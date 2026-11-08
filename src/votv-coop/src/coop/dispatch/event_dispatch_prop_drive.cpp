@@ -18,6 +18,7 @@
 #include "coop/element/registry.h"
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/world/media_device_sync.h"            // a placed radio's track and play state
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
@@ -228,6 +229,27 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::MediaDeviceState: {
+        // HOST->ALL, or a client's edit to the host: never relayed.
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: MediaDeviceState from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::MediaDeviceStatePayload)) {
+            UE_LOGW("event_feed: MediaDeviceState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::MediaDeviceStatePayload));
+            break;
+        }
+        net::MediaDeviceStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || p.ticks < 0 || p.playing > 1 || p.mode > 3 ||
+            !std::isfinite(p.volume) || !std::isfinite(p.brightness) || !std::isfinite(p.squeezeX) || !std::isfinite(p.squeezeY)) {
+            UE_LOGW("event_feed: MediaDeviceState malformed -- dropping");
+            break;
+        }
+        ::coop::media_device_sync::OnState(msg.senderPeerSlot, p);
         break;
     }
     case net::ReliableKind::PlantState:

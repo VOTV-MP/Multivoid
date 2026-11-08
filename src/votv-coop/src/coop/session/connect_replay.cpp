@@ -54,6 +54,7 @@
 #include "coop/interactables/window_sync.h"
 #include "coop/props/prop_food_sync.h"  // every world food's condition again
 #include "coop/world/plant_sync.h"
+#include "coop/world/media_device_sync.h"  // every radio again
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
 #include "coop/interactables/verb_lanes.h"  // the interactable lanes on a device's own verbs, at the script gate
 #include "coop/creatures/kerfus_lanes.h"  // the plain kerfur: its brain on the host, its state and drive, its verbs
@@ -131,6 +132,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_input_sync::SeedPingAttributionFromMachine();  // a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
+    coop::media_device_sync::QueueConnectBroadcastForSlot(slot);  // every radio again
     coop::props::prop_food_sync::QueueConnectBroadcastForSlot(slot);  // every world food's condition again
     coop::plant_sync::QueueConnectBroadcastForSlot(slot);  // every plant again
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines

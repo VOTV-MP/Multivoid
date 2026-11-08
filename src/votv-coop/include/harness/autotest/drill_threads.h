@@ -208,4 +208,10 @@ DWORD WINAPI PlantStateThread(LPVOID arg);
 // VOTVCOOP_RUN_ATV_HOST, both peers -- harness/autotest/autotest_atv_host.cpp
 DWORD WINAPI AtvHostThread(LPVOID arg);
 
+// VOTVCOOP_RUN_RADIO_STATE, both peers -- harness/autotest/autotest_radio_state.cpp
+DWORD WINAPI RadioStateThread(LPVOID arg);
+
+// VOTVCOOP_RUN_TV_STATE, both peers -- harness/autotest/autotest_tv_state.cpp
+DWORD WINAPI TvStateThread(LPVOID arg);
+
 }  // namespace harness::autotest

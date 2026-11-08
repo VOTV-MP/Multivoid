@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 278;
+inline constexpr uint16_t kProtocolVersion = 279;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1245,6 +1245,11 @@ enum class ReliableKind : uint8_t {
     // (op 3, 4), or, seated, changed its lights, brake or turbo (op 5) or pressed or released its horn (op 6, 7). Never
     // relayed; the host does it on its own copy, and its AtvHostState answers. AtvHostPayload.
     AtvRequest = 238,
+    // HOST->ALL: a placed radio's or TV's track, time, play state and mode, and a TV's channel and picture, on a change and
+    // every few seconds while it plays. A track is a hash a peer looks up in its own catalog. CLIENT->HOST: what this
+    // client's player changed through its interface; never relayed, the host's next state answers. Not pre-world. Late
+    // join: every device again at the ready edge. MediaDeviceStatePayload.
+    MediaDeviceState = 246,
 
     // CLIENT->HOST: this client pressed a coffee vending machine or a coffee maker (action 4), which its own copy
     // refused to run. The host resolves the device by its key, judges the sender's reach and that the key is
@@ -1977,6 +1982,22 @@ struct FoodStatePayload {
 };
 static_assert(sizeof(FoodStatePayload) == 44, "FoodStatePayload must be 44 bytes");
 static_assert(sizeof(FoodStatePayload) <= 256 - 20 - 8, "FoodStatePayload must fit in one reliable datagram");
+
+// A placed radio or TV (MediaDeviceState).
+struct MediaDeviceStatePayload {
+    WireKey  key;      // 32 -- the device's Key
+    uint64_t track;    // 8  -- ue_wrap::media_device::TrackId, 0 for none
+    int64_t  ticks;    // 8  -- the player's time, 100 ns
+    uint8_t  playing;  // 1
+    uint8_t  mode;     // 1  -- playmode, 0 to 3
+    uint8_t  _pad[2];  // 2  -- zero
+    int32_t  channel;     // 4  -- a TV's, -1 for none
+    float    volume;      // 4  -- a TV's
+    float    brightness;  // 4  -- a TV's
+    float    squeezeX;    // 4  -- a TV's
+    float    squeezeY;    // 4  -- a TV's
+};
+static_assert(sizeof(MediaDeviceStatePayload) == 72, "MediaDeviceStatePayload must be 72 bytes");
 
 // A client's bite of a world food (FoodBite).
 struct FoodBitePayload {

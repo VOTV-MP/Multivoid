@@ -262,6 +262,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIfEnum(coop::config_registry::rows::cremator_drill, "cremator drill", &coop::dev::cremator_drill::Thread, role);
     // The ATV: what of it the host owns, from a client's refuel to its horn.
     SpawnIf("VOTVCOOP_RUN_ATV_HOST", "ATV host-owned state drill", &AtvHostThread, role);
+    SpawnIf("VOTVCOOP_RUN_RADIO_STATE", "placed radio drill", &RadioStateThread, role);
+    SpawnIf("VOTVCOOP_RUN_TV_STATE", "placed TV drill", &TvStateThread, role);
 }
 
 }  // namespace harness::autotest

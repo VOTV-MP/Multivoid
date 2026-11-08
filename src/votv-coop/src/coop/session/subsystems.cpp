@@ -90,6 +90,7 @@
 #include "coop/props/prop_food_sync.h"
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
+#include "coop/world/media_device_sync.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
@@ -305,6 +306,7 @@ void Install(coop::net::Session& session) {
     coop::props::prop_can_state::Install(&session);  // a canned food's lid and contents: its record on a change
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::plant_sync::Install(&session);  // the host runs every plant
+    coop::media_device_sync::Install(&session);  // a placed radio's track and play state
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::desk_cursor_sync::Install(&session);  // coords-panel live-cursor unreliable motion stream (interpolated mirror)
     coop::desk_input_sync::Install(&session);  // the claim-free field-granular desk input lane
@@ -495,6 +497,7 @@ DisconnectStats DisconnectAll() {
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
     coop::plant_sync::OnDisconnect();
+    coop::media_device_sync::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
@@ -669,6 +672,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     coop::plant_sync::Tick();  // the plants' poll
+    coop::media_device_sync::Tick();  // the radios' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)

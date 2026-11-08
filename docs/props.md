@@ -441,6 +441,15 @@ its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use 
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
 answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
 
+A placed radio or TV (`coop/world/media_device_sync`) plays through each peer's own media player and picks its own
+next track, so the host's state stands: a client's copy is moved to its track, time and play state, and a client with
+the radio's interface open sends what its player changed. A track crosses as a hash of its catalog link and opens only
+from the peer's own catalog `[V]` (`harness/autotest/autotest_radio_state.cpp`: a pick, stop, play and mode from a
+client, a pick from the host and a rejoin, with silent test tracks, the rule written on and the pick by the radio's own
+function). A TV also carries its channel, volume, brightness and squeeze; its openLink needs its power as well as the
+rule, so a track waits for its cord `[V]` (`harness/autotest/autotest_tv_state.cpp`: the same from each peer with a
+channel and the picture, with a silent audio-only `.mp4`, powered by a write, so no picture was decoded).
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -466,6 +475,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, the hold it closes and the throw sequence (0 = not a throw); a client's goes through the host, which clamps it and sends it on |
 | `PropHoldRefused` | the host to every client | a hold the host refused, by its holder's slot and generation, the prop's key, and the slot whose hold keeps the prop |
 | `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, ripeness and uses; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
+| `MediaDeviceState` | the host to all; a client to the host | a placed radio's or TV's track hash, time, play state and mode, a TV's channel and picture; what a client's interface changed |
 | `PropDrivePose` (stream) | the host to all; a syncing client to the host | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation; a client's rows of the prop its own interaction moves, which the host judges before it relays one `[?]` |
 | `PropDriveEnd` | the host to all; a syncing client to the host | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation; a client's End is admitted when it is the row's syncer `[?]` |
 | `PropSyncClaim`, `PropSyncAnswer` | a client to the host; the host to that client | a client's request to sync a prop its interaction moves, and the host's grant, refusal (with the reason) or revoke (with the generation); the host also grants a thrown prop to its thrower unasked, `seq` being the throw sequence `[?]` |
@@ -505,6 +515,7 @@ prop resolves.
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
+| A radio or TV plays only on a peer whose own catalog holds the track and whose Custom Content rule is on, and is silent elsewhere; the ATV's radio and a TV showing a security camera are not this lane's | `[V]` `coop/world/media_device_sync`: a track is a hash, so no peer can make another open an address |
 | A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
 | A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
 | A food subclass's own counter (the shrimp's `shrimps`) and its own tick are not carried, and a heating device's work on a client's copy is local until the host's next value | `[RD]` `coop/props/prop_food_sync` |
@@ -529,6 +540,7 @@ prop resolves.
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
+| a placed radio or TV | `coop/world/media_device_sync`, `ue_wrap/world/media_device` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |

@@ -226,6 +226,8 @@ set(VOTVCOOP_SOURCES
     src/coop/props/food_tick_gate.cpp
     src/ue_wrap/actors/food.cpp
     src/coop/world/plant_sync.cpp
+    src/coop/world/media_device_sync.cpp
+    src/ue_wrap/world/media_device.cpp
     src/coop/world/plant_edit_gate.cpp
     src/ue_wrap/actors/growing_plant.cpp
     src/coop/props/prop_record_refresh.cpp
@@ -662,6 +664,8 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
     src/harness/autotest/autotest_atv_host.cpp
+    src/harness/autotest/autotest_radio_state.cpp
+    src/harness/autotest/autotest_tv_state.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
