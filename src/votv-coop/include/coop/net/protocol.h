@@ -2110,6 +2110,7 @@ static_assert(sizeof(PropDriveEndPayload) <= 256 - 20 - 8,
 enum class PropSyncReason : uint8_t {
     DevDrill = 1,
     SwingerParent = 2,   // unused until the swinger-parent feeder
+    BodyPush = 3,        // the client's own player walked into the prop and set it moving (coop/props/body_push)
 };
 
 // A client's request to be a prop's syncer (PropSyncClaim): the prop by its key when it has one and by its host eid,

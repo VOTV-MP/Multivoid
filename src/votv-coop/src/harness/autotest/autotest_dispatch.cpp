@@ -229,6 +229,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_HACKSAW", "hacksaw drill", &HacksawThread, role);
     // A glowstick stuck to a surface, on every peer.
     SpawnIfEnum(coop::config_registry::rows::glowstick_drill, "glowstick drill", &GlowstickThread, role);
+    SpawnIf("VOTVCOOP_RUN_BODY_PUSH", "body push drill", &BodyPushThread, role);
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
     // reflected AddMovementInput moving the possessed body.
     SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);
