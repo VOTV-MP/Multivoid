@@ -246,4 +246,7 @@ DWORD WINAPI OrbDrillThread(LPVOID arg);
 DWORD WINAPI SkyTpDrillThread(LPVOID arg);
 // roomba_drill, both peers -- harness/autotest/autotest_roomba.cpp
 DWORD WINAPI RoombaDrillThread(LPVOID arg);
+// VOTVCOOP_RUN_CHIPPER_FEED, both peers -- harness/autotest/autotest_chipper_feed.cpp
+DWORD WINAPI ChipperFeedThread(LPVOID arg);
+
 }  // namespace harness::autotest

@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/woodchipper_feed.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -141,6 +142,12 @@ sg::Verdict OnRefusePre(const sg::Call& call) {
     if (row != kTick && row != kEat) return sg::Verdict::Run;
     uint64_t& n = row == kTick ? g_counts.tickRefused : g_counts.eatRefused;
     ++n;
+    if (row == kEat && call.locals) {
+        // What entered the copy's box: a prop this client holds or syncs is the host's chipper's to eat.
+        static R::ParamOffset sOther{L"OtherActor"};
+        const int32_t off = sOther.Of(call.function);
+        if (off >= 0) coop::woodchipper_feed::OnClientIntake(call.object, *reinterpret_cast<void* const*>(call.locals + off));
+    }
     if ((n & (n - 1)) == 0)
         UE_LOGI("woodchipper_gate[%s]: refuse %p (call #%llu) -- the host runs the chipper", kRowTag[row], call.object,
                 static_cast<unsigned long long>(n));
