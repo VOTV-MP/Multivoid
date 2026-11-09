@@ -9,6 +9,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"beacon_skeleton_animblueprint_c", L"blueprintupdateanimation", L"beacon_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xd65da5f81aa4b765ull},
     {L"deersk_skeleton_animblueprint_c", L"blueprintupdateanimation", L"deersk_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xace20bbd0bb7f351ull},
     {L"deerzombsk_skeleton_animblueprint_c", L"blueprintupdateanimation", L"deerzombsk_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xa79fd56b6089193dull},
+    {L"dirthole_c", L"receivebeginplay", L"dirthole_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0x850fd6647220f15cull},
     {L"erielive_skeleton_animblueprint_c", L"blueprintupdateanimation", L"erielive_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x38cb1b4544d0c701ull},
     {L"firetank_skeleton_animblueprint_c", L"blueprintupdateanimation", L"firetank_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x649452581e892915ull},
     {L"fossilhound_skeleton_animblueprint_c", L"blueprintupdateanimation", L"fossilhound_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xda42d95946a8af2dull},

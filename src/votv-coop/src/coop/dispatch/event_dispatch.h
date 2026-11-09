@@ -83,8 +83,10 @@ bool HandleRequesterFeedbackEvent(net::Session& session,
 bool HandleKerfurCommandEvent(net::Session& session,
                               const net::Session::ReliableMessage& msg);
 
-// Dig family: a client's dig of a chip pile. ScrapPileIntent checks role()==Host AND a client sender slot here
-// and hands the pile's id to the host's lane (coop/props/scrap_pile_intent).
+// Dig family: a client's dig of a chip pile, and a shovel's hole in the ground. ScrapPileIntent and DugHoleIntent
+// check role()==Host AND a client sender slot here and hand the request to the host's lane
+// (coop/props/scrap_pile_intent, coop/world/dug_hole_sync); DugHoleState is the HOST->CLIENT hole, dropped on the
+// host and from any sender but slot 0.
 bool HandleDigEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg);
 

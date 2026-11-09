@@ -24,10 +24,12 @@ CFG_INT(trash_hold_red, "trash_hold_red", "dev", 0, 0, 1, "VOTVCOOP_TRASH_HOLD_R
     "a save-loaded clump in flight is no longer held at its saved pose and settles off its key again; the drill must "
     "then FAIL on orphans. 0 = the catch holds as designed.")
 
-CFG_ENUM(dig_drill, "dig_drill", "dev", "off", "off|shovel|empty", "VOTVCOOP_DIG_DRILL",
+CFG_ENUM(dig_drill, "dig_drill", "dev", "off", "off|shovel|empty|hole|hole_empty", "VOTVCOOP_DIG_DRILL",
     "Drill (BOTH peers, the same value, one client): once the client stands in its world the host spawns a wood chip "
     "pile beside the client's body; the client finds it and digs it with the pile's own turnIntoScrap, the call a "
     "shovel's or a rake's dig ends in. shovel: the client first takes a shovel into its hand, and the host must have "
     "dug the pile for it -- the pile gone and one scrap item in its place on both peers. empty: the hand stays empty, "
-    "and the host must refuse the dig -- the pile still there on both peers and no item. The verdict is the host's "
-    "rig line, tagged dig-drill.")
+    "and the host must refuse the dig -- the pile still there on both peers and no item. hole: the host digs a hole "
+    "in the ground beside the client, which must see one copy, dig its own hole with a shovel in hand (one hole there, "
+    "the host's) and end its copy (the host's ends). hole_empty: the client's empty-handed hole is refused on both "
+    "peers. The verdict is the host's rig line, tagged dig-drill.")

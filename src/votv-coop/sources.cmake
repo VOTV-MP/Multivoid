@@ -296,6 +296,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/rider_hold.cpp
     src/coop/world/weather_sync.cpp
     src/coop/world/spill_sync.cpp
+    src/coop/world/dug_hole_sync.cpp
     src/coop/world/sus_hole_intent.cpp
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp

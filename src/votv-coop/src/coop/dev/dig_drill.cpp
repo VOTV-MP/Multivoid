@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/dig_hole_drill.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -43,13 +44,14 @@ constexpr uint64_t kJudgeAfterDigMs = 6000;  // client
 constexpr uint64_t kHostJudgeMs = 30000;   // host: after its spawn
 constexpr uint64_t kGiveUpMs = 60000;      // client: no pile found by then
 
-enum class Mode { Off, Shovel, Empty };
+enum class Mode { Off, Shovel, Empty, Hole, HoleEmpty };
 enum class Step { Wait, Acted, Found, Dug, Done };
 
 Mode ModeNow() {
     static const Mode s = [] {
         const std::string v = coop::config::ResolveEnum(coop::config_registry::rows::dig_drill);
-        return v == "shovel" ? Mode::Shovel : v == "empty" ? Mode::Empty : Mode::Off;
+        return v == "shovel" ? Mode::Shovel : v == "empty" ? Mode::Empty : v == "hole" ? Mode::Hole
+             : v == "hole_empty" ? Mode::HoleEmpty : Mode::Off;
     }();
     return s;
 }
@@ -191,6 +193,8 @@ void TickClient(uint64_t now) {
 }  // namespace
 
 void Tick(coop::net::Session& session) {
+    if (ModeNow() == Mode::Hole || ModeNow() == Mode::HoleEmpty)
+        return coop::dev::dig_hole_drill::Tick(session, ModeNow() == Mode::HoleEmpty);
     if (ModeNow() == Mode::Off || g_step == Step::Done || !session.running()) return;
     const uint64_t now = coop::active_drive::NowMs();
     if (session.role() == coop::net::Role::Host) TickHost(session, now);
