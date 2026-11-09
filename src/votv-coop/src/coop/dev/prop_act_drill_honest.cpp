@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <string>
 
 namespace coop::dev::prop_act_drill::detail {
@@ -386,6 +387,13 @@ Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& 
             return Judged::Fail;
         }
     }
+    // An MRE's contents are rolled on the host's copy before its destroy, and no other take rolls anything.
+    const uint32_t wantOpens = std::wcscmp(row.leaf, L"prop_food_mre_C") == 0 ? 1 : 0;
+    const uint32_t opens = Since(PAH::MreOpens(), base.mreOpens);
+    if (opens != wantOpens) {
+        *why = std::to_string(opens) + " MRE opens on the host, " + std::to_string(wantOpens) + " expected";
+        return Judged::Fail;
+    }
     const uint32_t wantRaw = row.target == Target::HostTwo ? 1 : 0;
     const uint32_t raw = PRP::dev::WireDestroysNaming(eid);
     if (raw != 0) {
@@ -403,6 +411,10 @@ Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& 
             *why = std::to_string(second) + " raw PropDestroy naming the second prop, " + std::to_string(wantRaw) + " expected";
             return Judged::Fail;
         }
+    }
+    if (wantOpens) {
+        *why = "one destroy commit, the eid dead, the contents rolled on the host, no raw PropDestroy from the client";
+        return Judged::Pass;
     }
     *why = wantRaw ? "one destroy commit, the eid dead, the second prop's destroy through the seam"
                    : row.target == Target::HostKerfur

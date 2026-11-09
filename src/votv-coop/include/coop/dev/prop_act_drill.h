@@ -115,6 +115,7 @@ struct Baseline {
     uint32_t wrongFamily = 0;   // AnsweredFor(slot, WrongFamily)
     uint32_t fit = 0;           // TallyOf(the row's fitTally)
     bool kerfurBound = false;   // GetKerfurIdForEid(eid) named a kerfur record
+    uint32_t mreOpens = 0;      // MreOpens()
 };
 
 enum class Judged : uint8_t { Wait, Pass, Fail };

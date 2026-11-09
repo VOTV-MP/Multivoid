@@ -135,6 +135,7 @@ Baseline TakeBaseline(const Row& row, EL::ElementId eid, EL::ElementId eid2) {
     PRP::dev::WatchWireDestroys(kClientSlot, eid, eid2);
     Baseline b;
     b.destroys = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy);
+    b.mreOpens = PAH::MreOpens();
     b.aborts = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort);
     b.eid2 = eid2;
     b.answered = PAH::AnsweredTotal(kClientSlot);

@@ -10,6 +10,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_hold.h"
+#include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop.h"
 #include "coop/session/net_pump.h"
 
@@ -174,6 +175,14 @@ void SendCommit(uint8_t committed) {
             committed ? "committed" : "aborted");
 }
 
+// A granted MRE open: the host rolls the contents on its own copy and they reach this peer as its spawns, so this copy
+// is only removed, with the opening heard here. Opening it here too would roll a second, client-only set.
+bool OpenMreOnHost(void* target, void* local) {
+    ue_wrap::FVector at{};
+    if (E::TryGetActorLocation(target, at)) coop::prop_sound::PlayMreOpenAt(local ? local : target, at);
+    return E::DestroyActor(target);
+}
+
 // The record's verb, as the player's press runs it, on the target. False when the verb could not run at all (a
 // function that does not resolve, a player or target that is not live), as distinct from a verb that ran and bailed.
 bool RunVerb(void* target, void* local) {
@@ -186,8 +195,9 @@ bool RunVerb(void* target, void* local) {
         bool collected = false;
         return E::CallMainPlayerHoldObject(local, target, collected);
     }
-    case kFood:
     case kMre:
+        return OpenMreOnHost(target, local);
+    case kFood:
     case kPills:
         return PU::CallActionOptionIndex(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.action,
                                          g_rec.lookAt.Get());
