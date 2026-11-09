@@ -18,6 +18,7 @@
 
 #include "tower_drill_radio_steps.h"
 
+#include "coop/dev/drill_hand.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/world/fuse_tower_kind.h"
@@ -32,6 +33,8 @@
 #include "ue_wrap/engine/engine.h"             // TryGetActorLocation, GetActorForwardVector
 #include "ue_wrap/engine/engine_mainplayer.h"  // what the hand holds, where the camera is
 #include "ue_wrap/world/game_rules.h"
+
+#include <windows.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -81,6 +84,13 @@ constexpr float    kHandedAheadUU = 60.f;  // the host drops the fuse this far i
 constexpr uint8_t  kClientSlot = 1;
 
 bool FuseRed() { return ArmOf() == Arm::RadioFuseRed; }
+
+// VOTVCOOP_TOWER_FUSE_HAND (both peers): the good fuse comes from the client's own hold slot, as a player takes one
+// out of the inventory, instead of the host's world spawn. That fuse is the client's alone: the host never had it.
+bool HandFuse() {
+    static const bool on = ::GetEnvironmentVariableA("VOTVCOOP_TOWER_FUSE_HAND", nullptr, 0) > 0;
+    return on;
+}
 
 void FuseGo(FuseStep s) {
     g_fuse = s;
@@ -281,6 +291,23 @@ void FuseArmTick(const RadioView& v) {
         return;
     }
     case FuseStep::Await: {
+        if (HandFuse()) {
+            void* held = HeldActor(v.player);
+            if (held && FK::IsFuse(held)) {
+                UE_LOGI("[TOWER-DRILL] client took a good fuse into the hand from its own slot (%ls, %ls)",
+                        R::ClassNameOf(held).c_str(), ue_wrap::prop::GetPropNameString(held).c_str());
+                g_handed.Set(held);
+                FuseGo(FuseStep::Insert);
+                return;
+            }
+            static uint64_t lastTakeMs = 0;
+            if (NowMs() - lastTakeMs > 1000) {
+                lastTakeMs = NowMs();
+                coop::dev::drill_hand::TakeIntoHandNow(L"fuse", L"prop_fuse_C");
+            }
+            if (FuseOverdue(10000)) RadioAbandon("the hand never held a good fuse from the slot");
+            return;
+        }
         // The host hands a good fuse once its slot reads empty; its spawn watcher gives it to this copy.
         if (void* fuse = HandedFuseNear(v.player)) {
             g_handed.Set(fuse);
@@ -328,6 +355,10 @@ void FuseArmTick(const RadioView& v) {
 // tower would have one: 60 uu in front of the client's eye. The host's spawn watcher gives it to every peer.
 void FuseArmHostTick() {
     if (!IsRadioFuse(ArmOf())) return;
+    if (HandFuse()) {
+        // No fuse is handed; the host only says what became of its slot.
+        return;
+    }
     void* t = RT::Instance();
     RT::State st;
     if (!t || !RT::Read(t, st)) return;
