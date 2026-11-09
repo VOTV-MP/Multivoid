@@ -52,7 +52,9 @@ CFG_STRING(tower_drill, "tower_drill", "dev", "", "VOTVCOOP_TOWER_DRILL", false,
     "which fails as the host's cells do not change (a re-roll that repeats the host's cells is pulled again, three "
     "times at most, then INCONCLUSIVE); radiofuse -- the host blows a fuse of its tower and keeps it whole, the "
     "client pulls that fuse, the host hands it a good one, the client inserts that into the emptied slot (needs "
-    "difficulty 2 or more), and the host's slot must read good; radiofusered -- radiofuse with the gates open, which fails "
+    "difficulty 2 or more), and the host's slot must read good; with VOTVCOOP_TOWER_FUSE_HAND set on both peers "
+    "the host hands none and the client takes a good fuse into its own hold slot, as a player takes one out of the "
+    "inventory, and inserts that; radiofusered -- radiofuse with the gates open, which fails "
     "naming the host's slot left unchanged. The repair arms want the game rule enableLightsOut on, or the tower "
     "has no puzzle to press (radio then prints lightsout=0). Lines tagged [TOWER-DRILL]; the client's DONE line "
     "ends it.")

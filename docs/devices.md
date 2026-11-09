@@ -373,12 +373,21 @@ puzzle button, the lever or the panel's retract is refused and sent to the host,
 tower's own use with the look-at answered and then gives its own player's look-at back. A pull or an
 insert moves a fuse into or out of the player's own hand, so the client's own game makes it and
 claims the slot. The host takes a pull when its copy has the panel open, the lever at rest and that
-fuse blown, and an insert when the slot is empty and, above the two easiest difficulties, the host saw
-that player spend a good fuse at the tower; it refuses one otherwise, answering in the rows to the
+fuse blown, and an insert when the slot is empty and, above the two easiest difficulties, that player
+spent a good fuse on it; it refuses one otherwise, answering in the rows to the
 sender alone, and a refused pull's fuse is taken back out of the puller's hand, a refused insert's
 fuse given back where the player stands. A press or a lever the tower's own gates would ignore on the
 host's copy is refused the same way, and a dead player's acts are. Every act is judged within reach of
 the part it acts on, in the player's order, at a few a second.
+
+The spend is one of two things the host saw. A fuse lying in the world that the player grabbed is a
+world prop, and its destroy at the insert reaches the host, which counts it as a spend at the tower
+within reach of the player. A fuse taken out of the inventory is the hold slot's own actor, which is
+the player's expression and never a world prop, so its destroy reaches no one; for it the host asks
+the hand lane's history whether that player's hand held a good fuse within three seconds of the
+insert's arrival (`coop/player/hand_history`), and takes one such spend a player a second. The host
+cannot see the fuse leave the inventory, so a forged insert from a hand that holds a fuse is taken
+and the fuse kept: a fuse's worth, and only for a player already holding one.
 
 The radio tower is the second kind (`coop/world/fuse_tower_kind` holds what differs between the two). It
 is one actor, the gamemode's `radiotower`, and the drone's shop run reads its broken flag on the host, so
@@ -395,7 +404,8 @@ a fuse blowing or the tower breaking raises the console's "Radio tower has been 
 down!" alert by hand (the handler the host's broadcast would call), never for a tower's first applied
 row, since the handler also wakes the player. A client's press of a puzzle button or of either lever is
 sent to the host when its own copy is broken and idle; a whole tower answers with its own hint on the
-client. The host takes a pull of a blown fuse when no lever runs, and an insert on an empty slot. At
+client. The host takes a pull of a blown fuse when no lever runs, and an insert on an empty slot with
+a spend behind it, as the coordinate towers' are. At
 the two easiest difficulties the game keeps the held fuse and the insert solves the puzzle (the radio
 tower also writes the slot, the coordinate tower does not): a client's insert there is refused at the
 gate and sent to the host like a press, which judges reach and the slot on its copy and runs the solve,
