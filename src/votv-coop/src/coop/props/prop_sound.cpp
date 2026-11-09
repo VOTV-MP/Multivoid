@@ -228,6 +228,20 @@ void PlaySpillSplashAt(void* worldCtx, const ue_wrap::FVector& loc) {
     ue_wrap::engine::PlaySoundAtLocation(worldCtx, sCue, loc, sAtt ? sAtt : ResolveAttenuation(), 0.5f, 1.25f);
 }
 
+void PlayMreOpenAt(void* worldCtx, const ue_wrap::FVector& loc) {
+    if (!worldCtx || !R::IsLive(worldCtx)) return;
+    // mreOpen_Cue at att_small: what prop_food_mre_C's actionOptionIndex plays at its mesh. Latched resolves.
+    static void* sCue = nullptr;
+    static void* sAtt = nullptr;
+    if (!sCue) sCue = R::FindObject(L"mreOpen_Cue", L"SoundCue");
+    if (!sAtt) sAtt = R::FindObject(L"att_small", L"SoundAttenuation");
+    if (!sCue) {
+        UE_LOGW("prop_sound: 'mreOpen_Cue' not resolved yet -- no MRE opening");
+        return;
+    }
+    ue_wrap::engine::PlaySoundAtLocation(worldCtx, sCue, loc, sAtt ? sAtt : ResolveAttenuation(), 1.0f, 1.0f);
+}
+
 void PlayBottlePourAt(void* worldCtx, const ue_wrap::FVector& loc) {
     if (!worldCtx || !R::IsLive(worldCtx)) return;
     // fuel1 at att_default: what prop_snack_beer_C's tick plays beside each pour. Latched resolve.

@@ -13,6 +13,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_hold.h"
+#include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -23,6 +24,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -62,6 +64,7 @@ struct Slot {
     uint32_t waits[kWaitCauses] = {};
     uint32_t commits[kCommitSteps] = {};
     uint32_t maxDepth = 0;
+    uint8_t grantedFamily = 0;   // the verb of the request the slot's reservation was granted for
 };
 
 coop::net::Session* g_session = nullptr;
@@ -89,6 +92,30 @@ struct UseClass {
 };
 UseClass g_useClasses[] = {{L"prop_food_C", true, {}}, {L"prop_food_mre_C", false, {}},
                            {L"prop_sleeppills_C", false, {}}};
+
+// An MRE's open rolls its contents with the game's own `spawn`, which reads nothing of the player. The host runs it on
+// its copy before the destroy, so the contents are host-born and reach every peer; the opener only removes its copy.
+ue_wrap::CachedObjRef g_mreClass;
+uint32_t g_mreOpens = 0;
+
+bool IsMre(void* actor) {
+    void* const c = ResolveClass(g_mreClass, L"prop_food_mre_C");
+    return c && ue_wrap::prop::WalksToBase(R::ClassOf(actor), c);
+}
+
+void OpenMre(void* actor, uint8_t slot, uint32_t eid) {
+    static ue_wrap::CachedObjRef sSpawnFn;
+    if (!sSpawnFn.Alive()) sSpawnFn.Set(R::FindFunction(R::ClassOf(actor), L"spawn"));
+    void* const fn = sSpawnFn.Raw();
+    if (!fn || !R::CallFunction(actor, fn, nullptr)) {
+        UE_LOGW("prop_act: the MRE eid %u opened for slot %u could not roll its contents", static_cast<unsigned>(eid),
+                static_cast<unsigned>(slot));
+        return;
+    }
+    ++g_mreOpens;
+    ue_wrap::FVector at{};
+    if (ue_wrap::engine::TryGetActorLocation(actor, at)) coop::prop_sound::PlayMreOpenAt(actor, at);
+}
 
 // Food-body classes that are not offered the use: the plush offers no option (its getActionOptions is empty), and
 // the others own their action 4, whose destroy is carried by another request.
@@ -256,7 +283,10 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
         ++g_slots[slot].waits[static_cast<int>(cause)];
         return coop::net::Served::Wait;
     }
-    if (v == internal::ActVerdict::Grant) coop::prop_hold::Reserve(slot, q.req.id, q.req.eid, actor);
+    if (v == internal::ActVerdict::Grant) {
+        coop::prop_hold::Reserve(slot, q.req.id, q.req.eid, actor);
+        g_slots[slot].grantedFamily = q.req.family;
+    }
     const bool sent = Answer(slot, *internal::ReplyFor(v, q.req.id));
     if (v == internal::ActVerdict::Grant) {
         if (!sent) {
@@ -464,6 +494,8 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     case internal::CommitStep::Destroy:
         break;
     }
+    if (g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsMre(actor))
+        OpenMre(actor, senderSlot, p.eid);
     // The eid alone names the prop (no key), so the key fallback can never pick a sibling.
     ue_wrap::CachedObjRef before;
     before.Set(actor);
@@ -517,6 +549,7 @@ void OnDisconnect() {
     }
     if (!fits.empty()) UE_LOGI("prop_act: fit refusals this session:%s", fits.c_str());
     std::fill(std::begin(g_tally), std::end(g_tally), 0u);
+    g_mreOpens = 0;
     g_unreadSaid.clear();
     g_refusals.Clear();
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) coop::prop_hold::Release(slot);
@@ -532,6 +565,8 @@ uint32_t AnsweredFor(int slot, PropActReason reason) {
 }
 
 uint32_t TallyOf(Tally t) { return t < Tally::kCount ? g_tally[static_cast<int>(t)] : 0; }
+
+uint32_t MreOpens() { return g_mreOpens; }
 
 namespace dev {
 

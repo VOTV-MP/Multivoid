@@ -61,6 +61,10 @@ void PlaySpillSplashAt(void* worldCtx, const ue_wrap::FVector& loc);
 // each time it pours), at a bottle another peer poured (coop/world/spill_sync).
 void PlayBottlePourAt(void* worldCtx, const ue_wrap::FVector& loc);
 
+// An MRE's opening (mreOpen_Cue, vol 1.0 / pitch 1.0, att_small -- prop_food_mre_C's own at its mesh), played by the
+// opener when the host opens the MRE for it (coop/props/prop_act_request). `worldCtx` = any live actor in the world.
+void PlayMreOpenAt(void* worldCtx, const ue_wrap::FVector& loc);
+
 // The game's own save-denied/failed click (button_keypad_deny -- the desk play-screen deny
 // @23927 and the keypad deny, vol 0.5 / pitch 1.0), played at the LOCAL player whose action was
 // denied, which today is the device-occupancy busy deny. `playerActor` = the denied local
