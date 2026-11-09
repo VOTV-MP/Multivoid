@@ -5,6 +5,7 @@
 #include "coop/element/intent_authority.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_history.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
@@ -29,6 +30,10 @@ namespace GEN = ue_wrap::generator;
 
 // A spend waits for its install op; a player's inserts come seconds apart, so a few a slot cover any that race.
 constexpr int kSpendsPerSlot = 4;
+// An upgrade in the hand as its install arrives: the hand lane's pacing and its order against the op, and one such
+// spend a slot per gap.
+constexpr uint64_t kHandUpgradeWindowMs = 3000;
+constexpr uint64_t kHandUpgradeGapMs = 1000;
 
 struct Spend {
     int32_t  index = -1;  // the generator it was spent at; -1 an empty place
@@ -42,6 +47,7 @@ struct Spends {
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::roster_ledger::PerSlotState<Spends> g_spends;
 uint64_t g_recorded = 0, g_refunded = 0, g_unplaced = 0;
+uint64_t g_handSpentMs[coop::net::kMaxPeers] = {};  // the arrival of the last install a slot's hand paid for
 bool g_listening = false;
 
 uint64_t NowMs() {
@@ -96,6 +102,18 @@ bool TakeSpend(uint8_t slot, int32_t index) {
     return true;
 }
 
+bool TakeHandSpend(uint8_t slot, uint64_t arrivedMs) {
+    if (slot == 0 || slot >= coop::net::kMaxPeers) return false;
+    if (g_handSpentMs[slot] && arrivedMs < g_handSpentMs[slot] + kHandUpgradeGapMs) return false;
+    if (!coop::hand_history::HeldWithin(slot, L"prop_transformerUpgrade_C", kHandUpgradeWindowMs, arrivedMs))
+        return false;
+    g_handSpentMs[slot] = arrivedMs;
+    ++g_recorded;
+    UE_LOGI("power_upgrade: slot %u spent the upgrade in its hand (%s)", slot,
+            coop::hand_history::Describe(slot).c_str());
+    return true;
+}
+
 void Refund(uint8_t slot, void* gen) {
     ue_wrap::FVector at{};
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
@@ -119,6 +137,7 @@ void OnDisconnect() {
         UE_LOGI("power_upgrade: session end -- spends recorded %llu, refunds %llu",
                 static_cast<unsigned long long>(g_recorded), static_cast<unsigned long long>(g_refunded));
     for (int slot = 0; slot < g_spends.size(); ++slot) g_spends[slot] = Spends{};
+    for (auto& ms : g_handSpentMs) ms = 0;
     g_recorded = g_refunded = g_unplaced = 0;
 }
 

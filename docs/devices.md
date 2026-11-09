@@ -299,7 +299,7 @@ upgrade install run on the client first and are reconciled like the panel's pres
 the host's to run, with a held item that swings. The host takes an op from a player within reach, in
 the player's order, and judges an Activate press on its own copy of the repair puzzle, branching as
 the button does: a broken generator is mended, a whole one serviced. An install rests on the upgrade
-its insert spent, which the host saw that player destroy beside the generator
+its insert spent: a world upgrade the host saw that player destroy beside the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the upgrade the hand lane's history shows in that player's hand within three seconds of the op, one such a player a second
 (`coop/world/power_upgrade`): an install without one is refused, and one refused after it, the second
 of two players at a generator's last free place, gets its upgrade back where the player stands. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
 the game's repair with the puzzle solved followed by the Activate route's turn-on at the generator
