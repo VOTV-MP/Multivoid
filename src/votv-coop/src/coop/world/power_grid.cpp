@@ -250,11 +250,13 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     EL::IntentSubject reach{};
     if (read) reach = EL::IntentTarget::ForClientIntent(*s, sender, kGeneratorReachUU).Authorize(gen);
     if (reach.outcome == EL::IntentOutcome::NoBody && !waited) return Take::Wait;
-    // An install rests on the upgrade its insert spent, which the host saw destroyed beside this generator: taken
-    // here, whatever the outcome, so one spend answers one install. None yet waits for the destroy behind it.
+    // An install rests on the upgrade its insert spent: a world upgrade the host saw destroyed beside this generator,
+    // or the one the sender's hand held. Taken here, whatever the outcome, so one spend answers one install. None yet
+    // waits for the destroy or the hand state behind it.
     bool spent = false;
     if (read && p.op == coop::net::kPowerGridOpUpgrade) {
-        spent = coop::power_upgrade::TakeSpend(sender, p.index) || UnpairedInstalls();
+        spent = coop::power_upgrade::TakeSpend(sender, p.index) ||
+                coop::power_upgrade::TakeHandSpend(sender, wt.arrivedMs) || UnpairedInstalls();
         if (!spent && !waited) return Take::Wait;
     }
     std::wstring item;
@@ -342,7 +344,9 @@ void HostRefuseQueue(coop::net::Session* s, uint8_t slot, const Waiting& newest)
     g_waiting[slot].push_back(newest);
     std::vector<void*> gens;
     for (const Waiting& w : g_waiting[slot]) {
-        if (w.p.op != coop::net::kPowerGridOpUpgrade || !coop::power_upgrade::TakeSpend(slot, w.p.index)) continue;
+        if (w.p.op != coop::net::kPowerGridOpUpgrade || (!coop::power_upgrade::TakeSpend(slot, w.p.index) &&
+                                                         !coop::power_upgrade::TakeHandSpend(slot, w.arrivedMs)))
+            continue;
         if (gens.empty()) GEN::ReadGenerators(gens);
         if (w.p.index < gens.size() && gens[w.p.index]) coop::power_upgrade::Refund(slot, gens[w.p.index]);
     }

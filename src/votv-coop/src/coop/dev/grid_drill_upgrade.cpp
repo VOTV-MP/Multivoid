@@ -6,6 +6,7 @@
 #include "grid_drill_solve.h"  // the solve legs the repair arms run
 #include "grid_drill_walk.h"  // the walk to the generator
 
+#include "coop/dev/drill_hand.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -17,7 +18,11 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/generator.h"
+#include "ue_wrap/actors/prop.h"              // GetPropNameString
 #include "ue_wrap/engine/engine.h"            // TryGetActorLocation
+#include "ue_wrap/engine/engine_mainplayer.h"  // what the hand holds
+
+#include <windows.h>
 
 #include <chrono>
 #include <cstdint>
@@ -59,6 +64,26 @@ uint64_t g_unreadMs = 0;    // since when the drill's generator has not read, on
 
 // The arms that install the one upgrade and go on to the repair; the control installs nothing.
 bool Installs() { return g_flavour == UpgradeFlavour::Repair || g_flavour == UpgradeFlavour::RepairLossRed; }
+
+// VOTVCOOP_GRID_UPGRADE_HAND (client): each install uses an upgrade the client puts in its own hold slot, as a player
+// takes one out of the inventory, instead of the one the host handed over (whose arrival still paces the legs).
+bool HandUpgradeMode() {
+    static const bool on = ::GetEnvironmentVariableA("VOTVCOOP_GRID_UPGRADE_HAND", nullptr, 0) > 0;
+    return on;
+}
+
+// The upgrade in this client's hold slot, put there at most once a second; null until the hand holds one.
+void* HandHeldUpgrade(void* player) {
+    static uint64_t lastMs = 0;
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    void* held = ue_wrap::engine::ReadMainPlayerGrabState(player, gs) ? gs.holdingActor : nullptr;
+    if (held && GEN::IsUpgrade(held)) return held;
+    if (NowMs() - lastMs > 1000) {
+        lastMs = NowMs();
+        coop::dev::drill_hand::TakeIntoHandNow(L"transformerUpgrade", L"prop_transformerUpgrade_C");
+    }
+    return nullptr;
+}
 
 void Go(Step s) {
     g_step = s;
@@ -196,6 +221,16 @@ void ClientTick(void* player) {
             return;
         }
         g_nearBefore = nearby;
+        if (HandUpgradeMode()) {
+            void* inHand = HandHeldUpgrade(player);
+            if (!inHand) {
+                if (now - g_stepMs > kRowBoundMs) Abandon("the hold slot never held an upgrade");
+                return;
+            }
+            UE_LOGI("[GRID-DRILL] client: installs the upgrade in its hold slot (%ls), not the host's",
+                    ue_wrap::prop::GetPropNameString(inHand).c_str());
+            up = inHand;
+        }
         int32_t before = 0, after = 0, host = 0;
         const uint64_t sent0 = coop::power_grid::ClientOpsSent();
         if (!Levels(before, host) || !GEN::InsertUpgrade(gen, player, up) || !Levels(after, host)) {
