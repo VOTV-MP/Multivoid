@@ -83,6 +83,13 @@ bool HandleRequesterFeedbackEvent(net::Session& session,
 bool HandleKerfurCommandEvent(net::Session& session,
                               const net::Session::ReliableMessage& msg);
 
+// Dig family: a client's dig of a chip pile, and a shovel's hole in the ground. ScrapPileIntent and DugHoleIntent
+// check role()==Host AND a client sender slot here and hand the request to the host's lane
+// (coop/props/scrap_pile_intent, coop/world/dug_hole_sync); DugHoleState is the HOST->CLIENT hole, dropped on the
+// host and from any sender but slot 0.
+bool HandleDigEvent(net::Session& session,
+                       const net::Session::ReliableMessage& msg);
+
 // Economy family: the delivery order with its queue, the coin gun's sale and collect, the laptop
 // upgrade purchase and the point sack. OrderRequest, CoinGunSell and CoinCollect check the slot here
 // and leave the role gate to the module they call; UpgradeIntent and PointSackRedeem check role()==Host

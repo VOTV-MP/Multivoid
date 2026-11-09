@@ -184,6 +184,54 @@ out ended its stream on both peers at one pose and came to rest within 0.1 cm of
 over two runs; a prop that something knocked on the host after its stream had ended lay up to 15.9
 cm off in an earlier run, a knock being no verb ([props.md](props.md)) `[V]`.
 
+### The shovel and the rake
+
+Both tools dig a chip pile into scrap. Each traces from its holder's arm, and a chip pile the trace hits
+gets the pile's own `turnIntoScrap`: one trash item named by the pile's chip type, a random variant of
+it (`trWood_1`, `g2_metal_3`, a food for organic chips), spawned 25 cm above the pile, then the pile's
+destroy and the dig sound in 2D (`ue_wrap/actors/dig_tool`). Everything a dig changes in the world is in
+that one function. The host's own dig needs no lane: the item's birth and the pile's eid destroy leave
+on the prop seams, and a client's copy took both. A client's dig was its own alone, since a client's
+prop birth is refused at the door: the host kept the pile and the client kept a scrap the host never
+had.
+
+A client's dig is now the host's (`coop/props/scrap_pile_intent`). The client refuses the pile's
+`turnIntoScrap` at the script-body gate, whoever called it, and sends `ScrapPileIntent` with the pile's
+id; an identity-less pile is refused there and sends nothing. The host serves a sender's digs from a
+bounded queue at a bounded rate, checks that its mirror of that sender's hand is a shovel or a rake,
+that the pile resolves through the sender's own reach token and that no carry or land settle is open on
+it, then runs the pile's own `turnIntoScrap` inside the sender's feedback scope
+(`coop/requester_feedback`), so the dig sound plays on the digger's machine rather than the host's. The
+item and the pile's death then reach every peer as the host's own dig's do. A refused dig changes
+nothing anywhere: the pile stands on every peer. `[V]` the dig drill (`coop/dev/dig_drill`): a client
+holding a shovel dug the host's wood pile three times; each time both peers had no pile and one
+`trWood_` scrap 3 to 21 cm from it, and the dig sound was routed to the client and played there. An
+empty-handed client's dig was refused twice, with the pile standing and no scrap on both peers. 
+A shovel's dig into the ground makes a hole instead, below.
+
+### A shovel's hole in the ground
+
+`useShovel`'s trace on sand, dirt, gravel or grass that is not simulating spawns a `dirthole_C` at the
+hit, its `matType` naming the ground `[RD]`. The class is also the child actor every sus hole holds, so
+a dug hole is a `dirthole_C` no child actor component spawned (`ue_wrap/actors/dig_tool`). It has no save
+interface, so it is in no save `[RD]`. Its begin play digs up a buried item it overlaps
+(`dirthole_item_C`); a player's use buries the held item or plants a seed, and a dirt ball fills it;
+each ends the hole `[RD]`. Unsynced, a hole was its digger's alone `[V]`.
+
+The host numbers each of its dug holes at the birth the engine announces (`coop/world/ambient_births`;
+a sus hole's child is passed over) and sends its place, rotation and ground, and its end
+(`coop/world/dug_hole_sync`). A client's copy is spawned with its begin play refused at the script-body
+gate, so what a hole digs up is the host's and rides the prop lane. On a client the begin play of a dug
+hole the lane did not spawn is refused too: that is the player's own dig, destroyed and sent as a
+`DugHoleIntent`. The host serves it from a bounded queue at a bounded rate for a sender whose hand on
+the host's mirror holds a shovel, at a point within reach of its body, and spawns the hole as
+`useShovel` does inside the sender's feedback scope. A copy a client's own use ends is named to the host
+by number, and the host ends its hole for a sender within reach; a copy the host's word ends is
+forgotten first, so its end sends nothing. `[V]` the dig drill (`dig_drill=hole|hole_empty`,
+`coop/dev/dig_hole_drill`): the client saw one copy of the host's hole, its own dig with a shovel left
+one hole there on both peers, its end of the copy ended the host's hole, an empty-handed dig was
+refused with no hole on either peer, and a hole dug before a join stood on the joiner.
+
 ### Save-loaded piles at a join
 
 A joiner's world comes from the host's save, so the client has its own copy of every pile. The
@@ -208,6 +256,8 @@ replacement for the position key.
 | a broom stroke | the host | a client's stroke is what it read of its holder; the host runs the stroke with those reads, reach- and rate-checked |
 | a native a joiner has not bound | the host | only host messages move it (converts, position corrections, pose streams); the joiner runs no morph of it (`coop/props/trash_morph_gate`), and a clump of it is held still from its load spawn (`coop/props/trash_native_hold`) |
 | bagging a pile | the host, by intent | a client's press is refused at the script-body gate and sent as the target's id; the host spawns the bag and destroys the target, so the prop seams carry both |
+| a shovel's hole in the ground | the host, by intent | a client's own hole is refused at its begin play and sent as a place, its end of a copy as the hole's number; the host checks the shovel and the reach |
+| digging a pile with a shovel or a rake | the host, by intent | a client's `turnIntoScrap` is refused at the script-body gate and sent as the pile's id; the host checks the tool and the reach and runs the pile's own dig, so the prop seams carry the scrap and the pile's death |
 
 ## Wire messages
 
@@ -216,6 +266,9 @@ replacement for the position key.
 | `GrabIntent`, `ThrowIntent` | a client to the host | the pile id; the release or a hard throw with its direction |
 | `PackTrashIntent` | a client to the host | the id of the pile or clump a client bagged, and whether the tool was a folded bag or a roll |
 | `BroomStroke` | a client to the host | the segment, heading and velocity a broom stroke read of its holder |
+| `ScrapPileIntent` | a client to the host | the id of the chip pile a client's shovel or rake dug |
+| `DugHoleState` | the host to all | a dug hole's number, place, rotation, ground, and whether it stands |
+| `DugHoleIntent` | a client to the host | a dig's place, rotation and ground, or the number of a copy the client's own use ended |
 | `PropConvert` | the host to all | the atomic pile-clump convert: id, form, pose, scale, chip type, context |
 | `TrashCarryPose` (stream) | the host to all | per-id poses for client-grabbed clumps and the clumps a broom sets rolling |
 | `PropPose` (stream) | the host to all | the host's own held clump and its flight |
@@ -246,6 +299,8 @@ is absent on that client until a later join expresses it again, unless a convert
 that one replays and lands the host's pile. Nothing is invented at the stale save position, because
 the host may have moved or removed the pile since.
 
+Every standing dug hole goes again to the joiner alone; the save holds none, so nothing is bound.
+
 ## Known limits
 
 | Limit | Evidence |
@@ -259,6 +314,7 @@ the host may have moved or removed the pile since.
 | A client's broom stroke acts a round trip late on that client: its swing animates at once, and the clumps, trash and pushes arrive with the host's messages | `[V]` code: `coop/items/broom_stroke` refuses the stroke at its notify, inside the montage the press started |
 | A clump the game makes of no pile -- an angry erie flesh, a kerfus possessor and an erie plush each spawn one from their own graphs -- has no id at its birth: its first roll is the host's alone. The adoption scan enrols it where it lies, as it does any clump at rest, and every peer then gets it as a clump under that id | `[V]` code: the three graphs' spawns; `coop/props/trash_collect_sync` names a clump at birth only by the pile it is born of; `coop/props/prop_census` enrols a keyless clump |
 | A client cannot pick up a clump that is at rest -- one the save loaded, or one thrown and left on a box. Its use press names piles only, and the game's own pickup refuses a body that is not simulating, which a bound clump is not: the press does nothing. The host's hand can | `[V]` code: `coop/props/trash_use_intercept` recognises a chip pile under the crosshair and nothing else; `[RD]` the pickup's simulating test, `mainPlayer` use handler |
+| What a client's own use of a dug hole does besides ending it -- the item it buried, the seed it planted -- is that client's alone, and its own buried items are never dug up: a hole's dig-up is the host's | `[V]` code: `coop/world/dug_hole_sync` sends a copy's end and nothing else |
 | The join-window bind is by save-time position; the sidecar that replaces it is off by default | `[V]` see [join.md](join.md) |
 
 ## Code map
@@ -271,6 +327,8 @@ the host may have moved or removed the pile since.
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | the broom | `coop/items/broom_stroke` (every stroke the host's), `coop/items/broom_push` (what it pushes), `ue_wrap/actors/broom` |
 | bagging a pile | `coop/props/pack_trash_intent`, and the bag family's tests in `ue_wrap/actors/prop` |
+| a shovel's hole | `coop/world/dug_hole_sync`, `ue_wrap/actors/dig_tool`, `coop/dev/dig_hole_drill` (the drill) |
+| digging a pile | `coop/props/scrap_pile_intent`, `coop/dispatch/event_dispatch_dig.cpp`, `ue_wrap/actors/dig_tool`, `coop/dev/dig_drill` (the drill) |
 | garbage containers | `coop/interactables/garbage_sync` |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
 | tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp`, `harness/autotest/autotest_broomstroke.cpp` |

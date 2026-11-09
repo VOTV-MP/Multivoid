@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 284;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -772,6 +772,32 @@ enum class ReliableKind : uint8_t {
     // Late join: nothing to replay, since a pack the host has not run changed nothing.
     // PackTrashIntentPayload.
     PackTrashIntent = 144,
+
+    // Client to host: dig the chip pile this element id names with a shovel or a rake. A dig ends in the
+    // pile's own turnIntoScrap, which spawns one trash item and destroys the pile; on a client that
+    // authors nothing the host sees -- a client's prop birth is refused at the door -- so the pile
+    // stayed on the host and the item stayed on the client. The client refuses the pile's body at the
+    // script-body gate and asks here instead. Trust: the sender must hold a shovel or a rake on the host's
+    // mirror of its hand, the pile is resolved through the sender's own reach token and must not be
+    // under an open carry, and a sender's digs run no faster than a bounded rate from a bounded
+    // queue. The host runs the pile's own turnIntoScrap inside the sender's feedback scope, so the
+    // prop seams carry the item and the pile's death and the dig sound plays for the digger.
+    // Late join: nothing to replay, since a dig the host has not run changed nothing.
+    // PROVISIONAL number, final at landing. ScrapPileIntentPayload.
+    ScrapPileIntent = 247,
+    // HOST->ALL: a hole a shovel dug in the ground (a dirthole_C that is no sus hole's child), with the host's number
+    // for it, its place and its ground (matType), and its end. A dug hole is in no save and lives until something
+    // fills it, a buried item, a planted seed or a dirt ball, so its birth and its end are the host's and both cross.
+    // Not relayed, not pre-world. Late join: every standing hole again, to the joiner alone. PROVISIONAL number,
+    // final at landing. DugHoleStatePayload.
+    DugHoleState = 248,
+    // CLIENT->HOST: this client's shovel dug a hole here (op 0: the client's own hole is destroyed and this names its
+    // place, rotation and ground), or a copy of the host's hole ended here by this client's own use of it (op 1, the
+    // host's number). Never relayed, not pre-world. The host digs only for a sender whose hand holds a shovel on the
+    // host's mirror, at a point within the dig's reach of the sender's body, from a bounded queue at a bounded rate;
+    // it ends a hole only for a sender within reach of it. Late join: nothing. PROVISIONAL number, final at
+    // landing. DugHoleIntentPayload.
+    DugHoleIntent = 249,
 
     // Client to host: press one of the garage console's two faces -- the keyboard (call/send) or the
     // leave timer (toggle). Every peer's console holds its own drone as a level reference, so a
@@ -3887,6 +3913,44 @@ struct PackTrashIntentPayload {
 static_assert(sizeof(PackTrashIntentPayload) == 8, "PackTrashIntentPayload must be 8 bytes");
 static_assert(sizeof(PackTrashIntentPayload) <= 256 - 20 - 8,
               "PackTrashIntentPayload must fit one datagram");
+
+// A dig intent (ScrapPileIntent): the chip pile the client's shovel or rake dug.
+struct ScrapPileIntentPayload {
+    uint32_t eid;       // the chip pile the client dug
+    uint8_t  _pad[4];   // 8-byte alignment; zero
+};
+static_assert(sizeof(ScrapPileIntentPayload) == 8, "ScrapPileIntentPayload must be 8 bytes");
+static_assert(sizeof(ScrapPileIntentPayload) <= 256 - 20 - 8,
+              "ScrapPileIntentPayload must fit one datagram");
+
+// A shovel's hole in the ground (DugHoleState), host to all.
+struct DugHoleStatePayload {
+    uint32_t id;                // 4 -- the host's number for it
+    float    x, y, z;           // 12
+    float    pitch, yaw, roll;  // 12
+    uint8_t  matType;           // 1 -- the hole's ground: 0 dirt or grass, 1 gravel, 2 sand (useShovel's choice)
+    uint8_t  alive;             // 1 -- 0: the hole ended
+    uint8_t  _pad[2];           // 2 -- zero
+};
+static_assert(sizeof(DugHoleStatePayload) == 32, "DugHoleStatePayload must be 32 bytes");
+static_assert(sizeof(DugHoleStatePayload) <= 256 - 20 - 8, "DugHoleStatePayload must fit one datagram");
+
+namespace dug_hole {
+inline constexpr uint8_t kDig = 0;  // the client's shovel dug a hole at the named place
+inline constexpr uint8_t kEnd = 1;  // the client's copy of the host's hole `id` ended by the client's own use
+}  // namespace dug_hole
+
+// A client's shovel hole, or its end of a host hole (DugHoleIntent), client to host.
+struct DugHoleIntentPayload {
+    uint32_t id;                // 4 -- kEnd: the host's number; kDig: zero
+    float    x, y, z;           // 12 -- kDig: where the client's hole stood
+    float    pitch, yaw, roll;  // 12 -- kDig: its rotation
+    uint8_t  op;                // 1 -- dug_hole
+    uint8_t  matType;           // 1 -- kDig: its ground
+    uint8_t  _pad[2];           // 2 -- zero
+};
+static_assert(sizeof(DugHoleIntentPayload) == 32, "DugHoleIntentPayload must be 32 bytes");
+static_assert(sizeof(DugHoleIntentPayload) <= 256 - 20 - 8, "DugHoleIntentPayload must fit one datagram");
 
 // The upgrade levels (UpgradeLevels), host to all: the whole struct, absolute. The ORDER is
 // ue_wrap::upgrades' table order, fixed in that file precisely so this payload does not depend on

@@ -76,6 +76,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_prop_drive.cpp
     src/coop/dispatch/event_dispatch_requester_feedback.cpp
     src/coop/dispatch/event_dispatch_kerfur_command.cpp
+    src/coop/dispatch/event_dispatch_dig.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
     src/coop/dispatch/event_dispatch_world.cpp
@@ -253,6 +254,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_record_wire.cpp
     src/coop/props/prop_can_state.cpp
     src/coop/props/pack_trash_intent.cpp
+    src/coop/props/scrap_pile_intent.cpp
     src/coop/props/prop_drop_intent.cpp
     src/coop/props/hit_target_prop.cpp
     src/coop/props/bracket_position_wait.cpp
@@ -294,6 +296,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/rider_hold.cpp
     src/coop/world/weather_sync.cpp
     src/coop/world/spill_sync.cpp
+    src/coop/world/dug_hole_sync.cpp
     src/coop/world/sus_hole_intent.cpp
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp

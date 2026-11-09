@@ -113,6 +113,8 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::LinkProbe:
     case ReliableKind::LinkProbeReply:
     case ReliableKind::PackTrashIntent:
+    case ReliableKind::ScrapPileIntent:
+    case ReliableKind::DugHoleIntent:
     case ReliableKind::DroneFlyIntent:
     case ReliableKind::WoodchipperIntent:
     case ReliableKind::UpgradeIntent:
@@ -255,6 +257,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::VentCrawlState:
     case ReliableKind::AmbientTreeState:
     case ReliableKind::AmbientFixtureState:
+    case ReliableKind::DugHoleState:
     case ReliableKind::CrematorState:
     case ReliableKind::CrematorHit:
     case ReliableKind::RequesterFeedback:
