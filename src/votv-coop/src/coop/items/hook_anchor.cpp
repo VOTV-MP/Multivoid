@@ -1,6 +1,7 @@
 // coop/items/hook_anchor.cpp -- see the header for the transaction and what the arbiter takes.
 
 #include "coop/items/hook_anchor.h"
+#include "coop/items/hook_retrieve.h"
 
 #include "coop/element/intent_authority.h"
 #include "coop/items/save_record_wire.h"
@@ -407,7 +408,9 @@ void OnAnchoredChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     // see ue_wrap/actors/hook.h.
     // Immediate: the adoption builds this mirror in place and answers at once; the host named the hook's class.
     H::AdoptRecord(m, rec, ue_wrap::save_record::ClassLoad::Immediate);
-    E::SetActorEnableCollision(m, false);  // loadData re-enables both of the hook's spheres
+    // loadData leaves both of the hook's spheres query-only, as the game's own anchored hook has them: the player's look
+    // takes the copy and offers the pickup, which coop/items/hook_retrieve takes to the host, and nothing is pushed.
+    coop::hook_retrieve::PrepareAnchoredCopy(m);
 }
 
 void TickHost(uint64_t nowMs) {

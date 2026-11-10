@@ -198,6 +198,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/prop_syncer_drill_observer.cpp
     src/coop/dev/sack_drill.cpp
     src/coop/dev/equip_drill.cpp
+    src/coop/dev/hook_retrieve_drill.cpp
     src/coop/dev/fall_drill.cpp
     src/coop/dev/atv_spawn_drill.cpp
     src/coop/dev/atv_health_drill.cpp

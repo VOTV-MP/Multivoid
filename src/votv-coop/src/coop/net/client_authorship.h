@@ -110,6 +110,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::HookState:
     case ReliableKind::HookDestroy:
     case ReliableKind::HookAnchorCommit:
+    case ReliableKind::HookRetrieve:      // op 0 a client's pickup; op 1 is the host's, its handler checks the slot
     case ReliableKind::BroomStroke:
     case ReliableKind::LinkProbe:
     case ReliableKind::LinkProbeReply:

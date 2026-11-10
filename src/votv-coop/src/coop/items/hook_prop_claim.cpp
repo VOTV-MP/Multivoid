@@ -6,7 +6,8 @@
 // client's hook once it has bitten, and the hooks the world itself holds -- the save's anchored
 // ones the load path re-ties and the level-placed variant that ties itself at begin-play, which no
 // table of the lane names and the shared scan pass finds. All four sets are read here every pass.
-// Game thread, host only.
+// The same sets answer FindHookByKey on either role: a pickup names its hook by save key (coop/items/hook_retrieve).
+// Game thread; the claims host only.
 
 #include "hook_sync_detail.h"
 
@@ -158,6 +159,20 @@ void ResetPropClaims() {
     g_world.clear();
     g_worldScratch.clear();
     g_worldGen = 0;
+}
+
+void* FindHookByKey(const std::wstring& key) {
+    if (key.empty() || key == L"None") return nullptr;
+    auto keyed = [&key](void* h) { return h && PR::GetActorSaveKeyString(h) == key; };
+    for (const Adopted& a : AdoptedHooks())
+        if (void* h = a.ref.Get(); keyed(h)) return h;
+    for (const auto& kv : Mirrors())
+        if (kv.second.anchored)
+            if (void* h = kv.second.ref.Get(); keyed(h)) return h;
+    if (g_worldGen == ue_wrap::world_identity::Generation())
+        for (const WorldHook& w : g_world)
+            if (R::IsLiveByIndex(w.actor, w.idx) && keyed(w.actor)) return w.actor;
+    return nullptr;
 }
 
 void RegisterWorldHooksScan() {

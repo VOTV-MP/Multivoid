@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -99,6 +100,10 @@ void TickPropClaims();
 void ResetPropClaims();
 // Register the world-hooks consumer with the shared scan pass, once per process. Game thread.
 void RegisterWorldHooksScan();
+// The live hook on THIS machine whose save key is `key`, or null: an adopted hook (the host), an anchored mirror (a
+// client), or a hook the world holds -- one a joiner's save loaded. An owner-phase mirror carries no key and is never
+// found. The anchored tables first, then the shared scan's last pass. hook_prop_claim.cpp. Game thread.
+void* FindHookByKey(const std::wstring& key);
 
 // The interceptor's index: the mirror actors, flat. Read once per `hook_C::ReceiveTick` dispatch,
 // so it is a short linear scan over pointers rather than a hash -- a session holds a handful of
