@@ -18,6 +18,7 @@
 #include "coop/interactables/lightgroup_verbs.h"
 #include "coop/interactables/toggle_verbs.h"
 #include "coop/items/point_sack_intent.h"
+#include "coop/props/prop_nametag.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/walk_timer.h"  // per-lane [WALK-TIME] attribution (diagnostic)
@@ -35,6 +36,7 @@ void Install(coop::net::Session& session) {
     coop::keypad_verbs::Install(&session);       // a keypad's verbs: the host sends each, a client's own entries run on the host
     coop::desk_verb_intent::Install(&session);   // a client's press on the desk's save family is run by the host
     coop::point_sack_intent::Install(&session);  // a client's opened point sack is paid by the host
+    coop::prop_nametag::Install(&session);       // a prop's nametag is the host's: a client's tag is asked of it
     coop::cord_sync::Install(&session);          // a cord's link is the host's: a client claims its own player's plug, the host answers
     coop::coffee_intent::Install(&session);      // a client's press of the coffee vending machine or the coffee maker is run by the host
     coop::coffee_state::Install(&session);       // the coffee maker's state is the host's: it publishes the maker's record, a client's fill is cancelled
@@ -52,6 +54,7 @@ void Tick(coop::net::Session& session) {
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
     coop::point_sack_intent::Tick();    // settle the point sack watch
+    coop::prop_nametag::Tick();         // settle the nametag watch; CLIENT: an unanswered tag request runs out
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
     { ue_wrap::ScopedWalkTimer _w{"sync:desk_verb"}; coop::desk_verb_intent::Tick(session); }  // settle its seams; HOST: run one queued desk press a tick a client
     { ue_wrap::ScopedWalkTimer _w{"sync:cord"}; coop::cord_sync::Tick(); }  // settle its watches; HOST: the seed a joiner is owed; CLIENT: retry the parked links
@@ -77,6 +80,7 @@ void OnDisconnect() {
     coop::keypad_verbs::OnDisconnect();
     coop::desk_verb_intent::OnDisconnect();
     coop::point_sack_intent::OnDisconnect();
+    coop::prop_nametag::OnDisconnect();
     coop::cord_sync::OnDisconnect();
     coop::coffee_intent::OnDisconnect();   // a coffee device's own press runs where it is made
     coop::coffee_state::OnDisconnect();    // the maker's own fill runs where it is made

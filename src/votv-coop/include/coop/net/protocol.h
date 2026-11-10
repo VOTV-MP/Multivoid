@@ -670,13 +670,16 @@ enum class ReliableKind : uint8_t {
     // behind PropSpawn, so a record can never overtake the birth it belongs to. A record for a prop this peer
     // has not got yet is parked BY KEY and applied when that prop appears -- an identity, unlike an
     // element id, is still the same identity after the actor it named has been destroyed and
-    // remade.
+    // remade. A body whose first byte is 2 is a prop's nametag instead (coop/props/prop_nametag):
+    // the key, the slot whose tag it was and the tag, which every client applies.
     PropSaveData = 130,
 
     // Client to host: the same record for a prop the client just authored -- an eject, a drop, a
     // hand release. The host validates it (size and rate; the content is the holder's claim, which
     // is what a blob the arbiter cannot parse costs) and re-publishes it as PropSaveData. Never
-    // relayed: a client's record reaches other peers only after the host has taken it.
+    // relayed: a client's record reaches other peers only after the host has taken it. A body whose
+    // first byte is 2 is a client's nametag on a prop instead, which the host judges (the prop within
+    // reach, a nametag in the sender's hand) and applies before it tells every peer.
     PropSaveDataIntent = 131,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
