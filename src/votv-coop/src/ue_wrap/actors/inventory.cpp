@@ -85,7 +85,25 @@ void ReadEquipRecord(const void* base, EquipRecord& rec) {
     rec.tag      = SR::ReadFNameAt(base, kEquip_tag);
 }
 
+// An empty equipment slot: no item named and no class in its record. The game's own empty slot is a default
+// Fstruct_equipment, and AddEquipment finds a free slot by comparing whole structs against one (Array_Find), so a blank
+// has to be byte-for-byte that default: its record's transform the identity, not the zeroed one a blank C++ record holds.
+// A blank written with zeros is never free, and a player whose slots were padded that way could wear nothing new.
+bool IsBlankEquip(const EquipRecord& r) {
+    return (r.propName.empty() || r.propName == L"None") && r.data.className.empty();
+}
+
 void WriteEquipRecord(uint8_t* base, const EquipRecord& r) {
+    if (IsBlankEquip(r)) {
+        // The default the game compares against; this also heals a profile that stored a zeroed blank before.
+        EquipRecord blank;
+        blank.data.xform = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f};   // quat (0,0,0,1), origin, scale 1
+        SR::WriteFNameField(base + kEquip_propName, blank.propName);
+        SR::WriteFNameField(base + kEquip_propKey, blank.propKey);
+        SR::WriteSaveRecord(base + kEquip_data, blank.data);
+        SR::WriteFNameField(base + kEquip_tag, blank.tag);
+        return;
+    }
     SR::WriteFNameField(base + kEquip_propName, r.propName);
     SR::WriteFNameField(base + kEquip_propKey, r.propKey);
     SR::WriteSaveRecord(base + kEquip_data, r.data);  // embedded Fstruct_save (0x100 slot)
