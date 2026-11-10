@@ -41,8 +41,8 @@ inline constexpr float    kOverFlatCm = 35.f;
 inline constexpr float    kOverMinCm = 40.f;
 inline constexpr float    kOverMaxCm = 90.f;
 inline constexpr float    kOverAimCm = 65.f;
-inline constexpr int      kAimTicks = 40;          // the aim is corrected for at most this many ticks per prop
-inline constexpr float    kAimStepDeg = 3.f;       // ... by at most this much on each axis per tick
+inline constexpr int      kAimTicks = 600;         // the aim is corrected for at most this many ticks per prop
+inline constexpr float    kAimStepDeg = 1.f;       // ... by at most this much on each axis per tick
 inline constexpr float    kAimGain = 0.5f;         // ... and half of the measured angle between the prop and its target
 inline constexpr int      kGrabTries = 2;
 inline constexpr int      kWalkDeadlineS = 300;    // the director's own bound on one walk
@@ -111,6 +111,8 @@ bool Heard(const std::string& line);
 
 // 1 or 2: the run's arm (the dronesack_drill row's value).
 int Mode();
+const wchar_t* LooseClass();
+const wchar_t* LooseName();
 // Start recording the destroys the hooks see. Resolves the container class (and, in arm 2, prop_C); false when one
 // does not.
 bool Arm(bool isHost);

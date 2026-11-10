@@ -144,6 +144,18 @@ bool Rest(const std::string& prefix, std::string* rest) {
 
 bool Heard(const std::string& line) { return g_heard.count(line) != 0; }
 
+// VOTVCOOP_SACK_PROP=drive (both peers): arms 2 and 3 use zip disks (prop_drive_C) instead of cups.
+bool LooseIsDrive() {
+    static const bool d = [] {
+        char b[16] = {};
+        const DWORD n = ::GetEnvironmentVariableA("VOTVCOOP_SACK_PROP", b, sizeof b);
+        return n > 0 && n < sizeof b && std::string(b) == "drive";
+    }();
+    return d;
+}
+const wchar_t* LooseClass() { return LooseIsDrive() ? L"prop_drive_C" : L"prop_C"; }
+const wchar_t* LooseName() { return LooseIsDrive() ? L"drive" : L"cup"; }
+
 int Mode() {
     static const int m = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::dronesack_drill));
     return m;
@@ -152,7 +164,7 @@ int Mode() {
 bool Arm(bool isHost) {
     g_isHost = isHost;
     if (!g_containerCls) g_containerCls = R::FindClass(L"prop_container_C");
-    if (Mode() >= 2 && !g_propCls) g_propCls = R::FindClass(L"prop_C");
+    if (Mode() >= 2 && !g_propCls) g_propCls = R::FindClass(LooseClass());
     g_armed = g_containerCls != nullptr && (Mode() < 2 || g_propCls != nullptr);
     return g_armed;
 }
@@ -233,6 +245,12 @@ void PutLine(uint32_t eid) {
 // A prop this client could not put: said, and the route goes on to the next.
 void Skip(const char* why) {
     UE_LOGI("[SACK-DRILL] client put eid=%u: not made: %s", g_c.eids[g_c.i], why);
+    // A prop still in the hand is let go where it is, as a player lets go before the next grab: a grab of the next prop
+    // over it changes the hold with no release, and the host's copy stays where the hand last held it.
+    if (void* const player = coop::players::Registry::Get().Local()) {
+        void* const p = g_c.prop.Get();
+        if (p && D::Grabbing(player) == p) D::CallOnPlayer(player, L"dropGrabObject");
+    }
     CancelWalk();
     g_c.grab.reset();
     ++g_c.i;
@@ -335,13 +353,22 @@ void RouteTick(void* player) {
         const float flat = std::hypot(pp.X - sa.X, pp.Y - sa.Y), above = pp.Z - sa.Z;
         const float miss = (std::max)(0.f, flat - kOverFlatCm) + (std::max)(0.f, (std::max)(kOverMinCm - above, above - kOverMaxCm));
         if (miss < g_c.bestMiss) { g_c.bestMiss = miss; g_c.bestFlat = flat; g_c.bestAbove = above; }
-        if (miss == 0.f) {
+        // A release only once the held prop has hung over the sack for a second with the aim still, as a player lets go:
+        // one let go as the aim's last step lands still swings, and the release throws it.
+        static uint64_t overSince = 0;
+        if (miss != 0.f) overSince = 0;
+        else if (overSince == 0) overSince = now;
+        const uint64_t heldMs = overSince ? now - overSince : 0;
+        if (miss == 0.f && heldMs >= 1000) {
+            overSince = 0;
             if (!D::CallOnPlayer(player, L"dropGrabObject")) return Skip("dropGrabObject did not run");
-            UE_LOGI("[SACK-DRILL] client put eid=%u: release at flat=%.0f above=%.0f", eid, flat, above);
+            UE_LOGI("[SACK-DRILL] client put eid=%u: release at flat=%.0f above=%.0f after %llums over it", eid, flat, above,
+                    static_cast<unsigned long long>(heldMs));
             g_c.letGo = true;
             GoPut(Put::Settle);
             return;
         }
+        if (miss == 0.f) return;   // over the sack: wait for the prop to settle in the hand
         if (++g_c.aimTicks > kAimTicks) {
             char why[96];
             std::snprintf(why, sizeof(why), "closest flat=%.0f above=%.0f", g_c.bestFlat, g_c.bestAbove);

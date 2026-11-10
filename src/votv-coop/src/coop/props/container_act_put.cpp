@@ -24,6 +24,7 @@
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/container_view.h"
+#include "ue_wrap/actors/prop.h"  // WalksToBase
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
@@ -340,12 +341,24 @@ sg::Verdict PreDingus(const sg::Call& c) {
 
 // How many overlap puts on a shared mirror this client refused this session, and how many of those had no caller frame.
 uint32_t g_overlapCancelled = 0;
+
+// Whether `obj` is a drone sack, the forwarder of a prop its trigger takes into the drone's container.
+bool IsDroneSack(void* obj) {
+    static void* sackCls = nullptr;
+    if (!obj) return false;
+    if (!sackCls) sackCls = ue_wrap::object_index::ClassByName(L"prop_dronesack_C");
+    return sackCls && ue_wrap::prop::WalksToBase(R::ClassOf(obj), sackCls);
+}
 uint32_t g_overlapNoFrame = 0;
 
 // A prop entering a shared mirror's box must never be filed by this client: the mirror is display only, and a local body
 // would add the record to the display and destroy the prop before the host's truth overrules it. The host judges a put
 // at its own overlap (container_act_host_overlap), so nothing is asked and nothing is sent: the call is cancelled. Only the
-// container's own overlap graph is cancelled; a roomba's and the drone sack's calls, made from their own graphs, run.
+// container's own overlap graph is cancelled, and the drone sack's (prop_dronesack_C), whose trigger forwards a prop it
+// takes to the drone's container: run on a client, the local body filed the prop into this display mirror alone and
+// destroyed it, and that destroy took the host's copy with no record, so the item was lost unsold whenever the client's
+// copy reached the trigger first. The host's own sack forwards the same prop to its judge. A roomba's calls, made from
+// its own graph, run.
 // A call with no caller frame cannot be told from the overlap, so it is cancelled too (fails closed). On the host this
 // seat is the host's judge.
 sg::Verdict PreOverlap(const sg::Call& c) {
@@ -356,7 +369,7 @@ sg::Verdict PreOverlap(const sg::Call& c) {
     if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
     if (g_noOverlapCancel) return sg::Verdict::Run;   // the red: container_overlap_no_cancel, the BP body runs on the mirror
     if (c.callerFunction) {
-        if (c.callerObject != c.object) return sg::Verdict::Run;
+        if (c.callerObject != c.object && !IsDroneSack(c.callerObject)) return sg::Verdict::Run;
         // Whether a caller function is the container's own overlap graph is asked of its name once per function.
         static ue_wrap::ObjKeyedCache<bool, 8> sIsOwnGraph;
         bool* own = sIsOwnGraph.Find(c.callerFunction);
@@ -364,14 +377,20 @@ sg::Verdict PreOverlap(const sg::Call& c) {
             static const std::wstring kGraph = L"ExecuteUbergraph_prop_container";
             own = &sIsOwnGraph.Insert(c.callerFunction, R::ToString(R::NameOf(c.callerFunction)).compare(0, kGraph.size(), kGraph) == 0);
         }
-        if (!*own) return sg::Verdict::Run;
+        if (c.callerObject == c.object && !*own) return sg::Verdict::Run;
     } else {
         ++g_overlapNoFrame;
     }
     const uint32_t n = ++g_overlapCancelled;
-    if (n == 1 || n % 100 == 0)   // the first, then every 100th: a prop at a box's edge re-enters at the physics rate
-        UE_LOGI("container_act: overlap put on the shared mirror eid=%u cancelled, the host judges it (#%u, %u without a caller frame)",
-                static_cast<unsigned>(eid), n, g_overlapNoFrame);
+    if (n == 1 || n % 100 == 0) {   // the first, then every 100th: a prop at a box's edge re-enters at the physics rate
+        static R::ParamOffset sActor{L"actor"};
+        void* actor = nullptr;
+        ReadParam(sActor, c, actor);
+        UE_LOGI("container_act: overlap put on the shared mirror eid=%u cancelled, the host judges it (#%u, %u without a caller "
+                "frame; this one %ls from %ls)", static_cast<unsigned>(eid), n, g_overlapNoFrame,
+                actor && R::IsLive(actor) ? R::ClassNameOf(actor).c_str() : L"-",
+                c.callerObject && R::IsLive(c.callerObject) ? R::ClassNameOf(c.callerObject).c_str() : L"-");
+    }
     return sg::Verdict::Cancel;
 }
 
