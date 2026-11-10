@@ -43,9 +43,8 @@ namespace R  = ue_wrap::reflection;
 
 constexpr uint64_t kPlaceEveryMs = 1000;   // a floor that was not found is looked for again this often
 const wchar_t* const kSackPath = L"/Game/objects/prop_dronesack.prop_dronesack_C";
-// Arm 2's loose props are what the coffee drill spawns for a cup: a prop_C whose `name` row is "cup".
-const wchar_t* const kPropClass = L"prop_C";
-const wchar_t* const kPropName = L"cup";
+// Arm 2's loose props are what the coffee drill spawns for a cup, a prop_C whose `name` row is "cup", or zip disks
+// (LooseClass, LooseName).
 
 enum class Ph : uint8_t {
     Wait, Place, SackEid, AwaitBound,
@@ -164,7 +163,7 @@ bool PlaceProps(void* me) {
         const float x = g_h.sackAt.X + std::cos(a) * kPropRingCm, y = g_h.sackAt.Y + std::sin(a) * kPropRingCm;
         float floorZ = 0.f;
         if (!DP::FloorAt(me, x, y, g_h.sackAt.Z + 100.f, kFloorDownCm, kMinColumnCm, &floorZ)) continue;
-        void* const p = CD::SpawnProp(kPropClass, {x, y, floorZ + kRiseCm}, kPropName);
+        void* const p = CD::SpawnProp(LooseClass(), {x, y, floorZ + kRiseCm}, LooseName());
         if (!p) continue;
         ue_wrap::CachedObjRef ref;
         ref.Set(p);
@@ -198,6 +197,13 @@ void SaleDone() {
     UE_LOGI("[SACK-DRILL] host DONE arm 2 props in sack=%d of %zu, drone container records at call=%d, now=%d",
             static_cast<int>(g_h.propEids.size()) - PropsOutside(), g_h.propEids.size(), g_h.recordsAtCall,
             SackRecords(g_h.sack.Get()));
+    // Arm 2's verdict: every loose prop that left the floor is a record in the host's drone container at the call. A
+    // prop a client's own copy of the container filed is gone from the floor with no record here.
+    const int gone = static_cast<int>(g_h.propEids.size()) - PropsOutside();
+    const int filed = g_h.recordsAtCall - g_h.recordsAtDrop;
+    if (gone == 0) UE_LOGW("[SACK-DRILL] host arm 2 INCONCLUSIVE: no prop reached the sack");
+    else if (filed == gone) UE_LOGI("[SACK-DRILL] host arm 2 PASS: %d prop(s) left the floor, %d record(s) filed", gone, filed);
+    else UE_LOGW("[SACK-DRILL] host arm 2 FAIL: %d prop(s) left the floor, %d record(s) filed", gone, filed);
     Say(kDoneLine);
     g_h.ph = Ph::Done;
 }
@@ -335,7 +341,7 @@ void Fill() {
         ue_wrap::FVector at = g_h.sackAt;
         at.Z += kCrateAboveCm;
         void* cls = crate ? R::FindClass(L"prop_container_C") : nullptr;
-        void* const p = crate ? (cls ? E::SpawnActor(cls, at) : nullptr) : CD::SpawnProp(kPropClass, at, kPropName);
+        void* const p = crate ? (cls ? E::SpawnActor(cls, at) : nullptr) : CD::SpawnProp(LooseClass(), at, LooseName());
         if (!p) { Abandon("an item did not spawn"); return; }
         g_h.cur.Set(p);
         g_h.recordsBeforeItem = SackRecords(g_h.sack.Get());
@@ -471,7 +477,7 @@ void HostTick(coop::net::Session* s) {
         for (const uint32_t e : eids) csv += (csv.empty() ? "" : ",") + std::to_string(e);
         g_h.recordsAtDrop = SackRecords(g_h.sack.Get());
         UE_LOGI("[SACK-DRILL] host READY %zu loose props (%ls '%ls') eids=%s; drone container records=%d", eids.size(),
-                kPropClass, kPropName, csv.c_str(), g_h.recordsAtDrop);
+                LooseClass(), LooseName(), csv.c_str(), g_h.recordsAtDrop);
         Say(std::string(kPropsPrefix) + csv);
         Go(Ph::AwaitPuts);
         return;
