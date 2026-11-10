@@ -45,6 +45,21 @@ the hook lane did not have in front of it:
   its head still rides what it bit. Two players hooking one prop is then two host constraints on
   one host body, which is what single-player physics would do (`coop/items/hook_constraint`).
 
+An anchored hook is taken back with the use key, as the game has it: the player's look takes one of its two spheres,
+which the game leaves query-only, the pop-up offers the hook's one action, and `hook_C::actionOptionIndex` drops a hook
+item at the player, puts it in the inventory and destroys the hook. A client's copy of an anchored hook -- the mirror
+`HookAnchored` built, or the hook a joiner's save loaded -- keeps that collision, so the look takes it (the mirror's
+was switched off before, and no client got the pop-up), but its pickup is refused there and asked of the host by the
+hook's save key (`HookRetrieve`). The host takes its hook away without a drop when either end is within 200 uu of the
+sender's puppet, with the authority's pads, and tells every client the hook is gone, naming the taker; the taker's
+copy then runs the game's own pickup, so the item lands in that player's inventory, or at its feet when the inventory
+is full, and every other copy goes. The host player's own pickup runs the game's and is told the same way: a copy a
+joiner's save loaded has no other word that the hook went. A refused request has no answer; the copy stays and the
+player may press again (`coop/items/hook_retrieve`). `[V]` on the rig (`coop/dev/hook_retrieve_drill`): a client takes
+a mirror and a save-loaded copy, and the host takes its hook while the client holds each kind of copy; the reds fail,
+`nocollision` with no pose of the aim fan putting the client's look on its copy, the reported symptom, and
+`clientruns` with the host's hook still standing.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -52,6 +67,7 @@ the hook lane did not have in front of it:
 | a deployed hook, while its thrower still holds it | that peer | keyed by (slot, sequence); the others render a parked mirror |
 | a deployed hook once both ends are anchored | the host | the thrower hands over the hook's own save record; it is a save actor from then on |
 | a hook's tie, the physics constraint | the host | a client breaks every tie a hook builds on it; the host builds a client's tie on its mirror of that hook |
+| an anchored hook taken back with the use key | the host | a client's pickup is asked of the host by the hook's save key; the taker's copy runs the game's pickup once the host has taken its hook away |
 
 ## Wire messages
 
@@ -61,18 +77,21 @@ the hook lane did not have in front of it:
 | `HookDestroy` | the owner to all, or the host for a leaver | that hook is gone |
 | `HookAnchorCommit` | a client to the host | the anchored hook's own save record, chunked |
 | `HookAnchored` | the host to all | an anchored hook exists, as the same record |
+| `HookRetrieve` | a client to the host (op 0); the host to all (op 1) | an anchored hook's save key: a client's pickup of it; or that it is gone, and whose pickup it was |
 
 ## Late join
 
 A hook its thrower still owns reaches a joiner on its keepalive. An anchored hook is a save actor
 of the host's and arrives with the save, and the game's own load re-resolves both of its attach
-keys in the joiner's world. The deployables that are not built reach a joiner only through the save.
+keys in the joiner's world, and its pickup goes through the host like any other copy's. The deployables that are not
+built reach a joiner only through the save.
 
 ## Known limits
 
 | Limit | Evidence |
 |---|---|
 | The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
+| A hook whose save key the wire cannot carry (over 31 characters), or that has none, is not taken on a client: the press is refused there. The lane's hooks carry 23; the game's own keys and the level's hook were not measured | `[?]` `coop/items/hook_retrieve` |
 | A client's hook into the ATV ties the host's ATV against the client's puppet; whether the ATV lane's corrector carries that pull back to the client's copy is not measured | `[?]` `coop/items/hook_constraint` ties any keyed actor the bite resolves; `coop/interactables/atv_sync` corrects rather than parks |
 
 ## Code map
@@ -83,3 +102,4 @@ keys in the joiner's world. The deployables that are not built reach a joiner on
 | the anchor handoff | `coop/items/hook_anchor` |
 | the tie, host-only | `coop/items/hook_constraint` |
 | the props a tie claims for the driven-prop channel | `coop/items/hook_prop_claim` |
+| an anchored hook taken back with the use key | `coop/items/hook_retrieve` |

@@ -15,6 +15,7 @@
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
+#include "coop/items/hook_retrieve.h"
 #include "coop/items/hook_sync.h"  // the hook lane
 #include "coop/element/bind_wait.h"  // Holds: a held convert is no failed spawn
 #include "coop/element/quiescence_drain.h"  // the pending position corrections
@@ -461,6 +462,17 @@ bool HandleEntityEvent(net::Session& session,
         const int slot = msg.senderPeerSlot;
         ue_wrap::game_thread::Post([p, slot] {
             ::coop::hook_sync::OnDestroyMsg(p, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::HookRetrieve: {
+        // op 0 a client's pickup of an anchored hook, to the host; op 1 the host's word that one is gone.
+        if (msg.payloadLen < sizeof(net::HookRetrievePayload)) break;
+        net::HookRetrievePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] {
+            ::coop::hook_retrieve::OnMsg(p, slot);
         });
         break;
     }

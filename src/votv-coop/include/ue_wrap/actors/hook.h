@@ -94,6 +94,11 @@ bool ReadState(void* hookActor, State& out);
 // past this call checks its liveness first. False when unresolved.
 bool AttachedActors(void* hookActor, void*& outA, void*& outB);
 
+// Where a hook's two ends stand in the world: its `A` and `B` components, the head and the tail, which the
+// two collision spheres a player's look takes ride. False when unresolved or either end does not read.
+// Game thread.
+bool EndLocations(void* hookActor, FVector& outA, FVector& outB);
+
 // mainPlayer_C::activeHook, written: the field the game writes when the item fires a hook, so a
 // driver that plants one by hand hands it to the owner lane the same way. Null clears it.
 bool WriteActiveHook(void* mainPlayer, void* hookActor);
@@ -208,7 +213,8 @@ bool CaptureRecord(void* hookActor, ue_wrap::save_record::SaveRecord& out);
 // APPLIES THE RECORD AS GIVEN. loadData writes the actor's save key and both attach keys, so a
 // caller handing this something off the wire has already decided, field by field, what it will take
 // from the sender. The engine wrapper does not know what a sender is; that judgement is the lane's.
-// loadData also re-enables both collision spheres, so a mirror's caller turns collision off again.
+// loadData also sets both collision spheres query-only, as the game's own anchored hook has them; an anchored
+// mirror keeps them so, for the player's look to take it (coop/items/hook_retrieve).
 // `resolve` governs how the record's class leaves resolve (null = FindClass); the host adopting a
 // CLIENT's commit passes object_index::ClassByName so an attacker's class name costs a lookup, not a
 // whole-array walk. A client adopting the host's HookAnchored keeps the default.
@@ -222,9 +228,8 @@ bool AdoptRecord(void* hookActor, const ue_wrap::save_record::SaveRecord& r,
 // can never get that hook back.
 //
 // The canonical copy therefore has both restored after the adopt. A MIRROR deliberately does not:
-// with the flags clear, its OnDestroyed bindings destroy it rather than minting a second pickup,
-// and assign's collision re-enable, gated on the same pair, cannot fire two frames later and undo
-// the mirror's collision-off.
+// with the flags clear, its OnDestroyed bindings destroy it rather than minting a second pickup.
+// The use key's pickup does not read the flags: a client's goes to the host (coop/items/hook_retrieve).
 bool WriteAttachedFlags(void* hookActor, bool attachedA, bool attachedB);
 
 // hook_C's `maxDist`, the cable ceiling, which the flesh variant raises twentyfold. An arbiter

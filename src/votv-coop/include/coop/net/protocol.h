@@ -712,6 +712,17 @@ enum class ReliableKind : uint8_t {
     // so the answer cannot overtake the commit.
     HookAnchored = 136,
 
+    // An anchored hook taken off the world, named by its save key (coop/items/hook_retrieve). op 0
+    // (CLIENT->HOST): this client's player used its copy of the hook, the game's own pickup, which the
+    // client refused there. The host judges it (a hook of that key standing here, an end within the
+    // sender's reach), destroys its hook without a drop and answers. op 1 (HOST->ALL): the hook of that
+    // key is gone on the host -- a client's pickup it granted, or the host player's own -- and every
+    // client takes its copy away; `taker`, when it names a client, replays the pickup on that client's
+    // copy, so the item lands in that player's inventory and nowhere else. A refused op 0 is not
+    // answered: the copy stays and the player may use it again. Never relayed; not pre-world. Late join:
+    // none, the save carries the hooks that stand. HookRetrievePayload.
+    HookRetrieve = 255,
+
     // Host to all: the driven prop at eid has come to rest, or a hand took it -- its final pose and
     // velocity, and the claim generation its stream carried. A receiver hands the prop its physics
     // back and drops every later-arriving pose of that generation. A client that syncs the prop sends
@@ -2862,6 +2873,19 @@ struct HookDestroyPayload {
                           //      hook the host still owns.
 };
 static_assert(sizeof(HookDestroyPayload) == 4, "HookDestroyPayload must be 4 bytes");
+
+// HookRetrieve. The hook is named by its save key, the one name every copy of an anchored hook
+// shares: the host's adopted hook, a client's anchored mirror and a joiner's copy from the save.
+inline constexpr uint8_t kHookRetrieveRequest = 0;   // CLIENT->HOST: my player took this hook
+inline constexpr uint8_t kHookRetrieveGone    = 1;   // HOST->ALL: this hook is gone
+inline constexpr uint8_t kHookRetrieveNoTaker = 0xFF;
+struct HookRetrievePayload {
+    WireKey key;     // 32 -- the hook's save key
+    uint8_t op;      // 1 -- kHookRetrieve*
+    uint8_t taker;   // 1 -- op 1: the client slot whose pickup this was, else kHookRetrieveNoTaker
+    uint8_t pad[2];  // 2 -- zero
+};
+static_assert(sizeof(HookRetrievePayload) == 36, "HookRetrievePayload must be 36 bytes");
 
 // One chunk of a serialized blob, shared by every chunked kind; the assembly key is (sender slot,
 // kind, blobSeq); chunks arrive in order; coop/blob_chunks owns send and reassembly. The email

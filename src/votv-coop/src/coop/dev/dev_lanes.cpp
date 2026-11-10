@@ -38,6 +38,7 @@
 #include "coop/dev/prop_tool_park_selftest.h"  // [dev] the order the tool's parked states replay in
 #include "coop/dev/prop_syncer_drill.h"  // [dev] a client syncs a prop its own interaction moves: kick and forge, judged by the host and an observer
 #include "coop/dev/sack_drill.h"  // [dev] a client's point sack is paid by the host, once
+#include "coop/dev/hook_retrieve_drill.h"  // [dev] a client takes back an anchored hook, through the host
 #include "coop/dev/server_upgrade_drill.h"  // [dev] a client's install and take-out at a server box
 #include "coop/dev/server_drill.h"  // [dev] a server box's break is the host's; a client's repair runs there
 #include "coop/dev/camera_drill.h"  // [dev] a picked-up camera: does it stick to its wall again, and by whose hand
@@ -241,6 +242,7 @@ void EndSession() {
     coop::dev::prop_act_drill::OnDisconnect();  // [dev] the steps, the target and the walk belong to one session
     coop::dev::prop_syncer_drill::OnDisconnect();  // [dev] the phases, the target and the walk belong to one session
     coop::dev::sack_drill::OnDisconnect();  // [dev] the sack and the counts belong to one session
+    coop::dev::hook_retrieve_drill::OnDisconnect();  // [dev] the cups and the hook belong to one session
     coop::dev::drone_call_drill::OnDisconnect();  // [dev] the console, the legs and the host's watch belong to one world
     coop::dev::dronesack_drill::OnDisconnect();  // [dev] the sack, the crate and the records belong to one session
     coop::dev::container_writer_probe::OnDisconnect();  // [dev] the readings belong to one world
@@ -377,6 +379,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::prop_act_drill::Tick(&session);  // [dev] the act drill (a latched phase read when off)
     coop::dev::prop_syncer_drill::Tick(&session);  // [dev] the prop syncer drill (a latched enum read when off)
     coop::dev::sack_drill::Tick(&session);  // [dev] the point sack drill (a latched bool read when off)
+    coop::dev::hook_retrieve_drill::Tick(&session);  // [dev] the hook retrieve drill (a latched bool read when off)
     coop::dev::drone_call_drill::Tick(&session);  // [dev] the drone console drill (a single bool read when off)
     coop::dev::dronesack_drill::Tick(&session);  // [dev] the drone sack drill (a single bool read when off)
     coop::dev::server_upgrade_drill::Tick(&session);  // [dev] the server upgrade drill (a single bool read when off)

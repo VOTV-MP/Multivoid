@@ -477,6 +477,13 @@ bool AttachedActors(void* hookActor, void*& outA, void*& outB) {
     return true;
 }
 
+bool EndLocations(void* hookActor, FVector& outA, FVector& outB) {
+    if (!hookActor || !g_resolved || g_offCompA < 0 || g_offCompB < 0) return false;
+    void* a = ReadObj(hookActor, g_offCompA);
+    void* b = ReadObj(hookActor, g_offCompB);
+    return a && b && E::TryGetComponentLocation(a, outA) && E::TryGetComponentLocation(b, outB);
+}
+
 bool WriteActiveHook(void* mainPlayer, void* hookActor) {
     if (!mainPlayer || !g_resolved || g_offActiveHk < 0) return false;
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + g_offActiveHk) = hookActor;

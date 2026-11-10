@@ -5,6 +5,7 @@
 
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_constraint.h"       // the tie lives on the host: bites, breaks
+#include "coop/items/hook_retrieve.h"        // an anchored hook taken back with the use key
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"           // WireKeyFromString: the bite descriptor
@@ -408,6 +409,7 @@ void Install(coop::net::Session* session) {
     if (!GT::IsGameThread()) return;
     detail::SetSession(session);
     coop::hook_anchor::Install(session);
+    coop::hook_retrieve::Install(session);
     coop::hook_constraint::Install(session);
     detail::RegisterWorldHooksScan();
     if (g_parkInstalled || g_parkRefused) return;
@@ -438,6 +440,7 @@ void Tick() {
     // Before this lane's own resolve gate: the watch needs the hook class names and the gate's name
     // resolve, not the member table.
     coop::hook_constraint::Tick();
+    coop::hook_retrieve::Tick();
     if (!H::EnsureResolved()) return;
 
     TickOwner(now);
@@ -633,6 +636,7 @@ void OnDisconnect() {
     g_parkRefused   = false;
 
     coop::hook_anchor::OnDisconnect();
+    coop::hook_retrieve::OnDisconnect();
     coop::hook_constraint::OnDisconnect();
     H::ResetCache();
     detail::SetSession(nullptr);
