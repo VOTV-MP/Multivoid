@@ -14,6 +14,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
@@ -341,6 +344,68 @@ void* Materialize(const coop::net::PlantStatePayload& p, void* cls) {
                      coop::net::StringFromWireKey(p.attachParent), p.hideDirt != 0, {p.x, p.y, p.z}, {p.pitch, p.yaw, p.roll});
 }
 
+// CLIENT: a ripe crop's harvest. The game's body drops the yield into the world and ends the plant, and a prop born that way on
+// a client reaches no other peer, so the body is refused here and the harvest is asked of the host (plant_edit::kHarvest),
+// which runs the plant's own harvest: the yield is the host's births, and the plant's end reaches every peer. A bush's berries
+// go to the harvester's inventory, and a discard or a tree's no-op changes only the plant: those run here and reach the host
+// as the poll's edits. The any-class row the door, toggle and coin lanes already watch; the callback keeps plants alone.
+UE_FACT_FN(kRowAction, "plant_sync", nullptr, L"actionOptionIndex", AnyClass);
+constexpr int kActionTag = 0x504C4856;   // 'PLHV'
+constexpr uint64_t kHarvestRepeatMs = 2000;
+bool g_watchRegistered = false, g_watchSettled = false;
+std::unordered_map<std::wstring, uint64_t> g_harvestAsked;   // a crop asked of the host, and when
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+}
+
+ue_wrap::script_gate::Verdict OnActionPre(const ue_wrap::script_gate::Call& c) {
+    using V = ue_wrap::script_gate::Verdict;
+    coop::net::Session* s = g_session.load();
+    if (!s || s->role() != coop::net::Role::Client || !c.object || !c.locals) return V::Run;
+    if (!GP::IsPlantClass(R::ClassOf(c.object))) return V::Run;
+    const int32_t off = R::FindParamOffset(c.function, L"action");
+    if (off < 0 || c.locals[off] != 4 || !GP::HarvestTakesPlant(c.object)) return V::Run;
+    const std::wstring key = GP::Key(c.object);
+    if (key.empty()) return V::Run;
+    const uint64_t now = NowMs();
+    if (auto it = g_harvestAsked.find(key); it != g_harvestAsked.end() && now - it->second < kHarvestRepeatMs) return V::Cancel;
+    GP::Values v;
+    Payload p{};
+    if (!GP::Read(c.object, v) || !Describe(c.object, key, v, p)) {
+        UE_LOGW("plant_sync: this player's harvest of plant '%ls' could not be described -- not taken", key.c_str());
+        return V::Cancel;
+    }
+    p.editMask = coop::net::plant_edit::kHarvest;
+    if (!s->SendReliable(coop::net::ReliableKind::PlantEdit, &p, sizeof(p))) {
+        UE_LOGW("plant_sync: this player's harvest of plant '%ls' was not sent -- harvest it again", key.c_str());
+        return V::Cancel;
+    }
+    g_harvestAsked[key] = now;
+    UE_LOGI("plant_sync: this player harvested plant '%ls' -- the host runs it", key.c_str());
+    return V::Cancel;
+}
+
+void SettleWatch() {
+    namespace SG = ue_wrap::script_gate;
+    if (g_watchSettled) return;
+    if (!g_watchRegistered) {
+        g_watchRegistered = SG::WatchName(kRowAction, kActionTag, &OnActionPre, nullptr);
+        if (!g_watchRegistered) {
+            g_watchSettled = true;
+            UE_LOGE("plant_sync: the gate took no watch on %ls -- a client's crop harvest stays on its own screen",
+                    kRowAction.Name());
+            return;
+        }
+    }
+    SG::ResolvePendingNames();
+    if (!SG::NameWatchSettled(kRowAction, kActionTag)) return;
+    g_watchSettled = true;
+    if (SG::NameWatchLive(kRowAction, kActionTag)) UE_LOGI("plant_sync: the harvest watch on %ls is live", kRowAction.Name());
+    else UE_LOGE("plant_sync: the harvest watch on %ls settled dead -- a client's crop harvest stays on its own screen",
+                 kRowAction.Name());
+}
+
 void Install(coop::net::Session* session) { g_session.store(session); }
 
 void Tick() {
@@ -352,10 +417,12 @@ void Tick() {
     const uint32_t world = ue_wrap::world_identity::Generation();
     if (world != g_world) {
         g_world = world;
+        g_harvestAsked.clear();
         ResetClient();
         g_sent.clear();
         coop::plant_edit_gate::OnWorldChange();
     }
+    SettleWatch();
     if (s->role() == coop::net::Role::Host) HostPoll(*s, now);
     else if (s->role() == coop::net::Role::Client) ClientPoll(*s);
 }
