@@ -519,6 +519,14 @@ CFG_ENUM(hook_retrieve_red, "hook_retrieve_red", "dev", "off", "off|nocollision|
     "Developer (nojoingone: the host; the others: the client): the hook retrieve drill's reds. nocollision -- an anchored mirror's collision stays off, as "
     "before the lane, so the player's look never takes it (FAIL when the aim fan held every pose); clientruns -- the game's own pickup runs on the client's "
     "copy instead of asking the host (FAIL in the press's tick: nothing was asked, the copy and an item are here); nojoingone -- the host does not name gone, at a joiner's connect, the hooks taken since its save was cut (window mode: the copy stands).")
+CFG_STRING(nametag_drill, "nametag_drill", "dev", "", "VOTVCOOP_NAMETAG_DRILL", false,
+    "Drill (BOTH peers): a prop's nametag is the host's. run -- the host spawns a cup before the client's puppet once "
+    "its world is ready; the client takes a nametag into its hand, writes a tag on it, walks to the cup, aims and "
+    "left-clicks. Host DONE: its cup carries the tag, applied for the client once; client DONE: its copy carries the "
+    "tag and the item in its hand is spent. host -- the host player tags the cup the same way; client DONE when its "
+    "copy carries the host's tag.")
+CFG_FLAG(nametag_client_runs, "nametag_client_runs", "dev", false, "VOTVCOOP_NAMETAG_CLIENT_RUNS",
+    "Developer: a client's nametag runs the game's own use there instead of asking the host (the nametag drill's red).")
 CFG_ENUM(prop_syncer_drill, "prop_syncer_drill", "dev", "off", "off|kick|forge", "VOTVCOOP_PROP_SYNCER_DRILL",
     "Drill (host and BOTH clients, the same value; three peers): a client syncs a prop its own interaction moves. "
     "kick: the client in slot 1 walks to a keyed prop with the director, claims it, kicks it with the game's own "

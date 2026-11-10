@@ -275,6 +275,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_spawn_authoring.cpp
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_save_data.cpp
+    src/coop/props/prop_nametag.cpp
     src/coop/props/disc_record_ceiling.cpp
     src/coop/props/prop_record_gates.cpp
     src/coop/props/prop_stick_sync.cpp

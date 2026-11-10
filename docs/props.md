@@ -287,6 +287,22 @@ since a crowbar's pry frees a pryable sign with nobody holding it: the script ga
 component's unstick on every route, the unsticking peer broadcasts the prop's pose and velocity, and
 a receiver runs the same unstick with the tool and lets its copy go.
 
+### A nametag
+
+A nametag item (`prop_nametag_C`) carries a tag. Its left click reads the player's interaction hit and, on a prop,
+writes the tag into the prop's `nametag`, runs the prop's `setNametag` -- which takes down the floating label it had
+and builds one for a tag that is not None -- and destroys the item. A prop's nametag is base save state, carried by
+its save record and its spawn row, so before this lane a tag reached another peer only when the prop was born again:
+a client's tag stayed on its own copy, and the host's reached no client. The nametag is the host's
+(`coop/props/prop_nametag`). The host player's click runs the game's own, and the watch on its exit tells every
+client. A client's click is refused there and asked of the host with the prop's key and the tag; the host applies it
+when the prop is within the sender's reach and a nametag was in the sender's hand within the hand lane's 3 s, at most
+one a second a client, and tells every client, the sender included, whose held item then goes as the game's use takes
+it. A refused request has no answer, and the item stays. The message is a second body shape on the record lane's
+kinds, so no kind is added. `[V]` on the rig (`coop/dev/nametag_drill`): a client's tag lands on the host's cup once
+and its item is spent; the host player's tag reaches the client's copy; with `nametag_client_runs` the tag stays on
+the client's copy and the host FAILs.
+
 ### Containers
 
 A container's contents are not on the container: every container reads them from one global
@@ -481,6 +497,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |
 | container contents | the host | slices of its object array; an extraction is an intent |
+| a prop's nametag | the host | a client's tag is a request by the prop's key; the host applies it and tells every client |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
 | notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
@@ -501,6 +518,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropDriveEnd` | the host to all; a syncing client to the host | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation; a client's End is admitted when it is the row's syncer `[?]` |
 | `PropSyncClaim`, `PropSyncAnswer` | a client to the host; the host to that client | a client's request to sync a prop its interaction moves, and the host's grant, refusal (with the reason) or revoke (with the generation); the host also grants a thrown prop to its thrower unasked, `seq` being the throw sequence `[?]` |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, a throw or an unavoidable birth, for the host to author, with the placed root's velocity and the throw sequence |
+| `PropSaveData`, `PropSaveDataIntent`, body 2 | the host to all; a client to the host | a prop's nametag: the prop's key, the slot whose tag it was and the tag; a client's tag on a prop |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
@@ -516,7 +534,8 @@ prop's frozen and sleep converge with its snapshot row and its correction (stati
 a move gets a correction too, so an extinguisher taken off its mount during the window is loose on
 the joiner; a wall-attach component's owner converges its stuck state there through the component's
 own unstick or force-stick, so a sign pried in the window is off its wall. A stuck prop otherwise
-reaches a joiner through the save, which carries the frozen and static state. Container slices are
+reaches a joiner through the save, which carries the frozen and static state. A prop's nametag comes with the save
+and with its spawn row. Container slices are
 sent per live container at the ready edge. A joiner gets no held-prop or driven-prop pose until its
 world is ready, since the release and the end edge that close them are not sent to a world that is
 not ready either: a prop held at the join resolves on the first pose after it, and at the ready edge
@@ -558,6 +577,7 @@ prop resolves.
 | the prop-properties tool | `coop/props/prop_tool_flags`; the toolgun's sight and limits, shared with the remover: `coop/props/toolgun_sight`, `coop/props/toolgun_limits` |
 | a client's intents | `coop/props/prop_drop_intent`; a thrown prop: `coop/props/prop_throw`, `coop/net/throw_bounds` |
 | the stick | `coop/props/prop_stick_sync` |
+| a prop's nametag | `coop/props/prop_nametag`, `ue_wrap/actors/nametag` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
