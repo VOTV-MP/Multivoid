@@ -102,17 +102,21 @@ struct UseClass {
     ue_wrap::CachedObjRef cls;
 };
 UseClass g_useClasses[] = {{L"prop_food_C", true, {}}, {L"prop_food_mre_C", false, {}},
-                           {L"prop_sleeppills_C", false, {}}, {L"prop_snack_C", false, {}}};
+                           {L"prop_sleeppills_C", false, {}}, {L"prop_snack_C", false, {}},
+                           {L"prop_medkit_pack_C", false, {}}};
 
-// An MRE's open rolls its contents with the game's own `spawn`, which reads nothing of the player. The host runs it on
-// its copy before the destroy, so the contents are host-born and reach every peer; the opener only removes its copy.
-ue_wrap::CachedObjRef g_mreClass;
+// An MRE's open and a first aid kit's unpack roll their contents with the game's own `spawn`, which reads nothing of the
+// player. The host runs it on its copy before the destroy, so the contents are host-born and reach every peer; the
+// opener only removes its copy. Both play the MRE's opening.
+ue_wrap::CachedObjRef g_mreClass, g_kitClass;
 uint32_t g_mreOpens = 0;
 void (*g_onHeldAtDeparture)(uint8_t slot, uint32_t eid) = nullptr;   // dev seam, null by default
 
 bool IsMre(void* actor) {
-    void* const c = ResolveClass(g_mreClass, L"prop_food_mre_C");
-    return c && ue_wrap::prop::WalksToBase(R::ClassOf(actor), c);
+    void* const mre = ResolveClass(g_mreClass, L"prop_food_mre_C");
+    void* const kit = ResolveClass(g_kitClass, L"prop_medkit_pack_C");
+    void* const cls = R::ClassOf(actor);
+    return (mre && ue_wrap::prop::WalksToBase(cls, mre)) || (kit && ue_wrap::prop::WalksToBase(cls, kit));
 }
 
 // `spawn` ends in lib_C::progressAchievement ("jackpot", "rippedOff", "robbed"), which progresses the profile of the
@@ -132,17 +136,19 @@ ue_wrap::script_gate::Verdict OnMreAchievementPre(const ue_wrap::script_gate::Ca
     return ue_wrap::script_gate::Verdict::Cancel;
 }
 
-// True when the contents were rolled. A roll that cannot run still lets the destroy proceed, so it is tallied.
+// True when the contents were rolled. A roll that cannot run still lets the destroy proceed, so it is tallied. Each
+// class (an MRE, a first aid kit) has its own `spawn`, which the thunk asks of the actor's class.
 bool OpenMre(void* actor, uint8_t slot, uint32_t eid) {
     g_rollingMre = true;
     // The births of this call are named exactly: the act drill's MRE step says its contents from them.
     coop::host_spawn_watcher::dev::CaptureBirths(true);
-    const bool rolled = ue_wrap::prop_use::CallMreSpawn(actor);
+    const bool rolled = ue_wrap::prop_use::CallUnpackSpawn(actor);
     coop::host_spawn_watcher::dev::CaptureBirths(false);
     g_rollingMre = false;
     if (!rolled) {
         ++g_tally[static_cast<int>(Tally::MreRollFailed)];
-        UE_LOGW("prop_act: the MRE eid %u opened for slot %u could not roll its contents", static_cast<unsigned>(eid),
+        UE_LOGW("prop_act: the %ls eid %u unpacked for slot %u could not roll its contents",
+                R::ToString(R::NameOf(R::ClassOf(actor))).c_str(), static_cast<unsigned>(eid),
                 static_cast<unsigned>(slot));
         return false;
     }

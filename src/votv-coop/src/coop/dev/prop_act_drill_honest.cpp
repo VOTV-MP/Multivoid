@@ -51,6 +51,7 @@ namespace DP  = coop::dev::drill_props;
 using ue_wrap::FVector;
 
 constexpr const wchar_t* kMre     = L"/Game/objects/prop_food_mre.prop_food_mre_C";
+constexpr const wchar_t* kKit     = L"/Game/objects/prop_medkit_pack.prop_medkit_pack_C";
 constexpr const wchar_t* kPills   = L"/Game/objects/prop_sleeppills.prop_sleeppills_C";
 constexpr const wchar_t* kSoap    = L"/Game/objects/prop_food_soap.prop_food_soap_C";
 constexpr const wchar_t* kPlush   = L"/Game/objects/prop_eriePlush.prop_eriePlush_C";
@@ -293,6 +294,10 @@ constexpr Row kRows[] = {
     {"eat last use", kFood,    L"prop_food_C",        Verb::Use,    Ends::Gone,      &SetLastUse},
     {"mre",          kMre,     L"prop_food_mre_C",    Verb::Use,    Ends::Opened,    nullptr, Target::Host, true, false,
      nullptr, nullptr, false, PAH::Tally::kCount, &PoisonMre},
+    // A first aid kit's `spawn` rolls the props of its `drop` list, which a kit spawned bare leaves empty and which are no
+    // foods: the Opened step reads foods with a poison carrier, so the kit's step ends Gone, and the judge's unpack count
+    // is what shows the host ran its `spawn`.
+    {"first aid kit", kKit,    L"prop_medkit_pack_C", Verb::Use,    Ends::Gone,      nullptr},
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},
     // The plush offers no option, so its last use is asked and refused. Then the classes the judge reads by their own
@@ -414,11 +419,13 @@ Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& 
             return Judged::Fail;
         }
     }
-    // An MRE's contents are rolled on the host's copy before its destroy, and no other take rolls anything.
-    const uint32_t wantOpens = std::wcscmp(row.leaf, L"prop_food_mre_C") == 0 ? 1 : 0;
+    // An MRE's or a first aid kit's contents are rolled on the host's copy before its destroy, and no other take rolls
+    // anything.
+    const bool unpacks = std::wcscmp(row.leaf, L"prop_food_mre_C") == 0 || std::wcscmp(row.leaf, L"prop_medkit_pack_C") == 0;
+    const uint32_t wantOpens = unpacks ? 1 : 0;
     const uint32_t opens = Since(PAH::MreOpens(), base.mreOpens);
     if (opens != wantOpens) {
-        *why = std::to_string(opens) + " MRE opens on the host, " + std::to_string(wantOpens) + " expected";
+        *why = std::to_string(opens) + " unpacks on the host, " + std::to_string(wantOpens) + " expected";
         return Judged::Fail;
     }
     const uint32_t wantRaw = row.target == Target::HostTwo ? 1 : 0;

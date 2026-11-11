@@ -180,9 +180,9 @@ void SendCommit(uint8_t committed, uint8_t flags = 0) {
             static_cast<unsigned>(flags));
 }
 
-// A granted MRE open: the host rolls the contents on its own copy and they reach this peer as its spawns, so this copy
-// is only removed. Opening it here too would roll a second, client-only set. Replay plays the opening once the destroy
-// has happened.
+// A granted unpack (an MRE, a first aid kit): the host rolls the contents on its own copy and they reach this peer as
+// its spawns, so this copy is only removed. Opening it here too would roll a second, client-only set. Replay plays the
+// opening (the MRE's, for both) once the destroy has happened.
 bool OpenMreOnHost(void* target) { return E::DestroyActor(target); }
 
 // The record's verb, as the player's press runs it, on the target. False when the verb could not run at all (a
@@ -197,7 +197,7 @@ bool RunVerb(void* target, void* local) {
         bool collected = false;
         return E::CallMainPlayerHoldObject(local, target, collected);
     }
-    case kMre:
+    case kUnpack:
         return OpenMreOnHost(target);
     case kFood:
     case kPills:
@@ -229,7 +229,7 @@ void Replay() {
     bool destroyed = false;
     bool ran = false;
     ue_wrap::FVector mreAt{};   // an MRE's place, read while it stands: its opening is heard there after the destroy
-    const bool hearsMre = g_rec.row == kMre && E::TryGetActorLocation(target, mreAt);
+    const bool hearsMre = g_rec.row == kUnpack && E::TryGetActorLocation(target, mreAt);
     const bool snack = g_rec.row == kSnack;
     coop::snack_act::CopyState before, after;   // a snack's copy around the replay, read inside the latch
     {
@@ -294,11 +294,12 @@ UE_FACT_FN(kRowSoap,   "prop_act", L"prop_food_soap_C",  L"playerUsedOn",       
 // inherits it) calls the parent's first.
 UE_FACT_FN(kRowSnack,  "prop_act", L"prop_snack_C",      L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowBeer,   "prop_act", L"prop_snack_beer_C", L"actionOptionIndex",   Declared);
+UE_FACT_FN(kRowKit,    "prop_act", L"prop_medkit_pack_C", L"actionOptionIndex",  Declared);
 constexpr int kTagPocket = 0x50414331, kTagHold = 0x50414332, kTagFood = 0x50414333,
               kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336,
-              kTagSnack = 0x50414337, kTagBeer = 0x50414338;   // "PAC1".."PAC8"
+              kTagSnack = 0x50414337, kTagBeer = 0x50414338, kTagKit = 0x50414339;   // "PAC1".."PAC9"
 
-// The action index of eating, opening a food and taking pills.
+// The action index of eating, opening a food or a first aid kit, and taking pills.
 constexpr uint8_t kEatAction = 4;
 
 // Is this call the replay running now? The gate cannot tell a reflected call of ours from a drill's, so the latch does.
@@ -325,7 +326,7 @@ struct ActionParams {
     R::ParamOffset action{L"action"};
     R::ParamOffset lookAt{L"lookAtComponent"};
 };
-ActionParams g_foodParams, g_mreParams, g_pillsParams, g_snackParams, g_beerParams;
+ActionParams g_foodParams, g_mreParams, g_pillsParams, g_snackParams, g_beerParams, g_kitParams;
 
 struct SoapParams {
     R::ParamOffset holdObject{L"holdObject"};
@@ -357,6 +358,7 @@ bool FoodDestroys(const sg::Call& c) {
     return !notEdible && uses <= 1;
 }
 bool MreDestroys(const sg::Call& c) { return IsEat(g_mreParams, c); }
+bool KitDestroys(const sg::Call& c) { return IsEat(g_kitParams, c); }
 bool PillsDestroys(const sg::Call& c) { return IsEat(g_pillsParams, c); }
 // A snack is asked on every eat: a sip, an open and the last use all change the shared copy, whatever the client's copy
 // predicts.
@@ -416,7 +418,7 @@ struct HitParam {
     ue_wrap::CachedObjRef sizeFn;
     int32_t size = -1;
 };
-HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit, g_snackHit, g_beerHit;
+HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit, g_snackHit, g_beerHit, g_kitHit;
 
 // The hit of a use, as the replay writes it back: only its component and place matter.
 void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
@@ -526,7 +528,8 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitP
 }
 
 sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
-sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, g_mreHit, &MreDestroys); }
+sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kUnpack, g_mreParams, g_mreHit, &MreDestroys); }
+sg::Verdict PreKit(const sg::Call& c) { return PreAction(c, kUnpack, g_kitParams, g_kitHit, &KitDestroys); }
 sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
 // What a dead snack watch costs: the use runs on the client's copy alone, asked of nobody, and the copies diverge.
 constexpr const char* kSnackDead = "a client's use of a world snack runs on its own copy only, unasked, and the copies diverge";
@@ -595,6 +598,7 @@ Watch g_watches[] = {
     {kRowSoap,   kTagSoap,   &PreSoap,   "use",  WatchState::Pending},
     {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending, &PostSnack, kSnackDead},
     {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending, &PostBeer,  kSnackDead},
+    {kRowKit,    kTagKit,    &PreKit,    "use",  WatchState::Pending},
 };
 bool g_watchesSettled = false;
 
