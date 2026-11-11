@@ -8,7 +8,7 @@
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
 //   - OvenRepairState (151): the kitchen oven's repair (its fix(), one way)
 //   - CameraActiveState (181), CameraLightState (182): a security camera's two bits (host-authoritative)
-//   - CrematorState (221):   the cremator's lever run (isActive, host-authoritative)
+//   - CrematorState, CargoLiftState: the cremator's lever run, the cargo lift's direction (both host-authoritative)
 // Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key index, the
 // deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every channel is sent at the verbs
 // that write its state, on the authority (the host for doors, light groups, cameras and cremators, the peer that ran
@@ -73,6 +73,19 @@ void* ResolveCremator(const std::wstring& key);
 // Host: a cremator's handle just finished (coop/interactables/cremator_state); the cremator lane sends the isActive it
 // left when that changed. Only the host calls it (a client's handle finish looks again at its want instead). Game thread.
 void OnCrematorVerb(void* cremator);
+
+// The cargo lift lane's key for `lift` (its level-export FName), or "" when the lane does not index it: the name a
+// lift press intent carries. Game thread.
+std::wstring CargoLiftKey(void* lift);
+
+// The live cargo lift the lane indexes under `key` in the current world, or null. Game thread.
+void* ResolveCargoLift(const std::wstring& key);
+
+// Host: a cargo lift's press just ran; the lane sends the direction it left when that changed. Game thread.
+void OnCargoLiftVerb(void* lift);
+
+// Host: the lift's direction sent again to `slot` alone, for a press that asked for the direction it already has.
+void ResendCargoLiftTo(void* lift, uint8_t slot);
 
 // Whether the door lane's own apply is running on `door` now: a client's copy of a door refuses
 // every doorOpen and doorClose but that one. Game thread.

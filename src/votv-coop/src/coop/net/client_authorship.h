@@ -140,6 +140,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PointSackRedeem:
     case ReliableKind::CoffeeActionIntent:
     case ReliableKind::CrematorIntent:
+    case ReliableKind::CargoLiftIntent:
     case ReliableKind::RemoverRequest:
     case ReliableKind::HitIntent:
     case ReliableKind::ProjectileFired:
@@ -260,6 +261,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::AmbientTreeState:
     case ReliableKind::AmbientFixtureState:
     case ReliableKind::CrematorState:
+    case ReliableKind::CargoLiftState:
     case ReliableKind::CrematorHit:
     case ReliableKind::RequesterFeedback:
     case ReliableKind::KerfurCommandAnswer:
