@@ -91,24 +91,27 @@ struct UseClass {
     ue_wrap::CachedObjRef cls;
 };
 UseClass g_useClasses[] = {{L"prop_food_C", true, {}}, {L"prop_food_mre_C", false, {}},
-                           {L"prop_sleeppills_C", false, {}}};
+                           {L"prop_sleeppills_C", false, {}}, {L"prop_medkit_pack_C", false, {}}};
 
-// An MRE's open rolls its contents with the game's own `spawn`, which reads nothing of the player. The host runs it on
-// its copy before the destroy, so the contents are host-born and reach every peer; the opener only removes its copy.
-ue_wrap::CachedObjRef g_mreClass;
+// An MRE's open and a first aid kit's unpack roll their contents with the game's own `spawn`, which reads nothing of the
+// player. The host runs it on its copy before the destroy, so the contents are host-born and reach every peer; the
+// opener only removes its copy. Both play the MRE's opening.
+ue_wrap::CachedObjRef g_mreClass, g_kitClass;
 uint32_t g_mreOpens = 0;
 
 bool IsMre(void* actor) {
-    void* const c = ResolveClass(g_mreClass, L"prop_food_mre_C");
-    return c && ue_wrap::prop::WalksToBase(R::ClassOf(actor), c);
+    void* const mre = ResolveClass(g_mreClass, L"prop_food_mre_C");
+    void* const kit = ResolveClass(g_kitClass, L"prop_medkit_pack_C");
+    void* const cls = R::ClassOf(actor);
+    return (mre && ue_wrap::prop::WalksToBase(cls, mre)) || (kit && ue_wrap::prop::WalksToBase(cls, kit));
 }
 
 void OpenMre(void* actor, uint8_t slot, uint32_t eid) {
-    static ue_wrap::CachedObjRef sSpawnFn;
-    if (!sSpawnFn.Alive()) sSpawnFn.Set(R::FindFunction(R::ClassOf(actor), L"spawn"));
-    void* const fn = sSpawnFn.Raw();
+    // Each class has its own `spawn`: the function is asked of the actor's class, not cached across them.
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"spawn");
     if (!fn || !R::CallFunction(actor, fn, nullptr)) {
-        UE_LOGW("prop_act: the MRE eid %u opened for slot %u could not roll its contents", static_cast<unsigned>(eid),
+        UE_LOGW("prop_act: the %ls eid %u unpacked for slot %u could not roll its contents",
+                R::ToString(R::NameOf(R::ClassOf(actor))).c_str(), static_cast<unsigned>(eid),
                 static_cast<unsigned>(slot));
         return;
     }

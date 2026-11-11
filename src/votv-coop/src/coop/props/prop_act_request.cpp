@@ -175,8 +175,9 @@ void SendCommit(uint8_t committed) {
             committed ? "committed" : "aborted");
 }
 
-// A granted MRE open: the host rolls the contents on its own copy and they reach this peer as its spawns, so this copy
-// is only removed, with the opening heard here. Opening it here too would roll a second, client-only set.
+// A granted unpack (an MRE, a first aid kit): the host rolls the contents on its own copy and they reach this peer as its
+// spawns, so this copy is only removed, with the opening heard here. Opening it here too would roll a second,
+// client-only set. Both play the MRE's opening.
 bool OpenMreOnHost(void* target, void* local) {
     ue_wrap::FVector at{};
     if (E::TryGetActorLocation(target, at)) coop::prop_sound::PlayMreOpenAt(local ? local : target, at);
@@ -195,7 +196,7 @@ bool RunVerb(void* target, void* local) {
         bool collected = false;
         return E::CallMainPlayerHoldObject(local, target, collected);
     }
-    case kMre:
+    case kUnpack:
         return OpenMreOnHost(target, local);
     case kFood:
     case kPills:
@@ -268,10 +269,12 @@ UE_FACT_FN(kRowFood,   "prop_act", L"prop_food_C",       L"actionOptionIndex",  
 UE_FACT_FN(kRowMre,    "prop_act", L"prop_food_mre_C",   L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowPills,  "prop_act", L"prop_sleeppills_C", L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowSoap,   "prop_act", L"prop_food_soap_C",  L"playerUsedOn",        Declared);
+UE_FACT_FN(kRowKit,    "prop_act", L"prop_medkit_pack_C", L"actionOptionIndex",  Declared);
 constexpr int kTagPocket = 0x50414331, kTagHold = 0x50414332, kTagFood = 0x50414333,
-              kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336;   // "PAC1".."PAC6"
+              kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336,
+              kTagKit = 0x50414337;   // "PAC1".."PAC7"
 
-// The action index of eating, opening a food and taking pills.
+// The action index of eating, opening a food or a first aid kit, and taking pills.
 constexpr uint8_t kEatAction = 4;
 
 // Is this call the replay running now? The gate cannot tell a reflected call of ours from a drill's, so the latch does.
@@ -298,7 +301,7 @@ struct ActionParams {
     R::ParamOffset action{L"action"};
     R::ParamOffset lookAt{L"lookAtComponent"};
 };
-ActionParams g_foodParams, g_mreParams, g_pillsParams;
+ActionParams g_foodParams, g_mreParams, g_pillsParams, g_kitParams;
 
 struct SoapParams {
     R::ParamOffset holdObject{L"holdObject"};
@@ -330,6 +333,7 @@ bool FoodDestroys(const sg::Call& c) {
     return !notEdible && uses <= 1;
 }
 bool MreDestroys(const sg::Call& c) { return IsEat(g_mreParams, c); }
+bool KitDestroys(const sg::Call& c) { return IsEat(g_kitParams, c); }
 bool PillsDestroys(const sg::Call& c) { return IsEat(g_pillsParams, c); }
 
 // The soap's last use on a dry sponge in the hand: the body returns unless the hand holds a sponge with no soap.
@@ -385,7 +389,7 @@ struct HitParam {
     ue_wrap::CachedObjRef sizeFn;
     int32_t size = -1;
 };
-HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit;
+HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit, g_kitHit;
 
 // The hit of a use, as the replay writes it back: only its component and place matter.
 void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
@@ -495,7 +499,8 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitP
 }
 
 sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
-sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, g_mreHit, &MreDestroys); }
+sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kUnpack, g_mreParams, g_mreHit, &MreDestroys); }
+sg::Verdict PreKit(const sg::Call& c) { return PreAction(c, kUnpack, g_kitParams, g_kitHit, &KitDestroys); }
 sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
 
 // The replay passes the hand it finds then, not the one captured here: only the hit and the hand item's name travel.
@@ -534,6 +539,7 @@ Watch g_watches[] = {
     {kRowMre,    kTagMre,    &PreMre,    "use",  WatchState::Pending},
     {kRowPills,  kTagPills,  &PrePills,  "use",  WatchState::Pending},
     {kRowSoap,   kTagSoap,   &PreSoap,   "use",  WatchState::Pending},
+    {kRowKit,    kTagKit,    &PreKit,    "use",  WatchState::Pending},
 };
 bool g_watchesSettled = false;
 

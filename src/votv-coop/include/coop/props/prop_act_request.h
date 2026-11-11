@@ -41,8 +41,8 @@ ReplyAction DecideReply(bool pending, uint16_t pendingId, const coop::net::PropA
 const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" "granted"
 }  // namespace internal
 
-// The row of the verb a record replays.
-enum Row : uint8_t { kPocket = 1, kHold, kFood, kMre, kPills, kSoap };
+// The row of the verb a record replays. kUnpack is an open whose contents the host rolls: an MRE, a first aid kit.
+enum Row : uint8_t { kPocket = 1, kHold, kFood, kUnpack, kPills, kSoap };
 
 // The pending record: the target's element id and the call's arguments, as the replay needs them.
 struct Pending {

@@ -385,6 +385,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"prop_grunt_c", L"bndevt__prop_grunt_damagesphere_k2node_componentboundevent_1_componentbeginoverlapsignature__delegatesignature", L"prop_grunt_c.bndevt__prop_grunt_damagesphere_k2node_componentboundevent_1_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x9e1fcd8674a0a72eull},
     {L"prop_inventorycontainer_drone_c", L"receivebeginplay", L"prop_inventorycontainer_drone_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0xe9032bc7f165cf08ull},
     {L"prop_lighter_c", L"playerhanduse_lmb", L"prop_lighter_c.playerhanduse_lmb", 0x5de5f12d89a97b5eull, 0xca8166caab2c1130ull},
+    {L"prop_medkit_pack_c", L"actionoptionindex", L"prop_medkit_pack_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x509f41747e06741full},
     {L"prop_notebook_c", L"playerusedon", L"prop_notebook_c.playerusedon", 0x2c4f0c15ebdccee4ull, 0x3ef6e3b793e10020ull},
     {L"prop_pointsack_c", L"actionoptionindex", L"prop_pointsack_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x9f8cc0fce60d17feull},
     {L"prop_portablepc_c", L"open", L"prop_portablepc_c.open", 0x258b03e1afed7d13ull, 0x852448993c80bccbull},
