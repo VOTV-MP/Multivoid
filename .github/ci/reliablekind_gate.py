@@ -152,7 +152,9 @@ for _k in ("AuthHello", "AuthChallenge", "AuthProof"):
     }
 
 CASE = re.compile(r"case\s+(?:coop::)?(?:net::)?ReliableKind::(\w+)\s*:")
-ENUM_BLOCK = re.compile(r"enum class ReliableKind\s*:\s*uint8_t\s*\{(.*?)\n\};", re.S)
+ENUM_BLOCK = re.compile(r"enum class ReliableKind\s*:\s*uint(?:8|16)_t\s*\{(.*?)\n\};", re.S)
+# The value space the per-kind tables size for (protocol.h's kReliableKindSpace): every kind must lie below it.
+SPACE = re.compile(r"inline constexpr size_t kReliableKindSpace\s*=\s*(\d+)\s*;")
 # Name required; value optional (an implicit-increment enumerator is still a KIND, and the
 # first version of this regex demanded `= <decimal>` at exactly four spaces -- so a row
 # written `NewLane,` was not parsed at all and check 1 never asked it for a receiver. The
@@ -342,6 +344,18 @@ def check(tree: dict):
         if len(names) > 1:
             fails.append(f"{PROTO}: ReliableKind value {value} is claimed by {', '.join(names)} -- two kinds on one "
                          f"number reach the same receiver; renumber one.")
+    # Every kind below the per-kind tables' space: a kind past it would be counted nowhere and, where a table is
+    # indexed unguarded, read past its end.
+    sp = SPACE.search(tree[PROTO])
+    if not sp:
+        fails.append(f"{PROTO}: no `inline constexpr size_t kReliableKindSpace = <n>;` -- the per-kind tables' bound "
+                     f"cannot be checked.")
+    else:
+        space = int(sp.group(1))
+        for name, value in sorted(enums.items()):
+            if value is not None and value >= space:
+                fails.append(f"{PROTO}: ReliableKind {name} = {value} is not below kReliableKindSpace ({space}); "
+                             f"raise the space or renumber the kind.")
     if len(enums) < 100:
         fails.append(f"{PROTO}: parsed {len(enums)} ReliableKind enumerators, expected >=100. "
                      f"The enum moved or its shape changed -- fix this parser before trusting "
@@ -607,6 +621,11 @@ def drill() -> int:
     t = dict(base)
     t[PROTO] = t[PROTO].replace("    LightGroupState = 129,", "    LightGroupState = 9,", 1)
     controls.append(("two kinds on one value", t, "ReliableKind value 9 is claimed by"))
+
+    # 4c. a kind at or past the per-kind tables' space.
+    t = dict(base)
+    t[PROTO] = t[PROTO].replace("    LightGroupState = 129,", "    LightGroupState = 1024,", 1)
+    controls.append(("a kind past the tables' space", t, "LightGroupState = 1024 is not below kReliableKindSpace"))
 
     # 5. an enum row this parser cannot read must not pass silently.
     t = dict(base)

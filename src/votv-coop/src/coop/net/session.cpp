@@ -69,7 +69,7 @@ int BuildReliableWire_(uint8_t* buf, ReliableKind kind, const void* payload, int
     WriteHeader(*hdr, MsgType::Reliable, seq, ownEpoch, senderSlot);
     auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
     std::memset(rh, 0, sizeof(*rh));
-    rh->kind = static_cast<uint8_t>(kind);
+    rh->kind = static_cast<uint16_t>(kind);
     rh->payloadLen = static_cast<uint16_t>(len);
     // len=0 with a null payload is a legitimate control packet; memcpy from null is UB.
     if (len > 0 && payload) {
@@ -126,7 +126,7 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     const SendOutcome rc = backlog_.SendOrQueue(peerSlot, static_cast<int>(LaneForKind(kind)),
                                                hConn, wire, total, admission_);
     if (rc == SendOutcome::Streamed) rateControl_.NoteReliableQueued(peerSlot, total);
-    if (rc != SendOutcome::Dropped) net_stats::AddReliableSent(static_cast<uint8_t>(kind));
+    if (rc != SendOutcome::Dropped) net_stats::AddReliableSent(static_cast<uint16_t>(kind));
     return rc != SendOutcome::Dropped;
 }
 
@@ -257,7 +257,7 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len, int 
         if (rc == SendOutcome::Streamed) rateControl_.NoteReliableQueued(i, total);
         if (rc != SendOutcome::Dropped) anySuccess = true;
     }
-    if (anySuccess) net_stats::AddReliableSent(static_cast<uint8_t>(kind));
+    if (anySuccess) net_stats::AddReliableSent(static_cast<uint16_t>(kind));
     return anySuccess;
 }
 

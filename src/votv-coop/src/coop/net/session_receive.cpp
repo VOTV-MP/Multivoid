@@ -301,7 +301,8 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             const ClientAuthorship who = AuthorshipOf(static_cast<ReliableKind>(rh.kind));
             if (who == ClientAuthorship::Host || who == ClientAuthorship::NotAKind) {
                 const char* why = who == ClientAuthorship::Host ? "only the host authors it" : "it names no kind";
-                if (!saidHostKind_[rh.kind]) {
+                // A kind past the table's space (no kind is) is summed with the rest, never indexed.
+                if (rh.kind < kReliableKindSpace && !saidHostKind_[rh.kind]) {
                     saidHostKind_[rh.kind] = true;
                     UE_LOGW("net: refused kind %u from slot %d -- %s (client_authorship.h); later ones are "
                             "summed", static_cast<unsigned>(rh.kind), peerSlot, why);

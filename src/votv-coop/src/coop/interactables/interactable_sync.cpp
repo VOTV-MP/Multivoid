@@ -284,7 +284,7 @@ void Install(coop::net::Session* session) {
     IndexChannels();              // build the key->actor index (edges and the probe name by it; receivers resolve by it)
 }
 
-void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
+void OnReliable(uint16_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
     if (Channel* ch = ChannelForKind(static_cast<coop::net::ReliableKind>(kind)))
         ch->OnReliable(payload, senderPeerSlot);
 }

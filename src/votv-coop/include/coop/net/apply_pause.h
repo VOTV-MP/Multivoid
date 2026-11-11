@@ -16,13 +16,14 @@
 
 namespace coop::net {
 
-static_assert(sizeof(ReliableKind) == 1, "ApplyPauseSet indexes 256 kinds by the kind's byte");
+static_assert(kReliableKindSpace % 64 == 0, "ApplyPauseSet holds the kinds' space in whole 64-bit words");
 
 class ApplyPauseSet {
 public:
     // Raises or lowers `kind`'s pause; true when this call changed it. A raise is counted by Raises().
     bool Set(ReliableKind kind, bool on) {
-        const unsigned k = static_cast<std::uint8_t>(kind);
+        const unsigned k = static_cast<std::uint16_t>(kind);
+        if (k >= kReliableKindSpace) return false;   // no kind is: reliablekind_gate holds them below the space
         const std::uint64_t bit = 1ull << (k & 63u);
         std::atomic<std::uint64_t>& word = words_[k >> 6];
         if (on) {
@@ -33,7 +34,8 @@ public:
         return (word.fetch_and(~bit, std::memory_order_acq_rel) & bit) != 0;
     }
     bool Has(ReliableKind kind) const {
-        const unsigned k = static_cast<std::uint8_t>(kind);
+        const unsigned k = static_cast<std::uint16_t>(kind);
+        if (k >= kReliableKindSpace) return false;
         return (words_[k >> 6].load(std::memory_order_acquire) >> (k & 63u)) & 1u;
     }
     bool Any() const {
@@ -50,7 +52,7 @@ public:
     }
 
 private:
-    std::atomic<std::uint64_t> words_[4]{};
+    std::atomic<std::uint64_t> words_[kReliableKindSpace / 64]{};
     std::atomic<std::uint64_t> raises_{0};
 };
 

@@ -42,8 +42,8 @@ uint32_t g_published = 0;   // PropSpawn and PropDestroy messages accepted insid
 // The two broadcast kinds a published copy would travel as, as the session counted them accepted
 // (net_stats::AddReliableSent, at Session::SendReliable and SendReliableToSlot).
 uint32_t PublishedNow() {
-    return coop::net::net_stats::ReliableSent(static_cast<uint8_t>(coop::net::ReliableKind::PropSpawn)) +
-           coop::net::net_stats::ReliableSent(static_cast<uint8_t>(coop::net::ReliableKind::PropDestroy));
+    return coop::net::net_stats::ReliableSent(static_cast<uint16_t>(coop::net::ReliableKind::PropSpawn)) +
+           coop::net::net_stats::ReliableSent(static_cast<uint16_t>(coop::net::ReliableKind::PropDestroy));
 }
 
 // The grace the hand lane's history is asked with: one refill of the lane's own budget (hand_item::kHandBudget), the

@@ -38,7 +38,7 @@ void Install(coop::net::Session* session);
 // self-healing index, deferred and retried when the instance has not streamed in yet -- and
 // applies it, updating the poll baseline so the apply never echoes. The host's relay of a client's
 // symmetric edge happens in the session, before this runs.
-void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot);
+void OnReliable(uint16_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot);
 
 // The door lane's key for `door`, or "" when the lane does not index it in the current world: the
 // name a door verb intent carries. Game thread.
