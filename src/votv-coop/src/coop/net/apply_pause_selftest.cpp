@@ -17,7 +17,7 @@ bool RunSelftest() {
         if (ok) { ++pass; return; }
         UE_LOGE("apply_pause selftest FAIL: %s", what);
     };
-    auto kind = [](unsigned k) { return static_cast<ReliableKind>(static_cast<std::uint8_t>(k)); };
+    auto kind = [](unsigned k) { return static_cast<ReliableKind>(static_cast<std::uint16_t>(k)); };
 
     // 1. One kind: a raise counts once however often it is repeated, and so does its lower.
     {

@@ -2,6 +2,8 @@
 
 #include "coop/net/net_stats.h"
 
+#include "coop/net/protocol.h"  // kReliableKindSpace
+
 #include <atomic>
 
 namespace coop::net::net_stats {
@@ -11,7 +13,7 @@ std::atomic<uint64_t> g_bytesSent{0};
 std::atomic<uint64_t> g_bytesRecv{0};
 std::atomic<uint64_t> g_packetsSent{0};
 std::atomic<uint64_t> g_packetsRecv{0};
-std::atomic<uint32_t> g_reliableSent[256] = {};
+std::atomic<uint32_t> g_reliableSent[coop::net::kReliableKindSpace] = {};
 std::atomic<float>    g_inBps{0.f};
 std::atomic<float>    g_outBps{0.f};
 std::atomic<float>    g_inPktps{0.f};
@@ -36,8 +38,12 @@ void AddSent(uint32_t bytes) {
     g_packetsSent.fetch_add(1, std::memory_order_relaxed);
 }
 
-void AddReliableSent(uint8_t kind) { g_reliableSent[kind].fetch_add(1, std::memory_order_relaxed); }
-uint32_t ReliableSent(uint8_t kind) { return g_reliableSent[kind].load(std::memory_order_relaxed); }
+void AddReliableSent(uint16_t kind) {
+    if (kind < coop::net::kReliableKindSpace) g_reliableSent[kind].fetch_add(1, std::memory_order_relaxed);
+}
+uint32_t ReliableSent(uint16_t kind) {
+    return kind < coop::net::kReliableKindSpace ? g_reliableSent[kind].load(std::memory_order_relaxed) : 0;
+}
 
 void AddRecv(uint32_t bytes) {
     g_bytesRecv.fetch_add(bytes, std::memory_order_relaxed);

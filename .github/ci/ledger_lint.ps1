@@ -117,7 +117,7 @@ if (-not (Test-Path -LiteralPath $protoHeaderPath)) {
         $end = $Source.IndexOf("`n};", $start)
         if ($end -lt 0) { return $null }
         $names = @(); $bad = @()
-        # Skip 1: the `enum class X : uint8_t {` line that opens the body.
+        # Skip 1: the `enum class X : <type> {` line that opens the body.
         foreach ($line in (($Source.Substring($start, $end - $start) -split "`n") | Select-Object -Skip 1)) {
             $t = $line.Trim()
             if (-not $t -or $t.StartsWith("//")) { continue }

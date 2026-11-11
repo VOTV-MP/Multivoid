@@ -44,7 +44,7 @@ bool HandleCrematorEvent(net::Session& session,
             UE_LOGW("event_feed: CrematorState key length %u out of range -- dropping", static_cast<unsigned>(p.key.len));
             break;
         }
-        coop::interactable_sync::OnReliable(static_cast<uint8_t>(msg.kind), p, 0);
+        coop::interactable_sync::OnReliable(static_cast<uint16_t>(msg.kind), p, 0);
         break;
     }
     case net::ReliableKind::CrematorIntent: {

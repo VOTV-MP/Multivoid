@@ -145,7 +145,7 @@ private:
         // parallel to it: when each was held and which ReliableKind it carries, for the close line.
         struct JoinStamp {
             std::chrono::steady_clock::time_point at;
-            uint8_t kind;
+            uint16_t kind;
         };
         bool joinGate = false;
         // Announces received whose replay has not yet run: a drain finishing in that gap must not

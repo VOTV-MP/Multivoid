@@ -734,7 +734,7 @@ private:
     ApplyPauseSet applyPause_;
     // The receive edge's refusals of a kind no client may author (client_authorship.h): the first of each value
     // in a session said with its number, the rest summed. Net thread; reset by the stop, after the join.
-    std::array<bool, 256> saidHostKind_{};
+    std::array<bool, kReliableKindSpace> saidHostKind_{};
     RefusalTally hostKindRefusals_{"net"};
     // The epoch latch's drops (HandleMessage), each cause folded on its own: a zero epoch is a sender's bug, an
     // earlier connection's epoch a benign reconnect race. Net thread; cleared with the one above.
