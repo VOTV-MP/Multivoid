@@ -73,6 +73,9 @@ void OnDisconnect();
 // [dev] How many fires this client has replayed natively, for the event drill. Any thread.
 unsigned ReplayCount();
 
+// [dev] How many fires this host's watches have committed and broadcast (the host's side of the same drills). Game thread.
+unsigned HostFireCount();
+
 // Dev (the event drill): on a client, dispatch runEvent('solar') as a reflected call holding no
 // admission, and say whether the gate refused it. Game thread; false off a client or with the
 // watch not live (the call is then not made).

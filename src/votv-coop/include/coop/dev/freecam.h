@@ -1,7 +1,7 @@
 // coop/dev/freecam.h -- developer free-flying camera (dev-only).
 //
 // A debugging tool to fly around the coop scene. Toggle from EITHER the ImGui dev menu
-// (Player > Movement > "Freecam") OR the HOME key -- an exception to the rule that dev
+// (Player tools > Myself > "Free camera") OR the HOME key -- an exception to the rule that dev
 // features are reached from the F1 menu. Controls while flying:
 //   HOME  -- toggle freecam on/off (also the menu checkbox).
 //   WASD  -- move; Space / Ctrl -- up / down; Shift -- move faster.
@@ -22,7 +22,7 @@ namespace coop::dev::freecam {
 // works via the menu even when freecam=0 but devkeys=1.)
 void Init();
 
-// Menu action (Player > Movement): turn the free camera on/off (the view blends
+// Menu action (Player tools > Myself): turn the free camera on/off (the view blends
 // to/from a free camera). Lazily starts the driver threads if Init didn't. Safe
 // to call off the game thread (the actual enable/disable is posted to it).
 void SetActive(bool on);

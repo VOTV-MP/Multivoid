@@ -189,6 +189,12 @@ CFG_ENUM(stat_order_drill, "stat_order_drill", "dev", "off", "off|on|red|redjoin
     "answer, redjoin the host's effect on the joiner.")
 CFG_ENUM(bug_report_drill, "bug_report_drill", "dev", "off", "off|on|red", "VOTVCOOP_BUG_REPORT_DRILL",
     "The bug-report drill: plants values, saves a report, opens it and judges it (red: plants an address unmarked).")
+CFG_ENUM(cheat_drill, "cheat_drill", "dev", "off", "off|on", "VOTVCOOP_CHEAT_DRILL",
+    "Drill (BOTH peers): the host's and the players' cheat tools. The host spawns two crowbars, adds points and fires an "
+    "event through the panels' calls and the client must see each; with net.allow_player_cheats off the client's three "
+    "requests are all refused and move nothing; with it on the client's points, crowbars and event run on the host and "
+    "mirror here, a story event and an unlisted prop are refused; reset, the next request is refused again. Each peer first "
+    "opens the F1 panes it is offered. Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict.")
 CFG_ENUM(grants_drill, "grants_drill", "dev", "off", "off|grant|none|hostdeny", "VOTVCOOP_GRANTS_DRILL",
     "The local grants drill: checks this machine's dev grants against an arm's expectation.")
 CFG_ENUM(grants_drill_expect, "grants_drill_expect", "dev", "same", "same|grant|none|hostdeny",

@@ -1,0 +1,328 @@
+// coop/cheats/cheat_request.cpp -- see coop/cheats/cheat_request.h.
+
+#include "coop/cheats/cheat_request.h"
+
+#include "coop/cheats/cheat_run.h"
+#include "coop/comms/chat_feed.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/net/intent_bucket.h"
+#include "coop/net/net_clock.h"
+#include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"
+#include "coop/text/utf8_codec.h"
+#include "l10n/l10n.h"
+#include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"
+#include "ue_wrap/core/log.h"
+
+#include <windows.h>
+
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+
+namespace coop::cheats {
+namespace {
+
+namespace GT = ue_wrap::game_thread;
+using coop::net::CheatOp;
+using coop::net::CheatReason;
+
+constexpr size_t kReasons = static_cast<size_t>(CheatReason::Count);
+
+// A player's budget: a burst of eight (a row of preset presses), then three a second. A button a person can hold down
+// costs the host nothing past it.
+constexpr coop::net::IntentBudget kBudget{8.0f, 3.0f};
+constexpr uint64_t kSayEveryMs = 10000;
+
+std::atomic<coop::net::Session*> g_session{nullptr};
+coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
+
+std::atomic<uint32_t> g_nextId{0};
+void (*g_observer)(const coop::net::CheatResultPayload&) = nullptr;
+
+std::mutex g_statusMutex;
+Status g_status;   // guarded by g_statusMutex
+
+void SetStatus(const Status& s) {
+    std::lock_guard<std::mutex> lock(g_statusMutex);
+    g_status = s;
+}
+
+// HOST, game thread: per-sender state.
+coop::roster_ledger::PerSlotState<coop::net::IntentBucket> g_bucket;
+coop::roster_ledger::PerSlotState<uint64_t> g_nextSayMs;
+uint32_t g_answered[coop::players::kMaxPeers][kReasons] = {};
+
+const char* OpName(CheatOp op) {
+    return op == CheatOp::SpawnItem ? "spawn" : op == CheatOp::Points ? "points" : op == CheatOp::Event ? "event" : "?";
+}
+
+const char* ReasonName(CheatReason r) {
+    switch (r) {
+        case CheatReason::Ok: return "ok";
+        case CheatReason::Off: return "refused (the setting is off)";
+        case CheatReason::NotReady: return "refused (not ready)";
+        case CheatReason::Rate: return "refused (rate)";
+        case CheatReason::BadRequest: return "refused (bad request)";
+        case CheatReason::UnknownItem: return "refused (unknown item)";
+        case CheatReason::UnknownEvent: return "refused (unknown event)";
+        case CheatReason::Refused: return "refused (not offered to players)";
+        case CheatReason::NoTarget: return "refused (no such player)";
+        case CheatReason::Failed: return "failed";
+        default: return "?";
+    }
+}
+
+std::string Describe(const Request& r) {
+    char buf[160];
+    switch (r.op) {
+        case CheatOp::SpawnItem:
+            if (r.target == coop::net::kCheatInFront)
+                std::snprintf(buf, sizeof(buf), "spawn %d x '%s' in front of the player", r.count, r.name.c_str());
+            else
+                std::snprintf(buf, sizeof(buf), "spawn %d x '%s' at slot %d", r.count, r.name.c_str(), r.target);
+            break;
+        case CheatOp::Points: std::snprintf(buf, sizeof(buf), "points %+d", r.amount); break;
+        case CheatOp::Event:  std::snprintf(buf, sizeof(buf), "event '%s'", r.name.c_str()); break;
+        default: std::snprintf(buf, sizeof(buf), "unknown op %d", static_cast<int>(r.op)); break;
+    }
+    return buf;
+}
+
+// ---- client ---------------------------------------------------------------------------------------------------
+
+bool SendRequest(coop::net::Session& s, const Request& r) {
+    coop::net::CheatRequestPayload p{};
+    p.id = g_nextId.fetch_add(1) + 1;
+    p.amount = r.amount;
+    p.op = static_cast<uint8_t>(r.op);
+    p.count = static_cast<uint8_t>(r.count < 0 ? 0 : r.count > 255 ? 255 : r.count);
+    p.target = static_cast<uint8_t>(r.target);
+    const size_t n = r.name.size() < coop::net::kCheatNameMax - 1 ? r.name.size() : coop::net::kCheatNameMax - 1;
+    std::memcpy(p.name, r.name.data(), n);
+    return s.SendReliableToSlot(0, coop::net::ReliableKind::CheatRequest, &p, sizeof(p));
+}
+
+// A client's own notice of a refusal, in the feed: at most once a few seconds per reason, so a held button is one line.
+void NoticeToFeed(CheatReason r) {
+    static uint64_t sShownAt[kReasons] = {};
+    const size_t i = static_cast<size_t>(r);
+    if (i >= kReasons || r == CheatReason::Ok) return;
+    const uint64_t now = ::GetTickCount64();
+    if (sShownAt[i] != 0 && now - sShownAt[i] < 3000) return;
+    sShownAt[i] = now;
+    Status s;
+    s.valid = true;
+    s.reason = r;
+    coop::chat_feed::Push(StatusLine(s), coop::chat_feed::Keep::Transient);
+}
+
+// The route: the host and a solo game run it, a client asks the host.
+void Route(Request r) {
+    GT::Post([r = std::move(r)] {
+        coop::net::Session* s = LoadSession();
+        if (s && s->running() && s->role() == coop::net::Role::Client) {
+            Status st;
+            st.valid = true;
+            st.op = r.op;
+            st.pending = true;
+            if (SendRequest(*s, r)) {
+                SetStatus(st);
+                UE_LOGI("cheats: asked the host for %s", Describe(r).c_str());
+            } else {
+                st.pending = false;
+                st.reason = CheatReason::Failed;
+                SetStatus(st);
+                UE_LOGW("cheats: the request for %s was not sent", Describe(r).c_str());
+            }
+            return;
+        }
+        const Outcome o = Run(r, 0);
+        Status st;
+        st.valid = true;
+        st.op = r.op;
+        st.reason = o.reason;
+        st.done = o.done;
+        SetStatus(st);
+        UE_LOGI("cheats: the host's own %s -> %s", Describe(r).c_str(), ReasonName(o.reason));
+    });
+}
+
+// ---- host -----------------------------------------------------------------------------------------------------
+
+void Answer(coop::net::Session& s, uint8_t slot, const coop::net::CheatRequestPayload& p, const Outcome& o) {
+    const size_t i = static_cast<size_t>(o.reason);
+    if (slot < coop::players::kMaxPeers && i < kReasons) ++g_answered[slot][i];
+    coop::net::CheatResultPayload rp{};
+    rp.id = p.id;
+    rp.op = p.op;
+    rp.reason = static_cast<uint8_t>(o.reason);
+    rp.done = static_cast<uint16_t>(o.done < 0 ? 0 : o.done);
+    s.SendReliableToSlot(slot, coop::net::ReliableKind::CheatResult, &rp, sizeof(rp));
+}
+
+// What the host says in its own chat of a request it ran, so a cheat done in its world is never silent.
+void TellHost(const std::string& nick, const Request& r, int done) {
+    char line[256];
+    switch (r.op) {
+        case CheatOp::SpawnItem:
+            l10n::Fmt(line, sizeof(line), l10n::T("%1$s spawned %2$d x %3$s"), nick.c_str(), done, r.name.c_str());
+            break;
+        case CheatOp::Points:
+            if (r.amount >= 0)
+                l10n::Fmt(line, sizeof(line), l10n::T("%1$s added %2$d points"), nick.c_str(), r.amount);
+            else
+                l10n::Fmt(line, sizeof(line), l10n::T("%1$s removed %2$d points"), nick.c_str(), -r.amount);
+            break;
+        case CheatOp::Event:
+            l10n::Fmt(line, sizeof(line), l10n::T("%1$s triggered the event %2$s"), nick.c_str(), r.name.c_str());
+            break;
+        default: return;
+    }
+    coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
+}
+
+bool PrintableAscii(const char* s, size_t n) {
+    for (size_t i = 0; i < n; ++i)
+        if (static_cast<unsigned char>(s[i]) < 0x20 || static_cast<unsigned char>(s[i]) > 0x7E) return false;
+    return true;
+}
+
+}  // namespace
+
+void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
+
+bool PlayersMayCheat() { return coop::config::ResolveFlag(coop::config_registry::rows::net_allow_player_cheats); }
+
+void SpawnItem(const std::string& name, int count, int target) {
+    Request r;
+    r.op = CheatOp::SpawnItem;
+    r.name = name;
+    r.count = count;
+    r.target = target;
+    Route(std::move(r));
+}
+
+void AddPoints(int amount) {
+    Request r;
+    r.op = CheatOp::Points;
+    r.amount = amount;
+    Route(std::move(r));
+}
+
+void FireEvent(const std::string& name) {
+    Request r;
+    r.op = CheatOp::Event;
+    r.name = name;
+    Route(std::move(r));
+}
+
+Status LastStatus() {
+    std::lock_guard<std::mutex> lock(g_statusMutex);
+    return g_status;
+}
+
+std::string StatusLine(const Status& s) {
+    if (!s.valid) return std::string();
+    if (s.pending) return l10n::T("Asked the host...");
+    char buf[128];
+    switch (s.reason) {
+        case CheatReason::Ok:
+            if (s.op == CheatOp::SpawnItem) {
+                l10n::Fmt(buf, sizeof(buf), l10n::T("Spawned %d."), s.done);
+                return buf;
+            }
+            return l10n::T("Done.");
+        case CheatReason::Off: return l10n::T("The host has not allowed cheats.");
+        case CheatReason::NotReady: return l10n::T("Not ready yet -- try again in a moment.");
+        case CheatReason::Rate: return l10n::T("Too fast -- wait a moment.");
+        case CheatReason::BadRequest: return l10n::T("The host refused that request.");
+        case CheatReason::UnknownItem: return l10n::T("The host's game cannot spawn that item.");
+        case CheatReason::UnknownEvent: return l10n::T("The host's game has no such event.");
+        case CheatReason::Refused: return l10n::T("The host does not offer that to players.");
+        case CheatReason::NoTarget: return l10n::T("That player is not here.");
+        case CheatReason::Failed: return l10n::T("The game refused it.");
+        default: return std::string();
+    }
+}
+
+void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
+    UE_ASSERT_GAME_THREAD("cheat_request::OnRequest");
+    coop::net::Session* s = LoadSession();
+    if (!s || s->role() != coop::net::Role::Host) {
+        UE_LOGW("cheats: a CheatRequest reached a peer that is not hosting -- dropped");
+        return;
+    }
+    if (senderSlot < 1 || senderSlot >= coop::players::kMaxPeers) {
+        UE_LOGW("cheats: a CheatRequest from sender slot %u -- dropped", static_cast<unsigned>(senderSlot));
+        return;
+    }
+    const uint64_t now = coop::net::NowMs();
+    if (!g_bucket[senderSlot].Take(kBudget, now)) {
+        if (now >= g_nextSayMs[senderSlot]) {
+            g_nextSayMs[senderSlot] = now + kSayEveryMs;
+            UE_LOGI("cheats: slot %u is over its request rate; requests dropped", static_cast<unsigned>(senderSlot));
+            Outcome rate;
+            rate.reason = CheatReason::Rate;
+            Answer(*s, senderSlot, p, rate);   // told once per window, then dropped without an answer
+        }
+        return;
+    }
+    const std::string nick = coop::text::ToUtf8(coop::roster_ledger::DisplayName(senderSlot));
+
+    Request r;
+    Outcome o;
+    // The shape first: a name that is text and ends inside its field, and an op the host knows.
+    const size_t nameLen = strnlen(p.name, sizeof(p.name));
+    const bool shapeOk = nameLen < sizeof(p.name) && PrintableAscii(p.name, nameLen) &&
+                         p.op >= static_cast<uint8_t>(CheatOp::SpawnItem) && p.op <= static_cast<uint8_t>(CheatOp::Event);
+    if (!shapeOk) {
+        o.reason = CheatReason::BadRequest;
+        UE_LOGI("cheats: slot %u (%s) sent a malformed request (op %u) -> %s", static_cast<unsigned>(senderSlot),
+                nick.c_str(), static_cast<unsigned>(p.op), ReasonName(o.reason));
+    } else {
+        r.op = static_cast<CheatOp>(p.op);
+        r.name.assign(p.name, nameLen);
+        r.count = p.count;
+        r.target = p.target;
+        r.amount = p.amount;
+        if (!s->IsSlotWorldReady(senderSlot)) o.reason = CheatReason::NotReady;
+        else o = Run(r, senderSlot);
+        UE_LOGI("cheats: slot %u (%s) asked for %s -> %s", static_cast<unsigned>(senderSlot), nick.c_str(),
+                Describe(r).c_str(), ReasonName(o.reason));
+    }
+    Answer(*s, senderSlot, p, o);
+    if (o.reason == CheatReason::Ok) TellHost(nick, r, o.done);
+}
+
+void OnResult(const coop::net::CheatResultPayload& p) {
+    UE_ASSERT_GAME_THREAD("cheat_request::OnResult");
+    if (p.reason >= kReasons) return;
+    Status st;
+    st.valid = true;
+    st.op = static_cast<CheatOp>(p.op);
+    st.reason = static_cast<CheatReason>(p.reason);
+    st.done = p.done;
+    SetStatus(st);
+    UE_LOGI("cheats: the host answered %s: %s", OpName(st.op), ReasonName(st.reason));
+    NoticeToFeed(st.reason);
+    if (g_observer) g_observer(p);
+}
+
+void SetResultObserver(void (*fn)(const coop::net::CheatResultPayload& p)) { g_observer = fn; }
+
+uint32_t AnsweredFor(int slot, CheatReason reason) {
+    const size_t i = static_cast<size_t>(reason);
+    return slot >= 1 && slot < coop::players::kMaxPeers && i < kReasons ? g_answered[slot][i] : 0;
+}
+
+void OnDisconnect() {
+    SetStatus(Status{});
+    g_observer = nullptr;
+}
+
+}  // namespace coop::cheats

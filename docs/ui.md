@@ -124,12 +124,29 @@ captures input, suppresses the game's cursor recentring and hands the pointer ba
 game bind.
 
 F1 opens the menu: a category tree whose developer categories are hidden unless the developer
-switch is on (`ui/dev_menu`). For every player it holds Cosmetics (skins on a live mannequin,
+switch is on (`ui/dev_menu`). Each entry carries a role gate beside that switch: for everyone, the host
+of a live session, the host or a solo game (whoever writes the world), a client, or a client whose host lets
+players use cheats. For every player it holds Cosmetics (skins on a live mannequin,
 the nameplate preference, the nickname colour, the font and size), Network (the live statistics
 panel), World (the rules this peer runs under), Voice, Report a bug (saves a report file with
 your logs; nothing is sent), and on the host Administration (online,
 offline and banned players with teleport, kick, ban and unban, and the server's settings, changed
-through the same `/set` and `/reset` commands a person types). The config review panel shows the
+through the same `/set` and `/reset` commands a person types).
+
+The host, and a solo player, also see **Host tools**, with no developer switch: Items (every prop the
+game lists, from its own prop renderer's name table, searchable, with a count, spawned in front of the host
+or at any player in the session), Economy (the balance, preset steps and a custom amount, added or removed),
+Events (the game's events by kind; a red event, one that advances the story or moves players, needs a
+Ctrl+click), Entities (the game's creatures), World (snow, the clock, and helpers for the players: restore
+vitals for everyone or one player, bring the clients or one player to the host, go to a player), Myself
+(the free camera and position readout the host grants itself) and, on a host, Player cheats. A client sees
+**Player tools** instead: Myself (teleport to the host, unstuck, the free camera and position readout when
+the host grants them) and, only while the host's setting "Let players use cheats" (`net.allow_player_cheats`,
+a replicated server row, off by default, also in Administration > Server settings) is on, the same Items,
+Economy and Events panes. The panes call `coop/cheats/cheat_request`: the host's call runs at once; a client's
+is a `CheatRequest` the host checks and runs ([players.md](players.md)), so a client never writes the world.
+The developer's diagnostics (the object and bone overlays, the stamina test) stay under Player in the developer
+switch. The config review panel shows the
 boot sweep's findings on the ini before any session exists.
 
 ### In the game

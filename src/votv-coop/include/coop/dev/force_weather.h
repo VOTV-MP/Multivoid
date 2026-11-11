@@ -1,5 +1,5 @@
 // coop/dev/force_weather.h -- snow toggle (host-authoritative), driven by the
-// ImGui dev menu (Game > Weather > Snow).
+// ImGui dev menu (Host tools > World).
 //
 // Snow is the unambiguous weather visual (intComs_triggerSnow fans out to 53 BP
 // listeners: particles + ground accumulation + sky tint). Host-only: the host

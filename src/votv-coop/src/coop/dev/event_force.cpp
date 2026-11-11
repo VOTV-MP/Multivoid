@@ -52,36 +52,6 @@ const BoxRow* RowFor(const char* eventName) {
     return nullptr;
 }
 
-// Native-gate notes for rows WITHOUT a volume (mined from the eventer RE docs;
-// static truth, not live state).
-struct NoteRow { const char* event; const char* note; };
-constexpr NoteRow kNotes[] = {
-    { "agrav",         "no-op unless lib.isPhysicalEvents (physical-events setting ON)" },
-    { "bedEvent",      "arms the dream system -- fires on your NEXT sleep" },
-    { "treehouseSleep","fires on your NEXT sleep (kidnap teleport)" },
-    { "earthTp",       "teleports THE TRIGGERING PLAYER immediately (skysphere.tp)" },
-    { "peace",         "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "arirSignal",    "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "arirSpk",       "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "picSignal",     "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "arirSat_0",     "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "arirSat_1",     "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "arirSat_2",     "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "piramid_sig",   "signal joins the SETI pool NOW -- see it in the dish downloads" },
-    { "treehouse_0",   "instant build step (visible at the radio-tower treehouse site)" },
-    { "treehouse_1",   "instant build step (visible at the radio-tower treehouse site)" },
-    { "treehouse_2",   "instant build step (visible at the radio-tower treehouse site)" },
-    { "treehouse_3",   "instant build step (visible at the radio-tower treehouse site)" },
-    { "treehouse_4",   "instant build step (visible at the radio-tower treehouse site)" },
-    { "treehouse_5",   "instant build step (visible at the radio-tower treehouse site)" },
-    { "break_RomeoSierra", "instant: the server rack breaks NOW (check the server room)" },
-    { "break_Victor",  "instant: the server rack breaks NOW (check the server room)" },
-    { "break_Victor2", "instant: the server rack breaks NOW (check the server room)" },
-    { "solar",         "instant sky flash + boom (step outside / look at the sky)" },
-    { "picnic",        "instant: picnic props appear at the forest picnic site" },
-    { "destroyPicnic", "instant: the picnic site props are removed" },
-};
-
 struct Snap { bool resolved; bool armed; int shots; };
 Snap g_snap[kBoxCount];
 std::mutex g_snapMx;
@@ -177,12 +147,6 @@ void RequestRefresh() {
         std::lock_guard<std::mutex> lk(g_snapMx);
         std::memcpy(g_snap, fresh, sizeof(g_snap));
     });
-}
-
-const char* GateNote(const char* eventName) {
-    for (const auto& n : kNotes)
-        if (std::strcmp(n.event, eventName) == 0) return n.note;
-    return nullptr;
 }
 
 bool ForceNow(const char* eventName) {

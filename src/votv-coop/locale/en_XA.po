@@ -17,6 +17,22 @@ msgid "%1$.1f / %2$.1f MB"
 msgstr "[[%1$.1f / %2$.1f MB]]"
 
 #, c-format
+msgid "%1$d of %2$d items"
+msgstr "[[%1$d of %2$d items]]"
+
+#, c-format
+msgid "%1$s  |  %2$s"
+msgstr "[[%1$s  |  %2$s]]"
+
+#, c-format
+msgid ""
+"%1$s  |  %2$s\n"
+"Can wreck a save: Ctrl+click to trigger."
+msgstr ""
+"[[%1$s  |  %2$s\n"
+"Can wreck a save: Ctrl+click to trigger.]]"
+
+#, c-format
 msgid "%1$s (%2$llu KB)"
 msgstr "[[%1$s (%2$llu KB)]]"
 
@@ -55,6 +71,10 @@ msgstr "[[%1$s = '%2$s' (%3$s) -- %4$s; the built-in default is used.]]"
 #, c-format
 msgid "%1$s = '%2$s' -- not a known setting (typo, or a retired key)."
 msgstr "[[%1$s = '%2$s' -- not a known setting (typo, or a retired key).]]"
+
+#, c-format
+msgid "%1$s added %2$d points"
+msgstr "[[%1$s added %2$d points]]"
 
 #, c-format
 msgid "%1$s appears %2$llu time with different values; the FIRST line (line %3$d) wins. Pick which one to keep:"
@@ -147,6 +167,10 @@ msgid "%1$s left the game"
 msgstr "[[%1$s left the game]]"
 
 #, c-format
+msgid "%1$s removed %2$d points"
+msgstr "[[%1$s removed %2$d points]]"
+
+#, c-format
 msgid "%1$s saved the game"
 msgstr "[[%1$s saved the game]]"
 
@@ -161,8 +185,16 @@ msgstr[0] "[[%1$s sold it for %2$lld point (the host's price)]]"
 msgstr[1] "[[%1$s sold it for %2$lld points (the host's price)]]"
 
 #, c-format
+msgid "%1$s spawned %2$d x %3$s"
+msgstr "[[%1$s spawned %2$d x %3$s]]"
+
+#, c-format
 msgid "%1$s tried to save the game, but it cannot be saved during an event"
 msgstr "[[%1$s tried to save the game, but it cannot be saved during an event]]"
+
+#, c-format
+msgid "%1$s triggered the event %2$s"
+msgstr "[[%1$s triggered the event %2$s]]"
 
 #, c-format
 msgid "%1$s was turned away: Game version mismatch: server plays VOTV %2$s, client has VOTV %3$s. [%4$s]"
@@ -193,6 +225,10 @@ msgid "%d direct"
 msgstr "[[%d direct]]"
 
 #, c-format
+msgid "%d items"
+msgstr "[[%d items]]"
+
+#, c-format
 msgid "%d online"
 msgstr "[[%d online]]"
 
@@ -220,8 +256,27 @@ msgstr[1] "[[%llu servers]]"
 msgid "%s (without passwords)"
 msgstr "[[%s (without passwords)]]"
 
+#, c-format
+msgid "%s (you)"
+msgstr "[[%s (you)]]"
+
+msgid "(Unstuck lifts you 1.5 m straight up)"
+msgstr "[[(Unstuck lifts you 1.5 m straight up)]]"
+
+msgid "(food, sleep and health)"
+msgstr "[[(food, sleep and health)]]"
+
 msgid "(hidden -- friends join by invite/IP)"
 msgstr "[[(hidden -- friends join by invite/IP)]]"
+
+msgid "(it goes for that player, not for you)"
+msgstr "[[(it goes for that player, not for you)]]"
+
+msgid "(it stalks you; the other players see a harmless copy)"
+msgstr "[[(it stalks you; the other players see a harmless copy)]]"
+
+msgid "(its beam and blast run on the host)"
+msgstr "[[(its beam and blast run on the host)]]"
 
 msgid "(locked)"
 msgstr "[[(locked)]]"
@@ -241,6 +296,12 @@ msgstr "[[(others can find your game)]]"
 msgid "(system default)"
 msgstr "[[(system default)]]"
 
+msgid "(the clients follow)"
+msgstr "[[(the clients follow)]]"
+
+msgid "(the game's own; use a throwaway save)"
+msgstr "[[(the game's own; use a throwaway save)]]"
+
 msgid "(unnamed)"
 msgstr "[[(unnamed)]]"
 
@@ -249,6 +310,9 @@ msgstr "[[(you)]]"
 
 msgid "(your server)"
 msgstr "[[(your server)]]"
+
+msgid "2nd Victor server break"
+msgstr "[[2nd Victor server break]]"
 
 msgid ""
 "A compact live panel in the top-right corner: receive/send rate right\n"
@@ -279,11 +343,23 @@ msgstr "[[A proof arrived before a hello.]]"
 msgid "A second hello arrived on one connection."
 msgstr "[[A second hello arrived on one connection.]]"
 
+msgid "ATV boobytrap (car.trap = true)"
+msgstr "[[ATV boobytrap (car.trap = true)]]"
+
+msgid "ATV teleport"
+msgstr "[[ATV teleport]]"
+
 msgid "Actions"
 msgstr "[[Actions]]"
 
 msgid "Activation"
 msgstr "[[Activation]]"
+
+msgid "Add"
+msgstr "[[Add]]"
+
+msgid "Add points"
+msgstr "[[Add points]]"
 
 msgid "Administration"
 msgstr "[[Administration]]"
@@ -297,11 +373,26 @@ msgstr "[[Also refuse their address]]"
 msgid "Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone."
 msgstr "[[Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone.]]"
 
+msgid "Amount"
+msgstr "[[Amount]]"
+
+msgid "An event with a level volume only arms it: walk in, or press NOW! to complete it. Red events can wreck a save: Ctrl+click."
+msgstr "[[An event with a level volume only arms it: walk in, or press NOW! to complete it. Red events can wreck a save: Ctrl+click.]]"
+
 msgid "Another player is using that item."
 msgstr "[[Another player is using that item.]]"
 
+msgid "Ariral"
+msgstr "[[Ariral]]"
+
 msgid "As a client you see only what the host allows you."
 msgstr "[[As a client you see only what the host allows you.]]"
+
+msgid "Asked the host..."
+msgstr "[[Asked the host...]]"
+
+msgid "BLACK fog + eyer_C ghosts (mainGamemode)"
+msgstr "[[BLACK fog + eyer_C ghosts (mainGamemode)]]"
 
 msgid "Ban (permanent)"
 msgstr "[[Ban (permanent)]]"
@@ -332,6 +423,9 @@ msgstr "[[Change name]]"
 msgid "Chat"
 msgstr "[[Chat]]"
 
+msgid "Cheats"
+msgstr "[[Cheats]]"
+
 msgid "Check for an update"
 msgstr "[[Check for an update]]"
 
@@ -340,6 +434,9 @@ msgstr "[[Click on the name of the rule to see its description.]]"
 
 msgid "Click to mute your mic"
 msgstr "[[Click to mute your mic]]"
+
+msgid "Clock"
+msgstr "[[Clock]]"
 
 #, c-format
 msgid "Code %s -- include it in a bug report"
@@ -375,6 +472,9 @@ msgstr "[[Contact (optional, e.g. a Discord name)]]"
 
 msgid "Continue anyway"
 msgstr "[[Continue anyway]]"
+
+msgid "Cosmetic"
+msgstr "[[Cosmetic]]"
 
 msgid "Cosmetics"
 msgstr "[[Cosmetics]]"
@@ -424,6 +524,15 @@ msgstr "[[Could not start the report.]]"
 msgid "Could not write the report file."
 msgstr "[[Could not write the report file.]]"
 
+msgid "Count"
+msgstr "[[Count]]"
+
+msgid "Creature"
+msgstr "[[Creature]]"
+
+msgid "Custom amount"
+msgstr "[[Custom amount]]"
+
 msgid "Custom nickname color"
 msgstr "[[Custom nickname color]]"
 
@@ -455,6 +564,9 @@ msgstr "[[Direct connect]]"
 msgid "Disconnected now and refused whenever they rejoin."
 msgstr "[[Disconnected now and refused whenever they rejoin.]]"
 
+msgid "Done."
+msgstr "[[Done.]]"
+
 #, c-format
 msgid "Down:  %1$s now,  %2$s total,  %3$llu packet"
 msgid_plural "Down:  %1$s now,  %2$s total,  %3$llu packets"
@@ -471,14 +583,26 @@ msgstr ""
 "[[Dr. Kel\n"
 "(default)]]"
 
+msgid "Dream"
+msgstr "[[Dream]]"
+
 msgid "Duplicate settings with different values"
 msgstr "[[Duplicate settings with different values]]"
 
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr "[[Each surface picks its own family; applies on the next frame.]]"
 
+msgid "Economy"
+msgstr "[[Economy]]"
+
 msgid "Enter = send, Esc = close, Up/Down = history"
 msgstr "[[Enter = send, Esc = close, Up/Down = history]]"
+
+msgid "Entities"
+msgstr "[[Entities]]"
+
+msgid "Events"
+msgstr "[[Events]]"
 
 msgid "Everyone in the registry is online."
 msgstr "[[Everyone in the registry is online.]]"
@@ -496,12 +620,21 @@ msgstr "[[Files that will be included]]"
 msgid "Finding a route to %s"
 msgstr "[[Finding a route to %s]]"
 
+msgid "Free camera"
+msgstr "[[Free camera]]"
+
+msgid "Free camera: the host has not allowed this."
+msgstr "[[Free camera: the host has not allowed this.]]"
+
 msgid "Gamemode:"
 msgstr "[[Gamemode:]]"
 
 #, c-format
 msgid "Graphics API: %s"
 msgstr "[[Graphics API: %s]]"
+
+msgid "HOME also toggles it. WASD move, Space and Ctrl up and down, Shift fast, wheel changes the speed."
+msgstr "[[HOME also toggles it. WASD move, Space and Ctrl up and down, Shift fast, wheel changes the speed.]]"
 
 msgid "HOST"
 msgstr "[[HOST]]"
@@ -524,11 +657,17 @@ msgstr ""
 msgid "Host game"
 msgstr "[[Host game]]"
 
+msgid "Host tools"
+msgstr "[[Host tools]]"
+
 msgid "ID"
 msgstr "[[ID]]"
 
 msgid "Interface"
 msgstr "[[Interface]]"
+
+msgid "Items"
+msgstr "[[Items]]"
 
 #, c-format
 msgid "Joined %1$s's game"
@@ -558,8 +697,14 @@ msgstr "[[Last seen: %ds ago]]"
 msgid "Left the session."
 msgstr "[[Left the session.]]"
 
+msgid "Let players use cheats"
+msgstr "[[Let players use cheats]]"
+
 msgid "Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay."
 msgstr "[[Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay.]]"
+
+msgid "Let the players in this game use the host's cheat tools: spawn items, add or remove points and trigger events. Their requests are sent to the host, which checks and runs each one; the host's own tools are always its own. Off by default."
+msgstr "[[Let the players in this game use the host's cheat tools: spawn items, add or remove points and trigger events. Their requests are sent to the host, which checks and runs each one; the host's own tools are always its own. Off by default.]]"
 
 msgid "Levels"
 msgstr "[[Levels]]"
@@ -598,6 +743,9 @@ msgstr "[[Mic muted]]"
 msgid "Microphone"
 msgstr "[[Microphone]]"
 
+msgid "Move"
+msgstr "[[Move]]"
+
 msgid "Multiplayer may not work: you may not see other players, and some features may be off. Check for a Multivoid update made for your game version."
 msgstr "[[Multiplayer may not work: you may not see other players, and some features may be off. Check for a Multivoid update made for your game version.]]"
 
@@ -629,6 +777,9 @@ msgstr "[[Mute my microphone]]"
 msgid "Muted for you (click for volume)"
 msgstr "[[Muted for you (click for volume)]]"
 
+msgid "Myself"
+msgstr "[[Myself]]"
+
 #, c-format
 msgid "NET  %1$llu peer  %2$d ms"
 msgid_plural "NET  %1$llu peers  %2$d ms"
@@ -643,6 +794,9 @@ msgstr[1] "[[NET  %llu peers]]"
 
 msgid "NET  offline"
 msgstr "[[NET  offline]]"
+
+msgid "NOW!"
+msgstr "[[NOW!]]"
 
 msgid "Nameplate"
 msgstr "[[Nameplate]]"
@@ -707,11 +861,18 @@ msgstr "[[Not changeable right now]]"
 msgid "Not enough space."
 msgstr "[[Not enough space.]]"
 
+msgid "Not ready yet -- try again in a moment."
+msgstr "[[Not ready yet -- try again in a moment.]]"
+
 msgid "Not ready yet, try again in a moment."
 msgstr "[[Not ready yet, try again in a moment.]]"
 
 msgid "Not removable right now"
 msgstr "[[Not removable right now]]"
+
+#, c-format
+msgid "Now: day %1$d, %2$02d:%3$02d"
+msgstr "[[Now: day %1$d, %2$02d:%3$02d]]"
 
 msgid ""
 "Off = your floating name/health bar disappears on every peer's\n"
@@ -728,6 +889,15 @@ msgstr "[[Offline (seen before)]]"
 
 msgid "Online"
 msgstr "[[Online]]"
+
+msgid "Only the host can do this."
+msgstr "[[Only the host can do this.]]"
+
+msgid "Only the sun's angle; the clock above is what events and the save follow."
+msgstr "[[Only the sun's angle; the clock above is what events and the save follow.]]"
+
+msgid "Open it now"
+msgstr "[[Open it now]]"
 
 msgid "Other"
 msgstr "[[Other]]"
@@ -762,14 +932,23 @@ msgstr "[[Peers: %d]]"
 msgid "Permanently ban %s?"
 msgstr "[[Permanently ban %s?]]"
 
+msgid "Physics"
+msgstr "[[Physics]]"
+
 msgid "Pick a server from the list first."
 msgstr "[[Pick a server from the list first.]]"
+
+msgid "Pick an item from the list."
+msgstr "[[Pick an item from the list.]]"
 
 msgid "Ping"
 msgstr "[[Ping]]"
 
 msgid "Player"
 msgstr "[[Player]]"
+
+msgid "Player cheats"
+msgstr "[[Player cheats]]"
 
 #, c-format
 msgid ""
@@ -783,8 +962,14 @@ msgstr ""
 msgid "Player id %s"
 msgstr "[[Player id %s]]"
 
+msgid "Player tools"
+msgstr "[[Player tools]]"
+
 msgid "Players"
 msgstr "[[Players]]"
+
+msgid "Players see only their own tools (teleport to you, unstuck, what you grant)."
+msgstr "[[Players see only their own tools (teleport to you, unstuck, what you grant).]]"
 
 #, c-format
 msgid "Players: %1$d/%2$d"
@@ -793,15 +978,37 @@ msgstr "[[Players: %1$d/%2$d]]"
 msgid "Please describe what happened (at least 20 characters)."
 msgstr "[[Please describe what happened (at least 20 characters).]]"
 
+#, c-format
+msgid "Points: %d"
+msgstr "[[Points: %d]]"
+
+msgid "Points: not available yet"
+msgstr "[[Points: not available yet]]"
+
+msgid "Position and camera readout"
+msgstr "[[Position and camera readout]]"
+
+msgid "Position readout: the host has not allowed this."
+msgstr "[[Position readout: the host has not allowed this.]]"
+
 msgid "Preview tile = <skin name>.png/.bmp beside the pak."
 msgstr "[[Preview tile = <skin name>.png/.bmp beside the pak.]]"
+
+msgid "Prop"
+msgstr "[[Prop]]"
 
 #, c-format
 msgid "Push-to-talk (key: %s)"
 msgstr "[[Push-to-talk (key: %s)]]"
 
+msgid "RANDOM rep-tiered ariral prank (summonArirPrank)"
+msgstr "[[RANDOM rep-tiered ariral prank (summonArirPrank)]]"
+
 msgid "RELAY"
 msgstr "[[RELAY]]"
+
+msgid "Rain, fog and the rest of the weather are under Events > Weather."
+msgstr "[[Rain, fog and the rest of the weather are under Events > Weather.]]"
 
 msgid "Read-only. The host's save sets the rules for everyone."
 msgstr "[[Read-only. The host's save sets the rules for everyone.]]"
@@ -833,6 +1040,12 @@ msgstr "[[Release toast]]"
 msgid "Remote player"
 msgstr "[[Remote player]]"
 
+msgid "Remove"
+msgstr "[[Remove]]"
+
+msgid "Remove points"
+msgstr "[[Remove points]]"
+
 msgid "Report"
 msgstr "[[Report]]"
 
@@ -841,6 +1054,16 @@ msgstr "[[Report a bug]]"
 
 msgid "Rescan devices"
 msgstr "[[Rescan devices]]"
+
+msgid "Restore everyone's vitals"
+msgstr "[[Restore everyone's vitals]]"
+
+msgid "Restore my vitals"
+msgstr "[[Restore my vitals]]"
+
+#, c-format
+msgid "Restore vitals of %s"
+msgstr "[[Restore vitals of %s]]"
 
 #, c-format
 msgid ""
@@ -899,11 +1122,24 @@ msgstr ""
 "automatic resolution scale. Applies when you release the slider\n"
 "(the fonts re-bake). Saved to multivoid.ini (ui.scale).]]"
 
+msgid "Scare"
+msgstr "[[Scare]]"
+
+msgid "Search events..."
+msgstr "[[Search events...]]"
+
+msgid "Search items..."
+msgstr "[[Search items...]]"
+
 msgid "Select a category on the left."
 msgstr "[[Select a category on the left.]]"
 
 msgid "Select a server"
 msgstr "[[Select a server]]"
+
+#, c-format
+msgid "Selected: %s"
+msgstr "[[Selected: %s]]"
 
 msgid "Server address"
 msgstr "[[Server address]]"
@@ -923,6 +1159,12 @@ msgstr "[[Server settings]]"
 
 msgid "Session"
 msgstr "[[Session]]"
+
+msgid "Set clock"
+msgstr "[[Set clock]]"
+
+msgid "Sets the game's own clock. Jumping the day forward runs every event scheduled in between at once."
+msgstr "[[Sets the game's own clock. Jumping the day forward runs every event scheduled in between at once.]]"
 
 msgid ""
 "Show a chat line when another player does a shared action\n"
@@ -949,6 +1191,9 @@ msgstr "[[Show network stats overlay]]"
 msgid "Showing the %s server list."
 msgstr "[[Showing the %s server list.]]"
 
+msgid "Signal"
+msgstr "[[Signal]]"
+
 #, c-format
 msgid "Skin '%s' is not installed here -- keeping your current one"
 msgstr "[[Skin '%s' is not installed here -- keeping your current one]]"
@@ -963,11 +1208,35 @@ msgstr "[[Skins]]"
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr "[[Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak.]]"
 
+msgid "Snow"
+msgstr "[[Snow]]"
+
 msgid "Someone else has that item."
 msgstr "[[Someone else has that item.]]"
 
 msgid "Something was sent before the identity was proved."
 msgstr "[[Something was sent before the identity was proved.]]"
+
+msgid "Sound"
+msgstr "[[Sound]]"
+
+#, c-format
+msgid "Spawn %s in front of me"
+msgstr "[[Spawn %s in front of me]]"
+
+#, c-format
+msgid "Spawn at %s"
+msgstr "[[Spawn at %s]]"
+
+msgid "Spawn in front of me"
+msgstr "[[Spawn in front of me]]"
+
+msgid "Spawn killerWisp on a client"
+msgstr "[[Spawn killerWisp on a client]]"
+
+#, c-format
+msgid "Spawned %d."
+msgstr "[[Spawned %d.]]"
 
 msgid ""
 "Speech louder than this transmits. Watch the mic\n"
@@ -986,14 +1255,37 @@ msgstr "[[Starting your server -- loading %s]]"
 msgid "Stats"
 msgstr "[[Stats]]"
 
+msgid "Story"
+msgstr "[[Story]]"
+
+msgid "Sun position"
+msgstr "[[Sun position]]"
+
 msgid "Takes effect at the next session."
 msgstr "[[Takes effect at the next session.]]"
 
 msgid "Talking"
 msgstr "[[Talking]]"
 
+msgid "Teleport"
+msgstr "[[Teleport]]"
+
+#, c-format
+msgid "Teleport %s to me"
+msgstr "[[Teleport %s to me]]"
+
+msgid "Teleport clients to me"
+msgstr "[[Teleport clients to me]]"
+
+#, c-format
+msgid "Teleport me to %s"
+msgstr "[[Teleport me to %s]]"
+
 msgid "Teleport to me"
 msgstr "[[Teleport to me]]"
+
+msgid "Teleport to the host"
+msgstr "[[Teleport to the host]]"
 
 msgid "That can't be done right now."
 msgstr "[[That can't be done right now.]]"
@@ -1031,6 +1323,9 @@ msgstr "[[That kerfur will not take orders.]]"
 msgid "That line is too long."
 msgstr "[[That line is too long.]]"
 
+msgid "That player is not here."
+msgstr "[[That player is not here.]]"
+
 msgid "That text is too long."
 msgstr "[[That text is too long.]]"
 
@@ -1046,6 +1341,9 @@ msgstr "[[The connection fell too far behind and was closed.]]"
 msgid "The connection was lost."
 msgstr "[[The connection was lost.]]"
 
+msgid "The creatures are the game's own; every player sees them."
+msgstr "[[The creatures are the game's own; every player sees them.]]"
+
 msgid "The download of the host's world stopped part way through."
 msgstr "[[The download of the host's world stopped part way through.]]"
 
@@ -1054,6 +1352,15 @@ msgstr "[[The game is closing.]]"
 
 msgid "The game is shutting down."
 msgstr "[[The game is shutting down.]]"
+
+msgid "The game refused it."
+msgstr "[[The game refused it.]]"
+
+msgid "The game's item list is still loading -- it fills a little after the world is up."
+msgstr "[[The game's item list is still loading -- it fills a little after the world is up.]]"
+
+msgid "The game's spawn menu (Q) in story mode"
+msgstr "[[The game's spawn menu (Q) in story mode]]"
 
 msgid "The host banned you."
 msgstr "[[The host banned you.]]"
@@ -1094,17 +1401,26 @@ msgstr "[[The host does not allow the properties tool]]"
 msgid "The host does not allow the remover"
 msgstr "[[The host does not allow the remover]]"
 
+msgid "The host does not offer that to players."
+msgstr "[[The host does not offer that to players.]]"
+
 msgid "The host ended the session."
 msgstr "[[The host ended the session.]]"
 
 msgid "The host has no randomness to challenge with."
 msgstr "[[The host has no randomness to challenge with.]]"
 
+msgid "The host has not allowed cheats."
+msgstr "[[The host has not allowed cheats.]]"
+
 msgid "The host is settling its world"
 msgstr "[[The host is settling its world]]"
 
 msgid "The host kicked you."
 msgstr "[[The host kicked you.]]"
+
+msgid "The host lets players use cheats: Items, Economy and Events are on the left. Each use is a request the host checks and runs."
+msgstr "[[The host lets players use cheats: Items, Economy and Events are on the left. Each use is a request the host checks and runs.]]"
 
 msgid "The host never finished preparing its world for you."
 msgstr "[[The host never finished preparing its world for you.]]"
@@ -1117,6 +1433,9 @@ msgstr "[[The host plays a different version of the game.]]"
 
 msgid "The host received a malformed packet."
 msgstr "[[The host received a malformed packet.]]"
+
+msgid "The host refused that request."
+msgstr "[[The host refused that request.]]"
 
 msgid "The host runs a newer build of the mod. Update to join."
 msgstr "[[The host runs a newer build of the mod. Update to join.]]"
@@ -1135,6 +1454,12 @@ msgstr "[[The host was busy, and this connection was the slowest to prove itself
 
 msgid "The host will run that kerfur command in a moment."
 msgstr "[[The host will run that kerfur command in a moment.]]"
+
+msgid "The host's game cannot spawn that item."
+msgstr "[[The host's game cannot spawn that item.]]"
+
+msgid "The host's game has no such event."
+msgstr "[[The host's game has no such event.]]"
 
 msgid "The host's world arrived damaged and could not be used."
 msgstr "[[The host's world arrived damaged and could not be used.]]"
@@ -1163,11 +1488,17 @@ msgstr "[[The server is full.]]"
 msgid "The server list gave a bad address for this host."
 msgstr "[[The server list gave a bad address for this host.]]"
 
+msgid "The setting is saved with your other server settings and is also under Administration > Server settings."
+msgstr "[[The setting is saved with your other server settings and is also under Administration > Server settings.]]"
+
 msgid "The signaling server could not reach the host."
 msgstr "[[The signaling server could not reach the host.]]"
 
 msgid "The transport handshake with the host failed."
 msgstr "[[The transport handshake with the host failed.]]"
+
+msgid "The world clock is not available yet -- enter a world."
+msgstr "[[The world clock is not available yet -- enter a world.]]"
 
 msgid "Their identity is not proved yet."
 msgstr "[[Their identity is not proved yet.]]"
@@ -1246,6 +1577,9 @@ msgstr "[[Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under th
 msgid "Tidy up multivoid.ini"
 msgstr "[[Tidy up multivoid.ini]]"
 
+msgid "Too fast -- wait a moment."
+msgstr "[[Too fast -- wait a moment.]]"
+
 msgid "Too many actions at once, try again."
 msgstr "[[Too many actions at once, try again.]]"
 
@@ -1257,6 +1591,12 @@ msgstr "[[Too many kerfur commands at once, try again.]]"
 
 msgid "Too many password attempts. Try again in ten minutes."
 msgstr "[[Too many password attempts. Try again in ten minutes.]]"
+
+msgid "Tools the host grants"
+msgstr "[[Tools the host grants]]"
+
+msgid "Trigger a game event. 'day N' is the day it unlocks; the blue time is when the game schedules it."
+msgstr "[[Trigger a game event. 'day N' is the day it unlocks; the blue time is when the game schedules it.]]"
 
 msgid "Try again in a moment."
 msgstr "[[Try again in a moment.]]"
@@ -1273,6 +1613,18 @@ msgstr "[[Type an address first -- host or host:port.]]"
 msgid "Type the password this server was locked with."
 msgstr "[[Type the password this server was locked with.]]"
 
+msgid "UFO drops a body (ufoDropper_body_C)"
+msgstr "[[UFO drops a body (ufoDropper_body_C)]]"
+
+msgid "UFO drops a body (window variant)"
+msgstr "[[UFO drops a body (window variant)]]"
+
+msgid "UFO drops a car (ufoDropper_car_C)"
+msgstr "[[UFO drops a car (ufoDropper_car_C)]]"
+
+msgid "UFO drops a tank + pig"
+msgstr "[[UFO drops a tank + pig]]"
+
 msgid "UI size"
 msgstr "[[UI size]]"
 
@@ -1281,6 +1633,9 @@ msgstr "[[UNTESTED GAME VERSION]]"
 
 msgid "Unknown settings (nothing reads these)"
 msgstr "[[Unknown settings (nothing reads these)]]"
+
+msgid "Unstuck"
+msgstr "[[Unstuck]]"
 
 #, c-format
 msgid "Up:    %1$s now,  %2$s total,  %3$llu packet"
@@ -1374,6 +1729,9 @@ msgstr "[[Waiting for the host to capture its world]]"
 
 msgid "Waiting for the host's world"
 msgstr "[[Waiting for the host's world]]"
+
+msgid "Weather"
+msgstr "[[Weather]]"
 
 msgid "What happened"
 msgstr "[[What happened]]"
@@ -1469,8 +1827,104 @@ msgstr "[[Your net.ice=relay keeps your address from other players, and a direct
 msgid "Your player id %s"
 msgstr "[[Your player id %s]]"
 
+msgid "Your players now see Items, Economy and Events under Player tools. Each use is a request you check and run: it is logged on your machine and shown in your chat. Story events and anything that moves players stay yours alone."
+msgstr "[[Your players now see Items, Economy and Events under Player tools. Each use is a request you check and run: it is logged on your machine and shown in your chat. Story events and anything that moves players stay yours alone.]]"
+
+msgid "[ARMED - walk in]"
+msgstr "[[[ARMED - walk in]]]"
+
+msgid "[FIRED]"
+msgstr "[[[FIRED]]]"
+
+msgid "[volume ?]"
+msgstr "[[[volume ?]]]"
+
+msgid "[volume-gated]"
+msgstr "[[[volume-gated]]]"
+
+msgid "a walking mannequin"
+msgstr "[[a walking mannequin]]"
+
+msgid "ambient"
+msgstr "[[ambient]]"
+
+msgid "anomalous flowers (mainGamemode.flowerSpawner)"
+msgstr "[[anomalous flowers (mainGamemode.flowerSpawner)]]"
+
+msgid "anti-gravity (gated isPhysicalEvents)"
+msgstr "[[anti-gravity (gated isPhysicalEvents)]]"
+
+msgid "ariral 'sus' interaction (per-player)"
+msgstr "[[ariral 'sus' interaction (per-player)]]"
+
+msgid "ariral ATV repair (toolbox)"
+msgstr "[[ariral ATV repair (toolbox)]]"
+
+msgid "ariral refuels the ATV"
+msgstr "[[ariral refuels the ATV]]"
+
+msgid "ariral satellite signal"
+msgstr "[[ariral satellite signal]]"
+
+msgid "ariral signal (forceObjects)"
+msgstr "[[ariral signal (forceObjects)]]"
+
+msgid "ariral speak message (forceObjects)"
+msgstr "[[ariral speak message (forceObjects)]]"
+
+msgid "ariral throws SPIKED food (bad tier)"
+msgstr "[[ariral throws SPIKED food (bad tier)]]"
+
+msgid "ariral throws a drive prop (good tier)"
+msgstr "[[ariral throws a drive prop (good tier)]]"
+
+msgid "ariral throws a food prop (good tier)"
+msgstr "[[ariral throws a food prop (good tier)]]"
+
+msgid "ariral throws an EXPLOSIVE drive (bad tier)"
+msgstr "[[ariral throws an EXPLOSIVE drive (bad tier)]]"
+
+msgid "ariral treehouse build stage 0"
+msgstr "[[ariral treehouse build stage 0]]"
+
+msgid "arms a paper-gray prop scare"
+msgstr "[[arms a paper-gray prop scare]]"
+
+msgid "arms a wisp_C swarm"
+msgstr "[[arms a wisp_C swarm]]"
+
+msgid "arms arirShip_C (radio-tower ariral ship)"
+msgstr "[[arms arirShip_C (radio-tower ariral ship)]]"
+
+msgid "arms prop_arirEgg_C"
+msgstr "[[arms prop_arirEgg_C]]"
+
+msgid "arms prop_cookiebox_C"
+msgstr "[[arms prop_cookiebox_C]]"
+
+msgid "arms the piramid structure"
+msgstr "[[arms the piramid structure]]"
+
+msgid "arms the warning obelisk + alarms"
+msgstr "[[arms the warning obelisk + alarms]]"
+
+msgid "bad sun (mainGamemode.'Spawn Bad Sun')"
+msgstr "[[bad sun (mainGamemode.'Spawn Bad Sun')]]"
+
 msgid "banned"
 msgstr "[[banned]]"
+
+msgid "boar invasion (90 min)"
+msgstr "[[boar invasion (90 min)]]"
+
+msgid "bottom-hole controller"
+msgstr "[[bottom-hole controller]]"
+
+msgid "breaks the Romeo/Sierra servers"
+msgstr "[[breaks the Romeo/Sierra servers]]"
+
+msgid "breaks the Victor servers"
+msgstr "[[breaks the Victor servers]]"
 
 msgid "could not be read"
 msgstr "[[could not be read]]"
@@ -1479,11 +1933,87 @@ msgstr "[[could not be read]]"
 msgid "current: %s"
 msgstr "[[current: %s]]"
 
+msgid "day"
+msgstr "[[day]]"
+
+#, c-format
+msgid "day %d"
+msgstr "[[day %d]]"
+
+msgid "day-47 END (roar; alphaFinish gate)"
+msgstr "[[day-47 END (roar; alphaFinish gate)]]"
+
+msgid "daynightCycle.causeRain(false)"
+msgstr "[[daynightCycle.causeRain(false)]]"
+
+msgid "daynightCycle.causeRain(true)"
+msgstr "[[daynightCycle.causeRain(true)]]"
+
 msgid "direct"
 msgstr "[[direct]]"
 
+msgid "door keypad guessed (event_passwordGuesser_C)"
+msgstr "[[door keypad guessed (event_passwordGuesser_C)]]"
+
+msgid "drops a croissant + the enacros note"
+msgstr "[[drops a croissant + the enacros note]]"
+
+msgid "drops sushi + the enasus note"
+msgstr "[[drops sushi + the enasus note]]"
+
+msgid "event_crys"
+msgstr "[[event_crys]]"
+
+msgid "explosive gascans (event_funnyGascans_C)"
+msgstr "[[explosive gascans (event_funnyGascans_C)]]"
+
+msgid "forceObjects += looker"
+msgstr "[[forceObjects += looker]]"
+
+msgid "forceObjects += looker (sky)"
+msgstr "[[forceObjects += looker (sky)]]"
+
+msgid "forceObjects += looker (window)"
+msgstr "[[forceObjects += looker (window)]]"
+
+msgid "graffiti decal variant 0 (grime_arirGraffiti_C)"
+msgstr "[[graffiti decal variant 0 (grime_arirGraffiti_C)]]"
+
+msgid "graffiti decal variant 1"
+msgstr "[[graffiti decal variant 1]]"
+
+msgid "graffiti decal variant 2"
+msgstr "[[graffiti decal variant 2]]"
+
+msgid "graffiti decal variant 3"
+msgstr "[[graffiti decal variant 3]]"
+
+msgid "graffiti decal variant 4"
+msgstr "[[graffiti decal variant 4]]"
+
+msgid "graffiti decal variant 5"
+msgstr "[[graffiti decal variant 5]]"
+
+msgid "graffiti decal variant 6"
+msgstr "[[graffiti decal variant 6]]"
+
+msgid "gray forest invasion controller"
+msgstr "[[gray forest invasion controller]]"
+
+msgid "h"
+msgstr "[[h]]"
+
 msgid "host or host:port"
 msgstr "[[host or host:port]]"
+
+msgid "insomniac spawn attempt (internally gated -- may no-op)"
+msgstr "[[insomniac spawn attempt (internally gated -- may no-op)]]"
+
+msgid "lights turn off (event_lightsTurnoffer_C)"
+msgstr "[[lights turn off (event_lightsTurnoffer_C)]]"
+
+msgid "m"
+msgstr "[[m]]"
 
 msgid "multivoid.ini could not be read"
 msgstr "[[multivoid.ini could not be read]]"
@@ -1517,6 +2047,9 @@ msgstr ""
 msgid "n/a"
 msgstr "[[n/a]]"
 
+msgid "noiser_C x3 (alien noises)"
+msgstr "[[noiser_C x3 (alien noises)]]"
+
 msgid "not blocked"
 msgstr "[[not blocked]]"
 
@@ -1539,21 +2072,159 @@ msgstr "[[p2p]]"
 msgid "password"
 msgstr "[[password]]"
 
+msgid "per-player false-enter scare"
+msgstr "[[per-player false-enter scare]]"
+
+msgid "per-player gray hallucination"
+msgstr "[[per-player gray hallucination]]"
+
+msgid "per-player mannequin scare"
+msgstr "[[per-player mannequin scare]]"
+
+msgid "per-player toe-stab scare"
+msgstr "[[per-player toe-stab scare]]"
+
+msgid "per-player vent scare"
+msgstr "[[per-player vent scare]]"
+
+msgid "picnic signal (forceObjects)"
+msgstr "[[picnic signal (forceObjects)]]"
+
+msgid "piramid signal (forceObjects)"
+msgstr "[[piramid signal (forceObjects)]]"
+
 #, c-format
 msgid "pkt/s  %1$.0f in   %2$.0f out"
 msgstr "[[pkt/s  %1$.0f in   %2$.0f out]]"
 
+msgid "places the picnic props"
+msgstr "[[places the picnic props]]"
+
 msgid "reason (shown in the Banned list)"
 msgstr "[[reason (shown in the Banned list)]]"
+
+msgid "red-sky ambience (mainGamemode.spawnRedSky)"
+msgstr "[[red-sky ambience (mainGamemode.spawnRedSky)]]"
+
+msgid "removes the picnic props"
+msgstr "[[removes the picnic props]]"
+
+msgid "rep-gated"
+msgstr "[[rep-gated]]"
+
+msgid "rockThrower_C x3 (rocks at window)"
+msgstr "[[rockThrower_C x3 (rocks at window)]]"
 
 msgid "say:"
 msgstr "[[say:]]"
 
+msgid "shooting-star/meteor emitter (eff_shootingStar_rain)"
+msgstr "[[shooting-star/meteor emitter (eff_shootingStar_rain)]]"
+
+msgid "sleep/dream (trigger_bedEvent)"
+msgstr "[[sleep/dream (trigger_bedEvent)]]"
+
+msgid "solar sky/light flash + boom"
+msgstr "[[solar sky/light flash + boom]]"
+
+msgid "spawns alienJump_C"
+msgstr "[[spawns alienJump_C]]"
+
+msgid "spawns arirBusterSpawner_C"
+msgstr "[[spawns arirBusterSpawner_C]]"
+
+msgid "spawns arirTrasher_C"
+msgstr "[[spawns arirTrasher_C]]"
+
+msgid "spawns begoExplosion_C x4"
+msgstr "[[spawns begoExplosion_C x4]]"
+
+msgid "spawns event_vaccine_C"
+msgstr "[[spawns event_vaccine_C]]"
+
+msgid "spawns hillRollerSpawner_C"
+msgstr "[[spawns hillRollerSpawner_C]]"
+
+msgid "spawns kocker_C (vent banging)"
+msgstr "[[spawns kocker_C (vent banging)]]"
+
+msgid "spawns morningUfo_C"
+msgstr "[[spawns morningUfo_C]]"
+
+msgid "spawns npc_arirFollower_C"
+msgstr "[[spawns npc_arirFollower_C]]"
+
+msgid "spawns oilStainSpawn_C x8"
+msgstr "[[spawns oilStainSpawn_C x8]]"
+
+msgid "spawns prop_bombbox_C"
+msgstr "[[spawns prop_bombbox_C]]"
+
+msgid "spawns prop_cookiebox_C (gift)"
+msgstr "[[spawns prop_cookiebox_C (gift)]]"
+
+msgid "spawns saltpile_C (salt heart)"
+msgstr "[[spawns saltpile_C (salt heart)]]"
+
+msgid "spawns soltomiaCleaning_C"
+msgstr "[[spawns soltomiaCleaning_C]]"
+
+msgid "spawns tentacleBallsFollower_C"
+msgstr "[[spawns tentacleBallsFollower_C]]"
+
+msgid "spawns the dreambase + pivots"
+msgstr "[[spawns the dreambase + pivots]]"
+
+msgid "spawns the rozitBorg mothership"
+msgstr "[[spawns the rozitBorg mothership]]"
+
+msgid "spawns ventCrawler_C"
+msgstr "[[spawns ventCrawler_C]]"
+
+msgid "superEgger_C invasion"
+msgstr "[[superEgger_C invasion]]"
+
+msgid "teleports the triggering player"
+msgstr "[[teleports the triggering player]]"
+
+msgid "terminal types commands (event_consoleWrite_C)"
+msgstr "[[terminal types commands (event_consoleWrite_C)]]"
+
+msgid "the 'peace' signal (forceObjects)"
+msgstr "[[the 'peace' signal (forceObjects)]]"
+
 msgid "the host"
 msgstr "[[the host]]"
 
+msgid "thick rolling fog NOW (weatherFogController_C, 5-20 min)"
+msgstr "[[thick rolling fog NOW (weatherFogController_C, 5-20 min)]]"
+
 msgid "this player"
 msgstr "[[this player]]"
+
+msgid "trash props at doorways"
+msgstr "[[trash props at doorways]]"
+
+msgid "treehouse build stage 1"
+msgstr "[[treehouse build stage 1]]"
+
+msgid "treehouse build stage 2"
+msgstr "[[treehouse build stage 2]]"
+
+msgid "treehouse build stage 3"
+msgstr "[[treehouse build stage 3]]"
+
+msgid "treehouse build stage 4"
+msgstr "[[treehouse build stage 4]]"
+
+msgid "treehouse build stage 5 (final)"
+msgstr "[[treehouse build stage 5 (final)]]"
+
+msgid "treehouse kidnapping (sleep -> teleport)"
+msgstr "[[treehouse kidnapping (sleep -> teleport)]]"
+
+msgid "trigger"
+msgstr "[[trigger]]"
 
 msgid "type a command -- 'help'"
 msgstr "[[type a command -- 'help']]"

@@ -17,6 +17,23 @@ msgstr ""
 msgid "%1$.1f / %2$.1f MB"
 msgstr ""
 
+#: src/ui/cheat_items_pane.cpp
+#, c-format
+msgid "%1$d of %2$d items"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+#, c-format
+msgid "%1$s  |  %2$s"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+#, c-format
+msgid ""
+"%1$s  |  %2$s\n"
+"Can wreck a save: Ctrl+click to trigger."
+msgstr ""
+
 #: src/ui/bug_report_pane.cpp
 #, c-format
 msgid "%1$s (%2$llu KB)"
@@ -65,6 +82,11 @@ msgstr ""
 #: src/ui/config_review_panel.cpp
 #, c-format
 msgid "%1$s = '%2$s' -- not a known setting (typo, or a retired key)."
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+#, c-format
+msgid "%1$s added %2$d points"
 msgstr ""
 
 #: src/ui/config_review_panel.cpp
@@ -179,6 +201,11 @@ msgstr ""
 msgid "%1$s left the game"
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+#, c-format
+msgid "%1$s removed %2$d points"
+msgstr ""
+
 #: src/coop/comms/peer_action_feed.cpp
 #, c-format
 msgid "%1$s saved the game"
@@ -196,9 +223,19 @@ msgid_plural "%1$s sold it for %2$lld points (the host's price)"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/coop/cheats/cheat_request.cpp
+#, c-format
+msgid "%1$s spawned %2$d x %3$s"
+msgstr ""
+
 #: src/coop/comms/peer_action_feed.cpp
 #, c-format
 msgid "%1$s tried to save the game, but it cannot be saved during an event"
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+#, c-format
+msgid "%1$s triggered the event %2$s"
 msgstr ""
 
 #: src/coop/session/player_handshake_version.cpp
@@ -236,6 +273,11 @@ msgstr ""
 msgid "%d direct"
 msgstr ""
 
+#: src/ui/cheat_items_pane.cpp
+#, c-format
+msgid "%d items"
+msgstr ""
+
 #: src/ui/scoreboard.cpp
 #, c-format
 msgid "%d online"
@@ -270,8 +312,33 @@ msgstr[1] ""
 msgid "%s (without passwords)"
 msgstr ""
 
+#: src/ui/cheat_player_picker.cpp
+#, c-format
+msgid "%s (you)"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "(Unstuck lifts you 1.5 m straight up)"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "(food, sleep and health)"
+msgstr ""
+
 #: src/ui/scoreboard.cpp
 msgid "(hidden -- friends join by invite/IP)"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+msgid "(it goes for that player, not for you)"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+msgid "(it stalks you; the other players see a harmless copy)"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+msgid "(its beam and blast run on the host)"
 msgstr ""
 
 #: src/ui/server_browser_panels.cpp
@@ -298,6 +365,14 @@ msgstr ""
 msgid "(system default)"
 msgstr ""
 
+#: src/ui/cheat_world_pane.cpp
+msgid "(the clients follow)"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+msgid "(the game's own; use a throwaway save)"
+msgstr ""
+
 #: src/ui/server_browser_panels.cpp
 msgid "(unnamed)"
 msgstr ""
@@ -308,6 +383,10 @@ msgstr ""
 
 #: src/ui/server_browser_rows.cpp
 msgid "(your server)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "2nd Victor server break"
 msgstr ""
 
 #: src/ui/net_stats_panel.cpp
@@ -342,12 +421,28 @@ msgstr ""
 msgid "A second hello arrived on one connection."
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "ATV boobytrap (car.trap = true)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ATV teleport"
+msgstr ""
+
 #: src/ui/admin_panel.cpp
 msgid "Actions"
 msgstr ""
 
 #: src/ui/voice_panel.cpp
 msgid "Activation"
+msgstr ""
+
+#: src/ui/cheat_economy_pane.cpp
+msgid "Add"
+msgstr ""
+
+#: src/ui/cheat_economy_pane.cpp
+msgid "Add points"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -366,12 +461,32 @@ msgstr ""
 msgid "Also refuses anyone connecting from the same address -- people who share their router or their provider's address are refused too. It only works on a direct connection: a player who comes through a relay is refused by their identity alone."
 msgstr ""
 
+#: src/ui/cheat_economy_pane.cpp
+msgid "Amount"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "An event with a level volume only arms it: walk in, or press NOW! to complete it. Red events can wreck a save: Ctrl+click."
+msgstr ""
+
 #: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "Another player is using that item."
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Ariral"
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "As a client you see only what the host allows you."
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+msgid "Asked the host..."
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "BLACK fog + eyer_C ghosts (mainGamemode)"
 msgstr ""
 
 #: src/ui/scoreboard.cpp
@@ -412,6 +527,10 @@ msgstr ""
 msgid "Chat"
 msgstr ""
 
+#: src/ui/player_tools_pane.cpp
+msgid "Cheats"
+msgstr ""
+
 #: src/ui/game_build_dialog.cpp
 msgid "Check for an update"
 msgstr ""
@@ -422,6 +541,10 @@ msgstr ""
 
 #: src/ui/scoreboard.cpp
 msgid "Click to mute your mic"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Clock"
 msgstr ""
 
 #: src/ui/end_reason_dialog.cpp
@@ -464,6 +587,10 @@ msgstr ""
 
 #: src/ui/game_build_dialog.cpp
 msgid "Continue anyway"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "Cosmetic"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -530,6 +657,18 @@ msgstr ""
 msgid "Could not write the report file."
 msgstr ""
 
+#: src/ui/cheat_items_pane.cpp
+msgid "Count"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "Creature"
+msgstr ""
+
+#: src/ui/cheat_economy_pane.cpp
+msgid "Custom amount"
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "Custom nickname color"
 msgstr ""
@@ -568,6 +707,10 @@ msgstr ""
 msgid "Disconnected now and refused whenever they rejoin."
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+msgid "Done."
+msgstr ""
+
 #: src/ui/net_stats_panel.cpp
 #, c-format
 msgid "Down:  %1$s now,  %2$s total,  %3$llu packet"
@@ -585,6 +728,10 @@ msgid ""
 "(default)"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Dream"
+msgstr ""
+
 #: src/ui/config_review_panel.cpp
 msgid "Duplicate settings with different values"
 msgstr ""
@@ -593,8 +740,20 @@ msgstr ""
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr ""
 
+#: src/ui/dev_menu.cpp
+msgid "Economy"
+msgstr ""
+
 #: src/ui/chat_input.cpp
 msgid "Enter = send, Esc = close, Up/Down = history"
+msgstr ""
+
+#: src/ui/dev_menu.cpp
+msgid "Entities"
+msgstr ""
+
+#: src/ui/dev_menu.cpp
+msgid "Events"
 msgstr ""
 
 #: src/ui/admin_panel.cpp
@@ -618,6 +777,14 @@ msgstr ""
 msgid "Finding a route to %s"
 msgstr ""
 
+#: src/ui/player_tools_pane.cpp
+msgid "Free camera"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "Free camera: the host has not allowed this."
+msgstr ""
+
 #: src/ui/world_rules_panel.cpp
 msgid "Gamemode:"
 msgstr ""
@@ -625,6 +792,10 @@ msgstr ""
 #: src/ui/dev_menu.cpp
 #, c-format
 msgid "Graphics API: %s"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "HOME also toggles it. WASD move, Space and Ctrl up and down, Shift fast, wheel changes the speed."
 msgstr ""
 
 #: src/ui/scoreboard.cpp
@@ -648,12 +819,20 @@ msgstr ""
 msgid "Host game"
 msgstr ""
 
+#: src/ui/dev_menu.cpp
+msgid "Host tools"
+msgstr ""
+
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
 msgid "ID"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
 msgid "Interface"
+msgstr ""
+
+#: src/ui/dev_menu.cpp
+msgid "Items"
 msgstr ""
 
 #: src/coop/session/player_handshake.cpp
@@ -692,8 +871,16 @@ msgstr ""
 msgid "Left the session."
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc src/ui/cheat_access_pane.cpp
+msgid "Let players use cheats"
+msgstr ""
+
 #: include/coop/config/config_registry_rows.inc
 msgid "Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay."
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Let the players in this game use the host's cheat tools: spawn items, add or remove points and trigger events. Their requests are sent to the host, which checks and runs each one; the host's own tools are always its own. Off by default."
 msgstr ""
 
 #: src/ui/voice_panel.cpp
@@ -745,6 +932,10 @@ msgstr ""
 msgid "Microphone"
 msgstr ""
 
+#: src/ui/player_tools_pane.cpp
+msgid "Move"
+msgstr ""
+
 #: src/ui/game_build_dialog.cpp
 msgid "Multiplayer may not work: you may not see other players, and some features may be off. Check for a Multivoid update made for your game version."
 msgstr ""
@@ -786,6 +977,10 @@ msgstr ""
 msgid "Muted for you (click for volume)"
 msgstr ""
 
+#: src/ui/dev_menu.cpp
+msgid "Myself"
+msgstr ""
+
 #: src/ui/net_stats_panel.cpp
 #, c-format
 msgid "NET  %1$llu peer  %2$d ms"
@@ -802,6 +997,10 @@ msgstr[1] ""
 
 #: src/ui/net_stats_panel.cpp
 msgid "NET  offline"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "NOW!"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -888,12 +1087,21 @@ msgstr ""
 msgid "Not enough space."
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+msgid "Not ready yet -- try again in a moment."
+msgstr ""
+
 #: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "Not ready yet, try again in a moment."
 msgstr ""
 
 #: src/coop/props/remover_request.cpp
 msgid "Not removable right now"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+#, c-format
+msgid "Now: day %1$d, %2$02d:%3$02d"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -912,6 +1120,18 @@ msgstr ""
 
 #: src/ui/admin_panel.cpp
 msgid "Online"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp src/ui/cheat_world_pane.cpp
+msgid "Only the host can do this."
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Only the sun's angle; the clock above is what events and the save follow."
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "Open it now"
 msgstr ""
 
 #: src/ui/world_rules_panel.cpp
@@ -957,8 +1177,16 @@ msgstr ""
 msgid "Permanently ban %s?"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Physics"
+msgstr ""
+
 #: src/ui/server_browser_actions.cpp
 msgid "Pick a server from the list first."
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "Pick an item from the list."
 msgstr ""
 
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
@@ -967,6 +1195,10 @@ msgstr ""
 
 #: src/coop/comms/peer_action_feed.cpp src/ui/admin_panel.cpp src/ui/scoreboard.cpp
 msgid "Player"
+msgstr ""
+
+#: src/ui/dev_menu.cpp
+msgid "Player cheats"
 msgstr ""
 
 #: src/ui/admin_panel.cpp
@@ -982,7 +1214,15 @@ msgid "Player id %s"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
+msgid "Player tools"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp src/ui/dev_menu.cpp
 msgid "Players"
+msgstr ""
+
+#: src/ui/cheat_access_pane.cpp
+msgid "Players see only their own tools (teleport to you, unstuck, what you grant)."
 msgstr ""
 
 #: src/ui/server_browser_panels.cpp src/ui/server_browser_rows.cpp
@@ -994,8 +1234,29 @@ msgstr ""
 msgid "Please describe what happened (at least 20 characters)."
 msgstr ""
 
+#: src/ui/cheat_economy_pane.cpp
+#, c-format
+msgid "Points: %d"
+msgstr ""
+
+#: src/ui/cheat_economy_pane.cpp
+msgid "Points: not available yet"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "Position and camera readout"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "Position readout: the host has not allowed this."
+msgstr ""
+
 #: src/ui/skins_panel.cpp
 msgid "Preview tile = <skin name>.png/.bmp beside the pak."
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "Prop"
 msgstr ""
 
 #: src/ui/voice_panel.cpp
@@ -1003,8 +1264,16 @@ msgstr ""
 msgid "Push-to-talk (key: %s)"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "RANDOM rep-tiered ariral prank (summonArirPrank)"
+msgstr ""
+
 #: src/ui/link_format.cpp
 msgid "RELAY"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Rain, fog and the rest of the weather are under Events > Weather."
 msgstr ""
 
 #: src/ui/world_rules_panel.cpp
@@ -1043,8 +1312,16 @@ msgstr ""
 msgid "Release toast"
 msgstr ""
 
-#: src/coop/dispatch/event_feed.cpp src/ui/admin_panel.cpp src/ui/scoreboard.cpp
+#: src/coop/dispatch/event_feed.cpp src/ui/admin_panel.cpp src/ui/cheat_player_picker.cpp src/ui/scoreboard.cpp
 msgid "Remote player"
+msgstr ""
+
+#: src/ui/cheat_economy_pane.cpp
+msgid "Remove"
+msgstr ""
+
+#: src/ui/cheat_economy_pane.cpp
+msgid "Remove points"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -1057,6 +1334,19 @@ msgstr ""
 
 #: src/ui/voice_panel.cpp
 msgid "Rescan devices"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Restore everyone's vitals"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Restore my vitals"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+#, c-format
+msgid "Restore vitals of %s"
 msgstr ""
 
 #: src/ui/config_review_panel.cpp
@@ -1111,12 +1401,29 @@ msgid ""
 "(the fonts re-bake). Saved to multivoid.ini (ui.scale)."
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Scare"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "Search events..."
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "Search items..."
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "Select a category on the left."
 msgstr ""
 
 #: src/ui/server_browser_panels.cpp
 msgid "Select a server"
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+#, c-format
+msgid "Selected: %s"
 msgstr ""
 
 #: src/ui/browser_input_screens.cpp
@@ -1142,6 +1449,14 @@ msgstr ""
 
 #: src/ui/net_stats_panel.cpp
 msgid "Session"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Set clock"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Sets the game's own clock. Jumping the day forward runs every event scheduled in between at once."
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -1172,6 +1487,10 @@ msgstr ""
 msgid "Showing the %s server list."
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Signal"
+msgstr ""
+
 #: src/coop/player/local_body.cpp
 #, c-format
 msgid "Skin '%s' is not installed here -- keeping your current one"
@@ -1190,12 +1509,43 @@ msgstr ""
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr ""
 
+#: src/ui/cheat_world_pane.cpp
+msgid "Snow"
+msgstr ""
+
 #: src/coop/props/prop_act_request.cpp
 msgid "Someone else has that item."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "Something was sent before the identity was proved."
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "Sound"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+#, c-format
+msgid "Spawn %s in front of me"
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+#, c-format
+msgid "Spawn at %s"
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "Spawn in front of me"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+msgid "Spawn killerWisp on a client"
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+#, c-format
+msgid "Spawned %d."
 msgstr ""
 
 #: src/ui/voice_panel.cpp
@@ -1217,6 +1567,14 @@ msgstr ""
 msgid "Stats"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Story"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Sun position"
+msgstr ""
+
 #: src/ui/server_settings_pane.cpp
 msgid "Takes effect at the next session."
 msgstr ""
@@ -1225,8 +1583,30 @@ msgstr ""
 msgid "Talking"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "Teleport"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+#, c-format
+msgid "Teleport %s to me"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "Teleport clients to me"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+#, c-format
+msgid "Teleport me to %s"
+msgstr ""
+
 #: src/ui/scoreboard.cpp
 msgid "Teleport to me"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "Teleport to the host"
 msgstr ""
 
 #: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
@@ -1277,6 +1657,10 @@ msgstr ""
 msgid "That line is too long."
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+msgid "That player is not here."
+msgstr ""
+
 #: src/coop/bug_report/report_form.cpp
 msgid "That text is too long."
 msgstr ""
@@ -1297,6 +1681,10 @@ msgstr ""
 msgid "The connection was lost."
 msgstr ""
 
+#: src/ui/cheat_entities_pane.cpp
+msgid "The creatures are the game's own; every player sees them."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The download of the host's world stopped part way through."
 msgstr ""
@@ -1307,6 +1695,18 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The game is shutting down."
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+msgid "The game refused it."
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "The game's item list is still loading -- it fills a little after the world is up."
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "The game's spawn menu (Q) in story mode"
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1361,6 +1761,10 @@ msgstr ""
 msgid "The host does not allow the remover"
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+msgid "The host does not offer that to players."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The host ended the session."
 msgstr ""
@@ -1369,12 +1773,20 @@ msgstr ""
 msgid "The host has no randomness to challenge with."
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp src/ui/player_tools_pane.cpp
+msgid "The host has not allowed cheats."
+msgstr ""
+
 #: src/ui/loading_screen.cpp
 msgid "The host is settling its world"
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The host kicked you."
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "The host lets players use cheats: Items, Economy and Events are on the left. Each use is a request the host checks and runs."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1391,6 +1803,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The host received a malformed packet."
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+msgid "The host refused that request."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1415,6 +1831,14 @@ msgstr ""
 
 #: src/coop/creatures/kerfur_command_answer.cpp
 msgid "The host will run that kerfur command in a moment."
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+msgid "The host's game cannot spawn that item."
+msgstr ""
+
+#: src/coop/cheats/cheat_request.cpp
+msgid "The host's game has no such event."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1453,12 +1877,20 @@ msgstr ""
 msgid "The server list gave a bad address for this host."
 msgstr ""
 
+#: src/ui/cheat_access_pane.cpp
+msgid "The setting is saved with your other server settings and is also under Administration > Server settings."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The signaling server could not reach the host."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The transport handshake with the host failed."
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "The world clock is not available yet -- enter a world."
 msgstr ""
 
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
@@ -1555,6 +1987,10 @@ msgstr ""
 msgid "Tidy up multivoid.ini"
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+msgid "Too fast -- wait a moment."
+msgstr ""
+
 #: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "Too many actions at once, try again."
 msgstr ""
@@ -1569,6 +2005,14 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "Too many password attempts. Try again in ten minutes."
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "Tools the host grants"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "Trigger a game event. 'day N' is the day it unlocks; the blue time is when the game schedules it."
 msgstr ""
 
 #: src/coop/props/container_act_request.cpp
@@ -1591,6 +2035,22 @@ msgstr ""
 msgid "Type the password this server was locked with."
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "UFO drops a body (ufoDropper_body_C)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "UFO drops a body (window variant)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "UFO drops a car (ufoDropper_car_C)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "UFO drops a tank + pig"
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "UI size"
 msgstr ""
@@ -1601,6 +2061,10 @@ msgstr ""
 
 #: src/ui/config_review_panel.cpp
 msgid "Unknown settings (nothing reads these)"
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "Unstuck"
 msgstr ""
 
 #: src/ui/net_stats_panel.cpp
@@ -1722,6 +2186,10 @@ msgstr ""
 msgid "Waiting for the host's world"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp src/ui/cheat_world_pane.cpp
+msgid "Weather"
+msgstr ""
+
 #: src/ui/bug_report_pane.cpp
 msgid "What happened"
 msgstr ""
@@ -1738,7 +2206,7 @@ msgstr ""
 msgid "Whispering"
 msgstr ""
 
-#: src/ui/dev_menu.cpp
+#: src/coop/dev/event_trigger.cpp src/ui/dev_menu.cpp
 msgid "World"
 msgstr ""
 
@@ -1846,8 +2314,136 @@ msgstr ""
 msgid "Your player id %s"
 msgstr ""
 
+#: src/ui/cheat_access_pane.cpp
+msgid "Your players now see Items, Economy and Events under Player tools. Each use is a request you check and run: it is logged on your machine and shown in your chat. Story events and anything that moves players stay yours alone."
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "[ARMED - walk in]"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "[FIRED]"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "[volume ?]"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "[volume-gated]"
+msgstr ""
+
+#: src/ui/cheat_entities_pane.cpp
+msgid "a walking mannequin"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "ambient"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "anomalous flowers (mainGamemode.flowerSpawner)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "anti-gravity (gated isPhysicalEvents)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral 'sus' interaction (per-player)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral ATV repair (toolbox)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral refuels the ATV"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral satellite signal"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral signal (forceObjects)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral speak message (forceObjects)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral throws SPIKED food (bad tier)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral throws a drive prop (good tier)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral throws a food prop (good tier)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral throws an EXPLOSIVE drive (bad tier)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "ariral treehouse build stage 0"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms a paper-gray prop scare"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms a wisp_C swarm"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms arirShip_C (radio-tower ariral ship)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms prop_arirEgg_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms prop_cookiebox_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms the piramid structure"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "arms the warning obelisk + alarms"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "bad sun (mainGamemode.'Spawn Bad Sun')"
+msgstr ""
+
 #: src/ui/admin_panel.cpp
 msgid "banned"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "boar invasion (90 min)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "bottom-hole controller"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "breaks the Romeo/Sierra servers"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "breaks the Victor servers"
 msgstr ""
 
 #: src/coop/bug_report/report_files.cpp
@@ -1859,12 +2455,113 @@ msgstr ""
 msgid "current: %s"
 msgstr ""
 
+#: src/ui/cheat_world_pane.cpp
+msgid "day"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+#, c-format
+msgid "day %d"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "day-47 END (roar; alphaFinish gate)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "daynightCycle.causeRain(false)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "daynightCycle.causeRain(true)"
+msgstr ""
+
 #: src/ui/server_browser_panels.cpp
 msgid "direct"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "door keypad guessed (event_passwordGuesser_C)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "drops a croissant + the enacros note"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "drops sushi + the enasus note"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "event_crys"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "explosive gascans (event_funnyGascans_C)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "forceObjects += looker"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "forceObjects += looker (sky)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "forceObjects += looker (window)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 0 (grime_arirGraffiti_C)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 1"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 2"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 3"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 4"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 5"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "graffiti decal variant 6"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "gray forest invasion controller"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "h"
+msgstr ""
+
 #: src/ui/browser_input_screens.cpp
 msgid "host or host:port"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "insomniac spawn attempt (internally gated -- may no-op)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "lights turn off (event_lightsTurnoffer_C)"
+msgstr ""
+
+#: src/ui/cheat_world_pane.cpp
+msgid "m"
 msgstr ""
 
 #: src/ui/config_review_panel.cpp
@@ -1901,6 +2598,10 @@ msgstr ""
 msgid "n/a"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "noiser_C x3 (alien noises)"
+msgstr ""
+
 #: src/ui/admin_panel.cpp
 msgid "not blocked"
 msgstr ""
@@ -1930,25 +2631,209 @@ msgstr ""
 msgid "password"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "per-player false-enter scare"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "per-player gray hallucination"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "per-player mannequin scare"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "per-player toe-stab scare"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "per-player vent scare"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "picnic signal (forceObjects)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "piramid signal (forceObjects)"
+msgstr ""
+
 #: src/ui/net_stats_panel.cpp
 #, c-format
 msgid "pkt/s  %1$.0f in   %2$.0f out"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "places the picnic props"
 msgstr ""
 
 #: src/ui/admin_panel.cpp
 msgid "reason (shown in the Banned list)"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "red-sky ambience (mainGamemode.spawnRedSky)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "removes the picnic props"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "rep-gated"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "rockThrower_C x3 (rocks at window)"
+msgstr ""
+
 #: src/ui/chat_input.cpp
 msgid "say:"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "shooting-star/meteor emitter (eff_shootingStar_rain)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "sleep/dream (trigger_bedEvent)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "solar sky/light flash + boom"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns alienJump_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns arirBusterSpawner_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns arirTrasher_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns begoExplosion_C x4"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns event_vaccine_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns hillRollerSpawner_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns kocker_C (vent banging)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns morningUfo_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns npc_arirFollower_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns oilStainSpawn_C x8"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns prop_bombbox_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns prop_cookiebox_C (gift)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns saltpile_C (salt heart)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns soltomiaCleaning_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns tentacleBallsFollower_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns the dreambase + pivots"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns the rozitBorg mothership"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "spawns ventCrawler_C"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "superEgger_C invasion"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "teleports the triggering player"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "terminal types commands (event_consoleWrite_C)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "the 'peace' signal (forceObjects)"
 msgstr ""
 
 #: src/ui/loading_screen.cpp
 msgid "the host"
 msgstr ""
 
+#: src/coop/dev/event_trigger.cpp
+msgid "thick rolling fog NOW (weatherFogController_C, 5-20 min)"
+msgstr ""
+
 #: src/ui/admin_panel.cpp
 msgid "this player"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "trash props at doorways"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "treehouse build stage 1"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "treehouse build stage 2"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "treehouse build stage 3"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "treehouse build stage 4"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "treehouse build stage 5 (final)"
+msgstr ""
+
+#: src/coop/dev/event_trigger.cpp
+msgid "treehouse kidnapping (sleep -> teleport)"
+msgstr ""
+
+#: src/ui/cheat_events_pane.cpp
+msgid "trigger"
 msgstr ""
 
 #: src/ui/console.cpp

@@ -273,6 +273,12 @@ CFG_FLAG(net_allow_other_builds, "net.allow_other_builds", "net", false, "VOTVCO
     "already in stay."))
 CFG_ROWFLAGS(net_allow_other_builds, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(net_allow_other_builds, L10N_MARK("Allow other builds"))
+CFG_FLAG(net_allow_player_cheats, "net.allow_player_cheats", "net", false, "VOTVCOOP_NET_ALLOW_PLAYER_CHEATS",
+    L10N_MARK("Let the players in this game use the host's cheat tools: spawn items, add or remove points and trigger "
+    "events. Their requests are sent to the host, which checks and runs each one; the host's own tools are always its "
+    "own. Off by default."))
+CFG_ROWFLAGS(net_allow_player_cheats, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(net_allow_player_cheats, L10N_MARK("Let players use cheats"))
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,
