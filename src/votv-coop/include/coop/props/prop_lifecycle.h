@@ -38,10 +38,9 @@ void SetSession(coop::net::Session* session);
 // them. Idempotent; each part settles within a few pump ticks of the world, then O(1).
 void Install(coop::net::Session* session);
 
-// Host-authoritative intermediate-variant suppression predicate. Three
-// call sites (Init POST host-broadcast, snapshot enumerate, client local
-// spawn destroy) use this for symmetry. Public so prop_snapshot can
-// share it. The name compares without case, as the engine compares names.
+// Whether a class is held off the wire as a host-authoritative intermediate variant: the Init POST
+// host broadcast, the snapshot enumerate and the drop, hand and drive lanes skip it. Holds no class
+// now (the white mushroom it held is a plain item; see the .cpp). Public so prop_snapshot can share it.
 bool IsWireSuppressedPropClass(const std::wstring& cls);
 
 // PER-PLAYER state actors, NOT shared world props: each peer owns its own instance (per-save

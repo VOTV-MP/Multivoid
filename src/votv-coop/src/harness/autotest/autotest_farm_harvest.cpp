@@ -1,18 +1,13 @@
 // harness/autotest/autotest_farm_harvest.cpp -- TEST-ONLY: every farm plant, harvested by each peer.
-//
-// For each row of the game's list_farmPlants (or the rows VOTVCOOP_FARM_HARVEST_ROWS names, comma separated) the host
-// plants two copies beside the players, of the class the row plants, and writes them ripe: grown, watered, the fruit grown,
-// a bush's berries at the row's most. The host then takes one through the plant's own action (E, action 4) and the client the
-// other; a row that drops nothing is the game's discard, taken with Alt held. Each peer says, for both plants, whether the
-// plant still stands and its berry count, and how many of the row's drop items appeared in the world and in its own
-// inventory. The host judges each row by its kind:
-//   a crop (type 0, a drop): the plant gone on both peers, the harvester's yield inside the row's amount range;
-//   a bush (type 1): the berries to none on both peers, and the harvester holding them;
-//   a tree (type 2): the game's action takes nothing from a tree (its fruit hangs on it as props), so the row reports what
-//                    each peer holds of its fruit and is not judged;
-//   a plant that drops nothing: the discard ends it on both peers.
-// Lines `farm-harvest: ROW ...` per row and `farm-harvest: VERDICT PASS|FAIL`. Gated by VOTVCOOP_RUN_FARM_HARVEST; the
-// peers' shared folder is VOTVCOOP_CAN_DIR.
+// For each list_farmPlants row (or those VOTVCOOP_FARM_HARVEST_ROWS names) the host plants two copies ripe beside the
+// players; the host takes one through the plant's own action (E; Alt held for a discard) and the client the other. Each
+// peer says whether each plant stands, its berries, and the row's drops in the world and in its inventory. A row is judged
+// by its kind: a crop gone on both, the harvester's yield in the row's range and seen by the other peer; a bush's berries
+// taken on both and held by the harvester; a discard ending the plant on both; a tree (whose fruit hangs on it as props)
+// reported, not judged. The white mushroom's row counts each peer's copies with their puffball timer set (every host's, no
+// client's), and at the end the host turns its white mushrooms: the client's copies go and the puffballs stand.
+// Lines `farm-harvest: ROW ...` and `farm-harvest: VERDICT PASS|FAIL`. Gated by VOTVCOOP_RUN_FARM_HARVEST; the peers'
+// shared folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
@@ -22,6 +17,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/host_world_settle.h"
+#include "ue_wrap/actors/food.h"
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
@@ -128,6 +124,52 @@ Count CountDrop(const std::string& drop) {
             if (ue_wrap::save_record::RecordName(rec, name) && _wcsicmp(name.c_str(), ctx.want.c_str()) == 0) ++c.inv;
         }
     return c;
+}
+
+// The white mushrooms here, and how many of them roll to become a puffball (their Transform timer set): the host's do,
+// a client's never (it clears its own). Game thread.
+struct White { int n = 0, armed = 0; };
+White WhiteMushrooms() {
+    White w;
+    void* cls = OI::ClassByName(L"prop_food_mushroom7_C");
+    if (!cls) return w;
+    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+        auto* x = static_cast<White*>(ctx);
+        if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        ++x->n;
+        if (ue_wrap::food::PuffballTransformArmed(obj)) ++x->armed;
+    }, &w);
+    return w;
+}
+
+size_t CountOfClass(const wchar_t* cls) {
+    size_t n = 0;
+    if (void* c = OI::ClassByName(cls))
+        OI::ForEachInstance(c, [](void* ctx, void* obj, int32_t) {
+            if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) ++*static_cast<size_t*>(ctx);
+        }, &n);
+    return n;
+}
+
+// HOST: each white mushroom here turned now, through its own Transform (one call in twenty turns it), as its timer would
+// in time. How many turned. Game thread.
+int TurnWhiteMushrooms() {
+    std::vector<void*> whites;
+    if (void* c = OI::ClassByName(L"prop_food_mushroom7_C"))
+        OI::ForEachInstance(c, [](void* ctx, void* obj, int32_t) {
+            if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
+                static_cast<std::vector<void*>*>(ctx)->push_back(obj);
+        }, &whites);
+    int turned = 0;
+    for (void* w : whites) {
+        void* fn = R::FindDispatchFunctionCached(R::ClassOf(w), L"Transform");
+        for (int i = 0; fn && i < 400 && R::IsLive(w); ++i) {
+            ue_wrap::ParamFrame f(fn);
+            if (!f.valid() || !ue_wrap::Call(w, f)) break;
+        }
+        if (!R::IsLive(w)) ++turned;
+    }
+    return turned;
 }
 
 // A plant's state here: "gone", or its berry count. Game thread.
@@ -281,23 +323,61 @@ void RunHost() {
         int hRan = 0, hdW = 0, hdI = 0, cRan = 0, cdW = 0, cdI = 0, cSawW = 0;
         char hState[64] = {}, cAState[64] = {}, cBState[64] = {};
         std::sscanf(hostWord.c_str(), "%d %63s %d %d", &hRan, hState, &hdW, &hdI);
-        std::sscanf(clientWord.c_str(), "%63s %d | %d %63s %d %d", cAState, &cSawW, &cRan, cBState, &cdW, &cdI);
+        int cWhite = 0, cArmed = 0;
+        std::sscanf(clientWord.c_str(), "%63s %d | %d %63s %d %d | %d %d", cAState, &cSawW, &cRan, cBState, &cdW, &cdI, &cWhite,
+                    &cArmed);
+        White hw;
+        OnGameThread([&] { hw = WhiteMushrooms(); });
         const std::string hostVerdict = Judge(row, hState, cAState, hdW, hdI, cSawW);
         const std::string clientVerdict = Judge(row, cBState, bHere, cdW, cdI, hostSawW);
         const bool judgedRow = row.type != 2;
         if (judgedRow) ++judged;
-        const bool ok = hostVerdict.empty() && clientVerdict.empty() && hRan && cRan;
+        // The white mushroom's puffball roll is the host's: every host copy armed, no client copy.
+        std::string whiteVerdict;
+        if (row.drop == "shroom_7") {
+            UE_LOGI("farm-harvest: WHITE host %d (%d armed), client %d (%d armed)", hw.n, hw.armed, cWhite, cArmed);
+            if (cWhite == 0 || cArmed != 0 || hw.armed != hw.n)
+                whiteVerdict = Fmt(" white: host %d of %d armed, client %d of %d armed", hw.armed, hw.n, cArmed, cWhite);
+        }
+        const bool ok = hostVerdict.empty() && clientVerdict.empty() && whiteVerdict.empty() && hRan && cRan;
         if (judgedRow && !ok) ++fails;
         UE_LOGI("farm-harvest: ROW %s type=%d amount=%d..%d drop=%s | host take: ran=%d plant %s on host, %s on client; "
                 "+%d world +%d inv, client saw +%d | client take: ran=%d plant %s on client, %s on host; +%d world +%d inv, host saw +%d "
                 "-- %s%s%s", row.name.c_str(), row.type, row.amin, row.amax, row.drop.c_str(), hRan, hState, cAState, hdW,
                 hdI, cSawW, cRan, cBState, bHere.c_str(), cdW, cdI, hostSawW, !judgedRow ? "REPORTED (a tree)" : ok ? "PASS" : "FAIL",
                 hostVerdict.empty() ? "" : (" host: " + hostVerdict).c_str(),
-                clientVerdict.empty() ? "" : (" client: " + clientVerdict).c_str());
+                (clientVerdict.empty() ? whiteVerdict : (" client: " + clientVerdict + whiteVerdict)).c_str());
         OnGameThread([&] {
             for (const std::string& k : {a, b})
                 if (void* p = ByKey(k)) GP::Destroy(p);
         });
+    }
+    // The host's white mushrooms turn into puffballs, as their timers do in time: a client's copies go and the puffballs
+    // stand there, and none of its own turned.
+    std::string clientEnd;
+    if (PS::AwaitText("client_end", clientEnd, kStep)) {
+        size_t hostWhite = 0, puffBefore = 0, puffAfter = 0;
+        int turned = 0;
+        OnGameThread([&] { hostWhite = CountOfClass(L"prop_food_mushroom7_C"); puffBefore = CountOfClass(L"prop_puffballMature_C"); });
+        if (hostWhite > 0) {
+            OnGameThread([&] { turned = TurnWhiteMushrooms(); });
+            ::Sleep(500);
+            OnGameThread([&] { puffAfter = CountOfClass(L"prop_puffballMature_C"); });
+            PS::Mark("turned", std::to_string(turned));
+            std::string seen;
+            if (!PS::AwaitText("turned_seen", seen, kStep)) return;
+            int cWhite = -1, cPuff = -1;
+            std::sscanf(seen.c_str(), "%d %d", &cWhite, &cPuff);
+            const int hostPuff = static_cast<int>(puffAfter) - static_cast<int>(puffBefore);
+            const bool ok = turned == static_cast<int>(hostWhite) && cWhite == 0 && cPuff == hostPuff;
+            if (!ok) ++fails;
+            ++judged;
+            UE_LOGI("farm-harvest: TURN the host turned %d of %zu white mushrooms into %d puffballs; the client now holds %d "
+                    "white mushrooms and gained %d puffballs -- %s", turned, hostWhite, hostPuff, cWhite, cPuff,
+                    ok ? "PASS" : "FAIL");
+        } else {
+            PS::Mark("turned", "0");
+        }
     }
     UE_LOGI("farm-harvest: VERDICT %s -- %d of %d judged rows failed (%zu rows run)", fails ? "FAIL" : "PASS", fails, judged,
             rows.size());
@@ -349,8 +429,20 @@ void RunClient() {
         Count after{};
         OnGameThread([&] { aState = StateOf(a); after = CountDrop(row.drop); });
         const std::string mine = TakeHere(row, b);
+        White w;
+        OnGameThread([&] { w = WhiteMushrooms(); });
         PS::Mark(("clienttook_" + std::to_string(i)).c_str(),
-                 Fmt("%s %d | %s", aState.c_str(), after.world - before.world, mine.c_str()));
+                 Fmt("%s %d | %s | %d %d", aState.c_str(), after.world - before.world, mine.c_str(), w.n, w.armed));
+    }
+    size_t puffBefore = 0;
+    OnGameThread([&] { puffBefore = CountOfClass(L"prop_puffballMature_C"); });
+    PS::Mark("client_end");
+    std::string turned;
+    if (PS::AwaitText("turned", turned, kStep) && turned != "0") {
+        ::Sleep(3000);   // the host's destroys and births reach this peer
+        size_t white = 0, puff = 0;
+        OnGameThread([&] { white = CountOfClass(L"prop_food_mushroom7_C"); puff = CountOfClass(L"prop_puffballMature_C"); });
+        PS::Mark("turned_seen", std::to_string(white) + " " + std::to_string(static_cast<int>(puff) - static_cast<int>(puffBefore)));
     }
     PS::Await("done", 600);
     UE_LOGI("farm-harvest: DONE on client");

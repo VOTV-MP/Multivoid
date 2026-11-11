@@ -208,22 +208,7 @@ bool HandleEntityEvent(net::Session& session,
             }
         }
         // Stale-generation defence lives in the packet header's sender epoch, latched in
-        // Session::HandleMessage. The intermediate mushroom variant is refused here: growth is
-        // host-authoritative and the mature variant arrives when the host's timer fires;
-        // prop_lifecycle's client-side suppression is the other half, so the class is never spawned
-        // locally and never accepted from the wire.
-        {
-            std::wstring cls;
-            cls.reserve(p.className.len);
-            for (uint8_t i = 0; i < p.className.len; ++i) {
-                cls.push_back(static_cast<wchar_t>(static_cast<unsigned char>(p.className.data[i])));
-            }
-            if (cls == ue_wrap::profile::name::PropMushroomGrowingClass) {
-                UE_LOGI("event_feed: PropSpawn drop -- intermediate-variant class '%ls' suppressed on this peer (host-authoritative; mature variant will arrive when host transforms)",
-                        cls.c_str());
-                break;
-            }
-        }
+        // Session::HandleMessage.
         // The host saying an identity is alive now retires that identity's deferred destroy. PropSpawn
         // and PropDestroy share the Default lane in order, and the host's snapshot drain re-validates
         // liveness per row, so a spawn received after a destroy is newer: applying the older destroy at

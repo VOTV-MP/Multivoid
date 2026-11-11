@@ -528,11 +528,9 @@ inline constexpr const wchar_t* PropThrownFn          = L"thrown";
 // load, inventory drops); the host broadcasts, the client skips.
 inline constexpr const wchar_t* PropInitFn            = L"Init";
 
-// Classes that are intermediate state of a host-authoritative pipeline. Mushrooms grow through
-// class identity, mushroom7_C (growing, hidden, collision off) to a mature class through a
-// timer-driven Transform. On a client a local spawn of these is destroyed on Init POST and a wire
-// PropSpawn for them is dropped; the mature variant arrives through the host's broadcast. Each
-// entry is the BP class FName.
+// The white mushroom, a plain item: its BeginPlay sets a looping 180 s timer whose Transform turns it into a
+// prop_puffballMature_C one time in twenty. It crosses the wire as any prop; a client clears its own copies' timers
+// (coop/props/prop_food_sync), so only the host's turn.
 inline constexpr const wchar_t* PropMushroomGrowingClass = L"prop_food_mushroom7_C";
 
 // On the receiver Aprop_C.setKey is dispatched between Begin and Finish so the prop's Init() does not
@@ -611,7 +609,7 @@ inline constexpr const wchar_t* BlackFogClass                  = L"blackFog_C";
 inline constexpr const wchar_t* SetCollisionEnabledFn                = L"SetCollisionEnabled";
 // The cap-mushroom class: it overrides Aprop_C::Init and its natural-spawn path
 // (AmushroomSpawner_C::Spawn -> spawnedNaturally()) sets its StaticMesh to NoCollision.
-// mushroom7_C grows into prop_puffballMature_C, a separate species.
+// The white mushroom, prop_food_mushroom7_C, turns into prop_puffballMature_C, a separate species.
 inline constexpr const wchar_t* PropFoodMushroomClass                = L"prop_food_mushroom_C";
 }  // namespace name
 
