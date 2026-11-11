@@ -110,6 +110,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"bpcodelib", L"isboxinfrustum", L"bpcodelib.isboxinfrustum", 0xc3380a51e7a33fd2ull, 0xcbf29ce484222325ull},
     {L"canvas", L"k2_drawmaterial", L"canvas.k2_drawmaterial", 0x190866b42f1361c8ull, 0xcbf29ce484222325ull},
     {L"car1_witch_c", L"inpactevt_leftmousebutton_k2node_inputkeyevent_0", L"car1_witch_c.inpactevt_leftmousebutton_k2node_inputkeyevent_0", 0xba244dce9f431cf1ull, 0xf396c16f65ccd591ull},
+    {L"cargolift_c", L"actionoptionindex", L"cargolift_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0xa09b3d7d8081948dull},
     {L"charactermovementcomponent", L"k2_findfloor", L"charactermovementcomponent.k2_findfloor", 0x24fb76a4c0d427a0ull, 0xcbf29ce484222325ull},
     {L"cockroachmaster_c", L"addroachtimer", L"cockroachmaster_c.addroachtimer", 0x6a2d5d90ab51fa2dull, 0x3b5c683d881da498ull},
     {L"cockroachmaster_c", L"customevent", L"cockroachmaster_c.customevent", 0x6a2d5d90ab51fa2dull, 0xdaa8e32134df56b7ull},

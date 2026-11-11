@@ -6,6 +6,7 @@
 // kind-to-channel router and the Install, Tick and event facade.
 
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/cargo_lift.h"            // the cargo lift adapter's read and apply
 #include "coop/interactables/cremator_state.h"        // the cremator adapter's read and apply
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
 #include "coop/interactables/swinger_join_pose.h"     // a joiner's open lids at their host's places
@@ -14,6 +15,7 @@
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/devices/door_box.h"      // lockers and the drone-console box
+#include "ue_wrap/devices/cargo_lift.h"
 #include "ue_wrap/devices/garage.h"
 #include "ue_wrap/devices/lightswitch.h"
 #include "ue_wrap/devices/security_camera.h"
@@ -253,13 +255,27 @@ Channel g_oven{g_ovenAdapter};  // one way: whoever repairs it
 Channel g_cameraActive{g_cameraActiveAdapter, Channel::Mode::HostAuth};
 Channel g_cameraLight{g_cameraLightAdapter, Channel::Mode::HostAuth};
 Channel g_cremator{g_crematorAdapter, Channel::Mode::HostAuth};  // the lever run is the host's machine
+// The cargo lift, the base's elevator (cargoLift_C), host-authoritative: its `dir`, the direction its last press sent
+// it. A client applies a direction
+// by pressing its own copy, held while that copy moves (coop/interactables/cargo_lift); a client's press reaches the
+// host as a CargoLiftIntent. Keyed by the level-export FName, as the garage.
+const Adapter g_cargoLiftAdapter = {
+    "cargo_lift", coop::net::ReliableKind::CargoLiftState,
+    &ue_wrap::cargo_lift::EnsureResolved,
+    &ue_wrap::cargo_lift::IsCargoLift,
+    &ue_wrap::cargo_lift::GetNameKey,
+    &coop::cargo_lift::ReadState,
+    &coop::cargo_lift::ApplyState,
+    &coop::cargo_lift::TickApply,
+};
+Channel g_cargoLift{g_cargoLiftAdapter, Channel::Mode::HostAuth};
 // Keypads (ApasswordLock_C) are not a toggle (a typed buffer and three state bools, with an
 // accept verb this engine cannot reach) and live in coop::keypad_sync; KeypadState routes there
 // from event_feed, not through ChannelForKind.
 
 // Every channel, once: each list below walks this one, in this order.
 Channel* const kChannels[] = {&g_door, &g_light, &g_lightGroup, &g_container, &g_garage, &g_appliance, &g_doorBox,
-                              &g_oven, &g_cameraActive, &g_cameraLight, &g_cremator};
+                              &g_oven, &g_cameraActive, &g_cameraLight, &g_cremator, &g_cargoLift};
 
 Channel* ChannelForKind(coop::net::ReliableKind k) {
     for (Channel* ch : kChannels)
@@ -334,6 +350,17 @@ void* ResolveCremator(const std::wstring& key) {
 }
 
 void OnCrematorVerb(void* cremator) { g_cremator.OnLocalEdge(cremator); }
+
+std::wstring CargoLiftKey(void* lift) { return g_cargoLift.KeyForActor(lift); }
+
+void* ResolveCargoLift(const std::wstring& key) {
+    if (key.empty() || !ue_wrap::cargo_lift::EnsureResolved()) return nullptr;
+    return g_cargoLift.ActorForKey(key);
+}
+
+void OnCargoLiftVerb(void* lift) { g_cargoLift.OnLocalEdge(lift); }
+
+void ResendCargoLiftTo(void* /*lift*/, uint8_t slot) { g_cargoLift.QueueConnectBroadcastForSlot(slot); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

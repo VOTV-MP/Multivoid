@@ -19,7 +19,7 @@ a key-to-actor index that heals itself, per-key dedup, a deferred apply with a t
 an instance that has not streamed in yet, echo suppression, and the connect snapshot. A device
 family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines each: doors, light
 switches, light groups, container lids, the garage, the appliances, the lockers, the oven's repair,
-the security cameras.
+the security cameras, the cargo lift (the base's elevator, `coop/interactables/cargo_lift`).
 
 Each channel is sent at the verbs that write its state, which the script-body gate watches: every
 live writer of a door's open state goes through `doorOpen` or `doorClose`, and of a light group's
@@ -106,7 +106,7 @@ ever reaches `doorOpen`. The host's door then closes by its own
 autoclose, at the first of its five-second checks that finds its sensor list empty, and a client's
 puppet counts in that list exactly when the client's own player counts in the client's own copy of
 it. A device with no auto-revert (the garage, an appliance, an oven's repair, a locker, a lid) is
-symmetric: any peer's edge is the state.
+symmetric: any peer's edge is the state. The cargo lift is host-authoritative all the same, its direction (`dir`) the host's: a client's own press is refused and sent as the direction it wants, the host presses its own lift when that lift is not moving and the sender is within reach, and each client presses its copy to the host's direction, once that copy has stopped (`[V]` `harness/autotest/autotest_cargo_lift.cpp`: a host's press and a client's both move the lift on both peers, the platform at the same height each second).
 
 ### The cremator's lever run
 
@@ -530,8 +530,8 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
 | `CameraActiveState`, `CameraLightState` | the host to all | a camera's key and one bit |
 | `CameraToggleIntent` | a client to the host | a camera's key, which bit, the value wanted |
-| `CrematorState` | the host to all | a cremator's key and its lever run: on or off |
-| `CrematorIntent` | a client to the host | a cremator's key and the state the press wants: the handle was pressed |
+| `CrematorState`, `CargoLiftState` | the host to all | a cremator's key and its lever run: on or off; a cargo lift's key and its direction |
+| `CrematorIntent`, `CargoLiftIntent` | a client to the host | a cremator's key and the state the press wants: the handle was pressed; a cargo lift's key and the direction its press wants |
 | `CrematorHit` | the host to the victim | a cremator's key and a hit on that peer's player: damage, or an ignite with its seconds |
 | `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |

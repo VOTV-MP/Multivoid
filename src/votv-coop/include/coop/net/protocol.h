@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 284;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1372,6 +1372,17 @@ enum class ReliableKind : uint16_t {
     // change of either and again to a joiner alone at its ready edge. A client holds one for a copy that is not here yet and
     // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
     WalkerState = 231,
+    // HOST->ALL: the cargo lift's direction (cargoLift_C's `dir`, the base's elevator) after a press, keyed by the lift's
+    // level-export name. Host-authored: a client's copy is refused at the host's receive edge; never relayed; not
+    // pre-world (a pre-world copy waits for its index). A client presses its own copy to the direction, once that copy
+    // has stopped. Late join: the connect snapshot sends every indexed lift's direction at the joiner's world-ready edge.
+    // KeyedTogglePayload; its action is the direction (1 up, 0 down).
+    CargoLiftState = 256,
+    // CLIENT->HOST: a client pressed the cargo lift's call button; its action is the direction the press wants. The host
+    // resolves the lift by its key, judges the sender's reach and that its own lift is not moving, and presses it; the
+    // run reaches every peer as CargoLiftState. Never relayed; not pre-world; a press whose sender has no body on the
+    // host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload.
+    CargoLiftIntent = 257,
 };
 
 #pragma pack(push, 1)
