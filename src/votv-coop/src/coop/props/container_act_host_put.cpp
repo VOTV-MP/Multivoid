@@ -5,22 +5,23 @@
 #include "coop/props/container_act_host.h"
 #include "coop/props/container_act_host_internal.h"
 
-#include "coop/element/registry.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/props/container_act_wire.h"
-#include "coop/props/prop_record_wire.h"
-#include "coop/props/container_contents_sync.h"
+#include "coop/items/inventory_item_wire.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/container_target.h"
 
 #include "ue_wrap/actors/container_inventory.h"
-#include "ue_wrap/actors/floppy_disc.h"
+#include "ue_wrap/actors/save_record.h"   // IsPropClass
 #include "ue_wrap/actors/prop_gather.h"
+#include "ue_wrap/core/class_load.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,45 +32,28 @@ namespace {
 namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace caw = coop::props::container_act_wire;
-namespace prw = coop::props::prop_record_wire;
+namespace IW = coop::inventory_item_wire;
 namespace cr  = coop::props::container_reach;
 namespace csw = coop::props::container_slice_wire;
 namespace ci  = ue_wrap::container_inventory;
 namespace pg  = ue_wrap::prop_gather;
 namespace SR  = ue_wrap::save_record;
+namespace II  = ue_wrap::inventory_item;
 
-// The put drill's reds (dev:: below): inert unless a drill calls them, reset at the session's end.
-bool g_noReservation = false;   // a put's grant opens no hold
-bool g_noLapse = false;         // a sender is never slowed
-bool g_countJudged = false;     // the judgements of each slot's latest put head are counted
-dev::PutJudged g_judged[coop::net::kMaxPeers];
-
-// The last host events in order, a fixed ring: the drill judges which of two puts landed first from what the host did,
-// not from a count sampled a tick later. `seq` rises from 1 and 0 marks an empty entry.
-struct OrderEvent {
-    uint32_t seq = 0, eid = 0;
-    uint8_t slot = 0;
-    bool grant = false;   // a grant sent (or queued); false: a put commit inserted
-};
-constexpr size_t kOrderRing = 16;
-OrderEvent g_order[kOrderRing];
-uint32_t g_orderSeq = 0;
-
-// The container's room for one more record of `rec`'s size plus `flagBytes` (the fridge flag the container will add to a
-// record asked; none to a record it already stored): the lane's record cap and the slice's byte ceiling, the one SendBlob enforces on what the container publishes. Done unless the
-// container moved under the read; a count past the cap does not read at all, and is the cap.
-cre::EditResult ReadFit(uint32_t eid, const SR::SaveRecord& rec, size_t flagBytes, bool& countAtCap, bool& bytesOver) {
+// The container's room for one more entry of `rec`'s size: the lane's record cap and the slice's byte ceiling, the one
+// SendBlob enforces on what the container publishes. Done unless the container moved under the read; a count past the
+// cap does not read at all, and is the cap.
+cre::EditResult ReadFit(uint32_t eid, const II::Item& rec, bool& countAtCap, bool& bytesOver) {
     countAtCap = bytesOver = false;
-    std::vector<SR::SaveRecord> recs;
-    const cre::EditResult r = cre::ReadRecords(eid, recs, /*neuterNested=*/false);
+    std::vector<II::Item> recs;
+    const cre::EditResult r = cre::ReadRecords(eid, recs);
     if (r == cre::EditResult::Unreadable) {
         countAtCap = true;
         return cre::EditResult::Done;
     }
     if (r != cre::EditResult::Done) return r;
     countAtCap = recs.size() >= csw::kMaxRecords;
-    bytesOver = csw::SliceBytes(recs) + prw::RecordBytes(rec) + flagBytes >
-                coop::blob_chunks::MaxBlobBytes();
+    bytesOver = csw::SliceBytes(recs) + IW::ItemBytes(rec) > coop::blob_chunks::MaxBlobBytes();
     return cre::EditResult::Done;
 }
 
@@ -82,33 +66,27 @@ namespace detail {
 // prop; `slowable` is false for the latter, which a sender's lapsed reservation does not slow.
 // The class resolves through the object index, the resolver the container's own write uses, so a name it cannot
 // resolve is refused here and never written as a null class; a forged name costs a hash probe, not an array walk.
-void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, bool slowable, internal::PutInputs& p) {
+// A class the host has not loaded yet (an item the sender carried in from content this world never needed) is loaded
+// from the soft path the record carries, once, and only a /Game/ path whose object is that class; the prop-class
+// test below still decides whether it is a put.
+void ReadPutInputs(uint8_t slot, uint32_t eid, const II::Item& record, bool slowable, internal::PutInputs& p) {
     const internal::Inputs& b = p.base;
     if (!b.worldReady || b.holdsWait || b.reach != cr::Reach::Reached || b.container != internal::Container::Ready)
         return;
-    void* const actor = coop::element::LivePropActor(eid);
     ci::PutTerms t{};
-    p.termsRead = actor && ci::ReadPutTerms(actor, t);
+    p.termsRead = cre::PutTermsOf(eid, t);
     if (!p.termsRead) return;
     p.locked = t.locked;
-    p.slowed = slowable && !g_noLapse && cas::Live().Slowed(slot, coop::net::NowMs());   // the red: container_act_no_lapse
+    p.slowed = slowable && cas::Live().Slowed(slot, coop::net::NowMs());
     if (p.locked || p.slowed) return;
     std::wstring name;
-    p.nameOk = prw::PutNameOk(record);
-    if (!p.nameOk || !SR::RecordName(record, name)) return;
-    void* const cls = ue_wrap::object_index::ClassByName(record.className.c_str());
+    p.nameOk = IW::NameOk(record);
+    if (!p.nameOk || !II::ItemName(record, name)) return;
+    void* const cls = ue_wrap::class_load::ResolveSoftPath(record.classPath, &ue_wrap::object_index::ClassByName);
     p.classResolved = cls != nullptr;
     p.propClass = SR::IsPropClass(cls);
     if (!p.classResolved || !p.propClass) return;
-    // A client's floppy disc has leaf values that are its word, as a carried disc's are: held to what a game disc can
-    // hold. `slowable` is false for the host's own capture, which is not bounded (internal::FloppyBoundOk).
-    int32_t maxReadWrites = 0;
-    const bool disc = ue_wrap::floppy_disc::IsDiscClass(cls) && ue_wrap::floppy_disc::ReadDefaultReadWrites(maxReadWrites);
-    p.leafOk = internal::FloppyBoundOk(slowable, disc, record, maxReadWrites);
-    if (!p.leafOk) return;
-    p.filterRead = ci::FilterHolds(ci::InventoryOf(actor), cls, p.filterHolds);
-    if (!p.filterRead || p.filterHolds) return;
-    p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerRecord(record);
+    p.mailboxContainer = t.ownerIsMailbox && ci::IsContainerItem(record);
     if (p.mailboxContainer) return;
     pg::PropDataFlags row{};
     bool found = false;
@@ -119,11 +97,12 @@ void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, boo
     // The name's volume (a lookup in the game's own table, whatever the container) comes before the container read and
     // its size, which run only when every other term has passed.
     p.infinite = t.infinite;
-    p.maxVol = t.maxVol;
-    p.currVol = t.currVol;
+    p.maxVolume = t.maxVolume;
+    p.totalVolume = t.totalVolume;
     p.volumeRead = pg::VolumeOfName(name, p.volume, p.volumeKnown);
-    if (!p.volumeRead || !p.volumeKnown || (!t.infinite && p.currVol + p.volume > p.maxVol)) return;
-    switch (ReadFit(eid, record, caw::kFridgeElementBytes, p.countAtCap, p.bytesOver)) {
+    p.volume *= static_cast<float>(std::max<uint8_t>(1, record.amount));   // a stack is as many units as its amount
+    if (!p.volumeRead || !p.volumeKnown || (!t.infinite && p.totalVolume + p.volume > p.maxVolume)) return;
+    switch (ReadFit(eid, record, p.countAtCap, p.bytesOver)) {
         case cre::EditResult::Done:     break;
         case cre::EditResult::NotReady: p.base.container = internal::Container::NotReady; return;
         default:                        p.base.container = internal::Container::Gone; return;
@@ -140,50 +119,25 @@ std::optional<coop::net::Served> GrantPut(uint8_t slot, const caw::Request& q) {
     h.eid = q.eid;
     h.record = q.record;
     h.grantedMs = coop::net::NowMs();
-    if (g_noReservation) return std::nullopt;   // the red: the grant stands with no hold (container_act_no_reservation)
     if (cas::Live().Open(std::move(h))) return std::nullopt;
     Bump(Tally::GrantUnsent);   // cannot happen past holdsWait
     Answer(slot, ReplyOf(internal::Verdict::Gone, q.id));
     return coop::net::Served::Done;
 }
 
-void ResetPutDev() {
-    g_noReservation = g_noLapse = g_countJudged = false;
-    for (dev::PutJudged& j : g_judged) j = dev::PutJudged{};
-    for (OrderEvent& e : g_order) e = OrderEvent{};
-    g_orderSeq = 0;
-}
-
-void NoteOrder(uint8_t slot, uint32_t eid, bool grant) {
-    if (!g_countJudged) return;
-    ++g_orderSeq;
-    g_order[g_orderSeq % kOrderRing] = OrderEvent{g_orderSeq, eid, slot, grant};
-}
-
-// A put head was judged (not the early return of a head that waits): counted for the drill when it asks.
-void NoteJudged(uint8_t slot, uint16_t id) {
-    if (!g_countJudged || slot >= coop::net::kMaxPeers) return;
-    dev::PutJudged& j = g_judged[slot];
-    const uint64_t now = coop::net::NowMs();
-    if (j.id != id || !j.n) j = dev::PutJudged{id, 0, now, now};
-    ++j.n;
-    j.lastMs = now;
-}
-
-void SendTruthNow(uint8_t slot, uint32_t eid) { coop::props::container_contents_sync::SendTruthToSlot(eid, slot); }
+void SendTruthNow(uint8_t slot, uint32_t eid) { coop::props::container_target::SendTruth(eid, slot, /*bounded=*/false); }
 
 namespace {
 
 enum class DoneCheck : uint8_t { Insert, NoRoom, Gone, NotReady };
 // What a done (timely or late) finds on the live container, after its size was bounded by the asked one (MTA bounds a
-// client-set value at the store, CGame.cpp:2731-2736, 2743-2753): the caps and the filter are read again, since the
-// host's own writers are not stopped by a reservation. The record is the one the container stored, so its fridge flag
-// is already counted. Volume overfill is accepted: the client's own fit ran the game's whole test. A container whose
+// client-set value at the store, CGame.cpp:2731-2736, 2743-2753): the caps are read again, since the host's own writers
+// are not stopped by a reservation. The entry is the one the container stored, its placement already in it. Volume overfill is accepted: the client's own fit ran the game's whole test. A container whose
 // slice is not ready cannot be read: NotReady, and the insert waits on the owed path.
-DoneCheck CheckPutDone(uint32_t eid, const SR::SaveRecord& committed, bool otherHolds, const char*& why) {
+DoneCheck CheckPutDone(uint32_t eid, const II::Item& committed, bool otherHolds, const char*& why) {
     why = "";
     bool countAtCap = false, bytesOver = false;
-    const cre::EditResult read = ReadFit(eid, committed, /*flagBytes=*/0, countAtCap, bytesOver);
+    const cre::EditResult read = ReadFit(eid, committed, countAtCap, bytesOver);
     if (read == cre::EditResult::NoElement || read == cre::EditResult::NoInventory) {
         why = "the container is gone";
         return DoneCheck::Gone;
@@ -192,14 +146,9 @@ DoneCheck CheckPutDone(uint32_t eid, const SR::SaveRecord& committed, bool other
         why = "the container is not ready";
         return DoneCheck::NotReady;
     }
-    void* const cls = ue_wrap::object_index::ClassByName(committed.className.c_str());
-    bool filtered = false;
-    const bool filterRead = cls && ci::FilterHolds(ci::InventoryOf(coop::element::LivePropActor(eid)), cls, filtered);
     if (otherHolds) why = "another hold stands on it";
     else if (countAtCap) why = "record cap";
     else if (bytesOver) why = "byte cap";
-    else if (!filterRead) why = "filter unreadable";
-    else if (filtered) why = "filtered";
     return *why ? DoneCheck::NoRoom : DoneCheck::Insert;
 }
 
@@ -223,23 +172,20 @@ void PlaceTimelyDone(cas::Hold h, const caw::Commit& c) {
         Bump(Tally::PutDoneLost);
         NoteRefusal(h.slot, "put done refused at the insert");
         UE_LOGW("container_act: put done refused at the insert (eid %u, %ls, %s) -- the item is lost",
-                static_cast<unsigned>(h.eid), c.record.className.c_str(), why);
+                static_cast<unsigned>(h.eid), II::ClassLeaf(c.record).c_str(), why);
         SendTruthNow(h.slot, h.eid);
         return;
     }
     h.index = c.index;
     h.record = c.record;
-    const uint8_t slot = h.slot;
-    const uint32_t eid = h.eid;
-    Place(std::move(h), "put committed", cre::Source::Wire, "inserted");
-    if (check == DoneCheck::Insert) NoteOrder(slot, eid, /*grant=*/false);   // a NotReady insert is owed, not done
+    Place(std::move(h), "put committed", Source::Wire, "inserted");
 }
 
 // A commit whose hold is gone: the deadline released a reservation and left its tombstone, so an honest client's late
 // answer ends here (no precedent in MTA, which ignores a confirm that finds no reservation, CGame.cpp:3376; here the
 // replay already moved the item out of the client's inventory). True when the commit was a tombstone's, consumed
 // whatever came of it; false when it has none, so it is a bad commit. A late done is inserted like a timely one,
-// unless the container has since filled past a cap, taken a hold or filtered the class: then it is named and lost.
+// unless the container has since filled past a cap or taken a hold: then it is named and lost.
 bool LateCommit(uint8_t slot, const caw::Commit& c) {
     if ((c.committed == 1) != c.hasRecord) return false;
     std::optional<cas::Tombstone> t = cas::Live().ConsumeTombstone(slot, c.id, c.eid);
@@ -250,7 +196,7 @@ bool LateCommit(uint8_t slot, const caw::Commit& c) {
         return true;
     }
     std::wstring name;
-    if (c.record.className != t->className || !SR::RecordName(c.record, name) || name != t->name) {
+    if (II::ClassLeaf(c.record) != t->className || !II::ItemName(c.record, name) || name != t->name) {
         Bump(Tally::BadCommit);
         NoteRefusal(slot, "late commit names another record");
         UE_LOGI("container_act: slot=%u id=%u eid=%u late put done names another record -> bad",
@@ -282,7 +228,7 @@ bool LateCommit(uint8_t slot, const caw::Commit& c) {
         Bump(Tally::LateDoneLost);
         NoteRefusal(slot, "late put done over the cap");
         UE_LOGW("container_act: late put done over the cap (eid %u, %ls) -- the item is lost",
-                static_cast<unsigned>(c.eid), c.record.className.c_str());
+                static_cast<unsigned>(c.eid), II::ClassLeaf(c.record).c_str());
         SendTruthNow(slot, c.eid);
         return true;
     }
@@ -294,8 +240,8 @@ bool LateCommit(uint8_t slot, const caw::Commit& c) {
     h.record = c.record;
     Bump(Tally::LateDone);
     UE_LOGI("container_act: late put done inserted (eid %u, %ls)", static_cast<unsigned>(c.eid),
-            c.record.className.c_str());
-    Place(std::move(h), "late put done", cre::Source::Wire, "inserted");
+            II::ClassLeaf(c.record).c_str());
+    Place(std::move(h), "late put done", Source::Wire, "inserted");
     return true;
 }
 
@@ -320,31 +266,24 @@ Verdict DecidePut(const PutInputs& in, Tally* refusal) {
     if (!in.nameOk) { why = Tally::PutNoName; return Verdict::Refused; }
     if (!in.classResolved) { why = Tally::PutClassUnresolved; return Verdict::Refused; }
     if (!in.propClass) { why = Tally::PutNotProp; return Verdict::Refused; }
-    if (!in.leafOk) { why = Tally::PutBadLeaf; return Verdict::Refused; }
-    if (!in.filterRead) return Verdict::Wait;
-    if (in.filterHolds) { why = Tally::PutFiltered; return Verdict::Refused; }
     if (in.mailboxContainer) { why = Tally::PutIntoMailbox; return Verdict::Refused; }
     if (!in.rowRead) return Verdict::Wait;
     if (in.rowRefuses) { why = Tally::PutRowRefuses; return Verdict::Refused; }
     if (!in.volumeRead) return Verdict::Wait;
     if (!in.volumeKnown) { why = Tally::PutUnknownName; return Verdict::Refused; }
     if (in.countAtCap || in.bytesOver) return Verdict::NoSpace;
-    if (!in.infinite && in.currVol + in.volume > in.maxVol) return Verdict::NoSpace;
+    if (!in.infinite && in.totalVolume + in.volume > in.maxVolume) return Verdict::NoSpace;
     return Verdict::Grant;
 }
 
-bool StoredMatches(const SR::SaveRecord& asked, const SR::SaveRecord& stored) {
+bool StoredMatches(const II::Item& asked, const II::Item& stored) {
     std::wstring askedName, storedName;
-    return asked.className == stored.className && SR::RecordName(asked, askedName) &&
-           SR::RecordName(stored, storedName) && askedName == storedName;
+    return asked.classPath == stored.classPath && II::ItemName(asked, askedName) &&
+           II::ItemName(stored, storedName) && askedName == storedName;
 }
 
-bool FloppyBoundOk(bool fromClient, bool discClass, const SR::SaveRecord& record, int32_t maxReadWrites) {
-    return !fromClient || !discClass || ue_wrap::floppy_disc::DiscLeafOk(record, maxReadWrites, nullptr);
-}
-
-bool DoneSizeOk(size_t askedBytes, const SR::SaveRecord& committed) {
-    return prw::RecordBytes(committed) <= askedBytes + caw::kPutStoredSlack;
+bool DoneSizeOk(size_t askedBytes, const II::Item& committed) {
+    return IW::ItemBytes(committed) <= askedBytes + caw::kPutStoredSlack;
 }
 
 const char* PutWaitCause(const PutInputs& in) {
@@ -353,7 +292,6 @@ const char* PutWaitCause(const PutInputs& in) {
     if (in.base.reach == cr::Reach::NoBody) return "the sender's body has no pose";
     if (in.base.container == Container::NotReady) return "the container is not ready";
     if (!in.termsRead) return "the container's terms did not read";
-    if (!in.filterRead) return "the container's filter did not read";
     if (!in.rowRead) return "the list_props row did not read";
     if (!in.volumeRead) return "the volume of the name did not read";
     return "the container is not ready";
@@ -362,19 +300,3 @@ const char* PutWaitCause(const PutInputs& in) {
 }  // namespace internal
 
 }  // namespace coop::props::container_act_host
-
-namespace coop::props::container_act_host::dev {
-
-void NoReservation(bool on) { g_noReservation = on; }
-void NoLapse(bool on) { g_noLapse = on; }
-void CountPutJudgements(bool on) { g_countJudged = on; }
-PutJudged LastPutJudged(uint8_t slot) { return slot < coop::net::kMaxPeers ? g_judged[slot] : PutJudged{}; }
-
-uint32_t OrderSeq(uint32_t eid, uint8_t slot, bool grant) {
-    uint32_t first = 0;
-    for (const OrderEvent& e : g_order)
-        if (e.seq && e.eid == eid && e.slot == slot && e.grant == grant && (!first || e.seq < first)) first = e.seq;
-    return first;
-}
-
-}  // namespace coop::props::container_act_host::dev

@@ -1,30 +1,26 @@
-// coop/dev/delivery_census_probe.cpp -- COUNT the delivery-path actors over time. Diagnostic only,
-// ini-gated off by default ([dev] delivery_census=1); it never ships behaviour.
+// coop/dev/delivery_census_probe.cpp -- COUNT where a delivery's goods are, over time. Diagnostic only, ini-gated
+// off by default ([dev] delivery_census=1); it never ships behaviour.
 //
-// The lane it exists for synced the wrong actor: a drone's BeginPlay resolves its container by the
-// save key n'droneContainer', which occurs in exactly one cooked asset -- the drone's own -- while
-// the world-placed container is keyed 'drone_InventoryContainer'. That lookup is an exact
-// Array_Find over keyObj_key whose only writer is lib_C::assignKey, so it misses, the drone spawns
-// its own container, and compileOrder writes through (drone.container)->propInventory. The probe
-// therefore enumerates BY CLASS, never by key, and answers three questions with a count or a
-// pointer comparison rather than a hypothesis: Q-A how many containers exist (the row count per
-// class, per sample); Q-B which one receives a delivery (the per-row contents count watched across
-// one); Q-C whether that receiver is stable across two deliveries or churns. A full census is
-// logged on the first sample and thereafter only when a hash over the rows changes, so the log
-// shows edges -- a spawn, a destroy, a contents delta, an Index repoint -- rather than a wall of
-// identical rows.
+// A delivery lands in the drone's own inventory component and leaves it when the player drops the sack: the
+// sack is a world container, prop_dronesack_C, that takes the drone's entries with it. The census enumerates
+// those holders by class, never by key, and logs the drone's cargo count and each sack's entry count, with the
+// sack's element id, its place and whether the drone took it back. A full census is logged on the first sample
+// and thereafter only when a hash over the rows changes, so the log shows edges -- a sack appearing, goods
+// moving from the drone to a sack and back, a sale emptying the drone -- rather than a wall of identical rows.
+// Both peers run it; the host's drone is the truth and a client's is the copy drone_cargo_sync applied.
 
 #include "coop/dev/delivery_census_probe.h"
 
+#include "coop/config/config.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
-#include "coop/config/config.h"
-#include "ue_wrap/actors/inventory.h"    // ResolveSaveSlot
+
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/prop.h"         // GetInteractableKeyString
-#include "ue_wrap/engine/engine.h"       // TryGetActorLocation
-#include "ue_wrap/actors/save_record.h"  // Arr / ReadArr / kMxStride
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/drone.h"
+#include "ue_wrap/engine/engine.h"       // TryGetActorLocation
 
 #include <chrono>
 #include <cstdint>
@@ -36,26 +32,20 @@ namespace coop::dev::delivery_census {
 namespace {
 
 namespace R  = ue_wrap::reflection;
-namespace SR = ue_wrap::save_record;
+namespace D  = ue_wrap::drone;
+namespace CI = ue_wrap::container_inventory;
 
 constexpr uint64_t kSampleMs = 2000;
+constexpr size_t   kMaxEntries = 4096;
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
-}  // dev probe; a GUObjectArray walk is not free
+}
 
 uint64_t g_nextSample = 0;
 uint64_t g_lastHash = 0;
-
-// Per-GObjStack-slot occupancy from the previous sample. The census answered Q-A and Q-B but
-// exposed a fact it could not explain: on the host a delivery landed (slot count 0 -> 2) and the
-// SAME slot went back to 0 within eight seconds, while the player-facing sack was never observed as
-// an actor at all. So the contents LEAVE the container we sync. This tracks EVERY slot's count and
-// reports the deltas, which turns "where did they go" into a direct reading -- one slot loses N,
-// another gains N -- instead of another inference.
-std::vector<int32_t> g_prevSlots;
 bool     g_first = true;
 int      g_sampleNo = 0;
 
@@ -65,75 +55,39 @@ template <class T> T ReadAt(const void* base, int32_t off) {
     return v;
 }
 
-int32_t Off(void* cls, const wchar_t* name) {
-    return cls ? R::FindPropertyOffset(cls, name) : -1;
-}
-
-// One census row -- everything needed to answer Q-A/Q-B/Q-C without inferring anything.
+// One sack: everything needed to say where its goods are without inferring anything.
 struct Row {
     void*        actor = nullptr;
-    std::wstring cls;
-    std::wstring key;          // the save Key, or empty
-    uint32_t     eid = 0;      // 0 = not enrolled as an Element
-    void*        inv = nullptr;
-    int32_t      index = -1;   // propInventory.Index -- the GObjStack slot
-    float        currVol = 0.f;
-    bool         player = false;
-    int32_t      contents = -1;  // GObjStack[index].obj.Num, or -1 if unresolvable
+    std::wstring key;          // the save key, or empty
+    uint32_t     eid = 0;      // 0 = not enrolled as an element
+    int32_t      entries = -1; // non-blank inventory entries, or -1 when they do not read
+    int          taken = -1;   // takenByDrone, or -1 when the field does not resolve
     float        x = 0, y = 0, z = 0;
-    bool         locRead = false;   // false: x/y/z are not a position
-    bool         isDroneContainer = false;  // == drone.container (what compileOrder writes through)
-    bool         isSackContainer = false;   // == some sack.container
+    bool         locRead = false;
 };
 
-// The contents count for a propInventory, read straight out of the global GObjStack.
-int32_t ContentsOf(void* inv, int32_t index) {
-    if (!inv || index < 0) return -1;
-    void* save = ue_wrap::inventory::ResolveSaveSlot();
-    if (!save) return -1;
-    const int32_t offStack = Off(R::ClassOf(save), L"GObjStack");
-    if (offStack < 0) return -1;
-    const SR::Arr stack = SR::ReadArr(save, offStack);
-    if (index >= stack.num) return -1;
-    const uint8_t* slot = stack.data + static_cast<size_t>(index) * SR::kMxStride;
-    return SR::ReadArr(slot, 0).num;  // struct_mObject.obj @ +0
+// The non-blank entries of an inventory component, or -1 when they do not read.
+int32_t EntriesOf(void* inv) {
+    std::vector<D::CargoItem> items;
+    if (!inv || !CI::ReadContents(inv, items, kMaxEntries)) return -1;
+    int32_t n = 0;
+    for (const D::CargoItem& it : items)
+        if (!ue_wrap::inventory_item::IsEmpty(it)) ++n;
+    return n;
 }
 
-void FillInventory(Row& r) {
-    const int32_t offInv = Off(R::ClassOf(r.actor), L"propInventory");
-    if (offInv < 0) return;
-    r.inv = ReadAt<void*>(r.actor, offInv);
-    if (!r.inv || !R::IsLive(r.inv)) { r.inv = nullptr; return; }
-    void* icls = R::ClassOf(r.inv);
-    const int32_t oi = Off(icls, L"Index"), ov = Off(icls, L"currVol"), op = Off(icls, L"Player");
-    if (oi >= 0) r.index   = ReadAt<int32_t>(r.inv, oi);
-    if (ov >= 0) r.currVol = ReadAt<float>(r.inv, ov);
-    if (op >= 0) r.player  = ReadAt<uint8_t>(r.inv, op) != 0;
-    r.contents = ContentsOf(r.inv, r.index);
-}
-
-void FillCommon(Row& r) {
-    r.cls = R::ClassNameOf(r.actor);
-    r.key = ue_wrap::prop::GetInteractableKeyString(r.actor);
-    const auto id = coop::element::Registry::Get().EidForActor(r.actor);
-    r.eid = (id == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(id);
-    ue_wrap::FVector loc{};
-    r.locRead = ue_wrap::engine::TryGetActorLocation(r.actor, loc);
-    r.x = loc.X; r.y = loc.Y; r.z = loc.Z;
-}
-
-uint64_t HashRows(const std::vector<Row>& rows) {
+uint64_t HashRows(const std::vector<Row>& rows, int32_t cargo, int hasSack) {
     uint64_t h = 1469598103934665603ull;
     auto mix = [&h](uint64_t v) { h ^= v; h *= 1099511628211ull; };
     for (const auto& r : rows) {
         mix(reinterpret_cast<uintptr_t>(r.actor));
         mix(static_cast<uint64_t>(r.eid));
-        mix(static_cast<uint64_t>(static_cast<uint32_t>(r.index)));
-        mix(static_cast<uint64_t>(static_cast<uint32_t>(r.contents)));
-        mix(r.isDroneContainer ? 1u : 0u);
-        mix(r.isSackContainer ? 2u : 0u);
+        mix(static_cast<uint64_t>(static_cast<uint32_t>(r.entries)));
+        mix(static_cast<uint64_t>(static_cast<uint32_t>(r.taken)));
         for (wchar_t c : r.key) mix(static_cast<uint64_t>(c));
     }
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(cargo)));
+    mix(static_cast<uint64_t>(static_cast<uint32_t>(hasSack)));
     mix(static_cast<uint64_t>(rows.size()));
     return h;
 }
@@ -147,96 +101,41 @@ void Tick(bool isHost) {
     if (nowMs < g_nextSample) return;
     g_nextSample = nowMs + kSampleMs;
 
-    // The two pointers that DEFINE the answer. Read them first so the rows can be marked.
-    void* droneContainer = nullptr;
-    std::vector<void*> sackContainers;
+    void* const drone = D::Find();
+    const int32_t cargo = drone ? EntriesOf(D::InventoryOf(drone)) : -1;
+    const int hasSack = drone ? ((D::ReadFxBits(drone) & D::kFxHasSack) ? 1 : 0) : -1;
+    const int arrived = drone ? ((D::ReadFxBits(drone) & D::kFxArrived) ? 1 : 0) : -1;
 
-    const std::vector<void*> drones = R::FindObjectsByClass(L"drone_C");
-    for (void* d : drones) {
-        if (!d || !R::IsLive(d)) continue;
-        const int32_t off = Off(R::ClassOf(d), L"container");
-        if (off >= 0) droneContainer = ReadAt<void*>(d, off);
-    }
-
-    // Q-B: a sack REFERENCES a container through its own `container` field rather than holding
-    // contents, so enumerating the sacks turns "is the sack a third receiver" into a pointer
-    // compare.
-    const std::vector<void*> sacks = R::FindObjectsByClass(L"prop_dronesack_C");
-    for (void* s : sacks) {
-        if (!s || !R::IsLive(s)) continue;
-        void* scls = R::ClassOf(s);
-        const int32_t offC = Off(scls, L"container");
-        const int32_t offT = Off(scls, L"takenByDrone");
-        void* sc = (offC >= 0) ? ReadAt<void*>(s, offC) : nullptr;
-        if (sc) sackContainers.push_back(sc);
-        UE_LOGI("[delivery_census] SACK actor=%p taken=%d container=%p", s,
-                (offT >= 0) ? (ReadAt<uint8_t>(s, offT) ? 1 : 0) : -1, sc);
-    }
-
-    // Q-A: COUNT the containers by CLASS. Not a key lookup -- the key lookup is the broken thing.
     std::vector<Row> rows;
-    for (void* a : R::FindObjectsByClass(L"prop_inventoryContainer_drone_C")) {
+    for (void* a : R::FindObjectsByClass(L"prop_dronesack_C")) {
         if (!a || !R::IsLive(a)) continue;
         Row r;
         r.actor = a;
-        FillCommon(r);
-        FillInventory(r);
-        r.isDroneContainer = (a == droneContainer);
-        for (void* sc : sackContainers) if (sc == a) r.isSackContainer = true;
+        r.key = ue_wrap::prop::GetInteractableKeyString(a);
+        const auto id = coop::element::Registry::Get().EidForActor(a);
+        r.eid = (id == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(id);
+        r.entries = EntriesOf(CI::InventoryOf(a));
+        const int32_t offT = R::FindPropertyOffset(R::ClassOf(a), L"takenByDrone");
+        if (offT >= 0) r.taken = ReadAt<uint8_t>(a, offT) ? 1 : 0;
+        ue_wrap::FVector loc{};
+        r.locRead = ue_wrap::engine::TryGetActorLocation(a, loc);
+        r.x = loc.X; r.y = loc.Y; r.z = loc.Z;
         rows.push_back(std::move(r));
     }
 
-    // --- whole-GObjStack slot delta (the "where did it go" reading) ---
-    {
-        std::vector<int32_t> cur;
-        if (void* save = ue_wrap::inventory::ResolveSaveSlot()) {
-            const int32_t offStack = Off(R::ClassOf(save), L"GObjStack");
-            if (offStack >= 0) {
-                const SR::Arr stack = SR::ReadArr(save, offStack);
-                cur.reserve(static_cast<size_t>(stack.num));
-                for (int32_t i = 0; i < stack.num; ++i)
-                    cur.push_back(SR::ReadArr(stack.data + static_cast<size_t>(i) * SR::kMxStride, 0).num);
-            }
-        }
-        if (!g_prevSlots.empty() || !cur.empty()) {
-            std::wstring deltas;
-            const size_t n = cur.size() > g_prevSlots.size() ? cur.size() : g_prevSlots.size();
-            int changed = 0;
-            for (size_t i = 0; i < n; ++i) {
-                const int32_t a = i < g_prevSlots.size() ? g_prevSlots[i] : -1;
-                const int32_t b = i < cur.size() ? cur[i] : -1;
-                if (a == b) continue;
-                ++changed;
-                if (changed <= 24) {
-                    deltas += L" [" + std::to_wstring(i) + L"] " + std::to_wstring(a)
-                            + L"->" + std::to_wstring(b);
-                }
-            }
-            if (changed)
-                UE_LOGI("[delivery_census] GObjStack slots=%zu changed=%d:%ls",
-                        cur.size(), changed, deltas.c_str());
-        }
-        g_prevSlots.swap(cur);
-    }
-
-    const uint64_t h = HashRows(rows);
+    const uint64_t h = HashRows(rows, cargo, hasSack);
     if (!g_first && h == g_lastHash) return;   // EDGES only -- no identical-row wall
     g_first = false;
     g_lastHash = h;
     ++g_sampleNo;
 
-    UE_LOGI("[delivery_census] #%d %s -- containers=%zu sacks=%zu drone.container=%p",
-            g_sampleNo, isHost ? "HOST" : "CLIENT", rows.size(), sacks.size(), droneContainer);
+    UE_LOGI("[delivery_census] #%d %s -- drone=%p cargo=%d hasSack=%d arrived=%d sacks=%zu", g_sampleNo,
+            isHost ? "HOST" : "CLIENT", drone, cargo, hasSack, arrived, rows.size());
     for (const auto& r : rows) {
-        UE_LOGI("[delivery_census]   actor=%p cls='%ls' key='%ls' eid=%u idx=%d contents=%d "
-                "vol=%.1f player=%d loc=(%.0f,%.0f,%.0f)%s%s%s",
-                r.actor, r.cls.c_str(), r.key.empty() ? L"<none>" : r.key.c_str(), r.eid,
-                r.index, r.contents, r.currVol, r.player ? 1 : 0, r.x, r.y, r.z, r.locRead ? "" : " (unread)",
-                r.isDroneContainer ? "  <== drone.container (compileOrder writes HERE)" : "",
-                r.isSackContainer ? "  <== sack.container" : "");
+        UE_LOGI("[delivery_census]   sack=%p key='%ls' eid=%u entries=%d taken=%d loc=(%.0f,%.0f,%.0f)%s", r.actor,
+                r.key.empty() ? L"<none>" : r.key.c_str(), r.eid, r.entries, r.taken, r.x, r.y, r.z,
+                r.locRead ? "" : " (unread)");
     }
-    if (rows.empty())
-        UE_LOGW("[delivery_census]   (no prop_inventoryContainer_drone_C actors alive)");
 }
 
 }  // namespace coop::dev::delivery_census

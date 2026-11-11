@@ -1,5 +1,5 @@
 // ue_wrap/devices/laptop.h -- the stationary base PC (Alaptop_C) engine wrapper. Offsets are
-// resolved live via reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
+// resolved live from the class by member name; one not found leaves the wrapper unresolved, said once.
 //
 // What the wrapper reaches:
 //   - the power and boot axis: isOpened, powered, and the native power-button press

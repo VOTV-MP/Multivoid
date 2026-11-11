@@ -3,119 +3,58 @@
 
 #pragma once
 
-#include "ue_wrap/core/types.h"
-
 #include <cstdint>
+#include <cstdlib>
 #include <string>
-#include <vector>
 
 namespace coop::net { class Session; }
 
 namespace coop::dev::container_intent_drill::detail {
 
-inline constexpr uint64_t kPickEveryMs = 1000;
-inline constexpr uint64_t kPickFailMs  = 60000;
-inline constexpr int      kMinRecords  = 2;
-
-// A record's identity in the inventories: addObject re-files a record with the owner's flag in bools[0], so its hash
-// differs between a container and an inventory, and its class and first name do not.
-struct ItemKey {
-    std::wstring cls;
-    std::wstring name;
-    bool operator==(const ItemKey& o) const { return cls == o.cls && name == o.name; }
-};
-
-enum class Arm : uint8_t { Off, Take, Settle, Abort, Deadline, Double, Ghost, Held, Race, Two, Sale, Depart, Room,
-                           Forge, Unasked, PutRecord, PutHand, PutFood, PutHidden, PutNested, PutEmpty, PutHover, PutReserved, PutFull,
-                           PutFullHand, PutDepart, PutDeadline, PutOwed, PutJoin, ThrowHand, ThrowGrab, ThrowHostGrab, ThrowClamp,
-                           ThrowPlace, ThrowJoin, ThrowDepart, ThrowTouch, ThrowInto };
+// The arms are the throw arms: a client throws a drive at a shared backpack (container_intent_drill_throw*.cpp).
+enum class Arm : uint8_t { Off, ThrowHand, ThrowGrab, ThrowHostGrab, ThrowClamp, ThrowPlace, ThrowJoin, ThrowDepart, ThrowTouch };
 Arm ArmOf();
 const char* ArmName();
-
-// The forge and unasked arms: the client's line on drill chat once its appends are done, which the host judges on.
-inline constexpr const char* kAppendDoneLine = "ci-drill append done";
-
-// The put arms are their own drill (container_intent_drill_put*.cpp): neither half picks a world container.
-inline bool IsPutArm(Arm a) { return a >= Arm::PutRecord && a <= Arm::PutJoin; }
-
-// The throw arms are their own drill too (container_intent_drill_throw*.cpp): a client throws a drive at a shared backpack.
-inline bool IsThrowArm(Arm a) { return a >= Arm::ThrowHand && a <= Arm::ThrowInto; }
 
 // The arms that throw from the hotbar hand: throwclamp is throwhand with a forged velocity.
 inline bool IsHandThrow(Arm a) { return a == Arm::ThrowHand || a == Arm::ThrowClamp; }
 
-// The arms that name the record the press takes (R) at the pick, preferring a container where it is unique.
-bool NamesR();
-
-enum class Phase { Picking, Walking, Opening, SettleWait, Pressed, Parked, Holding, Settling,
-                   GhostFind, GhostWait, GhostBack, Appended, Watching, Done };
-
-extern Phase    g_phase;
-extern uint64_t g_pickStartMs;
-extern uint64_t g_nextPickMs;
-
-// The target, picked alike on both peers.
-extern uint32_t        g_eid;
-extern void*           g_actor;
-extern int32_t         g_actorIdx;
-extern ue_wrap::FVector g_pos;
-extern int             g_records0;
-extern uint64_t        g_r0;         // race and two: the hash of the target's record 0 at the pick
-extern bool            g_r0Unique;   // and whether no other record of the target has its class and name
-extern ItemKey         g_r0Key;      // the class and name of that record
-
-// The client's press and its answer, shared by the take arms and the append arms.
-extern uint64_t        g_phaseStartMs;
-extern uint64_t        g_takePressMs;
-extern uint64_t        g_waitFromMs;   // the commit's bound counts from here
-extern int             g_containerBefore;
-extern int             g_ownBefore;
-extern uint32_t        g_takesBefore;
-extern uint32_t        g_committed;
+inline constexpr const wchar_t* kPackPath   = L"/Game/objects/prop_backpack.prop_backpack_C";
+inline constexpr const wchar_t* kDriveClass = L"prop_drive_C";
+inline constexpr float    kDropCm       = 30.f;
+inline constexpr uint64_t kCheckEveryMs = 250;
 
 const char* Role();
 void Finish();
 void Fail(const char* fmt, ...);
+
+// The record count of the world container `eid`, or -1 when it does not read.
 int CountOf(uint32_t eid);
-bool TryPick(int& seen, int& qualified);
 
-// The RecordHash of each record of a container actor's inventory, in order, in the form a take request carries it.
-bool ContainerHashes(void* container, std::vector<uint64_t>& out);
+// The element id of an actor, or kInvalidId.
+uint32_t EidOf(void* actor);
 
-// The ItemKey of each record of a container actor's inventory, in order.
-bool ContainerKeys(void* container, std::vector<ItemKey>& out);
+// The client with a connected client of a lower slot is the second client: the joiner.
+bool IsJoiner();
 
-// How many records of the local player's own inventory have this class and name; -1 when the inventory does not read.
-int OwnHolds(const ItemKey& key);
+// The integer after "key=" in a chat line's text, or false when the key is absent.
+inline bool IntAfter(const std::string& text, const char* key, int& out) {
+    const std::string needle = std::string(key) + "=";
+    const size_t at = text.find(needle);
+    if (at == std::string::npos) return false;
+    const char* begin = text.c_str() + at + needle.size();
+    char* end = nullptr;
+    const long v = std::strtol(begin, &end, 10);
+    if (end == begin) return false;
+    out = static_cast<int>(v);
+    return true;
+}
 
-// The client's depart and room arms (container_intent_drill_depart_room.cpp).
-// Depart: the parked press leaves a mark (the wall clock) in the mod's data folder; a relaunched client finds it,
-// removes it, and is idle when the mark is under 300 s old (the arm runs once per host session). An older mark is
+// The throwdepart arm: the parked client leaves a mark (the wall clock) in the mod's data folder; a relaunched client finds
+// it, removes it, and is idle when the mark is under 300 s old (the arm runs once per host session). An older mark is
 // removed and the arm runs.
 void DepartMarkParked();
 bool DepartRejoined();
-// Room: the own inventory's capacity is written to 0 until RoomRestore writes the old value back (idempotent).
-bool RoomFill();
-void RoomRestore();
-
-// Presses the slot as a click does. False, with the failure printed, when no act opened.
-bool PressAndCheck(void* slot);
-
-// The client's ghost, forge and unasked arms (container_intent_drill_append.cpp): a record appended to the mirror, then
-// judged. StartGhost and StartAppend begin on the open screen; AppendTick runs the phases GhostFind to GhostBack.
-void StartGhost(uint64_t now);
-void StartAppend(uint64_t now);
-void AppendTick(uint64_t now);
-void AppendReset();
-
-// The host's half (container_intent_drill_host.cpp).
-void HostTick(const coop::net::Session& session);
-void HostReset();
-
-// The put arms' two halves, and their state back to the start (container_intent_drill_put.cpp, _put_host.cpp).
-void PutHostTick(const coop::net::Session& session);
-void PutClientTick();
-void PutReset();
 
 // The throw arms' two halves, and their state back to the start (container_intent_drill_throw.cpp, _throw_host.cpp).
 void ThrowHostTick(const coop::net::Session& session);

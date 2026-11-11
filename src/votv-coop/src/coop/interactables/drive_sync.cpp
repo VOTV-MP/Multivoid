@@ -403,16 +403,20 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot) {
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
             return;
         }
-        // A slot freezes the drive it takes, and in the game only a grab takes one out: the drive's
-        // playerTryToGrab ejects it, and the grab's playerGrabbed_pre unfreezes it. The line is
-        // that grab on another machine, and the grab's own hold reaches the drive through the prop
-        // lane: its first pose runs the same unfreeze here, its release leaves the holder's flags.
+        // A slot freezes the drive it takes, and a drive leaves one two ways in the game, both ending with it
+        // simulating: the drive's playerTryToGrab ejects it and the grab's playerGrabbed_pre unfreezes it (the hold
+        // reaches this copy through the prop lane, whose first pose runs the same unfreeze), and driveAction --
+        // playerTryToHold and playerTryToCollect -- ejects it and switches its physics on itself before it asks
+        // the hotbar or the bag for the drive. The line is that eject on another machine, and the physics half is
+        // not on the wire, so it is run here: left frozen, this copy fails the host's fit for the hold or pocket
+        // that follows (no simulating body) and the take is refused.
         bool frozen = false;
         {
             coop::desk_snd_fx::ScopedWireApply guard;
             LaneApply apply;
             DC::CallDrivePulledOut(slot);
             frozen = ue_wrap::prop::IsFrozen(cur);  // 0 once the hold's first pose has unfrozen it
+            if (frozen) ue_wrap::prop::CallAwakeUnfreeze(cur);
             DC::CompleteEjectLatch(slot, cur);
             SetBase(p.role, false, 0, nullptr);
         }

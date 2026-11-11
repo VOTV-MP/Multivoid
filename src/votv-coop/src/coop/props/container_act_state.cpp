@@ -2,7 +2,7 @@
 
 #include "coop/props/container_act_state.h"
 
-#include "coop/props/prop_record_wire.h"
+#include "coop/items/inventory_item_wire.h"
 
 #include <algorithm>
 #include <utility>
@@ -101,9 +101,9 @@ void State::Lapse(const Hold& h, uint64_t nowMs) {
     t.slot = h.slot;
     t.id = h.id;
     t.eid = h.eid;
-    t.className = h.record.className;
-    ue_wrap::save_record::RecordName(h.record, t.name);
-    t.askedBytes = coop::props::prop_record_wire::RecordBytes(h.record);
+    t.className = ue_wrap::inventory_item::ClassLeaf(h.record);
+    ue_wrap::inventory_item::ItemName(h.record, t.name);
+    t.askedBytes = coop::inventory_item_wire::ItemBytes(h.record);
     t.atMs = nowMs;
     size_t ofSlot = 0;
     for (const Tombstone& o : tombstones_) ofSlot += o.slot == h.slot ? 1 : 0;

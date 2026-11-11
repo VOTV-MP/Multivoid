@@ -46,7 +46,10 @@ constexpr DWORD kPollMs = 2000;
 constexpr int   kTagFix = 1, kTagCheck = 2, kTagCalc = 3, kTagUber = 4, kTagHealth = 5;
 constexpr int   kTagScopedCycle = 6, kTagScopedWind = 7, kTagPlainTick = 8, kTagRetireFirst = 9,
                 kTagUndeclared = 10;
-constexpr int   kSendNameEntry = 3501;   // the ubergraph entry sendName's stub names
+// The ubergraph entry the sendName stub names. It is a bytecode offset into the box's ubergraph (3501 on 0.9.0n, another
+// on any build that grew or shrank the graph), so it is learned from the first ubergraph call the stub itself makes, not
+// written down: -1 until then.
+int32_t g_sendNameEntry = -1;
 constexpr float kSentinel = -1.0f;       // no efficiency the game computes is negative
 
 // The watched functions, as rows: the class is the run-time class of a live box (or of the gamemode).
@@ -145,14 +148,20 @@ int32_t EntryOf(const SG::Call& call) {
     return entry;
 }
 SG::Verdict PreUber(const SG::Call& call) {
-    if (EntryOf(call) != kSendNameEntry) { ++g_uber.other; return SG::Verdict::Run; }
+    const int32_t entry = EntryOf(call);
+    if (g_sendNameEntry < 0 && entry >= 0 && IsDrillBox(call.object) && call.callerFunction == g_fnSendName &&
+        call.callerObject == call.object) {
+        g_sendNameEntry = entry;
+        UE_LOGI("[SCRIPTGATE] the sendName stub names ubergraph entry %d", entry);
+    }
+    if (entry < 0 || entry != g_sendNameEntry) { ++g_uber.other; return SG::Verdict::Run; }
     Tally(g_uber, call, false);
     if (IsDrillBox(call.object) && call.callerFunction == g_fnSendName && call.callerObject == call.object)
         ++g_uber.entryOk;
     return (g_cancelUberOnA && call.object == g_boxA) ? SG::Verdict::Cancel : SG::Verdict::Run;
 }
 void PostUber(const SG::Call& call) {
-    if (EntryOf(call) != kSendNameEntry) return;
+    if (g_sendNameEntry < 0 || EntryOf(call) != g_sendNameEntry) return;
     Tally(g_uber, call, true);
 }
 
@@ -355,7 +364,7 @@ void RunScriptGateDrill() {
         Check(v, CallSendName(g_boxA), "pass3: sendName(A) dispatched");
         Check(v, CallSendName(g_boxB), "pass3: sendName(B) dispatched");
         Check(v, g_uber.preA == 1 && g_uber.preB == 1, "pass3: the sendName entry fired once per box");
-        Check(v, g_uber.entryOk == 2, "pass3: EntryPoint read as 3501 with sendName as the caller, twice");
+        Check(v, g_uber.entryOk == 2, "pass3: EntryPoint read as the sendName stub's own entry with sendName as the caller, twice");
         Check(v, g_uber.postA == 0 && g_uber.postB == 1, "pass3: A's entry refused (no post), B's ran");
         g_cancelUberOnA = false;
         Check(v, SG::Unwatch(g_rUber, kTagUber, &PreUber, &PostUber), "unwatch the ubergraph");

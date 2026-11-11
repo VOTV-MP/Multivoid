@@ -5,7 +5,6 @@
 // same functions serve all of them. The set travels as a few lines (the chat line is short) and is collected part by part.
 
 #include "container_intent_drill_throw.h"
-#include "container_route_drill_detail.h"
 
 #include "coop/dev/drill_chat.h"
 #include "coop/net/protocol.h"

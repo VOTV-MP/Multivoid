@@ -11,6 +11,11 @@
 // lethal call while only a throw's or a swing's sequence is pending, which waits for the grant (below). A caller's
 // identity is never read: a physics impact carries the struck prop as its actor, and a drill's call nests under our code.
 
+// The host holds the same rule from the other side: a prop a client holds is moved on the host's copy by that client's
+// pose stream, as a body nothing can push back, so what it is moved into would break it (a drive has little health).
+// The host's impactDamage on a prop a peer's drive moves is cancelled, and the holder's copy decides; its break arrives
+// as the holder's destroy. Fire stays the host's.
+
 // The watches fail open: a dead one leaves that verb running on every copy, said in one ERROR line. Other owners (the
 // ATV, the player, the car, the own-graph breakers) are outside it. The damaged and destroyed sounds and particles the
 // component plays inside the cancelled body do not play on a client. Game thread.

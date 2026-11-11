@@ -34,8 +34,8 @@ namespace coop::hook_anchor {
 // the class, the save key and the base transform; it takes the anchor geometry from the sender,
 // bounds-checked; it clamps the cable length to the hook's own maxDist, the clamp the game itself
 // applies; and it reach-checks every attach key that resolves to something it can see.
-// `ue_wrap/actors/save_record` states the same rule for props and splices for the same reason --
-// this is that rule applied to a lineage its codec cannot reach.
+// `ue_wrap/actors/prop_record` states the same rule for props (a record never carries the receiver's
+// identity) -- this is that rule applied to a lineage whose fields the host must read before it applies.
 
 void Install(coop::net::Session* session);
 
@@ -49,7 +49,8 @@ enum class CommitResult { Failed, Sent, AdoptedLocally };
 // OWNER: this hook has both ends anchored and the game has let go of it. Capture its record and
 // either send the commit or, on the host, adopt it here. `Failed` means the caller keeps streaming
 // and tries again on the next poll.
-// The record-as-payload precedent is named in ue_wrap/actors/save_record.h, on CaptureRecord.
+// An actor's own record as the payload that carries it to another peer is the pair Relay, Moddy's VOTV mod,
+// publishes as a rule's spawn payload on its README Blueprint page (docs/credits.md).
 CommitResult SendCommit(uint16_t seq, ue_wrap::hook::Kind kind, void* hookActor);
 
 // HOST: a commit arrived.

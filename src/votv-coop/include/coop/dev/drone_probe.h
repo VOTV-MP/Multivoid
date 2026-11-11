@@ -3,10 +3,10 @@
 
 //   [#1] is mainGamemode.drone a persistent placed singleton? (presence + ptr stability)
 //   [#2] is AdroneConsole::player_use ProcessEvent-dispatched (hookable)? (observer fires)
-//   [#3] does dropSack's box fire the Aprop_C Init observer? (orderbox/giftbox Init fires)
+//   [#3] does the cargo spawn fire the Aprop_C Init observer? (orderbox/giftbox Init fires; the sack's ReceiveDestroyed fires when the drone takes it aboard)
 //   [#4] flyingType int -> {delivery,pickup,sell} value (state dump during the cycle)
 //   [#5] triggerFly/beginFly/dropSack/soundAlarm/checkOrders/compileOrder: PE or BP-internal?
-//   [#6] order-commit path (saveSlot.orders.Num / droneOrder.items.Num dump)
+//   [#6] order-commit path (save_slot.orders.Num / drone.order.items.Num / cargo entries dump)
 //   [#7] is the laptop shop reachable from a client? (a CLIENT-side run answers it)
 //   [#8] auto-drive schedule (daynight sendDriveBox / Make Default Order observer fires)
 //   [#9] gift injector on good task (createNewTask / Make Default Order fires)
@@ -24,7 +24,7 @@ namespace coop::dev::drone_probe {
 void Install();
 
 // Per-tick state poll: mainGamemode.drone presence + Active/hasOrder/hasSack/flyingType/
-// pickedUp transitions + saveSlot order/economy dump (throttled) + radarObjects membership.
+// pickedUp transitions + save_slot order/economy dump (throttled) + radarObjects membership.
 // No-op unless `drone_probe=1`. Game thread only.
 //
 // `connected`/`isHost` come from the session (net_pump). When ALSO `drone_probe_drive=1`, the

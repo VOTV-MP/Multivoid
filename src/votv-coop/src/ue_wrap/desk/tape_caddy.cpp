@@ -1,6 +1,6 @@
-// ue_wrap/desk/tape_caddy.cpp -- see ue_wrap/desk/tape_caddy.h. Offsets resolved from the
-// live classes via reflection (version-portable); the Alpha 0.9.0-n values are
-// logged fallbacks (wallunit reelBig 0x0288 / reelSmall 0x028C).
+// ue_wrap/desk/tape_caddy.cpp -- see ue_wrap/desk/tape_caddy.h. Offsets are resolved from the live
+// classes by member name; a member the name does not find leaves the wrapper unresolved, and no offset
+// is guessed.
 
 #include "ue_wrap/desk/tape_caddy.h"
 
@@ -46,10 +46,15 @@ bool EnsureResolved() {
     void* unitCls = R::FindClass(L"wallunit_tapes_C");
     void* reelCls = R::FindClass(L"prop_reel_C");
     if (!unitCls || !reelCls) return false;  // classes not loaded yet -- backoff above throttles
-    int32_t big   = R::FindPropertyOffset(unitCls, L"reelBig");
-    int32_t small = R::FindPropertyOffset(unitCls, L"reelSmall");
-    if (big < 0)   { UE_LOGW("tape_caddy: reelBig offset not found -- fallback 0x0288");   big = 0x0288; }
-    if (small < 0) { UE_LOGW("tape_caddy: reelSmall offset not found -- fallback 0x028C"); small = 0x028C; }
+    const int32_t big   = R::FindPropertyOffset(unitCls, L"reelBig");
+    const int32_t small = R::FindPropertyOffset(unitCls, L"reelSmall");
+    if (big < 0 || small < 0) {
+        static bool sSaid = false;
+        if (!sSaid) UE_LOGE("tape_caddy: 'reelBig' (%d) or 'reelSmall' (%d) not found by name -- the caddy stays unsynced",
+                            big, small);
+        sSaid = true;
+        return false;
+    }
     void* updFn = R::FindFunction(unitCls, L"upd");
     if (!updFn) UE_LOGW("tape_caddy: upd() not found on wallunit_tapes_C -- slot repaint disabled");
     g_unitCls = unitCls; g_reelBaseCls = reelCls;

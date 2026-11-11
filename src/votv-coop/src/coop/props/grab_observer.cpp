@@ -37,7 +37,7 @@ UE_FACT_FN(kRowSetPhysicsLinearVelocity, "grab_observer", L"PrimitiveComponent",
 UE_FACT_FN(kRowSetPhysicsAngularVelocityInDegrees, "grab_observer", L"PrimitiveComponent",
            L"SetPhysicsAngularVelocityInDegrees", Declared);
 UE_FACT_FN(kRowUseInputEvent, "grab_observer", L"mainPlayer_C",
-           L"InpActEvt_use_K2Node_InputActionEvent_41", Declared);
+           L"InpActEvt_use_K2Node_InputActionEvent_37", Declared);
 // The `grab` timeline's tick and end: a timeline's name is content, stable across a recook.
 UE_FACT_FN(kRowGrabUpdateFunc, "grab_observer", L"mainPlayer_C", L"grab__UpdateFunc", Declared);
 UE_FACT_FN(kRowGrabFinishedFunc, "grab_observer", L"mainPlayer_C", L"grab__FinishedFunc", Declared);

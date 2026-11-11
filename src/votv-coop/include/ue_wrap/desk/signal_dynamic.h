@@ -1,4 +1,4 @@
-// ue_wrap/desk/signal_dynamic.h -- the Fstruct_signalDataDynamic (0x70) bridge.
+// ue_wrap/desk/signal_dynamic.h -- the Fstruct_signalDataDynamic (0x78) bridge.
 //
 // This ONE struct is both the desk refiner's loaded signal (comp_data_0) and an element of
 // gamemode.savedSignals_0, the desk signal library. Its rows are pure POD and strings, with no
@@ -21,7 +21,7 @@
 
 namespace ue_wrap::signal_dynamic {
 
-// Field offsets within Fstruct_signalDataDynamic (stride 0x70).
+// Field offsets within Fstruct_signalDataDynamic (stride 0x78).
 inline constexpr int32_t kOff_name     = 0x00;  // FString
 inline constexpr int32_t kOff_level    = 0x10;  // int32
 inline constexpr int32_t kOff_id       = 0x18;  // FString (base64url, ~22 chars)
@@ -34,11 +34,12 @@ inline constexpr int32_t kOff_loc      = 0x40;  // FVector2D
 inline constexpr int32_t kOff_object   = 0x48;  // FName
 inline constexpr int32_t kOff_signal   = 0x50;  // FName (the template key)
 inline constexpr int32_t kOff_image    = 0x58;  // Fstruct_byteImage = TArray<uint8>
-inline constexpr int32_t kOff_freq     = 0x68;  // enum byte
-inline constexpr int32_t kOff_qual     = 0x69;  // enum byte
-inline constexpr int32_t kOff_objType  = 0x6A;  // enum byte
-inline constexpr int32_t kOff_daq      = 0x6C;  // float downloadedAtQuality
-inline constexpr int32_t kStride       = 0x70;
+inline constexpr int32_t kOff_imgName  = 0x68;  // FName signalObjectImageName
+inline constexpr int32_t kOff_freq     = 0x70;  // enum byte
+inline constexpr int32_t kOff_qual     = 0x71;  // enum byte
+inline constexpr int32_t kOff_objType  = 0x72;  // enum byte
+inline constexpr int32_t kOff_daq      = 0x74;  // float downloadedAtQuality
+inline constexpr int32_t kStride       = 0x78;
 
 // Wire-facing view of one row. The photo is read only when asked (ReadStruct's withImage): the lanes that
 // poll rows at a cadence leave it out, and the rack packs sixteen rows into one blob.
@@ -47,6 +48,7 @@ struct Row {
     std::wstring id;              // non-unique across copies; nothing looks rows up by it
     std::wstring object;          // FName leaf as string
     std::wstring signal;          // FName leaf as string -- the template key
+    std::wstring imageName;       // FName leaf as string -- signalObjectImageName, empty for NAME_None
     int32_t level = 0;
     int32_t polarity = 0;
     float   size = 0;             // saveSignal gate: must be > 0
@@ -79,7 +81,7 @@ bool ReadStruct(const void* base, Row& out, bool withImage = false);
 // that cannot be minted writes no field at all. Game thread.
 bool WriteStructLive(void* base, const Row& in);
 
-// Build the 0x70 param-frame bytes for a struct PARAMETER (gamemode.saveSignal's
+// Build the kStride param-frame bytes for a struct PARAMETER (gamemode.saveSignal's
 // `signal`): PODs raw, FStrings and the photo pointing AT `in`'s buffers (the
 // callee deep-copies during the call -- `in` must outlive it), FNames interned.
 // Game thread.

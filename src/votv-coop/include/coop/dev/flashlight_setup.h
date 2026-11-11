@@ -18,14 +18,13 @@ namespace coop::dev::flashlight_setup {
 // pinned down. Returns true if the call dispatched. Game thread only.
 bool GiveFlashlight(void* mainPlayer);
 
-// Write a full charge into the live saveSlot: battery = 1.0f, and
-// flashlightBattery = the prop_batts_C UClass. Both fields are found by name
-// through FindPropertyOffset on saveSlot_C, so a recook that shifts BP offsets
-// still works. Returns true on success. Game thread only.
+// Write a full charge (100) into the worn flashlight's own `battery`, inside its
+// inventory entry (ue_wrap/actors/inventory.h WriteWornItemProperty). Returns true
+// on success; false when no flashlight is worn. Game thread only.
 bool SetBatteryFull(void* mainPlayer);
 
 // High-level: ensure flashlight is equipped + battery is full. Reads
-// mainPlayer.hasFlashlight to decide whether GiveFlashlight is needed.
+// mainPlayer.equipped_flashlight to decide whether GiveFlashlight is needed.
 // Logs the verified state. Game thread only.
 bool EnsureFlashlightReady(void* mainPlayer);
 

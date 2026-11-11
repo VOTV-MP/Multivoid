@@ -171,8 +171,8 @@ std::wstring LevelOf(void* obj) {
 
 Counts Sample() {
     Counts c;
-    void* hand[1 + coop::players::kMaxPeers];
-    const size_t handN = coop::hand_item::CollectHandAxisActors(hand, 1 + coop::players::kMaxPeers);
+    void* hand[coop::hand_item::kHandAxisCap];
+    const size_t handN = coop::hand_item::CollectHandAxisActors(hand, coop::hand_item::kHandAxisCap);
     std::vector<Truth> truth;
     truth.reserve(4096);
     // The world the game is running: a prop of another (the menu's backdrop, a dying world) is never a

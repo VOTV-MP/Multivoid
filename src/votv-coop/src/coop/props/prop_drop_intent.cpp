@@ -1,6 +1,7 @@
 // coop/props/prop_drop_intent.cpp -- see coop/props/prop_drop_intent.h for the design.
 
 #include "coop/props/prop_drop_intent.h"
+#include "coop/props/wire_class.h"  // the class name and its content path on the wire
 
 #include "coop/config/config.h"             // the throw arms' dev knobs
 #include "coop/config/config_registry.h"
@@ -20,7 +21,7 @@
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
-#include "coop/props/container_writer_watch.h"   // TakeObjInFlight -- mark a container-extraction birth
+#include "coop/props/container_writer_watch.h"   // ExtractInFlight -- mark an extraction birth
 #include "coop/props/container_birth.h"           // a thrown container's birth slice
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
@@ -197,10 +198,10 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
         coop::dev::prop_birth_key_probe::NotePendingCapHit(actor);
         return;
     }
-    // Was a container extraction in flight when this actor spawned? The extracted item's actor
-    // materialises inside the take call, so the latch is live exactly here. Marks the entry as a
-    // container-extraction birth, admitted at drain.
-    const bool fromContainerExtract = coop::props::container_writer_watch::TakeObjInFlight();
+    // Was an extraction in flight when this actor spawned? The inventory screen spawns the items it
+    // drops inside its dropItems body, so the latch is live exactly here. Marks the entry as an
+    // extraction birth, admitted at drain.
+    const bool fromContainerExtract = coop::props::container_writer_watch::ExtractInFlight();
     if (coop::dev::prop_birth_key_probe::IsEnabled()) {
         // The seam reading the probe exists for: is the Key there before any drain tick waits?
         coop::dev::prop_birth_key_probe::NoteEnqueue(
@@ -236,7 +237,9 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
                           const std::wstring& key, uint8_t authorSlot) {
     // Host resolving a CLIENT's placed-prop class: object_index, so an attacker's unknown class is an
     // O(1) miss, not a whole-array walk. Host world is always up, so the index is current.
-    void* clsObj = ue_wrap::object_index::ClassByName(cls.c_str());
+    // A class the host has not loaded (a client's spawn-menu prop, an item the host never met) is loaded from the content path
+    // the intent carries, then judged by the lineage gate below like any other.
+    void* clsObj = coop::wire_class::Resolve(p.className, &ue_wrap::object_index::ClassByName);
     if (!clsObj) {
         UE_LOGW("[PROP-DROP] HOST class '%ls' not found -- cannot spawn placed prop key='%ls'",
                 cls.c_str(), key.c_str());
@@ -503,7 +506,7 @@ void Tick(coop::net::Session* session) {
         // Author the host-authoritative spawn intent (a place, or a fresh birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
-        FillWireStr(p.className.len, p.className.data, cls);
+        coop::wire_class::FillFromClass(p.className, cls, R::ClassOf(e.actor));
         FillWireStr(p.key.len, p.key.data, key);
         namespace pf = coop::net::propspawn_flags;
         if (ue_wrap::prop::IsDescendantOfProp(e.actor)) {

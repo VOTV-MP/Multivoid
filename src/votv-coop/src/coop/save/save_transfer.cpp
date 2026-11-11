@@ -1,12 +1,12 @@
 // coop/save/save_transfer.cpp -- the host's world to a joining client: a live capture of the host's
-// world into a scratch slot (or the on-disk slot behind a torn-read guard), chunked over the
-// Transfer lane behind a Begin, CRC-checked and written to the client's coop slot. The photograph
+// world into a scratch save folder (or the on-disk folder behind a torn-read guard), packed
+// (coop/save/save_folder_pack), chunked over the Transfer lane behind a Begin, CRC-checked and
+// unpacked into the client's coop folder. The photograph
 // only; what the world did while it travelled is coop/save/join_window_baseline, captured in the
 // same breath here and flushed from this tick. See coop/save/save_transfer.h.
 
 #include "coop/save/save_transfer.h"
 
-#include "coop/atomic_file/atomic_file.h"
 #include "coop/comms/chat_feed.h"  // the join-window cue, behind the pile_delta_probe flag
 #include "coop/element/element.h"   // Element::GetActor
 #include "coop/element/registry.h"  // the host's eid-to-actor lookup
@@ -27,14 +27,17 @@
 #include "coop/session/join_beacon.h"  // the joiner hears which phase this stream is in
 #include "coop/session/host_world_settle.h"  // whether the host's world has finished starting
 #include "coop/save/join_window_baseline.h"  // the capture instant's baselines and their flush
+#include "coop/save/save_folder_pack.h"
 #include "coop/save/save_guard.h"
 #include "coop/save/save_indicator_suppress.h"  // detect the SAVED HUD across the join scratch save
+#include "coop/save/save_scratch.h"  // where the joiner's copy and the host's capture live
 #include "coop/save/slot_file_read.h"  // the torn-read guard and the stream's CRC
 #include "ue_wrap/engine/engine.h"      // the host's current prop position
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"        // IsChipPile: a grabbed clump belongs to the convert stream
 #include "ue_wrap/core/reflection.h"  // IsLive
 #include "ue_wrap/engine/save_capture.h"
+#include "ue_wrap/engine/save_folder.h"  // AreaOf: the area a save folder's own metadata names
 #include "ue_wrap/engine/world_identity.h"  // whether a world is coming in
 #include "ue_wrap/world/game_mode.h"   // the host's own mode, for the begin
 #include "ue_wrap/world/world_singleton.h"  // the gamemode that owns the world's save
@@ -42,7 +45,6 @@
 #include <windows.h>
 
 #include <atomic>
-#include <chrono>
 #include <cmath>     // the drift log
 #include <cstdio>
 #include <cstring>
@@ -79,7 +81,7 @@ struct HostStream {
     coop::net::SaveTransferBeginPayload beginPayload{};
     uint32_t nextChunk = 0;
     uint32_t chunkCount = 0;
-    coop::slot_file_read::StableRead read;  // the canonical slot's read under the torn-read guard
+    coop::slot_file_read::StableRead read;  // the save folder's world file, read under the torn-read guard
     bool      stallSaid = false;   // [dev] stall_world_stream_at_pct said its piece once
     std::vector<uint8_t> blob;     // captured stable blob (per-slot copy; 17MB,
                                    // freed on completion -- joins are rare)
@@ -157,13 +159,15 @@ void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes
     hs.beginPayload.sidecarBytes = sidecarBytes;  // the framed identity map leads the stream
 }
 
-// One stable-read attempt for a slot still capturing; true once the blob is captured.
+// One stable-read attempt for a slot still capturing; true once the blob is captured. The torn-read
+// guard watches the folder's world file, the one the game rewrites at length; the small persistent
+// save and metadata are read with it.
 bool TryCaptureBlob_(int slot, HostStream& hs) {
     namespace SR = coop::slot_file_read;
-    const fs::path file = coop::save_guard::SaveGamesDir() / (g_hostSlot + L".sav");
-    std::vector<uint8_t> bytes;
-    uint32_t crc = 0;
-    switch (SR::PollStable(hs.read, file, slot, bytes, crc)) {
+    const fs::path folder = coop::save_guard::SaveGamesDir() / g_hostSlot;
+    std::vector<uint8_t> world;
+    uint32_t worldCrc = 0;
+    switch (SR::PollStable(hs.read, folder / L"main.sav", slot, world, worldCrc)) {
     case SR::Poll::Waiting:
         return false;
     case SR::Poll::Unreadable:
@@ -172,8 +176,17 @@ bool TryCaptureBlob_(int slot, HostStream& hs) {
     case SR::Poll::Ready:
         break;
     }
+    std::vector<uint8_t> bytes;
+    // The area is the one the folder's own metadata names, so the area file packed is the one that
+    // metadata sends the joiner's load to.
+    const std::wstring area = ue_wrap::save_folder::AreaOf(ue_wrap::save_folder::FolderPath(g_hostSlot));
+    if (!coop::save_folder_pack::Pack(folder, area, bytes)) {
+        ArmBeginNoSave_(slot);
+        return false;
+    }
+    const uint32_t crc = SR::Crc32(bytes.data(), bytes.size());
     BeginStreamFromBlob_(slot, hs, std::move(bytes), crc);
-    UE_LOGI("save_transfer: slot %d streaming CANONICAL slot '%ls' (stale fallback; %u bytes, "
+    UE_LOGI("save_transfer: slot %d streaming the SAVE FOLDER '%ls' (stale fallback; %u bytes, "
             "%u chunks, crc=0x%08X)",
             slot, g_hostSlot.c_str(), static_cast<uint32_t>(hs.blob.size()), hs.chunkCount, crc);
     return true;
@@ -194,7 +207,8 @@ bool     g_cliHaveBegin = false;
 uint32_t g_cliChunksSeen = 0;
 std::vector<uint8_t> g_cliBuf;
 
-std::wstring CoopSlotFileNameNoExt_() {
+// This instance's scratch save, named by process so same-machine peers cannot collide.
+std::wstring CoopSlotLeaf_() {
     wchar_t buf[32];
     swprintf(buf, 32, L"zcoop_%lu", static_cast<unsigned long>(::GetCurrentProcessId()));
     return buf;
@@ -219,7 +233,7 @@ void MaybeFinishLocked_() {
         return;
     }
     // The host may have prepended the framed index-to-eid identity sidecar: framing, not part of
-    // the .sav, so it is stripped and the game's loadObjects sees a clean GVAS blob. The split
+    // the save folder, so it is stripped before the folder is unpacked. The split
     // length comes from the CRC-verified Begin, so it holds even if the map's inner framing is
     // malformed.
     const uint8_t* blobStart = g_cliBuf.data();
@@ -241,27 +255,22 @@ void MaybeFinishLocked_() {
             coop::save_identity_bind::SetReceivedMap(rxMap);
         } else {
             UE_LOGE("save_transfer: identity sidecar parse failed (sidecarBytes=%u consumed=%zu) -- map "
-                    "ignored (stripping the bytes anyway; the .sav blob follows)", g_cliSidecarBytes, consumed);
+                    "ignored (stripping the bytes anyway; the save folder follows)", g_cliSidecarBytes, consumed);
         }
         blobStart = g_cliBuf.data() + g_cliSidecarBytes;
         blobLen = g_cliBuf.size() - g_cliSidecarBytes;
     }
-    const fs::path dir = coop::save_guard::SaveGamesDir();
-    const fs::path dst = dir / (CoopSlotFileNameNoExt_() + L".sav");
-    // Cached: the net thread, and the host sends the save again when it is lost.
-    const atomic_file::Result wr = atomic_file::Write(
-        dst, std::string_view(reinterpret_cast<const char*>(blobStart), blobLen),
-        atomic_file::Mode::Replace, atomic_file::Sync::Cached);
-    if (!wr.ok()) {
-        UE_LOGE("save_transfer: slot write of '%ls' failed (%s)", dst.c_str(),
-                atomic_file::Describe(wr).c_str());
+    const fs::path dst = coop::save_scratch::Dir(CoopSlotLeaf_());
+    // On the net thread; the host sends the save again when it is lost.
+    if (!coop::save_folder_pack::Unpack(blobStart, blobLen, dst)) {
+        UE_LOGE("save_transfer: unpacking the host's save into '%ls' failed", dst.c_str());
         g_cliState = ClientState::Failed;
         return;
     }
     g_cliBuf.clear();
     g_cliBuf.shrink_to_fit();
     g_cliState = ClientState::ReadySlotWritten;
-    UE_LOGI("save_transfer: host save written as '%ls' (%zu blob bytes [%u stream - %u sidecar], crc ok) "
+    UE_LOGI("save_transfer: host save unpacked into '%ls' (%zu blob bytes [%u stream - %u sidecar], crc ok) "
             "-- ready to load", dst.c_str(), blobLen, g_cliTotal, g_cliSidecarBytes);
 }
 
@@ -320,14 +329,9 @@ bool HostWorldComingIn_() {
     return !ue_wrap::world_singleton::Gamemode() || !coop::host_world_settle::Settled();
 }
 
-void DeleteFileLogged_(const fs::path& p) {
-    std::error_code ec;
-    if (fs::remove(p, ec)) UE_LOGI("save_transfer: deleted '%ls'", p.c_str());
-}
-
 }  // namespace
 
-std::wstring CoopSlotName() { return CoopSlotFileNameNoExt_(); }
+std::wstring CoopSlotName() { return coop::save_scratch::FolderName(CoopSlotLeaf_()); }
 
 const std::wstring& HostSlot() { return g_hostSlot; }
 
@@ -348,52 +352,51 @@ void SetHostSlot(const std::wstring& slot) {
     UE_LOGI("save_transfer: host slot = '%ls'", slot.c_str());
 }
 
-// The throwaway slot the live host world is serialised into: the zcoop_ prefix means the boot
-// sweep removes a crash leftover, and it is deleted the instant it is read. Never the host's
-// canonical slot.
-constexpr const wchar_t* kHostXferSlot = L"zcoop_hostxfer";
+// The throwaway scratch save the live host world is serialised into: the boot sweep removes a crash
+// leftover, and it is deleted the instant it is read. Never the host's own save folder.
+constexpr const wchar_t* kHostXferFolder = L"zcoop_hostxfer";
 
 namespace {
 
-// The live capture and the begin of its stream, or the canonical slot when the capture cannot run. Runs at
+// The live capture and the begin of its stream, or the save folder when the capture cannot run. Runs at
 // the joiner's request, or once the host's world it waited for is in.
 void CaptureAndBegin_(int peerSlot, HostStream& hs) {
-    // The host's world is serialised live, now, into a scratch slot instead of shipping the stale
+    // The host's world is serialised live, now, into a scratch folder instead of shipping the stale
     // on-disk save: an entity the host changed since its last autosave (a kerfur turned on, now an
     // NPC) is captured in its live state, so the joiner's loadObjects builds a correct world and
-    // the reconcile has nothing to fix. The canonical slot is never named or written. On the game
-    // thread (net_pump::Tick asserts it), so the save UFunctions are legal; the scratch file is
+    // the reconcile has nothing to fix. The host's own save folder is never named or written. On the game
+    // thread (net_pump::Tick asserts it), so the save UFunctions are legal; the scratch folder is
     // read synchronously, then deleted. The bracket around the capture DETECTS the native SAVED
     // HUD rather than suppressing it -- nothing suppresses it yet: the bracket spans the
     // synchronous capture, and a manual save uses a BP path the mod never calls, so a fire inside
     // it belongs to the join save.
     coop::dev::host_settle_drill::NoteCapture();  // [dev] the real settle conditions at the capture (a no-op when off)
     coop::save_indicator_suppress::Begin();
-    const bool captured = ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot);
+    std::wstring area;  // the area the host stands in, empty outside one
+    const bool captured = ue_wrap::save_capture::CaptureLiveWorldToFolder(
+        coop::save_scratch::FolderName(kHostXferFolder), area);
     coop::save_indicator_suppress::End();
     if (captured) {
-        const fs::path scratchFile =
-            coop::save_guard::SaveGamesDir() / (std::wstring(kHostXferSlot) + L".sav");
+        const fs::path scratch = coop::save_scratch::Dir(kHostXferFolder);
         std::vector<uint8_t> bytes;
-        bool got = coop::slot_file_read::ReadWholeFile(scratchFile, bytes) && !bytes.empty();
+        bool got = coop::save_folder_pack::Pack(scratch, area, bytes);
         // A second opinion, not the primary check, which is the producer's: save_capture refuses a
-        // capture whose objectsData came back empty. This size ratio discriminates only a big
-        // canonical against a small capture; a stale gamemode's full container serialises a
+        // capture whose object records came back empty. This size ratio discriminates only a big
+        // world file on disk against a small capture; a stale gamemode's full container serialises a
         // complete world that is not the host's, and nothing here sees that.
         if (got && !g_hostSlot.empty()) {
             std::error_code sizeEc;
             const uint64_t canonical =
-                fs::file_size(coop::save_guard::SaveGamesDir() / (g_hostSlot + L".sav"), sizeEc);
+                fs::file_size(coop::save_guard::SaveGamesDir() / g_hostSlot / L"main.sav", sizeEc);
             if (!sizeEc && canonical > 0 && bytes.size() * 8 < canonical) {
-                UE_LOGW("save_transfer: slot %d -- live capture produced %zu B against a canonical "
-                        "'%ls.sav' of %llu B: the game had not finished writing it. REFUSING to "
-                        "stream a world we cannot vouch for; falling back to the canonical slot.",
-                        peerSlot, bytes.size(), g_hostSlot.c_str(),
-                        static_cast<unsigned long long>(canonical));
+                UE_LOGW("save_transfer: slot %d -- live capture packed %zu B against the save's main.sav "
+                        "of %llu B: the game had not finished writing it. REFUSING to stream a world we "
+                        "cannot vouch for; falling back to the save folder.",
+                        peerSlot, bytes.size(), static_cast<unsigned long long>(canonical));
                 got = false;
             }
         }
-        DeleteFileLogged_(scratchFile);  // transient -- gone the instant it is read
+        coop::save_scratch::Remove(kHostXferFolder);  // transient -- gone the instant it is read
         if (got) {
             // The identity sidecar, dev-gated: the index-to-eid map of the keyless save-loaded
             // natives, prepended to the blob so it travels inside the same CRC'd stream the client
@@ -416,7 +419,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
                 framed.reserve(sidecar.size() + bytes.size());
                 framed.insert(framed.end(), sidecar.begin(), sidecar.end());
                 framed.insert(framed.end(), bytes.begin(), bytes.end());
-                bytes.swap(framed);  // bytes := [sidecar][.sav blob]
+                bytes.swap(framed);  // bytes := [sidecar][packed folder]
             }
             const uint32_t crc = coop::slot_file_read::Crc32(bytes.data(), bytes.size());  // CRC over the FRAMED stream
             BeginStreamFromBlob_(peerSlot, hs, std::move(bytes), crc, sidecarBytes);
@@ -439,17 +442,17 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
         }
         // Only when the read itself failed: the plausibility gate above has already said why.
         if (bytes.empty())
-        UE_LOGW("save_transfer: slot %d -- live scratch '%ls.sav' unreadable after capture; "
-                "falling back to the canonical slot", peerSlot, kHostXferSlot);
+            UE_LOGW("save_transfer: slot %d -- live scratch folder '%ls' unreadable after capture; "
+                    "falling back to the save folder", peerSlot, kHostXferFolder);
     }
 
     // The live capture is unavailable (no live gamemode, unresolved save UFunctions, an unreadable
-    // scratch): the canonical on-disk slot goes out behind the torn-read guard, since a stale world
+    // scratch): the save folder on disk goes out behind the torn-read guard, since a stale world
     // still beats no world and the reconcile covers it.
     if (g_hostSlot.empty()) { ArmBeginNoSave_(peerSlot); return; }
-    hs.active = true;  // TickHost::TryCaptureBlob_ captures the canonical slot
-    UE_LOGW("save_transfer: slot %d -- LIVE capture unavailable; falling back to canonical "
-            "slot '%ls' (stale; torn-read guard)", peerSlot, g_hostSlot.c_str());
+    hs.active = true;  // TickHost::TryCaptureBlob_ captures the save folder
+    UE_LOGW("save_transfer: slot %d -- LIVE capture unavailable; falling back to the save "
+            "folder '%ls' (stale; torn-read guard)", peerSlot, g_hostSlot.c_str());
 }
 
 }  // namespace
@@ -485,7 +488,7 @@ void OnRequest(int peerSlot) {
     // A joiner that asks while the host's world is still coming in -- a world is current but not yet the
     // gamemode that owns its save, or the gamemode is up and the world has not finished starting (its prop
     // processor's passes, its containers' inventories): the seconds after a load that a quick rejoin lands
-    // in -- waits for it rather than taking the canonical slot: the live capture carries what the host
+    // in -- waits for it rather than taking the save folder: the live capture carries what the host
     // changed since its save, and the lanes' join snapshots are taken in the same breath, so their seeds
     // run. The joiner hears it as the host capturing its world. With no gamemode the note renews its wait at
     // the first note only, so a world that never comes in ends the join as the host never preparing it;
@@ -726,22 +729,6 @@ uint8_t ReceivedGameMode() {
     return g_cliGameMode;
 }
 
-void CleanupStaleSlotsAtBoot() {
-    const fs::path dir = coop::save_guard::SaveGamesDir();
-    if (dir.empty()) return;
-    std::error_code ec;
-    const auto now = fs::file_time_type::clock::now();
-    for (const auto& e : fs::directory_iterator(dir, ec)) {
-        const std::wstring name = e.path().filename().wstring();
-        if (name.rfind(L"zcoop_", 0) != 0) continue;
-        // Age-gated: a concurrent same-machine sibling may be mid-join; only leftovers over an hour
-        // old are swept.
-        const auto mt = fs::last_write_time(e.path(), ec);
-        if (ec) continue;
-        if (now - mt > std::chrono::hours(1)) DeleteFileLogged_(e.path());
-    }
-}
-
 void OnDisconnect() {
     {
         std::lock_guard<std::mutex> lk(g_cliMu);
@@ -763,10 +750,7 @@ void OnDisconnect() {
         g_cliBuf.shrink_to_fit();
     }
     coop::save_identity_bind::OnDisconnect();  // drop the received map and the bound-native set
-    const fs::path dir = coop::save_guard::SaveGamesDir();
-    if (!dir.empty()) {
-        DeleteFileLogged_(dir / (CoopSlotFileNameNoExt_() + L".sav"));
-    }
+    coop::save_scratch::Remove(CoopSlotLeaf_());  // the joiner's copy of the host's world
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_host[slot] = HostStream{};
         g_worldTaken[slot] = false;

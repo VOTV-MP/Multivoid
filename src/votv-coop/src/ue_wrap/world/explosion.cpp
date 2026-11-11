@@ -76,8 +76,8 @@ bool AllResolved() {
 struct Layout {
     void*   cls = nullptr;
     bool    ok = false;
-    int32_t damage = -1, radius = -1, force = -1, fireStrength = -1, fireFuel = -1, innerShake = -1, outerShake = -1;
-    int32_t objType = -1, ignores = -1;
+    int32_t damage = -1, radius = -1, force = -1, fireStrength = -1, fireFuel = -1;
+    int32_t ignores = -1;
     int32_t ignoreWallsOff = -1, skipSettingOff = -1;
     uint8_t ignoreWallsMask = 0, skipSettingMask = 0;
 };
@@ -93,19 +93,15 @@ const Layout* LayoutFor(int i, void* cls) {
     l.force = R::FindPropertyOffset(cls, L"force");
     l.fireStrength = R::FindPropertyOffset(cls, L"fireStrength");
     l.fireFuel = R::FindPropertyOffset(cls, L"fireFuel");
-    l.innerShake = R::FindPropertyOffset(cls, L"innerShake");
-    l.outerShake = R::FindPropertyOffset(cls, L"outerShake");
-    l.objType = R::FindPropertyOffset(cls, L"objType");
     l.ignores = R::FindPropertyOffset(cls, L"ignores");
     const bool bools = R::FindBoolProperty(cls, L"ignoreWalls", l.ignoreWallsOff, l.ignoreWallsMask) &&
                        R::FindBoolProperty(cls, L"Skip Setting", l.skipSettingOff, l.skipSettingMask);
     l.ok = bools && l.damage >= 0 && l.radius >= 0 && l.force >= 0 && l.fireStrength >= 0 && l.fireFuel >= 0 &&
-           l.innerShake >= 0 && l.outerShake >= 0 && l.objType >= 0 && l.ignores >= 0;
+           l.ignores >= 0;
     if (!l.ok)
         UE_LOGE("[EXPLOSION] class %ls: a property to write did not resolve (damage=%d radius=%d force=%d fire=%d/%d "
-                "shake=%d/%d objType=%d ignores=%d bools=%d); no copy of it is spawned",
-                ClassName(At(i)), l.damage, l.radius, l.force, l.fireStrength, l.fireFuel, l.innerShake,
-                l.outerShake, l.objType, l.ignores, bools ? 1 : 0);
+                "ignores=%d bools=%d); no copy of it is spawned",
+                ClassName(At(i)), l.damage, l.radius, l.force, l.fireStrength, l.fireFuel, l.ignores, bools ? 1 : 0);
     return l.ok ? &l : nullptr;
 }
 
@@ -239,19 +235,6 @@ bool ReadForceRadius(void* explosion, float& out) {
     return std::isfinite(out) && out >= 0.f;
 }
 
-bool NarrowForceToPawn(void* explosion) {
-    UE_ASSERT_GAME_THREAD("explosion::NarrowForceToPawn");
-    void* comp = RadialForceOf(explosion);
-    if (!comp) return false;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(comp), L"RemoveObjectTypeToAffect");
-    if (!fn) return false;
-    for (const uint8_t type : {uint8_t{1}, uint8_t{3}}) {
-        ParamFrame f(fn);
-        if (!f.Set<uint8_t>(L"ObjectType", type) || !Call(comp, f)) return false;
-    }
-    return true;
-}
-
 void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float scale[3], const Params& p,
                     void* ignoreActor) {
     UE_ASSERT_GAME_THREAD("explosion::SpawnDeferred");
@@ -292,9 +275,6 @@ void* SpawnDeferred(Cls c, const float loc[3], const float rot[3], const float s
     PutFloat(base, l->force, p.force);
     PutFloat(base, l->fireStrength, p.fireStrength);
     PutFloat(base, l->fireFuel, p.fireFuel);
-    PutFloat(base, l->innerShake, p.innerShake);
-    PutFloat(base, l->outerShake, p.outerShake);
-    *reinterpret_cast<int32_t*>(base + l->objType) = p.objType;
     PutBool(base, l->ignoreWallsOff, l->ignoreWallsMask, p.ignoreWalls);
     PutBool(base, l->skipSettingOff, l->skipSettingMask, p.skipSetting);
     if (ignoreActor) {
@@ -332,9 +312,6 @@ bool ReadParams(void* explosion, Params& out) {
     out.force = GetFloat(base, l->force);
     out.fireStrength = GetFloat(base, l->fireStrength);
     out.fireFuel = GetFloat(base, l->fireFuel);
-    out.innerShake = GetFloat(base, l->innerShake);
-    out.outerShake = GetFloat(base, l->outerShake);
-    out.objType = *reinterpret_cast<const int32_t*>(base + l->objType);
     out.ignoreWalls = (base[l->ignoreWallsOff] & l->ignoreWallsMask) != 0;
     out.skipSetting = (base[l->skipSettingOff] & l->skipSettingMask) != 0;
     return true;

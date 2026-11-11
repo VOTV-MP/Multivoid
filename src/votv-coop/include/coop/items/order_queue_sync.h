@@ -1,4 +1,4 @@
-// coop/items/order_queue_sync.h -- the delivery order queue (saveSlot.orders), the host's, mirrored on
+// coop/items/order_queue_sync.h -- the delivery order queue (save_slot.orders), the host's, mirrored on
 // every client (OrderQueue). Gameplay/network layer (principle 7): it reaches the
 // engine only through ue_wrap::order_economy.
 //

@@ -372,7 +372,7 @@ void ClientTick(void* player) {
         if (Answered() && coop::fuse_tower_ops::PendingClaims() == 0) {
             ue_wrap::engine::MainPlayerGrabState gs{};
             void* held = ue_wrap::engine::ReadMainPlayerGrabState(player, gs)
-                             ? (gs.grabbingActor ? gs.grabbingActor : gs.holdingActor) : nullptr;
+                             ? (gs.grabbingActor ? gs.grabbingActor : gs.mainHand) : nullptr;
             const bool heldPulled = held && CT::IsPulledFuse(held);
             UE_LOGI("[TOWER-DRILL] client's pull answered: slot %d reads %d (the host's %d), reaped %llu, the hand "
                     "holds %s", g_slot, l.fuses[g_slot], w.fuses[g_slot],

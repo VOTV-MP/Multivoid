@@ -89,8 +89,8 @@ constexpr float kRunUntilCm     = 1500.f;
 
 // The keys the walk presses at the human-input seam: mainPlayer's input-action event stubs (input_stub.h).
 InputStub g_drop{L"InpActEvt_drop_K2Node_InputActionEvent_1"};
-InputStub g_runPress{L"InpActEvt_run_K2Node_InputActionEvent_8"};     // input_run = true
-InputStub g_runRelease{L"InpActEvt_run_K2Node_InputActionEvent_9"};   // input_run = false
+InputStub g_runPress{L"InpActEvt_run_K2Node_InputActionEvent_9"};     // input_run = true
+InputStub g_runRelease{L"InpActEvt_run_K2Node_InputActionEvent_10"};  // input_run = false
 // A walk-to target is reached on its own level only: the walker's centre within this of the target's
 // height, less than a storey. A route whose end the navmesh put on the floor below counts as
 // horizontally there, 11 m under a door on the dish building's upper floor.
@@ -619,7 +619,7 @@ public:
         E::MainPlayerGrabState gs{};
         if (E::ReadMainPlayerGrabState(ctx.player, gs)) {
             if ((gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ||
-                (gs.holdingActor  && ue_wrap::prop::IsGarbageClump(gs.holdingActor))) {
+                (gs.mainHand  && ue_wrap::prop::IsGarbageClump(gs.mainHand))) {
                 goal_.grabbed = true;
                 UE_LOGI("director/Grab: VERIFIED -- clump in hand, goal GRABBED");
                 return ProcStatus::Done;
@@ -697,7 +697,7 @@ ClearState ClearHand::Tick(const PlayerContext& ctx) {
     if (ticks_ == kDropMeasureTicks) {   // MEASURED, the hand still full: the input-seam result, not assumed
         // MEASURED HALT-fact, LABELED (not a silent mask): the reflection input stub does not run the
         // drop body (chippile InpActEvt_use precedent) -> the drop is not input-seam-faithful. Clear at
-        // the effect seam, ONE reasoned verb per slot: grabbing_actor -> PHC release; holding_actor
+        // the effect seam, ONE reasoned verb per slot: grabbing_actor -> PHC release; holdingActor_main
         // (the hand item / morph carry) -> throwHoldingProp (the SDK's "drop the held prop").
         usedEffectFallback_ = true;
         void* cls = R::FindClass(P::name::MainPlayerClass);

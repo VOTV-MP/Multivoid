@@ -5,8 +5,6 @@
 
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_contents_internal.h"
-#include "coop/props/container_act_host.h"
-#include "coop/props/container_arming.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_slice_wire.h"
@@ -18,7 +16,7 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "ue_wrap/actors/container_inventory.h"
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/inventory_item.h"
 #include "ue_wrap/core/log.h"
 
 #include <cstdint>
@@ -29,12 +27,11 @@
 namespace coop::props::container_contents_sync {
 namespace {
 
-namespace SR = ue_wrap::save_record;
+namespace II = ue_wrap::inventory_item;
 namespace cw = coop::props::container_slice_wire;
 namespace ci = ue_wrap::container_inventory;
 namespace cb = coop::props::container_birth;
 namespace cio = coop::props::container_contents_io;
-namespace ca  = coop::props::container_arming;
 
 using coop::element::LivePropActor;
 
@@ -45,10 +42,9 @@ uint32_t g_nextSeq = 1;
 // edge and the drain, and an eid re-resolves forward, so a destroyed container stops resolving.
 std::set<uint32_t> g_dirty;
 
-// What was last sent, per eid: the hash of the records and the flags apart. Skipping an unchanged blob is what bounds the
-// orphaned-buffer cost: a steady-state re-broadcast allocates nothing. A change of the container's arming with the same
-// records is sent.
-std::map<uint32_t, internal::Seen> g_sent;
+// What was last sent, per eid: the hash of the records. Skipping an unchanged blob is what bounds the orphaned-buffer
+// cost: a steady-state re-broadcast allocates nothing.
+std::map<uint32_t, uint64_t> g_sent;
 
 // Containers whose broadcast the transport refused while a world-ready peer was present, and
 // first publications whose contents do not read yet; retried by the sweep.
@@ -76,7 +72,7 @@ namespace internal {
 // < 0 fans out; on a client the same call reaches the host alone, the author-to-arbiter edge.
 
 bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSlot, bool force) {
-    std::vector<SR::SaveRecord> recs;
+    std::vector<II::Item> recs;
     if (!cio::ReadRecords(inv, recs)) {
         // Nothing resolvable is not a transport failure -- unless a first publication is owed for this
         // eid, which a slot not readable yet would otherwise lose for good.
@@ -91,17 +87,13 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
     }
     // A client ships a slice only for a container it threw: its birth.
     const bool birth = !IsHostRole() && toSlot < 0 && cb::IsBirthSlice(eid);
-    // The host's reading of the container's arming rides every slice it sends; a client's slice carries none (container_arming).
-    void* const owner = ci::OwnerOf(inv);
-    if (IsHostRole()) ca::Track(eid);
-    const uint8_t flags = IsHostRole() ? ca::ReadFlags(owner) : uint8_t{0};
     const uint64_t h = cw::RecordsHash(eid, recs);
     if (!force && !birth) {
         const auto it = g_sent.find(eid);
-        if (it != g_sent.end() && it->second.records == h && it->second.flags == flags)
+        if (it != g_sent.end() && it->second == h)
             return true;  // unchanged -- say nothing
     }
-    const std::vector<uint8_t> blob = cw::Pack(eid, recs, flags);
+    const std::vector<uint8_t> blob = cw::Pack(eid, recs);
     if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
         UE_LOGW("container_contents: eid=%u blob %zu B exceeds the transport ceiling -- dropped "
                 "(contents stay diverged; there is no bulk path)", eid, blob.size());
@@ -131,15 +123,8 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
                                             g_nextSeq++, blob);
     if (ok) {
         if (toSlot < 0) cb::FirstSent(eid);
-        if (toSlot < 0) g_sent[eid] = Seen{h, flags};  // only a FAN-OUT establishes what every peer has
+        if (toSlot < 0) g_sent[eid] = h;  // only a FAN-OUT establishes what every peer has
         if (toSlot < 0 && !IsHostRole()) coop::dev::container_route_census::NoteSliceSent(eid);   // dev: the route census
-        // The author of a mutation re-derives its own volume, mass and names here: the host
-        // excludes the author from the relay, and the native take path does not call
-        // updateVolumesAndMass, so the mutator's own displayed volume went stale while every other
-        // peer converged. A targeted send -- a joiner's seed, the truth re-sent to a refused
-        // author -- changed nothing on this peer, so it re-derives nothing; the seed sends every
-        // container in the world in one frame.
-        if (toSlot < 0) ci::RederiveShownState(owner, inv);
         UE_LOGI("container_contents: eid=%u shipped %zu records (%zu B)%s%s%s",
                 eid, recs.size(), blob.size(),
                 toSlot < 0 ? "" : " [targeted]",
@@ -189,7 +174,6 @@ void DrainDirty(coop::net::Session* s) {
         void* actor = LivePropActor(eid);
         if (!actor) {   // gone: nothing is owed for it any more
             cb::Forget(eid);
-            ca::Untrack(eid);
             continue;
         }
         if (!ci::IsContainer(actor)) continue;
@@ -211,15 +195,11 @@ void DrainDirty(coop::net::Session* s) {
     }
 }
 
-// Any change of a container's records or arming reaches here: the host's overlap-put judge forgets what it refused for it.
-void MarkDirty(uint32_t eid) {
-    g_dirty.insert(eid);
-    container_act_host::overlap::OnContainerChanged(eid);
-}
+void MarkDirty(uint32_t eid) { g_dirty.insert(eid); }
 
 std::set<uint32_t>& Dirty() { return g_dirty; }
 
-void NoteSent(uint32_t eid, const Seen& seen) { g_sent[eid] = seen; }
+void NoteSent(uint32_t eid, uint64_t recordsHash) { g_sent[eid] = recordsHash; }
 
 void ForgetSent(uint32_t eid) { g_sent.erase(eid); }
 

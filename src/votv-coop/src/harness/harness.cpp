@@ -25,6 +25,7 @@
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/save/join_window_baseline.h"
+#include "coop/save/save_scratch.h"
 #include "coop/save/save_transfer.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
@@ -521,11 +522,11 @@ void Start() {
     // object_overlay=1 so the smoke exercises the draw path.
     coop::dev::object_overlay::InitFromIni();
     coop::dev::ragdoll_bone_overlay::InitFromIni();
-    // The save transfer's sinks on the session, and a sweep of stale crash-leftover zcoop_ slots
-    // (age-gated, never a live sibling's).
+    // The save transfer's sinks on the session, and a sweep of the scratch saves a crashed session left
+    // (never a live sibling's).
     coop::save_transfer::Install(&session_runtime::Session());
     coop::join_window_baseline::Install(&session_runtime::Session());
-    coop::save_transfer::CleanupStaleSlotsAtBoot();
+    coop::save_scratch::SweepStale();
     // The player-list scoreboard (a second overlay surface, on tilde); the roster reads this
     // session.
     coop::roster::SetSession(&session_runtime::Session());

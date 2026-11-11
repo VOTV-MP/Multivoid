@@ -16,7 +16,12 @@ namespace {
 // by BeginDismiss (game) and read by Render (render).
 enum class State { Hidden, Up, Fading };
 std::atomic<int>    g_state{static_cast<int>(State::Hidden)};
-std::atomic<double> g_fadeStart{0.0};  // ImGui::GetTime() at BeginDismiss
+// ImGui::GetTime() when the render thread first drew the fade; kUnstamped until it did. The game thread never reads the ImGui
+// clock: ImGui::GetTime() dereferences the current context, which does not exist until the overlay's first frame, and a
+// fault there (seen on a client whose join completed before its first Present) skipped the rest of the SnapshotComplete
+// handler: the reconcile window never lowered and the host never heard the client ready.
+constexpr double kUnstamped = -1.0;
+std::atomic<double> g_fadeStart{kUnstamped};
 
 constexpr float kFadeSeconds = 0.40f;  // smooth 1->0 dismiss (not a hard snap); the world fades in assembled
 
@@ -29,10 +34,10 @@ void Show() {
 }
 
 void BeginDismiss() {
-    // Only from a raised cover; ignore a double-dismiss / not-shown. Publish g_fadeStart BEFORE flipping to
-    // Fading so the render thread, on observing Fading (acquire), sees the start time (release pairs).
+    // Only from a raised cover; ignore a double-dismiss / not-shown. Clear the start stamp BEFORE flipping to Fading so the
+    // render thread, on observing Fading (acquire), stamps the fade's start itself with its own clock (release pairs).
     int expected = static_cast<int>(State::Up);
-    g_fadeStart.store(ImGui::GetTime(), std::memory_order_relaxed);
+    g_fadeStart.store(kUnstamped, std::memory_order_relaxed);
     g_state.compare_exchange_strong(expected, static_cast<int>(State::Fading),
                                     std::memory_order_release, std::memory_order_relaxed);
 }
@@ -51,7 +56,11 @@ void Render() {
 
     float alpha = 1.0f;
     if (st == State::Fading) {
-        const double start = g_fadeStart.load(std::memory_order_relaxed);
+        double start = g_fadeStart.load(std::memory_order_relaxed);
+        if (start == kUnstamped) {   // the first frame of the fade: Render is the only writer from here
+            start = ImGui::GetTime();
+            g_fadeStart.store(start, std::memory_order_relaxed);
+        }
         const float t = static_cast<float>(ImGui::GetTime() - start) / kFadeSeconds;
         if (t >= 1.0f) return;  // fade complete -> draw nothing (Render is read-only; state stays Fading
                                 // until the next Show()/Reset() on the game thread -- harmless, IsActive

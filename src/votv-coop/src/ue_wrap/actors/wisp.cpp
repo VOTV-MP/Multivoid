@@ -1,10 +1,9 @@
 // ue_wrap/actors/wisp.cpp -- see ue_wrap/actors/wisp.h. Engine access for the VOTV Killer Wisp
 // (Akillerwisp_C / FName "killerwisp_C").
 //
-// All field offsets are resolved from the live class via reflection (FindPropertyOffset)
-// rather than hardcoded, so they stay correct across game builds (version-tagging rule).
-// The known Alpha 0.9.0-n offsets (CXXHeaderDump/killerwisp.hpp) are kept only as a logged
-// fallback if the reflected walk ever fails to find the property.
+// All field offsets are resolved from the live class by member name (FindPropertyOffset), never
+// hardcoded. A member the name does not find leaves the wrapper unresolved (said once), so the
+// killerwisp lane stays off rather than reading or writing a guessed offset.
 
 #include "ue_wrap/actors/wisp.h"
 
@@ -29,32 +28,16 @@ namespace P = profile;
 
 // Resolved once at EnsureResolved, then read-only (g_resolved release/acquire).
 std::atomic<bool> g_resolved{false};
+std::atomic<bool> g_missing{false};  // a member is not on the class: said once, never retried
 
 void*   g_wispCls       = nullptr;  // killerwisp_C UClass
-int32_t g_tryGrabOff    = -1;       // tryGrab       (0x05D8, bool)
-int32_t g_grabOff       = -1;       // grab          (0x0600, bool)
-int32_t g_killedOff     = -1;       // killed        (0x0618, bool)
-int32_t g_playerDmgOff  = -1;       // playerDamaged (0x0635, bool)
-int32_t g_harmlessOff   = -1;       // harmless      (0x0658, bool)
-int32_t g_targetOff     = -1;       // Target        (0x0610, APawn*)
+int32_t g_tryGrabOff    = -1;       // tryGrab       (bool)
+int32_t g_grabOff       = -1;       // grab          (bool)
+int32_t g_killedOff     = -1;       // killed        (bool)
+int32_t g_playerDmgOff  = -1;       // playerDamaged (bool)
+int32_t g_harmlessOff   = -1;       // harmless      (bool)
+int32_t g_targetOff     = -1;       // Target        (APawn*)
 void*   g_releaseFn     = nullptr;  // releasePlayer() -- the grab-cancel verb
-
-// Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/killerwisp.hpp).
-constexpr int32_t kTryGrabFallback   = 0x05D8;
-constexpr int32_t kGrabFallback      = 0x0600;
-constexpr int32_t kKilledFallback    = 0x0618;
-constexpr int32_t kPlayerDmgFallback = 0x0635;
-constexpr int32_t kHarmlessFallback  = 0x0658;
-constexpr int32_t kTargetFallback    = 0x0610;
-
-int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
-    int32_t off = R::FindPropertyOffset(cls, name);
-    if (off < 0) {
-        UE_LOGW("wisp: reflected %ls offset not found -- using fallback 0x%04X", name, fallback);
-        off = fallback;
-    }
-    return off;
-}
 
 template <typename T>
 T ReadAt(void* obj, int32_t off) {
@@ -81,16 +64,24 @@ bool EnsureResolved() {
 namespace {
 bool ResolveFromClass(void* cls) {
     if (g_resolved.load(std::memory_order_acquire)) return true;
+    if (g_missing.load(std::memory_order_relaxed)) return false;
 
     // The names below match the live CXXHeaderDump member spellings (note Target is upper-case);
     // the property lookup compares insensitively (reflection_props.cpp), so the casing is
     // documentation rather than a match condition.
-    const int32_t tryGrabOff   = ResolveOff(cls, L"tryGrab",       kTryGrabFallback);
-    const int32_t grabOff      = ResolveOff(cls, L"grab",          kGrabFallback);
-    const int32_t killedOff    = ResolveOff(cls, L"killed",        kKilledFallback);
-    const int32_t playerDmgOff = ResolveOff(cls, L"playerDamaged", kPlayerDmgFallback);
-    const int32_t harmlessOff  = ResolveOff(cls, L"harmless",      kHarmlessFallback);
-    const int32_t targetOff    = ResolveOff(cls, L"Target",        kTargetFallback);
+    const int32_t tryGrabOff   = R::FindPropertyOffset(cls, L"tryGrab");
+    const int32_t grabOff      = R::FindPropertyOffset(cls, L"grab");
+    const int32_t killedOff    = R::FindPropertyOffset(cls, L"killed");
+    const int32_t playerDmgOff = R::FindPropertyOffset(cls, L"playerDamaged");
+    const int32_t harmlessOff  = R::FindPropertyOffset(cls, L"harmless");
+    const int32_t targetOff    = R::FindPropertyOffset(cls, L"Target");
+    if (tryGrabOff < 0 || grabOff < 0 || killedOff < 0 || playerDmgOff < 0 || harmlessOff < 0 || targetOff < 0) {
+        g_missing.store(true, std::memory_order_relaxed);
+        UE_LOGE("wisp: members not all found by name (tryGrab=%d grab=%d killed=%d playerDamaged=%d harmless=%d "
+                "Target=%d) -- the killerwisp lane stays off",
+                tryGrabOff, grabOff, killedOff, playerDmgOff, harmlessOff, targetOff);
+        return false;
+    }
 
     // releasePlayer() -- the grab-cancel verb (RE: entry ubergraph @13289). Tolerated
     // null here (the host neutralization can fall back to destroying the BP wisp), but

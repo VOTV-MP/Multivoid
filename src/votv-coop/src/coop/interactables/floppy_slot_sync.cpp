@@ -61,10 +61,14 @@ uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
 // head [u8 op][u8 deviceKind]; op 0=claim{[u8 index][slot]}, 1=canonical{[u32 generation][u16 n]{[u8 index][slot]}}
 // The generation counts the host's changes of the laptop's occupancy (0 for the boxes): the laptop's file quad carries
 // it too, so the two lanes agree which disc an edit belongs to.
-// slot [i32 type][i32 rw][u8 zip][u32 nametypeLen][utf8][u32 jsonLen][utf8][u16 rows]{[u32 len][utf8]}
+// slot [i32 type][i32 rw][u8 zip][u32 nametypeLen][utf8][u32 jsonLen][utf8][u32 bytesLen][bytes][u16 rows]{[u32 len][utf8]}
+// bytes is the 0.10 disc's ActorToBytes stream (floppyObjectDataBytes): the slot's disc is that, not the JSON of 0.9.
 // nametype is empty for every class but the laptop's, and it is on the wire because the format
 // claims to leave room for that device: a member the digest raises an edge on and the wire drops
 // is a field the receiver would blank on every change.
+
+// A disc actor's stream is a few kilobytes; the slot reads and writes no more than this either (ue_wrap/devices/floppy_slot).
+constexpr size_t kMaxObjectBytes = 256 * 1024;
 
 constexpr uint8_t kOpClaim     = 0;
 constexpr uint8_t kOpCanonical = 1;
@@ -106,6 +110,13 @@ struct Slot {
     FS::Content c;
 };
 
+// Whether two occupied slots hold one disc: by the save key where the JSON carries one (0.9), else by the ActorToBytes
+// stream (0.10, where the JSON is empty and the stream is the disc).
+bool SameDiscIdentity(const Slot& a, const Slot& b, const std::wstring& keyA, const std::wstring& keyB) {
+    if (!keyA.empty() || !keyB.empty()) return keyA == keyB;
+    return a.c.objectBytes == b.c.objectBytes;
+}
+
 // An empty slot is a type and nothing else. What the device still holds in its other fields is
 // residue its own eject left behind, so carrying it would put a stale disc's JSON on the wire for
 // every empty box in the connect set.
@@ -116,6 +127,8 @@ void PackSlot(std::vector<uint8_t>& b, const Slot& s) {
     b.push_back(s.st.zip ? 1 : 0);
     PutStr32(b, s.c.nametype);
     PutStr32(b, s.c.objectData);
+    PutU32(b, static_cast<uint32_t>(s.c.objectBytes.size()));
+    b.insert(b.end(), s.c.objectBytes.begin(), s.c.objectBytes.end());
     // The count and the rows that follow it are the same number or the reader desyncs, so the
     // clamp binds both.
     const size_t rows = s.c.data.size() < 0xFFFF ? s.c.data.size() : 0xFFFF;
@@ -131,6 +144,12 @@ bool ParseSlot(Reader& r, Slot& out) {
     out.st.zip        = r.U8() != 0;
     out.c.nametype    = r.Str32();
     out.c.objectData  = r.Str32();
+    {
+        const uint32_t n = r.U32();
+        if (!r.ok || n > r.n - r.off || n > kMaxObjectBytes) { r.ok = false; return false; }
+        out.c.objectBytes.assign(r.p + r.off, r.p + r.off + n);
+        r.off += n;
+    }
     const uint16_t rows = r.U16();
     for (uint16_t i = 0; i < rows && r.ok; ++i) out.c.data.push_back(r.Str32());
     return r.ok;
@@ -309,7 +328,8 @@ bool SlotEquals(FS::DeviceKind kind, const Slot& a, const Slot& b) {
     if (a.st.floppyType < 0 || b.st.floppyType < 0)
         return a.st.floppyType < 0 && b.st.floppyType < 0;
     const bool sameDisc = a.st.floppyType == b.st.floppyType && a.st.zip == b.st.zip &&
-                          a.c.nametype == b.c.nametype && a.c.objectData == b.c.objectData;
+                          a.c.nametype == b.c.nametype && a.c.objectData == b.c.objectData &&
+                          a.c.objectBytes == b.c.objectBytes;
     // The laptop holding the disc the canonical names is the canonical: its rows and read-writes are its quad's
     // until the disc changes, and a peer's own edits since its claim are in them.
     if (ScopeOf(kind) == FS::DigestScope::Occupancy) return sameDisc;
@@ -422,7 +442,7 @@ void ClientClaim(coop::net::Session* s, FS::DeviceKind kind, size_t index, void*
         aw.deadline = NowMs() + kAnswerMs;
         UE_LOGI("floppy_slot_sync: CLIENT claim sent (device=%zu type=%d rw=%d rows=%zu json=%zu entry=%zu B "
                 "key '%ls')", index, cur.st.floppyType, cur.st.readWrites, cur.c.data.size(),
-                cur.c.objectData.size(), body.size(), FS::ObjectDataKey(cur.c.objectData).c_str());
+                cur.c.objectData.size(), body.size(), FS::ObjectDataKey(cur.c.objectData).c_str());   // 0.9 JSON only; the bytes ride the entry
     } else {
         if (!g_retry.count(ShadowKey(kind, index)))
             UE_LOGW("floppy_slot_sync: claim for device %zu send refused -- retry armed", index);
@@ -667,7 +687,7 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot), prev.st.floppyType, prevKey.c_str(),
                 prev.c.data.size(),
                 !held || in.st.floppyType < 0 ? ""
-                : prevKey == inKey ? " -- OVERWROTE AN OCCUPIED SLOT (same key)"
+                : SameDiscIdentity(prev, in, prevKey, inKey) ? " -- OVERWROTE AN OCCUPIED SLOT (same key)"
                                    : " -- OVERWROTE AN OCCUPIED SLOT HOLDING ANOTHER DISC");
         // The re-publish IS the acknowledgement, and it goes to the author too: if the host's own
         // copy differs from what the claim said, the author is the peer that most needs correcting.
@@ -732,7 +752,7 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                 "an occupied slot: type %d key '%ls' rows %zu -- %s",
                 static_cast<unsigned>(index), in.st.floppyType, inKey.c_str(), in.c.data.size(),
                 prev.st.floppyType, prevKey.c_str(), prev.c.data.size(),
-                prevKey == inKey ? "OVERWROTE AN OCCUPIED SLOT (same key)"
+                SameDiscIdentity(prev, in, prevKey, inKey) ? "OVERWROTE AN OCCUPIED SLOT (same key)"
                                  : "OVERWROTE AN OCCUPIED SLOT HOLDING ANOTHER DISC");
     }
     g_haveCanonical[kindB] = true;

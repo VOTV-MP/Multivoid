@@ -416,10 +416,7 @@ bool ClientPuppetReady() {
     return rp.valid() && rp.HasPose();
 }
 
-bool MirrorGatherable(void* mirror, Verb verb) {
-    return mirror && !coop::prop_drive_stream::IsParked(mirror) &&
-           (verb != Verb::Pocket || ue_wrap::prop_gather::IsGatherable(mirror));
-}
+bool MirrorGatherable(void* mirror) { return mirror && !coop::prop_drive_stream::IsParked(mirror); }
 
 std::string MirrorState(void* mirror) {
     if (!mirror) return " (no mirror)";

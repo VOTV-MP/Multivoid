@@ -1,8 +1,8 @@
 // ue_wrap/devices/grime.cpp -- see ue_wrap/devices/grime.h. Engine access for VOTV surface grime
 // (Agrime_C).
 //
-// Offsets are resolved from the live class via reflection (FindPropertyOffset) with the
-// documented Alpha 0.9.0-n CXX-dump values as a logged fallback (version-tagging rule).
+// Offsets are resolved from the live class by member name (FindPropertyOffset). A member the name
+// does not find leaves its lane off, said once; no offset is guessed.
 
 #include "ue_wrap/devices/grime.h"
 
@@ -25,16 +25,11 @@ namespace E = ue_wrap::engine;
 std::atomic<bool> g_resolved{false};
 
 void*   g_grimeCls       = nullptr;  // grime_C UClass
-int32_t g_processOff     = -1;       // Agrime_C::process    (Alpha 0.9.0-n: 0x0250)
-int32_t g_typeOff        = -1;       // Agrime_C::Type       (Alpha 0.9.0-n: 0x024C)
+int32_t g_processOff     = -1;       // Agrime_C::process
+int32_t g_typeOff        = -1;       // Agrime_C::Type
 void*   g_applyMaterialFn = nullptr; // Agrime_C::applyMaterial() -- builds the dynamic material
 int32_t g_dynmatOff      = -1;       // Agrime_C::dynmat (the decal's material instance)
 int32_t g_cleanParamOff  = -1;       // Agrime_C::cleanParameter (the scalar's name; varies by subclass)
-
-// Fallbacks for the current game build, used only if the reflected lookup misses. grime_C is a
-// blueprint class, so it is in no header dump; these came from the live class layout.
-constexpr int32_t kProcessOffFallback = 0x0250;
-constexpr int32_t kTypeOffFallback    = 0x024C;
 
 }  // namespace
 
@@ -44,16 +39,10 @@ bool EnsureResolved() {
     void* grimeCls = R::FindClass(L"grime_C");
     if (!grimeCls) return false;  // BP class not loaded yet -- caller retries
 
-    int32_t processOff = R::FindPropertyOffset(grimeCls, L"process");
-    if (processOff < 0) {
-        UE_LOGW("grime: reflected process offset not found -- using fallback 0x%04X", kProcessOffFallback);
-        processOff = kProcessOffFallback;
-    }
-    int32_t typeOff = R::FindPropertyOffset(grimeCls, L"Type");
-    if (typeOff < 0) {
-        UE_LOGW("grime: reflected Type offset not found -- using fallback 0x%04X", kTypeOffFallback);
-        typeOff = kTypeOffFallback;
-    }
+    const int32_t processOff = R::FindPropertyOffset(grimeCls, L"process");
+    if (processOff < 0) UE_LOGE("grime: 'process' not found by name -- grime reads and wipes stay off");
+    const int32_t typeOff = R::FindPropertyOffset(grimeCls, L"Type");
+    if (typeOff < 0) UE_LOGE("grime: 'Type' not found by name -- grime types are not read");
     void* applyMaterialFn = R::FindFunction(grimeCls, L"applyMaterial");
     if (!applyMaterialFn)
         UE_LOGW("grime: applyMaterial UFunction not found -- a decal with no material yet cannot "

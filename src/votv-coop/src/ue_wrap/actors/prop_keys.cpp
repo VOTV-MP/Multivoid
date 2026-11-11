@@ -5,6 +5,7 @@
 #include "ue_wrap/actors/prop.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"  // ClassByName, the trash base in one lookup
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -25,8 +26,6 @@ inline T ReadField(void* base, size_t off) {
     return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(base) + off);
 }
 
-constexpr size_t kAactorSaveKeyOff = 0x0230;
-
 // The actor_save base that owns the key field GetActorSaveKeyString reads, resolved on demand
 // and cached; null means not resolvable yet, never no key.
 std::atomic<void*> g_actorSaveCls{nullptr};
@@ -37,6 +36,26 @@ inline void* ActorSaveCls() {
         if (c) g_actorSaveCls.store(c, std::memory_order_release);
     }
     return c;
+}
+
+// actor_save_C::Key, read from the class by name once found; -1 until then, and for good if the class
+// has no such member (said once): a key is never read from a guessed offset.
+int32_t ActorSaveKeyOff() {
+    static std::atomic<int32_t> sOff{-1};
+    static std::atomic<bool> sMissing{false};
+    const int32_t known = sOff.load(std::memory_order_acquire);
+    if (known >= 0) return known;
+    if (sMissing.load(std::memory_order_relaxed)) return -1;
+    void* base = ActorSaveCls();
+    if (!base) return -1;
+    const int32_t off = R::FindPropertyOffset(base, L"Key");
+    if (off < 0) {
+        sMissing.store(true, std::memory_order_relaxed);
+        UE_LOGE("prop_keys: actor_save_C 'Key' not found by name -- trash piles carry no key, so none is synced");
+        return -1;
+    }
+    sOff.store(off, std::memory_order_release);
+    return off;
 }
 
 // The per-class GetKey cache, under a mutex: observers on a parallel-anim worker would race the
@@ -72,7 +91,8 @@ R::FName GetInteractableKey(void* obj) {
     // The trash pile: a direct field.
     void* cls = R::ClassOf(obj);
     if (WalksToBase(cls, TrashBitsPileClass())) {
-        return ReadField<R::FName>(obj, kAactorSaveKeyOff);
+        const int32_t off = ActorSaveKeyOff();
+        return off < 0 ? R::FName{0, 0} : ReadField<R::FName>(obj, static_cast<size_t>(off));
     }
     // The chip pile and the clump: the blueprint function.
     if (WalksToBase(cls, GarbageClumpClass()) || WalksToBase(cls, ChipPileClass())) {
@@ -86,7 +106,9 @@ std::wstring GetActorSaveKeyString(void* obj) {
     void* base = ActorSaveCls();
     if (!base) return {};
     if (!WalksToBase(R::ClassOf(obj), base)) return {};   // NOT an actor_save: the offset is not its key
-    return R::ToString(ReadField<R::FName>(obj, kAactorSaveKeyOff));
+    const int32_t off = ActorSaveKeyOff();
+    if (off < 0) return {};
+    return R::ToString(ReadField<R::FName>(obj, static_cast<size_t>(off)));
 }
 
 std::wstring GetInteractableKeyString(void* obj) {
@@ -109,7 +131,10 @@ R::FName ReadKeyField(void* obj, KeyField where) {
     if (!obj) return R::FName{0, 0};
     switch (where) {
         case KeyField::Prop:      return ReadField<R::FName>(obj, P::off::Aprop_Key);
-        case KeyField::ActorSave: return ReadField<R::FName>(obj, kAactorSaveKeyOff);
+        case KeyField::ActorSave: {
+            const int32_t off = ActorSaveKeyOff();
+            return off < 0 ? R::FName{0, 0} : ReadField<R::FName>(obj, static_cast<size_t>(off));
+        }
         default:                  return R::FName{0, 0};
     }
 }

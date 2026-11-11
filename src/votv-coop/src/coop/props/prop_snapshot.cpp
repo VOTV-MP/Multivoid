@@ -4,6 +4,7 @@
 // for a prop adopted into tracking after the join. Interface: coop/props/prop_snapshot.h.
 
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/wire_class.h"  // the class name and its content path on the wire
 
 #include "coop/config/config.h"  // ReadEnv, the dedupe-bypass drill
 #include "coop/element/prop.h"
@@ -335,10 +336,7 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // (mushroom7_C) and a per-player prop never cross the wire.
     if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return skip(Skip::kWireSuppressed);
     if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return skip(Skip::kPerPlayer);
-    p.className.len = 0;
-    for (size_t j = 0; j < cls.size() && j < 63; ++j) {
-        p.className.data[p.className.len++] = static_cast<char>(cls[j]);
-    }
+    coop::wire_class::FillFromClass(p.className, cls, R::ClassOf(obj));
     const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(obj);
     if (keyStr.empty() || keyStr == L"None") {
         // A keyless trash actor is expressible, in either resting form: its cross-peer identity is

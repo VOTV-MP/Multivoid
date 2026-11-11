@@ -194,9 +194,9 @@ bool Anchor(ue_wrap::FVector& out, const char*& why) {
 void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut, ue_wrap::FVector& locOut) {
     void* best = nullptr;
     float bestD2 = kPickRadiusCm * kPickRadiusCm;
-    void* handAxis[1 + coop::players::kMaxPeers];
+    void* handAxis[coop::hand_item::kHandAxisCap];
     const size_t handAxisN =
-        coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
+        coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap);
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);

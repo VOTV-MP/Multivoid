@@ -35,7 +35,7 @@ inline constexpr const wchar_t* ExecuteConsoleCommandFn = L"ExecuteConsoleComman
 inline constexpr const wchar_t* GameInstanceClass = L"mainGameInstance_C";
 
 // The live UsaveSlot_C instance holds the player's current runtime vitals (food, sleep, health,
-// coffeePower), which the BP mutates in place and SaveGameToSlot serialises whole; its field
+// coffeePower), which the BP mutates in place and the save write serialises whole; its field
 // offsets are resolved at runtime through FindPropertyOffset (a BP-cooked class).
 inline constexpr const wchar_t* SaveSlotClass = L"saveSlot_C";
 
@@ -189,18 +189,25 @@ inline constexpr size_t kAmbientPropSpawnMirrorClassesSize =
 inline constexpr const wchar_t* BeginDeferredSpawnFn = L"BeginDeferredActorSpawnFromClass";
 inline constexpr const wchar_t* FinishSpawningActorFn = L"FinishSpawningActor";
 
-// The story-save load: the game's own entry (GameplayStatics::LoadGameFromSlot,
-// mainGameInstance_C::setSaveSlotObject with loadObjects=true, then untitled_1; the save selects
-// the mode).
-inline constexpr const wchar_t* LoadGameFromSlotFn = L"LoadGameFromSlot";
+// The save load, as ui_saveSlots_C's Apply and tryLaunch do it: the folder's main.sav, persistent.sav
+// and main.meta read through the native CompressedSaveLoadLib, registered with
+// mainGameInstance_C::setSaveSlotObject, then the save's starter map opened with
+// loadObjectsFromSlot set (ue_wrap/engine/save_folder.h, engine_save.cpp).
+inline constexpr const wchar_t* CompressedSaveLoadLibClass = L"CompressedSaveLoadLib";
+inline constexpr const wchar_t* LoadGameCompressedFn = L"LoadGameCompressed";
+inline constexpr const wchar_t* SaveGameCompressedFn = L"SaveGameCompressed";
 inline constexpr const wchar_t* SetSaveSlotObjectFn = L"setSaveSlotObject";
+// lib_C::createAreaSlot(areaName): a save whose metadata names an area swaps the area's own slot in.
+inline constexpr const wchar_t* CreateAreaSlotFn = L"createAreaSlot";
+// The option ui_saveSlots_C::tryLaunch passes lib_C::loadLevel, which stores it in the
+// GameInstance's NewVar_1; the gamemode's BeginPlay quits the game on a level outside its built-in
+// list unless it is there.
+inline constexpr const wchar_t* LoadLevelOption = L"PQXYyeofZ8cr5rJD4YXLVw";
 
 // The live host-world capture (save_capture.cpp): repopulate the world save from live actors, then
-// serialise it to a scratch slot for a joiner (a kerfur the host turned on after its last
-// autosave is captured live). All on AmainGamemode_C except SaveGameToSlot.
-inline constexpr const wchar_t* MainGamemodeSaveObjectsFn  = L"saveObjects";   // saveObjects(bool quicksave)
-inline constexpr const wchar_t* MainGamemodeSaveTriggersFn = L"saveTriggers";  // saveTriggers()
-inline constexpr const wchar_t* SaveGameToSlotFn           = L"SaveGameToSlot";  // (USaveGame*, FString slot, int32 idx) -> bool
+// serialise it to a scratch folder for a joiner (a kerfur the host turned on after its last
+// autosave is captured live).
+inline constexpr const wchar_t* MainGamemodeSaveObjectsFn  = L"saveObjects";   // saveObjects(bool quicksave, bool skipEventBlock)
 inline constexpr const wchar_t* ActorClassName = L"Actor";  // owns K2_Get/SetActorLocation
 inline constexpr const wchar_t* GetActorLocationFn = L"K2_GetActorLocation";
 inline constexpr const wchar_t* GetActorRotationFn = L"K2_GetActorRotation";
@@ -436,7 +443,7 @@ inline constexpr const wchar_t* AddImpulseFn                           = L"AddIm
 // Secondary, the input level: the grabbed prop's identity is read from mainPlayer_C.grabbing_actor
 // inside the InpActEvt observer. The "_41" K2Node ordinal is version-fragile (a BP recook can
 // renumber it).
-inline constexpr const wchar_t* MainPlayerUseInputEventFn    = L"InpActEvt_use_K2Node_InputActionEvent_41";
+inline constexpr const wchar_t* MainPlayerUseInputEventFn    = L"InpActEvt_use_K2Node_InputActionEvent_37";
 // The LMB (fire) action: the native throw-when-holding seam (InpActEvt_fire -> throwHoldingProp),
 // separate from use/E. Two handlers (_58 press, _59 release); the client registers both and gates
 // on ClientCarryEid so only the edge that finds a live carry acts.

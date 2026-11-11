@@ -1,11 +1,7 @@
 // coop/dev/delivery_census_probe.h -- see the .cpp. Diagnostic only; ini-gated OFF by default
-// ([dev] delivery_census=1). Settles the order-delivery open question by COUNTING the delivery-path
-// actors (FindObjectsByClass) and comparing POINTERS -- never by looking a container up by key,
-// since the broken key lookup is the thing under investigation.
-//
-// Run it across TWO CONSECUTIVE deliveries: whether the receiving container's actor ptr / eid /
-// propInventory.Index change between them is the churn answer, and that decides whether stable
-// element-key addressing is applicable to a delivery container at all.
+// ([dev] delivery_census=1). Counts the holders of a delivery's goods -- the drone's cargo and each
+// prop_dronesack_C with its entry count -- by class, and logs when they change, so a drop-sack, a
+// put-back and a sale each read as an edge on both peers.
 
 #pragma once
 

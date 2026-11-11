@@ -218,9 +218,9 @@ void DrainAtComplete(void* localPlayer) {
 
     // The query reads the object index as it stands.
     if (!waiters.empty()) ue_wrap::object_index::DrainAll();
-    void* handAxis[1 + coop::players::kMaxPeers];
+    void* handAxis[coop::hand_item::kHandAxisCap];
     const ue_wrap::prop::NearbyExclusion notAdoptable{
-        handAxis, coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers)};
+        handAxis, coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap)};
 
     std::vector<std::wstring> keys(waiters.size());
     std::vector<std::wstring> classes(waiters.size());

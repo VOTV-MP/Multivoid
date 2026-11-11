@@ -6,7 +6,7 @@
 //             whether the transfer expired. gone: once the copy awaits slot 1's slice, kicks slot 1 and is DONE when
 //             the transfer ended with its author.
 //   CLIENT -- once its world is ready, finds the backpack's mirror holding the host's two records, waits for it to
-//             lie still, takes it into the hand (Hold Object) and throws it (throwHoldingProp), the game's own birth.
+//             lie still, takes it into the hand (Add Object to Free Hotbar Slot) and throws it (throwHoldingProp), the game's own birth.
 // red and gone run with container_birth_skip_slice=1 on the client, and gone with the rig's --observer: a second
 // client keeps the host's session alive, so the kick ends the transfer through the peer-gone path rather than with
 // the whole session (with one client the kick is the session's end). "[THROW-DRILL] FAIL" is the lane failing

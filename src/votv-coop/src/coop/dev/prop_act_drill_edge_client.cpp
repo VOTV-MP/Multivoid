@@ -404,8 +404,8 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather
         // it. A pair's second mirror is taken in the same step, so it waits too.
         if (!poll) return;
-        if ((g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), r.act.verb)) ||
-            (g_mirror2.Get() && !MirrorGatherable(g_mirror2.Get(), r.act.verb))) {
+        if ((g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) ||
+            (g_mirror2.Get() && !MirrorGatherable(g_mirror2.Get()))) {
             if (CExpired(kGatherBoundMs))
                 Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;

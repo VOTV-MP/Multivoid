@@ -2,6 +2,8 @@
 
 #include "drive_drill_verbs.h"  // co-located private header (src tree, not include/)
 
+#include "coop/props/prop_act_request.h"
+
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
@@ -24,7 +26,9 @@ void* PlayerFn(void* player, const wchar_t* name) {
 
 bool Pocket(void* player, void* prop) {
     bool taken = false;
-    return ue_wrap::engine::CallPutObjectInventory2(player, prop, true, taken) && taken;
+    // An asked take is cancelled here and reports success (the ask is the take): not taken until the host answers.
+    return ue_wrap::engine::CallMainPlayerAddObjectToInventory(player, prop, taken) && taken &&
+           coop::prop_act_request::dev::PendingId() == 0;
 }
 
 void* TakeOut(const std::wstring& cls, const std::wstring& key) {
@@ -49,7 +53,8 @@ void* TakeOut(const std::wstring& cls, const std::wstring& key) {
 
 bool Hold(void* player, void* prop) {
     bool collected = false;
-    return ue_wrap::engine::CallMainPlayerHoldObject(player, prop, collected) && collected;
+    return ue_wrap::engine::CallMainPlayerAddObjectToFreeHotbarSlot(player, prop, ue_wrap::engine::HotbarAdd{}, collected) &&
+           collected && coop::prop_act_request::dev::PendingId() == 0;
 }
 
 bool Throw(void* player) {

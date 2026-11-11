@@ -382,7 +382,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
     case CStage::AwaitGather:
         // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather it.
         if (!poll) return;
-        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), kDepartRow.verb)) {
+        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) {
             if (CExpired(kGatherBoundMs)) Fail("the mirror never became gatherable here (the host's drive did not end)");
             return;
         }

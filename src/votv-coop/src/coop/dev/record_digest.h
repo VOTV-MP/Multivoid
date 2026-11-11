@@ -6,8 +6,6 @@
 // FNV-1a hash per non-empty value group, so two log lines taken at two moments compare by eye and
 // a mismatch names the group that moved.
 //
-// What the digest cannot see is a signal row's photo: ue_wrap::signal_dynamic::Row reads it only when
-// asked and the records here do not ask, so two drives that differ only in their photo hash the same.
 // Class, key and transform are left out on purpose -- the readout prints the first two beside the
 // digest, and a carried record's transform is where the item stood when it was pocketed.
 
@@ -65,16 +63,6 @@ inline std::string ValuesOf(const ue_wrap::save_record::SaveRecord& r) {
     pods("f", r.floats);
     pods("i", r.ints);
     strs("s", r.strings);
-    {
-        Fnv32 f;
-        for (const auto& g : r.signals) {
-            f.Str(g.name); f.Str(g.id); f.Str(g.object); f.Str(g.signal);
-            f.Pod(g.level); f.Pod(g.polarity); f.Pod(g.size); f.Pod(g.decoded);
-            f.Pod(g.downloadedAtQuality); f.Pod(g.locX); f.Pod(g.locY); f.Pod(g.date);
-            f.Pod(g.isCopy); f.Pod(g.frequency); f.Pod(g.quality); f.Pod(g.objectType);
-        }
-        emit("sig", !r.signals.empty(), f);
-    }
     strs("cls", r.classes);
     pods("v", r.vectors);
     pods("rot", r.rotators);

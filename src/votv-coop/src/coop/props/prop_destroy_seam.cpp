@@ -2,8 +2,8 @@
 // K2_DestroyActor patch seam and the echo-suppressed local destroy. The shared session cache
 // rides prop_lifecycle_detail.h. The local player's hand-view actor dies here too but is not a
 // world prop, so its death is never broadcast. The hand-view test is taken at the destroy's
-// ENTRY (a pre hook on the same function): the actor's OnDestroyed runs updateHold, which nulls
-// holding_actor and destroys the same actor again, nested, before the outer call returns, so a
+// ENTRY (a pre hook on the same function): the actor's OnDestroyed runs better_holdItem_mainhand, which nulls
+// holdingActor_main and destroys the same actor again, nested, before the outer call returns, so a
 // test taken at the post hook would miss the outer call.
 
 #include "coop/props/prop_lifecycle.h"
@@ -78,7 +78,7 @@ ue_wrap::script_gate::Verdict OnK2DestroyPre(void* context, void* /*srcObj*/, co
         }
         if (!r.actor && !freeSlot) freeSlot = &r;
     }
-    // At the call's entry holding_actor still names the actor: the Blueprint nulls it only after the destroy.
+    // At the call's entry holdingActor_main still names the actor: the Blueprint nulls it only after the destroy.
     if (!coop::hand_item::IsLocalHandViewActor(context)) return Verdict::Run;
     if (!freeSlot) {
         if (!g_handViewFullWarned) {
@@ -190,7 +190,7 @@ void DestroySeamBody(void* self, HandView handView) {
     // teardowns and load churn are not conversions; the kerfur layer owns the wire when it returns
     // true. A cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
-    // The local player's hand-view actor is not a world prop: updateHold destroys it on every drop,
+    // The local player's hand-view actor is not a world prop: better_holdItem_mainhand destroys it on every drop,
     // throw, stow and switch, and its world counterpart died at the pickup. It carries the item's
     // key, so broadcasting its death would name the world prop the drop is about to re-create.
     // The pre hook recorded it at the call's entry. A client still parks the key, once, at the

@@ -224,7 +224,7 @@ float GetActorRootMass(void* actor) {
 
 void* GetActorRootPhysicalMaterial(void* actor) {
     // Root surface -> physical material, the same resolution a blocking trace's
-    // hit.PhysMat does on the hit face. Feeds lib_C::physSound for actors that are
+    // hit.PhysMat does on the hit face. Feeds lib_C::getPhysicalAsAudio for actors that are
     // NOT prop_C descendants (the trash clump derives from plain Actor -- it has no
     // physicsImpact component to read a cached PhysMat from).
     void* root = PrimitiveRootOf(actor);

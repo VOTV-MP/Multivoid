@@ -93,10 +93,10 @@ bool SendChatLine(coop::net::Session* s, const std::string& text) {
 }
 
 // A live covered prop's Key, discovered from this peer's own tracked keys. `Covers` is the SAME gate the
-// host's record apply runs -- a class that declares its own getData below Aprop_C AND that no dedicated
+// host's record apply runs -- a class that keeps save state of its own below Aprop_C AND that no dedicated
 // lane has claimed -- so a prop that passes it here is one the host will actually apply the record to
-// (OverridesGetData alone is not enough: the ATV container overrides getData but a dedicated lane owns
-// it, and the host drops its record unapplied). The tracked keys mirror the host's world, so a key
+// (carrying state alone is not enough: the ATV container does but a dedicated lane owns it, and the host
+// drops its record unapplied). The tracked keys mirror the host's world, so a key
 // covered here is covered on the host too. Empty when the loaded world carries no such prop -- the arm
 // then reports it could not stage, never a false pass.
 bool FindCoveredPropKey(std::wstring& outKey) {

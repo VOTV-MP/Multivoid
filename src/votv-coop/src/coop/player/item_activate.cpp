@@ -37,7 +37,7 @@ namespace GT = ue_wrap::game_thread;
 
 // The flashlight: `updateFlashlight` is BP-inlined into `Flashlight Update` and never dispatches through
 // ProcessEvent, so a POST observer is registered on both; the outer name has a literal space and the
-// FName lookup matches that exact string. The F input events (_13 press, _14 release; recook-fragile
+// FName lookup matches that exact string. The F input events (_48 press, _49 release; recook-fragile
 // ordinals) are always dispatched as UFunctions; both are observed and the sender dedups on last-sent
 // state. timerHoldFlashlight fires when F is held long enough to switch the beam mode (spread <->
 // focused); its body mutates `flashlightMode` and light_R's cone and intensity, which a POST observer
@@ -45,9 +45,9 @@ namespace GT = ue_wrap::game_thread;
 UE_FACT_FN(kRowUpdateFlashlight, "item_activate", L"mainPlayer_C", L"updateFlashlight", Declared);
 UE_FACT_FN(kRowFlashlightUpdate, "item_activate", L"mainPlayer_C", L"Flashlight Update", Declared);
 UE_FACT_FN(kRowFlashlightInput13, "item_activate", L"mainPlayer_C",
-           L"InpActEvt_flashlight_K2Node_InputActionEvent_13", Declared);
+           L"InpActEvt_flashlight_K2Node_InputActionEvent_48", Declared);
 UE_FACT_FN(kRowFlashlightInput14, "item_activate", L"mainPlayer_C",
-           L"InpActEvt_flashlight_K2Node_InputActionEvent_14", Declared);
+           L"InpActEvt_flashlight_K2Node_InputActionEvent_49", Declared);
 UE_FACT_FN(kRowTimerHoldFlashlight, "item_activate", L"mainPlayer_C", L"timerHoldFlashlight", Declared);
 
 bool g_installed = false;
@@ -179,8 +179,8 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     const char* which =
         (function == g_flashlightUpdateFn)     ? "Flashlight_Update" :
         (function == g_updateFlashlightFn)     ? "updateFlashlight"  :
-        (function == g_flashlightInput13Fn)    ? "InpActEvt_13"      :
-        (function == g_flashlightInput14Fn)    ? "InpActEvt_14"      :
+        (function == g_flashlightInput13Fn)    ? "InpActEvt_48"      :
+        (function == g_flashlightInput14Fn)    ? "InpActEvt_49"      :
         (function == g_timerHoldFlashlightFn)  ? "timerHoldFlashlight" :
         "<unknown>";
 
@@ -195,38 +195,26 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     ue_wrap::engine::MainPlayerFlashlightState fl{};
     if (!ue_wrap::engine::ReadMainPlayerFlashlightState(self, fl)) return;
     const bool flashlight = fl.flashlight;
-    const bool hasFlashlight = fl.hasFlashlight;
-    const bool crankFlashlight = fl.crankFlashlight;
+    const bool equipped = fl.equippedFlashlight;
 
     if (ProbeLogEnabled()) {
-        // The probe line: whether the BP early-returned without a flashlight (the bool unchanged)
-        // and whether light_R's visibility tracks the bool; the crank variant is logged separately
-        // since it is not sent.
+        // The probe line: whether the BP early-returned without a flashlight equipped and whether
+        // light_R's visibility tracks the bool.
         void* light_R = ue_wrap::engine::GetMainPlayerLightR(self);
         ue_wrap::engine::FlashlightSnapshot snap{};
         const bool snapOk = ue_wrap::engine::ReadFlashlightSnapshot(light_R, snap);
-        UE_LOGI("flashlight[POST %s] self=%p flashlight=%d hasFL=%d crankFL=%d "
+        UE_LOGI("flashlight[POST %s] self=%p flashlight=%d equipped=%d "
                 "light_R=%p bVisible=%d Intensity=%.1f", which, self,
-                flashlight ? 1 : 0, hasFlashlight ? 1 : 0,
-                crankFlashlight ? 1 : 0, light_R,
+                flashlight ? 1 : 0, equipped ? 1 : 0, light_R,
                 snapOk && snap.visible ? 1 : 0,
                 snapOk ? snap.intensity : -1.f);
     }
 
-    // The crank lantern (_c) toggles its own light components, not the player's light_R; it is not
-    // sent.
-    if (crankFlashlight) {
+    // No send without an equipped flashlight: the F release flips the bool before Flashlight Update
+    // returns on equipped_flashlight, so the bool alone would ship a toggle no light follows.
+    if (!equipped) {
         if (ProbeLogEnabled()) {
-            UE_LOGI("flashlight: crank lantern (_c) -- nothing sent");
-        }
-        return;
-    }
-
-    // No send when the BP guard early-returned for no equipped flashlight, or a recook that always
-    // sets the bool on F would ship spurious activations.
-    if (!hasFlashlight) {
-        if (ProbeLogEnabled()) {
-            UE_LOGI("flashlight: hasFlashlight=false -- BP early-returned, no wire send");
+            UE_LOGI("flashlight: equipped_flashlight=false -- BP early-returned, no wire send");
         }
         return;
     }
@@ -405,7 +393,7 @@ void Install(coop::net::Session* session) {
     g_flashlightClassHash = HashClassName(L"prop_equipment_flashlight_C");
     g_installed = true;
     UE_LOGI("flashlight: %d POST observer(s) installed (updateFlashlight=%p, "
-            "'Flashlight Update'=%p, InpActEvt_13=%p, InpActEvt_14=%p, "
+            "'Flashlight Update'=%p, InpActEvt_48=%p, InpActEvt_49=%p, "
             "timerHoldFlashlight=%p, classHash=0x%08X, probe_log=%d)",
             registered, g_updateFlashlightFn, g_flashlightUpdateFn,
             g_flashlightInput13Fn, g_flashlightInput14Fn,
@@ -576,6 +564,18 @@ void ReplayPeerStatesToSlot(int newSlot) {
 }
 
 void TickConnect() {
+    // The battery ticker belongs to whichever mainPlayer_C began play last, and a puppet is one: from the first puppet on, the
+    // local flashlight's battery would never drain (and the light never go off at empty). Once a second the ticker is pointed
+    // back at the local pawn when it points elsewhere (flash_battery drill: player=%p against the local pawn %p, the value read
+    // 100 while the worn item's battery sat at 0.02).
+    {
+        static uint64_t s_nextMs = 0;
+        const uint64_t nowMs = ::GetTickCount64();
+        if (nowMs >= s_nextMs) {
+            s_nextMs = nowMs + 1000;
+            if (void* const mp = coop::players::Registry::Get().Local()) ue_wrap::engine::RepointFlashlightTicker(mp);
+        }
+    }
     // The peers hold this flashlight as on and the game has switched it off without a function call: the
     // battery ran out. A failed send stays unrecorded, so the next tick retries it.
     if (g_lastSentOn.load(std::memory_order_acquire)) {

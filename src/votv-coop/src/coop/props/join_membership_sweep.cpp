@@ -185,8 +185,8 @@ static void RunDivergenceSweep_(void* localPlayer) {
     int inClass = 0;        // live, non-mirror, LOCAL Prop Elements (the membership universe)
     int claimedCount = 0;
     int sparedCount = 0;    // see Spared
-    void* handAxis[1 + coop::players::kMaxPeers];
-    const size_t handAxisN = coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
+    void* handAxis[coop::hand_item::kHandAxisCap];
+    const size_t handAxisN = coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap);
     const auto onHandAxis = [&](void* obj) {
         for (size_t h = 0; h < handAxisN; ++h)
             if (handAxis[h] == obj) return true;

@@ -1,86 +1,75 @@
 // ue_wrap/actors/container_view.h -- the local player's view into a container: the inventory screen
-// mainGamemode_C::openPropInv opens (the gamemode's propInventory, a ui_playerInventory_C), which container it
-// shows (its `entered`, which gen_player sets as openPropInv opens the screen) while it is the player's
-// active interface, and the screen's own close: exit() (the interface cleared, the screen hidden, the close
-// sound), then the first tab again and the selection redrawn, as the screen's close key runs it. Game thread.
+// (ui_FreeLayoutInventory_C, mainGamemode_C::ui_FLI_inventory) that a container's opencontainer, an ATV's and a
+// drone's open onto their inventory component with begin(component), and the screen's own close, end(). The screen
+// shows two canvases, the player's bag and the open component's; dragging an item between them is the only way a
+// player takes from or puts into a container, and the screen moves it with the component's removeInventoryItem and
+// addItemAdvanced. This module reads which container the screen shows and finds and discards the copy a drag has just
+// filed in the player's bag. Game thread.
 // Engine-wrapper layer (principle 7): no gameplay logic.
 #pragma once
+
+#include "ue_wrap/actors/inventory_item.h"
 
 #include <cstdint>
 
 namespace ue_wrap::container_view {
 
-// The container the local player's inventory screen shows, or null when that screen is not the
-// player's active interface (closed, or another interface is up).
+// The screen, live, or null when the gamemode or the field does not resolve.
+void* Screen();
+
+// The container the screen shows: the owner of the screen's open component while the screen is active, when that
+// owner is a prop_container_C. Null when the screen is closed or shows an ATV's or a drone's inventory or the
+// player's own bag alone.
 void* Viewed();
 
-// Whether `container` is the local player's own inventory (the gamemode's playerContainer, which the
-// inventory key opens, or any container of the player-inventory class, as the screen itself tells them
-// apart). A view onto it is opened through no actor.
-bool IsOwnInventory(void* container);
+// The inventory component the active screen shows beside the player's bag, whoever owns it (a container, a drone, an ATV);
+// null when the screen is closed.
+void* ViewedInventory();
 
-// The gamemode's playerContainer, the actor of the local player's own inventory; null when it does not resolve or is
-// not live. Its records read through container_inventory::InventoryOf like any container's.
-void* OwnInventory();
+// Open the screen onto an inventory component through the screen's own begin(component), as an ATV's open option does.
+// False when the screen or the verb does not resolve or the call fails.
+bool OpenInventory(void* component);
 
-// Whether the open screen's close resolves; false when no screen is open.
+// Drop the bag's item widget `bagItem` on the canvas of the component the screen shows, as a mouse release over that
+// canvas does: the screen's currentlyDragging is set to the widget, hoverContainer is raised and enddrag runs (which
+// files the entry with the component's addItemAdvanced from the screen's own script). False when a field or the verb
+// does not resolve, or the call fails; the drop's outcome is the caller's to read.
+bool DropOnViewed(void* bagItem);
+
+// Whether the active screen's close resolves.
 bool CanClose();
 
-// Open the screen onto `container` (an Aprop_container_C) through the gamemode's own openPropInv, as
-// the actor that opens it does. False when the gamemode or the verb cannot be reached.
-bool Open(void* container);
-
-// Close the screen as its close key does. False, and nothing done, when it is not open or its exit()
-// does not resolve.
+// Close the screen as its close key does (end). False, and nothing done, when it is not active or end() does not resolve.
 bool Close();
 
-// One container slot of the inventory screen: its screen (owner), the container that screen takes from (the
-// screen's as_prop; null on the player's own pane, which is still a slot) and the record index it names (id).
-struct Slot {
-    void* screen;
-    void* container;
-    int32_t id;
+// Open the screen onto `container` through its own opencontainer, as the player's use of it does. False when the
+// verb does not resolve or the call fails.
+bool Open(void* container);
+
+// The item widget a drag has just filed in the player's bag as the copy of `taken`: the one the screen holds as its
+// currentlyDragging or in its mass selection whose entry is `taken`'s item (class, name, tag, keys, state and amount)
+// and whose owner is not `from`, the component `taken` is leaving. Null when there is none.
+void* CopyOf(const ue_wrap::inventory_item::Item& taken, void* from);
+
+// The player's own bag component the screen shows (playerInventoryComponent), or null.
+void* PlayerComponent();
+
+// One item widget as the screen holds it: the entry it shows (its dataReference), the inventory component that owns it
+// and the entry's index in that component's array.
+struct WidgetEntry {
+    ue_wrap::inventory_item::Item item;
+    void* owner = nullptr;
+    int32_t index = -1;
 };
+// False when the widget is not live or its layout does not resolve.
+bool ReadWidget(void* widget, WidgetEntry& out);
 
-// Read `obj` as a slot. False when it is not a uicomp_playerInvContainerSlot_C or a field does not resolve.
-bool ReadSlot(void* obj, Slot& out);
+// The widget the screen holds as currentlyDragging whose entry is `item` (the same item: class, name, tag, keys, state and
+// amount, wherever it lies), or one of the mass selection's; null when there is none. `CopyOf` with no component to exclude.
+void* SourceOf(const ue_wrap::inventory_item::Item& item);
 
-// The gamemode's inventory screen (propInventory), open or not; null when it does not resolve or is not live.
-void* InventoryScreen();
-
-// The slot widget of `screen` (a ui_playerInventory_C) that names record `id`, or null; and its first live slot.
-// Both read the screen's slots_prop.
-void* SlotById(void* screen, int32_t id);
-void* FirstSlot(void* screen);
-
-// The slot's own pressButton. False when it does not resolve or the call fails.
-bool PressSlot(void* slot);
-
-// When the open screen shows `container`: gen_player(enter = container, double = true), as pressButton's own
-// redraw does. False, and nothing done, when the screen is closed, shows another container, or the call fails.
-bool Redraw(void* container);
-
-// What the `hotbar_1` key's em_take reads before it puts the selected record of the player's own pane into the
-// container the screen shows: that container (as_prop; null on the player's own pane), whether the screen's take
-// button is enabled, whether a container slot is hovered (a live hoverContainerSlot) and visible, and the selected
-// record's index (the screen's own getInd).
-struct PutState {
-    void* container;
-    bool takeEnabled;
-    bool hovered;
-    bool hoverVisible;
-    int32_t index;
-};
-
-// Read `screen` (a ui_playerInventory_C) as the put reads it. `index` is asked of the game only when no slot is hovered
-// and the take button is enabled, the press that can go on to a put; it is -1 otherwise. False, `out` zeroed, when it
-// is not live or a field or a call does not resolve; `failed`, when given, then names the field.
-bool ReadPutState(void* screen, PutState& out, const char** failed = nullptr);
-
-// The screen's em_take, the hotbar_1 key's verb. False when it does not resolve or the call fails.
-bool RunPut(void* screen);
-
-// The gamemode's playerContainer, the player's own inventory actor; null when the gamemode or the field does not resolve.
-void* PlayerContainer();
+// Take the copy back out of the bag: the widget's own removeItem (which blanks its entry in its owner and removes
+// the widget) and, when the screen is dragging it, the screen's dropDragged. False when removeItem does not resolve.
+bool Discard(void* copy);
 
 }  // namespace ue_wrap::container_view

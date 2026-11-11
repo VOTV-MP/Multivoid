@@ -1,8 +1,8 @@
 // coop/dev/container_intent_drill_throw_arms.cpp -- what four of the container intent drill's throw arms add to the
 // flight the client and the host trace (container_intent_drill_throw.cpp, _throw_host.cpp); see
 // container_intent_drill_throw.h.
-//   throwplace  -- the bit stays CLEAR on a non-throw: the client lets go of a grab with dropGrabObject alone, then places a
-//                  held drive with the game's precision place; the host reads throwSeq 0 on the release and the drop intent
+//   throwplace  -- the bit stays CLEAR on a non-throw: the client lets go of a grab with dropGrabObject alone, then places the
+//                  held item with the game's place (dropItem_mainhand on the surface); the host reads throwSeq 0 on the release and the drop intent
 //                  and elects no syncer.
 //   throwjoin   -- (--observer) the host holds the second client's world-ready answer until the thrower's first admitted row,
 //                  so it is seeded mid-flight and follows the relayed rows; the host sets its copy against its instants.
@@ -11,9 +11,7 @@
 //                  copy flies on and rests, and the rejoined client's seed agrees with the host's rest pose.
 //   throwtouch  -- the host picks the flying prop up 150 ms after the first admitted row; the thrower's row ends with it.
 
-#include "container_intent_drill_put.h"        // Put2IsJoiner: putjoin's role rule
 #include "container_intent_drill_throw.h"
-#include "container_route_drill_detail.h"
 
 #include "coop/dev/container_route_census.h"
 #include "coop/config/config.h"
@@ -50,11 +48,10 @@ namespace E   = ue_wrap::engine;
 namespace R   = ue_wrap::reflection;
 namespace DR  = coop::director;
 namespace DC  = coop::dev::drill_chat;
-namespace RD  = coop::dev::container_route_drill::detail;
+namespace RD  = coop::dev::container_intent_drill::detail;
 namespace cen = coop::dev::container_route_census;
 using ue_wrap::FVector;
 
-constexpr uint64_t kPlaceModeMs     = 500;      // the precision place's mode is entered this long before the drop
 constexpr uint64_t kPlaceLandMs     = 10000;    // the placed prop's release or intent reaches the host within this
 constexpr uint64_t kTouchAfterRowMs = 150;      // the host's grab follows the first admitted row by this long
 constexpr uint64_t kTouchVerifyMs   = 3000;     // the grab is on the player, and the row ended, within this
@@ -68,10 +65,6 @@ constexpr uint64_t kMarkEveryMs     = 1000;     // the host says the thrown eid 
 unsigned long long U(uint64_t v) { return static_cast<unsigned long long>(v); }
 
 // ---- throwplace -----------------------------------------------------------------------------------------------------------
-
-enum class P : uint8_t { Start, WaitMode };
-P        g_p = P::Start;
-uint64_t g_pMs = 0;
 
 // The host's baseline at the arm line, and what it concluded of each part.
 struct Base { uint32_t rel = 0, relThrown = 0, intents = 0, intentsThrown = 0, elected = 0; };
@@ -104,9 +97,8 @@ bool     g_jDone = false;
 
 // ---- throwplace: the client ----------------------------------------------------------------------------------------------
 
-// The first part lets go of the grab with dropGrabObject alone: no traceThrow, no throwShit (mainPlayer.cpp:11150). The second
-// enters the placement mode as the game's own place does, simulateDrop(dontWakeup=false, place=true, dontCollect=true)
-// (mainPlayer.cpp:1458, :9942), and drops with the custom event precisionPlacemet_drop (:9972, reached from :1617).
+// The first part lets go of the grab with dropGrabObject alone: no traceThrow, no throwShit. The second places the held
+// item as the game's own place does, dropItem_mainhand(surface=true, playercamera=false, dropone=false).
 PlaceState PlaceTick(void* player, int n, char* why, size_t whyLen) {
     if (n == 1) {
         if (!DR::CallOnPlayer(player, L"dropGrabObject")) {
@@ -116,24 +108,14 @@ PlaceState PlaceTick(void* player, int n, char* why, size_t whyLen) {
         UE_LOGI("[CI-DRILL] %s %s: dropGrabObject alone released the grab (no traceThrow, no throwShit)", Role(), ArmName());
         return PlaceState::Done;
     }
-    if (g_p == P::Start) {
-        void* fn = R::FindDispatchFunctionCached(R::ClassOf(player), L"simulateDrop");
-        ue_wrap::ParamFrame f(fn);
-        if (!fn || !f.valid() || !f.Set<bool>(L"dontWakeup", false) || !f.Set<bool>(L"place", true) ||
-            !f.Set<bool>(L"dontCollect", true) || !ue_wrap::Call(player, f)) {
-            std::snprintf(why, whyLen, "simulateDrop(place=true) did not run");
-            return PlaceState::Failed;
-        }
-        g_p = P::WaitMode;
-        g_pMs = ::GetTickCount64();
-        return PlaceState::Working;
-    }
-    if (::GetTickCount64() - g_pMs < kPlaceModeMs) return PlaceState::Working;
-    if (!DR::CallOnPlayer(player, L"precisionPlacemet_drop")) {
-        std::snprintf(why, whyLen, "precisionPlacemet_drop did not run");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(player), L"dropItem_mainhand");
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid() || !f.Set<bool>(L"surface", true) || !f.Set<bool>(L"playercamera", false) ||
+        !f.Set<bool>(L"dropone", false) || !ue_wrap::Call(player, f)) {
+        std::snprintf(why, whyLen, "dropItem_mainhand(surface=true) did not run");
         return PlaceState::Failed;
     }
-    UE_LOGI("[CI-DRILL] %s %s: precisionPlacemet_drop after the placement mode", Role(), ArmName());
+    UE_LOGI("[CI-DRILL] %s %s: dropItem_mainhand(surface=true) placed the held item", Role(), ArmName());
     return PlaceState::Done;
 }
 
@@ -188,8 +170,8 @@ void PlaceHostPass() {
 
 // ---- throwtouch: the host ------------------------------------------------------------------------------------------------
 
-// The host's pawn takes the flying prop with the game's own pickup of a named actor, `Hold Object` with `manual` set
-// (mainPlayer.cpp:16196; ue_wrap::engine::CallMainPlayerHoldObject): no aim, not a teleport, not a dev write. The pickup
+// The host's pawn takes the flying prop with the game's own pickup of a named actor, `Add Object to Free Hotbar Slot`
+// (ue_wrap::engine::CallMainPlayerAddObjectToFreeHotbarSlot): no aim, not a teleport, not a dev write. The pickup
 // equips the drive and the world prop leaves, so the thrower's row ends with the prop (Died) and its copy goes with the
 // host's destroy. A physics grab of the flying prop needs an aim at a moving target and is not measured here.
 HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen) {
@@ -208,7 +190,7 @@ HostJudge TouchHostTick(uint32_t eid, char* why, size_t whyLen) {
             return HostJudge::Failed;
         }
         bool collected = false;
-        const bool called = ue_wrap::engine::CallMainPlayerHoldObject(player, prop, collected);
+        const bool called = ue_wrap::engine::CallMainPlayerAddObjectToFreeHotbarSlot(player, prop, ue_wrap::engine::HotbarAdd{}, collected);
         g_touchGrabbed = called && collected;
         g_touchGrabMs = now;
         UE_LOGI("[CI-DRILL] host throwtouch: the pickup ran %llu ms after the first admitted row (called %d, collected %d)",
@@ -382,7 +364,7 @@ std::string g_jhEnd;
 uint64_t    g_jhEndMs = 0;
 int         g_jhReadyN = 0;          // the throw whose "was a second client in the world before the host copy rested" is latched
 bool        g_jhReady = false;
-constexpr int kJoinerSlot = 2;           // the client with a connected peer of a lower slot (Put2IsJoiner)
+constexpr int kJoinerSlot = 2;           // the client with a connected peer of a lower slot (IsJoiner)
 bool        g_jhLate = false;            // the joiner was in the world before the hold was set
 uint64_t    g_jhReleaseMs = 0;           // cen::UnixMs() of the release: the joiner's first sample is set against it
 uint64_t    g_jhElectMs = 0;             // cen::UnixMs() of the tick that saw the throw's election
@@ -576,7 +558,7 @@ HostJudge JoinHostJudge(const Track& host, int n, float& gapOut, char* why, size
 
 // ---- throwjoin: the joiner -----------------------------------------------------------------------------------------------
 
-bool JoinerRole() { return ArmOf() == Arm::ThrowJoin && Put2IsJoiner(); }
+bool JoinerRole() { return ArmOf() == Arm::ThrowJoin && IsJoiner(); }
 
 // The second client: for EVERY throw the host names it waits for the prop, traces its mirror from the moment it reads, and says
 // where it was at fixed instants after its first sample and where it came to rest. It is done once the thrower's done line
@@ -631,8 +613,6 @@ void JoinerTick(const coop::net::Session& session) {
 }
 
 void ArmsReset() {
-    g_p = P::Start;
-    g_pMs = 0;
     g_base = Base{};
     g_placeGrab = "?";
     g_placeHand = "n/a";

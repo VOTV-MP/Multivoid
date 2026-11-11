@@ -13,6 +13,11 @@
 // element id, so the host resolves the one the sender stands at -- that resolve IS the reach
 // test -- re-tests the lid, then calls/sends or flips its leaveAfter5min (DroneState carries it) and clicks.
 // The presser's machine clicks for the body it cancelled. Nothing to replay on a late join.
+//
+// The drone's own sack option (drone_C::actionOptionIndex, action 7) is the third verb. It empties the cargo into a
+// new sack, which only the host's drone may do: the client refuses its own body and sends the press, and the host
+// tests that the sender is within reach of its drone and that the drone is parked with its sack aboard, then runs
+// dropSack. The sack reaches the peers on the prop and container lanes, the cargo on drone_cargo_sync.
 
 #pragma once
 

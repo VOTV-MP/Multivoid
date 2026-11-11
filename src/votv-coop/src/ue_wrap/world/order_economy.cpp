@@ -58,7 +58,7 @@ int32_t g_offOrders     = -1;  // on saveSlot's class
 bool ResolveGmOffsets(void* gm) {
     void* gmCls = R::ClassOf(gm);
     if (!gmCls) return false;
-    if (g_offSaveSlot   < 0) g_offSaveSlot   = R::FindPropertyOffset(gmCls, L"saveSlot");
+    if (g_offSaveSlot   < 0) g_offSaveSlot   = R::FindPropertyOffset(gmCls, L"save_slot");
     if (g_offLaptop     < 0) g_offLaptop     = R::FindPropertyOffset(gmCls, L"laptop");
     if (g_offDrone      < 0) g_offDrone      = R::FindPropertyOffset(gmCls, L"drone");
     if (g_offRadiotower < 0) g_offRadiotower = R::FindPropertyOffset(gmCls, L"radiotower");

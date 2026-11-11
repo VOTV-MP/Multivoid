@@ -40,16 +40,11 @@ int ClassIdOf(void* cls, bool& byName);
 // The class's short name, as the game spells it.
 const wchar_t* ClassName(Cls c);
 
-// Narrow an explosion's radial force to pawns: its RadialForce member's own RemoveObjectTypeToAffect, called twice with
-// the enum bytes 1 and 3 (WorldDynamic, PhysicsBody; byte 2, Pawn, stays). The component's array is never written
-// raw: that does not narrow. False when the member or the function does not resolve, or a call fails.
-bool NarrowForceToPawn(void* explosion);
 
-// The parameters a blast reads, as the host captured them. objType is explosion_C's Int.
+// The parameters a blast reads, as the host captured them.
 struct Params {
-    float   damage, radius, force, fireStrength, fireFuel, innerShake, outerShake;
-    int32_t objType;
-    bool    ignoreWalls, skipSetting;
+    float damage, radius, force, fireStrength, fireFuel;
+    bool  ignoreWalls, skipSetting;
 };
 
 // A new explosion of class `c` at a full transform (rotation = pitch, yaw, roll in degrees; the scale included, which

@@ -6,6 +6,8 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
+#include "coop/player/hand_item_mirror.h"  // kFallbackRelPos
+#include "coop/player/hand_item_wire.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/join_progress.h"
@@ -43,9 +45,6 @@ std::wstring Widen(const char* s) {
     return w;
 }
 
-// The fallback hold transform the owner ships before its first measure (hand_item.cpp), so the message
-// is shaped as an honest one is in every field but the class.
-constexpr float kFallbackRel[6] = {45.f, 10.f, -40.f, 0.f, 0.f, 0.f};
 constexpr auto  kFailBound = std::chrono::seconds(180);  // a failure bound, never a wait
 
 // A FIXED sentinel per arm: the host judges it, and a line its record kept from a prior run is excluded
@@ -60,22 +59,16 @@ bool OwnJoinOver() {
            coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
 }
 
-// HandItem's wire layout (hand_item.cpp BuildPayload): slot, has, then a length-prefixed class, name and
-// item, then the six-float hold transform when held. The name and item are empty, so no build writes an
-// item name into the actor it spawns.
+// The forged state (coop/player/hand_item_wire.h): shaped as an honest main-hand state is in every field but the
+// class, at the fallback hold transform the owner ships before its first measure. The name and item are empty, so
+// no build writes an item name into the actor it spawns.
 std::vector<uint8_t> BuildForgedHand(uint8_t slot, const char* cls) {
-    std::vector<uint8_t> out;
-    const size_t cl = std::strlen(cls);
-    out.push_back(slot);
-    out.push_back(1);
-    out.push_back(static_cast<uint8_t>(cl));
-    for (size_t i = 0; i < cl; ++i) out.push_back(static_cast<uint8_t>(cls[i]));
-    out.push_back(0);  // name
-    out.push_back(0);  // item
-    const size_t base = out.size();
-    out.resize(base + sizeof(kFallbackRel));
-    std::memcpy(out.data() + base, kFallbackRel, sizeof(kFallbackRel));
-    return out;
+    coop::hand_item_wire::Record r;
+    r.slot = slot;
+    r.has = true;
+    for (const char* c = cls; *c; ++c) r.cls.push_back(static_cast<wchar_t>(*c));
+    std::memcpy(r.relPos, coop::hand_item::kFallbackRelPos, sizeof(r.relPos));
+    return coop::hand_item_wire::Build(r);
 }
 
 bool SendChatLine(coop::net::Session* s, const std::string& text) {

@@ -48,7 +48,7 @@ void DiagnoseSeatRefusal(void* local, void* atv) {
             if (pf.valid() && ue_wrap::Call(local, pf))
                 emptyHands = pf.Get<bool>(L"empty") ? 1 : 0;
         }
-        const int32_t hoff = R::FindPropertyOffset(pcls, L"holding_actor");
+        const int32_t hoff = R::FindPropertyOffset(pcls, L"holdingActor_main");
         if (hoff >= 0) {
             void* held = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(local) + hoff);
             holdingClass = held ? R::ClassNameOf(held) : std::wstring(L"<none>");
@@ -56,7 +56,7 @@ void DiagnoseSeatRefusal(void* local, void* atv) {
     }
 
     UE_LOGW("[ATVP] ARM sit gates: fallVeloc.Z=%s (need |Z|<800), checkEquip.empty=%s "
-            "(need 1), holding_actor=%ls, atv.occupant=%p (need null)",
+            "(need 1), holdingActor_main=%ls, atv.occupant=%p (need null)",
             haveFall ? std::to_string(fallZ).c_str() : "?",
             emptyHands < 0 ? "?" : (emptyHands ? "1" : "0"),
             holdingClass.c_str(), ue_wrap::atv::GetOccupantPlayer(atv));

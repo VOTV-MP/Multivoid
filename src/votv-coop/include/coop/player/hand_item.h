@@ -1,6 +1,6 @@
 // coop/player/hand_item.h -- the hotbar HAND-ITEM display axis.
 //
-// The item shown in a player's hand is NOT a world entity: VOTV's updateHold destroys and
+// The item shown in a player's hand is NOT a world entity: VOTV's better_holdItem_mainhand destroys and
 // respawns a fresh local actor on every quick-slot switch. Riding the WORLD-prop pipeline
 // (PropSpawn/PropPose/PropRelease) therefore produced a peer's held item updating late or never
 // -- the host's pre-quiescence express gate suppressed every host hand item forever, the client
@@ -9,20 +9,31 @@
 //
 // The model is MTA's: a ped's current weapon is PLAYER STATE attached to the ped locally on
 // every machine, so the hand item is part of the player's EXPRESSION like skin and nick colour.
-// The owner polls mainPlayer.holding_actor (Aprop_C only -- the trash clump/pile carry keeps its
-// own lane) and broadcasts a small reliable HandItem{class, name, item} on change; every peer keeps a
-// display-only mirror. Nothing goes per-tick on the wire, switch latency is one reliable
-// message, and late join replays per-slot state. All functions game-thread only.
+// The owner polls mainPlayer.holdingActor_main and holdingActor_offhand (Aprop_C only -- the trash
+// clump/pile carry keeps its own lane) and broadcasts a small reliable HandItem{hand, class, name,
+// item} for a hand that changed (coop/player/hand_item_wire.h); every peer keeps a display-only
+// mirror per hand: the main hand's held in the puppet's view, the off hand's attached to the
+// puppet's own `weapon_off`, where the game attaches it. Nothing goes per-tick on the wire but the
+// main hand's pose, switch latency is one reliable message, and late join replays per-slot state.
+// The queries below answer for the main hand, the one the game's verbs use. All functions
+// game-thread only.
 
 #pragma once
 
 #include "coop/net/intent_bucket.h"
 #include "coop/net/session.h"
 
+#include "coop/player/players_registry.h"  // kMaxPeers
+
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace coop::hand_item {
+
+// The most actors the hand axis holds: this peer's two hand actors and two mirrors per peer slot. The size of an
+// array CollectHandAxisActors fills.
+inline constexpr size_t kHandAxisCap = 2 * (1 + coop::players::kMaxPeers);
 
 // The hand lane's budget: an application is a mirror destroyed and spawned on every peer and two sends. Twelve at
 // once and four a second sit above the most an honest player sent in the archived logs (9 in a second, 32 in ten);
@@ -30,8 +41,8 @@ namespace coop::hand_item {
 inline constexpr coop::net::IntentBudget kHandBudget{12.0f, 4.0f};
 
 // Owner side, per tick (from local_streams::Tick). `local` is the local mainPlayer; `holdingProp` is
-// the local player's holding_actor IF it is a live Aprop_C descendant, else nullptr. Announces
-// EDGE-INSTANT on change -- a quick-slot switch is one synchronous updateHold call, bytecode-proven,
+// the local player's holdingActor_main IF it is a live Aprop_C descendant, else nullptr. Announces
+// EDGE-INSTANT on change -- a quick-slot switch is one synchronous better_holdItem_mainhand call, bytecode-proven,
 // so a null IS the stow.
 //
 // At the hand edge, an ex-hand actor that SURVIVED the edge was RELEASED into the world (an
@@ -64,23 +75,23 @@ bool HandleHandItem(coop::net::Session& session,
 void ReplayPeerStatesToSlot(int slot);
 
 // The axis boundary for the world-prop census: the LOCAL player's live hotbar hand actor (a
-// fresh mainPlayer.holding_actor read, Aprop_C-gated), or nullptr. prop_census's seed walk
+// fresh mainPlayer.holdingActor_main read, Aprop_C-gated), or nullptr. prop_census's seed walk
 // skips this actor -- it is player expression, never a world entity, and adopting it makes the
 // safety census express an incremental PropSpawn that lands on the peer as a frozen duplicate
 // at the puppet. Fresh read rather than the announce latch: the census runs earlier in the pump
-// tick than TickOwner, and updateHold can have respawned the actor in between.
+// tick than TickOwner, and better_holdItem_mainhand can have respawned the actor in between.
 void* LocalHandActor();
 
-// Whether `actor` is the local player's hotbar hand actor (mainPlayer.holding_actor, Aprop_C-gated,
-// the predicate LocalHandActor routes by). Pointer identity only, with no liveness check on `actor`:
-// the destroy seam's pre hook asks it at the call's entry, while holding_actor still names the actor
-// (the Blueprint nulls it only after the destroy). Game thread only.
+// Whether `actor` is one of the local player's two hand actors (mainPlayer.holdingActor_main or
+// holdingActor_offhand, Aprop_C-gated, the predicate LocalHandActor routes by). Pointer identity only,
+// with no liveness check on `actor`: the destroy seam's pre hook asks it at the call's entry, while the
+// hand field still names the actor (the Blueprint nulls it only after the destroy). Game thread only.
 bool IsLocalHandViewActor(void* actor);
 
-// The FULL hand-axis boundary, ONE owner: true for the local hand actor AND for every live
-// remote mirror. LocalHandActor above answers only for the local half, and a census that asks
+// The FULL hand-axis boundary, ONE owner: true for the local hand actors (both hands) AND for every
+// live remote mirror. LocalHandActor above answers only for the local half, and a census that asks
 // it alone adopts the mirrors. Callers: prop_drop_intent on both enqueue AND drain -- the
-// drain-time re-check is load-bearing, because holding_actor is not yet written when
+// drain-time re-check is load-bearing, because holdingActor_main is not yet written when
 // FinishSpawn returns -- and rng_roll_census's channel exclusion. prop_census's seed walk takes
 // the same set the cheaper way, hoisting CollectHandAxisActors once per walk. Game thread only.
 bool IsHandAxisActor(void* actor);
@@ -112,9 +123,8 @@ uint32_t OwnHandLookSeq();
 // the pry ends with an empty hand. Game thread only.
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
 
-// The item `slot`'s hand holds, as its owner last announced: the name its hold slot holds it under,
-// the key the player's updateHold looks the game's item tables up by, or empty when it holds
-// nothing. Game thread only.
+// The item `slot`'s main hand holds, as its owner last announced: its holdingObjectName_main, the
+// key the player looks the game's item tables up by, or empty when it holds nothing. Game thread only.
 std::wstring HeldItem(uint8_t slot);
 
 // Host, each tick after the roster reconcile and before the drain (event_feed::Update): a client's newest hand state
@@ -131,8 +141,8 @@ bool HandStateOwed(uint8_t slot);
 // The hostile drill's keep_latest arm reads it. Game thread only.
 uint32_t StatesApplied(int slot);
 
-// Snapshot the current hand-axis actors (local hand + live remote mirrors)
-// into out[]; returns the count (<= 1 + kMaxPeers). For per-walk hoisting.
+// Snapshot the current hand-axis actors (the local hand actors + the live remote mirrors of both
+// hands) into out[]; returns the count (<= kHandAxisCap). For per-walk hoisting.
 size_t CollectHandAxisActors(void* out[], size_t cap);
 
 // Session lifecycle.

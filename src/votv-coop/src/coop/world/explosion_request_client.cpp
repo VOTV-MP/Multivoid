@@ -266,7 +266,7 @@ void SendShot(coop::net::Session& s, const Pending& e) {
         void* player = coop::players::Registry::Get().Local();
         ue_wrap::engine::MainPlayerGrabState gs{};
         const bool read = player && ue_wrap::engine::ReadMainPlayerGrabState(player, gs);
-        void* ha = read ? gs.holdingActor : nullptr;
+        void* ha = read ? gs.mainHand : nullptr;
         UE_LOGI("[EXPLOSION] shot held for the announce: look=%u holding=%ls live=%d keyed=%d prop=%d grabbing=%ls",
                 item.lookSeq, ha ? R::ClassNameOf(ha).c_str() : L"none", ha && R::IsLive(ha) ? 1 : 0,
                 ha && ue_wrap::prop::IsKeyedInteractable(ha) ? 1 : 0, ha && ue_wrap::prop::IsDescendantOfProp(ha) ? 1 : 0,

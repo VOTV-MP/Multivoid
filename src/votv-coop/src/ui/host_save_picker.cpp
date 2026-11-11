@@ -189,12 +189,11 @@ void Render() {
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_PadOuterX;
-        if (ImGui::BeginTable("##savelist", 5, tflags, ImVec2(0.0f, -footer))) {
+        if (ImGui::BeginTable("##savelist", 4, tflags, ImVec2(0.0f, -footer))) {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Mode",    ImGuiTableColumnFlags_WidthFixed, S(80.0f));
             ImGui::TableSetupColumn("Day",     ImGuiTableColumnFlags_WidthFixed, S(50.0f));
-            ImGui::TableSetupColumn("Health",  ImGuiTableColumnFlags_WidthFixed, S(64.0f));
             ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, S(70.0f));
             ImGui::TableHeadersRow();
 
@@ -213,8 +212,7 @@ void Render() {
                 }
                 ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(W2A(s.modeLabel).c_str());
                 ImGui::TableSetColumnIndex(2); ImGui::Text("%d", s.day);
-                ImGui::TableSetColumnIndex(3); ImGui::Text("%.0f/%.0f", s.health, s.maxHealth);
-                ImGui::TableSetColumnIndex(4);
+                ImGui::TableSetColumnIndex(3);
                 if (s.versionConflict) ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s",
                                                           s.version.empty() ? "unk!" : W2A(s.version).c_str());
                 else                   ImGui::TextDisabled("%s", W2A(s.version).c_str());

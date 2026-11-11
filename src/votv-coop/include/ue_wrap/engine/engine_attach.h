@@ -100,7 +100,7 @@ bool SetActorRootPhysicsAngularVelocity(void* actor, const FVector& ang);
 float GetActorRootMass(void* actor);
 
 // The root surface's UPhysicalMaterial (GetMaterial(0), then GetPhysicalMaterial()), the input
-// lib_C::physSound takes; equivalent to the trace's answer for the single-material clump and pile.
+// lib_C::getPhysicalAsAudio takes; equivalent to the trace's answer for the single-material clump and pile.
 // Null on failure.
 void* GetActorRootPhysicalMaterial(void* actor);
 

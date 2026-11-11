@@ -103,7 +103,7 @@ void* PickTarget(void* player, std::wstring& outKey) {
         if (!a || !R::IsLive(a) || !coop::prop_hold_claim::IsArbitrated(a)) continue;
         if (ue_wrap::prop::IsFrozen(a) || ue_wrap::prop::IsStatic(a) || ue_wrap::prop::IsHeavy(a)) continue;
         ue_wrap::prop_gather::HoldFacts hf{};
-        if (!ue_wrap::prop_gather::ReadHoldFacts(a, hf) || hf.child || !hf.canHold || hf.heavy || hf.pickupRefused)
+        if (!ue_wrap::prop_gather::ReadHoldFacts(a, hf) || hf.child || hf.takeRefused)
             continue;
         ue_wrap::FVector p{};
         if (!E::TryGetActorLocation(a, p)) continue;

@@ -18,6 +18,7 @@
 #include "coop/player/death_revive.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/revive_protection.h"
+#include "coop/save/puppet_save_skip.h"
 #include "coop/player/run_end_travel.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
@@ -53,6 +54,7 @@ void TickShutdownHooks() {
     coop::shutdown::UpdateWindowTitle();
     coop::death_revive::Install(s);
     coop::revive_protection::Install();
+    coop::puppet_save_skip::Install();
     coop::player::run_end_travel::Install(s);
 }
 

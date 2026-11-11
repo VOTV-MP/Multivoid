@@ -8,8 +8,8 @@
 // rewardSig; rewardSat; and the reel_big / reel_small best-SENT pair, which only sell and
 // rollover write.
 //
-// The taskNew offset itself is reflected (FindPropertyOffset on saveSlot_C, with a numeric
-// fallback); the INNER field offsets are the measured struct layout and live as named
+// The taskNew offset itself is reflected (FindPropertyOffset on saveSlot_C; a miss turns the
+// wrapper off, no offset is guessed); the INNER field offsets are the measured struct layout and live as named
 // constants in daily_task.cpp, because GUID-suffixed member names defeat exact-name
 // reflection and the struct is byte-stable within the targeted game version.
 

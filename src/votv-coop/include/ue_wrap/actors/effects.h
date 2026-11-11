@@ -56,12 +56,11 @@ bool Add(const std::wstring& name, float strength, float seconds);
 // takes one instance.
 bool Remove(const std::wstring& name);
 
-// The game's own saveSlot_C::reset_player_effects on `saveSlot`, which may be a save object whose world
-// does not exist yet: every effect record of its objectsData removed (and any empty record). Returns how
-// many records went (the array's length before less after); -1 when `saveSlot` is not live, the function
-// or objectsData does not resolve, an array header does not read, or the call fails. `gamemodeSet` (null
-// allowed) reports whether the save's gamemode field held an object when the call ran, the target of
-// the hint the game's verb ends with.
-int ResetOnSaveObject(void* saveSlot, bool* gamemodeSet);
+// Take the player's effect records out of `saveSlot`'s betterObjectsData, which may be a save object
+// whose world does not exist yet: the records attached to "mainPlayer", the ones the game's own
+// saveSlot_C::reset_player_effects matches (that verb then empties the whole array, the world's
+// records too, so it is not the one called). Returns how many records went; -1 when `saveSlot` is
+// not live, the array or its record type does not resolve, or its header does not read. Game thread.
+int RemovePlayerEffectRecords(void* saveSlot);
 
 }  // namespace ue_wrap::effects

@@ -121,8 +121,11 @@ boundaries; real-client collection is a separate acceptance check.
 ### The floppy slot
 
 A laptop and a signal server hold a disc the same way: inserting one moves its type, its remaining
-writes, its data rows and the JSON of its whole save struct into four fields of the device and
-destroys the actor, and ejecting one spawns the disc back from those fields. The four are one
+writes, its data rows and the whole disc into the fields of the device and destroys the actor, and
+ejecting one spawns the disc back from those fields. The whole disc is, in 0.9, the JSON of its save
+struct (`floppyObjectData`) and, in 0.10, the actor's `ActorToBytes` stream (`floppyObjectDataBytes`,
+which the JSON field no longer carries; the slot lane reads, digests and writes it, and the wire entry
+carries it after the JSON). The fields are one
 concept with one owner, and they are state, not an event: the host holds every device's slot, each
 peer polls its own devices once a second behind a digest that reads the raw field bytes, and a peer
 whose own game changed a slot sends the host the outcome as a claim. The host applies it and answers
@@ -214,7 +217,7 @@ joiner as a reset and then every queued order, and the joiner ignores the queue'
 reset arrives.
 
 Every device's floppy slot goes to a joiner at the same edge, an empty one as much as a full one:
-the joiner's world came from the host's save file, which coop stops the game refreshing, so it knows
+the joiner's world came from the host's save, which coop stops the game refreshing, so it knows
 nothing the host has done since. The laptop's file quad follows the laptop's slot on the same lane
 and under the same count, so the joiner takes the disc before its files, and a set the transport
 refused is sent again with the quad behind it.

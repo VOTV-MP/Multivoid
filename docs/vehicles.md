@@ -76,6 +76,16 @@ turn a divergence into an item loss the host persists. The mirror's own accrual 
 overwrite never races an irreversible act. The battery is an inserted prop's charge and rides
 the prop lane.
 
+### The trunk
+
+In 0.10 an ATV's trunk is its own `inventoryComponent_C` (the open option runs the inventory screen's `begin(atv.inventoryComponent)`);
+the `spawnedContainer` prop of 0.9 is never created. The component is the host's: `coop/interactables/atv_trunk_sync` reads each
+ATV's trunk twice a second, sends it whole when it changed (`AtvTrunk`, a chunked blob in the container slice grammar, host to client)
+and a client writes it over its copy; a joiner gets every trunk at its connect replay. The trunk is keyed by the ATV's game key (a
+target id of the container act lane: a base plus 20 bits of a hash of the key), and a client's take, put, stack and merge on the open
+trunk are asked of the host like a world container's, with reach judged at the ATV. A client's hand put is refused. Details:
+[props.md](props.md).
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -90,6 +100,7 @@ the prop lane.
 | the condition values | the syncer | overwritten on the mirror, re-derived on edges |
 | tyre and spare presence | the host | consumed from the host's own copy only |
 | a runtime ATV's identity | the host | its game key, announced |
+| the trunk's contents | the host | the host's component is the truth; a client's acts are asked and judged there |
 
 ## Wire messages
 
@@ -101,6 +112,7 @@ the prop lane.
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
+| `AtvTrunk` | the host to all | one ATV's trunk entries, whole, as a chunked blob in the container slice grammar (element id = the trunk's target id) |
 
 ## Late join
 
@@ -138,6 +150,7 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | the seat and syncer table, and the host's judgements | `coop/interactables/atv_authority` |
 | the corrector, the hit guard and the damage gate | `coop/interactables/atv_corrector`, `coop/interactables/atv_hit_guard`, `coop/interactables/atv_damage_gate` |
 | condition | `coop/interactables/atv_condition_sync`, `ue_wrap/devices/atv_condition` |
+| the trunk | `coop/interactables/atv_trunk_sync`, `ue_wrap/devices/atv` (`InventoryOf`, `ReadTrunk`, `WriteTrunk`), `coop/props/container_target` (the id), `coop/props/container_reach` |
 | the engine wrapper | `ue_wrap/devices/atv` |
 | the seat | `coop/interactables/device_occupancy` |
-| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; the smoke run with the ATV scenario enabled |
+| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`, `coop/dev/atv_trunk_drill` (a client's take and put, the host's own add); the smoke run with the ATV scenario enabled |

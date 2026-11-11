@@ -6,9 +6,9 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/fstring_utils.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/desk/signal_dynamic.h"
 
 #include <chrono>
 #include <cstring>
@@ -19,8 +19,10 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// Fstruct_save FIELD layout (struct_save.hpp; raw size 0xF8, ARRAY STRIDE 0x100 -- see
-// kSaveStride in the header). class@0 + transform@0x10 + key@0x40 + 11 groups.
+// Fstruct_save1 FIELD layout (struct_save1.hpp; raw size 0xE8, ARRAY STRIDE 0xF0 -- see
+// kSaveStride in the header). class@0 + transform@0x10 + key@0x40 + 10 groups. The struct has no
+// `signals` group. SaveLayoutOk() checks the live struct against these before a live call reads or
+// writes a record, so a game build that moves a member refuses the codec instead of corrupting a frame.
 constexpr int32_t kSave_class      = 0x00;
 constexpr int32_t kSave_transform  = 0x10;
 constexpr int32_t kSave_key        = 0x40;
@@ -28,13 +30,21 @@ constexpr int32_t kSave_bools      = 0x48;
 constexpr int32_t kSave_floats     = 0x58;
 constexpr int32_t kSave_ints       = 0x68;
 constexpr int32_t kSave_strings    = 0x78;
-constexpr int32_t kSave_signals    = 0x88;  // TArray<Fstruct_signalDataDynamic> (flat)
-constexpr int32_t kSave_classes    = 0x98;
-constexpr int32_t kSave_vectors    = 0xA8;
-constexpr int32_t kSave_rotators   = 0xB8;
-constexpr int32_t kSave_transforms = 0xC8;
-constexpr int32_t kSave_bytes      = 0xD8;
-constexpr int32_t kSave_names      = 0xE8;
+constexpr int32_t kSave_classes    = 0x88;
+constexpr int32_t kSave_vectors    = 0x98;
+constexpr int32_t kSave_rotators   = 0xA8;
+constexpr int32_t kSave_transforms = 0xB8;
+constexpr int32_t kSave_bytes      = 0xC8;
+constexpr int32_t kSave_names      = 0xD8;
+
+struct Member { const wchar_t* prefix; int32_t off; };
+constexpr Member kMembers[] = {
+    {L"class_", kSave_class},     {L"transform_", kSave_transform}, {L"key_", kSave_key},
+    {L"bools_", kSave_bools},     {L"floats_", kSave_floats},       {L"ints_", kSave_ints},
+    {L"strings_", kSave_strings}, {L"classes_", kSave_classes},     {L"vectors_", kSave_vectors},
+    {L"rotators_", kSave_rotators}, {L"transforms_", kSave_transforms}, {L"bytes_", kSave_bytes},
+    {L"names_", kSave_names},
+};
 
 std::wstring ReadFStringAt(const void* base, int32_t off) {
     R::FString s{};
@@ -168,14 +178,6 @@ void ReadSaveRecord(const void* base, SaveRecord& rec) {
                [](const uint8_t* e, std::vector<uint8_t>& g) { g.push_back(*e); });
     ReadGroups(base, kSave_names,   8, rec.names,
                [](const uint8_t* e, std::vector<std::wstring>& g) { g.push_back(ReadFNameAt(e, 0)); });
-    // signals: TArray<Fstruct_signalDataDynamic> directly (reuse the proven 0x70 reader).
-    const Arr sig = ReadArr(base, kSave_signals);
-    rec.signals.reserve(static_cast<size_t>(sig.num));
-    for (int32_t i = 0; i < sig.num; ++i) {
-        ue_wrap::signal_dynamic::Row row;
-        if (ue_wrap::signal_dynamic::ReadStruct(sig.data + static_cast<size_t>(i) * kSignalStride, row))
-            rec.signals.push_back(std::move(row));
-    }
 }
 
 void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) {
@@ -224,23 +226,39 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) 
                 [](uint8_t* e, uint8_t v) { *e = v; });
     WriteGroups(base, kSave_names, 8, r.names,
                 [](uint8_t* e, const std::wstring& v) { WriteFNameField(e, v); });
-    // signals: a FLAT TArray<Fstruct_signalDataDynamic> (0x70). Reuse the proven live writer
-    // (engine-mints the row FStrings, interns the FNames, zeroes image).
-    void* sb = AllocZeroed(r.signals.size(), kSignalStride);
-    if (!sb) { WriteArrHeader(base, kSave_signals, nullptr, 0); return; }
-    for (size_t i = 0; i < r.signals.size(); ++i)
-        // Ignore the bool: the slot is AllocZeroed, so a partial mint (KismetStringLibrary
-        // unresolved) leaves a valid empty row (null FStrings / NAME_None / empty image) -- a
-        // safe blank fallback, never garbage. We never crash a whole inventory over one signal.
-        ue_wrap::signal_dynamic::WriteStructLive(
-            reinterpret_cast<uint8_t*>(sb) + i * kSignalStride, r.signals[i]);
-    WriteArrHeader(base, kSave_signals, sb, static_cast<int32_t>(r.signals.size()));
 }
 
 
-// ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
+// ---- The typed pair, on a LIVE prop ------------------------------------------------------------
 
 namespace {
+
+// The live struct matches the constants above: the right size and every member at its offset. Checked
+// once; asked again at most once a second while the struct is not loaded.
+bool SaveLayoutOk() {
+    static bool s_ok = false;
+    if (s_ok) return true;
+    static uint64_t s_nextTryMs = 0;
+    const uint64_t now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (now < s_nextTryMs) return false;
+    s_nextTryMs = now + 1000;
+    void* const st = R::FindObject(L"struct_save1", L"UserDefinedStruct");
+    if (!st) return false;
+    if (R::StructSize(st) != kSaveRecordBytes) {
+        UE_LOGW("save_record: struct_save1 is %d bytes, not the %d the codec is written for -- typed records are not "
+                "read or written", R::StructSize(st), kSaveRecordBytes);
+        return false;
+    }
+    for (const Member& m : kMembers) {
+        if (R::FindPropertyOffsetByPrefix(st, m.prefix) != m.off) {
+            UE_LOGW("save_record: struct_save1.%ls is not at +0x%X -- typed records are not read or written",
+                    m.prefix, m.off);
+            return false;
+        }
+    }
+    return s_ok = true;
+}
 
 void*    g_propCls      = nullptr;  // Aprop_C -- the root the override test measures against
 void*    g_baseGetData  = nullptr;  // Aprop_C::getData, for the base half of a record
@@ -307,7 +325,7 @@ const ClassVerbs* VerbsFor(void* cls) {
 // Published as CaptureRecordVia at the bottom of the file: a class off the Aprop_C chain needs
 // exactly this dispatch and none of the lineage policy around it.
 bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
-    if (!fn) return false;
+    if (!fn || !SaveLayoutOk()) return false;
     ParamFrame f(fn);
     const int32_t off = f.ParamOffset(L"data");
     if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
@@ -350,11 +368,6 @@ bool EnsureConventionChecked(void* actor, void* cls) {
                 if (!(leafG[g][e] == baseG[g][e])) return true;
         return false;
     };
-    auto clashFlat = [](const auto& leafA, const auto& baseA) {
-        for (size_t i = 0; i < leafA.size() && i < baseA.size(); ++i)
-            if (!(leafA[i] == baseA[i])) return true;
-        return false;
-    };
     const wchar_t* which = nullptr;
     if      (clash(leaf.bools,      base.bools))      which = L"bools";
     else if (clash(leaf.floats,     base.floats))     which = L"floats";
@@ -366,7 +379,6 @@ bool EnsureConventionChecked(void* actor, void* cls) {
     else if (clash(leaf.transforms, base.transforms)) which = L"transforms";
     else if (clash(leaf.bytes,      base.bytes))      which = L"bytes";
     else if (clash(leaf.names,      base.names))      which = L"names";
-    else if (clashFlat(leaf.signals, base.signals))   which = L"signals";
     if (!which) return true;
     it->second.overrides = false;   // and so Covers() is false for this class from here on
     UE_LOGW("save_record: '%ls' stores its own value in `%ls` at an element Aprop_C writes too -- "
@@ -397,44 +409,19 @@ void SpliceGroups(std::vector<V>& dst, const std::vector<V>& src) {
 
 }  // namespace
 
-bool OverridesGetData(void* cls) {
-    const ClassVerbs* v = VerbsFor(cls);
-    return v && v->overrides;
-}
-
-bool CaptureRecord(void* actor, SaveRecord& out) {
-    if (!actor) return false;
-    void* cls = R::ClassOf(actor);
-    const ClassVerbs* v = VerbsFor(cls);
-    if (!v || !v->getData) return false;
-    // Measured before the first record of this class ever leaves: a class that fails the splice
-    // convention must not be published, or every receiver would drop what it sent.
-    if (!EnsureConventionChecked(actor, cls)) return false;
-    return CallForRecord(actor, v->getData, out);
-}
-
-namespace {
-int g_applying = 0;   // ApplyRecord calls in progress; game thread
-struct ApplyingScope {
-    ApplyingScope() { ++g_applying; }
-    ~ApplyingScope() { --g_applying; }
-};
-}  // namespace
-
-bool IsApplying() { return g_applying > 0; }
-
 bool CaptureOwnRecord(void* actor, SaveRecord& out) {
     if (!actor) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
     return v && v->getData && CallForRecord(actor, v->getData, out);
 }
 
+void* PropBaseClass() { return EnsurePropClass() ? g_propCls : nullptr; }
+
 bool IsPropClass(void* cls) {
     return cls && EnsurePropClass() && R::IsDescendantOfAny(cls, &g_propCls, 1);
 }
 
 bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
-    const ApplyingScope applying;
     if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
     // `overrides` and not merely "a loadData exists somewhere": this function dispatches
@@ -470,7 +457,6 @@ bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
     SpliceGroups(merged.transforms, base.transforms);
     SpliceGroups(merged.bytes,      base.bytes);
     SpliceGroups(merged.names,      base.names);
-    SpliceElements(merged.signals,  base.signals);   // a flat array, so the rule applies one level up
 
     ParamFrame f(v->loadData);
     const int32_t off = f.ParamOffset(L"data");
@@ -486,7 +472,7 @@ bool CaptureRecordVia(void* actor, void* recordFn, SaveRecord& out) {
 }
 
 bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassResolver resolve) {
-    if (!actor || !loadFn) return false;
+    if (!actor || !loadFn || !SaveLayoutOk()) return false;
     ParamFrame f(loadFn);
     const int32_t off = f.ParamOffset(L"data");
     if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;

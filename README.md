@@ -11,7 +11,7 @@
 |--|--|
 | **Install** | [**Multivoid on Thunderstore**](https://thunderstore.io/c/voices-of-the-void/p/Pelmentor/Multivoid/) — through r2modman or the Thunderstore Mod Manager, which set the loader up for you ([other routes](docs/install.md)) |
 | **Current build** | the newest `.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name and the in-game banner carry the identity) |
-| **Game target** | Voices of the Void Alpha **0.9.0n** |
+| **Game target** | Voices of the Void Alpha **0.10.0** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
 | **Players** | up to **4** (host + 3) |
 | **Platform** | Windows · UE4.27 · LAN + Internet |
@@ -54,7 +54,7 @@ with its own signatures, drives the game's own classes and functions through ref
 where reflection cannot see. No asset edits, no repacked paks.
 
 Transport is GameNetworkingSockets: 13 unreliable pose and state streams, a voice stream beside
-them, and one reliable ordered channel whose payloads are 223 message kinds. Each machine's engine
+them, and one reliable ordered channel whose payloads are 225 message kinds. Each machine's engine
 re-derives animation, physics and rendering from the streamed state. The host is authoritative for
 world state, randomness and NPC simulation; a client acts by naming an intent that the host
 performs.
@@ -66,10 +66,10 @@ the wrapper. [docs/architecture.md](docs/architecture.md) is the one-read overvi
 
 ## Versioning
 
-The version identity is the pair **(game version, build number)**: `Multivoid 0.9.0n b<N>` in the
+The version identity is the pair **(game version, build number)**: `Multivoid 0.10.0 b<N>` in the
 in-game banner, in the DLL's own version resource, and in the release tag. The game target bumps
 when the mod adapts to a new VOTV build; the build number is the wire-protocol revision and bumps
-with every release and every wire change. The zip is named `Pelmentor-Multivoid-0.9.<N>.zip` because
+with every release and every wire change. The zip is named `Pelmentor-Multivoid-<major>.<minor>.<N>.zip` because
 mod managers require a numeric `major.minor.patch`; it is the same pair, not a third axis. Join
 compatibility is byte-equality on the pair, per lobby. Source of truth:
 [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt).
@@ -107,7 +107,7 @@ cmake --build build/votv-coop --config Release
 | [`src/votv-coop/`](src/votv-coop/) | The mod: `ue_wrap` / `coop` / `ui` / `harness` / `loader` |
 | [`server/`](server/) | The master server and the signaling relay, in Rust |
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA) |
-| `Game_0.9.0n_HOST*/` | Local game installs. **Gitignored** — never committed |
+| `Game_<version>_HOST*/` | Local game installs. **Gitignored** — never committed |
 
 ## Roadmap
 

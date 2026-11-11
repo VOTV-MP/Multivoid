@@ -212,7 +212,7 @@ void Held(const Spec& sp, const LegDef& d, void* player) {
     }
     if (!Late(kStepBound)) return;
     std::snprintf(g_src.r.skipText, sizeof(g_src.r.skipText),
-                  "the hand never held the item: holding_actor is %s, the row builds %ls",
+                  "the hand never held the item: holdingActor_main is %s, the row builds %ls",
                   HeldClassName(player).c_str(), d.cls);
     Abandon(g_src.r.skipText);
 }

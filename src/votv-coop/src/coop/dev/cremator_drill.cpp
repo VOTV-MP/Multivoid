@@ -28,12 +28,16 @@
 #include "coop/session/teleport_client.h"  // OrderToPose: the order that sends the client to the firebox
 
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <cctype>
@@ -47,6 +51,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace coop::dev::cremator_drill {
@@ -643,6 +648,25 @@ void RunHostCremate(const std::string& arm) {
     Done(arm);
 }
 
+// 0.10's map: the save's cremator stands inside a water volume (the volume's overlap files the player in the water master's
+// actorsInWater), and the game's own ignite ends with `lib_C::isUnderwater` -> extinguishFire, so a body in the chamber is
+// never lit: it dies of the machine's damage "but not by its fire". That is the game's rule, the same one single-player runs,
+// not the lane's. A rig fixture so the arm can measure the lane: this client's body is taken off the water master's list
+// (its `remove obj`) every 200 ms while the trip runs, as an exit from the water would; the burning bit then runs the path
+// the host judges. Game thread.
+void LeaveWaterList() {
+    void* const player = coop::players::Registry::Get().Local();
+    void* const gm = ue_wrap::world_singleton::Gamemode();
+    if (!player || !gm) return;
+    const int32_t off = ue_wrap::reflection::FindPropertyOffset(ue_wrap::reflection::ClassOf(gm), L"waterFloatMaster");
+    void* const wfm = off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(gm) + off) : nullptr;
+    if (!wfm || !ue_wrap::reflection::IsLive(wfm)) return;
+    void* const fn = ue_wrap::reflection::FindDispatchFunctionCached(ue_wrap::reflection::ClassOf(wfm), L"remove obj");
+    ue_wrap::ParamFrame f(fn);
+    if (!fn || !f.valid() || !f.Set<void*>(L"find", player)) return;
+    ue_wrap::Call(wfm, f);
+}
+
 void RunClientCremate(const std::string& arm) {
     if (!HostPuppetUp()) return;
     if (LowArm(arm)) {
@@ -652,7 +676,17 @@ void RunClientCremate(const std::string& arm) {
         if (!wrote) { Abort("%s: the client's health did not write", arm.c_str()); return; }
     }
     Mark("client_ready");
-    if (!Await("cremate_over", kDeathSec + 120)) return;
+    std::atomic<bool> tripOver{false};
+    std::thread water([&] {
+        while (!tripOver.load()) {
+            OnGameThread([] { LeaveWaterList(); });
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    });
+    const bool over = Await("cremate_over", kDeathSec + 120);
+    tripOver.store(true);
+    water.join();
+    if (!over) return;
     // A kick lands moments after the verb's end line, and its notice stays until the dialog is acknowledged.
     coop::join_progress::Notice notice;
     if (EndsInKick(arm))

@@ -1,8 +1,8 @@
 // ue_wrap/world/daynightcycle.cpp -- see ue_wrap/world/daynightcycle.h. Engine access for VOTV's
 // world clock (AdaynightCycle_C).
 //
-// Offsets are resolved from the live class via reflection (FindPropertyOffset); the known
-// Alpha 0.9.0-n offsets are a logged fallback if the reflected walk ever fails.
+// Offsets are resolved from the live class by member name (FindPropertyOffset). A member the name does
+// not find leaves its reads and writes off, said once; no offset is guessed.
 
 #include "ue_wrap/world/daynightcycle.h"
 
@@ -21,22 +21,16 @@ namespace R = reflection;
 
 std::atomic<bool> g_resolved{false};
 void*   g_cycleCls    = nullptr;  // daynightCycle_C UClass
-int32_t g_totalTimeOff = -1;      // AdaynightCycle_C::totalTime (Alpha 0.9.0-n: 0x02B0)
-int32_t g_dayOff       = -1;      // AdaynightCycle_C::Day       (0x0298)
-int32_t g_timeScaleOff = -1;      // AdaynightCycle_C::TimeScale (0x02B4)
-int32_t g_maxTimeOff   = -1;      // AdaynightCycle_C::MaxTime   (0x02AC) -- one day's length in totalTime units
-int32_t g_timeZOff     = -1;      // AdaynightCycle_C::timeZ     (0x02D0) -- FIntVector (hour, minute, DAY)
-// The rate inputs, read by instruments only, so no fallback: an unresolved one fails the read.
+int32_t g_totalTimeOff = -1;      // AdaynightCycle_C::totalTime
+int32_t g_dayOff       = -1;      // AdaynightCycle_C::Day
+int32_t g_timeScaleOff = -1;      // AdaynightCycle_C::TimeScale
+int32_t g_maxTimeOff   = -1;      // AdaynightCycle_C::MaxTime -- one day's length in totalTime units
+int32_t g_timeZOff     = -1;      // AdaynightCycle_C::timeZ -- FIntVector (hour, minute, DAY)
+// The rate inputs, read by instruments only: an unresolved one fails the read.
 int32_t g_realtimeOff  = -1;      // AdaynightCycle_C::realtime (bool)
 int32_t g_diffMultOff  = -1;      // AdaynightCycle_C::diff_mult
 int32_t g_settingMpOff = -1;      // AdaynightCycle_C::settingMultiplayer (the rules' day speed)
 int32_t g_sleepDilOff  = -1;      // AdaynightCycle_C::sleepingTimeDilation
-
-constexpr int32_t kTotalTimeOffFallback = 0x02B0;
-constexpr int32_t kDayOffFallback       = 0x0298;
-constexpr int32_t kTimeScaleOffFallback = 0x02B4;
-constexpr int32_t kMaxTimeOffFallback   = 0x02AC;
-constexpr int32_t kTimeZOffFallback     = 0x02D0;
 
 int32_t g_cycleGmOff = -1;        // AdaynightCycle_C::gamemode
 
@@ -53,16 +47,15 @@ bool EnsureResolved() {
     void* cls = R::FindClass(L"daynightCycle_C");
     if (!cls) return false;  // not loaded yet -- caller retries
 
-    int32_t totalOff = R::FindPropertyOffset(cls, L"totalTime");
-    if (totalOff < 0) totalOff = kTotalTimeOffFallback;
-    int32_t dayOff = R::FindPropertyOffset(cls, L"Day");
-    if (dayOff < 0) dayOff = kDayOffFallback;
-    int32_t scaleOff = R::FindPropertyOffset(cls, L"TimeScale");
-    if (scaleOff < 0) scaleOff = kTimeScaleOffFallback;
-    int32_t maxOff = R::FindPropertyOffset(cls, L"MaxTime");
-    if (maxOff < 0) maxOff = kMaxTimeOffFallback;
-    int32_t timeZOff = R::FindPropertyOffset(cls, L"timeZ");
-    if (timeZOff < 0) timeZOff = kTimeZOffFallback;
+    const int32_t totalOff = R::FindPropertyOffset(cls, L"totalTime");
+    const int32_t dayOff = R::FindPropertyOffset(cls, L"Day");
+    const int32_t scaleOff = R::FindPropertyOffset(cls, L"TimeScale");
+    const int32_t maxOff = R::FindPropertyOffset(cls, L"MaxTime");
+    const int32_t timeZOff = R::FindPropertyOffset(cls, L"timeZ");
+    if (totalOff < 0 || dayOff < 0 || scaleOff < 0 || maxOff < 0 || timeZOff < 0)
+        UE_LOGE("daynightcycle: clock members not all found by name (totalTime=%d Day=%d TimeScale=%d MaxTime=%d "
+                "timeZ=%d) -- the reads and writes of each missing one stay off",
+                totalOff, dayOff, scaleOff, maxOff, timeZOff);
 
     g_cycleCls     = cls;
     g_totalTimeOff = totalOff;
@@ -90,7 +83,7 @@ void* Cycle() {
 }
 
 bool ReadClockOf(void* cycle, float& totalTime, float& day, float& timeScale) {
-    if (!cycle || g_totalTimeOff < 0) return false;
+    if (!cycle || g_totalTimeOff < 0 || g_dayOff < 0 || g_timeScaleOff < 0) return false;
     const char* base = reinterpret_cast<const char*>(cycle);
     totalTime = *reinterpret_cast<const float*>(base + g_totalTimeOff);
     day       = *reinterpret_cast<const float*>(base + g_dayOff);
@@ -111,7 +104,7 @@ bool ReadMaxTimeOf(void* cycle, float& maxTime) {
 bool ReadMaxTime(float& maxTime) { return ReadMaxTimeOf(Cycle(), maxTime); }
 
 void ApplyClockOf(void* cycle, float totalTime, float day) {
-    if (!cycle || g_totalTimeOff < 0) return;
+    if (!cycle || g_totalTimeOff < 0 || g_dayOff < 0) return;
     char* base = reinterpret_cast<char*>(cycle);
     *reinterpret_cast<float*>(base + g_totalTimeOff) = totalTime;
     *reinterpret_cast<float*>(base + g_dayOff)       = day;
@@ -170,9 +163,9 @@ struct LatchedMember {
     }
 };
 
-// The saveSlot substrate (gamemode -> saveSlot). The running world's gamemode, for the callers with no
+// The saveSlot substrate (gamemode -> save_slot). The running world's gamemode, for the callers with no
 // cycle in hand (the host's clock sample, the dev instruments), is the world singleton's.
-LatchedMember g_gmSaveSlot{L"mainGamemode_C", L"saveSlot", "the save slot's clock fields are out of reach"};
+LatchedMember g_gmSaveSlot{L"mainGamemode_C", L"save_slot", "the save slot's clock fields are out of reach"};
 LatchedMember g_slotDailyDelivery{L"saveSlot_C", L"dailyDelivery", "the 6 am order latch cannot be set"};
 LatchedMember g_slotSavedTime{L"saveSlot_C", L"savedtime", "the day number can be neither read nor written"};
 LatchedMember g_slotMusics{L"saveSlot_C", L"musics", "the day's music flags cannot be set again"};

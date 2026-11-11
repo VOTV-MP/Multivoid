@@ -45,7 +45,6 @@ uint64_t ContentHash(const SR::SaveRecord& r) {
     auto vv_vec3  = [&](const std::vector<std::vector<std::array<float,3>>>& g){ h=FnvU32(h,(uint32_t)g.size()); for(auto&v:g){h=FnvU32(h,(uint32_t)v.size()); h=FnvBytes(h,v.data(),v.size()*sizeof(std::array<float,3>));} };
     vv_vec3(r.vectors); vv_vec3(r.rotators);
     h=FnvU32(h,(uint32_t)r.transforms.size()); for(auto&v:r.transforms){ h=FnvU32(h,(uint32_t)v.size()); h=FnvBytes(h,v.data(),v.size()*sizeof(std::array<float,10>)); }
-    h=FnvU32(h,(uint32_t)r.signals.size());   // signal rows: hash count only (Row is opaque here)
     return h;
 }
 
@@ -129,30 +128,33 @@ int CountItemInstances(const ItemSig& x, bool print) {
         UE_LOGW("dup_verifier: could not resolve saveSlot.GObjStack offset -- GObjStack count is BLIND");
     }
 
-    // (2) What the player wears and holds (saveSlot.equipment, saveSlot.hold): the two player
-    // stores that are NOT a GObjStack slice. What the player carries is GObjStack[0] and is in the
-    // walk above already, so it is not counted a second time here. Logged as READ-OK or
+    // (2) What the player carries and wears (the pawn's inventory component, slotArray_A and
+    // slotArray_B): the player's stores, which are not a GObjStack slice. Logged as READ-OK or
     // READ-FAILED because a bare number would fuse "read fine, found nothing" with "the read
-    // failed"; ReadAll fails before the world is up (no player container yet).
+    // failed"; ReadAll fails before the world is up (no pawn yet).
     INV::PlayerInventory pinv;
     const bool playerReadOk = INV::ReadAll(pinv);
     int playerRows = 0;
     if (playerReadOk) {
-        playerRows = static_cast<int>(pinv.equipment.size() + pinv.hold.size());
-        for (const auto& e : pinv.equipment) if (SigOf(e.data) == x) { ++player; if (print) UE_LOGI("dup_verifier:   MATCH equipment cls=%ls key=%ls", e.data.className.c_str(), e.data.key.c_str()); }
-        for (const auto& e : pinv.hold)      if (SigOf(e.data) == x) { ++player; if (print) UE_LOGI("dup_verifier:   MATCH hold cls=%ls key=%ls", e.data.className.c_str(), e.data.key.c_str()); }
+        playerRows = static_cast<int>(pinv.inventory.size() + pinv.equipment.size());
+        for (const auto* arr : {&pinv.inventory, &pinv.equipment})
+            for (const auto& e : *arr)
+                if (SigOf(e) == x) {
+                    ++player;
+                    if (print) UE_LOGI("dup_verifier:   MATCH player cls=%ls key=%ls", e.className.c_str(), e.key.c_str());
+                }
     } else {
-        UE_LOGW("dup_verifier: INV::ReadAll FAILED -- the equipment/hold count is BLIND, NOT zero");
+        UE_LOGW("dup_verifier: INV::ReadAll FAILED -- the carried/worn count is BLIND, NOT zero");
     }
 
     const std::string playerVerdict =
         playerReadOk ? (std::to_string(player) + " READ-OK") : std::string("BLIND(READ-FAILED)");
-    UE_LOGI("dup_verifier: COUNT X(cls=%ls key=%ls) -- GObjStack=%d worn/held=%s (eq/hold rows=%d) "
+    UE_LOGI("dup_verifier: COUNT X(cls=%ls key=%ls) -- GObjStack=%d carried/worn=%s (player rows=%d) "
             "(scanned %d rows in %d non-empty slices)",
             x.className.c_str(), x.key.c_str(), gobj, playerVerdict.c_str(),
             playerRows, scannedRows, scannedSlices);
-    // Primary count = GObjStack, which holds every container's contents and what the player
-    // carries. The worn/held count is a separate store, logged for the reader to fold in.
+    // Primary count = GObjStack, which holds every container's contents. The carried/worn count
+    // is the player's own store, logged for the reader to fold in.
     return gobj;
 }
 

@@ -14,6 +14,7 @@
 #include "coop/player/roster.h"
 #include "coop/props/prop_act_request.h"
 #include "coop/props/prop_key_index.h"
+#include "coop/save/save_scratch.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
@@ -23,12 +24,16 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/save_folder.h"
 
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -254,36 +259,37 @@ void HostSeedTheWants(void* player) {
         UE_LOGW("[INV-PICKUP-DRILL] HOST: nothing seeded -- the player's location could not be read");
         return;
     }
+    // The host refuses a take beyond the sender's reach, so each want needs a candidate near the host, where the
+    // joiner (join_at_host) stands: one the world already has there, else one spawned here.
+    constexpr float kNearCm = 600.f;
+    auto isNear = [&](void* a) {
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(a, at)) return false;
+        const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
+        return dx * dx + dy * dy + dz * dz <= kNearCm * kNearCm;
+    };
     float step = 0.f;
     for (const Want& w : kWants) {
-        if (w.kind == Kind::Plain) continue;
         std::vector<void*> have = LiveOf(w);
         void* pick = nullptr;
-        for (void* a : have) if (HoldsData(w.kind, a)) { pick = a; break; }
+        for (void* a : have) if (isNear(a) && (w.kind == Kind::Plain || HoldsData(w.kind, a))) { pick = a; break; }
         if (pick) {
-            UE_LOGI("[INV-PICKUP-DRILL] HOST: the world already holds %hs: '%ls' key='%ls' (%zu of the kind)",
+            UE_LOGI("[INV-PICKUP-DRILL] HOST: the world already holds %hs near: '%ls' key='%ls' (%zu of the kind)",
                     w.label, R::ClassNameOf(pick).c_str(),
                     ue_wrap::prop::GetInteractableKeyString(pick).c_str(), have.size());
             continue;
         }
-        bool spawned = false;
-        if (have.empty()) {
-            void* cls = R::FindClass(w.classes.front());
-            step += 40.f;
-            void* born = cls ? E::SpawnActor(cls, {me.X + 60.f, me.Y + step, me.Z + 60.f}) : nullptr;
-            if (!born) {
-                UE_LOGE("[INV-PICKUP-DRILL] HOST: no %hs in the world and the spawn of '%ls' failed "
-                        "(class=%p)", w.label, w.classes.front(), cls);
-                continue;
-            }
-            have.push_back(born);
-            spawned = true;
+        void* cls = R::FindClass(w.classes.front());
+        step += 40.f;
+        void* born = cls ? E::SpawnActor(cls, {me.X + 60.f, me.Y + step, me.Z + 60.f}) : nullptr;
+        if (!born) {
+            UE_LOGE("[INV-PICKUP-DRILL] HOST: no %hs near and the spawn of '%ls' failed (class=%p)", w.label,
+                    w.classes.front(), cls);
+            continue;
         }
-        const bool ok = Stamp(w.kind, have.front());
-        UE_LOGI("[INV-PICKUP-DRILL] HOST: %hs '%ls' key='%ls' for %hs -> stamp %hs",
-                spawned ? "spawned" : "took the world's empty", R::ClassNameOf(have.front()).c_str(),
-                ue_wrap::prop::GetInteractableKeyString(have.front()).c_str(), w.label,
-                ok ? "written" : "WRITE FAILED");
+        const bool ok = w.kind == Kind::Plain || Stamp(w.kind, born);
+        UE_LOGI("[INV-PICKUP-DRILL] HOST: spawned '%ls' key='%ls' for %hs -> stamp %hs", R::ClassNameOf(born).c_str(),
+                ue_wrap::prop::GetInteractableKeyString(born).c_str(), w.label, ok ? "written" : "WRITE FAILED");
     }
 }
 
@@ -366,6 +372,26 @@ bool OrderWant(const Want& w) {
         if (HoldsData(w.kind, prop)) order.insert(order.begin(), prop);
         else order.push_back(prop);
     }
+    {   // Near candidates first, data-holding ones leading: a far prop is the host's refusal (reach), not a pocket.
+        ue_wrap::FVector me{};
+        void* const pl = coop::players::Registry::Get().Local();
+        if (pl && E::TryGetActorLocation(pl, me)) {
+            auto d2 = [&](void* p) {
+                ue_wrap::FVector at{};
+                if (!E::TryGetActorLocation(p, at)) return 1e30f;
+                const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
+                return dx * dx + dy * dy + dz * dz;
+            };
+            std::stable_sort(order.begin(), order.end(), [&](void* a, void* b) {
+                const bool ha = HoldsData(w.kind, a), hb = HoldsData(w.kind, b);
+                return ha != hb ? ha : d2(a) < d2(b);
+            });
+            const size_t before = order.size();
+            order.erase(std::remove_if(order.begin(), order.end(), [&](void* p) { return d2(p) > 700.f * 700.f; }), order.end());
+            if (order.size() != before)
+                UE_LOGI("[INV-PICKUP-DRILL] %hs: %zu candidate(s) beyond the host's reach left alone", w.label, before - order.size());
+        }
+    }
     if (carried) {
         UE_LOGI("[INV-PICKUP-DRILL] %hs is already carried -- nothing pocketed for it", w.label);
         return false;
@@ -397,7 +423,7 @@ void PocketSettle(bool called, bool took) {
         took = keyed ? held : !g_pocket.order[g_pocket.next - 1].Alive();
         g_pocket.asked = false;
     }
-    UE_LOGI("[INV-PICKUP-DRILL] putObjectInventory2('%ls' key='%ls' at (%.0f, %.0f, %.0f)%s) "
+    UE_LOGI("[INV-PICKUP-DRILL] addObjectToInventory('%ls' key='%ls' at (%.0f, %.0f, %.0f)%s) "
             "for %hs -> %hs%hs", g_pocket.cls.c_str(), g_pocket.key.c_str(), g_pocket.at.X, g_pocket.at.Y,
             g_pocket.at.Z, g_pocket.atRead ? "" : " (unread)", w.label,
             !called ? "CALL FAILED" : took ? "POCKETED" : "refused", wasAsked ? " (asked the host)" : "");
@@ -440,26 +466,22 @@ void PocketTick() {
         UE_LOGW("[INV-PICKUP-DRILL] '%ls' key='%ls' stands here holding NO data -- stamped "
                 "on this peer -> %hs", g_pocket.cls.c_str(), g_pocket.key.c_str(), ok ? "written" : "WRITE FAILED");
     }
-    // The record as the item itself serializes it, before the verb runs. The carried
-    // record differs from it in the bool group by design: addObject appends the owner's
-    // `fridge` flag to bools[0].
+    // The record as the item itself serializes it through its typed getData, before the verb runs.
     // Deliberately NOT gated on prop_save_data::Covers. That gate answers "does the
     // live-prop record lane publish this class", and a food is claimed off that lane; the
     // pocket is a different custody with a different carrier, and this line is the readout
     // of what the pocket will take. Gating it here would blind the drill to the one lane it
-    // is driving. It writes no field of the actor -- getData only builds a struct -- but it
-    // is not free of consequence: the first capture for a class runs the codec's convention
-    // check, which can eject that class from the record lane for the session. A drill can
-    // therefore be the party that ejects one, and the warning will name this class.
+    // is driving. It writes no field of the actor -- getData only builds a struct.
     SR::SaveRecord before;
-    if (SR::CaptureRecord(prop, before))
+    if (SR::CaptureOwnRecord(prop, before))
         UE_LOGI("[INV-PICKUP-DRILL] before the pickup '%ls' key='%ls': %hs", g_pocket.cls.c_str(),
                 g_pocket.key.c_str(), coop::dev::record_digest::ValuesOf(before).c_str());
 
     g_pocket.atRead = E::TryGetActorLocation(prop, g_pocket.at);   // for the line below only
     bool taken = false;
-    const bool called = E::CallPutObjectInventory2(player, prop, true, taken);
-    if (called && !taken && coop::prop_act_request::dev::PendingId() != 0) {
+    const bool called = E::CallMainPlayerAddObjectToInventory(player, prop, taken);
+    // A cancelled, asked call reports success (the ask is the take); the host's answer comes later.
+    if (called && coop::prop_act_request::dev::PendingId() != 0) {
         g_pocket.asked = true;
         return;
     }
@@ -468,8 +490,8 @@ void PocketTick() {
 
 // CLIENT, once: starts the pocketing of the wants.
 void PocketBegin(void* player) {
-    if (!R::FindFunction(R::ClassOf(player), L"putObjectInventory2")) {
-        UE_LOGE("[INV-PICKUP-DRILL] putObjectInventory2 did not resolve -- drill aborted");
+    if (!R::FindFunction(R::ClassOf(player), L"addObjectToInventory")) {
+        UE_LOGE("[INV-PICKUP-DRILL] addObjectToInventory did not resolve -- drill aborted");
         ClientFinish();
         return;
     }
@@ -538,9 +560,10 @@ void HostSaveTick(coop::net::Session& session) {
     const bool quick = firstSaveOfTheTwo;
     const bool plain = s_mode == "quick" && !quick;
     ue_wrap::ParamFrame f(fn);
-    f.Set(L"quicksave", quick);
-    f.Set(L"overwriteSubsave", !quick && !plain);
-    f.Set(L"isForcedSave", true);  // save() hands saveToSlot `false` whatever this says
+    // 0.10 saveSlot_C::save(asBackup, asAutosave) has none of these three; each is written only where the build has it.
+    if (R::FindParamOffset(fn, L"quicksave") >= 0) f.Set(L"quicksave", quick);
+    if (R::FindParamOffset(fn, L"overwriteSubsave") >= 0) f.Set(L"overwriteSubsave", !quick && !plain);
+    if (R::FindParamOffset(fn, L"isForcedSave") >= 0) f.Set(L"isForcedSave", true);  // save() hands saveToSlot `false` whatever this says
     const bool called = ue_wrap::Call(slot, f);
     UE_LOGI("[INV-PICKUP-DRILL] HOST save #%d through saveSlot_C::save (%hs) -> %hs", s_runs,
             quick ? "quicksave: a new subsave" : plain ? "plain: the main slot" : "the loaded slot",
@@ -548,34 +571,27 @@ void HostSaveTick(coop::net::Session& session) {
     if (s_left == 0) UE_LOGI("[INV-PICKUP-DRILL] HOST SAVES DONE for this arrival (%d so far)", s_runs);
 }
 
-// CLIENT, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: ask the engine to write this world's save
-// object, once. A client's save cycle is held off before it ever reaches the engine, so the gate on
-// the engine's save function is never asked in a normal run and would rot unseen. The slot name is
-// a scratch one the boot sweep removes, in case the gate ever lets it through.
+// CLIENT, with VOTVCOOP_INV_PICKUP_DRILL_SAVE set: ask the engine to write this world's save object,
+// once. A client's save cycle is held off before it ever reaches the engine, so the gate on the
+// engine's save write is never asked in a normal run and would rot unseen. The folder is a scratch
+// save, deleted again either way, in case the gate ever lets the write through.
 void ClientWriteGateProbe() {
     static const bool s_on = !::coop::config::ReadEnv("VOTVCOOP_INV_PICKUP_DRILL_SAVE").empty();
     if (!s_on) return;
     void* slot = ue_wrap::inventory::ResolveSaveSlot();
-    void* gsCdo = R::FindClassDefaultObject(L"GameplayStatics");
-    void* fn = gsCdo ? R::FindFunction(R::ClassOf(gsCdo), L"SaveGameToSlot") : nullptr;
-    if (!slot || !fn) {
-        UE_LOGE("[INV-PICKUP-DRILL] CLIENT write gate probe: not resolvable (slot=%p fn=%p)", slot, fn);
+    const std::wstring leaf = L"zcoop_gateprobe";
+    const std::wstring folder = ue_wrap::save_folder::FolderPath(coop::save_scratch::FolderName(leaf));
+    if (!slot || folder.empty()) {
+        UE_LOGE("[INV-PICKUP-DRILL] CLIENT write gate probe: not resolvable (slot=%p folder='%ls')", slot,
+                folder.c_str());
         return;
     }
-    std::wstring name = L"zcoop_gateprobe";
-    R::FString fs{};
-    fs.Data = name.data();
-    fs.Num  = static_cast<int32_t>(name.size()) + 1;
-    fs.Max  = fs.Num;
-    ue_wrap::ParamFrame f(fn);
-    f.Set<void*>(L"SaveGameObject", slot);
-    f.SetRaw(L"SlotName", &fs, sizeof(fs));
-    f.Set<int32_t>(L"UserIndex", 0);
-    const bool called = ue_wrap::Call(gsCdo, f);
-    const bool wrote = called && f.Get<uint8_t>(L"ReturnValue") != 0;
-    UE_LOGI("[INV-PICKUP-DRILL] CLIENT write gate probe: SaveGameToSlot('%ls') -> %hs", name.c_str(),
-            !called ? "CALL FAILED" : wrote ? "WRITTEN -- THE GATE LET A CLIENT WORLD SAVE THROUGH"
-                                            : "refused (the gate held)");
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(folder), ec);
+    const bool wrote = ue_wrap::save_folder::SaveCompressed(slot, folder, L"main", L".sav");
+    UE_LOGI("[INV-PICKUP-DRILL] CLIENT write gate probe: SaveGameCompressed('%ls') -> %hs", folder.c_str(),
+            wrote ? "WRITTEN -- THE GATE LET A CLIENT WORLD SAVE THROUGH" : "refused (the gate held)");
+    coop::save_scratch::Remove(leaf);
 }
 
 // Which keys stand in the world under the wanted classes, on THIS peer, over time. The drill's

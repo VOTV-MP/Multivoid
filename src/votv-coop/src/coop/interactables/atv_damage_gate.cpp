@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/atv_hit_guard.h"
 #include "coop/interactables/atv_sync.h"
 
 #include "ue_wrap/core/log.h"
@@ -30,6 +31,17 @@ enum Row { kAddDamage, kExploded, kExplode };
 
 Counters g_counters{};
 
+// The calls let run, by the copy they ran on: a drill that blasts one ATV judges that ATV, not the other one a save
+// may hold within the blast. A small table; a ninth ATV is counted in the totals only.
+struct RanOn { void* actor = nullptr; unsigned long long n[kRows] = {}; };
+RanOn g_ranOn[8];
+
+void CountRan(Row row, void* actor) {
+    for (RanOn& r : g_ranOn) {
+        if (r.actor == actor || !r.actor) { r.actor = actor; ++r.n[row]; return; }
+    }
+}
+
 SG::Verdict Judge(Row row, const SG::Call& c) {
     // The developer red arm of the ATV health drill: no copy is a non-owner here, so the host's copy runs the damage
     // the drill's `gate` arm needs it to cancel. Resolved once.
@@ -40,6 +52,12 @@ SG::Verdict Judge(Row row, const SG::Call& c) {
         return SG::Verdict::Cancel;
     }
     ++g_counters.ran[row];
+    CountRan(row, c.object);
+    // exploded / explode are rare, and which copy ran one is what a drill needs to know: name it.
+    if (row != kAddDamage)
+        UE_LOGI("atv_damage_gate: %s RAN on actor=%p (indexed=%d, owns=%d, guard active=%d)",
+                row == kExploded ? "exploded" : "explode", c.object, coop::atv_sync::IsIndexed(c.object) ? 1 : 0,
+                coop::atv_sync::OwnsTick(c.object) ? 1 : 0, coop::atv_hit_guard::Active() ? 1 : 0);
     return SG::Verdict::Run;
 }
 
@@ -122,6 +140,16 @@ void Install() {
 
 Counters ReadCounters() { return g_counters; }
 
-void Reset() { g_counters = Counters{}; }
+unsigned long long RanOnActor(void* actor, int row) {
+    if (!actor || row < 0 || row >= kRows) return 0;
+    for (const RanOn& r : g_ranOn)
+        if (r.actor == actor) return r.n[row];
+    return 0;
+}
+
+void Reset() {
+    g_counters = Counters{};
+    for (RanOn& r : g_ranOn) r = RanOn{};
+}
 
 }  // namespace coop::atv_damage_gate

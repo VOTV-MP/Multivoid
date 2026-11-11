@@ -18,7 +18,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/actors/inventory.h"          // the hold slot, read for the empty-hand check
+#include "ue_wrap/actors/inventory.h"          // the hand item name, read for the empty-hand check
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
@@ -264,7 +264,7 @@ bool WaitForHand(const wchar_t* cls, int boundMs) {
     return false;
 }
 
-// Whether the local hold slot, what TakeIntoHand writes over, holds nothing.
+// Whether the local main hand's item name reads empty.
 bool HoldSlotEmpty() {
     return GT::RunAndWait([](std::atomic<int>& done) {
         done.store(ue_wrap::inventory::ReadHeldItemName().empty() ? 1 : 2);
@@ -272,7 +272,7 @@ bool HoldSlotEmpty() {
 }
 
 // The local hand takes `item` of class `cls` (list_props' row name and its class), or empties with
-// "None" and no class: coop/dev/drill_hand's game-thread write, run from this drill's own thread.
+// "None" and no class: coop/dev/drill_hand's game-thread take, run from this drill's own thread.
 bool TakeIntoHand(const wchar_t* item, const wchar_t* cls) {
     return GT::RunAndWait([item, cls](std::atomic<int>& done) {
         done.store(coop::dev::drill_hand::TakeIntoHandNow(item, cls) ? 1 : 2);
@@ -623,7 +623,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     float hitDamage = kHitDamage;
     bool armed = !client;
     // A client already holding something is no clean test of a hand with nothing that swings, and its
-    // item would be written over: the unarmed and armed legs are skipped, and with them the hits.
+    // item would be destroyed: the unarmed and armed legs are skipped, and with them the hits.
     const bool emptyHand = back2 && client && HoldSlotEmpty();
     if (back2 && client && !emptyHand)
         UE_LOGW("[DOOR-DRILL] client door=%ls: the hand holds an item already -- the pry and hit checks are "

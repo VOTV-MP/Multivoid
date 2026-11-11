@@ -10,7 +10,7 @@ namespace harness::autotest {
 
 // The chipPile grab test, host-driven: the host is teleported to a pile, aimed until the game's
 // own trace names it, and InpActEvt_use fired through the same edge a real press hits;
-// holding_actor is measured and a throw tests the re-pile. It produces the log to read, never a
+// holdingActor_main is measured and a throw tests the re-pile. It produces the log to read, never a
 // pass by itself. Env VOTVCOOP_RUN_CHIPPILE_TEST=1.
 void RunAutonomousChipPileTest();
 DWORD WINAPI ChipPileTestThread(LPVOID arg);

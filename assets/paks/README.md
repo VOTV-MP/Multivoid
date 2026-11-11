@@ -47,5 +47,5 @@ Worth stating once: git history is permanent. A release asset can be replaced or
 committed blob stays reachable.
 
 If this directory is ever emptied, restock from any dev install
-(`Game_0.9.0n_HOST/WindowsNoEditor/VotV/Content/Paks/LogicMods/multivoid/`) or rebuild from the
+(`Game_<version>_HOST/WindowsNoEditor/VotV/Content/Paks/LogicMods/multivoid/`) or rebuild from the
 model sources with the converter.

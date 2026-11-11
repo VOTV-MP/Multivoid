@@ -2,10 +2,10 @@
 //
 // The pair belongs together: both are the client-side half of host-only persistence, and both are
 // client-only and verify from the log the module itself writes.
-//   - RunAutonomousSaveBlockTest drives saveSlot.saveToSlot, so the native SaveGameToSlot block is
+//   - RunAutonomousSaveBlockTest drives saveSlot.saveToSlot, so the native SaveGameCompressed block is
 //     observable without waiting for an autosave or a menu trigger. After the settle the live
 //     saveSlot_C is resolved and its saveToSlot called by reflection, driving
-//     UGameplayStatics::SaveGameToSlot (the hook target); the client log shows the invoke line and
+//     CompressedSaveLoadLib::SaveGameCompressed (the hook target); the client log shows the invoke line and
 //     then the block line, so the hook cancels the write rather than merely installing. The host
 //     runs nothing. Env VOTVCOOP_RUN_SAVEBLOCK_TEST=1.
 //   - RunAutonomousSaveBtnDisableTest drives mainPlayer_C::InpActEvt_Escape, so the pause-menu
@@ -46,23 +46,23 @@ std::string ReadEnv(const char* name) {
 
 // ---- the autonomous client save-block test ---------------------------------
 //
-// CLIENT-ONLY. Proves the SaveGameToSlot native hook (coop/save/save_block.cpp) actually CANCELS a
+// CLIENT-ONLY. Proves the SaveGameCompressed native hook (coop/save/save_block.cpp) actually CANCELS a
 // world save on the client, not merely that it installed. Over a short run neither the autosave
 // timer nor a menu save fires, so the exact write path is driven by reflection: resolve the live
 // saveSlot_C world-save object and call its saveToSlot UFunction directly -- the blueprint funnel
 // closest to the hook, with no gamemode-level gate in the way. saveToSlot's body invokes
-// UGameplayStatics::SaveGameToSlot, our hook target, once per slot and subsave; on the client the
-// detour returns false WITHOUT calling the trampoline, so nothing reaches disk.
+// CompressedSaveLoadLib::SaveGameCompressed, our hook target, once per file of the save; on the client the
+// hook answers false and the original never runs, so nothing reaches disk.
 //
 // The client log shows `saveblock_test: invoking ...` immediately followed by `save_block: BLOCKED
-// client world-save ...`. The host neither runs this routine nor installs the hook, so its log
-// carries no save_block line at all and its save path is byte-for-byte untouched. Gated by
+// client write of ...`. The host does not run this routine, so its log
+// carries no save_block line at all. Gated by
 // VOTVCOOP_RUN_SAVEBLOCK_TEST="1".
 void RunAutonomousSaveBlockTest() {
     const bool isHost = !IsClientRole();
     if (isHost) {
-        UE_LOGI("saveblock_test: not client -- this routine is client-only (the host "
-                "installs no save hook; its save path is untouched). Returning.");
+        UE_LOGI("saveblock_test: not client -- this routine is client-only (the host's save gate stays open, "
+                "its save path is untouched). Returning.");
         return;
     }
     UE_LOGI("saveblock_test: starting on client (waiting 18 s: connect + possession + "
@@ -85,8 +85,8 @@ void RunAutonomousSaveBlockTest() {
             done->store(-1, std::memory_order_release);
             return;
         }
-        // saveToSlot(quicksave, overwriteSubsave, isForcedSave): a zeroed frame = full,
-        // non-forced save -> the body's UGameplayStatics::SaveGameToSlot calls hit our
+        // saveToSlot(asBackup, asAutosave): a zeroed frame = a plain save of the main slot,
+        // the body's CompressedSaveLoadLib::SaveGameCompressed calls hit our
         // client hook and are cancelled. Serialization is content-agnostic (it serializes
         // whatever the live save object holds), and the write is blocked regardless, so
         // calling it directly is safe.

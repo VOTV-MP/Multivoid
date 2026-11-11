@@ -18,6 +18,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/save_capture.h"
 #include "ue_wrap/world/world_singleton.h"
 
@@ -97,9 +98,11 @@ bool Save(const char* step, bool bypassEvent) {
                 ev == ue_wrap::save_capture::EventState::On ? 1 : 0, bypassEvent ? 1 : 0);
         if (!fn) { UE_LOGW("save-drill: save did not resolve"); return; }
         ue_wrap::ParamFrame f(fn);
-        f.Set<bool>(L"quicksave", false);
+        // 0.9 took (quicksave, bypassEvent, overwriteSubsave), 0.10 takes (asBackup, bypassEvent, asAutosave): all false here
+        // but bypassEvent, so a param is written only where the build has it.
+        if (R::FindParamOffset(fn, L"quicksave") >= 0) f.Set<bool>(L"quicksave", false);
         f.Set<bool>(L"bypassEvent", bypassEvent);
-        f.Set<bool>(L"overwriteSubsave", false);
+        if (R::FindParamOffset(fn, L"overwriteSubsave") >= 0) f.Set<bool>(L"overwriteSubsave", false);
         const bool ok = f.valid() && ue_wrap::Call(gm, f);
         UE_LOGI("save-drill: save ran (ok=%d)", ok ? 1 : 0);
     });

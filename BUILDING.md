@@ -208,7 +208,7 @@ only our sources change.
 
 This deploys `main.dll` into the mod folder
 (`...\Binaries\Win64\Mods\Multivoid\dlls\`) of **four** local game copies —
-`Game_0.9.0n_HOST` (HOST), `_CLIENT_1` (CLIENT), `_CLIENT_2` (CLIENT2), and
+`Game_<version>_HOST` (HOST), `_CLIENT_1` (CLIENT), `_CLIENT_2` (CLIENT2), and
 `_CLIENT_3` (DEV, the development copy). It also ships the client-puppet
 mesh pak into `...\Content\Paks\LogicMods\multivoid\`. The deploy is
 idempotent (identical bytes are skipped) and refuses a `main.dll` whose

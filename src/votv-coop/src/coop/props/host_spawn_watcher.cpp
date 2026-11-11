@@ -1,6 +1,7 @@
 // coop/props/host_spawn_watcher.cpp -- see coop/props/host_spawn_watcher.h.
 
 #include "coop/props/host_spawn_watcher.h"
+#include "coop/props/wire_class.h"  // the class name and its content path on the wire
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -165,9 +166,7 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     }
 
     coop::net::PropSpawnPayload p{};
-    p.className.len = 0;
-    for (size_t i = 0; i < cls.size() && i < 63; ++i)
-        p.className.data[p.className.len++] = static_cast<char>(cls[i]);
+    coop::wire_class::FillFromClass(p.className, cls, R::ClassOf(actor));
     p.key.len      = 0;   // key=None: the eid is the identity
     p.propName.len = 0;   // these classes carry their own mesh (no list_props row)
 

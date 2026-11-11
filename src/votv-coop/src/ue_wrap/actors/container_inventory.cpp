@@ -2,10 +2,10 @@
 
 #include "ue_wrap/actors/container_inventory.h"
 
-#include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"           // WalksToBase
+#include "ue_wrap/actors/save_record.h"    // ReadArr
 #include "ue_wrap/core/cached_obj_ref.h"
-#include "ue_wrap/core/component_calls.h"  // CallParamless
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -18,15 +18,14 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace SR = ue_wrap::save_record;
+namespace II = ue_wrap::inventory_item;
 
-int32_t g_offInvIndex  = -2;  // propInventory_C.Index
-int32_t g_offInvPlayer = -2;  // propInventory_C.Player  -- the world-vs-PERSONAL discriminator
-int32_t g_offInvOwner  = -2;  // propInventory_C.Owner   -- the Aprop_container_C
-int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
-int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
-int32_t g_offCurrVol   = -2;  // propInventory_C.currVol
-int32_t g_offMaxVol    = -2;  // propInventory_C.maxVol  -- the capacity addObject's volume check reads
-int32_t g_offInvObj    = -2;  // propInventory_C.obj  -- set by init, never cleared
+int32_t g_offCanvas    = -2;  // inventoryComponent_C.canvasInventory
+int32_t g_offInvOwner  = -2;  // inventoryComponent_C.owner  -- set by makeOwner at BeginPlay, never cleared
+int32_t g_offComponent = -2;  // prop_container_C.inventoryComponent
+int32_t g_offTotalVol  = -2;  // inventoryComponent_C.totalVolume
+int32_t g_offMaxVol    = -2;  // inventoryComponent_C.maxVolume  -- the capacity addItemAdvanced's volume check reads
+int32_t g_offDisplay   = -2;  // inventoryComponent_C.activeDisplayCanvas
 int32_t g_offAllContainers = -2;  // mainGamemode_C.allContainers
 
 int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
@@ -46,7 +45,8 @@ template <class T> T ReadAt(const void* base, int32_t off) {
 
 // Looked up per use, one index lookup each, so a class not loaded yet is asked for again.
 void* ContainerClass() { return ue_wrap::object_index::ClassByName(L"prop_container_C"); }
-void* InventoryClass() { return ue_wrap::object_index::ClassByName(L"propInventory_C"); }
+void* InventoryClass() { return ue_wrap::object_index::ClassByName(L"inventoryComponent_C"); }
+void* PlayerContainerClass() { return ue_wrap::object_index::ClassByName(L"prop_inventoryContainer_player_C"); }
 
 }  // namespace
 
@@ -62,57 +62,28 @@ bool IsInventory(void* obj) {
 
 void* InventoryOf(void* container) {
     if (!container) return nullptr;
-    if (CachedOffset(g_offPropInv, R::ClassOf(container), L"propInventory") < 0) return nullptr;
-    void* inv = ReadAt<void*>(container, g_offPropInv);
+    if (CachedOffset(g_offComponent, R::ClassOf(container), L"inventoryComponent") < 0) return nullptr;
+    void* inv = ReadAt<void*>(container, g_offComponent);
     return (inv && R::IsLive(inv)) ? inv : nullptr;
 }
 
 void* OwnerOf(void* inventory) {
     if (!inventory) return nullptr;
-    if (CachedOffset(g_offInvOwner, R::ClassOf(inventory), L"Owner") < 0) return nullptr;
-    void* owner = ReadAt<void*>(inventory, g_offInvOwner);
+    void* const owner = R::OuterOf(inventory);
     return (owner && R::IsLive(owner)) ? owner : nullptr;
 }
 
 bool IsWorldInventory(void* inventory) {
-    if (!inventory) return false;
-    if (CachedOffset(g_offInvPlayer, R::ClassOf(inventory), L"Player") < 0) return false;
-    return ReadAt<uint8_t>(inventory, g_offInvPlayer) == 0;
+    void* const owner = OwnerOf(inventory);
+    if (!owner || !IsContainer(owner)) return false;
+    void* const player = PlayerContainerClass();
+    return !(player && ue_wrap::prop::WalksToBase(R::ClassOf(owner), player));
 }
-
-namespace {
-
-// GObjStack[idx], the struct_mObject element: null when the save slot, the field or the index does not resolve.
-uint8_t* StackSlotAt(int32_t idx) {
-    if (idx < 0) return nullptr;
-    void* save = ue_wrap::inventory::ResolveSaveSlot();
-    if (!save) return nullptr;
-    if (CachedOffset(g_offGObjStack, R::ClassOf(save), L"GObjStack") < 0) return nullptr;
-    const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
-    if (idx >= stack.num) return nullptr;
-    return const_cast<uint8_t*>(stack.data) + static_cast<size_t>(idx) * SR::kMxStride;
-}
-
-}  // namespace
 
 uint8_t* ContentsSlot(void* inventory) {
     if (!inventory) return nullptr;
-    if (CachedOffset(g_offInvIndex, R::ClassOf(inventory), L"Index") < 0) return nullptr;
-    return StackSlotAt(ReadAt<int32_t>(inventory, g_offInvIndex));
-}
-
-bool ReadStackCount(int32_t stackIndex, int32_t& count) {
-    count = 0;
-    uint8_t* const slot = StackSlotAt(stackIndex);
-    if (!slot) return false;
-    count = SR::ReadArr(slot, 0).num;   // struct_mObject.obj @ +0
-    return true;
-}
-
-bool ContainerStackIndex(const SR::SaveRecord& r, int32_t& index) {
-    if (!IsContainerRecord(r)) return false;
-    index = !r.ints.empty() && !r.ints[0].empty() ? r.ints[0][0] : 0;
-    return true;
+    if (CachedOffset(g_offCanvas, R::ClassOf(inventory), L"canvasInventory") < 0) return nullptr;
+    return static_cast<uint8_t*>(inventory) + g_offCanvas;
 }
 
 namespace {
@@ -147,17 +118,23 @@ bool ReadBool(BoolFields& fields, void* obj, const wchar_t* name, bool& out) {
 
 }  // namespace
 
+bool ReadInventoryPutTerms(void* inventory, PutTerms& out) {
+    static BoolFields sInfinite;
+    out = PutTerms{};
+    PutTerms t{};
+    if (!inventory || !MaxVolume(inventory, t.maxVolume) || !CurrentVolume(inventory, t.totalVolume) ||
+        !ReadBool(sInfinite, inventory, L"infiniteVolume", t.infinite))
+        return false;
+    out = t;
+    return true;
+}
+
 bool ReadPutTerms(void* container, PutTerms& out) {
-    static BoolFields sInfinite, sLocked;
-    static int32_t sMaxVol = -2;
+    static BoolFields sLocked;
     static ue_wrap::CachedObjRef sMailbox;   // the mailbox class, asked of the object index until it is found
     out = PutTerms{};
-    void* const inv = InventoryOf(container);
-    if (!inv || CachedOffset(sMaxVol, R::ClassOf(inv), L"maxVol") < 0) return false;
     PutTerms t{};
-    t.maxVol = ReadAt<float>(inv, sMaxVol);
-    if (!CurrentVolume(inv, t.currVol) || !ReadBool(sInfinite, inv, L"infinite", t.infinite) ||
-        !ReadBool(sLocked, container, L"locked", t.locked))
+    if (!ReadInventoryPutTerms(InventoryOf(container), t) || !ReadBool(sLocked, container, L"locked", t.locked))
         return false;
     if (!sMailbox.Alive()) sMailbox.Set(ue_wrap::object_index::ClassByName(L"prop_mailbox_C"));
     t.ownerIsMailbox = sMailbox.Alive() && ue_wrap::prop::WalksToBase(R::ClassOf(container), sMailbox.Raw());
@@ -165,103 +142,154 @@ bool ReadPutTerms(void* container, PutTerms& out) {
     return true;
 }
 
-bool FilterHolds(void* inventory, void* cls, bool& holds) {
-    static int32_t sFilter = -2;
-    holds = false;
-    if (!inventory || !cls || CachedOffset(sFilter, R::ClassOf(inventory), L"filter") < 0) return false;
-    const SR::Arr filter = SR::ReadArr(inventory, sFilter);
-    for (int32_t i = 0; i < filter.num; ++i)
-        if (ReadAt<void*>(filter.data, i * static_cast<int32_t>(sizeof(void*))) == cls) { holds = true; break; }
-    return true;
-}
-
-bool ReadContents(void* inventory, std::vector<SR::SaveRecord>& out, size_t maxRecords,
-                  int32_t* countOut) {
+bool ReadContents(void* inventory, std::vector<Item>& out, size_t maxItems, int32_t* countOut) {
     if (countOut) *countOut = -1;
-    uint8_t* slot = ContentsSlot(inventory);
-    if (!slot) return false;
-    const SR::Arr objs = SR::ReadArr(slot, 0);  // struct_mObject.obj @ +0
-    if (countOut) *countOut = objs.num;
-    if (static_cast<size_t>(objs.num) > maxRecords) return false;
+    uint8_t* const slot = ContentsSlot(inventory);
+    if (!slot || !II::Resolve()) return false;
+    const SR::Arr items = SR::ReadArr(slot, 0);
+    if (countOut) *countOut = items.num;
+    if (static_cast<size_t>(items.num) > maxItems) return false;
+    const size_t stride = static_cast<size_t>(II::Stride());
     out.clear();
-    out.reserve(static_cast<size_t>(objs.num));
-    for (int32_t i = 0; i < objs.num; ++i) {
-        SR::SaveRecord r;
-        SR::ReadSaveRecord(objs.data + static_cast<size_t>(i) * SR::kSaveStride, r);
-        out.push_back(std::move(r));
+    out.reserve(static_cast<size_t>(items.num));
+    for (int32_t i = 0; i < items.num; ++i) {
+        Item it;
+        if (!II::Read(items.data + static_cast<size_t>(i) * stride, it)) return false;
+        out.push_back(std::move(it));
     }
     return true;
 }
 
-bool IsContainerRecord(const SR::SaveRecord& r) {
-    if (r.className.empty()) return false;
+bool IsContainerItem(const Item& it) {
+    if (II::IsEmpty(it)) return false;
     void* const base = ContainerClass();
     if (!base) return false;
-    void* const cls = ue_wrap::object_index::ClassByName(r.className.c_str());
+    void* const cls = ue_wrap::object_index::ClassByName(II::ClassLeaf(it).c_str());
     return cls && ue_wrap::prop::WalksToBase(cls, base);
 }
 
-bool CarriesInventoryIndex(const SR::SaveRecord& r) {
-    return !r.ints.empty() && !r.ints[0].empty() && r.ints[0][0] != -1;
+bool AddItemAsObject(void* inventory, void* actor) {
+    if (!inventory || !actor) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(inventory), L"addItemAsObject");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<void*>(L"object", actor) || !ue_wrap::Call(inventory, f)) return false;
+    return f.Get<bool>(L"success");
 }
 
-void ClearInventoryIndex(SR::SaveRecord& r) {
-    if (r.ints.empty()) r.ints.resize(1);
-    if (r.ints[0].empty()) r.ints[0].resize(1);
-    r.ints[0][0] = -1;
+bool AddItemAdvanced(void* inventory, const Item& data) {
+    if (!inventory || II::IsEmpty(data) || !II::Resolve()) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(inventory), L"addItemAdvanced");
+    if (!fn) return false;
+    const size_t stride = static_cast<size_t>(II::Stride());
+    void* const entry = SR::AllocZeroed(1, stride);   // engine-owned buffers, orphaned like every entry we build
+    if (!entry || !II::Write(static_cast<uint8_t*>(entry), data)) return false;
+    ue_wrap::ParamFrame f(fn);
+    const float position[2] = {data.posX, data.posY};
+    if (!f.valid() || !f.SetRaw(L"data", entry, static_cast<int32_t>(stride)) ||
+        !f.Set<bool>(L"setPositionAndRotation", true) || !f.SetRaw(L"itemPosition", position, sizeof(position)) ||
+        !f.Set<float>(L"itemRotation", data.rotation) || !ue_wrap::Call(inventory, f))
+        return false;
+    return f.Get<bool>(L"success_volume") && f.Get<bool>(L"validclass");
 }
 
-// updateVolumesAndMass calls only Get Volume; the ejector checkObjectsVolume (which calls takeObj) is
-// not called. Each verb is looked up on the instance's own class through the memoised dispatch
-// lookup, which climbs to the class that declares it -- updateVolumesAndMass is declared only on
-// Aprop_container_C, and every real container is a subclass -- and holds its answer by the class's
+WriteResult WriteContents(void* inventory, const std::vector<Item>& items) {
+    uint8_t* const slot = ContentsSlot(inventory);
+    if (!slot || !II::Resolve()) return WriteResult::NotReady;
+    // Without the allocator an empty array would silently replace real contents.
+    if (void* probe = R::EngineAlloc(16)) {
+        R::EngineFree(probe);
+    } else {
+        UE_LOGW("container_inventory: EngineAlloc unavailable -- the entries are left as they are");
+        return WriteResult::Refused;
+    }
+    const int32_t n = static_cast<int32_t>(items.size());
+    const size_t stride = static_cast<size_t>(II::Stride());
+    void* const buf = SR::AllocZeroed(static_cast<size_t>(n), stride);
+    if (!buf && n > 0) {
+        UE_LOGW("container_inventory: alloc of %d entries failed -- the entries are left as they are", n);
+        return WriteResult::Refused;
+    }
+    for (int32_t i = 0; i < n; ++i) {
+        if (!II::Write(static_cast<uint8_t*>(buf) + static_cast<size_t>(i) * stride, items[static_cast<size_t>(i)])) {
+            UE_LOGW("container_inventory: entry %d did not write -- the entries are left as they are", i);
+            return WriteResult::Refused;   // the half-built buffer is orphaned, never installed
+        }
+    }
+    void* const shown = DetachDisplay(inventory);
+    SR::WriteArrHeader(slot, 0, buf, n);
+    if (shown) AttachDisplay(inventory, shown);
+    else RederiveShownState(inventory);
+    return WriteResult::Written;
+}
+
+// Looked up on the instance's own class through the memoised dispatch lookup, which holds its answer by the class's
 // slot and serial, so no function of a class that is gone is called.
-void RederiveShownState(void* container, void* inventory) {
-    void* const updateVol =
-        container ? R::FindDispatchFunctionCached(R::ClassOf(container), L"updateVolumesAndMass") : nullptr;
-    void* const recalcNames =
-        inventory ? R::FindDispatchFunctionCached(R::ClassOf(inventory), L"recalculateNames") : nullptr;
-    if ((container && !updateVol) || (inventory && !recalcNames)) {
+void RederiveShownState(void* inventory) {
+    if (!inventory) return;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(inventory), L"calculateVolumes");
+    if (!fn) {
         static bool s_said = false;
         if (!s_said) {
             s_said = true;
-            UE_LOGW("container_inventory: re-derive verb MISSING (updateVolumesAndMass=%p recalculateNames=%p) "
-                    "-- applied contents will show a STALE currVol / names", updateVol, recalcNames);
+            UE_LOGW("container_inventory: calculateVolumes MISSING -- applied contents will show a STALE volume");
         }
+        return;
     }
-    // The volume sum reads the names array that recalculateNames rebuilds from the records,
-    // so the names come first.
-    if (recalcNames) ue_wrap::component_calls::CallParamless(inventory, recalcNames);
-    if (updateVol)   ue_wrap::component_calls::CallParamless(container, updateVol);
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid()) return;
+    f.Set<bool>(L"countSlotBar_A", false);
+    f.Set<bool>(L"updateVisible", true);
+    f.Set<bool>(L"recalucateMaxVolume", true);   // the game's own spelling
+    ue_wrap::Call(inventory, f);
+}
+
+void* DetachDisplay(void* inventory) {
+    if (!inventory || CachedOffset(g_offDisplay, R::ClassOf(inventory), L"activeDisplayCanvas") < 0) return nullptr;
+    void* const canvas = ReadAt<void*>(inventory, g_offDisplay);
+    if (!canvas || !R::IsLive(canvas)) return nullptr;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(canvas), L"despawncanvas");
+    if (!fn) return nullptr;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !ue_wrap::Call(canvas, f)) return nullptr;
+    return canvas;
+}
+
+void AttachDisplay(void* inventory, void* canvas) {
+    if (!inventory || !canvas || !R::IsLive(canvas)) return;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(inventory), L"assignCanvas");
+    if (!fn) return;
+    ue_wrap::ParamFrame f(fn);
+    if (f.valid() && f.Set<void*>(L"activedisplaycanvas", canvas)) ue_wrap::Call(inventory, f);
 }
 
 bool CurrentVolume(void* inventory, float& out) {
     out = 0.f;
-    if (!inventory || CachedOffset(g_offCurrVol, R::ClassOf(inventory), L"currVol") < 0) return false;
-    out = ReadAt<float>(inventory, g_offCurrVol);
+    if (!inventory || CachedOffset(g_offTotalVol, R::ClassOf(inventory), L"totalVolume") < 0) return false;
+    out = ReadAt<float>(inventory, g_offTotalVol);
     return true;
 }
 
 bool MaxVolume(void* inventory, float& out) {
     out = 0.f;
-    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVol") < 0) return false;
+    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVolume") < 0) return false;
     out = ReadAt<float>(inventory, g_offMaxVol);
     return true;
 }
 
 bool SetMaxVolume(void* inventory, float value) {
-    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVol") < 0) return false;
+    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVolume") < 0) return false;
     std::memcpy(reinterpret_cast<uint8_t*>(inventory) + g_offMaxVol, &value, sizeof(value));
     return true;
 }
 
-// The host's world-settle edge: propInventory.init sets `obj` on its first line and nothing clears it,
-// so a live `obj` is the mark that a container's inventory has run its init.
+// The host's world-settle edge: makeOwner sets `owner` at the component's BeginPlay and nothing clears it, so a live
+// `owner` is the mark that a container's inventory has begun play.
 bool InventoryInitialized(void* container) {
     void* const inv = InventoryOf(container);
-    if (!inv || CachedOffset(g_offInvObj, R::ClassOf(inv), L"obj") < 0) return false;
-    void* const obj = ReadAt<void*>(inv, g_offInvObj);
-    return obj && R::IsLive(obj);
+    if (!inv || CachedOffset(g_offInvOwner, R::ClassOf(inv), L"owner") < 0) return false;
+    void* const owner = ReadAt<void*>(inv, g_offInvOwner);
+    return owner && R::IsLive(owner);
 }
 
 bool AllContainersResolved(void* gamemode) {

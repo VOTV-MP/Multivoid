@@ -74,7 +74,7 @@ bool WriteSlotLatch(void* slotActor, bool recentlyDetached);
 // isRecentlyDetached = false. No-op when still overlapping (the organic EndOverlap will clear it).
 void CompleteEjectLatch(void* slotActor, void* driveActor);
 
-// Drive payload (prop_drive.data_0, Fstruct_signalDataDynamic 0x70).
+// Drive payload (prop_drive.data_0, Fstruct_signalDataDynamic).
 bool ReadDriveRow(void* driveActor, ue_wrap::signal_dynamic::Row& out);
 bool WriteDriveRow(void* driveActor, const ue_wrap::signal_dynamic::Row& in);
 bool CallDriveUpd(void* driveActor);  // LED/hover refresh (plain, reflected-safe)

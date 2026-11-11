@@ -1,5 +1,5 @@
-// ue_wrap/actors/floppy_disc.cpp -- see ue_wrap/actors/floppy_disc.h. Offsets resolved live via
-// reflection; the Alpha 0.9.0-n fallbacks come from the CXX header dump.
+// ue_wrap/actors/floppy_disc.cpp -- see ue_wrap/actors/floppy_disc.h. Offsets are resolved live from the
+// class by member name; a member the name does not find leaves the wrapper unresolved, and no offset is guessed.
 
 #include "ue_wrap/actors/floppy_disc.h"
 
@@ -40,8 +40,14 @@ bool EnsureResolved() {
     if (!cls) return false;  // loads on demand; the backoff above bounds the retry
     g_offData       = R::FindPropertyOffset(cls, L"Data");
     g_offReadWrites = R::FindPropertyOffset(cls, L"readWrites");
-    if (g_offData < 0)       { UE_LOGW("floppy_disc: data offset -- fallback 0x368");       g_offData = 0x368; }
-    if (g_offReadWrites < 0) { UE_LOGW("floppy_disc: readWrites offset -- fallback 0x37C"); g_offReadWrites = 0x37C; }
+    if (g_offData < 0 || g_offReadWrites < 0) {
+        static bool sSaid = false;
+        if (!sSaid) UE_LOGE("floppy_disc: 'Data' (%d) or 'readWrites' (%d) not found by name -- discs stay unsynced",
+                            g_offData, g_offReadWrites);
+        sSaid = true;
+        g_offData = g_offReadWrites = -1;
+        return false;
+    }
     g_cls = cls;
     g_resolved = true;
     UE_LOGI("floppy_disc: resolved (data=0x%X readWrites=0x%X)", g_offData, g_offReadWrites);

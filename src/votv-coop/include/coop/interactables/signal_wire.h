@@ -4,11 +4,11 @@
 // only in a row read with it (signal_dynamic::ReadStruct's withImage), as SavedSignalAppend's are,
 // and only within blob_chunks::MaxBlobBytes(); past it the row crosses without it, logged.
 //
-// Layout, version byte 1, little-endian:
+// Layout, version byte 2, little-endian:
 //   u8 ver; u8 flags(bit0 hasData, bit1 isCopy, bit3 image); u8 frequency; u8 quality;
-//   u8 objectType; u8 nameChars; u8 idChars; u8 objectChars; u8 signalChars; u8 pad[3];
+//   u8 objectType; u8 nameChars; u8 idChars; u8 objectChars; u8 signalChars; u8 imageNameChars; u8 pad[2];
 //   i32 level; i32 polarity; f32 size; f32 decoded; f32 downloadedAtQuality; f32 locX;
-//   f32 locY; i64 date; then name, id, object and signal as UTF-16LE; with bit3, u32 bytes + PNG.
+//   f32 locY; i64 date; then name, id, object, signal and imageName as UTF-16LE; with bit3, u32 bytes + PNG.
 //
 // A row's cross-peer identity, which SavedSignalDelete keys on, is the FNV-1a 64 of the blob up to the
 // strings' end with the image bit zeroed: a row shares it with its photo or without.
@@ -22,7 +22,7 @@
 
 namespace coop::signal_wire {
 
-inline constexpr size_t kNameCap = 96, kIdCap = 48, kObjectCap = 64, kSignalCap = 64;
+inline constexpr size_t kNameCap = 96, kIdCap = 48, kObjectCap = 64, kSignalCap = 64, kImageNameCap = 64;
 
 // Serialize (caps logged + applied by the caller's truncation policy: the
 // serializer truncates silently at the caps -- callers WARN once on cap hits

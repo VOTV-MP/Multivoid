@@ -1,4 +1,4 @@
-// harness/autotest/autotest_food_state.cpp -- TEST-ONLY: a world food's temperature, ripeness and uses across two peers.
+// harness/autotest/autotest_food_state.cpp -- TEST-ONLY: a world food's temperature, freshness and uses across two peers.
 //
 // The client meets the host, then the host spawns seven foods and names them in a folder both peers read. A takes
 // written conditions and bites from each peer, B the client's last bite, C the host's burn, D a burn written on the
@@ -63,8 +63,9 @@ using PS::Mark;
 using PS::WaitFor;
 
 constexpr float   kTemperatureSlack = 3.f;
-constexpr float   kRipenessSlack = 8.f;  // the lane's step, and the seconds a step takes to cross
-constexpr float   kRipenessStep = 5.f;   // the lane's publish step: a host food that fell this far has rolled on
+constexpr float   kFreshnessSlack = 0.05f;  // a few of the lane's steps: the fraction of a freshness stage the tick spends meanwhile
+constexpr float   kLetGoSlack = 0.1f;       // a released food has crossed the wire and a poll since its holder wrote it
+constexpr float   kFreshnessStep = 0.01f;   // the lane's publish step: a host food that fell this far has rolled on
 constexpr uint8_t kActionEat = 4;  // enum_interactionactions: the food's action branch tests this value
 
 constexpr int kFoods = 7;          // 0 bites, 1 last bite, 2 burn, 3 looks and the client's throw, 4 the host's throw,
@@ -144,13 +145,19 @@ int FailCount(const std::string& text) { return std::atoi(text.c_str()); }
 
 std::string Describe(const F::Condition& c) {
     char line[96];
-    std::snprintf(line, sizeof(line), "%.2f %.2f %d", c.temperature, c.ripeness, c.uses);
+    std::snprintf(line, sizeof(line), "%.2f %.3f %d %d %d", c.temperature, c.freshness, c.freshnessSteps, c.uses,
+                  c.spoiled ? 1 : 0);
     return line;
 }
 
+// The stages a food has left, counting the fraction of the current one: what the tick spends, whichever side of a
+// stage boundary two readings fall.
+float Remaining(const F::Condition& c) { return static_cast<float>(c.freshnessSteps) + c.freshness; }
+
 bool Matches(const F::Condition& here, const F::Condition& host) {
-    return here.uses == host.uses && std::fabs(here.temperature - host.temperature) <= kTemperatureSlack &&
-           std::fabs(here.ripeness - host.ripeness) <= kRipenessSlack;
+    return here.uses == host.uses && here.spoiled == host.spoiled &&
+           std::fabs(here.temperature - host.temperature) <= kTemperatureSlack &&
+           std::fabs(Remaining(here) - Remaining(host)) <= kFreshnessSlack;
 }
 
 // The reader of a step answers it, so the writer's next change cannot land before the read.
@@ -191,7 +198,9 @@ bool Compare(const char* step, const std::string& key) {
     } else {
         std::istringstream in(body);
         F::Condition host;
-        in >> host.temperature >> host.ripeness >> host.uses;
+        int spoiled = 0;
+        in >> host.temperature >> host.freshness >> host.freshnessSteps >> host.uses >> spoiled;
+        host.spoiled = spoiled != 0;
         WaitFor(step, kStepBoundSec, [&] { return ReadFood(key, here) && Matches(here, host); }, false);
         read = ReadFood(key, here);
         Verdict(step, read && Matches(here, host), "client " + (read ? Describe(here) : std::string("gone")) + " host " + body);
@@ -238,7 +247,7 @@ bool TakeInHand(const std::string& key) {
         OnGameThread([&] {
             void* player = coop::players::Registry::Get().Local();
             bool collected = false;
-            if (player && Find(key)) E::CallMainPlayerHoldObject(player, Find(key), collected);
+            if (player && Find(key)) E::CallMainPlayerAddObjectToFreeHotbarSlot(player, Find(key), E::HotbarAdd{}, collected);
         });
         if (WaitFor("the food in the hand", 3, [&] {
                 bool held = false;
@@ -282,21 +291,21 @@ void CheckTickGate(bool clientSide) {
 
 // This peer's player lets go of what it holds, thrown or placed down; the dropped food's key goes in the folder and
 // comes back (`none` when nothing was dropped).
-std::string LetGo(const char* keyFile, bool place) {
+std::string LetGo(const char* keyFile, bool place, F::Condition* landed = nullptr) {
     std::string key;
     OnGameThread([&] {
         void* player = coop::players::Registry::Get().Local();
         if (!player) return;
         void* const before = E::ReadMainPlayerDroppedItem(player);
         if (place) {
-            // simulateDrop(dontWakeup, place, dontCollect): the drop the R key and the inventory run, with the hand's
-            // item spawned where the player aims.
-            void* fn = R::FindDispatchFunctionCached(R::ClassOf(player), L"simulateDrop");
+            // dropItem_mainhand(surface, playercamera, dropone) with surface on: the drop that sets the hand's item
+            // down where the player aims.
+            void* fn = R::FindDispatchFunctionCached(R::ClassOf(player), L"dropItem_mainhand");
             ue_wrap::ParamFrame f(fn);
             if (fn && f.valid()) {
-                f.Set<bool>(L"dontWakeup", false);
-                f.Set<bool>(L"place", true);
-                f.Set<bool>(L"dontCollect", true);
+                f.Set<bool>(L"surface", true);
+                f.Set<bool>(L"playercamera", false);
+                f.Set<bool>(L"dropone", true);
                 ue_wrap::Call(player, f);
             }
         } else {
@@ -306,26 +315,41 @@ std::string LetGo(const char* keyFile, bool place) {
         if (dropped == before) dropped = nullptr;  // nothing was dropped: the field still names an older one
         const std::wstring k = dropped ? ue_wrap::prop::GetInteractableKeyString(dropped) : L"";
         key.assign(k.begin(), k.end());
+        if (dropped && landed) F::Read(dropped, *landed);
     });
     if (key.empty()) key = "none";
-    Mark(keyFile, key);
+    Mark(keyFile, landed && key != "none" ? key + " " + Describe(*landed) : key);
     return key;
 }
 
-// The dropped food here, against what its holder wrote into the hand; the copy has to exist and the uses have to match.
-void CheckLetGo(const char* step, const std::string& key, const F::Condition& want) {
+// A released food's publication: its key and, after a space, the condition its holder's own landed copy showed.
+bool SplitLanded(const std::string& text, std::string& key, F::Condition& cond) {
+    std::istringstream in(text);
+    int spoiled = 0;
+    if (!(in >> key >> cond.temperature >> cond.freshness >> cond.freshnessSteps >> cond.uses >> spoiled)) return false;
+    cond.spoiled = spoiled != 0;
+    return true;
+}
+
+// The dropped food here, against `want`; the copy has to exist and the uses have to match. In 0.10 a drop spawns its
+// food from the hotbar slot's data, not from the hand actor, so what the holder wrote into the hand does not reach the
+// landed copy: the other peer's copy is judged against the holder's landed copy (`byFreshness`), and the holder's own
+// against the hand's uses alone.
+void CheckLetGo(const char* step, const std::string& key, const F::Condition& want, bool byFreshness) {
     F::Condition got;
-    auto lands = [&] { return ReadFood(key, got) && got.uses == want.uses && std::fabs(got.ripeness - want.ripeness) <= 30.f; };
-    WaitFor(step, kStepBoundSec, lands, false);
+    auto fits = [&] {
+        return ReadFood(key, got) && got.uses == want.uses &&
+               (!byFreshness || std::fabs(Remaining(got) - Remaining(want)) <= kLetGoSlack);
+    };
+    WaitFor(step, kStepBoundSec, fits, false);
     const bool read = ReadFood(key, got);
-    Verdict(step, read && got.uses == want.uses && std::fabs(got.ripeness - want.ripeness) <= 30.f,
-            (read ? Describe(got) : std::string("no such food")) + " wrote " + Describe(want));
+    Verdict(step, read && fits(), (read ? Describe(got) : std::string("no such food")) + " expected " + Describe(want));
 }
 
 // One way a held food leaves a hand, and the names of its steps and signals.
 struct Leg {
     const char* tag;               // the signals' suffix
-    bool        place;             // simulateDrop with place, else throwHoldingProp
+    bool        place;             // dropItem_mainhand onto the surface, else throwHoldingProp
     const char* clientHolds;       // the client's pickup
     const char* hostShowsHand;     // the host's mirror of the client's hand
     const char* clientKeeps;       // the client's own dropped food
@@ -344,20 +368,21 @@ constexpr Leg kPlace = {"place", true, "14-client-holds", "14-host-shows-client-
 
 std::string Sig(const char* name, const Leg& leg) { return std::string(name) + "_" + leg.tag; }
 
-constexpr F::Condition kClientHot = {340.f, 2500.f, 3};
-constexpr F::Condition kClientLet = {300.f, 2500.f, 3};
-constexpr F::Condition kHostHot = {340.f, 2600.f, 2};
-constexpr F::Condition kHostLet = {300.f, 2600.f, 2};
+constexpr F::Condition kClientHot = {340.f, 0.5f, 2, 3};
+constexpr F::Condition kClientLet = {300.f, 0.5f, 2, 3};
+constexpr F::Condition kHostHot = {340.f, 0.6f, 2, 2};
+constexpr F::Condition kHostLet = {300.f, 0.6f, 2, 2};
 
 // The host's half of a leg: the client holds and lets go, then the host holds `hostKey` and lets go.
 bool HostLeg(const Leg& leg, const std::string& hostKey) {
     if (!Await(Sig("client_holds", leg).c_str())) return false;
     CheckMirror(leg.hostShowsHand, 1, kClientHot);
     Mark(Sig("host_saw_hand", leg).c_str());
-    std::string dropped;
-    if (!AwaitText(Sig("client_let_go", leg).c_str(), dropped)) return false;
-    if (dropped == "none") Verdict(leg.hostTookIt, false, "no dropped food");
-    else CheckLetGo(leg.hostTookIt, dropped, kClientLet);
+    std::string droppedText, dropped;
+    F::Condition theirs;
+    if (!AwaitText(Sig("client_let_go", leg).c_str(), droppedText)) return false;
+    if (droppedText == "none" || !SplitLanded(droppedText, dropped, theirs)) Verdict(leg.hostTookIt, false, "no dropped food");
+    else CheckLetGo(leg.hostTookIt, dropped, theirs, true);
     Mark(Sig("host_saw_let_go", leg).c_str());
 
     if (!TakeInHand(hostKey)) {
@@ -370,7 +395,8 @@ bool HostLeg(const Leg& leg, const std::string& hostKey) {
     if (!Await(Sig("client_saw_host_hand", leg).c_str())) return false;
     WriteHand(kHostLet);
     ::Sleep(kHandDwellMs);
-    LetGo(Sig("host_let_go", leg).c_str(), leg.place);
+    F::Condition landed;
+    LetGo(Sig("host_let_go", leg).c_str(), leg.place, &landed);
     return true;
 }
 
@@ -386,24 +412,26 @@ bool ClientLeg(const Leg& leg, const std::string& clientKey) {
     if (!Await(Sig("host_saw_hand", leg).c_str())) return false;
     WriteHand(kClientLet);
     ::Sleep(kHandDwellMs);
-    const std::string own = LetGo(Sig("client_let_go", leg).c_str(), leg.place);
-    if (own != "none") CheckLetGo(leg.clientKeeps, own, kClientLet);
+    F::Condition ownLanded;
+    const std::string own = LetGo(Sig("client_let_go", leg).c_str(), leg.place, &ownLanded);
+    if (own != "none") CheckLetGo(leg.clientKeeps, own, kClientLet, false);
     if (!Await(Sig("host_saw_let_go", leg).c_str())) return false;
 
     if (!Await(Sig("host_holds", leg).c_str())) return false;
     CheckMirror(leg.clientShowsHand, 0, kHostHot);
     Mark(Sig("client_saw_host_hand", leg).c_str());
-    std::string thrown;
-    if (!AwaitText(Sig("host_let_go", leg).c_str(), thrown)) return false;
-    if (thrown != "none") CheckLetGo(leg.clientSawIt, thrown, kHostLet);
+    std::string thrownText, thrown;
+    F::Condition theirs;
+    if (!AwaitText(Sig("host_let_go", leg).c_str(), thrownText)) return false;
+    if (thrownText != "none" && SplitLanded(thrownText, thrown, theirs)) CheckLetGo(leg.clientSawIt, thrown, theirs, true);
     else Verdict(leg.clientSawIt, false, "no dropped food");
     return true;
 }
 
-// A food's ripeness has fallen a step from `from`: the host's tick has rolled the food on.
+// A food's freshness has fallen a step from `from`: the host's tick has rolled the food on.
 bool RolledOn(const std::string& key, const F::Condition& from) {
     F::Condition now;
-    return ReadFood(key, now) && std::fabs(now.ripeness - from.ripeness) >= kRipenessStep;
+    return ReadFood(key, now) && std::fabs(Remaining(now) - Remaining(from)) >= kFreshnessStep;
 }
 
 void RunHost() {
@@ -435,7 +463,7 @@ void RunHost() {
     if (!Await("client_saw_born")) return;
 
     if (!Publish("00-born", keys[0])) return;
-    WriteFood(keys[0], {300.f, 3400.f, 5});
+    WriteFood(keys[0], {300.f, 0.8f, 2, 5});
     if (!Publish("01-host-wrote", keys[0])) return;
     // The step's subject is time: the host's tick rolls the food on while the client's copy, its tick refused, holds its numbers.
     F::Condition wrote;
@@ -458,7 +486,14 @@ void RunHost() {
         Verdict("04-host-bit-itself", ok, ok ? Describe(c) : "uses not 3");
     }
     if (!Publish("04-host-bit", keys[0])) return;
-    WriteFood(keys[1], {300.f, 3400.f, 1});
+    {   // The food spoils on the host (its own setSpoiled): the client's copy must come to show it.
+        F::Condition now;
+        ReadFood(keys[0], now);
+        now.spoiled = true;
+        WriteFood(keys[0], now);
+    }
+    if (!Publish("04b-host-spoiled", keys[0])) return;
+    WriteFood(keys[1], {300.f, 0.8f, 2, 1});
     Mark("b_ready");
     if (!Await("client_bit_b")) return;
     {
@@ -467,7 +502,7 @@ void RunHost() {
     }
     if (!Announce("05-client-last-bite", Exists(keys[1]) ? "live" : "gone")) return;
     const int burntBefore = CountBurnt();
-    WriteFood(keys[2], {1000.f, 3400.f, 3});
+    WriteFood(keys[2], {1000.f, 0.4f, 2, 3});
     int burntAfter = burntBefore;
     const bool burnt = WaitFor("the host's food to burn", kStepBoundSec, [&] {
         burntAfter = CountBurnt();
@@ -480,13 +515,13 @@ void RunHost() {
     if (!Publish("07-client-burn-stays", keys[3])) return;
 
     // The looks of a client's copy: steam, then frozen, then neither.
-    WriteFood(keys[3], {340.f, 3000.f, 4});
+    WriteFood(keys[3], {340.f, 0.8f, 2, 4});
     Mark("hot");
     if (!Await("client_saw_hot")) return;
-    WriteFood(keys[3], {250.f, 3000.f, 4});
+    WriteFood(keys[3], {250.f, 0.8f, 2, 4});
     Mark("frozen");
     if (!Await("client_saw_frozen")) return;
-    WriteFood(keys[3], {300.f, 3000.f, 4});
+    WriteFood(keys[3], {300.f, 0.8f, 2, 4});
     Mark("thawed");
     if (!Await("client_saw_thawed")) return;
 
@@ -511,7 +546,7 @@ void RunHost() {
             return !s.IsSlotConnected(1) || s.peerGenerationForSlot(1) != life1Gen;
         }))
         return;
-    WriteFood(keys[0], {295.f, 3000.f, 2});
+    WriteFood(keys[0], {295.f, 0.8f, 2, 2});
     // The rejoined life's drill begins when its process boots: its world is up and the signals below are written since.
     if (!Await("rejoin_ready", kReadyBoundSec)) return;
     Mark("rejoin_key", keys[0]);
@@ -579,6 +614,7 @@ void RunClient() {
     Mark("client_bit_a");
     if (!Compare("03-client-bit", keys[0])) return;
     if (!Compare("04-host-bit", keys[0])) return;
+    if (!Compare("04b-host-spoiled", keys[0])) return;
     if (!Await("b_ready")) return;
     // The copy has the host's one use before the bite, or the bite is not the last one.
     if (!WaitFor("the one-use food here", kStepBoundSec, [&] {
@@ -600,7 +636,7 @@ void RunClient() {
                 "client " + std::to_string(CountBurnt()) + " host " + std::to_string(after));
     }
     if (!Compare("06-burnt-food", keys[2])) return;
-    WriteFood(keys[3], {1000.f, 3400.f, 3});
+    WriteFood(keys[3], {1000.f, 0.4f, 2, 3});
     Mark("client_wrote_d");
     ::Sleep(kNoBurnDwellMs);
     Verdict("07-parked-copy-did-not-burn", Exists(keys[3]), Exists(keys[3]) ? "it lives" : "it burnt on its own");

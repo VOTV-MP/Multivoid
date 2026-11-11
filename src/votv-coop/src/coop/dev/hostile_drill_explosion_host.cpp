@@ -51,6 +51,10 @@ uint16_t          g_playerNo = 0;    // slot 1's occupant when the host said rea
 // The rejoin arm's phase: life 1's shot to take, the wait for the returning occupant, and life 2's request to count.
 enum class Rejoin { One, Between, Two };
 Rejoin            g_rejoin = Rejoin::One;
+// The lane's counters are cleared with the host's last client leaving (explosion_request::OnDisconnect), so life 1's
+// accepted shot is gone from them when life 2 is judged: the baseline is retaken then, and life 2's table is its own
+// one request (refused as an unknown shot), which is what proves the first life's shot id did not outlive it.
+bool              g_rebased = false;
 
 // ---- the story arm's writes: the host's mode and the gamemode's flags the guns' hold gate reads ----
 struct Story {
@@ -258,6 +262,8 @@ bool RejoinPhases(coop::net::Session* s, const Spec& sp, const Delta& d) {
         }
         Say(ReadyLine(sp.arm, 2));
         g_rejoin = Rejoin::Two;
+        g_base = ER::GetCounters();
+        g_rebased = true;
         g_judgeAt = Clock::now();
         UE_LOGI("[HOSTILE-DRILL] %s armed on the returning client in slot %u", sp.name, static_cast<unsigned>(kSlot));
         return true;
@@ -265,10 +271,12 @@ bool RejoinPhases(coop::net::Session* s, const Spec& sp, const Delta& d) {
     return false;
 }
 
-void Judge(coop::net::Session* s, const Spec& sp) {
+void Judge(coop::net::Session* s, const Spec& spec) {
     const Delta d = Diff(ER::GetCounters());
-    const bool rejoin = sp.mode == Mode::Rejoin;
-    if (rejoin && RejoinPhases(s, sp, d)) return;
+    const bool rejoin = spec.mode == Mode::Rejoin;
+    if (rejoin && RejoinPhases(s, spec, d)) return;
+    Spec sp = spec;
+    if (rejoin && g_rebased) { sp.sent = 1; sp.shots = 0; }   // life 2 alone (see g_rebased)
     // The per-slot state resets when the slot's occupant changes, so a replaced occupant is not judged on it (the
     // rejoin arm waits for exactly that change).
     if (!rejoin && sp.mode != Mode::NotReady) {
@@ -311,6 +319,12 @@ void HostTick(coop::net::Session* s, const Spec& sp) {
 void HostReset() {
     XD::Unguard();
     RestoreStory();
+    // The rejoin arm spans the client's death: its first life's shot was accepted and the counters, the baseline and
+    // the first occupant's number are what the second life is judged against. The host's last client leaving is
+    // exactly the disconnect that runs this reset, so a reset that took them would put the arm back at life 1 and
+    // the returning client would send life 1's shot again (measured: never a verdict). They stand until the second
+    // life is judged.
+    if (g_rejoin != Rejoin::One) return;
     g_step = HStep::Begin;
     g_base = ER::Counters{};
     g_armAt = g_judgeAt = {};
@@ -318,6 +332,7 @@ void HostReset() {
     g_waiting = "the slot's world-ready";
     g_playerNo = 0;
     g_rejoin = Rejoin::One;
+    g_rebased = false;
 }
 
 }  // namespace coop::dev::hostile_drill::explosion::detail

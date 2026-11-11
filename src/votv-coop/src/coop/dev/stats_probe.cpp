@@ -12,6 +12,7 @@
 #include "ue_wrap/core/log.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
@@ -53,8 +54,7 @@ void NotFound(const char* what) {
 }
 
 // A writable row: read, write, read back, restore, read again. A refused or unreadable step is a
-// NOT FOUND. Every attempted write is followed by a restore, since a write can store its value and
-// still report failure (Strength and Agility, when updateStrAgl's call fails).
+// NOT FOUND. Every attempted write is followed by a restore.
 void ProbeWritable(V::Field f, bool red) {
     const V::Row& row = V::RowOf(f);
     float orig = 0.f, back = 0.f, restored = 0.f;
@@ -81,11 +81,11 @@ void ProbeReadOnly(V::Field f) {
     Good();
 }
 
-// The snapshot's nine members against their rows: each row is written a distinct value, the
+// The snapshot's seven members against their rows: each row is written a distinct value, the
 // snapshot is read, and each member must hold its own row's value. The pairing is written out here
 // on purpose: it is the instrument for SnapshotField's switch, so a swapped pair reads back crossed.
 void ProbeSnapshot() {
-    constexpr size_t kRows = 9;
+    constexpr size_t kRows = 7;
     float orig[kRows];
     for (size_t i = 0; i < kRows; ++i)
         if (!V::Read(static_cast<V::Field>(i), &orig[i])) return NotFound("snapshot");
@@ -113,11 +113,9 @@ void ProbeSnapshot() {
         {"maxHealth", s.maxHealth, V::Field::MaxHealth},
         {"food", s.food, V::Field::Food},
         {"sleep", s.sleep, V::Field::Sleep},
-        {"battery", s.battery, V::Field::Battery},
         {"coffeePower", s.coffeePower, V::Field::CoffeePower},
         {"gasolinepilled", s.gasolinepilled, V::Field::GasolinePilled},
         {"strength", s.strength, V::Field::Strength},
-        {"agility", s.agility, V::Field::Agility},
     };
     for (size_t i = 0; i < kRows; ++i) {
         const float wrote = kSnapshotBase + static_cast<float>(static_cast<size_t>(pairs[i].row));
@@ -147,8 +145,8 @@ void ProbeRefusals() {
         V::Write(V::Field::Health, before);
     }
     else if (!V::Read(V::Field::Health, &after) || !Near(before, after)) which = "a refused NaN write changed Health";
-    else if (V::FieldFromId(static_cast<uint8_t>(V::Field::Count), &id)) which = "id 22 was accepted";
-    else if (!V::FieldFromId(static_cast<uint8_t>(V::Field::Glasses), &id)) which = "id 21 was refused";
+    else if (V::FieldFromId(static_cast<uint8_t>(V::Field::Count), &id)) which = "id 20 was accepted";
+    else if (!V::FieldFromId(static_cast<uint8_t>(V::Field::Glasses), &id)) which = "id 19 was refused";
     if (!which) {
         UE_LOGI("[STATS-PROBE] refusals OK");
         return Good();
@@ -157,7 +155,8 @@ void ProbeRefusals() {
     Bad();
 }
 
-// The save class's own defaults, read through the rows' offsets off its class default object.
+// The pawn class's and the save class's own defaults, read through the rows' offsets off their class default
+// objects.
 void ProbeDefaults() {
     V::Snapshot d;
     if (!V::ReadDefaults(d)) return NotFound("defaults");
@@ -197,6 +196,18 @@ int CountOf(const std::vector<E::Entry>& list, const std::wstring& name, const E
     return n;
 }
 
+// The entries of `name` as "[live strength time]" each, for a MISMATCH that has to say what the list held.
+std::string Describe(const std::vector<E::Entry>& list, const std::wstring& name) {
+    std::string s;
+    for (const E::Entry& e : list) {
+        if (!SameName(e.name, name.c_str())) continue;
+        char b[64];
+        std::snprintf(b, sizeof(b), "[%s %.2f %.2f]", e.live ? "live" : "dead", e.strength, e.time);
+        s += b;
+    }
+    return s.empty() ? std::string("none") : s;
+}
+
 void EffectNotFound(const std::wstring& name) {
     UE_LOGE("[STATS-PROBE] effect %ls NOT FOUND", name.c_str());
     Bad();
@@ -218,6 +229,7 @@ void ProbeEffectAdded(const std::wstring& name, bool red) {
     const float strength = first ? first->strength : 0.f;
     const float time = first ? first->time : 0.f;
     const int expected = (red && SameName(name, L"bloodLoss")) ? 2 : 1;
+    const std::string addedList = Describe(list, name);   // before the removal changes `list`
     const bool addedOk = added == expected && first && first->live && Near(strength, kEffectStrength) &&
                          Near(time, kEffectSeconds);
     // The removal runs whatever the add read back, and takes the one instance an add makes. An add
@@ -228,7 +240,7 @@ void ProbeEffectAdded(const std::wstring& name, bool red) {
     const int after = CountOf(list, name, nullptr);
     const bool ok = addedOk && after == 0;
     if (ok) UE_LOGI("[STATS-PROBE] effect %ls after-add=%d strength=%.3f time=%.3f after-remove=%d OK", name.c_str(), added, strength, time, after);
-    else UE_LOGE("[STATS-PROBE] effect %ls after-add=%d strength=%.3f time=%.3f after-remove=%d MISMATCH", name.c_str(), added, strength, time, after);
+    else UE_LOGE("[STATS-PROBE] effect %ls after-add=%d strength=%.3f time=%.3f after-remove=%d MISMATCH -- the list held %s after the add, holds %s after the removal", name.c_str(), added, strength, time, after, addedList.c_str(), Describe(list, name).c_str());
     ok ? Good() : Bad();
 }
 

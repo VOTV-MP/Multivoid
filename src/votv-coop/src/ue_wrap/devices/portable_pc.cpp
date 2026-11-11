@@ -13,10 +13,6 @@ namespace {
 
 namespace R = reflection;
 
-// `opened` on the alpha 0.9.0-n cook, used only when the property lookup fails: without it a
-// recook that renames the field silently disables the lid lane instead of degrading to the last
-// known layout.
-constexpr int32_t kOpenedFallback = 0x398;
 int32_t g_offOpened = -1;  // the class's layout, read from its first object and kept
 
 constexpr const wchar_t* kClassName = L"prop_portablePc_C";
@@ -27,10 +23,13 @@ CachedObjRef g_clsRef;
 
 void ResolveMembers(void* cls) {
     g_offOpened = R::FindPropertyOffset(cls, L"opened");
+    // A field the name does not find is not guessed at: a write at a stale offset lands in whatever the class
+    // keeps there now.
     if (g_offOpened < 0) {
-        UE_LOGW("portable_pc: 'opened' not found by name -- using the measured fallback 0x%X",
-                kOpenedFallback);
-        g_offOpened = kOpenedFallback;
+        static bool sSaid = false;
+        if (!sSaid) UE_LOGE("portable_pc: 'opened' not found by name -- the lid lane stays off");
+        sSaid = true;
+        return;
     }
     UE_LOGI("portable_pc: resolved (opened=0x%X)", g_offOpened);
 }

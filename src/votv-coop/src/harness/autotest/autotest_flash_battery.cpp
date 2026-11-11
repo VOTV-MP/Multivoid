@@ -16,7 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
-#include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -26,6 +26,8 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstring>
+#include <vector>
 #include <string>
 
 namespace harness::autotest {
@@ -73,12 +75,49 @@ void RunOwner(const std::string& who) {
     UE_LOGI("flash-battery: %hs switched its flashlight on (on=%d)", who.c_str(), on ? 1 : 0);
     Mark((who + "_on").c_str());
     if (!Await((who + "_seen_on").c_str())) return;
-    OnGameThread([&] { ue_wrap::vitals::Write(ue_wrap::vitals::Field::Battery, 0.02f); });
+    OnGameThread([&] {
+        std::wstring before;
+        ue_wrap::inventory::ReadWornItemProperty(L"prop_equipment_flashlight_C", L"battery", before);
+        const bool wrote = ue_wrap::inventory::WriteWornItemProperty(L"prop_equipment_flashlight_C", L"battery", L"0.02");
+        std::wstring after;
+        ue_wrap::inventory::ReadWornItemProperty(L"prop_equipment_flashlight_C", L"battery", after);
+        UE_LOGI("flash-battery: %hs wrote the worn flashlight's battery (%d): '%ls' -> '%ls'", who.c_str(), wrote ? 1 : 0,
+                before.c_str(), after.c_str());
+    });
+    // What the game's tick does to it: the value read back each poll, and whether the flashlight bool and the ticker's
+    // own flag moved. A value that stays put means the ticker does not run on this item; one that falls and a light
+    // that stays on means the tick reached empty and did not switch it off.
     if (!WaitFor("the game's tick switching the flashlight off", 30, [&] {
             bool off = false;
             OnGameThread([&] {
                 E::MainPlayerFlashlightState fl{};
                 off = E::ReadMainPlayerFlashlightState(local, fl) && !fl.flashlight;
+                static int s_polls = 0;
+                if (++s_polls % 5 == 1) {
+                    std::wstring now, drain;
+                    ue_wrap::inventory::ReadWornItemProperty(L"prop_equipment_flashlight_C", L"battery", now);
+                    // The game's tick drains `battery` by the item's own `batteryDrain` times the frame time (ticker_playerFlashlight_C.
+                    // calculate, capture-0.10.0-b284.txt): a drain of 0, or of a property the item does not carry, leaves it where it is.
+                    const bool drainRead = ue_wrap::inventory::ReadWornItemProperty(L"prop_equipment_flashlight_C", L"batteryDrain", drain);
+                    // The ticker's own state: deltaSeconds is written on the first line of its ReceiveTick, so 0 means that tick has not run;
+                    // drainMult scales the drain; `player` is the pawn it drains for.
+                    const std::vector<void*> tickers = R::FindObjectsByClass(L"ticker_playerFlashlight_C");
+                    float dt = -1.f, mult = -1.f, value = -1.f;
+                    void* tp = nullptr;
+                    if (!tickers.empty()) {
+                        void* const t = tickers[0];
+                        static R::InstanceOffset sDt{L"deltaSeconds"}, sMult{L"drainMult"}, sVal{L"value"}, sPl{L"player"};
+                        auto rd = [&](R::InstanceOffset& o, void* dst, size_t n) {
+                            const int32_t off = o.Of(t);
+                            if (off >= 0) std::memcpy(dst, static_cast<const uint8_t*>(t) + off, n);
+                        };
+                        rd(sDt, &dt, sizeof dt); rd(sMult, &mult, sizeof mult); rd(sVal, &value, sizeof value); rd(sPl, &tp, sizeof tp);
+                    }
+                    UE_LOGI("flash-battery: poll: battery='%ls' batteryDrain=%ls%ls flashlight=%d ticker instances=%zu deltaSeconds=%.4f "
+                            "drainMult=%.3f value=%.3f ticker=%p player=%p (local %p)", now.c_str(), drainRead ? L"'" : L"(not read)",
+                            drainRead ? drain.c_str() : L"", fl.flashlight ? 1 : 0, tickers.size(), dt, mult, value,
+                            tickers.empty() ? nullptr : tickers[0], tp, local);
+                }
             });
             return off;
         }))

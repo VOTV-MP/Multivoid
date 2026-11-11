@@ -62,7 +62,7 @@ bool IsCarriedDiscClass(void* cls) {
 
 void* HeldBy(void* player) {
     E::MainPlayerGrabState gs{};
-    return (player && E::ReadMainPlayerGrabState(player, gs)) ? gs.holdingActor : nullptr;
+    return (player && E::ReadMainPlayerGrabState(player, gs)) ? gs.mainHand : nullptr;
 }
 
 }  // namespace
@@ -193,12 +193,12 @@ HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
         return;   // the destructor destroys the copy
     }
     E::MainPlayerGrabState gs{};
-    if (!E::ReadMainPlayerGrabState(puppet_, gs) || !E::WriteMainPlayerHoldingActor(puppet_, actor)) {
+    if (!E::ReadMainPlayerGrabState(puppet_, gs) || !E::WriteMainPlayerMainHandActor(puppet_, actor)) {
         UE_LOGW("kerfur_disc_carry[host]: slot %u's puppet took no disc in its hand -- not carried",
                 static_cast<unsigned>(slot));
         return;
     }
-    previous_ = gs.holdingActor;
+    previous_ = gs.mainHand;
     wrote_ = true;
     ok_ = true;
     UE_LOGI("kerfur_disc_carry[host]: slot %u's disc %ls '%ls' %p stands in its puppet's hand for the verb "
@@ -211,7 +211,7 @@ HandScope::~HandScope() { Close(); }
 void HandScope::Close() {
     if (closed_) return;
     closed_ = true;
-    if (wrote_) E::WriteMainPlayerHoldingActor(puppet_, previous_);
+    if (wrote_) E::WriteMainPlayerMainHandActor(puppet_, previous_);
     if (void* alive = copy_.Get()) {
         E::DestroyActor(alive);
         if (ok_)

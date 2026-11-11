@@ -2,6 +2,7 @@
 
 #include "ue_wrap/devices/floppy_slot.h"
 
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/field_io.h"
@@ -10,7 +11,10 @@
 #include "ue_wrap/engine/engine_component.h"  // SetStaticMesh
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <chrono>
+#include <string>
+#include <cstring>
 
 namespace ue_wrap::floppy_slot {
 
@@ -45,6 +49,28 @@ uint64_t NowMs() {
 // element counts the engine wrote, and anything outside this is not one.
 constexpr int32_t kMaxCount = 200000;
 
+// A disc actor's ActorToBytes stream is a few kilobytes; a TArray<uint8> header claiming more is not one.
+constexpr int32_t kMaxObjectBytes = 256 * 1024;
+
+std::vector<uint8_t> ReadBytesAt(const void* base, int32_t off) {
+    if (off < 0) return {};
+    const auto* a = reinterpret_cast<const TArrayView*>(reinterpret_cast<const uint8_t*>(base) + off);
+    if (!a->data || a->num <= 0 || a->num > kMaxObjectBytes) return {};
+    return std::vector<uint8_t>(a->data, a->data + a->num);
+}
+
+// Overwrite a TArray<uint8> field with an engine-allocated copy; the replaced buffer is orphaned, never freed (the
+// container lane's rule: freeing a buffer the game may still hold is the riskier act).
+void WriteBytesField(void* base, int32_t off, const std::vector<uint8_t>& v) {
+    if (off < 0) return;
+    void* buf = nullptr;
+    if (!v.empty() && v.size() <= static_cast<size_t>(kMaxObjectBytes)) {
+        buf = save_record::AllocZeroed(v.size(), 1);
+        if (buf) std::memcpy(buf, v.data(), v.size());
+    }
+    save_record::WriteArrHeader(base, off, buf, buf ? static_cast<int32_t>(v.size()) : 0);
+}
+
 // How many passes a delegate name gets before the resolver stops asking. Each miss is a full
 // object-array walk with no cache, so a name this build does not have must not be asked forever.
 constexpr int kMaxOverlapTries = 30;
@@ -68,6 +94,7 @@ struct Desc {
     int32_t offReadWrites = -1;
     int32_t offData       = -1;
     int32_t offObjectData = -1;
+    int32_t offObjectBytes = -1;   // 0.10: floppyObjectDataBytes, a TArray<uint8>; -1 where the class has none
     int32_t offZip        = -1;
     int32_t offNametype   = -1;
     int32_t offWidget     = -1;
@@ -185,6 +212,15 @@ void MixFString(uint64_t& h, const void* base, int32_t off) {
     if (n > 0) Mix(h, v->data, static_cast<size_t>(n) * sizeof(wchar_t));
 }
 
+// A TArray<uint8>'s own bytes, straight out of its header.
+void MixBytesField(uint64_t& h, const void* base, int32_t off) {
+    if (off < 0) return;
+    const auto* a = reinterpret_cast<const TArrayView*>(reinterpret_cast<const uint8_t*>(base) + off);
+    const int32_t n = (a->data && a->num > 0 && a->num <= kMaxObjectBytes) ? a->num : 0;
+    Mix(h, &n, sizeof(n));
+    if (n > 0) Mix(h, a->data, static_cast<size_t>(n));
+}
+
 }  // namespace
 
 bool EnsureResolved(DeviceKind kind) {
@@ -202,6 +238,7 @@ bool EnsureResolved(DeviceKind kind) {
     d->offReadWrites = R::FindPropertyOffset(cls, L"floppyReadwrites");
     d->offData       = R::FindPropertyOffset(cls, L"floppyData");
     d->offObjectData = R::FindPropertyOffset(cls, L"floppyObjectData");
+    d->offObjectBytes = R::FindPropertyOffset(cls, L"floppyObjectDataBytes");   // optional: 0.9 has none
     if (d->hasZip)      d->offZip      = R::FindPropertyOffset(cls, L"zip");
     if (d->hasNametype) d->offNametype = R::FindPropertyOffset(cls, L"floppyNametype");
     if (d->refreshWidget) d->offWidget = R::FindPropertyOffset(cls, L"Widget");
@@ -220,8 +257,8 @@ bool EnsureResolved(DeviceKind kind) {
         return false;
     }
     d->resolved = true;
-    UE_LOGI("floppy_slot: %ls resolved (type=0x%X rw=0x%X data=0x%X json=0x%X)",
-            d->className, d->offType, d->offReadWrites, d->offData, d->offObjectData);
+    UE_LOGI("floppy_slot: %ls resolved (type=0x%X rw=0x%X data=0x%X json=0x%X bytes=%d)",
+            d->className, d->offType, d->offReadWrites, d->offData, d->offObjectData, d->offObjectBytes);
     return true;
 }
 
@@ -284,6 +321,7 @@ bool ReadContent(DeviceKind kind, void* device, Content& out) {
     if (!device || !d || !d->resolved) return false;
     out.nametype   = d->offNametype >= 0 ? ReadFStringAt(device, d->offNametype) : std::wstring();
     out.objectData = ReadFStringAt(device, d->offObjectData);
+    out.objectBytes = ReadBytesAt(device, d->offObjectBytes);
     out.data       = ReadFStringArrayField(device, d->offData);
     // The row reader answers an empty vector both for an empty array and for one past the bound it
     // will read, and those two must never look alike here: the second published as the first would
@@ -308,6 +346,7 @@ bool ReadDigest(DeviceKind kind, void* device, uint64_t& out, DigestScope scope)
     if (d->offZip >= 0) Mix(h, p + d->offZip, 1);
     MixFString(h, device, d->offNametype);
     MixFString(h, device, d->offObjectData);
+    MixBytesField(h, device, d->offObjectBytes);
     if (scope == DigestScope::Occupancy) { out = h; return true; }
     Mix(h, p + d->offReadWrites, sizeof(int32_t));
     const auto* arr = reinterpret_cast<const TArrayView*>(p + d->offData);
@@ -328,6 +367,7 @@ bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& 
     if (d->offZip >= 0) p[d->offZip] = st.zip ? 1 : 0;
     if (d->offNametype >= 0) WriteFStringField(device, d->offNametype, content.nametype);
     WriteFStringField(device, d->offObjectData, content.objectData);
+    WriteBytesField(device, d->offObjectBytes, content.objectBytes);
     WriteFStringArrayField(device, d->offData, content.data);
     // The fields are written either way; false says the LOOK of the device is still wrong, so a
     // caller that can come back should.
@@ -363,11 +403,23 @@ std::wstring ObjectDataKey(const std::wstring& json) {
     return json.substr(at + 1, end - at - 1);
 }
 
+bool BytesCarryKey(const std::vector<uint8_t>& bytes, const std::wstring& key) {
+    if (key.empty() || bytes.empty()) return false;
+    std::string narrow;
+    narrow.reserve(key.size());
+    for (wchar_t w : key) narrow.push_back(w < 128 ? static_cast<char>(w) : '?');
+    const auto found = [&](const uint8_t* pat, size_t n) {
+        return std::search(bytes.begin(), bytes.end(), pat, pat + n) != bytes.end();
+    };
+    if (found(reinterpret_cast<const uint8_t*>(narrow.data()), narrow.size())) return true;
+    return found(reinterpret_cast<const uint8_t*>(key.data()), key.size() * sizeof(wchar_t));
+}
+
 void ResetCache() {
     for (auto& d : g_desc) {
         d.resolved = false;
         d.nextTryMs = 0;
-        d.offType = d.offReadWrites = d.offData = d.offObjectData = -1;
+        d.offType = d.offReadWrites = d.offData = d.offObjectData = d.offObjectBytes = -1;
         d.offZip = d.offNametype = d.offWidget = d.offMesh = -1;
         // The overlap entries go with the rest: a resolved UFunction of a world's Blueprint class
         // is cached on the same terms as this file's offsets, and a caller holding one past a

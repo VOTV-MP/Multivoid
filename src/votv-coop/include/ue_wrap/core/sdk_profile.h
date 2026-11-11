@@ -19,7 +19,7 @@ namespace ue_wrap::profile {
 // The game build the signatures and offsets were derived against: a row of
 // ue_wrap/facts/game_builds.inc, by its name, which holds its identity and the text a player reads.
 // coop::version::kGameTarget names the same build (a static_assert in bootstrap/boot.cpp).
-inline constexpr const char* kTargetBuild = "0.9.0n";
+inline constexpr const char* kTargetBuild = "0.10.0";
 inline constexpr const char* kTargetEngineVersion = "UE4.27";  // exe FileVersion 4.27.2.0
 
 // The main pak, in <game>\VotV\Content\Paks: its footer names the build (ue_wrap/core/game_build.h).
@@ -58,14 +58,6 @@ inline constexpr size_t kFMallocReallocVtOff = 0x20;  // FMalloc::Realloc vtable
 // EngineAlloc goes through FMalloc::Realloc(nullptr, size, align), the slot the signature is
 // matched from; paired with EngineFree on the same GMalloc, so the engine's own realloc or GC
 // free of that buffer is allocator-matched.
-
-// UGameplayStatics::SaveGameToSlot(USaveGame*, const FString& slot, int32) -> bool: the single
-// physical write chokepoint of every save trigger and both save containers. Hooked here because
-// BP-to-BP calls dispatch through ProcessInternal, past the ProcessEvent detour. IDA
-// 0x142B59AA0; the match is the function address.
-inline constexpr const char* kSigSaveGameToSlot =
-    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 48 8B DA 33 F6 "
-    "48 8D 54 24 30 48 89 74 24 30 48 89 74 24 38 41 8B F8";
 
 // AActor::EndPlay(EEndPlayReason): where the engine ends an actor's play. RouteEndPlay calls it through
 // the actor's vtable for a destroy, a stream-out and a world teardown, and 17 of the 18 C++ overrides
@@ -188,7 +180,6 @@ inline constexpr size_t FUObjectArray_MasterSerialNumber = 0xB0;      // int32 c
 inline constexpr size_t TArray_Data = 0x00;  // TArray<T*> = {T** Data; int32 Num; int32 Max}
 inline constexpr size_t TArray_Num = 0x08;
 inline constexpr size_t TArray_Max = 0x0C;
-inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
 // The mod's own UMG widget tree (built through SpawnObject):
 inline constexpr size_t UUserWidget_WidgetTree = 0x01D8;       // UWidgetTree*
 inline constexpr size_t UWidgetTree_RootWidget = 0x0028;       // UWidget*
@@ -389,19 +380,19 @@ inline constexpr size_t USkeletalMesh_AnimScriptInstance = 0x6B0;            // 
 // The body AnimBP poses from its own public variables and needs no possessing controller (the
 // figura and kerfurOmega NPC classes share it), so the puppet is an inert mainPlayer_C orphan
 // (ue_wrap/actors/puppet) wearing the peer's skin, posed by writing the variables.
-inline constexpr size_t AmainPlayer_mesh_playerVisible = 0x04F8;  // USkeletalMeshComponent*  mainPlayer.hpp:13
+inline constexpr size_t AmainPlayer_mesh_playerVisible = 0x0538;  // USkeletalMeshComponent*  mainPlayer.hpp:13
 inline constexpr size_t USkinnedMesh_SkeletalMesh = 0x0480;       // USkeletalMesh* (the skin asset)  Engine.hpp:18299
 inline constexpr size_t USkeletalMesh_AnimClass = 0x06A8;         // TSubclassOf<UAnimInstance>  Engine.hpp:18094
 
 // The puppet spawns mainPlayer_C directly (inertPawn=true): its PostProcess components are
 // destroyed (they grade the local camera), the first-person arms are hidden, mesh_playerVisible
 // stays visible. Offsets from mainPlayer.hpp.
-inline constexpr size_t AmainPlayer_PostProcess_overlays_OBSOLETE = 0x04C8;  // UPostProcessComponent*  mainPlayer.hpp:9
-inline constexpr size_t AmainPlayer_mic                           = 0x0518;  // UAudioCaptureComponent*  mainPlayer.hpp (mic input; must be destroyed on the orphan to prevent latent device hold)
-inline constexpr size_t AmainPlayer_PostProcess_pl                = 0x0590;  // UPostProcessComponent*  mainPlayer.hpp:50
-inline constexpr size_t AmainPlayer_arms                          = 0x05F8;  // USkeletalMeshComponent*  mainPlayer.hpp:55 (FP viewmodel)
-inline constexpr size_t AmainPlayer_playermodel                   = 0x0638;  // USkeletalMeshComponent*  mainPlayer.hpp:58 (legacy/equipment overlay; review visibility)
-inline constexpr size_t AmainPlayer_GameMode                      = 0x0C80;  // AmainGamemode_C*  mainPlayer.hpp (cached at BeginPlay; nulled on the puppet so subsequent gamemode-interaction BP paths return early)
+inline constexpr size_t AmainPlayer_PostProcess_overlays_OBSOLETE = 0x0508;  // UPostProcessComponent*  mainPlayer.hpp:9
+inline constexpr size_t AmainPlayer_mic                           = 0x0558;  // UAudioCaptureComponent*  mainPlayer.hpp (mic input; must be destroyed on the orphan to prevent latent device hold)
+inline constexpr size_t AmainPlayer_PostProcess_pl                = 0x05D0;  // UPostProcessComponent*  mainPlayer.hpp:50
+inline constexpr size_t AmainPlayer_arms                          = 0x04C8;  // USkeletalMeshComponent*  mainPlayer.hpp:55 (FP viewmodel)
+inline constexpr size_t AmainPlayer_playermodel                   = 0x0670;  // USkeletalMeshComponent*  mainPlayer.hpp:58 (legacy/equipment overlay; review visibility)
+inline constexpr size_t AmainPlayer_GameMode                      = 0x0CF0;  // AmainGamemode_C*  mainPlayer.hpp (cached at BeginPlay; nulled on the puppet so subsequent gamemode-interaction BP paths return early)
 inline constexpr size_t mainGamemode_mainPlayer                   = 0x0630;  // AmainPlayer_C*  mainGamemode.hpp (the canonical "the local player" ref the gamemode uses for save/sleep/damage; the orphan's BeginPlay would overwrite it via intComs_gamemodeBeginPlay -- the puppet path captures + restores)
 
 // The AnimBlueprint_kerfurOmega_regular_C variables (spd, animWalkAlpha, animWalkRate) are
@@ -472,35 +463,30 @@ inline constexpr size_t Aprop_propData_heavy = Aprop_propData + Fstruct_prop_hea
 // The list_props DataTable row name init() resolves the mesh, mass and collision from (the CDO
 // default is 'cube'); a mirror spawn writes it before FinishSpawningActor. prop.hpp:12.
 inline constexpr size_t Aprop_Name          = 0x0258;  // FName (ComparisonIndex @ +0, Number @ +4)
-inline constexpr size_t Aprop_Static        = 0x02D8;  // bool (a Static prop can't be grabbed)
-inline constexpr size_t Aprop_removeWOrespawn = 0x02D9;  // bool (despawn-without-respawn; saved by SP getData/loadData)
-inline constexpr size_t Aprop_frozen        = 0x02DA;  // bool
-inline constexpr size_t Aprop_sleep         = 0x02DD;  // bool (prop settled/sleeping -> physics NOT simulating). SDK dump prop.hpp:19 `bool sleep; // 0x02DD`. SP: init() = SetSimulatePhysics(NOT(static||frozen||sleep)).
-inline constexpr size_t Aprop_Key           = 0x02E0;  // FName (ComparisonIndex @ +0, Number @ +4)
+inline constexpr size_t Aprop_Static        = 0x02E0;  // bool (a Static prop can't be grabbed)
+inline constexpr size_t Aprop_removeWOrespawn = 0x02E1;  // bool (despawn-without-respawn; saved by SP getData/loadData)
+inline constexpr size_t Aprop_frozen        = 0x02E2;  // bool
+inline constexpr size_t Aprop_sleep         = 0x02E5;  // bool (prop settled/sleeping -> physics NOT simulating). SDK dump prop.hpp:19 `bool sleep; // 0x02DD`. SP: init() = SetSimulatePhysics(NOT(static||frozen||sleep)).
+inline constexpr size_t Aprop_Key           = 0x02E8;  // FName (ComparisonIndex @ +0, Number @ +4)
 inline constexpr size_t Aprop_StaticMesh    = 0x0238;  // UStaticMeshComponent*
-// The per-material prop sound set: prop.physicsImpact -> physSoundData -> soft_30, the cue
-// the native E grab plays (mainPlayer ubergraph @100337, volume 0.5, pitch 1.0). The cache
-// fills LAZILY, from the lib_C::physSound DataTable row on an impact, so a never-impacted
-// prop reads empty and a caller must fall back to a fresh lookup rather than treat the
-// empty cache as a row miss.
+// The per-material prop sound set: prop.physicsImpact -> audioPhysMat (a physmat_soundsandparticles_C, read by
+// name) -> sound_soft, the cue the native pickup plays. The cache fills LAZILY (setPhysSoundData, through
+// lib_C::getPhysicalAsAudio), so a never-impacted prop reads empty and a caller falls back to a fresh lookup
+// rather than treat the empty cache as a miss.
 inline constexpr size_t Aprop_physicsImpact          = 0x0230;  // Ucomp_physicsImpact_C*  prop.hpp:8
-inline constexpr size_t CompPhysImpact_physSoundData = 0x00C8;  // Fstruct_physSound (inline, 0x98)  comp_physicsImpact.hpp:9
-inline constexpr size_t CompPhysImpact_PhysMat       = 0x0290;  // UPhysicalMaterial*  comp_physicsImpact.hpp (the comp's cached physmat -- input for a fresh lib_C::physSound lookup)
-inline constexpr size_t FstructPhysSound_soft        = 0x0010;  // USoundBase* soft_30  struct_physSound.hpp
+inline constexpr size_t CompPhysImpact_PhysMat       = 0x01F8;  // UPhysicalMaterial*  comp_physicsImpact.hpp (the comp's cached physmat -- input for a fresh lib_C::getPhysicalAsAudio lookup)
 
 // The freecam gamma fix: a bare ACameraActor renders with the default post-process, so the
 // player camera's FPostProcessSettings are copied onto it, with the one TArray
 // (WeightedBlendables @0x550) zeroed so the two cameras do not alias one heap array.
-inline constexpr size_t AmainPlayer_Camera = 0x0530;                    // UCameraComponent*  mainPlayer.hpp:20
+inline constexpr size_t AmainPlayer_Camera = 0x0570;                    // UCameraComponent*  mainPlayer.hpp:20
 
 // The flashlight: the player-held light is the SpotLight on mainPlayer itself (the _a / _b item
 // actors carry no light); puppets are mainPlayer_C orphans with the same offsets.
-inline constexpr size_t AmainPlayer_light_R         = 0x0678;  // USpotLightComponent* (mainPlayer.hpp:61)
-inline constexpr size_t AmainPlayer_lag_fl          = 0x0670;  // USpringArmComponent* parenting light_R (mainPlayer.hpp:60)
-inline constexpr size_t AmainPlayer_flashlight     = 0x0838;  // bool -- canonical on/off (mainPlayer.hpp:115)
-inline constexpr size_t AmainPlayer_flashlightMode = 0x0C79;  // uint8 -- beam mode (mainPlayer.hpp:251)
-inline constexpr size_t AmainPlayer_hasFlashlight  = 0x0CC2;  // bool -- equipped guard (mainPlayer.hpp:260)
-inline constexpr size_t AmainPlayer_crankFlashlight = 0x0CC4;  // bool -- _c variant marker (mainPlayer.hpp:262)
+inline constexpr size_t AmainPlayer_light_R         = 0x06B0;  // USpotLightComponent* (mainPlayer.hpp:61)
+inline constexpr size_t AmainPlayer_lag_fl          = 0x06A8;  // USpringArmComponent* parenting light_R (mainPlayer.hpp:60)
+inline constexpr size_t AmainPlayer_flashlight     = 0x0890;  // bool -- canonical on/off (mainPlayer.hpp:115)
+inline constexpr size_t AmainPlayer_flashlightMode = 0x0CE9;  // uint8 -- beam mode (mainPlayer.hpp:251)
 
 // ULightComponentBase::Intensity (Engine.hpp:13569). The game's flashlight BP toggles Intensity,
 // not bVisible, so the sender reads it and the receiver mirrors it through SetIntensity.
@@ -595,12 +581,8 @@ inline constexpr size_t DirectionalWind_windTarget             = 0x0238;  // UBi
 inline constexpr size_t AmainGamemode_redSky                = 0x0888;  // AredSkyEvent_C*
 
 // AmainGamemode_C::saveSlot: the live world-save container saveObjects() / saveTriggers()
-// repopulate and SaveGameToSlot serialises; save_capture reads it (mainGamemode.hpp).
-inline constexpr size_t AmainGamemode_saveSlot              = 0x04B0;  // UsaveSlot_C*
-
-// UsaveSlot_C::objectsData: the TArray<Fstruct_save> of every world object (saveSlot.hpp);
-// save_capture's safety probe reads its Num (@ +0x8).
-inline constexpr size_t UsaveSlot_objectsData              = 0x0300;  // TArray<Fstruct_save>
+// repopulate and the save write serialises; save_capture reads it (mainGamemode.hpp).
+inline constexpr size_t AmainGamemode_saveSlot              = 0x04B8;  // UsaveSlot_C*
 
 // AmainGamemode_C::daynightCycle is the world singleton's daynightCycle_C, so no gamemode offset
 // is needed.

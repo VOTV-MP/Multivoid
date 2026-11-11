@@ -82,6 +82,10 @@ struct DHost {
     SpawnStep                       sp;        // the ATV the arm acts on (trap: unused, the world's)
     coop::atv_damage_gate::Counters gate0{};   // the gate's counters at the seated edge
     ER::Counters                    req0{};    // and the request lane's
+    // The ATV the blast is aimed at and the runs of `exploded` it had at the seated edge: a save may hold another ATV the
+    // blast also reaches, and that one is the host's own, so its `exploded` runs by right (the totals count it).
+    void*                           gateActor = nullptr;
+    unsigned long long              ranOn0 = 0;
     bool readySeen = false, carChecked = false, sawAwait = false;
     bool sawBlown = false, sawTrapClear = false;   // latched while the judge polls: the mark can be re-armed by a report
 };
@@ -143,6 +147,8 @@ void HostSeated(Arm a, const TableView* t) {
         return HostFail(a, "the table never named the client occupant and syncer", got, "occupant 1 syncer 1");
     }
     h.gate0 = GATE::ReadCounters();
+    h.gateActor = t->actor;
+    h.ranOn0 = GATE::RanOnActor(t->actor, kExploded);
     h.req0 = ER::GetCounters();
     if (a == Arm::Owner) return HostPhase(HPh::Judge, "judge");
     if (a == Arm::Trap) {
@@ -176,7 +182,7 @@ void HostArmed(Arm a, const TableView* t) {
 // gate: the blast's `exploded` was cancelled once on the host's copy and ran nowhere on it.
 void HostJudgeGate(Arm a) {
     const GATE::Counters c = GATE::ReadCounters();
-    const uint64_t ran = c.ran[kExploded] - g_dh.gate0.ran[kExploded];
+    const uint64_t ran = GATE::RanOnActor(g_dh.gateActor, kExploded) - g_dh.ranOn0;
     const uint64_t cancelled = c.cancelled[kExploded] - g_dh.gate0.cancelled[kExploded];
     if (ran != 0)
         return HostFail(a, "the blast ran on the host's copy, which does not own the ATV", "ran " + Plus(ran),
@@ -222,7 +228,7 @@ void HostAwait(Arm a) {
     char nums[64];
     if (a == Arm::Gate) {
         const GATE::Counters c = GATE::ReadCounters();
-        const uint64_t ran = c.ran[kExploded] - h.gate0.ran[kExploded];
+        const uint64_t ran = GATE::RanOnActor(h.gateActor, kExploded) - h.ranOn0;
         const uint64_t cancelled = c.cancelled[kExploded] - h.gate0.cancelled[kExploded];
         if (ran != 0 || cancelled != 1)
             return HostFail(a, "the gate's counters moved after the judgement",

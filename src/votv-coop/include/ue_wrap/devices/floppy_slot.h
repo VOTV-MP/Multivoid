@@ -46,7 +46,8 @@ struct Scalars {
 
 struct Content {
     std::wstring              nametype;    // laptop only (floppyNametype)
-    std::wstring              objectData;  // the disc's save struct as JSON
+    std::wstring              objectData;  // the disc's save struct as JSON (0.9; the 0.10 box and laptop leave it empty)
+    std::vector<uint8_t>      objectBytes; // 0.10: the disc's ActorToBytes stream (floppyObjectDataBytes), opaque
     std::vector<std::wstring> data;        // the disc's data rows
 };
 
@@ -94,6 +95,10 @@ bool ClearSlot(DeviceKind kind, void* device);
 // back under (prop_C::loadData takes the key from it). Empty when the JSON has no key member,
 // which is what a blank or a cut JSON reads, and the eject then keeps the key it minted.
 std::wstring ObjectDataKey(const std::wstring& json);
+
+// Whether a disc's ActorToBytes stream carries `key` (the save key, which the stream holds as a string, narrow or wide).
+// The 0.10 slot keeps the disc as bytes, not JSON, so this is how a caller asks which disc sits in a slot.
+bool BytesCarryKey(const std::vector<uint8_t>& bytes, const std::wstring& key);
 
 // Level change: the classes, offsets and functions are world-scoped.
 void ResetCache();

@@ -6,7 +6,7 @@
 // nothing (a flag verb), so it is not the signal by itself: every class's init is watched at the script gate, a
 // can's state is read after it, and only a change from what this peer last knew publishes the record. A can never
 // seen before is compared with its class's defaults, so a new one stays quiet and the first Open on an old one
-// goes out. A record landing here updates what is known and does not go back. Temperature and ripeness belong to
+// goes out. A record landing here updates what is known and does not go back. Temperature and freshness belong to
 // prop_food_C, a separate family (coop/props/prop_food_state). Game thread.
 
 #pragma once

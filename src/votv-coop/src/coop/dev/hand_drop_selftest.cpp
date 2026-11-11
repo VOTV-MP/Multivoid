@@ -127,7 +127,7 @@ ue_wrap::CachedObjRef g_dropped;   // the world actor a throw spawned, which the
 
 struct EpisodeResult {
     bool         pickupFired = false;
-    bool         pickupHeld  = false;   // holding_actor really became the target
+    bool         pickupHeld  = false;   // holdingActor_main really became the target
     bool         dropFired   = false;
     bool         dropCleared = false;
     std::wstring targetKey;
@@ -159,14 +159,13 @@ void* MainPlayer() {
 void* HoldingActor(void* player) {
     E::MainPlayerGrabState gs{};
     if (!player || !E::ReadMainPlayerGrabState(player, gs)) return nullptr;
-    return gs.holdingActor;
+    return gs.mainHand;
 }
 
-// The pickup in progress on the holder, one candidate per act. The game's own pickup is E::CallMainPlayerHoldObject
-// with the target handed in directly: `Hold Object` reads `manual` when it is valid and only falls back to whatever
-// the player is looking at when it is not, so a driver needs no aim and no hit result. It ends in addEquip, which
-// writes the hold slot and calls updateHold, so a collected prop IS a hand item -- and it destroys the world actor on
-// the way, which is why a census taken while it is held reads one row shorter on BOTH peers.
+// The pickup in progress on the holder, one candidate per act. The game's own pickup is
+// E::CallMainPlayerAddObjectToFreeHotbarSlot with the target handed in directly, so a driver needs no aim and no hit
+// result. It selects the slot the item lands in, so a collected prop IS a hand item -- and it destroys the world actor
+// on the way, which is why a census taken while it is held reads one row shorter on BOTH peers.
 //
 // `collected` is the verb's own answer and the only honest one for a call that ran: the call returning says the frame
 // dispatched, while every refusal inside -- not simulating physics, too heavy, cannot be held -- leaves collected
@@ -188,16 +187,9 @@ struct PickupRun {
 PickupRun g_pick;
 
 // ---- where each role censuses ------------------------------------------------------------------
-// The game's own release. Three were measured before this one was settled on, and what each does
-// is worth keeping, because the choice decides WHERE the released prop is when the peers exchange
-// it:
-//   simulateDrop(place=false) parks the released actor in `droppedItem` and puts nothing in the
-//     world -- measured, no prop within 6 m on either peer, and three keyed destroys on the wire;
-//   simulateDrop(place=true) enters the placement MODE rather than releasing, so the hand
-//     stayed full on two of four episodes and the watcher read a still-held prop as lost;
-//   throwHoldingProp drops, teleports the released actor to the camera and throws it -- the one
-//     that reliably empties the hand and leaves a prop in the world.
-// The throw is why the census radius is metres: the released prop travels before it settles.
+// The game's own release: throwHoldingProp drops the hand's item from its hotbar slot, puts the released actor at the
+// camera and throws it, which empties the hand and leaves a prop in the world. The throw is why the census radius is
+// metres: the released prop travels before it settles.
 bool CallDropHolding(void* player) {
     void* cls = R::FindClass(P::name::MainPlayerClass);
     void* fn  = cls ? R::FindFunction(cls, L"throwHoldingProp") : nullptr;
@@ -424,8 +416,9 @@ void PickupTick() {
     void* target = g_pick.list[g_pick.next++].actor.Get();
     if (!target) return;   // died since the census: the try is spent
     bool collected = false;
-    const bool called = E::CallMainPlayerHoldObject(player, target, collected);
-    if (called && !collected && coop::prop_act_request::dev::PendingId() != 0) {
+    const bool called = E::CallMainPlayerAddObjectToFreeHotbarSlot(player, target, ue_wrap::engine::HotbarAdd{}, collected);
+    // An asked take is cancelled and reports success (the ask is the take): the hand says what it came to.
+    if (called && coop::prop_act_request::dev::PendingId() != 0) {
         g_pick.asked = true;
         return;
     }

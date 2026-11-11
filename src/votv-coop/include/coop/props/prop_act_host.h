@@ -35,9 +35,8 @@ void RunSelftest();                               // the pure decisions, once pe
 // predicted entry; ours cancels at PRE and shows one line, so every refusal of the act is one reply reason.
 enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFailed, QueueFullUnready, BadSender,
                              GrantUnsent, FitUnread, FitBadFamily, FitTrash, FitNotProp, FitDenied, FitNoUseRow,
-                             FitCollectRefused, FitPickupRefused, FitIgnoreSave, FitChild, FitPhysics, FitCanCollect,
-                             FitCanHold, FitHeavy, FitMeshRoot, FitVolume, FitSaveClass, FitEquipRow, FitNotEdible,
-                             kCount };
+                             FitIgnoreSave, FitChild, FitAttached, FitPhysics, FitTakeRefused, FitSaveClass,
+                             FitNotEdible, kCount };
 const char* TallyName(Tally t);   // "target_gone" ... "fit_not_edible"; "" past kCount
 
 namespace internal {   // pure, no engine call: prop_act_selftest drives these (NOT the game thread)
@@ -47,19 +46,22 @@ enum class ActVerdict : uint8_t { Wait, Gone, WrongFamily, Held, Reach, Grant };
 struct ActInputs {
     bool worldReady = false, holdsReservation = false, hasBody = false, live = false, heldByOther = false;
     coop::element::IntentOutcome reach = coop::element::IntentOutcome::NoBody;
+    bool seated = false;   // a drive the desk's slot still holds, whose eject from the requester has not arrived yet
     bool familyFits = false;
 };
 ActVerdict Decide(const ActInputs& in);
 
-// The facts one act is judged on. `read` is false when a fact could not be read, and then nothing fits.
+// The facts one act is judged on. `read` is false when a fact could not be read, and then nothing fits. takeRefused
+// is the prop's canBeCollectedOrPickedUp answering ignore: the game's own verdict on its heavy, static, frozen and
+// data-row flags, which a subclass may override, so none of those flags is judged apart from it. `driven` is a prop
+// the mod's pose stream drives, which counts as simulating.
 struct ActTraits {
-    bool read, collectRefused, pickupRefused, ignoreSave, child, frozen, simulating, driven, canCollect, canHold,
-         heavy, meshRoot, volumeFits, saveClass, equipRow, offered, foodBody, notEdible;
+    bool read, takeRefused, ignoreSave, child, attached, simulating, driven, saveClass, offered, foodBody, notEdible;
 };
 // The requester's own state (room, hunger) is no term of a fit: MTA's pickup reads the requester's health and armor on
 // the server (CPickup.cpp:384-396), but a peer's inventory is not replicated here, so its replay refuses and aborts.
-bool PocketFits(const ActTraits& t);   // putObjectInventory2 and addObject
-bool HoldFits(const ActTraits& t);     // Hold Object and updateHold
+bool PocketFits(const ActTraits& t);   // addObjectToInventory and the inventory's addItemAsObject
+bool HoldFits(const ActTraits& t);     // Add Object to Free Hotbar Slot
 bool UseFits(const ActTraits& t);      // the use verbs the lane carries
 bool KnownFamily(uint8_t family);      // 1..3
 // The first term of the verb's fit that is false, in the order the fit reads them; none when the act fits.
@@ -73,7 +75,7 @@ const char* VerdictName(ActVerdict v);   // "wait" "gone" "wrong-family" "held" 
 const char* CommitName(CommitStep s);    // "bad" "abort" "target-gone" "destroy"
 }  // namespace internal
 
-enum class WaitCause : uint8_t { NotReady, Reservation, NoBody, kCount };
+enum class WaitCause : uint8_t { NotReady, Reservation, NoBody, Seated, kCount };
 
 // The counters the drills judge by. A slot outside 1..kMaxPeers-1 reads 0.
 uint32_t AnsweredFor(int slot, coop::net::PropActReason reason);   // replies sent per reason (Granted = grants)

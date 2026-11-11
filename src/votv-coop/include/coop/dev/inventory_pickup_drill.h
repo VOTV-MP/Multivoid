@@ -8,7 +8,7 @@
 // `values` lines under one key in both lives are the comparison), sets food and sleep to numbers
 // no fresh life has, and walks by the bot director to a NavMesh-reachable point, so the items,
 // the vitals and the pose all have something to return. The pickup moves nobody:
-// mainPlayer::putObjectInventory2 has no reach test. The host's half seeds such a drive and disc
+// mainPlayer::addObjectToInventory has no reach test. The host's half seeds such a drive and disc
 // and, with VOTVCOOP_INV_PICKUP_DRILL_SAVE=1, saves when a joiner's world comes up, the only
 // moment a host writes profiles to disk (`quick` alternates a quicksave with a plain save).
 // Nothing waits on a clock: `CLIENT LIFE DONE`, `HOST SAVES DONE` and coop/session/rig_ready.h's

@@ -11,7 +11,6 @@
 // sample of its own element nearest the client's peak pose, less the client's clock there (-1 with no sample).
 
 #include "container_intent_drill_throw.h"
-#include "container_route_drill_detail.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -54,7 +53,7 @@ namespace E   = ue_wrap::engine;
 namespace R   = ue_wrap::reflection;
 namespace ci  = ue_wrap::container_inventory;
 namespace DC  = coop::dev::drill_chat;
-namespace RD  = coop::dev::container_route_drill::detail;
+namespace RD  = coop::dev::container_intent_drill::detail;
 namespace cen = coop::dev::container_route_census;
 using ue_wrap::FVector;
 
@@ -676,10 +675,6 @@ void LiveDriveEids(std::vector<uint32_t>& out) {
 void ThrowHostTick(const coop::net::Session& session) {
     if (ArmOf() == Arm::ThrowHostGrab) {
         HostGrabHostTick(session);
-        return;
-    }
-    if (ArmOf() == Arm::ThrowInto) {
-        IntoHostTick(session);
         return;
     }
     if (!g_hMs) {   // the first step's clock starts when the arm does, never at reset

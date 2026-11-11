@@ -95,7 +95,7 @@ using detail::g_atvs;
 
 // True if this peer's player is grabbing `actor` with the grav hand (carried, not seated). The
 // ATV has no grabbed flag of its own (isDriven and Player are written only on the seating path),
-// so the grabber identity is the player's grabbing_actor, the slot the release clears. holding_actor
+// so the grabber identity is the player's grabbing_actor, the slot the release clears. holdingActor_main
 // is only ever the hand item the player spawns (mainPlayer BP: one write besides null), never a world ATV.
 bool IsLocalGrabber(void* actor, void* localPlayer) {
     if (!localPlayer || !actor) return false;

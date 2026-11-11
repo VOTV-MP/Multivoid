@@ -1,6 +1,6 @@
 // ue_wrap/desk/meadow_store.h -- standalone engine access for the MEADOW signal DATABASE on the
 // in-game stationary PC (game classes laptop_C / ui_laptop_C): saveSlot.savedSignals_0, a
-// TArray<Fstruct_signalDataDynamic> of 0x70 stride, and its two id-preserving ui_laptop verbs.
+// TArray<Fstruct_signalDataDynamic> of signal_dynamic::kStride, and its two id-preserving ui_laptop verbs.
 // Principle-7 engine-wrapper layer; coop::meadow_db_sync drives the mirror through here.
 //
 // The store LIVES on the saveSlot object, so persistence is free; the deck list's save mirror
@@ -53,7 +53,7 @@ bool ApplyRemoveSignal(int32_t index);
 
 // Byte-permute the store rows in place: row i of the NEW order := old row
 // srcIdx[i]. srcIdx must be a full permutation of [0, Count()). FString/array
-// pointers move WITH their 0x70 blocks (one temp copy, each pointer lands
+// pointers move WITH their kStride blocks (one temp copy, each pointer lands
 // exactly once -- no alloc/free/dup); GT-serial so the mid-state is
 // unobservable. The WIDGET arrays are NOT touched -- follow with
 // ApplyGenSignalList (the game's own full rebuild) for coherence.

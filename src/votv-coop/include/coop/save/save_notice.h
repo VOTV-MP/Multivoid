@@ -2,8 +2,8 @@
 //
 // Persistence is the host's alone (coop/save/save_block): a client's world save is blocked, so the game
 // shows its SAVED indicator on the host only and a client never knew a save happened. The host hears its
-// own world saves at the engine's write (ue_wrap/engine/save_to_slot_hook) -- the hosted world's save
-// object under a slot of the game's own, so a join's scratch capture and the save-slot menu's writes do
+// own world saves at the engine's write (ue_wrap/engine/save_write_hook) -- the hosted world's save
+// object in a save of the game's own, so a join's scratch capture and the save-slot menu's writes do
 // not count -- and puts one line in its chat feed and sends WorldSaved. While the game counts an event as
 // running, its save shows an error and returns without a write, so the host also watches mainGamemode.save;
 // a save told to bypass the event writes the slot without gathering the world. The watch reports only when the

@@ -6,6 +6,7 @@
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/drill_chat.h"
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
 #include "coop/player/players_registry.h"
@@ -47,7 +48,7 @@ namespace PR = ue_wrap::prop;
 // carry: the host takes it off and carries it off. short: the host lets go the moment it holds it.
 // client: the client carries, the host watches. join: the host takes it off while a joiner loads.
 enum class Arm { Off, Carry, Short, Client, Join };
-enum class Step { WaitJoin, WalkTo, Grab, WalkAway, Rest, Done, Invalid };
+enum class Step { WaitJoin, WalkTo, Grab, WalkAway, Rest, Settle, Done, Invalid };
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -65,6 +66,7 @@ char Who() { return coop::roster::LocalIsHost() ? 'H' : 'C'; }
 constexpr float kReachCm        = 110.f;  // the director's stop distance from the extinguisher, level
 constexpr float kCarryCm        = 450.f;  // how far off the carry's end should be
 constexpr int   kRestMaxTicks   = 600;    // ~10 s for a dropped extinguisher to come to rest
+constexpr int   kSettleTicks    = 240;    // ~4 s more, for the drive's last correction of the actor's copy
 // A walk that stops making way ends here. The rig save puts the client about 760 m from the base,
 // a route of some 200 s (the container probe's long-route deadline).
 constexpr int   kWalkDeadlineS  = 300;
@@ -286,6 +288,55 @@ void TickReleaseReadout() {
             v.linearCmS.X, v.linearCmS.Y, v.linearCmS.Z);
 }
 
+
+// ---- The verdict: the acting peer says where its extinguisher came to rest, the watching peer judges its own copy ---------
+// Two physics sims settle a dropped extinguisher within a few centimetres of each other; the tolerance leaves room for a
+// different bounce without passing a copy still on its wall. (The carry arm's re-latch probe and the short arm's stale
+// tail keep their own evidence lines; this is the one word for "both peers hold the extinguisher in one place".)
+constexpr float kRestTolCm = 40.f;
+constexpr int   kJudgeWaitTicks = 900;   // ~15 s for the watching peer's copy to come to rest after the acting peer's word
+const char* const kRestPrefix = "fireext rest ";
+bool g_judged = false;
+int  g_judgeTicks = 0;
+
+void SayRest(const std::wstring& key, const ue_wrap::FVector& at) {
+    char line[160];
+    std::string k;
+    for (wchar_t c : key) k += c < 128 ? static_cast<char>(c) : '?';
+    std::snprintf(line, sizeof(line), "%s%s %.0f %.0f %.0f", kRestPrefix, k.c_str(), at.X, at.Y, at.Z);
+    coop::dev::drill_chat::Say(line);
+}
+
+void JudgeWatcher(char who) {
+    namespace DC = coop::dev::drill_chat;
+    if (g_judged || !g_watchArmed) return;
+    std::string rest;
+    if (!DC::SeenRestOf(kRestPrefix, &rest)) return;
+    char keyBuf[64] = {};
+    float ax = 0.f, ay = 0.f, az = 0.f;
+    if (std::sscanf(rest.c_str(), "%63s %f %f %f", keyBuf, &ax, &ay, &az) != 4) return;
+    std::wstring key;
+    for (const char* p = keyBuf; *p; ++p) key += static_cast<wchar_t>(*p);
+    Watched* row = nullptr;
+    for (auto& w : g_watched)
+        if (w.key == key) { row = &w; break; }
+    void* const o = row ? row->ref.Get() : nullptr;
+    auto verdict = [&](bool pass, const char* what, float a) {
+        g_judged = true;
+        if (pass) UE_LOGI("[FIREEXT-DRILL] [%c] PASS %s (%.1f cm)", who, what, a);
+        else      UE_LOGW("[FIREEXT-DRILL] [%c] FAIL %s (%.1f cm)", who, what, a);
+    };
+    if (!row) return verdict(false, "this peer holds no extinguisher with the key the acting peer named", 0.f);
+    if (!o) return verdict(false, "this copy is gone", 0.f);
+    if (!E::IsActorRootBodyAtRest(o) && ++g_judgeTicks < kJudgeWaitTicks) return;
+    ue_wrap::FVector at{};
+    if (!ReadWatched(o, at, who, "the verdict")) return verdict(false, "this copy's location does not read", 0.f);
+    ReadMounts();
+    if (IsMounted(o)) return verdict(false, "this copy is still on its mount", Dist(at, row->start));
+    const float apart = Dist(at, ue_wrap::FVector{ax, ay, az});
+    if (apart > kRestTolCm) return verdict(false, "the copies rest apart (tolerance 40)", apart);
+    verdict(true, "the copies rest together and this one is off its mount", apart);
+}
 // ---- The acting peer's steps -------------------------------------------------------------------
 
 Step g_step = Step::WaitJoin;
@@ -533,6 +584,17 @@ void ActStep(coop::net::Session& s, void* player) {
         if (!rested && g_stepTicks < kRestMaxTicks) return;
         ClearStaleTail(s);  // the tail ends here whatever its length
         LogTarget(rested ? "RESTED" : "NOT AT REST after the wait");
+        Go(Step::Settle);
+        return;
+    }
+    case Step::Settle: {
+        // A copy the host drives after the release is put right a moment after it first reads at rest (a measured client copy
+        // came to rest 86 cm short of the host's and was moved there 1 s later): the word waits for that.
+        if (g_stepTicks < kSettleTicks) return;
+        void* t = g_target.Get();
+        LogTarget("SETTLED");
+        ue_wrap::FVector restAt{};
+        if (t && ReadWatched(t, restAt, Who(), "the rest word")) SayRest(g_targetKey, restAt);
         Go(Step::Done);
         return;
     }
@@ -575,6 +637,7 @@ void Tick(coop::net::Session* session) {
         ArmWatch(Who());
     }
     TickWatch(Who());
+    JudgeWatcher(Who());
     if (ArmOf() == Arm::Carry) {
         TickRelatchProbe();
         TickReleaseReadout();
@@ -597,6 +660,8 @@ void OnDisconnect() {
     g_probeTicks = -1;
     g_afterTicks = -1;
     g_tailEnded = false;
+    g_judged = false;
+    g_judgeTicks = 0;
     g_walk.reset();
 }
 

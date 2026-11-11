@@ -22,9 +22,6 @@ void* LiveWorldInventory(uint32_t eid);
 // The container's live contents to one slot, forced past the unchanged-hash guard. False when refused.
 bool SendContainerTo(uint32_t eid, void* inv, int slot);
 
-// What was last sent or applied for one container: the hash of its records and the flags byte that went with them.
-struct Seen { uint64_t records = 0; uint8_t flags = 0; };
-
 // ---- the publish half (container_contents_publish.cpp) ----
 
 // Broadcast one container's slice: to every world-ready peer (toSlot < 0) or to one slot. Unchanged since the last fan-out
@@ -43,7 +40,7 @@ void MarkDirty(uint32_t eid);
 std::set<uint32_t>& Dirty();
 
 // What every peer has: set after a fan-out or an accepted birth slice, forgotten when a baseline may not stand.
-void NoteSent(uint32_t eid, const Seen& seen);
+void NoteSent(uint32_t eid, uint64_t recordsHash);
 void ForgetSent(uint32_t eid);
 
 // The session's end: the dirty set, the retries, the dev counters and the sent baselines.

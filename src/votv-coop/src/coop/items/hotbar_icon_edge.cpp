@@ -18,10 +18,9 @@ namespace HB = ue_wrap::hotbar;
 // tables are up, which is the last thing to happen in the window this watches.
 constexpr int kPollTicks = 15;   // ~8 Hz at ~120 Hz
 
-// Does the bar contradict the store -- items carried, icons published, and the first slot still
-// showing none? updateSlotInv fills from the end of the item list down to slot 0, so slot 0 is
-// the one slot a rebuild always reaches when the bar lists anything; its emptiness therefore
-// means the rebuild found no icons rather than that the bar is short.
+// Does the bar contradict its items -- a slot naming an item, icons published, and that slot still
+// showing none? Each slot draws its own icon, so the first slot that names an item answers for the
+// draws that ran before the icons were published.
 //
 // This asks about the OUTCOME rather than watching the tables go from empty to full, because the
 // transition is not reliably observable: a world load runs as one long blocking call, and a run
@@ -29,8 +28,8 @@ constexpr int kPollTicks = 15;   // ~8 Hz at ~120 Hz
 // sample. A trigger armed on that edge would have missed it; a question about the bar is still
 // true afterwards.
 bool BuiltWithoutIcons(const HB::State& s) {
-    if (!s.IconsReady() || s.carried <= 0 || s.slots <= 0) return false;
-    const std::wstring tex = HB::SlotTexture(s, 0);
+    if (!s.IconsReady() || s.firstFilled < 0) return false;
+    const std::wstring tex = HB::SlotTexture(s, s.firstFilled);
     return tex == L"Black" || tex == L"null" || tex == L"no-parameter" || tex == L"no-material";
 }
 
@@ -39,7 +38,7 @@ bool BuiltWithoutIcons(const HB::State& s) {
 // out so the streamer brings it back with the new art
 // (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:6859). Deliberate divergence:
 // MTA owns its streamer and can force the re-express directly, while the bar is the game's own
-// widget, so the re-express here is the game's own rebuild verb called once.
+// widget, so the re-express here is the game's own draw verb called once per slot.
 //
 // The world this edge has finished with. Held as a CachedObjRef rather than a bare pointer: the
 // engine reuses object slots, so a new world's renderer can land on the freed address of the old
@@ -68,21 +67,21 @@ void Tick() {
             // Said on the settle as well as on the rebuild: a gate that only speaks when it acts
             // cannot report that it RAN, and this one spent a release unreachable on the launch
             // every player makes while its own readout was inside the branch that never ran.
-            UE_LOGI("hotbar: the quick-slot bar was built with its icons (names=%d texs=%d "
-                    "carried=%d) -- nothing to rebuild", s.iconNames, s.iconTextures, s.carried);
+            UE_LOGI("hotbar: the hotbar was drawn with its icons (names=%d texs=%d "
+                    "filled=%d) -- nothing to redraw", s.iconNames, s.iconTextures, s.filled);
         }
         return;
     }
 
     g_settled.Set(s.renderer);
-    const std::wstring before = HB::SlotTexture(s, 0);
+    const std::wstring before = HB::SlotTexture(s, s.firstFilled);
     const bool ok = HB::Rebuild(s);
     HB::State after;
     HB::Read(after);
-    UE_LOGI("hotbar: the icon tables arrived after the bar was built (names=%d texs=%d phases=%d "
-            "carried=%d) -- rebuilt through updateSlotInv: called=%d, slot0 %ls -> %ls",
-            s.iconNames, s.iconTextures, s.rendererPhases, s.carried, ok ? 1 : 0, before.c_str(),
-            HB::SlotTexture(after, 0).c_str());
+    UE_LOGI("hotbar: the icon tables arrived after the hotbar was drawn (names=%d texs=%d phases=%d "
+            "filled=%d) -- redrawn through each slot's upd: called=%d, slot%d %ls -> %ls",
+            s.iconNames, s.iconTextures, s.rendererPhases, s.filled, ok ? 1 : 0, s.firstFilled, before.c_str(),
+            HB::SlotTexture(after, s.firstFilled).c_str());
 }
 
 }  // namespace coop::hotbar_icon_edge

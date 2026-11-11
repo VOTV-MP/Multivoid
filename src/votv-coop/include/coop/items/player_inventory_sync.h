@@ -1,21 +1,24 @@
-// coop/items/player_inventory_sync.h -- the per-player profile (coop/items/player_profile.h:
-// what a player carries, wears and holds, their vitals, where they stood), host-persisted at <mod data dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the
-// key that peer PROVED at admission (coop/net/peer_identity.h), never from a value it sent.
+// coop/items/player_inventory_sync.h -- the per-player profile (coop/items/player_profile.h: the
+// player's own save record -- their vitals, what they carry, wear and hold -- and where they
+// stood), host-persisted at <mod data dir>/coop_players/<host save>/<guid>.json. The GUID is
+// derived from the key that peer PROVED at admission (coop/net/peer_identity.h), never from a
+// value it sent.
 //
-// A joiner's world is built from a capture of the HOST's save object, and the carried items
-// live in that object (saveSlot.GObjStack[0]), so without a substitution every joiner carries
-// the host's items under the host's keys, and the host's status effects ride along as records
-// of its world, which the join hook resets out of the joiner's copy. In session order: the host sends a joining peer its
-// profile while that peer is still pre-world (a first join gets a starter kit under fresh
-// keys), and the client writes it into the save object before the world materialises; the
-// client streams its profile back as it changes (and at once after an admin's order, SendProfileNow),
-// only from a world that was built from one;
-// the host holds each complete, changed blob by GUID and cuts the held profiles to disk when its
-// own world is saved, at no other moment (coop/player/player_profile_store.h says why). Nothing
-// held and no file IS the first-join test.
+// A joiner's world is built from a capture of the HOST's save object, and the player's record is
+// one of the saved actors in it (saveSlot.betterObjectsData), so without a substitution every
+// joiner carries the host's items under the host's keys at the host's vitals, and the host's
+// status effects ride along as records of its world, which the join hook resets out of the
+// joiner's copy. In session order: the host sends a joining peer its profile while that peer is
+// still pre-world (a first join gets one with no record, and starts as a new game's player), and
+// the client writes it into the save object before the world materialises; the client streams
+// its profile back as it changes (and at once after an admin's order, SendProfileNow), only from
+// a world that was built from one; the host holds each complete, changed blob by GUID and cuts
+// the held profiles to disk when its own world is saved, at no other moment
+// (coop/player/player_profile_store.h says why). Nothing held and no file IS the first-join test.
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net { class Session; struct BlobChunkPayload; }
@@ -28,12 +31,12 @@ void Install(coop::net::Session* session);
 // ---- transport and host persistence ----
 
 // Bidirectional PlayerInventoryBlob receiver (event_feed -> here); branches by role:
-//   * HOST receiving from a CLIENT slot (1..): one chunk of that client's inventory STREAM.
+//   * HOST receiving from a CLIENT slot (1..): one chunk of that client's profile STREAM.
 //     Reassembles (per-sender) and hands a complete blob to the profile store, which holds
 //     the newest one per GUID.
 //   * CLIENT receiving from the HOST (slot 0): one chunk of the host's ON-JOIN apply blob.
 //     Reassembles and, on completion, deserializes + stashes it as the pending
-//     per-player inventory (HasPendingApply()), to be written into the save object by the
+//     per-player profile (HasPendingApply()), to be written into the save object by the
 //     SaveObjectReadyHook before the world materializes.
 // Game thread.
 void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot);
@@ -41,8 +44,8 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot);
 // ---- the live apply on join: host to client, then the save-object-ready hook ----
 
 // HOST: send peer `peerSlot` its per-player profile (the one the store holds, else its file,
-// FNV-verified with a .bak fallback; the starter kit when there is neither -- never another
-// player's inventory). Chunked to that ONE slot over PlayerInventoryBlob. Called from the host tick the
+// FNV-verified with a .bak fallback; a profile with no record when there is neither -- never
+// another player's). Chunked to that ONE slot over PlayerInventoryBlob. Called from the host tick the
 // moment the slot is connected and its GUID has arrived, so the blob lands in the joiner's
 // pre-world window. No-op off the host or when the peer's GUID hasn't arrived. Returns true iff
 // the blob was actually enqueued -- the caller (HostPersistTick) latches "sent" ONLY on true, and retries next tick on a channel-busy refusal
@@ -54,7 +57,7 @@ bool SendInventoryToSlot(int peerSlot);
 bool HasPendingApply();
 
 // CLIENT: the next save object to come ready belongs to a join, so the hook may substitute the
-// profile into it (or empty the host's items out of it when none arrived), and the hook resets the
+// profile into it (or take the host's record out of it when none arrived), and the hook resets the
 // host's status effects out of it before either. One-shot, consumed by
 // the hook and cleared on disconnect; the join boot calls it right before each world load. Every
 // other load in the process -- a later Host-with-save above all -- is left alone. Any thread.
@@ -81,8 +84,13 @@ void OnDisconnect();
 // CLIENT: send this client's profile now, on the stream's path, past the stream's hash and cadence
 // checks; a send restarts the stream's 30 s cadence. False when the stream is shut (not connected,
 // or this world was not built from a host profile, so the host keeps the one it holds), when the
-// items do not read, or when the transport refused or the profile is too large. Game thread.
+// record does not read, or when the transport refused or the profile is too large. Game thread.
 bool SendProfileNow(coop::net::Session* s);
+
+// CLIENT: what the last profile the transport took looked like: how many were sent this session, the size on the wire,
+// the record's size and its FNV-64. For the profile fill drill, which compares it with what the host stored. Game thread.
+struct SendStats { uint32_t count = 0; size_t wireBytes = 0; size_t recordBytes = 0; uint64_t recordHash = 0; };
+SendStats LastSend();
 
 // HOST: how many client profile blobs have been assembled and handed to the store so far: one per complete stream
 // that came from a sender with a GUID (a complete stream dropped for want of one is not counted), an identical blob
@@ -93,10 +101,10 @@ uint32_t ProfilesReceived();
 // last step of the save seam; a write the seam refuses is not counted). A reader waits on the count rising. Game thread.
 uint32_t WorldSavesWritten();
 
-// Per-tick: the client's outbound inventory stream, or the host's on-join push, by role. It
-// also carries a one-shot read-verify self-test (ini inventory_selftest=1) that reads the local
-// saveSlot inventory a few seconds after world-up and logs what it found; that part is a no-op
-// unless the flag is set. Game thread.
+// Per-tick: the client's outbound profile stream, or the host's on-join push, by role. It also
+// carries a one-shot read-verify self-test (ini inventory_selftest=1) that reads the local
+// player's items and record a few seconds after world-up and logs what it found; that part is a
+// no-op unless the flag is set. Game thread.
 void Tick();
 
 }  // namespace coop::player_inventory_sync

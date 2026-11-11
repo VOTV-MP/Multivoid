@@ -63,10 +63,12 @@ the puppet stays attached as the anchor for the nameplate and the recovery hand-
 
 ### What the player holds and toggles
 
-The item in a player's hand is player state, not a world entity: the game destroys and respawns
-the held actor on every hotbar switch. The owner polls its own holding actor and broadcasts the
-class and name on change, and every peer keeps a display-only mirror, physics and collision off,
-attached to the puppet's weapon component at the native hold transform
+The items in a player's two hands are player state, not world entities: the game spawns each
+hand's actor from its hotbar slot and destroys and respawns it on every switch. The owner polls
+its own two hand actors (`holdingActor_main`, `holdingActor_offhand`) and broadcasts a hand's
+class, name and item name on change, and every peer keeps a display-only mirror per hand, physics
+and collision off: the main hand's held in the puppet's view at the owner's measured hold
+transform, the off hand's attached to the puppet's own `weapon_off`, where the game attaches it
 (`coop/player/hand_item`). The flashlight rides the item-activation kind: the receiver toggles
 the puppet's own light and plays a positional click (`coop/player/item_activate`,
 `coop/player/flashlight_click_sound`). The cone starts inside the head, so a body casting shadows from it cuts its own silhouette out of the beam,
@@ -75,8 +77,8 @@ which flickers as the body animates. The game leaves a real player's two body me
 and drew that silhouette on every other peer's screen, so its spawn switches both off
 (`ue_wrap/actors/puppet_spawn`) `[V]` (`harness/autotest/autotest_beam_look.cpp`: the flags of both
 bodies logged side by side, and the host's captures of a client's beam on the floor, the silhouette
-there before and gone after). An empty battery switches the light off in the game's `ReceiveTick` with no
-function call to observe, so each tick the sender compares the game's flashlight bool with what it last
+there before and gone after). The charge is the worn flashlight's own, in its inventory entry. An empty battery switches the
+light off in the game's `ReceiveTick` with no function call to observe, so each tick the sender compares the game's flashlight bool with what it last
 sent, and the other peer's puppet goes dark too `[V]` (`harness/autotest/autotest_flash_battery.cpp`,
 each peer's battery drained in turn).
 A carried trash clump is driven to the puppet's hand on
@@ -197,17 +199,26 @@ Per player and private: the contents never cross the wire as gameplay. The host 
 peer's inventory per save under the identity the peer proved at admission and hands it back at
 the next join, before the world exists (`coop/items/player_inventory_sync`). The hand-back is a
 substitution, not an addition: a joiner's world is built from a capture of the host's save
-object, and that object is where the game keeps what a player carries (`GObjStack[0]`), wears
-and holds, so whatever is not replaced there is the host's. A first join gets the three
-starter items as copies under fresh keys, because the game's key index holds one object per
-key and a copy under its source's key aliases the original the moment either is dropped. The
-same profile carries the player's vitals (health, food, sleep, the flashlight charge, the food
-tolerances and the buffs), which the game keeps in place on that same save object, and where
-the player stood: a first join starts from the game's own defaults at the start point (the KPP gate in a fresh game, day 0 to 2; beside the
+object, and the game saves the player there as one of its saved actors: a record whose stream
+holds the pawn's vitals (health, food, sleep, coffee and gasoline) and its inventory component
+(the hotbar, the bag, the worn equipment), handed back to the level's player as the world loads
+(`ue_wrap/actors/player_record`). Whatever is not replaced there is the host's. The profile is the
+player's own record as the game wrote it, a readable copy of the vitals, and the save object's
+own per-player fields (strength, the food tolerances); a first join has no record, so the host's
+leaves the joiner's save object and the player starts as a new game's does, with the game's own
+starting equipment. The profile also carries where the player stood: a first join starts from the game's own defaults at the start point (the KPP gate in a fresh game, day 0 to 2; beside the
 base's bed from day 3), a
 returning player gets their numbers back and appears at the last spot they were standing on
 (on the ground, not ragdolled, not seated: a position read while driving the ATV is not a place
-a body can be put back), and one who left dead starts a fresh life. The vitals and the position ride a change of the items at once and otherwise go every
+a body can be put back), and one who left dead starts a fresh life. The profile travels deflated (`coop/items/inventory_wire`, blob version 5; version 4, the raw form, is still read from a profile
+file an earlier build wrote). The record is the game's tagged-property stream, about 2.4 KB per item and about 23 KB for an empty
+inventory, which is mostly property names that repeat, so it shrinks about forty times: 13 crowbars were 58630 bytes raw against
+the 56100-byte transport ceiling (255 chunks) and are about 3 KB now. A profile whose deflated form still passes one transport blob
+(the player's maxVolume is 50000, so the number of items is bounded only by the smallest item the game lists; 2269 fish steaks of
+volume 22 are a 5.4 MB record and a 120 KB blob) is cut into parts of at most one transport blob each (a marker byte, a group id, the
+part's index and count; at most 24 parts, 1.3 MB) and joined again by the receiver; past that the client logs an ERROR and the host
+keeps the last profile that fitted. The same goes for the host's push at a join. `[V]` (`profile_fill_drill`).
+The vitals and the position ride a change of the items at once and otherwise go every
 30 seconds. The host holds the newest profile of every player in memory for as long as the hosted
 world lives, so a rejoin gets back what the player left with, and writes the profiles to disk
 only with its own world save (`coop/player/player_profile_store`): a pocketed item has left the
@@ -216,10 +227,9 @@ item twice after a host restart, and an older one would lose it. A host that qui
 saving takes its players' profiles back to its last save together with its world. The copy that
 is written is the one taken when the game gathered the world into its save object, which during
 a game event is not the moment of the save (see [join.md](join.md), the save transfer). The
-profiles are keyed by the file the world is in: they stand under `coop_players/<save slot>/` in the
-mod's own folder (`Mods\Multivoid`), and one world is written under more than one name: a quicksave writes a new subsave file,
-and a plain save made after loading a subsave writes the main slot, so a save to another slot
-first copies the whole set beside that file. A profile reaches the host up to a second after the
+profiles are keyed by the save the world is in (its folder under `SaveGames/`): they stand under
+`coop_players/<save>/` in the mod's own folder (`Mods\Multivoid`), and one world can be written under more than
+one name, so a save to another name first copies the whole set beside that save. A profile reaches the host up to a second after the
 pickup it reports, so a save inside that second holds a profile one pickup behind its world. That identity is
 a key file in the mod's own folder, bound to the machine it was made on, under a private access list that admits only the
 account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
@@ -320,10 +330,10 @@ host. A setting that holds a password is never set or shown by command.
 | `RagdollPose` (stream) | each peer, while ragdolled | pelvis transform and velocity |
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
-| `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
+| `HandItem`, `ItemActivate` | each peer, relayed | per hand (main, off): the held item's class, its actor's name and its item name (the key of the game's item tables); the flashlight state |
 | `PlayerHit` | host to the hit peer | a parked creature's hit on the peer's puppet: the verb (addDamage or punch) to run on its own player |
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
-| `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
+| `PlayerInventoryBlob` | both | the per-player profile (the player's save record, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
 
 ## Late join

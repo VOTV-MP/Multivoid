@@ -10,13 +10,16 @@
 #include "coop/dev/container_join_drill.h"  // [dev] an edit no world-ready peer could take reaches the joiner
 #include "coop/dev/container_opener_probe.h"  // [dev] the actors far containers open through, on real objects
 #include "coop/dev/container_writer_probe.h"  // [dev] a container writer the container lane never saw
-#include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/container_view_drill.h"  // [dev] a container view closes as its opener leaves reach
+#include "coop/dev/container_take_drill.h"  // [dev] a client's take from a shared container
+#include "coop/dev/drone_cargo_take_drill.h"  // [dev] a client's take from the drone's cargo
+#include "coop/dev/atv_trunk_drill.h"  // [dev] a client's take from and put into an ATV's trunk
+#include "coop/dev/container_stack_drill.h"  // [dev] a client's part of a stack and merge of two, in a shared container
+#include "coop/dev/offhand_drill.h"  // [dev] a client holds an item in its off hand and drops it
 #include "coop/dev/container_intent_drill.h"  // [dev] a client takes from a shared container by the player's click
 #include "coop/dev/join_prop_loss_drill.h"  // [dev] a client's physics break and a position rekey at the join, measured on both peers
 #include "coop/dev/pr64_drill.h"  // [dev] a client's E on a host-owned coin and a drive box's lid, measured on both peers
 #include "coop/dev/container_route_census.h"  // [dev] each container verb counted by the route on its stack
-#include "coop/dev/container_route_drill.h"  // [dev] the census drill: each route driven once on a client
 #include "coop/dev/death_seam_census.h"  // [dev] every element end the death seam announces
 #include "coop/dev/damage_probe.h"  // [dev] every player damage verb call, and by whom
 #include "coop/dev/delivery_census_probe.h"  // COUNT the delivery-path actors
@@ -94,11 +97,12 @@
 #include "coop/dev/kerfur_seat_probe.h"  // [dev] which seat sees a kerfur radial command, logged by role
 #include "coop/dev/requester_feedback_exercise.h"  // [dev] the requester feedback's hint, raised inside a scope for slot 1
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
-#include "coop/dev/food_clock_probe.h"  // the food record's arrival catch-up and the two clocks behind it
+#include "coop/dev/food_clock_probe.h"  // the foods the prop-record lane turns away
 #include "coop/dev/grime_drill.h"  // [dev] a clean on either peer reaching the other's copy
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
 #include "coop/dev/hookdrag_selftest.h"  // [dev] a prop dragged by a hook, driven
-#include "coop/dev/inventory_pickup_drill.h"  // dev drill: one client pickup through putObjectInventory2
+#include "coop/dev/profile_fill_drill.h"  // dev drill: a full inventory profile reaches the host
+#include "coop/dev/inventory_pickup_drill.h"  // dev drill: one client pickup through addObjectToInventory
 #include "coop/dev/kerfur_convert_drill.h"  // [dev] a client turns a kerfur off and on beside a disc of its own
 #include "coop/dev/kerfur_serve_drill.h"  // [dev] the host runs a client's Omega commands for that client
 #include "coop/dev/kerfus_drill.h"  // [dev] a client turns the plain kerfur on and off through the host
@@ -176,7 +180,6 @@ void Install(coop::net::Session& session) {
     coop::dev::kerfus_drill::Install(&session);  // [dev] the Kerfus drill (no-op unless kerfus_drill=1)
     coop::dev::kerfus_throw_drill::Install(&session);  // [dev] the Kerfus throw drill (kerfus_throw_drill=1)
     coop::dev::kerfur_serve_drill::Install(&session);  // [dev] the Omega serve drill (kerfur_serve_drill=1)
-    coop::dev::container_selftest::Install(&session);  // [dev] the container-lane e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1)
     coop::dev::rack_birth_drill::Install(&session);  // [dev] the rack birth drill (no-op unless rack_birth_drill=1)
     coop::dev::burn_revive_drill::Install(&session);  // [dev] the burn revive drill (no-op unless burn_revive_drill=1)
@@ -221,6 +224,11 @@ void EndSession() {
     coop::dev::light_drill::OnDisconnect();  // [dev] the switch, its group and the phase belong to one world
     coop::dev::keypad_drill::OnDisconnect();  // [dev] the keypad and the legs belong to one world
     coop::dev::container_view_drill::OnDisconnect();  // [dev] the ATV, the view and the walks belong to one world
+    coop::dev::container_take_drill::OnDisconnect();  // [dev] the picked container and the walk belong to one world
+    coop::dev::atv_trunk_drill::OnDisconnect();  // [dev] the seeded trunk and the steps belong to one world
+    coop::dev::drone_cargo_take_drill::OnDisconnect();  // [dev] the seeded cargo and the walk belong to one world
+    coop::dev::container_stack_drill::OnDisconnect();  // [dev] the seeded stacks, the walk and the screen belong to one world
+    coop::dev::offhand_drill::OnDisconnect();  // [dev] the steps belong to one session
     coop::dev::container_intent_drill::OnDisconnect();  // [dev] the target, the screen and the walk belong to one session
     coop::dev::join_prop_loss_drill::OnDisconnect();  // [dev] the cans, the pair and the steps belong to one session
     coop::dev::impact_damage_probe::OnDisconnect();  // [dev] the session's call count is said and cleared
@@ -228,7 +236,6 @@ void EndSession() {
     coop::dev::kerfur_seat_probe::OnDisconnect();  // [dev] the session's call counts are said and cleared
     coop::dev::requester_feedback_exercise::OnDisconnect();  // [dev] the once-latch clears
     coop::dev::pr64_drill::OnDisconnect();  // [dev] the arm's steps and its walk belong to one session
-    coop::dev::container_route_drill::OnDisconnect();  // [dev] the fixtures and the steps belong to one session
     coop::dev::container_route_census::OnDisconnect();  // [dev] the census reports and starts over
     coop::dev::physmods_drill::OnDisconnect();  // [dev] the client arms again, so a rejoin says its line
     coop::dev::throw_drill::OnDisconnect();  // [dev] the backpack and its copy belong to one session
@@ -302,7 +309,6 @@ void EndSession() {
 }
 
 void RearmSelftests() {
-    coop::dev::container_selftest::OnDisconnect();  // [dev] re-arm the circle on reconnect
     coop::dev::container_join_drill::OnDisconnect();  // [dev] a later session's joiners start over
     coop::dev::floppy_selftest::OnDisconnect();  // [dev] re-arm the disc episodes on reconnect
     coop::dev::hookdrag_selftest::OnDisconnect();  // [dev] re-arm the drag on reconnect
@@ -338,7 +344,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::kerfur_serve_drill::Tick();  // [dev] the Omega serve drill's phases (a single bool read when off)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
     coop::dev::host_settle_drill::Tick(session);  // [dev] the host settle drill's verdict (a single bool read when off)
-    coop::dev::food_clock_probe::Tick();  // [dev] the food catch-up's clock reading (a single bool read when off)
+    coop::dev::food_clock_probe::Tick();  // [dev] the food claim reading (a single bool read when off)
     coop::dev::lookat_churn_probe::Tick();  // [dev] the interaction UI's rebuild rate under a held aim (a single bool read when off)
     coop::dev::lookat_aim_drill::Tick(&session);  // [dev] walk to a prop and hold the aim (a single bool read when off)
     coop::dev::door_drill::Tick(&session);  // [dev] the door drill's sensor readings and walk (a single bool read when off)
@@ -357,16 +363,19 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)
     coop::dev::recycled_slot_drill::Tick();  // [dev] the recycled-slot drill (a single read when off)
     coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)
-    coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)
     coop::dev::container_join_drill::Tick(&session);  // [dev] the container join drill (a single bool read when off)
     coop::dev::container_opener_probe::Tick(&session);  // [dev] far containers' openers and the reach to them (latched read when off)
     coop::dev::container_writer_probe::Tick(&session);  // [dev] a container changed by a writer nothing watches (latched read when off)
     coop::dev::container_view_drill::Tick(&session);  // [dev] the view-close drill (a single bool read when off)
+    coop::dev::container_take_drill::Tick(&session);  // [dev] the container take drill (a single bool read when off)
+    coop::dev::atv_trunk_drill::Tick(&session);  // [dev] the ATV trunk drill (a single bool read when off)
+    coop::dev::drone_cargo_take_drill::Tick(&session);  // [dev] the drone cargo take drill (a single bool read when off)
+    coop::dev::container_stack_drill::Tick(&session);  // [dev] the container stack drill (a single bool read when off)
+    coop::dev::offhand_drill::Tick(&session);  // [dev] the off-hand drill (a single bool read when off)
     coop::dev::container_intent_drill::Tick(&session);  // [dev] the container intent drill (a latched bool read when off)
     coop::dev::join_prop_loss_drill::Tick(&session);  // [dev] the join prop-loss drill (a latched enum read when off)
     coop::dev::pr64_drill::Tick(&session);  // [dev] the pr64 drill (a latched enum read when off)
     coop::dev::container_route_census::Tick(&session);  // [dev] the route census (a latched string read when off)
-    coop::dev::container_route_drill::Tick(&session);  // [dev] the census drill (a latched bool read when off)
     coop::dev::physmods_drill::Tick(&session);  // [dev] the module-plug drill (a single bool read when off)
     coop::dev::throw_drill::Tick(&session);  // [dev] the throw drill (latched string compares when off)
     coop::dev::atv_spawn_drill::Tick(&session);  // [dev] the ATV spawn drill (latched string compares when off)
@@ -441,7 +450,7 @@ void TickDrills(coop::net::Session& session) {
 void TickInventory(coop::net::Session& session) {
     namespace PP = coop::dev::perf_probe;
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) by content (no-op unless live_store_readout=1)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_pickup_drill"}; coop::dev::inventory_pickup_drill::Tick(&session); }  // dev drill: a client pockets one prop through the game's own verb (no-op unless its env switch is set)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_pickup_drill"}; coop::dev::inventory_pickup_drill::Tick(&session); coop::dev::profile_fill_drill::Tick(&session); }  // dev drill: a client pockets one prop through the game's own verb (no-op unless its env switch is set)
 }
 
 void TickProbes(coop::net::Session& session, bool isConnected, bool isHost) {

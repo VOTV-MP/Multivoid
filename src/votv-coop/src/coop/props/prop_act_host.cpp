@@ -23,6 +23,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/desk/drive_chain.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -48,9 +49,22 @@ constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
 // The reach a take or use is allowed beyond the target's bounds and the pose-staleness ball. A lenient bound on the
 // sender's last-synced place, not its exact range: the shape of MTA's server cutoff (CGame.cpp:3113).
 constexpr float kActReachUU = 200.0f;
+constexpr uint64_t kSeatWaitMs = 3000;   // how long a hold or pocket of a still-seated drive waits for the requester's eject line
+
+// Does one of the desk's slots (play, comp, eraser) still hold `actor`?
+bool SeatedInDeskSlot(void* actor) {
+    if (!ue_wrap::drive_chain::EnsureResolved() || !ue_wrap::drive_chain::IsDriveClass(ue_wrap::reflection::ClassOf(actor)))
+        return false;
+    for (int r = 0; r < ue_wrap::drive_chain::kRoleCount; ++r) {
+        void* const slot = ue_wrap::drive_chain::SlotActor(r);
+        if (slot && ue_wrap::drive_chain::SlotDrive(slot) == actor) return true;
+    }
+    return false;
+}
 
 struct Queued {
     coop::net::PropActRequestPayload req;
+    mutable uint64_t seatedSinceMs = 0;   // when the serving first found the target seated in a desk slot; 0 until then
 };
 
 constexpr int kWaitCauses = static_cast<int>(WaitCause::kCount);
@@ -109,14 +123,10 @@ void PocketTraits(void* actor, internal::ActTraits& t) {
     ue_wrap::prop_gather::PocketFacts f{};
     t.read = ue_wrap::prop_gather::ReadPocketFacts(actor, f);
     if (!t.read) return;
-    t.collectRefused = f.collectRefused;
+    t.takeRefused = f.takeRefused;
+    t.ignoreSave = f.ignoreSave;
     t.child = f.child;
-    t.frozen = f.frozen;
-    t.simulating = f.simulating;
-    t.canCollect = f.canCollect;
-    t.heavy = f.heavy;
-    t.meshRoot = f.meshRoot;
-    t.volumeFits = f.volumeFits;
+    t.attached = f.attached;
     t.saveClass = f.saveClass;
 }
 
@@ -124,15 +134,11 @@ void HoldTraits(void* actor, internal::ActTraits& t) {
     ue_wrap::prop_gather::HoldFacts f{};
     t.read = ue_wrap::prop_gather::ReadHoldFacts(actor, f);
     if (!t.read) return;
-    t.pickupRefused = f.pickupRefused;
+    t.takeRefused = f.takeRefused;
     t.ignoreSave = f.ignoreSave;
     t.child = f.child;
-    t.frozen = f.frozen;
     t.simulating = f.simulating;
-    t.canHold = f.canHold;
-    t.heavy = f.heavy;
     t.saveClass = f.saveClass;
-    t.equipRow = f.equipRow;
 }
 
 // The use verb's traits: the class the game offers the eat on, and for food's body whether it is edible. The term that
@@ -235,6 +241,16 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
     dist = sub.distUU;
     allowed = sub.reachUU;
     if (in.reach != EL::IntentOutcome::Ok) return;
+    // A drive taken out of the desk's slot by hold or pocket is ejected on the requester first (driveAction), and that
+    // slot line travels beside this request, not before it. Seated here still, the drive is frozen and attached, and
+    // would fail the fit for a verb that has not met its eject yet: the request waits for the line, up to a bound, after
+    // which it is judged as it stands (a drive nobody ejected is refused).
+    if (q.req.family != static_cast<uint8_t>(PropActFamily::Use) && SeatedInDeskSlot(actor)) {
+        const uint64_t now = coop::net::NowMs();
+        if (q.seatedSinceMs == 0) q.seatedSinceMs = now;
+        in.seated = now - q.seatedSinceMs < kSeatWaitMs;
+        if (in.seated) return;
+    }
     // The act's facts are the dear reads, so they come last; MTA's entry tests its cheap conditions first too
     // (trailer, action, occupant, then distance: CGame.cpp:3105-3113).
     in.familyFits = FamilyFits(actor, q.req.family);
@@ -252,7 +268,8 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
         // A request waits where MTA answers or drops at once (a sender not joined, CGame.cpp:3025; one with an action in
         // flight, FAIL_ACTION at :3350): a peer joining mid-activity is never refused for it.
         const WaitCause cause = !in.worldReady ? WaitCause::NotReady
-                                : in.holdsReservation ? WaitCause::Reservation : WaitCause::NoBody;
+                                : in.holdsReservation ? WaitCause::Reservation
+                                : in.seated ? WaitCause::Seated : WaitCause::NoBody;
         ++g_slots[slot].waits[static_cast<int>(cause)];
         return coop::net::Served::Wait;
     }
@@ -293,6 +310,7 @@ ActVerdict Decide(const ActInputs& in) {
     // Authorize answers NoBody for the state HasBody reads, so this is the defence for a body lost between the two.
     if (in.reach == coop::element::IntentOutcome::NoBody) return ActVerdict::Wait;
     if (in.reach != coop::element::IntentOutcome::Ok) return ActVerdict::Reach;
+    if (in.seated) return ActVerdict::Wait;
     if (!in.familyFits) return ActVerdict::WrongFamily;
     return ActVerdict::Grant;
 }
@@ -302,14 +320,11 @@ bool KnownFamily(uint8_t family) {
 }
 
 bool PocketFits(const ActTraits& t) {
-    return t.read && !t.collectRefused && !t.child && (t.frozen || t.simulating || t.driven) && t.canCollect &&
-           !t.heavy && t.meshRoot && t.volumeFits && t.saveClass;
+    return t.read && !t.ignoreSave && !t.child && !t.attached && !t.takeRefused && t.saveClass;
 }
 
 bool HoldFits(const ActTraits& t) {
-    return t.read && !t.pickupRefused &&
-           (t.frozen || ((t.simulating || t.driven) && !t.child && !t.heavy && t.canHold)) && !t.ignoreSave &&
-           t.saveClass && t.equipRow;
+    return t.read && !t.ignoreSave && !t.child && (t.simulating || t.driven) && !t.takeRefused && t.saveClass;
 }
 
 bool UseFits(const ActTraits& t) { return t.read && t.offered && !(t.foodBody && t.notEdible); }
@@ -318,25 +333,17 @@ std::optional<Tally> FirstRefusal(uint8_t family, const ActTraits& t) {
     if (!KnownFamily(family)) return Tally::FitBadFamily;
     if (!t.read) return Tally::FitUnread;
     if (family == static_cast<uint8_t>(PropActFamily::Pocket)) {
-        if (t.collectRefused) return Tally::FitCollectRefused;
+        if (t.ignoreSave) return Tally::FitIgnoreSave;
         if (t.child) return Tally::FitChild;
-        if (!(t.frozen || t.simulating || t.driven)) return Tally::FitPhysics;
-        if (!t.canCollect) return Tally::FitCanCollect;
-        if (t.heavy) return Tally::FitHeavy;
-        if (!t.meshRoot) return Tally::FitMeshRoot;
-        if (!t.volumeFits) return Tally::FitVolume;
+        if (t.attached) return Tally::FitAttached;
+        if (t.takeRefused) return Tally::FitTakeRefused;
         if (!t.saveClass) return Tally::FitSaveClass;
     } else if (family == static_cast<uint8_t>(PropActFamily::Hold)) {
-        if (t.pickupRefused) return Tally::FitPickupRefused;
-        if (!t.frozen) {
-            if (!(t.simulating || t.driven)) return Tally::FitPhysics;
-            if (t.child) return Tally::FitChild;
-            if (t.heavy) return Tally::FitHeavy;
-            if (!t.canHold) return Tally::FitCanHold;
-        }
         if (t.ignoreSave) return Tally::FitIgnoreSave;
+        if (t.child) return Tally::FitChild;
+        if (!(t.simulating || t.driven)) return Tally::FitPhysics;
+        if (t.takeRefused) return Tally::FitTakeRefused;
         if (!t.saveClass) return Tally::FitSaveClass;
-        if (!t.equipRow) return Tally::FitEquipRow;
     } else {
         if (!t.offered) return Tally::FitNoUseRow;
         if (t.foodBody && t.notEdible) return Tally::FitNotEdible;
@@ -499,9 +506,8 @@ const char* TallyName(Tally t) {
     static const char* const kNames[] = {
         "target_gone", "bad_commit", "held_at_disconnect", "destroy_failed", "queue_full_unready", "bad_sender",
         "grant_unsent", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
-        "fit_collect_refused", "fit_pickup_refused", "fit_ignore_save", "fit_child", "fit_physics",
-        "fit_can_collect", "fit_can_hold", "fit_heavy", "fit_mesh_root", "fit_volume", "fit_save_class",
-        "fit_equip_row", "fit_not_edible"};
+        "fit_ignore_save", "fit_child", "fit_attached", "fit_physics", "fit_take_refused", "fit_save_class",
+        "fit_not_edible"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }

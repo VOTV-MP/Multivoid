@@ -437,24 +437,23 @@ void ClientTick() {
         Next(Step::Pocket);
         return;
     case Step::Pocket: {
-        // The game gathers only a drive frozen or simulating: the host's drive is pocketed once its copy here rests
-        // gatherable.
-        // Found once by the registry scan and held after: the poll then reads the held reference.
+        // The game's pocket refuses a drive that is ignoreSave, a child actor, attached to a parent or refused by
+        // canBeCollectedOrPickedUp, and has no physics term: the host's drive is pocketed once its copy here passes
+        // all four. Found once by the registry scan and held after: the poll then reads the held reference.
         if (!g_replace.Alive()) g_replace.Set(UnseatedDriveNamed(kReplace));
         void* const d = g_replace.Alive() ? g_replace.Get() : nullptr;
-        if (!d || !ue_wrap::prop_gather::IsGatherable(d)) {
+        ue_wrap::prop_gather::PocketFacts facts{};
+        const bool read = d && ue_wrap::prop_gather::ReadPocketFacts(d, facts);
+        if (!read || facts.takeRefused || facts.ignoreSave || facts.child || facts.attached) {
             if (Expired(kLegBoundMs)) {
                 char why[220];
-                if (d) {
-                    void* const mesh = ue_wrap::prop::GetStaticMesh(d);
-                    std::snprintf(why, sizeof why, "the re-placement drive never reached this client gatherable (child=%d "
-                                  "frozen=%d root simulating=%d mesh simulating=%d parked=%d)", E::IsChildActor(d) ? 1 : 0,
-                                  ue_wrap::prop::IsFrozen(d) ? 1 : 0, E::IsActorRootSimulatingPhysics(d) ? 1 : 0,
-                                  mesh && E::IsComponentSimulatingPhysics(mesh) ? 1 : 0,
-                                  coop::prop_drive_stream::IsParked(d) ? 1 : 0);
+                if (read) {
+                    std::snprintf(why, sizeof why, "the re-placement drive never became pocketable on this client "
+                                  "(takeRefused=%d ignoreSave=%d child=%d attached=%d)", facts.takeRefused ? 1 : 0,
+                                  facts.ignoreSave ? 1 : 0, facts.child ? 1 : 0, facts.attached ? 1 : 0);
                 } else {
-                    std::snprintf(why, sizeof why, "the re-placement drive never reached this client gatherable (no live "
-                                  "unseated drive here reads its row)");
+                    std::snprintf(why, sizeof why, "the re-placement drive never became pocketable on this client (%s)",
+                                  d ? "its pocket facts could not be read" : "no live unseated drive here reads its row");
                 }
                 Fail(why);
             }
@@ -508,8 +507,8 @@ void ClientTick() {
         E::MainPlayerGrabState hand{};
         // A hold destroys the world drive and spawns a hand item of its class: the hold is taken when the
         // drive is gone and the hand has a drive.
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || g_own.Alive() ||
-            R::ClassNameOf(hand.holdingActor) != kDriveCls) {
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.mainHand || g_own.Alive() ||
+            R::ClassNameOf(hand.mainHand) != kDriveCls) {
             Abandon("the taken-out drive could not be taken into the hand");
             return;
         }

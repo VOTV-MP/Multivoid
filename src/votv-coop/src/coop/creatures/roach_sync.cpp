@@ -365,7 +365,10 @@ void Tick() {
         return;
     }
 
-    // HOST: poll -> paged broadcast on change / drift / keepalive.
+    // HOST: poll -> paged broadcast on change / drift / keepalive. A joiner that is connected
+    // but not yet world-ready is no receiver (the send gate drops the fan-out); it is served by
+    // QueueConnectBroadcastForSlot when it becomes ready.
+    if (!s->AnyWorldReadyPeer()) return;
     void* master = Master();
     if (!master) return;
     std::vector<SnapEntry> snap;

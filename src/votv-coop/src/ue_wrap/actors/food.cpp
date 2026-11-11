@@ -28,7 +28,10 @@ constexpr int32_t kFrostDataIndex = 1;
 // come back at the address of another, so the table goes with the world (SyncWorld), as prop_can_state's does.
 struct ClassInfo {
     bool    food = false;
-    int32_t temperature = -1, ripeness = -1, uses = -1, celsius = -1, steam = -1, impact = -1;
+    int32_t temperature = -1, freshness = -1, freshnessSteps = -1, uses = -1, celsius = -1, steam = -1, impact = -1;
+    int32_t spoiledOff = -1;
+    uint8_t spoiledMask = 0;
+    void*   setSpoiled = nullptr;   // the class's setSpoiled(isSpoiled), which also switches the spoiled effect
     int32_t frozenOff = -1;   // tempLessThan0 is a Blueprint bool: one bit of a byte it may share with its neighbours
     uint8_t frozenMask = 0;
 };
@@ -53,8 +56,11 @@ ClassInfo& InfoOf(void* cls) {
         info.food = R::NameEquals(R::NameOf(c), L"prop_food_C");
     if (info.food) {
         info.temperature = R::FindPropertyOffset(cls, L"temperature");
-        info.ripeness = R::FindPropertyOffset(cls, L"ripeness");
-        info.uses = R::FindPropertyOffset(cls, L"uses");
+        info.freshness = R::FindPropertyOffset(cls, L"freshnessAlpha");
+        info.freshnessSteps = R::FindPropertyOffset(cls, L"invRead_Freshness");
+        if (!R::FindBoolProperty(cls, L"isSpoiled", info.spoiledOff, info.spoiledMask)) info.spoiledOff = -1;
+        info.setSpoiled = R::FindFunction(cls, L"setSpoiled");
+        info.uses = R::FindPropertyOffset(cls, L"invRead_Uses");
         info.celsius = R::FindPropertyOffset(cls, L"celsius");
         info.steam = R::FindPropertyOffset(cls, L"eff_steam");
         info.impact = R::FindPropertyOffset(cls, L"physicsImpact");
@@ -62,12 +68,14 @@ ClassInfo& InfoOf(void* cls) {
             info.frozenOff = -1;
             info.frozenMask = 0;
         }
-        UE_LOGI("food: class %ls: temperature @0x%X ripeness @0x%X uses @0x%X celsius @0x%X eff_steam @0x%X "
-                "physicsImpact @0x%X tempLessThan0 @0x%X mask 0x%02X",
-                R::ToString(R::NameOf(cls)).c_str(), info.temperature, info.ripeness, info.uses, info.celsius,
-                info.steam, info.impact, info.frozenOff, info.frozenMask);
-        if (info.temperature < 0 || info.ripeness < 0 || info.uses < 0 || info.celsius < 0)
-            UE_LOGW("food: class %ls declares no temperature, ripeness, uses or celsius -- its foods are not read",
+        UE_LOGI("food: class %ls: temperature @0x%X freshnessAlpha @0x%X invRead_Freshness @0x%X invRead_Uses @0x%X "
+                "celsius @0x%X eff_steam @0x%X physicsImpact @0x%X tempLessThan0 @0x%X mask 0x%02X",
+                R::ToString(R::NameOf(cls)).c_str(), info.temperature, info.freshness, info.freshnessSteps, info.uses,
+                info.celsius, info.steam, info.impact, info.frozenOff, info.frozenMask);
+        if (info.temperature < 0 || info.freshness < 0 || info.freshnessSteps < 0 || info.uses < 0 ||
+            info.celsius < 0)
+            UE_LOGW("food: class %ls declares no temperature, freshnessAlpha, invRead_Freshness, invRead_Uses or "
+                    "celsius -- its foods are not read",
                     R::ToString(R::NameOf(cls)).c_str());
     }
     return g_class.emplace(cls, info).first->second;
@@ -127,24 +135,33 @@ bool IsFood(void* actor) { return actor && R::IsLive(actor) && IsFoodClass(R::Cl
 bool Read(void* actor, Condition& out) {
     if (!IsFood(actor)) return false;
     const ClassInfo& info = InfoOf(R::ClassOf(actor));
-    if (info.temperature < 0 || info.ripeness < 0 || info.uses < 0) return false;
+    if (info.temperature < 0 || info.freshness < 0 || info.freshnessSteps < 0 || info.uses < 0) return false;
     const auto* base = static_cast<const uint8_t*>(actor);
     std::memcpy(&out.temperature, base + info.temperature, sizeof(float));
-    std::memcpy(&out.ripeness, base + info.ripeness, sizeof(float));
+    std::memcpy(&out.freshness, base + info.freshness, sizeof(float));
+    std::memcpy(&out.freshnessSteps, base + info.freshnessSteps, sizeof(int32_t));
     std::memcpy(&out.uses, base + info.uses, sizeof(int32_t));
+    out.spoiled = info.spoiledOff >= 0 && (base[info.spoiledOff] & info.spoiledMask) != 0;
     return true;
 }
 
 bool Write(void* actor, const Condition& in) {
     if (!IsFood(actor)) return false;
     const ClassInfo& info = InfoOf(R::ClassOf(actor));
-    if (info.temperature < 0 || info.ripeness < 0 || info.uses < 0 || info.celsius < 0) return false;
+    if (info.temperature < 0 || info.freshness < 0 || info.freshnessSteps < 0 || info.uses < 0 || info.celsius < 0)
+        return false;
     auto* base = static_cast<uint8_t*>(actor);
     const float c = in.temperature - kKelvinToCelsius;
     std::memcpy(base + info.temperature, &in.temperature, sizeof(float));
-    std::memcpy(base + info.ripeness, &in.ripeness, sizeof(float));
+    std::memcpy(base + info.freshness, &in.freshness, sizeof(float));
+    std::memcpy(base + info.freshnessSteps, &in.freshnessSteps, sizeof(int32_t));
     std::memcpy(base + info.uses, &in.uses, sizeof(int32_t));
     std::memcpy(base + info.celsius, &c, sizeof(float));
+    const bool spoiled = info.spoiledOff >= 0 && (base[info.spoiledOff] & info.spoiledMask) != 0;
+    if (info.setSpoiled && spoiled != in.spoiled) {
+        ue_wrap::ParamFrame f(info.setSpoiled);
+        if (f.valid() && f.Set<bool>(L"isSpoiled", in.spoiled)) ue_wrap::Call(actor, f);
+    }
     return true;
 }
 

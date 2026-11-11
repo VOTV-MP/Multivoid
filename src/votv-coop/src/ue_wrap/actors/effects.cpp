@@ -10,6 +10,7 @@
 #include "ue_wrap/engine/data_table.h"
 #include "ue_wrap/world/world_singleton.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -120,29 +121,32 @@ bool EnsureEffectOffsets() {
     return g_strengthOff >= 0 && g_timeOff >= 0;
 }
 
-// ---- the save object's reset, resolved per save class ----------------------------------------
+// ---- the save object's effect records, resolved per save class --------------------------------
 
+// An effect is saved as a record of saveSlot_C.betterObjectsData attached to the player: its
+// struct_bettersave attachKey is "mainPlayer", the test the game's own reset_player_effects makes.
+// That verb then clears the WHOLE array, the world's records with the effects, so it is not called;
+// the matching records are taken out here instead.
 struct SaveSlot {
     void*   cls = nullptr;
-    int32_t objectsData = -1;   // TArray<Fstruct_save>
-    int32_t gamemode = -1;      // UmainGamemode_C*, the hint's target
-    void*   resetFn = nullptr;  // reset_player_effects
+    int32_t records = -1;    // TArray<struct_bettersave>
+    int32_t stride = 0;      // one record's bytes
+    int32_t attachKey = -1;  // the FName member within a record
 };
 SaveSlot g_slot;
 
-// `slot`'s class with the reset verb and its two rows resolved, the gamemode shape. A name that
-// does not resolve stays unresolved for that class and is logged once.
 const SaveSlot& SaveSlotFor(void* slot) {
     if (void* const cls = R::ClassOf(slot); cls != g_slot.cls) {
         g_slot = SaveSlot{};
         g_slot.cls = cls;
-        g_slot.objectsData = R::FindPropertyOffset(cls, L"objectsData");
-        g_slot.gamemode = R::FindPropertyOffset(cls, L"gamemode");
-        g_slot.resetFn = R::FindFunction(cls, L"reset_player_effects");
-        const std::wstring label = R::ToString(R::NameOf(cls));
-        if (g_slot.objectsData < 0) UE_LOGE("effects: %ls.objectsData did not resolve", label.c_str());
-        if (g_slot.gamemode < 0) UE_LOGE("effects: %ls.gamemode did not resolve", label.c_str());
-        if (!g_slot.resetFn) UE_LOGE("effects: %ls.reset_player_effects did not resolve", label.c_str());
+        g_slot.records = R::FindPropertyOffset(cls, L"betterObjectsData");
+        void* rec = R::ArrayInnerStruct(cls, L"betterObjectsData");
+        // The record holds an FTransform, so the array lays records out on 16-byte boundaries.
+        g_slot.stride = rec ? (R::StructSize(rec) + 15) & ~15 : 0;
+        g_slot.attachKey = rec ? R::FindPropertyOffsetByPrefix(rec, L"attachKey_") : -1;
+        if (g_slot.records < 0 || g_slot.stride <= 0 || g_slot.attachKey < 0)
+            UE_LOGE("effects: %ls.betterObjectsData did not resolve (offset %d, stride %d, attachKey %d)",
+                    R::ToString(R::NameOf(cls)).c_str(), g_slot.records, g_slot.stride, g_slot.attachKey);
     }
     return g_slot;
 }
@@ -160,23 +164,30 @@ bool ArrayLength(const void* base, int32_t off, int32_t* num) {
 
 }  // namespace
 
-int ResetOnSaveObject(void* saveSlot, bool* gamemodeSet) {
-    if (gamemodeSet) *gamemodeSet = false;
+int RemovePlayerEffectRecords(void* saveSlot) {
     if (!SR::PlausibleObjPtr(saveSlot) || !R::IsLive(saveSlot)) return -1;
     const SaveSlot& s = SaveSlotFor(saveSlot);
-    if (s.objectsData < 0 || !s.resetFn) return -1;
-    int32_t before = 0;
-    if (!ArrayLength(saveSlot, s.objectsData, &before)) return -1;
-    if (gamemodeSet && s.gamemode >= 0) {
-        void* gm = nullptr;
-        std::memcpy(&gm, static_cast<const uint8_t*>(saveSlot) + s.gamemode, sizeof(gm));
-        *gamemodeSet = gm != nullptr;
+    if (s.records < 0 || s.stride <= 0 || s.attachKey < 0) return -1;
+    uint8_t* const hdr = static_cast<uint8_t*>(saveSlot) + s.records;
+    uint8_t* data = nullptr;
+    int32_t num = 0;
+    std::memcpy(&data, hdr, sizeof(data));
+    std::memcpy(&num, hdr + 8, sizeof(num));
+    if (num < 0 || (num > 0 && !data)) return -1;
+    // Compacted in place, as TArray::RemoveAt moves its elements: a record is bitwise-relocatable.
+    // A removed record's own heap members are not freed; they are a few strings, once per join.
+    int32_t kept = 0;
+    for (int32_t i = 0; i < num; ++i) {
+        uint8_t* rec = data + static_cast<size_t>(i) * static_cast<size_t>(s.stride);
+        R::FName key{};
+        std::memcpy(&key, rec + s.attachKey, sizeof(key));
+        if (R::NameEquals(key, L"mainPlayer")) continue;
+        if (kept != i) std::memmove(data + static_cast<size_t>(kept) * static_cast<size_t>(s.stride), rec,
+                                    static_cast<size_t>(s.stride));
+        ++kept;
     }
-    ParamFrame f(s.resetFn);
-    if (!f.valid() || !Call(saveSlot, f)) return -1;
-    int32_t after = 0;
-    if (!ArrayLength(saveSlot, s.objectsData, &after)) return -1;
-    return before - after;
+    std::memcpy(hdr + 8, &kept, sizeof(kept));
+    return num - kept;
 }
 
 bool Names(std::vector<std::wstring>* out) {
@@ -198,11 +209,16 @@ bool List(std::vector<Entry>* out) {
     if (actors.num > 0 && !EnsureEffectOffsets()) return false;
     out->clear();
     out->reserve(static_cast<size_t>(names.num));
+    // 0.10: effect_C registers itself again in its new processKeys override, so one addEffect leaves the one actor in both
+    // arrays twice. An actor already listed is the same effect, not another: it is listed once.
+    std::vector<void*> seen;
     for (int32_t i = 0; i < names.num; ++i) {
         R::FName n{};
         void* a = nullptr;
         std::memcpy(&n, names.data + static_cast<size_t>(i) * sizeof(R::FName), sizeof(n));
         std::memcpy(&a, actors.data + static_cast<size_t>(i) * sizeof(void*), sizeof(a));
+        if (SR::PlausibleObjPtr(a) && std::find(seen.begin(), seen.end(), a) != seen.end()) continue;
+        if (SR::PlausibleObjPtr(a)) seen.push_back(a);
         Entry e{R::ToString(n), false, 0.f, 0.f};
         if (SR::PlausibleObjPtr(a) && R::IsLive(a)) {
             e.live = true;
@@ -230,6 +246,42 @@ size_t ForEachWorldEffect(void (*fn)(void* effect, void* ctx), void* ctx) {
         ++visited;
     }
     return visited;
+}
+
+// The second registration an add leaves (see List) outlives the actor the game's removal destroys: the arrays then hold a
+// name whose actor is dead, which the game's own next addEffect of that name would find first and stack onto. Taken out of
+// both arrays here, in step, for the name just removed. The arrays are the gamemode's own, edited on the game thread
+// between its ticks, as TArray::RemoveAt does (elements are bitwise-relocatable).
+void PurgeStale(void* gm, const std::wstring& spelled) {
+    if (g_gm.effectsNames < 0 || g_gm.effects < 0) return;
+    uint8_t* const nh = static_cast<uint8_t*>(gm) + g_gm.effectsNames;
+    uint8_t* const ah = static_cast<uint8_t*>(gm) + g_gm.effects;
+    uint8_t* names = nullptr;
+    uint8_t* acts = nullptr;
+    int32_t nn = 0, an = 0;
+    std::memcpy(&names, nh, sizeof(names));
+    std::memcpy(&nn, nh + 8, sizeof(nn));
+    std::memcpy(&acts, ah, sizeof(acts));
+    std::memcpy(&an, ah + 8, sizeof(an));
+    if (nn != an || nn <= 0 || !names || !acts) return;
+    int32_t kept = 0;
+    for (int32_t i = 0; i < nn; ++i) {
+        R::FName n{};
+        void* a = nullptr;
+        std::memcpy(&n, names + static_cast<size_t>(i) * sizeof(R::FName), sizeof(n));
+        std::memcpy(&a, acts + static_cast<size_t>(i) * sizeof(void*), sizeof(a));
+        const bool stale = _wcsicmp(R::ToString(n).c_str(), spelled.c_str()) == 0 && !(SR::PlausibleObjPtr(a) && R::IsLive(a));
+        if (stale) continue;
+        if (kept != i) {
+            std::memmove(names + static_cast<size_t>(kept) * sizeof(R::FName), names + static_cast<size_t>(i) * sizeof(R::FName), sizeof(R::FName));
+            std::memmove(acts + static_cast<size_t>(kept) * sizeof(void*), acts + static_cast<size_t>(i) * sizeof(void*), sizeof(void*));
+        }
+        ++kept;
+    }
+    if (kept == nn) return;
+    std::memcpy(nh + 8, &kept, sizeof(kept));
+    std::memcpy(ah + 8, &kept, sizeof(kept));
+    UE_LOGI("effects: removed %d stale registration(s) of '%ls' the game's removal left", nn - kept, spelled.c_str());
 }
 
 bool Add(const std::wstring& name, float strength, float seconds) {
@@ -268,7 +320,9 @@ bool Remove(const std::wstring& name) {
     ParamFrame f(g_gm.removeEffectFn);
     if (!f.valid()) return false;
     if (!f.Set<R::FName>(L"InputPin", pin)) return false;
-    return Call(gm, f);
+    const bool ran = Call(gm, f);
+    if (ran) PurgeStale(gm, spelled);
+    return ran;
 }
 
 }  // namespace ue_wrap::effects

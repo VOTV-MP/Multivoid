@@ -45,7 +45,7 @@ bool HostHolds(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_hold::HostHolds");
     void* local = coop::players::Registry::Get().Local();
     E::MainPlayerGrabState g{};
-    return local && E::ReadMainPlayerGrabState(local, g) && (g.grabbingActor == actor || g.holdingActor == actor);
+    return local && E::ReadMainPlayerGrabState(local, g) && (g.grabbingActor == actor || ue_wrap::engine::InEitherHand(g, actor));
 }
 
 Holder WhoHolds(void* actor, int requester) {

@@ -1,6 +1,6 @@
 // ue_wrap/devices/lightswitch.cpp -- see ue_wrap/devices/lightswitch.h. Engine access for VOTV
-// light groups (Atrigger_lightRoot_C). Offsets resolved from the live class via
-// reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
+// light groups (Atrigger_lightRoot_C). Offsets are resolved from the live class by member name; a member
+// the name does not find leaves its lane off, said once, and no offset is guessed.
 
 #include "ue_wrap/devices/lightswitch.h"
 
@@ -20,23 +20,19 @@ namespace R = reflection;
 std::atomic<bool> g_resolved{false};
 
 void*   g_rootCls    = nullptr;  // trigger_lightRoot_C UClass
-int32_t g_keyOff     = -1;       // AtriggerBase_C::Key       (Alpha 0.9.0-n: 0x0260)
-int32_t g_isActiveOff = -1;      // trigger_lightRoot_C::IsActive (0x02B8)
+int32_t g_keyOff     = -1;       // AtriggerBase_C::Key
+int32_t g_isActiveOff = -1;      // trigger_lightRoot_C::IsActive
 void*   g_runTriggerFn = nullptr;// runTrigger(owner, index) -- index 1/2 are the ABSOLUTE setters
 void*   g_setActiveFn = nullptr; // setActive(bool) -- the group's breaker verb
 int32_t g_breakerOff  = -1;      // trigger_lightRoot_C::active, the breaker (distinct from IsActive)
 
-constexpr int32_t kKeyOffFallback      = 0x0260;
-constexpr int32_t kIsActiveOffFallback = 0x02B8;
-
 // --- The light SWITCH (Alightswitch_C) ---
 std::atomic<bool> g_swResolved{false};
 void*   g_swCls   = nullptr;  // lightswitch_C UClass
-int32_t g_swKeyOff = -1;      // AtriggerBase_C::Key (shared base offset, 0x0260)
-int32_t g_swAOff  = -1;       // Alightswitch_C::A (the flip bool, 0x02A0)
+int32_t g_swKeyOff = -1;      // AtriggerBase_C::Key (shared base offset)
+int32_t g_swAOff  = -1;       // Alightswitch_C::A (the flip bool)
 void*   g_useFn   = nullptr;  // use()
 int32_t g_objectsOff = -1;    // triggerBase_C::objects (TArray<UObject*>): objects[0] is the switch's group
-constexpr int32_t kSwitchAOffFallback = 0x02A0;
 
 }  // namespace
 
@@ -46,22 +42,16 @@ bool EnsureResolved() {
     void* rootCls = R::FindClass(L"trigger_lightRoot_C");
     if (!rootCls) return false;
 
-    // Key is declared on the trigger base, which the property lookup climbs to.
-    int32_t keyOff = R::FindPropertyOffset(rootCls, L"Key");
-    if (keyOff < 0) {
-        UE_LOGW("lightswitch: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
-        keyOff = kKeyOffFallback;
-    }
-    int32_t isActiveOff = R::FindPropertyOffset(rootCls, L"IsActive");
-    if (isActiveOff < 0) {
-        UE_LOGW("lightswitch: reflected IsActive offset not found -- using fallback 0x%04X", kIsActiveOffFallback);
-        isActiveOff = kIsActiveOffFallback;
-    }
     void* setActiveFn = R::FindFunction(rootCls, L"SetActive");
     if (!setActiveFn) {
         UE_LOGW("lightswitch: SetActive UFunction not found -- not ready");
         return false;
     }
+    // Key is declared on the trigger base, which the property lookup climbs to.
+    const int32_t keyOff = R::FindPropertyOffset(rootCls, L"Key");
+    if (keyOff < 0) UE_LOGE("lightswitch: 'Key' not found by name -- light groups carry no key, so none is synced");
+    const int32_t isActiveOff = R::FindPropertyOffset(rootCls, L"IsActive");
+    if (isActiveOff < 0) UE_LOGE("lightswitch: 'IsActive' not found by name -- a light group's state is not read");
     // `active` (the breaker) and `IsActive` (the live state) are two separate FBoolProperties, and
     // FName lookup ignores case, so these two names resolve two fields. Read only: the breaker is
     // set through the group's own setActive.
@@ -110,15 +100,12 @@ bool EnsureSwitchResolved() {
     void* cls = R::FindClass(L"lightswitch_C");
     if (!cls) return false;
     // Key and objects are declared on the trigger base, which the property lookup climbs to.
-    int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
-    if (keyOff < 0) keyOff = kKeyOffFallback;
-    int32_t aOff = R::FindPropertyOffset(cls, L"A");
-    if (aOff < 0) {
-        UE_LOGW("lightswitch: switch A offset not found -- using fallback 0x%04X", kSwitchAOffFallback);
-        aOff = kSwitchAOffFallback;
-    }
     void* useFn = R::FindFunction(cls, L"use");
     if (!useFn) { UE_LOGW("lightswitch: switch use() UFunction not found -- not ready"); return false; }
+    const int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
+    if (keyOff < 0) UE_LOGE("lightswitch: switch 'Key' not found by name -- switches carry no key, so none is synced");
+    const int32_t aOff = R::FindPropertyOffset(cls, L"A");
+    if (aOff < 0) UE_LOGE("lightswitch: switch 'A' not found by name -- a switch's flip is not read");
     g_objectsOff = R::FindPropertyOffset(cls, L"objects");
     g_swCls = cls; g_swKeyOff = keyOff; g_swAOff = aOff; g_useFn = useFn;
     g_swResolved.store(true, std::memory_order_release);

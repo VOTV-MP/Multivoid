@@ -22,7 +22,16 @@ struct Want {
     int minRecords = 2;
     // Containers this answers true for rank before the others; null ranks by element id alone.
     bool (*prefers)(void* actor) = nullptr;
+    // Containers this answers true for are not candidates at all (a locked container, which the game refuses to open); null
+    // skips none.
+    bool (*skips)(void* actor) = nullptr;
 };
+
+// Whether the container's `locked` flag is set (`known` says the flag resolved on its class), and the `skips` rule that leaves a
+// locked container out of the pick: the game's openContainer refuses it with the hint "Cannot open", so a drill that opens its
+// pick can do nothing with it. Says once per class which it left out.
+bool IsLocked(void* container, bool* known);
+bool SkipLocked(void* actor);
 
 struct Pick {
     uint32_t eid = 0;

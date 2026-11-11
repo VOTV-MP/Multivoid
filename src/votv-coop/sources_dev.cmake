@@ -77,6 +77,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/kerfur_convert_drill.cpp
     src/coop/dev/kerfus_drill.cpp
     src/coop/dev/kerfus_throw_drill.cpp
+    src/coop/dev/drill_place.cpp
     src/coop/dev/desk_crossing_drill.cpp
     src/coop/dev/desk_ping_drill.cpp
     src/coop/dev/desk_ping_drill_observer.cpp
@@ -105,7 +106,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/kerfur_serve_drill_steps.cpp
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/radio_tower_probe.cpp
-    src/coop/dev/container_selftest.cpp
     src/coop/dev/container_poke.cpp
     src/coop/dev/container_join_drill.cpp
     src/coop/dev/drive_selftest.cpp
@@ -124,16 +124,14 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_opener_probe.cpp
     src/coop/dev/container_writer_probe.cpp
     src/coop/dev/container_view_drill.cpp
+    src/coop/dev/container_take_drill.cpp
+    src/coop/dev/drone_cargo_take_drill.cpp
+    src/coop/dev/atv_trunk_drill.cpp
+    src/coop/dev/container_stack_drill.cpp
+    src/coop/dev/offhand_drill.cpp
     src/coop/dev/container_intent_drill.cpp
-    src/coop/dev/container_intent_drill_append.cpp
-    src/coop/dev/container_intent_drill_depart_room.cpp
-    src/coop/dev/container_intent_drill_host.cpp
+    src/coop/dev/container_intent_drill_depart.cpp
     src/coop/dev/container_pick.cpp
-    src/coop/dev/container_intent_drill_pick.cpp
-    src/coop/dev/container_intent_drill_put.cpp
-    src/coop/dev/container_intent_drill_put_host.cpp
-    src/coop/dev/container_intent_drill_put2.cpp
-    src/coop/dev/container_intent_drill_put_join.cpp
     src/coop/dev/container_intent_drill_throw.cpp
     src/coop/dev/container_intent_drill_throw_act.cpp
     src/coop/dev/container_intent_drill_throw_arms.cpp
@@ -141,20 +139,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_intent_drill_throw_hit.cpp
     src/coop/dev/container_intent_drill_throw_hostgrab.cpp
     src/coop/dev/container_intent_drill_throw_host.cpp
-    src/coop/dev/container_intent_drill_throw_into_arm.cpp
-    src/coop/dev/container_intent_drill_throw_into_arming.cpp
-    src/coop/dev/container_intent_drill_throw_into.cpp
-    src/coop/dev/container_intent_drill_throw_into_release.cpp
-    src/coop/dev/container_intent_drill_throw_into_host.cpp
-    src/coop/dev/container_intent_drill_throw_into_verdict.cpp
-    src/coop/dev/container_intent_drill_throw_into_judge.cpp
-    src/coop/dev/container_intent_drill_throw_into_observer.cpp
-    src/coop/dev/container_intent_drill_throw_into_spawn.cpp
-    src/coop/dev/container_intent_drill_throw_into_stand.cpp
-    src/coop/dev/container_intent_drill_throw_into_take.cpp
-    src/coop/dev/container_intent_drill_throw_into_hold.cpp
-    src/coop/dev/container_intent_drill_throw_into_path.cpp
-    src/coop/dev/container_intent_drill_throw_into_probe.cpp
     src/coop/dev/container_intent_drill_throw_trace.cpp
     src/coop/dev/pr64_drill.cpp
     src/coop/dev/pr64_drill_coin.cpp
@@ -162,15 +146,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/pr64_drill_lid.cpp
     src/coop/dev/pr64_drill_lid_aim.cpp
     src/coop/dev/container_route_census.cpp
-    src/coop/dev/container_route_drill.cpp
-    src/coop/dev/container_route_drill_client.cpp
-    src/coop/dev/container_route_drill_client_hand.cpp
-    src/coop/dev/container_route_drill_host.cpp
     src/coop/dev/dev_lanes.cpp
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
     src/coop/dev/dronesack_drill.cpp
-    src/coop/dev/dronesack_drill_take.cpp
     src/coop/dev/dronesack_drill_host.cpp
     src/coop/dev/dronesack_drill_census.cpp
     src/coop/dev/join_prop_loss_drill.cpp
@@ -307,6 +286,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/live_store_readout.cpp
     src/coop/dev/hotbar_icon_probe.cpp
     src/coop/dev/inventory_pickup_drill.cpp
+    src/coop/dev/profile_fill_drill.cpp
     src/coop/dev/drone_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/pile_late_load.cpp
@@ -338,10 +318,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/director/body_floor.cpp
     src/coop/dev/director/proc_walkgrab.cpp
     src/coop/dev/director/director_run.cpp
-    src/coop/dev/director/container_take_probe.cpp
     src/coop/dev/director/grab_race_probe.cpp
     src/coop/dev/director/dup_verifier.cpp
-    src/coop/dev/director/container_take_judge.cpp
     src/coop/dev/director/door_approach.cpp
     src/coop/dev/director/routes.cpp
     src/coop/dev/director/aim_fan.cpp

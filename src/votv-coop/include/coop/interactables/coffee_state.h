@@ -1,13 +1,13 @@
 // coop/interactables/coffee_state.h -- the coffee maker's state is the host's.
 //
-// The maker's state is its save record: hasCup, hasCoffee and coffeeReady (its loadData restores them and
+// The maker's state is its save record: hasCup, hasCoffee and coffeeReady (its betterLoadData restores them and
 // repaints). Two bodies change them: its brew (actionOptionIndex, action 4) and its hit handler, which is the
 // fill (a cup that touches it is destroyed and sets hasCup; a coffee bag that touches it loses one of its amounts
 // and sets hasCoffee). The host runs both: a client's press goes to the host (coop/interactables/coffee_intent),
 // and a client's own run of the hit handler is cancelled here, since it would destroy its mirror of the cup and
 // set flags no record carries. After each run the host compares the flags with what it noted before the body and
 // publishes the maker's record (coop/props/prop_save_data) when they differ, and the bag's when its amounts moved;
-// every client applies it through loadData. A client's record for a maker or a bag is refused, except the one
+// every client applies it through betterLoadData. A client's record for a maker or a bag is refused, except the one
 // behind its own drop (coop/props/prop_record_gates). The cup's destroy crosses by the native destroy seam, the
 // debit by balance_sync. A maker's power follows the cord lane on each peer and is not in the record.
 

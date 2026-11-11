@@ -491,7 +491,7 @@ void RunClient() {
     });
     Check(WaitFor([&] {
               E::MainPlayerGrabState gs{};
-              cup = Me() && E::ReadMainPlayerGrabState(Me(), gs) ? gs.holdingActor : nullptr;
+              cup = Me() && E::ReadMainPlayerGrabState(Me(), gs) ? gs.mainHand : nullptr;
               return cup && R::ClassNameOf(cup) == L"prop_food_coffeeCup_C";
           }, 5),
           "a cup is in this player's hand");
@@ -521,7 +521,7 @@ void RunClient() {
         });
         const bool in = WaitFor([&] {
             E::MainPlayerGrabState gs{};
-            beer = Me() && E::ReadMainPlayerGrabState(Me(), gs) ? gs.holdingActor : nullptr;
+            beer = Me() && E::ReadMainPlayerGrabState(Me(), gs) ? gs.mainHand : nullptr;
             return beer && R::ClassNameOf(beer) == L"prop_snack_beer_C";
         }, 2);
         UE_LOGI("spill-drill: the hand row '%ls' %hs", row, in ? "holds a beer" : "holds none");

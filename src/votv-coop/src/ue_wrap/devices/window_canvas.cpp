@@ -47,7 +47,7 @@ int32_t g_offSoap       = -1;       // float soapAmount
 int32_t g_offDynmat     = -1;       // MaterialInstanceDynamic* dynmat
 int32_t g_offDrawmat    = -1;       // MaterialInterface* drawmat (the brush parent material)
 void*   g_playerCls     = nullptr;
-int32_t g_offHolding    = -1;       // mainPlayer_C::holding_actor -- the item in hand
+int32_t g_offHolding    = -1;       // mainPlayer_C::holdingActor_main -- the item in hand
 void*   g_setScalarFn   = nullptr;  // MaterialInstanceDynamic::SetScalarParameterValue
 void*   g_matLibCdo     = nullptr;  // Default__KismetMaterialLibrary
 void*   g_createMidFn   = nullptr;  // KismetMaterialLibrary::CreateDynamicMaterialInstance
@@ -211,7 +211,7 @@ bool ReadHeldBrush(void* mainPlayer, float& size, float& opac, float& col) {
     if (!mainPlayer || !R::IsLive(mainPlayer) || !EnsureSponge()) return false;
     if (g_playerCls != R::ClassOf(mainPlayer)) {
         g_playerCls = R::ClassOf(mainPlayer);
-        g_offHolding = R::FindPropertyOffset(g_playerCls, L"holding_actor");
+        g_offHolding = R::FindPropertyOffset(g_playerCls, L"holdingActor_main");
     }
     if (g_offHolding < 0 || g_offSize < 0) return false;
     void* held = ReadField<void*>(mainPlayer, g_offHolding);

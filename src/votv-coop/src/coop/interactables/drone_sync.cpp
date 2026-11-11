@@ -11,6 +11,7 @@
 #include "coop/interactables/drone_sync.h"
 
 #include "coop/element/lerp_window.h"
+#include "coop/interactables/drone_cargo_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -158,6 +159,7 @@ void ApplyMirror(void* drone, DroneMirror& e) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    coop::drone_cargo_sync::Install(session);
     // Install is the per-tick idempotent ensure path -- latch the log so it fires once, not 60x/s.
     if (!g_installLogged && D::EnsureResolved()) {
         UE_LOGI("drone: drone_sync installed (drone present=%d)", D::Find() != nullptr ? 1 : 0);
@@ -190,13 +192,6 @@ void ApplyState(void* drone, const coop::net::DroneStatePayload& payload) {
         g_m.leaveWriteWarned = true;
         UE_LOGW("drone_sync: the host's leave timer could not be written onto this copy's drone");
     }
-    if (hasSack)
-        D::RepointContainer(drone);  // cargo aboard -> point the mirror at the prop-mirrored container.
-                                     // EVERY hasSack packet (not just the rising edge): the container
-                                     // may stream in AFTER the edge, or be destroyed+respawned (new
-                                     // address) -- RepointContainer short-circuits when the field is
-                                     // already a live container, so steady-state cost is ~one deref.
-
     // Dust: replay the blueprint's per-tick dust update on EVERY packet rather than on bit edges.
     // The anchor moves with the drone, the intensity tracks ground distance, and the
     // EmitterLoops=1/20s system self-completes and needs the IsActive != want re-arm -- all of it
@@ -262,6 +257,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     FillPayload(drone, r, /*adopt*/true, p);
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DroneState, &p, sizeof(p));
     UE_LOGI("drone: connect-snapshot -- sent pose to slot %d (active=%d)", peerSlot, p.active);
+    coop::drone_cargo_sync::QueueConnectBroadcastForSlot(peerSlot);
 }
 
 void Tick() {
@@ -270,6 +266,7 @@ void Tick() {
     if (!s || !s->connected()) return;
     void* drone = D::Find();
     if (!drone) return;
+    coop::drone_cargo_sync::Tick();   // the cargo keeps its own cadence: the host's read of it, a client's apply
 
     if (s->role() == coop::net::Role::Host) {
         // HOST authority. While the drone is Active or its dust is on, the stream runs as it always did:
@@ -326,6 +323,7 @@ void OnDisconnect() {
     g_sentActive = false;
     g_sentBits = 0;
     g_installLogged = false;
+    coop::drone_cargo_sync::OnDisconnect();
 }
 
 }  // namespace coop::drone_sync

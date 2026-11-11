@@ -42,10 +42,11 @@ mod hooks the engine's function dispatch with its own detour, patches individual
 and observes the VM's internal virtual calls where neither reaches; which calls each seam sees is
 mapped on [coop-dispatch-visibility.md](coop-dispatch-visibility.md).
 
-**What is the save format?** The engine's own save-game serialisation, one flat unencrypted file
-per slot under the user's local application data, about twenty megabytes with photos inline,
-written in place with no rename. The host owns the save and streams it to a joiner, who loads it
-through the game's own loader ([join.md](join.md)).
+**What is the save format?** The engine's own save-game serialisation, one folder per save under
+the user's local application data (`SaveGames/<name>/`: `main.sav` for the world, `persistent.sav`,
+`main.meta`, previews and an `areas/` folder), each file written through the game's compressed save
+library. The host owns the save and streams it to a joiner, who loads it through the game's own
+loader ([join.md](join.md)).
 
 **Is the game single-instance?** No. There is no mutex or instance lock, so two or more copies run
 on one machine, which is how the whole test rig works ([testing.md](testing.md)).

@@ -12,10 +12,13 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/reflected_offset.h"
+
+#include <windows.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -175,14 +178,6 @@ void* ReadPhysicsHandleGrabbedComponent(void* phc) {
     return comp;  // may be nullptr if the PHC has no current grabbed component
 }
 
-bool CallMainPlayerUpdateHold(void* mainPlayer) {
-    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
-    void* fn = R::FindFunction(R::ClassOf(mainPlayer), L"updateHold");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    return f.valid() && Call(mainPlayer, f);
-}
-
 bool CallMainPlayerUseSelectedAction(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"useSelectedAction");
@@ -212,27 +207,29 @@ bool MainPlayerHasSelectedAction(void* mainPlayer) {
     return f.Get<bool>(L"return");
 }
 
-bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected) {
-    collected = false;
+bool CallMainPlayerAddObjectToFreeHotbarSlot(void* mainPlayer, void* target, const HotbarAdd& how, bool& success) {
+    success = false;
     if (!mainPlayer || !R::IsLive(mainPlayer) || !target) return false;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"Hold Object");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"Add Object to Free Hotbar Slot");
     if (!fn) return false;
+    // `data` stays zeroed: the body reads the item's data off `object` whenever it is valid.
     ParamFrame f(fn);
-    if (!f.valid() || !f.Set<bool>(L"useHold", false) || !f.Set<void*>(L"manual", target) || !Call(mainPlayer, f))
+    if (!f.valid() || !f.Set<void*>(L"object", target) || !f.Set<bool>(L"autoselect", how.autoselect) ||
+        !f.Set<bool>(L"destroyOnSuccess", how.destroyOnSuccess) || !f.Set<bool>(L"stack", how.stack) ||
+        !f.Set<bool>(L"equipment", how.equipment) || !Call(mainPlayer, f))
         return false;
-    collected = f.Get<bool>(L"collected");
+    success = f.Get<bool>(L"success");
     return true;
 }
 
-bool CallPutObjectInventory2(void* mainPlayer, void* target, bool noNotify, bool& taken) {
-    taken = false;
+bool CallMainPlayerAddObjectToInventory(void* mainPlayer, void* target, bool& success) {
+    success = false;
     if (!mainPlayer || !R::IsLive(mainPlayer) || !target) return false;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"putObjectInventory2");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"addObjectToInventory");
     if (!fn) return false;
     ParamFrame f(fn);
-    if (!f.valid() || !f.Set<void*>(L"InputPin", target) || !f.Set<bool>(L"noNotify", noNotify) || !Call(mainPlayer, f))
-        return false;
-    taken = f.Get<bool>(L"return");
+    if (!f.valid() || !f.Set<void*>(L"object", target) || !Call(mainPlayer, f)) return false;
+    success = f.Get<bool>(L"success");
     return true;
 }
 
@@ -262,12 +259,11 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     if (grabbingOff >= 0) {
         out.grabbingActor = *reinterpret_cast<void**>(base + grabbingOff);
     }
-    // The holding actor: the chip-pile and clump carry slot, added in a later game recook; a
-    // missing offset leaves the field null rather than dereferencing a negative offset.
-    const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
-    if (holdingOff >= 0) {
-        out.holdingActor = *reinterpret_cast<void**>(base + holdingOff);
-    }
+    // The two hand actors; a missing offset leaves its field null rather than dereferencing a negative offset.
+    const int32_t mainOff = ue_wrap::reflected_offset::MainPlayer_holdingActor_main();
+    if (mainOff >= 0) out.mainHand = *reinterpret_cast<void**>(base + mainOff);
+    const int32_t offOff = ue_wrap::reflected_offset::MainPlayer_holdingActor_offhand();
+    if (offOff >= 0) out.offHand = *reinterpret_cast<void**>(base + offOff);
     const int32_t grabsHeavyOff = ue_wrap::reflected_offset::MainPlayer_grabsHeavy();
     const int32_t heavyOff       = ue_wrap::reflected_offset::MainPlayer_Heavy();
     const int32_t grabLenOff     = ue_wrap::reflected_offset::MainPlayer_grabLen();
@@ -277,9 +273,9 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     return true;
 }
 
-bool WriteMainPlayerHoldingActor(void* mainPlayer, void* actor) {
+bool WriteMainPlayerMainHandActor(void* mainPlayer, void* actor) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
-    const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
+    const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holdingActor_main();
     if (holdingOff < 0) return false;
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + holdingOff) = actor;
     return true;
@@ -514,10 +510,45 @@ bool ReadMainPlayerFlashlightState(void* mainPlayer, MainPlayerFlashlightState& 
     out = {};
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
-    out.flashlight      = *reinterpret_cast<bool*>(base + P::off::AmainPlayer_flashlight);
-    out.hasFlashlight   = *reinterpret_cast<bool*>(base + P::off::AmainPlayer_hasFlashlight);
-    out.crankFlashlight = *reinterpret_cast<bool*>(base + P::off::AmainPlayer_crankFlashlight);
-    out.mode            = *reinterpret_cast<uint8_t*>(base + P::off::AmainPlayer_flashlightMode);
+    const int32_t equippedOff = ue_wrap::reflected_offset::MainPlayer_equipped_flashlight();
+    if (equippedOff < 0) return false;
+    out.flashlight         = *reinterpret_cast<bool*>(base + P::off::AmainPlayer_flashlight);
+    out.equippedFlashlight = *reinterpret_cast<bool*>(base + equippedOff);
+    out.mode               = *reinterpret_cast<uint8_t*>(base + P::off::AmainPlayer_flashlightMode);
+    return true;
+}
+
+bool RepointFlashlightTicker(void* mainPlayer) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    // The ticker is the one the local pawn's own BeginPlay found or made and kept in `ticker_flashlightController`: the object the
+    // game's puppets then took over by GetActorOfClass. The object index lists another ticker object of that class (a dead world's,
+    // measured: its `player` was the local pawn while the live one drained a puppet), so the pawn's own field is what names it.
+    static int32_t s_ctlOff = -2;
+    static void* s_ctlCls = nullptr;
+    if (void* const pc = R::ClassOf(mainPlayer); pc != s_ctlCls) {
+        s_ctlCls = pc;
+        s_ctlOff = R::FindPropertyOffset(pc, L"ticker_flashlightController");
+    }
+    if (s_ctlOff < 0) return false;
+    void* const ticker = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(mainPlayer) + s_ctlOff);
+    if (!ticker || !R::IsLive(ticker)) return false;
+    static int32_t s_off = -2;
+    static void* s_cls = nullptr;
+    if (void* const cls = R::ClassOf(ticker); cls != s_cls) { s_cls = cls; s_off = R::FindPropertyOffset(cls, L"player"); }
+    if (s_off < 0) return false;
+    void** const slot = reinterpret_cast<void**>(static_cast<uint8_t*>(ticker) + s_off);
+    {   // the state it saw, every ten seconds: a repoint that never logs is either right or looking at another ticker
+        static uint64_t s_diagMs = 0;
+        const uint64_t nowMs = ::GetTickCount64();
+        if (nowMs - s_diagMs >= 10000) {
+            s_diagMs = nowMs;
+            UE_LOGI("flashlight: battery ticker %p drains %p; the local player is %p", ticker, *slot, mainPlayer);
+        }
+    }
+    if (*slot == mainPlayer) return false;
+    UE_LOGI("flashlight: the battery ticker drained %p, not the local player %p (a puppet's BeginPlay took it) -- pointed back",
+            *slot, mainPlayer);
+    *slot = mainPlayer;
     return true;
 }
 
@@ -731,6 +762,9 @@ bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood) {
     // The blood parameter guards the block that adds the blood-loss effect; leaving it false
     // makes a synthetic hit unlike any hit the game produces.
     if (blood) f.Set<bool>(L"blood", true);
+    // Every game caller passes callDamageEvent=true (damageFromBloodLoss stays false): it broadcasts the
+    // player's `damaged` delegate, which the inventory widget listens to.
+    f.Set<bool>(L"callDamageEvent", true);
     return Call(mainPlayer, f);
 }
 

@@ -266,21 +266,32 @@ bool EnsurePropBaseResolved() {
     return PropBaseClass() != nullptr;
 }
 
-// The trash pile's collect counters, raw int32 fields per the header dump; the displayed uses
-// count is their sum, formatted live by the look-at, so no refresh verb is needed.
+// The trash pile's collect counters (amountA / amountB, int32), read from the live property layout:
+// their offsets moved between builds (0x260/0x264 on 0.9.0n, where 0x260 on 0.10 is the StaticMesh
+// component pointer), so a fixed offset writes a count over the strong object reference. The displayed
+// uses count is their sum, formatted live by the look-at, so no refresh verb is needed.
+namespace {
+R::InstanceOffset g_trashAmountA{L"amountA"};
+R::InstanceOffset g_trashAmountB{L"amountB"};
+}  // namespace
+
 bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b) {
     if (!actor || !IsTrashBitsPile(actor)) return false;
+    const int32_t offA = g_trashAmountA.Of(actor), offB = g_trashAmountB.Of(actor);
+    if (offA < 0 || offB < 0) return false;
     const uint8_t* base = reinterpret_cast<const uint8_t*>(actor);
-    a = *reinterpret_cast<const int32_t*>(base + 0x0260);
-    b = *reinterpret_cast<const int32_t*>(base + 0x0264);
+    a = *reinterpret_cast<const int32_t*>(base + offA);
+    b = *reinterpret_cast<const int32_t*>(base + offB);
     return true;
 }
 
 bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b) {
     if (!actor || !IsTrashBitsPile(actor)) return false;
+    const int32_t offA = g_trashAmountA.Of(actor), offB = g_trashAmountB.Of(actor);
+    if (offA < 0 || offB < 0) return false;
     uint8_t* base = reinterpret_cast<uint8_t*>(actor);
-    *reinterpret_cast<int32_t*>(base + 0x0260) = a;
-    *reinterpret_cast<int32_t*>(base + 0x0264) = b;
+    *reinterpret_cast<int32_t*>(base + offA) = a;
+    *reinterpret_cast<int32_t*>(base + offB) = b;
     return true;
 }
 

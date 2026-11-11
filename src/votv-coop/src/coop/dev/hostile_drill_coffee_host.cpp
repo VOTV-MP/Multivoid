@@ -178,8 +178,20 @@ std::string Summary(const Tally& d) {
 
 // What does not match the arm's table, or empty.
 std::string Mismatch(const Spec& sp, const Tally& d) {
-    const Tally want = Expected(sp);
+    Tally want = Expected(sp);
     std::string bad;
+    // The flood's split between runs and queue refusals depends on how many of the 20 arrive before the host's tick
+    // serves a head (it serves one a tick, and the receive can hand the burst over across ticks, as the pinned
+    // send rate does): the queue holds 8 and the sender's token budget (4) bounds what a tick or two can drain, so
+    // the table is a range with the outcomes summing to the 20 sent. Exactly 8/12 was the one-batch case.
+    if (sp.arm == Arm::Flood) {
+        constexpr uint64_t kQueue = 8, kBudgetSlack = 4;
+        const size_t ran = static_cast<size_t>(Field::Ran), full = static_cast<size_t>(Field::QueueFull);
+        if (d[ran] >= kQueue && d[ran] <= kQueue + kBudgetSlack && d[ran] + d[full] == sp.sent) {
+            want[ran] = d[ran];
+            want[full] = d[full];
+        }
+    }
     for (size_t i = 0; i < kFields; ++i)
         if (d[i] != want[i])
             bad += std::string(" ") + FieldName(static_cast<Field>(i)) + " " + std::to_string(d[i]) + " (wanted " +

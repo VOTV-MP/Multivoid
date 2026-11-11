@@ -1,5 +1,5 @@
-// ue_wrap/devices/laptop.cpp -- see ue_wrap/devices/laptop.h. Offsets resolved live via
-// reflection; the Alpha 0.9.0-n fallbacks come from the CXX header dump.
+// ue_wrap/devices/laptop.cpp -- see ue_wrap/devices/laptop.h. Offsets are resolved live from the class
+// by member name; a member the name does not find leaves the wrapper unresolved, and no offset is guessed.
 
 #include "ue_wrap/devices/laptop.h"
 
@@ -42,6 +42,7 @@ int32_t g_offFloppyBuffer = -1;     // laptop.floppyBuffer (TArray<FString>)
 int32_t g_offFloppyBufUids = -1;    // laptop.floppyBufferUIDs (TArray<int32>)
 int32_t g_offFloppyProcess = -1;   // laptop.floppyProcess (bool): the slot timeline is moving a disc
 bool    g_resolved = false;
+bool    g_missing = false;          // a member the wrapper needs is not on the class: said once, never retried
 uint64_t g_nextResolveTryMs = 0;
 
 // The widget seam is resolved from the widget and its rows where they are used: an instance's class
@@ -65,6 +66,7 @@ bool CallWidgetUpdFloppy(void* inst) {
 
 bool EnsureResolved() {
     if (g_resolved) return true;
+    if (g_missing) return false;
     const uint64_t now = NowMs();
     if (now < g_nextResolveTryMs) return false;
     g_nextResolveTryMs = now + 1000;
@@ -72,31 +74,33 @@ bool EnsureResolved() {
     void* cls = R::FindClass(L"laptop_C");
     if (!cls) return false;
 
-    struct Row { const wchar_t* name; int32_t* slot; int32_t fallback; };
+    struct Row { const wchar_t* name; int32_t* slot; };
     const Row rows[] = {
-        { L"powered",          &g_offPowered,     0x42B },
-        { L"isOpened",         &g_offIsOpened,    0x418 },
-        { L"Anim",             &g_offAnim,        0x42A },
-        { L"floppyReadwrites", &g_offReadWrites,  0x4E8 },
-        { L"floppyData",       &g_offFloppyData,  0x458 },
-        { L"Widget",           &g_offWidget,      0x420 },
+        { L"powered",          &g_offPowered },
+        { L"isOpened",         &g_offIsOpened },
+        { L"Anim",             &g_offAnim },
+        { L"floppyReadwrites", &g_offReadWrites },
+        { L"floppyData",       &g_offFloppyData },
+        { L"Widget",           &g_offWidget },
+        { L"floppyBuffer",     &g_offFloppyBuffer },
+        { L"floppyBufferUIDs", &g_offFloppyBufUids },
     };
+    bool missing = false;
     for (const Row& r : rows) {
         *r.slot = R::FindPropertyOffset(cls, r.name);
         if (*r.slot < 0) {
-            UE_LOGW("laptop: offset '%ls' not found -- fallback 0x%X", r.name, r.fallback);
-            *r.slot = r.fallback;
+            UE_LOGE("laptop: '%ls' not found by name -- the laptop lane stays off", r.name);
+            missing = true;
         }
+    }
+    if (missing) {
+        g_missing = true;
+        return false;
     }
     const bool action = R::FindDispatchFunctionCached(cls, L"actionOptionIndex") != nullptr;
     if (!action) UE_LOGW("laptop: actionOptionIndex not found -- power replay disabled");
 
-    // The buffer fields.
-    g_offFloppyBuffer  = R::FindPropertyOffset(cls, L"floppyBuffer");
-    g_offFloppyBufUids = R::FindPropertyOffset(cls, L"floppyBufferUIDs");
-    if (g_offFloppyBuffer < 0)  { UE_LOGW("laptop: floppyBuffer offset -- fallback 0x4B8"); g_offFloppyBuffer = 0x4B8; }
-    if (g_offFloppyBufUids < 0) { UE_LOGW("laptop: floppyBufferUIDs offset -- fallback 0x4D8"); g_offFloppyBufUids = 0x4D8; }
-    // No fallback: a busy flag read from a guessed offset would answer for a field it is not.
+    // Optional: a busy flag read from a guessed offset would answer for a field it is not.
     g_offFloppyProcess = R::FindPropertyOffset(cls, L"floppyProcess");
     if (g_offFloppyProcess < 0) UE_LOGW("laptop: floppyProcess not found -- the slot reads as never busy");
 

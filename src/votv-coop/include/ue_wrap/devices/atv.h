@@ -16,11 +16,13 @@
 
 #pragma once
 
+#include "ue_wrap/actors/inventory_item.h"
 #include "ue_wrap/core/types.h"  // FVector, FRotator
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::atv {
 
@@ -111,6 +113,28 @@ const char* SpawnFailText(SpawnFail why);
 // step; `bornKey` (optional) receives the key the read-back found on a KeyMismatch. Game thread only.
 void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot,
                   const std::wstring& key, SpawnFail* why = nullptr, std::wstring* bornKey = nullptr);
+
+// ---- the trunk ---------------------------------------------------------------------------------
+// In 0.10 the ATV's trunk is the ATV's own inventoryComponent_C (ATV_C.inventoryComponent): the inventory screen is
+// opened on it with begin(component), a hand item put into it runs addItemAsObject on it, and its contents are
+// canvasInventory, the same entry array a world container holds (ue_wrap/actors/inventory_item). The 0.9
+// `spawnedContainer` prop is never created.
+
+// The ATV's inventory component, live, or null (a class without the field, or a null/dead actor).
+void* InventoryOf(void* atv);
+
+// The trunk's entries, read whole, blanks included. False when the component, the array or the entry layout does not
+// resolve, or when it holds more than `maxItems` (nothing is read then). Game thread.
+bool ReadTrunk(void* atv, std::vector<ue_wrap::inventory_item::Item>& out, size_t maxItems);
+
+enum class TrunkWrite : uint8_t {
+    Written,   // the entries are in the array and the shown state is re-derived
+    NotReady,  // the component, the array or the entry layout does not resolve yet -- the caller waits
+    Refused,   // not written: no allocator, or an allocation or an entry failed
+};
+// Replace the trunk with `items` (container_inventory::WriteContents: the old buffer is orphaned, never freed, and an
+// inventory screen showing the trunk is rebuilt from the new entries). Game thread.
+TrunkWrite WriteTrunk(void* atv, const std::vector<ue_wrap::inventory_item::Item>& items);
 
 // Tear down an ATV -- K2_DestroyActor on the actor -- a SpawnMirror'd one or a native twin, when the
 // host announces it gone (AtvDestroy), or a mirror on disconnect. False, and nothing done, on a null or

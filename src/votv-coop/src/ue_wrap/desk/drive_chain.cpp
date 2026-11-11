@@ -42,7 +42,7 @@ Clock::time_point g_nextTry{};
 // The eraser, the rack and the port are reached through instances in hand, whose classes are loaded
 // by construction: their fields from the instance's class, their verbs through the dispatch cache.
 R::InstanceOffset g_eraserSlot{L"driveSLot_obj"};  // signalDriveEraser_C (typo'd in the BP)
-R::InstanceOffset g_rackData{L"data"};             // prop_driveRack_C (TArray<row>, stride 0x70)
+R::InstanceOffset g_rackData{L"data"};             // prop_driveRack_C (TArray<row>, stride SD::kStride)
 R::InstanceOffset g_rackHas{L"has"};               // prop_driveRack_C (TArray<bool>)
 
 // ---- instance caches (slot, serial and world, validated per access) ----

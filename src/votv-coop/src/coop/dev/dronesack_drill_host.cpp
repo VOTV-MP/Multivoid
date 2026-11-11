@@ -1,7 +1,7 @@
 // coop/dev/dronesack_drill_host.cpp -- see coop/dev/dronesack_drill.h: the host's half. It puts the sack on the floor
 // in front of itself and waits for the client to bind its mirror of it. Arm 1 then drops a crate onto the sack and
 // for kWatchMs logs what destroyed the crate. Arm 2 spawns loose props round the sack, lets the client carry them
-// into it, calls the delivery drone and waits for its sale to clear the drone's container.
+// into it, puts the sack back on the delivery drone, calls it and waits for its sale to clear the drone's cargo.
 
 #include "coffee_drill_detail.h"     // co-located private header: SpawnProp (a prop_C named by a row)
 #include "dronesack_drill_detail.h"  // co-located private header (src tree, not include/)
@@ -42,6 +42,7 @@ namespace EL = coop::element;
 namespace R  = ue_wrap::reflection;
 
 constexpr uint64_t kPlaceEveryMs = 1000;   // a floor that was not found is looked for again this often
+constexpr uint64_t kSackRearmMs = 1500;    // dropSack disarms the drone's sack interaction for a second
 const wchar_t* const kSackPath = L"/Game/objects/prop_dronesack.prop_dronesack_C";
 // Arm 2's loose props are what the coffee drill spawns for a cup: a prop_C whose `name` row is "cup".
 const wchar_t* const kPropClass = L"prop_C";
@@ -52,22 +53,21 @@ enum class Ph : uint8_t {
     CrateEid, Watch,                                  // arm 1
     PlaceProps, PropEids, AwaitPuts, Settle, Call, Sale, Tail,   // arm 2 (Call, Sale and Tail are arm 3's too)
     Fill,                                             // arm 3
-    AwaitTake,                                        // arm 4
     Done
 };
 
 struct Host {
     Ph                    ph = Ph::Wait;
-    uint64_t              phaseMs = 0, nextPlaceMs = 0, dropMs = 0, callMs = 0, soldMs = 0;
+    uint64_t              phaseMs = 0, nextPlaceMs = 0, dropMs = 0, callMs = 0, soldMs = 0, letGoMs = 0;
     uint32_t              sackEid = 0, crateEid = 0;
     int                   recordsAtDrop = -1, recordsAtCall = -1;
+    bool                  sackTaken = false;   // the drill's sack has gone aboard the drone
     ue_wrap::FVector      sackAt{};
     ue_wrap::CachedObjRef sack, crate;
     std::vector<ue_wrap::CachedObjRef> props;
     std::vector<uint32_t>              propEids;
     // arm 3: the items dropped one at a time, cups first and the crate last
     int                   item = 0, absorbed = 0, recordsBeforeItem = 0, crateRecords = -1;
-    int32_t               crateIndex = -1;
     uint64_t              itemMs = 0;
     bool                  spawned = false, read = false, eidSeen = false;
     ue_wrap::CachedObjRef cur;
@@ -187,19 +187,49 @@ std::string OutsideList() {
     return out.empty() ? "none" : out;
 }
 
+// The entries in the drone's cargo, blanks left out, or -1 when they do not read.
+int DroneRecords() {
+    std::vector<DR::CargoItem> items;
+    void* const drone = DR::Find();
+    if (!drone || !DR::ReadCargo(drone, items, 4096)) return -1;
+    int n = 0;
+    for (const DR::CargoItem& it : items)
+        if (!ue_wrap::inventory_item::IsEmpty(it)) ++n;
+    return n;
+}
+
 void SaleDone() {
     if (Mode() >= 3) {
-        UE_LOGI("[SACK-DRILL] host DONE arm %d items absorbed=%d of %d, drone container records at call=%d, now=%d",
-                Mode(), g_h.absorbed, kPropCount + 1, g_h.recordsAtCall, SackRecords(g_h.sack.Get()));
+        UE_LOGI("[SACK-DRILL] host DONE arm %d items absorbed=%d of %d, drone cargo records at call=%d, now=%d",
+                Mode(), g_h.absorbed, kPropCount + 1, g_h.recordsAtCall, DroneRecords());
         Say(kDoneLine);
         g_h.ph = Ph::Done;
         return;
     }
-    UE_LOGI("[SACK-DRILL] host DONE arm 2 props in sack=%d of %zu, drone container records at call=%d, now=%d",
+    UE_LOGI("[SACK-DRILL] host DONE arm 2 props in sack=%d of %zu, drone cargo records at call=%d, now=%d",
             static_cast<int>(g_h.propEids.size()) - PropsOutside(), g_h.propEids.size(), g_h.recordsAtCall,
-            SackRecords(g_h.sack.Get()));
+            DroneRecords());
     Say(kDoneLine);
     g_h.ph = Ph::Done;
+}
+
+// The sale reads the drone's own cargo, and the sack on the floor is a container of its own, so before the drone is
+// called the drill's sack goes aboard as the drone's body takes a sack that touches it: the drone lets go of its own
+// sack (dropSack), and once its sack interaction has re-armed, putSackOn moves the drill's sack's entries into the
+// drone's cargo and destroys the sack.
+bool PutSackAboard(void* drone) {
+    if (g_h.sackTaken) return true;
+    void* const sack = g_h.sack.Get();
+    if (!sack) { Abandon("the drill's sack is gone before the drone could take it"); return false; }
+    if (DR::ReadFxBits(drone) & DR::kFxHasSack) {
+        if (!DR::DropSack(drone)) { Abandon("the drone's own sack could not be dropped"); return false; }
+        g_h.letGoMs = NowMs();
+        return false;
+    }
+    if (NowMs() - g_h.letGoMs < kSackRearmMs) return false;
+    if (!DR::PutSackOn(drone, sack)) { Abandon("putSackOn did not dispatch"); return false; }
+    g_h.sackTaken = true;
+    return true;
 }
 
 // The drone is called as the console's own keyboard calls it, once it is parked.
@@ -211,11 +241,10 @@ void CallDrone() {
         if (NowMs() - g_h.phaseMs > kParkBoundMs) Abandon("the drone did not park");
         return;
     }
-    g_h.recordsAtCall = SackRecords(g_h.sack.Get());
-    UE_LOGI("[SACK-DRILL] host calls the drone: hasSack=%d, drone container records=%d",
+    if (!PutSackAboard(drone)) return;
+    g_h.recordsAtCall = DroneRecords();
+    UE_LOGI("[SACK-DRILL] host calls the drone: hasSack=%d, drone cargo records=%d",
             (DR::ReadFxBits(drone) & DR::kFxHasSack) ? 1 : 0, g_h.recordsAtCall);
-    if (Mode() >= 3) UE_LOGI("[SACK-DRILL] host crate inventory index=%d before the sale (read when it was dropped)",
-                             g_h.crateIndex);
     CensusTake("host", Moment::Before);
     Say(kCallLine);
     if (!DK::TriggerFly(consoles[0])) { Abandon("the drone's call did not dispatch"); return; }
@@ -225,9 +254,9 @@ void CallDrone() {
 
 void Sale() {
     PrintNew();
-    const int records = SackRecords(g_h.sack.Get());
+    const int records = DroneRecords();
     if (g_h.recordsAtCall <= 0) {
-        UE_LOGI("[SACK-DRILL] host: the drone container held nothing at the call, so there is no sale to see");
+        UE_LOGI("[SACK-DRILL] host: the drone cargo held nothing at the call, so there is no sale to see");
         SaleDone();
         return;
     }
@@ -235,13 +264,12 @@ void Sale() {
         UE_LOGI("[SACK-DRILL] host sale done at +%llums",
                 static_cast<unsigned long long>(NowMs() - g_h.callMs));
         CensusTake("host", Moment::After);
-        if (Mode() >= 3) CensusIndexHolders("host", Moment::After, g_h.crateIndex);
         Say(kSoldLine);
         g_h.soldMs = NowMs();
         Go(Ph::Tail);
         return;
     }
-    if (NowMs() - g_h.callMs > kSaleBoundMs) Abandon("the drone container was not cleared");
+    if (NowMs() - g_h.callMs > kSaleBoundMs) Abandon("the drone cargo was not cleared");
 }
 
 // The census is read again kCensusLaterMs after the sale, and the two reads are compared.
@@ -249,58 +277,8 @@ void Tail() {
     PrintNew();
     if (NowMs() - g_h.soldMs < kCensusLaterMs) return;
     CensusTake("host", Moment::AfterLater);
-    if (Mode() >= 3) CensusIndexHolders("host", Moment::AfterLater, g_h.crateIndex);
     CensusDiff("host", g_h.sack.Get());
-    if (Mode() == 4) {   // the client takes from the sold sack at +5 s, if its copy still holds records: wait for what it says
-        void* const container = ContainerOf(g_h.sack.Get());
-        UE_LOGI("[SACK-DRILL] host drone container in sync scope=%d", ContainerInSyncScope(container) ? 1 : 0);
-        Go(Ph::AwaitTake);
-        return;
-    }
     SaleDone();
-}
-
-// Arm 4: what the client says about its take from the sold sack, and the drone container's records on the host.
-void AwaitTake() {
-    PrintNew();
-    const uint64_t now = NowMs();
-    std::string rest;
-    if (!Rest(kTookPrefix, &rest)) {
-        if (now - g_h.phaseMs > kTakeBoundMs) Abandon("the client never said whether it took from the sold sack");
-        return;
-    }
-    int took = 0, reply = kReplyFailed;
-    char* tail = nullptr;
-    took = static_cast<int>(std::strtol(rest.c_str(), &tail, 10));
-    if (tail && *tail) reply = static_cast<int>(std::strtol(tail, nullptr, 10));
-    void* const container = ContainerOf(g_h.sack.Get());
-    const EL::ElementId eid = container ? EidOf(container) : EL::kInvalidId;
-    uint32_t grants = 0, gones = 0;
-    if (eid != EL::kInvalidId) AH::dev::Verdicts(static_cast<uint32_t>(eid), grants, gones);
-    const int records = SackRecords(g_h.sack.Get());
-    UE_LOGI("[SACK-DRILL] host: the client took=%d reply=%d; the drone container is eid=%u grants=%u gones=%u",
-            took, reply, eid == EL::kInvalidId ? 0u : static_cast<unsigned>(eid), grants, gones);
-    // The sack stays at 0 and no take of it was granted. A take that was pressed was answered Gone; one that was not
-    // (the sale's publication came first) was never asked.
-    const bool pressed = reply != kReplyNothing;
-    const bool gone = reply == static_cast<int>(coop::net::ContainerActReason::Gone);
-    if (eid == EL::kInvalidId) {
-        UE_LOGW("[SACK-DRILL] host arm 4 FAIL: the drone container has no element id");
-    } else if (reply == kReplyFailed) {
-        UE_LOGW("[SACK-DRILL] host arm 4 FAIL: the client's take did not run");
-    } else if (records != 0 || grants != 0 || took != 0) {
-        UE_LOGW("[SACK-DRILL] host arm 4 FAIL: the sold sack reads %d records, %u takes of it were granted, the client took=%d",
-                records, grants, took);
-    } else if (pressed && (!gone || gones == 0)) {
-        UE_LOGW("[SACK-DRILL] host arm 4 FAIL: the client's take was answered %d with %u Gone, not Gone", reply, gones);
-    } else if (!pressed) {
-        UE_LOGI("[SACK-DRILL] host arm 4 PASS: nothing to take (the sale's publication came first), the sack stays at 0");
-    } else {
-        UE_LOGI("[SACK-DRILL] host arm 4 PASS: the client's take of the sold sack was refused Gone, the sack stays at 0");
-    }
-    UE_LOGI("[SACK-DRILL] host DONE arm 4 drone container records=%d", records);
-    Say(kDoneLine);
-    g_h.ph = Ph::Done;
 }
 
 // ---- arm 3: the host drops each item itself ----
@@ -324,7 +302,6 @@ void Fill() {
     PrintNew();
     const uint64_t now = NowMs();
     if (g_h.item > kPropCount) {   // every item has been tried
-        if (g_h.crateIndex >= 0) Say(std::string(kIndexPrefix) + std::to_string(g_h.crateIndex));
         UE_LOGI("[SACK-DRILL] host filled: %d of %d items absorbed; drone container records=%d", g_h.absorbed,
                 kPropCount + 1, SackRecords(g_h.sack.Get()));
         Go(Ph::Call);
@@ -349,8 +326,7 @@ void Fill() {
         g_h.read = true;
         if (crate) {
             g_h.crateRecords = RecordsOf(p);
-            g_h.crateIndex = ContainerIndex(p);
-            UE_LOGI("[SACK-DRILL] host crate records=%d inventory index=%d dropped", g_h.crateRecords, g_h.crateIndex);
+            UE_LOGI("[SACK-DRILL] host crate records=%d dropped", g_h.crateRecords);
         }
     }
     if (p && !g_h.eidSeen) NoteItemEid(p, crate);
@@ -496,9 +472,6 @@ void HostTick(coop::net::Session* s) {
         return;
     case Ph::Sale:
         Sale();
-        return;
-    case Ph::AwaitTake:
-        AwaitTake();
         return;
     case Ph::Fill:
         Fill();

@@ -93,8 +93,7 @@ void RunDefaults(Tally& check) {
     Params p{};
     float scale[3];
     RecipeFor(Kind::Rocket, 0.0f, p, scale);
-    check(Near(p.innerShake, 1000.0f) && Near(p.outerShake, 2000.0f), "default: the shakes are not explosion_C's own");
-    check(p.objType == 0 && !p.ignoreWalls && !p.skipSetting, "default: an untouched field is not zero");
+    check(!p.ignoreWalls && !p.skipSetting, "default: an untouched field is not zero");
     RecipeFor(Kind::None, 0.0f, p, scale);
     check(Near(p.force, 10000.0f) && Near(p.radius, 1000.0f) && Near(p.damage, 50.0f),
           "default: None is not the defaults");

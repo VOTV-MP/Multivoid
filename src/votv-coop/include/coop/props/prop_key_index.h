@@ -5,11 +5,12 @@
 //
 // Membership comes from the engine's own create and delete notifications (ue_wrap/core/object_index's
 // listeners), the key from the bodies that write it: prop_C writes its key in init (from getKey, which turns
-// None into a fresh key), in loadData (which then runs init) and in the setKey event, and the one write the
-// game makes to another object's key (ATV.createContainer) is followed by that object's getKey. Script-gate
-// POST watches on those four bodies, every class, re-read the key field after each. trashBitsPile keeps
-// actor_save's key, written by its loadData and setKey. The chip pile and the garbage clump have no key field
-// and are not here (their identity is the eid).
+// None into a fresh key), in betterLoadData (the world load's) and loadData (a zipped box's, a mailbox's), both of
+// which then run init, and in the setKey event, and the one write the game makes to another object's key
+// (ATV.createContainer) is followed by that object's getKey. Script-gate POST watches on those five bodies, every
+// class, re-read the key field after each. trashBitsPile keeps actor_save's key, written by its betterLoadData,
+// loadData and setKey. The chip pile and the garbage clump have no key field and are not here (their identity is
+// the eid).
 
 #pragma once
 

@@ -3,16 +3,16 @@
 // bound); the host refuses every other client slice. A slice for a container with no actor waits in bind_wait, one for
 // a container not ready in container_park, the bytes are container_slice_wire.
 //
-// Two rules restate HERE, because breaking either destroys player data: a container whose propInventory_C.Player
-// reads true, OR whose offset will not resolve, is SKIPPED (personal inventory shares one global GObjStack array, and
-// a write over another peer's slice wipes that player's inventory); and a nested container's own index rides as the
-// sentinel -1, on the way out AND on the way in, since a real value there names a slot in the SENDER's array.
+// One rule restates HERE, because breaking it destroys player data: only a world container's inventoryComponent is
+// written (ue_wrap::container_inventory::IsWorldInventory); a player's own inventoryComponent_player, and any
+// component whose layout will not resolve, is SKIPPED, since a write over it replaces that player's inventory.
 //
-// The edge is coop/props/container_writer_watch (script_gate on addObject and takeObj), marking the OWNING actor's
-// eid dirty through MarkHostWrite on the host; a client's mirror is display only, a verb on it marks nothing. Apply
-// raw-writes the receiver's own GObjStack slot, then re-derives the setter-managed state through
-// updateVolumesAndMass and recalculateNames; addObject cannot be the apply verb (it takes a live AActor* and
-// serialises it itself) and checkObjectsVolume is not called (it ejects).
+// The edge is coop/props/container_writer_watch (script_gate on the inventory component's addItemAsObject,
+// addItemAdvanced, removeInventoryItem, trimInventory and transferFromInvToInf, and the inventory screen's dropItems),
+// marking the OWNING actor's eid dirty through MarkHostWrite on the host; a client's mirror is display only, a verb
+// on it marks nothing. Apply writes the receiver's own canvasInventory entries (ue_wrap::container_inventory::
+// WriteContents), then re-derives the volumes through calculateVolumes; addItemAsObject cannot be the apply verb (it
+// takes a live AActor* and serialises it itself).
 
 #pragma once
 
@@ -27,8 +27,8 @@ namespace coop::props::container_contents_sync {
 
 void Install(coop::net::Session* session);
 
-// Drives the writer watches' registration (container_writer_watch: the verbs, and the host's drone
-// sale), the FName resolve and the dirty-set drain. Near-free when the dirty set is empty, the steady state.
+// Drives the writer watches' registration (container_writer_watch: the inventory writers),
+// the FName resolve and the dirty-set drain. Near-free when the dirty set is empty, the steady state.
 void Tick();
 
 // The seam from the edge: this peer wrote the container `eid` (container_writer_watch). Marks it
@@ -40,11 +40,9 @@ void MarkHostWrite(uint32_t eid);
 void ForgetApplied(uint32_t eid);
 
 // ContainerContents chunks: a BlobChunkPayload whose blob is
-// `[u8 op=0][u32 eid][u16 n][u8 flags]` then n records in the coop/items/save_record_wire
+// `[u8 op=0][u32 eid][u16 n]` then n entries in the coop/items/inventory_item_wire
 // grammar. Never refanned -- a client accepts slot 0 and nothing else, and the host accepts only a
-// non-zero slot, which is a client-authored slice it takes as a thrown container's birth and refuses otherwise. The flags
-// byte is the host's reading of the container's overlap arming (container_arming): a client applies it to its mirror's box, the host
-// never takes it from a client and relays a birth slice with its own reading.
+// non-zero slot, which is a client-authored slice it takes as a thrown container's birth and refuses otherwise.
 void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Host: ship the joiner one contents blob per live world container. The join save-transfer blob is
@@ -59,7 +57,7 @@ void NoteJoinSnapshotBracket(bool open);
 
 void OnDisconnect();
 
-// ---- dev-instrument seams (coop/dev/container_selftest) ------------------------
+// ---- dev-instrument seams (the dev probes) ------------------------
 // These exist so the instrument reuses this module's measured world-versus-personal boundary
 // instead of reimplementing it. A probe free to get boundary 1 wrong would be testing a different
 // rule than the one that ships.
@@ -79,12 +77,12 @@ size_t SnapshotWorldContainers(WorldContainer* out, size_t want);
 bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol);
 
 // The hash of one container's records (coop/props/container_slice_wire::RecordsHash) and its record count, for the parity
-// report. The arming flags are the host's truth, read per peer and not compared across peers. False when the eid is not a
+// report. False when the eid is not a
 // live world container here, its contents do not read, or a transfer into it is in progress. Game thread.
 bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords);
 
 // Dev (the route census drill): the hash of each record of one container as the lane publishes it
-// (RecordsHash over that record alone), in order, and of the whole slice's records, flags left out. False as ContentHashOf.
+// (RecordsHash over that record alone), in order, and of the whole slice's records. False as ContentHashOf.
 // Game thread.
 bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole);
 
@@ -93,8 +91,8 @@ bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole);
 // the host's contents move ahead of every client's base. False when the contents do not read or are empty. Game thread.
 bool DevRawAppend(uint32_t eid, bool publish);
 
-// Dev (the route census drill): as DevRawAppend, with the record of a live item (its own getData, as addObject files
-// it) appended instead of a copy of the first. False as DevRawAppend, or when the item's record does not read.
+// Dev (the route census drill): as DevRawAppend, with the entry of a live item (its own betterGetData, as addItemAsObject
+// files it) appended instead of a copy of the first. False as DevRawAppend, or when the item's entry does not read.
 bool DevRawAppendActor(uint32_t eid, void* item, bool publish);
 
 // Host: send this container's live contents to one slot, forced past the unchanged-hash guard -- the truth a refused

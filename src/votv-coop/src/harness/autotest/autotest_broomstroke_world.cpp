@@ -69,7 +69,7 @@ void* LocalPlayer() {
 void* Holding(void* player) {
     E::MainPlayerGrabState gs{};
     if (!player || !E::ReadMainPlayerGrabState(player, gs)) return nullptr;
-    return gs.holdingActor;
+    return gs.mainHand;
 }
 
 uint32_t EidOf(void* actor) {
@@ -195,18 +195,12 @@ bool EquipBroom(const char* who) {
             UE_LOGW("broom_drill: %s EQUIP -- the broom did not spawn", who);
             d.store(1); return;
         }
-        // `Hold Object` takes a manual target, ends in the hotbar's equip and destroys the world copy.
-        void* fn = R::FindDispatchFunction(R::ClassOf(player), L"Hold Object", nullptr);
-        ue_wrap::ParamFrame f(fn);
+        // The player's own pickup of the spawned broom: it enters the hotbar, is selected, and the world copy is destroyed.
         bool collected = false;
-        if (f.valid()) {
-            f.Set<bool>(L"useHold", false);   // take `manual`, not what the camera looks at
-            f.Set<void*>(L"manual", broom);
-            if (ue_wrap::Call(player, f)) collected = f.Get<bool>(L"collected");
-        }
+        E::CallMainPlayerAddObjectToFreeHotbarSlot(player, broom, E::HotbarAdd{}, collected);
         void* h = Holding(player);
         const bool isBroom = ue_wrap::broom::IsBroom(h);
-        UE_LOGI("broom_drill: %s EQUIP -- spawned %p, Hold Object collected=%d, hand=%p broom=%d",
+        UE_LOGI("broom_drill: %s EQUIP -- spawned %p, hotbar pickup collected=%d, hand=%p broom=%d",
                 who, broom, collected ? 1 : 0, h, isBroom ? 1 : 0);
         ok->store(isBroom ? 1 : 0);
         d.store(1);

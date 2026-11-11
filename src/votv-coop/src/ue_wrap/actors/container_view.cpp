@@ -1,12 +1,11 @@
 // ue_wrap/actors/container_view.cpp -- see container_view.h.
 #include "ue_wrap/actors/container_view.h"
 
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
-#include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
@@ -15,322 +14,182 @@
 namespace ue_wrap::container_view {
 namespace {
 
-namespace R = reflection;
+namespace R  = reflection;
+namespace II = inventory_item;
 
-// The fields the view reads, resolved per class object: a class a world change replaced resolves again.
-// Offsets only -- a class's layout is the same in every world; its functions go through the memoised
-// lookup, which holds them by slot and serial.
+// Offsets only -- a class's layout is the same in every world -- resolved per class object, so a class a world change
+// replaced resolves again. The functions go through the memoised dispatch lookup.
 struct Fields {
     void* gmCls = nullptr;
-    int32_t propInventory = -1;    // mainGamemode_C.propInventory, the inventory screen
-    int32_t mainPlayer = -1;       // mainGamemode_C.mainPlayer, the local player
-    int32_t playerContainer = -1;  // mainGamemode_C.playerContainer, the player's own inventory
-    void* playerCls = nullptr;
-    int32_t activeInterface = -1;  // mainPlayer_C.activeInterface
+    int32_t screen = -1;       // mainGamemode_C.ui_FLI_inventory
     void* screenCls = nullptr;
-    int32_t entered = -1;   // ui_playerInventory_C.entered, the container shown
-    int32_t switcher = -1;  // ui_playerInventory_C.WidgetSwitcher_54, the screen's tabs
-    void* ownerCls = nullptr;  // the class of a slot's owner screen
-    int32_t asProp = -1;       // ui_playerInventory_C.as_prop, the container a slot takes from
-    void* slotCls = nullptr;
-    int32_t slotId = -1;     // uicomp_playerInvContainerSlot_C.id, the record index
-    int32_t slotOwner = -1;  // uicomp_playerInvContainerSlot_C.owner, the screen
-    void* putCls = nullptr;    // the screen class the put fields below were read from
-    int32_t putAsProp = -1;    // ui_playerInventory_C.as_prop
-    int32_t putHover = -1;     // ui_playerInventory_C.hoverContainerSlot
-    int32_t putTake = -1;      // ui_playerInventory_C.Button_a_take
-    void* buttonCls = nullptr;  // the class of the take button
-    int32_t enabledOff = -1;    // the button's bIsEnabled bitfield: its byte and mask
-    uint8_t enabledMask = 0;
-    void* getIndFn = nullptr;   // ui_playerInventory_C.getInd of putCls
-    void* slotsCls = nullptr;   // the screen class slotsProp was read from
-    int32_t slotsProp = -1;     // ui_playerInventory_C.slots_prop, the container slots
+    int32_t component = -1;    // ui_FreeLayoutInventory_C.containerInventoryComponent
+    int32_t dragging = -1;     // ui_FreeLayoutInventory_C.currentlyDragging
+    int32_t massSelect = -1;   // ui_FreeLayoutInventory_C.massSelect
+    int32_t player = -1;       // ui_FreeLayoutInventory_C.playerInventoryComponent
+    void* activeCls = nullptr;
+    int32_t activeOff = -1;    // ui_FreeLayoutInventory_C.inventoryActive, a bitfield: its byte and mask
+    uint8_t activeMask = 0;
+    void* itemCls = nullptr;
+    int32_t itemData = -1;     // uicomp_FLI_item_C.dataReference
+    int32_t itemOwner = -1;    // uicomp_FLI_item_C.ownerComponent
+    int32_t itemIndex = -1;    // uicomp_FLI_item_C.index
 };
 Fields g;
 
-// The call whose result is the selected record's index; its row is the fingerprint table's.
-UE_FACT_FN(kRowGetInd, "container_act", L"ui_playerInventory_C", L"getInd", Declared);
-
-void* PointerAt(void* obj, int32_t off) {
-    return obj && off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(obj) + off) : nullptr;
+void* PointerAt(const void* obj, int32_t off) {
+    void* p = nullptr;
+    if (obj && off >= 0) std::memcpy(&p, static_cast<const uint8_t*>(obj) + off, sizeof(p));
+    return p;
 }
 
-// The running world's gamemode, its fields resolved.
-void* Gamemode() {
+// The live screen, its fields resolved.
+void* ResolvedScreen() {
     void* const gm = world_singleton::Gamemode();
     if (!gm) return nullptr;
     if (void* const cls = R::ClassOf(gm); cls != g.gmCls) {
         g.gmCls = cls;
-        g.propInventory = R::FindPropertyOffset(cls, L"propInventory");
-        g.mainPlayer = R::FindPropertyOffset(cls, L"mainPlayer");
-        g.playerContainer = R::FindPropertyOffset(cls, L"playerContainer");
+        g.screen = R::FindPropertyOffset(cls, L"ui_FLI_inventory");
     }
-    return gm;
-}
-
-// The inventory screen, when it is the local player's active interface.
-void* OpenScreen() {
-    void* const gm = Gamemode();
-    void* const screen = PointerAt(gm, g.propInventory);
-    void* const player = PointerAt(gm, g.mainPlayer);
-    if (!screen || !player) return nullptr;
-    if (void* const cls = R::ClassOf(player); cls != g.playerCls) {
-        g.playerCls = cls;
-        g.activeInterface = R::FindPropertyOffset(cls, L"activeInterface");
-    }
-    if (PointerAt(player, g.activeInterface) != screen) return nullptr;
+    void* const screen = PointerAt(gm, g.screen);
+    if (!screen || !R::IsLive(screen)) return nullptr;
     if (void* const cls = R::ClassOf(screen); cls != g.screenCls) {
         g.screenCls = cls;
-        g.entered = R::FindPropertyOffset(cls, L"entered");
-        g.switcher = R::FindPropertyOffset(cls, L"WidgetSwitcher_54");
+        g.component = R::FindPropertyOffset(cls, L"containerInventoryComponent");
+        g.dragging = R::FindPropertyOffset(cls, L"currentlyDragging");
+        g.massSelect = R::FindPropertyOffset(cls, L"massSelect");
+        g.player = R::FindPropertyOffset(cls, L"playerInventoryComponent");
+    }
+    if (void* const cls = R::ClassOf(screen); cls != g.activeCls) {
+        g.activeCls = cls;
+        if (!R::FindBoolProperty(cls, L"inventoryActive", g.activeOff, g.activeMask)) g.activeOff = -1;
     }
     return screen;
 }
 
-void CallNoArgs(void* obj, void* fn) {
+bool Active(void* screen) {
+    return screen && g.activeOff >= 0 && g.activeMask != 0 &&
+           (*(static_cast<const uint8_t*>(screen) + g.activeOff) & g.activeMask) != 0;
+}
+
+bool CallNoArgs(void* obj, const wchar_t* name) {
+    void* const fn = obj ? R::FindDispatchFunctionCached(R::ClassOf(obj), name) : nullptr;
+    if (!fn) return false;
     ParamFrame f(fn);
-    if (f.valid()) Call(obj, f);
+    return f.valid() && Call(obj, f);
+}
+
+bool ResolveItemFields(void* item) {
+    if (void* const cls = R::ClassOf(item); cls != g.itemCls) {
+        g.itemCls = cls;
+        g.itemData = R::FindPropertyOffset(cls, L"dataReference");
+        g.itemOwner = R::FindPropertyOffset(cls, L"ownerComponent");
+        g.itemIndex = R::FindPropertyOffset(cls, L"index");
+    }
+    return g.itemData >= 0 && g.itemOwner >= 0;
+}
+
+// The same item: what an entry stands for, not where it lies on its canvas.
+bool SameItem(const II::Item& a, const II::Item& b) {
+    return a.classPath == b.classPath && a.name == b.name && a.tag == b.tag && a.key == b.key &&
+           a.attachKey == b.attachKey && a.actorData == b.actorData && a.amount == b.amount;
+}
+
+// Is `item` a widget holding `taken`'s item in a component other than `from`?
+bool HoldsCopy(void* item, const II::Item& taken, void* from) {
+    if (!item || !R::IsLive(item) || !ResolveItemFields(item) || PointerAt(item, g.itemOwner) == from) return false;
+    II::Item held;
+    return II::Read(static_cast<const uint8_t*>(item) + g.itemData, held) && SameItem(held, taken);
 }
 
 }  // namespace
 
+void* Screen() { return ResolvedScreen(); }
+
 void* Viewed() {
-    return PointerAt(OpenScreen(), g.entered);
+    void* const screen = ResolvedScreen();
+    if (!Active(screen)) return nullptr;
+    void* const owner = container_inventory::OwnerOf(PointerAt(screen, g.component));
+    return owner && container_inventory::IsContainer(owner) ? owner : nullptr;
 }
 
-bool IsOwnInventory(void* container) {
-    if (!container) return false;
-    if (container == PointerAt(Gamemode(), g.playerContainer)) return true;
-    // The screen itself tells the player's own inventory apart by its class.
-    void* ownCls = object_index::ClassByName(L"prop_inventoryContainer_player_C");
-    void* const cls = R::ClassOf(container);
-    return ownCls && cls && R::IsDescendantOfAny(cls, &ownCls, 1);
+void* ViewedInventory() {
+    void* const screen = ResolvedScreen();
+    if (!Active(screen)) return nullptr;
+    void* const comp = PointerAt(screen, g.component);
+    return comp && R::IsLive(comp) ? comp : nullptr;
 }
 
-void* OwnInventory() {
-    void* const own = PointerAt(Gamemode(), g.playerContainer);
-    return own && R::IsLive(own) ? own : nullptr;
+bool OpenInventory(void* component) {
+    void* const screen = ResolvedScreen();
+    void* const fn = screen && component ? R::FindDispatchFunctionCached(R::ClassOf(screen), L"begin") : nullptr;
+    ParamFrame f(fn);
+    return fn && f.valid() && f.Set<void*>(L"containerInventoryComponent", component) && Call(screen, f);
+}
+
+bool DropOnViewed(void* bagItem) {
+    void* const screen = ResolvedScreen();
+    if (!Active(screen) || !bagItem || g.dragging < 0) return false;
+    int32_t hoverOff = -1;
+    uint8_t hoverMask = 0;
+    if (!R::FindBoolProperty(R::ClassOf(screen), L"hoverContainer", hoverOff, hoverMask) || hoverOff < 0 || hoverMask == 0)
+        return false;
+    uint8_t* const hover = static_cast<uint8_t*>(screen) + hoverOff;
+    std::memcpy(static_cast<uint8_t*>(screen) + g.dragging, &bagItem, sizeof(bagItem));
+    *hover = static_cast<uint8_t>(*hover | hoverMask);
+    const bool ran = CallNoArgs(screen, L"enddrag");
+    *hover = static_cast<uint8_t>(*hover & ~hoverMask);
+    return ran;
 }
 
 bool CanClose() {
-    void* const screen = OpenScreen();
-    return screen && R::FindDispatchFunctionCached(R::ClassOf(screen), L"exit");
-}
-
-bool Open(void* container) {
-    void* const gm = Gamemode();
-    if (!gm || !container) return false;
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(gm), L"openPropInv");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    if (!f.valid()) return false;
-    f.Set<void*>(L"prop", container);
-    return Call(gm, f);
+    void* const screen = ResolvedScreen();
+    return Active(screen) && R::FindDispatchFunctionCached(R::ClassOf(screen), L"end");
 }
 
 bool Close() {
-    void* const screen = OpenScreen();
-    if (!screen) return false;
-    void* const cls = R::ClassOf(screen);
-    void* const exitFn = R::FindDispatchFunctionCached(cls, L"exit");
-    if (!exitFn) return false;
-    ParamFrame f(exitFn);
-    if (!f.valid() || !Call(screen, f)) return false;
-    // The rest of the game's own close: the first tab again, and the selection redrawn.
-    static void* s_setIndexFn = nullptr;
-    if (!s_setIndexFn) {
-        if (void* switcherCls = R::FindClass(L"WidgetSwitcher"))
-            s_setIndexFn = R::FindFunction(switcherCls, L"SetActiveWidgetIndex");
-    }
-    if (void* const switcher = PointerAt(screen, g.switcher); switcher && s_setIndexFn) {
-        ParamFrame idx(s_setIndexFn);
-        if (idx.valid()) {
-            idx.Set<int32_t>(L"Index", 0);
-            Call(switcher, idx);
-        }
-    }
-    if (void* const upd = R::FindDispatchFunctionCached(cls, L"updSelect")) CallNoArgs(screen, upd);
+    void* const screen = ResolvedScreen();
+    return Active(screen) && CallNoArgs(screen, L"end");
+}
+
+bool Open(void* container) { return CallNoArgs(container, L"openContainer"); }
+
+void* PlayerComponent() {
+    void* const screen = ResolvedScreen();
+    void* const comp = screen ? PointerAt(screen, g.player) : nullptr;
+    return comp && R::IsLive(comp) ? comp : nullptr;
+}
+
+bool ReadWidget(void* widget, WidgetEntry& out) {
+    if (!widget || !R::IsLive(widget) || !ResolveItemFields(widget) || g.itemIndex < 0) return false;
+    if (!II::Read(static_cast<const uint8_t*>(widget) + g.itemData, out.item)) return false;
+    out.owner = PointerAt(widget, g.itemOwner);
+    std::memcpy(&out.index, static_cast<const uint8_t*>(widget) + g.itemIndex, sizeof(out.index));
     return true;
 }
 
-bool ReadSlot(void* obj, Slot& out) {
-    if (!obj) return false;
-    void* base = object_index::ClassByName(L"uicomp_playerInvContainerSlot_C");
-    void* const cls = R::ClassOf(obj);
-    if (!base || !cls || !R::IsDescendantOfAny(cls, &base, 1)) return false;
-    if (cls != g.slotCls) {
-        g.slotCls = cls;
-        g.slotId = R::FindPropertyOffset(cls, L"id");
-        g.slotOwner = R::FindPropertyOffset(cls, L"owner");
-    }
-    if (g.slotId < 0 || g.slotOwner < 0) return false;
-    void* const screen = PointerAt(obj, g.slotOwner);
-    if (!screen) return false;
-    void* const screenCls = R::ClassOf(screen);
-    if (!screenCls) return false;
-    if (screenCls != g.ownerCls) {
-        g.ownerCls = screenCls;
-        g.asProp = R::FindPropertyOffset(screenCls, L"as_prop");
-    }
-    if (g.asProp < 0) return false;
-    out.screen = screen;
-    out.container = PointerAt(screen, g.asProp);
-    out.id = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(obj) + g.slotId);
-    return true;
-}
+void* SourceOf(const II::Item& item) { return CopyOf(item, nullptr); }
 
-void* InventoryScreen() {
-    void* const screen = PointerAt(Gamemode(), g.propInventory);
-    return screen && R::IsLive(screen) ? screen : nullptr;
-}
-
-namespace {
-
-// The live slot widgets of the screen's slots_prop, each handed to `want` until it answers true; that slot, or null.
-template <typename Want>
-void* FindSlot(void* screen, Want want) {
-    if (!screen) return nullptr;
-    if (void* const cls = R::ClassOf(screen); cls != g.slotsCls) {
-        g.slotsCls = cls;
-        g.slotsProp = R::FindPropertyOffset(cls, L"slots_prop");
-    }
-    if (g.slotsProp < 0) return nullptr;
-    const save_record::Arr arr = save_record::ReadArr(screen, g.slotsProp);
-    if (!arr.data) return nullptr;
-    for (int32_t i = 0; i < arr.num; ++i) {
-        void* slot = nullptr;
-        std::memcpy(&slot, arr.data + static_cast<size_t>(i) * sizeof(slot), sizeof(slot));
-        if (slot && R::IsLive(slot) && want(slot)) return slot;
+void* CopyOf(const II::Item& taken, void* from) {
+    void* const screen = ResolvedScreen();
+    if (!screen || II::IsEmpty(taken)) return nullptr;
+    if (void* const dragged = PointerAt(screen, g.dragging); HoldsCopy(dragged, taken, from)) return dragged;
+    if (g.massSelect < 0) return nullptr;
+    const save_record::Arr selected = save_record::ReadArr(screen, g.massSelect);
+    for (int32_t i = 0; selected.data && i < selected.num; ++i) {
+        void* const item = PointerAt(selected.data, i * static_cast<int32_t>(sizeof(void*)));
+        if (HoldsCopy(item, taken, from)) return item;
     }
     return nullptr;
 }
 
-}  // namespace
-
-void* SlotById(void* screen, int32_t id) {
-    return FindSlot(screen, [id](void* slot) {
-        Slot s{};
-        return ReadSlot(slot, s) && s.id == id;
-    });
-}
-
-void* FirstSlot(void* screen) {
-    return FindSlot(screen, [](void*) { return true; });
-}
-
-bool PressSlot(void* slot) {
-    if (!slot) return false;
-    void* const cls = R::ClassOf(slot);
-    void* const fn = cls ? R::FindDispatchFunctionCached(cls, L"pressButton") : nullptr;
-    if (!fn) return false;
-    ParamFrame f(fn);
-    return f.valid() && Call(slot, f);
-}
-
-bool Redraw(void* container) {
-    void* const screen = OpenScreen();
-    if (!container || !screen || PointerAt(screen, g.entered) != container) return false;
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(screen), L"gen_player");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    if (!f.valid()) return false;
-    f.Set<void*>(L"enter", container);
-    f.Set<bool>(L"double", true);
-    return Call(screen, f);
-}
-
-namespace {
-
-// A UWidget's visibility answer, its own IsVisible. False when it does not resolve or the call fails.
-bool WidgetVisible(void* widget, bool& visible) {
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"IsVisible");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    if (!f.valid() || !Call(widget, f)) return false;
-    visible = f.Get<bool>(L"ReturnValue");
+bool Discard(void* copy) {
+    if (!copy || !R::IsLive(copy)) return false;
+    void* const screen = ResolvedScreen();
+    const bool dragging = screen && PointerAt(screen, g.dragging) == copy;
+    if (!CallNoArgs(copy, L"removeItem")) return false;
+    if (dragging) CallNoArgs(screen, L"dropDragged");
     return true;
-}
-
-// The take button's bIsEnabled, a packed bitfield: read by its mask, the class asked again when it changes.
-bool ButtonEnabled(void* button, bool& enabled) {
-    void* const cls = R::ClassOf(button);
-    if (cls != g.buttonCls) {
-        g.buttonCls = cls;
-        g.enabledOff = -1;
-        g.enabledMask = 0;
-        if (!R::FindBoolProperty(cls, L"bIsEnabled", g.enabledOff, g.enabledMask)) g.enabledOff = -1;
-    }
-    if (g.enabledOff < 0 || g.enabledMask == 0) return false;
-    enabled = (*(static_cast<const uint8_t*>(button) + g.enabledOff) & g.enabledMask) != 0;
-    return true;
-}
-
-}  // namespace
-
-bool ReadPutState(void* screen, PutState& out, const char** failed) {
-    const char* sink = "";
-    const char*& field = failed ? *failed : sink;
-    field = "";
-    out = PutState{};
-    out.index = -1;
-    if (!screen || !R::IsLive(screen)) {
-        field = "the screen";
-        return false;
-    }
-    void* const cls = R::ClassOf(screen);
-    if (cls != g.putCls) {
-        g.putCls = cls;
-        g.putAsProp = R::FindPropertyOffset(cls, L"as_prop");
-        g.putHover = R::FindPropertyOffset(cls, L"hoverContainerSlot");
-        g.putTake = R::FindPropertyOffset(cls, L"Button_a_take");
-        g.getIndFn = facts::ResolveOn(kRowGetInd, cls).Fn();   // once per class, not once per press
-    }
-    if (g.putAsProp < 0 || g.putHover < 0 || g.putTake < 0) {
-        field = "as_prop, hoverContainerSlot or Button_a_take";
-        return false;
-    }
-    void* const button = PointerAt(screen, g.putTake);
-    PutState s{};
-    s.index = -1;
-    if (!button || !ButtonEnabled(button, s.takeEnabled)) {
-        field = "Button_a_take.bIsEnabled";
-        return false;
-    }
-    s.container = PointerAt(screen, g.putAsProp);
-    void* const hover = PointerAt(screen, g.putHover);
-    s.hovered = hover && R::IsLive(hover);
-    if (s.hovered && !WidgetVisible(hover, s.hoverVisible)) {
-        field = "hoverContainerSlot.IsVisible";
-        return false;
-    }
-    // The selected index is asked of the game only for a press that can go on to a put.
-    if (!s.hovered && s.takeEnabled) {
-        if (!g.getIndFn) {
-            field = "getInd";
-            return false;
-        }
-        ParamFrame f(g.getIndFn);
-        if (!f.valid() || !Call(screen, f)) {
-            field = "getInd";
-            return false;
-        }
-        s.index = f.Get<int32_t>(L"ReturnValue");
-    }
-    out = s;
-    return true;
-}
-
-bool RunPut(void* screen) {
-    if (!screen || !R::IsLive(screen)) return false;
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(screen), L"em_take");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    return f.valid() && Call(screen, f);
-}
-
-void* PlayerContainer() {
-    void* const c = PointerAt(Gamemode(), g.playerContainer);
-    return c && R::IsLive(c) ? c : nullptr;
 }
 
 }  // namespace ue_wrap::container_view

@@ -1,5 +1,5 @@
-// coop/dev/dronesack_drill.cpp -- see coop/dev/dronesack_drill.h: the client's half (its arm 4 take is
-// dronesack_drill_take.cpp), the destroy hooks and what the two halves share.
+// coop/dev/dronesack_drill.cpp -- see coop/dev/dronesack_drill.h: the client's half, the destroy hooks and what the
+// two halves share.
 
 #include "coop/dev/dronesack_drill.h"
 
@@ -79,7 +79,7 @@ std::vector<Received>  g_recv;
 std::map<std::string, std::string> g_rests;
 std::set<std::string>              g_heard;
 
-const char* const kRestPrefixes[] = {kSackPrefix, kBoundPrefix, kCratePrefix, kPropsPrefix, kIndexPrefix, kTookPrefix};
+const char* const kRestPrefixes[] = {kSackPrefix, kBoundPrefix, kCratePrefix, kPropsPrefix};
 const char* const kHeardLines[] = {kDoneLine, kPutsDoneLine, kCallLine, kSoldLine};
 
 void PollChat() {
@@ -150,6 +150,11 @@ int Mode() {
 }
 
 bool Arm(bool isHost) {
+    if (Mode() > 3) {
+        UE_LOGW("[SACK-DRILL] arm %d is retired: it took from the sack the sale had emptied, and the sack no longer "
+                "outlives the sale (the drone takes it aboard and sells from its own cargo); arms 1 to 3 remain", Mode());
+        return false;
+    }
     g_isHost = isHost;
     if (!g_containerCls) g_containerCls = R::FindClass(L"prop_container_C");
     if (Mode() >= 2 && !g_propCls) g_propCls = R::FindClass(L"prop_C");
@@ -170,21 +175,13 @@ uint32_t CrateEid() { return g_crateEid; }
 
 int RecordsOf(void* containerActor) {
     if (!containerActor) return -1;
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(containerActor), L"propInventory");
-    if (off < 0) return -1;
-    void* const inv = ReadAt<void*>(containerActor, off);
-    if (!inv || !R::IsLive(inv)) return -1;
+    void* const inv = CI::InventoryOf(containerActor);
+    if (!inv) return -1;
     const uint8_t* const slot = CI::ContentsSlot(inv);
     return slot ? SR::ReadArr(slot, 0).num : -1;
 }
 
-void* ContainerOf(void* holder) {
-    if (!holder) return nullptr;
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(holder), L"container");
-    if (off < 0) return nullptr;
-    void* const container = ReadAt<void*>(holder, off);
-    return container && R::IsLive(container) ? container : nullptr;
-}
+void* ContainerOf(void* holder) { return holder && CI::IsContainer(holder) ? holder : nullptr; }
 
 int SackRecords(void* sack) { return RecordsOf(ContainerOf(sack)); }
 
@@ -377,50 +374,6 @@ void RouteTick(void* player) {
     }
 }
 
-// ---- arm 4: does the client's sack keep what the sale sold ----
-
-constexpr unsigned kProbeS[4] = {1, 5, 15, 30};   // seconds after the host's sold line
-
-void SoldProbes(uint64_t now) {
-    if (!g_c.soldSeenMs) {
-        if (!Heard(kSoldLine)) {   // before the sale: the walk to the sack and its screen opened, then held
-            if (g_c.take == Take::Idle) TakeStart(now);
-            TakeTick(now);
-            return;
-        }
-        g_c.soldSeenMs = now;
-        void* const container = ContainerOf(g_c.sack.Get());
-        const EL::ElementId eid = container ? EL::Registry::Get().EidForActor(container) : EL::kInvalidId;
-        UE_LOGI("[SACK-DRILL] client sack records are read from the sack's container field: '%ls' eid=%u",
-                container ? R::ClassNameOf(container).c_str() : L"none", eid == EL::kInvalidId ? 0u : static_cast<unsigned>(eid));
-        UE_LOGI("[SACK-DRILL] client drone container in sync scope=%d", ContainerInSyncScope(container) ? 1 : 0);
-    }
-    for (int i = 0; i < 4; ++i) {
-        if (g_c.probed[i] || now - g_c.soldSeenMs < kProbeS[i] * 1000ULL) continue;
-        g_c.probed[i] = true;
-        UE_LOGI("[SACK-DRILL] client after sale +%us sack records=%d", kProbeS[i], SackRecords(g_c.sack.Get()));
-    }
-    MirrorWatch(now);
-    TakeTick(now);   // the press, once the mirror has been watched alone and still lists records
-    // The verdict has both halves: the press (refused Gone with nothing out, or nothing to take) and the mirror (0 in
-    // time). The mirror's FAIL is said here, after the press has answered, so the press runs in the red too.
-    if (g_c.take == Take::Done && g_c.mirror != 0 && !g_c.verdicted) {
-        g_c.verdicted = true;
-        if (g_c.mirror == 2)
-            UE_LOGW("[SACK-DRILL] client arm 4 FAIL: the mirror still showed %d records 2 s after the sale, before any press",
-                    g_c.mirrorLeft);
-        else if (g_c.takeOk)
-            UE_LOGI("[SACK-DRILL] client arm 4 PASS: the mirror read 0 within 2 s of the sale, and every press was "
-                    "refused Gone or none was made");
-    }
-}
-
-// Arm 3: which containers hold the index the host read off its crate, when the host said one.
-void IndexHolders(Moment m) {
-    std::string rest;
-    if (Rest(kIndexPrefix, &rest)) CensusIndexHolders("client", m, std::atoi(rest.c_str()));
-}
-
 // The census edges: the host's call (before), its sale (after), and kCensusLaterMs after that (the second read).
 void CensusStep(uint64_t now) {
     if (g_c.census == 0 && Heard(kCallLine)) {
@@ -429,17 +382,14 @@ void CensusStep(uint64_t now) {
     }
     if (g_c.census <= 1 && Heard(kSoldLine)) {
         CensusTake("client", Moment::After);
-        IndexHolders(Moment::After);
         g_c.afterMs = now;
         g_c.census = 2;
     }
     if (g_c.census == 2 && now - g_c.afterMs >= kCensusLaterMs) {
         CensusTake("client", Moment::AfterLater);
-        IndexHolders(Moment::AfterLater);
         CensusDiff("client", g_c.sack.Get());
         g_c.census = 3;
     }
-    if (Mode() == 4) SoldProbes(now);
 }
 
 void ClientTickImpl() {
@@ -466,7 +416,6 @@ void ClientTickImpl() {
         g_c.armMs = now;
         Say(std::string(kBoundPrefix) + std::to_string(g_c.sackEid));
         UE_LOGI("[SACK-DRILL] client READY sack mirror eid=%u records=%d", g_c.sackEid, SackRecords(mirror));
-        if (Mode() == 4) WalkToSack();
         g_c.phaseMs = now;
         g_c.ph = Mode() == 2 ? ClientPh::Props : ClientPh::Watch;   // arms 1 and 3: the host does the work, this peer reads
         return;
@@ -489,16 +438,13 @@ void ClientTickImpl() {
         if (Mode() >= 2) CensusStep(now);
         // The census after the sale is compared before the run ends; a host that ended with no sale has none to wait for.
         if (!Heard(kDoneLine) || g_c.census == 2) return;
-        if (Mode() == 4 && g_c.soldSeenMs && g_c.took < 0) return;   // the take is made before the host can end
         std::string rest;
         const uint32_t crateEid = Rest(kCratePrefix, &rest) ? ParseEid(rest) : 0;
         for (Destroyed& d : g_destroys)
             if (!d.printed) PrintDestroy("client", d, crateEid, g_c.armMs, true);
         if (g_destroysDropped)
             UE_LOGW("[SACK-DRILL] client: %zu more destroys were not recorded", g_destroysDropped);
-        if (Mode() == 4) {
-            UE_LOGI("[SACK-DRILL] client DONE arm 4 sack records=%d took=%d", SackRecords(g_c.sack.Get()), g_c.took > 0 ? 1 : 0);
-        } else if (Mode() >= 2) {
+        if (Mode() >= 2) {
             UE_LOGI("[SACK-DRILL] client DONE arm %d sack records=%d", Mode(), SackRecords(g_c.sack.Get()));
         } else {
             const bool alive = crateEid != 0 && EL::LivePropActor(crateEid) != nullptr;

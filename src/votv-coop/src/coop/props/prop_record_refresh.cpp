@@ -60,11 +60,10 @@ bool ReadOpened(void* box, bool& out) {
 
 // A record has just landed on `box`. Its LOOK follows `name`, NOT `opened`: Aprop_C::init picks
 // the mesh from that field and the box's own init() chains to it. And `name` is the one thing the
-// record deliberately does not carry -- save_record's splice keeps element 0 of every group, which
-// is where Aprop_C writes name, for the RECEIVER, so a sender's name is dropped by design. So the
-// look is re-derived here from the state that did travel, with the pair the Blueprint itself uses,
-// and init() re-runs the mesh pick. Idempotent: a name already right returns before the write, so
-// an init() that loops back through upd() stops on the second pass.
+// record deliberately does not carry -- prop_record::Apply seats the RECEIVER'S own name, so a sender's
+// is dropped by design. So the look is re-derived here from the state that did travel, with the pair
+// the Blueprint itself uses, and init() re-runs the mesh pick. Idempotent: a name already right returns
+// before the write, so an init() that loops back through upd() stops on the second pass.
 void RefreshLook(void* box, bool opened) {
     void* cls = R::ClassOf(box);
     if (!cls) return;
@@ -170,7 +169,7 @@ void OnUpdPost(const sg::Call& call) {
     const Watched* w = ByTag(call.tag);
     if (!w || !call.object) return;
     // Our own apply is the one caller to ignore: prop_save_data puts a record in through the
-    // prop's loadData, whose tail calls upd(), so without this an applied record would publish
+    // prop's betterLoadData, whose tail calls upd(), so without this an applied record would publish
     // itself straight back and the two peers would trade one record forever. The neighbouring
     // lanes gate on the same flag for the same reason. Logged rather than dropped silently: this
     // line is the far side's receipt, and it says which state actually landed.
@@ -187,7 +186,7 @@ void OnUpdPost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     void* actor = call.object;
-    // The load churn is not a change. A joining client runs every save prop's loadData, which
+    // The load churn is not a change. A joining client runs every save prop's betterLoadData, which
     // ends in upd(), so without this the join would send the host an intent per prop describing
     // the state the host has just sent us. The host's world is the reconciled authority, so the
     // gate never holds there.

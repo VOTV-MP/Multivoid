@@ -18,7 +18,7 @@ constexpr uint8_t kFlagImage = 0x08;
 // Where the strings end: the photo-free part a row's identity covers.
 size_t PrefixSize(const std::vector<uint8_t>& b) {
     if (b.size() < kHeadSize) return b.size();
-    const size_t end = kHeadSize + 2 * (static_cast<size_t>(b[5]) + b[6] + b[7] + b[8]);
+    const size_t end = kHeadSize + 2 * (static_cast<size_t>(b[5]) + b[6] + b[7] + b[8] + b[9]);
     return end < b.size() ? end : b.size();
 }
 
@@ -81,13 +81,14 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r) {
     const size_t ic = r.id.size() > kIdCap ? kIdCap : r.id.size();
     const size_t oc = r.object.size() > kObjectCap ? kObjectCap : r.object.size();
     const size_t sc = r.signal.size() > kSignalCap ? kSignalCap : r.signal.size();
-    if (oc < r.object.size() || sc < r.signal.size()) {
+    const size_t gc = r.imageName.size() > kImageNameCap ? kImageNameCap : r.imageName.size();
+    if (oc < r.object.size() || sc < r.signal.size() || gc < r.imageName.size()) {
         // A truncated FName resolves to the WRONG template on the receiver --
         // load-bearing, so it must be loud (caps are sized to never hit).
-        UE_LOGW("signal_wire: FName over cap (object %zu, signal %zu chars) -- truncated",
-                r.object.size(), r.signal.size());
+        UE_LOGW("signal_wire: FName over cap (object %zu, signal %zu, imageName %zu chars) -- truncated",
+                r.object.size(), r.signal.size(), r.imageName.size());
     }
-    const size_t prefix = kHeadSize + 2 * (nc + ic + oc + sc);
+    const size_t prefix = kHeadSize + 2 * (nc + ic + oc + sc + gc);
     bool image = !r.image.empty();
     if (image && prefix + 4 + r.image.size() > coop::blob_chunks::MaxBlobBytes()) {
         image = false;
@@ -99,7 +100,7 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r) {
     }
     std::vector<uint8_t> b;
     b.reserve(prefix + (image ? 4 + r.image.size() : 0));
-    b.push_back(1);
+    b.push_back(2);
     uint8_t flags = 0;
     if (r.hasData) flags |= 0x01;
     if (r.isCopy) flags |= 0x02;
@@ -112,7 +113,8 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r) {
     b.push_back(static_cast<uint8_t>(ic));
     b.push_back(static_cast<uint8_t>(oc));
     b.push_back(static_cast<uint8_t>(sc));
-    b.push_back(0); b.push_back(0); b.push_back(0);
+    b.push_back(static_cast<uint8_t>(gc));
+    b.push_back(0); b.push_back(0);
     AppendPod<int32_t>(b, r.level);
     AppendPod<int32_t>(b, r.polarity);
     AppendPod<float>(b, r.size);
@@ -125,6 +127,7 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r) {
     AppendWchars(b, r.id, kIdCap);
     AppendWchars(b, r.object, kObjectCap);
     AppendWchars(b, r.signal, kSignalCap);
+    AppendWchars(b, r.imageName, kImageNameCap);
     if (image) {
         AppendPod<uint32_t>(b, static_cast<uint32_t>(r.image.size()));
         b.insert(b.end(), r.image.begin(), r.image.end());
@@ -133,15 +136,15 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r) {
 }
 
 bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& out) {
-    if (b.size() < kHeadSize || b[0] != 1) return false;
+    if (b.size() < kHeadSize || b[0] != 2) return false;
     const uint8_t flags = b[1];
     out.hasData = (flags & 0x01) != 0;
     out.isCopy  = (flags & 0x02) != 0;
     out.frequency  = b[2];
     out.quality    = b[3];
     out.objectType = b[4];
-    const size_t nc = b[5], ic = b[6], oc = b[7], sc = b[8];
-    if (nc > kNameCap || ic > kIdCap || oc > kObjectCap || sc > kSignalCap) return false;
+    const size_t nc = b[5], ic = b[6], oc = b[7], sc = b[8], gc = b[9];
+    if (nc > kNameCap || ic > kIdCap || oc > kObjectCap || sc > kSignalCap || gc > kImageNameCap) return false;
     size_t off = 12;
     if (!ReadPod(b, off, out.level) || !ReadPod(b, off, out.polarity) ||
         !ReadPod(b, off, out.size) || !ReadPod(b, off, out.decoded) ||
@@ -150,7 +153,8 @@ bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& ou
         !ReadPod(b, off, out.date))
         return false;
     if (!ReadWchars(b, off, nc, out.name) || !ReadWchars(b, off, ic, out.id) ||
-        !ReadWchars(b, off, oc, out.object) || !ReadWchars(b, off, sc, out.signal))
+        !ReadWchars(b, off, oc, out.object) || !ReadWchars(b, off, sc, out.signal) ||
+        !ReadWchars(b, off, gc, out.imageName))
         return false;
     out.image.clear();
     if (!(flags & kFlagImage)) return true;

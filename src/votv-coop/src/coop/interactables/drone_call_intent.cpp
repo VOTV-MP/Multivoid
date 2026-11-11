@@ -34,17 +34,24 @@ namespace sg = ue_wrap::script_gate;
 
 // The verb the console's buttons arrive on, watched on the console's own class by name, so the watch
 // matches whichever class the running world loads under that name: a level class is never kept by
-// pointer across worlds.
+// pointer across worlds. The drone's own option menu arrives on the drone's.
 UE_FACT_FN(kRowActionOptionIndex, "drone_call_intent", L"droneConsole_C", L"actionOptionIndex", Declared);
+UE_FACT_FN(kRowDroneActionOptionIndex, "drone_call_intent", L"drone_C", L"actionOptionIndex", Declared);
 constexpr int kTagDroneCall = 0x44524f4e;  // 'DRON'
+constexpr int kTagDroneSack = 0x44525350;  // 'DRSP'
 
 // The action the console's own switch routes to its faces. Its other cases, 10 and 11, are the
 // lid, which is already a synced door and must keep running locally.
 constexpr uint8_t kActionUse = 4;
 
+// The drone's own action options: 4 opens the cargo (local: it reads the cargo the host sent), 7 drops the sack.
+constexpr uint8_t kActionDropSack = 7;
+
 // A console press is an arm's-length interaction, so the sender's reach is the desk's rather than
 // the pile grab's: the console is a small box a player stands at.
 constexpr float kConsoleReachUU = 400.0f;
+// The parked drone is a body some metres across, looked at from beside it.
+constexpr float kDroneReachUU = 600.0f;
 
 // One press is one call. The drone's own body ignores a press it cannot honour, so a burst costs
 // nothing but the dispatch; the bound is here so a stalled client's backlog neither stalls a frame
@@ -56,6 +63,7 @@ constexpr uint64_t kRefusalSayMs   = 10000;
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchInstalled = false;
 bool g_watchLive = false;
+bool g_sackWatchInstalled = false;
 
 uint64_t g_sent = 0, g_flown = 0, g_denied = 0;
 
@@ -68,11 +76,50 @@ struct Slot {
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
 // ---- host side -------------------------------------------------------------------------------
+// The sack option: the drone itself is within the sender's reach, parked, with its sack aboard. The
+// host's own copy of the drone is tested, never the press, and dropSack runs on it: the sack and the
+// cargo it takes leave on the prop and container lanes, and the drone's flags on DroneState.
+void ExecuteDropSack(coop::net::Session& s, uint8_t slot) {
+    void* const drone = ue_wrap::drone::Find();
+    const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kDroneReachUU);
+    if (!drone || token.Authorize(drone).outcome != coop::element::IntentOutcome::Ok) {
+        ++g_denied;
+        UE_LOGI("[DRONE-CALL] DENY slot=%u -- the drone is not within reach", static_cast<unsigned>(slot));
+        return;
+    }
+    const uint8_t bits = ue_wrap::drone::ReadFxBits(drone);
+    if (!(bits & ue_wrap::drone::kFxArrived) || !(bits & ue_wrap::drone::kFxHasSack)) {
+        ++g_denied;
+        UE_LOGI("[DRONE-CALL] DENY slot=%u -- the drone is not parked with its sack aboard",
+                static_cast<unsigned>(slot));
+        return;
+    }
+    if (!ue_wrap::drone::DropSack(drone)) {
+        ++g_denied;
+        UE_LOGW("[DRONE-CALL] slot=%u -- dropSack did not dispatch", static_cast<unsigned>(slot));
+        return;
+    }
+    ++g_flown;
+    UE_LOGI("[DRONE-CALL] the sack dropped for slot=%u", static_cast<unsigned>(slot));
+}
+
 // One press, run or refused and then consumed, or left at the head of its queue: false while the host
 // has no body for the sender, the seconds between a joiner's curtain and its first pose. That is a
 // mid-join window rather than a verdict, which the door-verb, keypad and container lanes wait out the
 // same way (principle 8): a press made in it is not lost.
 bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, uint8_t slot) {
+    if (p.verb == coop::net::drone_verb::kDropSack) {
+        if (!coop::element::IntentTarget::ForClientIntent(s, slot, kDroneReachUU).HasBody()) {
+            if (!g_slots[slot].waitSaid) {
+                g_slots[slot].waitSaid = true;
+                UE_LOGI("[DRONE-CALL] slot %u's presses wait: the host has no body for it yet",
+                        static_cast<unsigned>(slot));
+            }
+            return false;
+        }
+        ExecuteDropSack(s, slot);
+        return true;
+    }
     // The console carries no identity to name, so the sender's reach IS the resolve: of this
     // world's consoles, the one the sender is standing at. Any of them calls the same drone, so
     // the first within reach is the press.
@@ -185,16 +232,48 @@ sg::Verdict OnActionPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+// The drone's own option menu: the sack option is the host's to run, since dropSack moves the cargo into
+// a new sack, and a client's copy of it would be a second sack and a second cargo. The open option reads
+// the cargo this client holds and stays local.
+sg::Verdict OnDroneActionPre(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client || !call.object) return sg::Verdict::Run;
+
+    static void*   sFn = nullptr;
+    static int32_t sActionOff = -1;
+    if (call.function != sFn) {
+        sFn = call.function;
+        sActionOff = R::FindParamOffset(call.function, L"action");
+    }
+    if (sActionOff < 0) return sg::Verdict::Run;
+    if (*reinterpret_cast<uint8_t*>(call.locals + sActionOff) != kActionDropSack) return sg::Verdict::Run;
+
+    coop::net::DroneFlyIntentPayload p{};
+    p.verb = coop::net::drone_verb::kDropSack;
+    if (!s->SendReliable(coop::net::ReliableKind::DroneFlyIntent, &p, sizeof(p))) {
+        UE_LOGW("[DRONE-CALL] the drop-sack press was not sent (the session refused it); the drone stays as the "
+                "host has it");
+        return sg::Verdict::Cancel;
+    }
+    ++g_sent;
+    UE_LOGI("[DRONE-CALL] CLIENT SENT a drop-sack press (#%llu)", static_cast<unsigned long long>(g_sent));
+    return sg::Verdict::Cancel;
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!g_watchInstalled)
         g_watchInstalled = sg::WatchName(kRowActionOptionIndex, kTagDroneCall, &OnActionPre, nullptr);
+    if (!g_sackWatchInstalled)
+        g_sackWatchInstalled = sg::WatchName(kRowDroneActionOptionIndex, kTagDroneSack, &OnDroneActionPre, nullptr);
 }
 
 void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
+    if (!g_sackWatchInstalled)
+        g_sackWatchInstalled = sg::WatchName(kRowDroneActionOptionIndex, kTagDroneSack, &OnDroneActionPre, nullptr);
     if (!g_watchInstalled) {
         g_watchInstalled = sg::WatchName(kRowActionOptionIndex, kTagDroneCall, &OnActionPre, nullptr);
         return;

@@ -45,10 +45,9 @@ using Clock  = std::chrono::steady_clock;
 // A press on a world food: the eat is its action branch. A bite from the hand is another function, on a food this lane
 // leaves alone.
 UE_FACT_FN(kRowAction, "prop_food_sync", L"prop_food_C", L"actionOptionIndex", Declared);
-// The two bodies that write the player's droppedItem: simulateDrop (a throw, a place, the inventory's drop) and
-// forceDrop (a faint, a creature's grab). Each spawns the dropped food anew from the hand's data.
-UE_FACT_FN(kRowSimulateDrop, "prop_food_sync", L"mainPlayer_C", L"simulateDrop", Declared);
-UE_FACT_FN(kRowForceDrop, "prop_food_sync", L"mainPlayer_C", L"forceDrop", Declared);
+// The body every drop runs, from either hand (a drop, a place, a throw, a faint): it spawns the dropped food anew from
+// the hotbar slot's data and writes the player's droppedItem.
+UE_FACT_FN(kRowPlaceDrop, "prop_food_sync", L"mainPlayer_C", L"Place Drop Object from Hotbar Slot", Declared);
 constexpr int kTag = 0x464F4F44;  // 'FOOD'
 
 constexpr auto   kPoll = std::chrono::milliseconds(500);
@@ -57,8 +56,7 @@ constexpr auto   kPoll = std::chrono::milliseconds(500);
 // inside it (the eat interaction's own length, to be read on the rig).
 constexpr auto   kBiteGap = std::chrono::milliseconds(200);
 constexpr float  kTemperatureStep = 1.f;   // the tick's target is re-rolled every tick, so a smaller step is noise
-constexpr float  kRipenessStep = 5.f;     // a food starts near 7200 (a class's own row: 3600 to 1e9) and falls about
-                                           // half a point a second
+constexpr float  kFreshnessStep = 0.01f;  // a stage lasts 180 to 1440 s (spoilageDuration), so this is a few seconds
 constexpr size_t kSendsPerPoll = 64;
 constexpr size_t kMaxPending = 512;
 constexpr size_t kMaxReleasesPerSlot = 64;
@@ -68,9 +66,11 @@ constexpr auto   kReleaseWaitMs = std::chrono::milliseconds(30000);
 constexpr auto   kSayGap = std::chrono::seconds(1);  // one refusal line, and one corrective FoodState, per slot per this
 constexpr auto   kHandRepeat = std::chrono::seconds(5);  // a mirror rebuilt on a slot switch, a joiner's first copy
 constexpr float  kMaxTemperature = 2000.f;
-// A garbage guard, not a game rule: -1 for the tick guard's dip below 0, 1e9 the largest class default (the soap's).
-constexpr float  kMinRipeness = -1.f;
-constexpr float  kMaxRipeness = 1e9f;
+// A garbage guard, not a game rule: the alpha runs 1 down to 0 and a stage is spent when it dips below, and the stage count is
+// a small class default.
+constexpr float   kMinFreshness = -1.f;
+constexpr float   kMaxFreshness = 1.f;
+constexpr int32_t kMaxFreshnessSteps = 100000;
 // Twice the player's armLength 200: the door's and the coffee's reach (door_verb_intent.cpp kDoorReachUU,
 // coffee_intent.cpp kReachUU). Authorize adds the food's bounds and the pose slack.
 constexpr float  kReachUU = 400.f;
@@ -78,8 +78,7 @@ constexpr float  kReachUU = 400.f;
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
 bool g_watched = false;
-bool g_simulateDropWatched = false;
-bool g_forceDropWatched = false;
+bool g_dropWatched = false;
 bool g_dropLogged = false;
 
 std::vector<void*> g_classes;
@@ -180,8 +179,9 @@ void Collect(std::vector<void*>& out) {
 }
 
 bool Moved(const F::Condition& a, const F::Condition& b) {
-    return a.uses != b.uses || std::fabs(a.temperature - b.temperature) >= kTemperatureStep ||
-           std::fabs(a.ripeness - b.ripeness) >= kRipenessStep;
+    return a.uses != b.uses || a.freshnessSteps != b.freshnessSteps || a.spoiled != b.spoiled ||
+           std::fabs(a.temperature - b.temperature) >= kTemperatureStep ||
+           std::fabs(a.freshness - b.freshness) >= kFreshnessStep;
 }
 
 std::wstring KeyOf(void* actor) {
@@ -198,8 +198,10 @@ coop::net::FoodStatePayload StatePayload(const std::wstring& key, const F::Condi
     coop::net::FoodStatePayload p{};
     FillKey(key, p.key);
     p.temperature = now.temperature;
-    p.ripeness = now.ripeness;
+    p.freshness = now.freshness;
+    p.freshnessSteps = now.freshnessSteps;
     p.uses = now.uses;
+    p.spoiled = now.spoiled ? 1 : 0;
     return p;
 }
 
@@ -266,7 +268,7 @@ bool Apply(const std::wstring& key, const coop::net::FoodStatePayload& p) {
     void* const actor = coop::prop_key_index::Find(key);
     if (!actor || !F::IsFood(actor)) return false;
     if (coop::hand_item::IsHandAxisActor(actor)) return true;  // the hand owns it; its record carries it onward
-    F::Write(actor, {p.temperature, p.ripeness, p.uses});
+    F::Write(actor, {p.temperature, p.freshness, p.freshnessSteps, p.uses, p.spoiled != 0});
     F::PaintLooks(actor);
     ++g_applied;
     return true;
@@ -283,9 +285,10 @@ void PollMirrors() {
         Painted& painted = g_painted[slot];
         const coop::net::FoodHandPayload& c = state.condition;
         if (painted.actor.Is(mirror) && painted.condition.temperature == c.temperature &&
-            painted.condition.ripeness == c.ripeness && painted.condition.uses == c.uses)
+            painted.condition.freshness == c.freshness && painted.condition.freshnessSteps == c.freshnessSteps &&
+            painted.condition.uses == c.uses && painted.condition.spoiled == c.spoiled)
             continue;
-        F::Write(mirror, {c.temperature, c.ripeness, c.uses});
+        F::Write(mirror, {c.temperature, c.freshness, c.freshnessSteps, c.uses, c.spoiled != 0});
         F::PaintLooks(mirror);
         painted.actor.Set(mirror);
         painted.condition = c;
@@ -340,7 +343,9 @@ bool PlaceOf(int slot, ue_wrap::FVector& out) {
 // Which of a release's numbers is outside what any food holds. A garbage guard, not a game rule.
 const char* ValueFault(const coop::net::FoodStatePayload& p) {
     if (p.temperature < 0.f || p.temperature > kMaxTemperature) return "temperature out of bound";
-    if (p.ripeness < kMinRipeness || p.ripeness > kMaxRipeness) return "ripeness out of bound";
+    if (p.freshness < kMinFreshness || p.freshness > kMaxFreshness) return "freshness out of bound";
+    if (p.freshnessSteps < -1 || p.freshnessSteps > kMaxFreshnessSteps) return "freshness steps out of bound";
+    if (p.spoiled > 1) return "spoiled is not a bool";
     return nullptr;
 }
 
@@ -357,7 +362,7 @@ const char* CopyFault(int slot, void* actor, const coop::net::FoodStatePayload& 
 
 void TakeRelease(coop::net::Session& s, int slot, const std::wstring& key, void* actor,
                  const coop::net::FoodStatePayload& p) {
-    const F::Condition condition{p.temperature, p.ripeness, p.uses};
+    const F::Condition condition{p.temperature, p.freshness, p.freshnessSteps, p.uses, p.spoiled != 0};
     F::Write(actor, condition);
     Publish(s, key, condition);
     UE_LOGI("prop_food_sync: slot %d let go of '%ls' -- condition taken", slot, key.c_str());
@@ -441,8 +446,10 @@ void SendRelease(coop::net::Session& s, void* actor) {
     coop::net::FoodStatePayload p{};
     FillKey(key, p.key);
     p.temperature = now.temperature;
-    p.ripeness = now.ripeness;
+    p.freshness = now.freshness;
+    p.freshnessSteps = now.freshnessSteps;
     p.uses = now.uses;
+    p.spoiled = now.spoiled ? 1 : 0;
     s.SendReliableToSlot(0, coop::net::ReliableKind::FoodRelease, &p, sizeof(p));
     UE_LOGI("prop_food_sync: let go of '%ls' here, uses=%d -- FoodRelease sent", key.c_str(), now.uses);
 }
@@ -461,7 +468,7 @@ void OnDropPost(const sg::Call& c) {
     if (F::IsFood(dropped)) SendRelease(*s, dropped);
 }
 
-// Every tick: the hand's food is read for FoodHand, which nothing signals (holding_actor is written by updateHold with
+// Every tick: the hand's food is read for FoodHand, which nothing signals (holdingActor_main is written by better_holdItem_mainhand with
 // no seam of its own), and a hand that emptied with its food still alive is sent as a release.
 void TickHand(coop::net::Session& s) {
     void* const local = coop::players::Registry::Get().Local();
@@ -479,7 +486,8 @@ void TickHand(coop::net::Session& s) {
     if (!F::Read(food, now)) return;
     const auto at = Clock::now();
     if (g_handSentAny && !Moved(g_handSent, now) && at - g_handSentAt < kHandRepeat) return;
-    coop::net::FoodHandPayload p{now.temperature, now.ripeness, now.uses};
+    coop::net::FoodHandPayload p{now.temperature, now.freshness, now.freshnessSteps, now.uses,
+                                 static_cast<uint8_t>(now.spoiled ? 1 : 0), {}};
     const bool sent = s.role() == coop::net::Role::Host
                           ? s.SendReliable(coop::net::ReliableKind::FoodHand, &p, sizeof(p))
                           : s.SendReliableToSlot(0, coop::net::ReliableKind::FoodHand, &p, sizeof(p));
@@ -492,9 +500,8 @@ void TickHand(coop::net::Session& s) {
 void WatchWhenLoaded() {
     // A refusal is logged once by the gate itself, and retried here; each watch has its own latch, so one that
     // registered is not registered again for the other's sake.
-    if (!g_simulateDropWatched) g_simulateDropWatched = sg::WatchName(kRowSimulateDrop, kTag, nullptr, &OnDropPost);
-    if (!g_forceDropWatched) g_forceDropWatched = sg::WatchName(kRowForceDrop, kTag, nullptr, &OnDropPost);
-    if (g_simulateDropWatched && g_forceDropWatched && !g_dropLogged) {
+    if (!g_dropWatched) g_dropWatched = sg::WatchName(kRowPlaceDrop, kTag, nullptr, &OnDropPost);
+    if (g_dropWatched && !g_dropLogged) {
         g_dropLogged = true;
         UE_LOGI("prop_food_sync: the watch on the player's drop is registered");
     }

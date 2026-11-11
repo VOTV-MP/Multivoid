@@ -26,8 +26,8 @@ namespace coop::prop_sound {
 void PlayUseClick(void* propActor);
 
 // The grabbed prop's per-material pickup cue at the prop's location.
-// prop_C reads its cached physSoundData; plain-Actor grabs (the clump)
-// resolve root material -> physmat -> the same physSound row. Silent when
+// prop_C reads its cached audioPhysMat; plain-Actor grabs (the clump)
+// resolve root material -> physmat -> the same sounds object. Silent when
 // the material has no soft row (native parity).
 void PlayGrabSound(void* propActor);
 
@@ -39,7 +39,7 @@ void PlayThrowWhoosh(void* propActor);
 // landed pile (vol 1.0 / pitch 1.0 / att_default -- the flesh_impact PlaySoundAtLocation params
 // the chipPile uses for its own impact reaction). The chipPile/clump BP plays NO dedicated land
 // sound (shovelDig_Cue is the recycle-to-scrap action, flesh_impact_Cue a damage reaction): the
-// native "land thud" is the physics-material IMPACT cue, since lib_C::physSound(physmat)
+// native "land thud" is the physics-material IMPACT cue, since lib_C::getPhysicalAsAudio(physmat)
 // returns {step, impact, soft} and this reads the `impact` row -- the sibling of the `soft` row
 // PlayGrabSound already uses. Silent when the material has no impact row (native parity, same as
 // the grab soft-miss). Receiver side of the host-authoritative kToPile LAND convert, a genuine

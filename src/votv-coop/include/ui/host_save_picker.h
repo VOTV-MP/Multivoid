@@ -2,7 +2,7 @@
 //
 // Native functions, ImGui on top: lists existing saves via ue_wrap::save_browser
 // (which drives VOTV's own loadSlots) and offers a New Game (save_browser::CreateNamedSave
-// = VOTV's CreateSaveGameObject + SaveGameToSlot). On confirm it calls
+// = VOTV's createSaveSlotTreeDirectory). On confirm it calls
 // coop::session_manager::HostWithSave -> the harness LOADS the chosen world (or creates
 // the new save) THEN starts the host session.
 //

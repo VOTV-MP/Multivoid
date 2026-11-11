@@ -74,7 +74,7 @@ int32_t g_handedBox = -1;
 void* HeldActor() {
     void* pawn = coop::players::Registry::Get().Local();
     ue_wrap::engine::MainPlayerGrabState gs{};
-    return (pawn && ue_wrap::engine::ReadMainPlayerGrabState(pawn, gs)) ? gs.holdingActor : nullptr;
+    return (pawn && ue_wrap::engine::ReadMainPlayerGrabState(pawn, gs)) ? gs.mainHand : nullptr;
 }
 
 // Every box's level in servers[] order, capped at the wire's box count. False before the servers resolve.
@@ -193,7 +193,8 @@ void OnVerbPost(const sg::Call& call) {
     p.op = live > f.before ? kOpInstall : kOpTakeOut;
     p.box = static_cast<uint8_t>(idx);
     if (p.op == kOpTakeOut) {
-        // The take-out hands the player a new upgrade; with full hands it stays in the world at the player.
+        // The take-out's "quick hold object" puts a new upgrade in a free hotbar slot and selects it, so it stands
+        // in the main hand; with no free slot the game destroys it.
         void* held = HeldActor();
         g_handed.Reset();
         if (held && held != f.heldBefore && SB::IsUpgradeClass(R::ClassOf(held))) g_handed.Set(held);
@@ -215,8 +216,9 @@ void RecordDeny(uint8_t sender) {
 }
 
 // The upgrade a refused take-out handed this client is a ghost. In the hand it goes as the box's own install
-// consumes a held upgrade, its hand actor destroyed; left in the world (full hands) the host reaps its birth,
-// and here the untracked upgrades in reach of this player go.
+// consumes a held upgrade: its hand actor destroyed, and the game's holdActorDestroy_main takes it from its hotbar
+// slot. Once out of the hand (dropped into the world before the refusal landed) the host reaps its birth, and here
+// the untracked upgrades in reach of this player go.
 void ClientRemoveTakeOutGhost(uint8_t box) {
     void* handed = (g_handedBox == box) ? g_handed.Get() : nullptr;
     g_handed.Reset();

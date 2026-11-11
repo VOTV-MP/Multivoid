@@ -9,7 +9,9 @@
 // lets go the moment it holds it, then re-sends the closed hold's pose for a moment, which every
 // receiver must drop. client: the client carries, the host watches. join: the host
 // takes it off while a joiner's captured world still loads. Each step waits on a state the actor
-// reads; the last prints `ACTOR DONE`, a refused one `INVALID` with its reason. The evidence is the
+// reads; the last prints `ACTOR DONE` and says where the extinguisher rests in the lobby chat, and the watching peer then
+// prints `[FIREEXT-DRILL] [H|C] PASS` (its copy is off the mount and rests within 40 cm of that place) or `FAIL`; a refused
+// step prints `INVALID` with its reason. The evidence is the
 // watch: each peer prints every extinguisher it has, then each move or change of its frozen,
 // mounted, thrusting or spraying bit, so the two logs name one key.
 

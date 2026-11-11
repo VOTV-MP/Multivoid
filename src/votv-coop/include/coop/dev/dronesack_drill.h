@@ -1,18 +1,19 @@
 // coop/dev/dronesack_drill.h -- [dev] the drone sack measure drill: what happens to what is dropped onto the drone
-// sack, on each peer; it changes no product behaviour. Lines are tagged [SACK-DRILL]; a stuck leg says ABANDONED (--dead-marker).
+// sack (a world container that takes what touches it into its own inventory), on each peer; it changes no product
+// behaviour. Lines are tagged [SACK-DRILL]; a stuck leg says ABANDONED (--dead-marker).
 // Both peers run it with the same dronesack_drill value; the host puts a prop_dronesack_C in front of itself, names it
 // in the lobby chat, and waits for the client to say its mirror is bound.
 //   1 -- the host drops a prop_container_C crate 150 cm above the sack; for 15 s each peer logs the crate's local
 //        destroy with the caller's class, the client whether its seam sent a PropDestroy, the host whether one reached it.
 //   2 -- the host spawns six loose prop_C props (named "cup") on a ring round the sack; the client walks to each with
 //        the director, grabs it, carries it over the sack and lets go; "client put" says whether its mirror died
-//        here, by which caller, and whether the seam sent a PropDestroy. The host then calls the drone through the
-//        console's keyboard verb and logs when the sale clears the drone's container. Both peers read a census of
-//        every world container ([SACK-CENSUS]) at the call, at the sale and 5 s later, and name what changed.
+//        here, by which caller, and whether the seam sent a PropDestroy. The host then lets the drone's own sack go,
+//        puts the drill's sack aboard (putSackOn moves its entries into the drone's cargo and destroys it), calls the
+//        drone through the console's keyboard verb and logs when the sale clears the drone's cargo. Both peers read a
+//        census of every world container ([SACK-CENSUS]) at the call, at the sale and 5 s later, and name what
+//        changed.
 //   3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then the same call, sale and
-//        census; the crate's GObjStack index is logged before the sale and the containers holding it after.
-//   4 -- arm 3, the client opening the sack's screen before the sale and pressing its first slot (an act) at the sale
-//        marker: refused Gone, nothing comes out, the sack stays 0, and its mirror reads 0 within 2 s of the sale.
+//        census.
 
 #pragma once
 

@@ -1,11 +1,8 @@
 // coop/config/config_registry_rows_dev_container.inc -- the [dev] container rows that sat together in the dev row list,
-// moved in their order: the contents selftest, the join drill with its two red arms, the opener probe and the
+// moved in their order: the join drill with its two red arms, the opener probe and the
 // view drill, the writer probe and the two red arms of the drone sack drill. Included by config_registry_rows_dev.inc where they stood, so each row keeps its place in every
 // expansion of the list. The entry forms are config_registry_rows.inc's.
 
-CFG_FLAG(container_selftest, "container_selftest", "dev", false, "VOTVCOOP_CONTAINER_SELFTEST",
-    "Autonomous selftest: container contents sync. It MUTATES the world -- it extracts an item on"
-    " each peer -- so it is armed per run from the environment, like the hand-drop one.")
 CFG_FLAG(container_join_drill, "container_join_drill", "dev", false, "VOTVCOOP_CONTAINER_JOIN_DRILL",
     "Drill (BOTH peers): the host extracts an item while a joiner is connected but not world-ready; the joiner "
     "then reports a content hash per world container and the host judges it. Lines tagged [CONTAINER-JOIN] and "
@@ -13,9 +10,6 @@ CFG_FLAG(container_join_drill, "container_join_drill", "dev", false, "VOTVCOOP_C
 CFG_FLAG(container_retry_red, "container_retry_red", "dev", false, "VOTVCOOP_CONTAINER_RETRY_RED",
     "Red arm for the container join drill: a container send refused with no world-ready peer is re-armed "
     "every sweep, as before the fix, and counted.")
-CFG_FLAG(drone_sale_watch_off, "drone_sale_watch_off", "dev", false, "VOTVCOOP_DRONE_SALE_WATCH_OFF",
-    "Red arm for the drone sack drill (HOST): the watch that publishes the drone's emptied container after a sale "
-    "is not registered, so the clients' copies keep the sold items until something else writes the container.")
 CFG_FLAG(container_writer_probe, "container_writer_probe", "dev", false, "VOTVCOOP_CONTAINER_WRITER_PROBE",
     "Probe (HOST): every 2 s reads each world container's content hash and says once per container when it "
     "changed with no write the container lane saw (a local write, an applied remote slice or a connect seed's "
@@ -33,6 +27,36 @@ CFG_FLAG(container_view_drill, "container_view_drill", "dev", false, "VOTVCOOP_C
     "Drill (client): walks to the ATV, opens its container through the game's own openPropInv, then walks "
     "back; the view must stay open while the ATV is within reach and close on the tick it leaves it. Run it "
     "with join_at_host=1. Lines tagged [CVIEW-DRILL]; the client's DONE line, carrying the verdict, ends it.")
+CFG_FLAG(offhand_drill, "offhand_drill", "dev", false, "VOTVCOOP_OFFHAND_DRILL",
+    "Drill (BOTH peers): a client takes a crowbar into its main hand, runs the off-hand key's handler so the off hand holds it, "
+    "then drops the off hand's item; the host must resolve the dropped prop's key to a live prop, and its hand_item lane logs "
+    "the off-hand mirror. Lines tagged [OFFHAND-DRILL].")
+CFG_FLAG(container_take_drill, "container_take_drill", "dev", false, "VOTVCOOP_CONTAINER_TAKE_DRILL",
+    "Drill (BOTH peers): a client walks to a world container with at least two records, opens it on the inventory "
+    "screen and moves the first record into its bag as the screen's drag does (the bag's addItemAdvanced, then the "
+    "container's removeInventoryItem); the container must hold one record fewer and the bag one more, and still do "
+    "so a few seconds later. The host logs every change of a container's record count. Lines tagged [CTAKE-DRILL]; "
+    "the client's DONE line carries the verdict.")
+CFG_FLAG(drone_cargo_take_drill, "drone_cargo_take_drill", "dev", false, "VOTVCOOP_DRONE_CARGO_TAKE_DRILL",
+    "Drill (BOTH peers): the host fills the delivery drone's cargo with two records copied off a world container; a client "
+    "walks to the drone, moves the first record into its bag as the inventory screen's drag does (the bag's addItemAdvanced, "
+    "then the cargo's removeInventoryItem); the cargo must hold one record fewer and the bag one more, and still do so a few "
+    "seconds later, and the host must read the cargo one record fewer. Lines tagged [DRONE-CARGO-DRILL]; the client's DONE "
+    "line and the host's PASS or FAIL line carry the verdicts.")
+CFG_FLAG(atv_trunk_drill, "atv_trunk_drill", "dev", false, "VOTVCOOP_ATV_TRUNK_DRILL",
+    "Drill (BOTH peers, run with join_at_host=1): the host fills the first ATV's trunk with two records copied off a world "
+    "container and sets that ATV down beside its player; a client takes the first record into its bag as the inventory "
+    "screen's drag does (the bag's addItemAdvanced, then the trunk's removeInventoryItem), then opens the trunk on the "
+    "screen and drops that bag item on its canvas (the screen's enddrag); each leg must stand on the client and on the "
+    "host, at a second read too. Last the host adds a record itself and the client's mirror must show it. It MUTATES the "
+    "ATV's trunk. Lines tagged [ATV-TRUNK-DRILL]; the client's DONE line and the host's PASS or FAIL line carry the verdicts.")
+CFG_FLAG(container_stack_drill, "container_stack_drill", "dev", false, "VOTVCOOP_CONTAINER_STACK_DRILL",
+    "Drill (BOTH peers): the host clears a world container and seeds it with a stack of 6 and two stacks of 3 of one item; a "
+    "client walks there, opens it on the inventory screen and drags one unit off the stack of 6 with the right button (the "
+    "screen's own beginDrag on that stack's widget, which runs takeFromStack), then merges the two stacks of 3 as the canvas's "
+    "combine action does (addToStack on one, then the other leaves). Each leg must stand on the client and on the host, at a "
+    "second read too. It MUTATES the container. Lines tagged [CSTACK-DRILL]; the client's DONE line and the host's PASS or "
+    "FAIL line carry the verdicts.")
 CFG_ENUM(join_prop_loss_drill, "join_prop_loss_drill", "dev", "off", "off|break|swing|heldbreak|fire|rekey|twin|stack|late|throwat",
     "VOTVCOOP_JOIN_PROP_LOSS_DRILL",
     "Drill (BOTH peers, run with join_at_host=1): the host puts beer cans on the ground ahead of it before the client "
@@ -65,89 +89,27 @@ CFG_FLAG(bracket_position_wait_off, "bracket_position_wait_off", "dev", false, "
     "Developer red arm: never set (CLIENT). Inside the snapshot bracket a host spawn that matches a neighbour by "
     "position binds it on arrival, as it did before the bracket's end was awaited, so the bracket's eid order decides "
     "whose actor each key gets and the join prop loss drill's rekey arm must fail.")
-CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|take|settle|abort|deadline|double|ghost|held|race|two|sale|depart|room|forge|unasked|putrecord|puthand|putfood|puthidden|putnested|putempty|puthover|putreserved|putfull|putfullhand|putdepart|putdeadline|putowed|putjoin|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch|throwinto",
+CFG_ENUM(container_intent_drill, "container_intent_drill", "dev", "off", "off|throwhand|throwgrab|throwhostgrab|throwclamp|throwplace|throwjoin|throwdepart|throwtouch",
     "VOTVCOOP_CONTAINER_INTENT_DRILL",
-    "Drill (BOTH peers): both pick the same shared container (the smallest element id, within 5000 cm of the player, "
-    "that holds two records or more and that a nav route reaches; race, two, sale and room take one whose first record "
-    "is unique first; with none reached, the nearest); "
-    "the client walks to it, opens it and presses its first slot, and prints the reply-to-commit time and the "
-    "container and own counts; the host prints the container's count and the act holds on change. take -- the "
-    "honest take. settle -- the press comes 5 s after the screen opened. abort -- the replay is parked and the "
-    "screen closed under it, so the take is aborted. deadline -- the replay is parked past the host's hold "
-    "deadline, so the client aborts the stale grant. double -- abort, sent twice. held -- the replay is parked "
-    "20 s and still runs. ghost -- a record the host never had is pressed. race -- the client's grant, then the host's own "
-    "press of the same container; the client keeps the item and the host does not. two -- two clients press the same "
-    "record (run with --observer): one grant and one Gone. sale -- the host's reply is held and a raw clear of the "
-    "container (a stand-in for a sale) comes between the grant and the replay; the client keeps the item. depart -- "
-    "the replay is parked and the rig drops the client (--rejoin --rejoin-marker \"[CI-DRILL] client depart "
-    "parked\"); the host's record returns. room -- the client's own inventory has no room, so the item stays a world "
-    "prop. forge -- the client writes a record into its mirror twice, a second apart, and publishes each: the host "
-    "refuses both as not a birth and sends its truth once (red: container_slice_accept_red=1 on the host). unasked -- "
-    "the client calls the game's addObject on its mirror outside any act: the writer probe names it "
-    "(container_writer_probe=1 on the client) and the host receives no slice. The put arms pick no container: the host spawns a target (a backpack, a minifridge for putfood) 600 cm "
-    "ahead of the client and the item it takes, and each arm MEASURES and prints. putrecord -- the client pockets a "
-    "drive and puts it in by the hotbar key. puthand -- it carries a drive past the target and puts it in by hold and "
-    "run. putfood -- the same with food and the fridge; the held food's temperature, ripeness, record clock and hash are "
-    "printed at the ask and the replay. puthidden -- a hovered slot is hidden and the take key asked: no put may be "
-    "asked. putnested -- a gembox that holds a record is put into the target: refused, no put asked. putempty -- an "
-    "empty gembox is put in by the hotbar key and the host's stored record is read. puthover -- a slot is hovered "
-    "under the parked replay: the put is aborted and the slot's record not taken (red: container_act_no_hover_guard). "
-    "putreserved -- the host's own put into the target while the client's grant stands is refused (red: "
-    "container_act_no_reservation). putfull / putfullhand -- the target is filled to its volume first and the client's "
-    "hotbar-key / hold-and-run put is refused for space. putdepart -- the client leaves with its grant parked "
-    "(--rejoin --rejoin-marker \"[CI-DRILL] client putdepart parked\"); the host releases the reservation and inserts "
-    "nothing. putdeadline -- the replay is parked past the host's 30 s deadline: the late done is inserted once, a "
-    "second done of it is a bad commit, and the next put is answered Lapsed (red: container_act_no_lapse). putowed -- "
-    "the host's insert answers NotReady (container_act_insert_notready=1 or 2): the put is given up after 30 tries and the "
-    "client's mirror loses the phantom record; with 2 a take is then aborted and its restore must stay owed, never given "
-    "up, until the knob is set to 0. putjoin -- two clients (--observer): the first client's put is granted while the "
-    "second joins, the second asks the same target and waits at the head, then both commit. throwhand and throwgrab "
-    "(run with container_route_census=1 on both peers) MEASURE a client throwing a drive at a shared backpack from about "
-    "350 cm, from the hotbar hand or from a physics grab (throwhostgrab: the host grabs and throws, the client only traces): "
+    "Drill (BOTH peers): the throw arms. A client throws a drive at a shared backpack from about 350 cm. throwhand and "
+    "throwgrab (run with container_route_census=1 on both peers) MEASURE a client throwing from the hotbar hand or "
+    "from a physics grab (throwhostgrab: the host grabs and throws, the client only traces): "
     "both peers trace the flight, the first blocking hit, the overlap and the final poses, "
     "and the host prints MEASURED per throw; they fail only on a fixture failure, and on the flight: the thrower's "
     "copy parked in flight, or the host's copy more than the bound from the thrower's at the instants the client "
     "says (red: container_throw_no_elect, container_throw_no_velocity). throwclamp -- throwhand with "
     "container_throw_scale=10: the host's copy must fly no faster than the throw bound (red: container_throw_no_clamp). "
-    "throwplace -- the client lets go of a grab and then places a held drive with the game's precision place: neither "
-    "carries a throw sequence and the host elects no syncer. throwjoin (--observer) -- a second client joins while the "
-    "client's grab throw flies: its copy follows the relayed rows. throwdepart -- the client leaves at the first "
-    "admitted row (--rejoin --rejoin-marker \"[CI-DRILL] client throwdepart parked\"): the host takes the prop back at "
-    "the last row's velocity and it lands where the host's copy lands. throwtouch -- the host grabs the flying prop "
-    "150 ms after the first admitted row: the host overrides the syncer and the thrower's copy follows the host. The "
-    "run on throwhand with container_throw_stepped_rows prints whether the host revoked the thrower's trust. "
-    "throwinto (container_route_census=1 on both peers) -- the client throws a hand drive into a shared open basket from "
-    "about 70 cm (n=1, up to two retries on a miss), then brings a grabbed one over a basket of its own and lets go (n=2, the control, no throw), "
-    "then lowers a grabbed one into the box of another basket of its own without letting go (n=3, held), then takes the one record of an unarmed "
-    "basket on the screen and throws a hand drive into it (n=4, armed by the take), then, with a second client (--observer), the first "
-    "takes from an unarmed basket and the second throws into it (n=5; without a second client it is NOT MEASURED): "
-    "each is judged on both peers, host +1, client mirror +1 and no live copy of the drive left (n=3: and the client's grab ended; "
-    "n=5: and the first client's mirror +1). "
-    "Lines tagged [CI-DRILL]; the "
-    "host's DONE line ends it. It MUTATES the world.")
-CFG_FLAG(container_act_no_escrow, "container_act_no_escrow", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_ESCROW",
-    "Red arm for the container intent drill (HOST): a grant opens its escrow with the record found but does not "
-    "remove it from the container, so a second taker finds it still there and the item is taken twice.")
+    "throwplace -- the client lets go of a grab and then places the held item with the game's place (dropItem_mainhand on "
+    "the surface): neither carries a throw sequence and the host elects no syncer. throwjoin (--observer) -- a second "
+    "client joins while the client's grab throw flies: its copy follows the relayed rows. throwdepart -- the client "
+    "leaves at the first admitted row (--rejoin --rejoin-marker \"[CI-DRILL] client throwdepart parked\"): the host "
+    "takes the prop back at the last row's velocity and it lands where the host's copy lands. throwtouch -- the host "
+    "grabs the flying prop 150 ms after the first admitted row: the host overrides the syncer and the thrower's copy "
+    "follows the host. The run on throwhand with container_throw_stepped_rows prints whether the host revoked the "
+    "thrower's trust. Lines tagged [CI-DRILL]; the host's DONE line ends it. It MUTATES the world.")
 CFG_FLAG(container_slice_accept_red, "container_slice_accept_red", "dev", false, "VOTVCOOP_CONTAINER_SLICE_ACCEPT_RED",
-    "Red arm for the container intent drill's forge arm (HOST): a client's container slice that is not a thrown "
+    "Red arm (HOST): a client's container slice that is not a thrown "
     "container's birth is not refused at the receive edge, so the host applies the forged record and relays it.")
-CFG_FLAG(container_act_no_hover_guard, "container_act_no_hover_guard", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_HOVER_GUARD",
-    "Red arm for the put drill's puthover (CLIENT): the replay of a hotbar-key put no longer checks that no slot "
-    "is hovered, so a slot hovered after the ask is pressed by the replay and its record is taken unjudged.")
-CFG_FLAG(container_act_no_reservation, "container_act_no_reservation", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_RESERVATION",
-    "Red arm for the put drill's putreserved (HOST): a put's grant opens no reservation, so the host's own put "
-    "into the same container is not refused while the client's put stands granted.")
-CFG_FLAG(container_act_no_lapse, "container_act_no_lapse", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_LAPSE",
-    "Red arm for the put drill's putdeadline (HOST): a sender whose reservation lapsed, or was abandoned late, "
-    "is never slowed, so its next put is granted at once instead of answered Lapsed.")
-CFG_FLAG(container_act_no_hand_table, "container_act_no_hand_table", "dev", false, "VOTVCOOP_CONTAINER_ACT_NO_HAND_TABLE",
-    "Red arm for the put drill's putfood (CLIENT): the per-class table of hold-and-run hash exclusions is empty, so "
-    "only the transform and the lifespan are left out and a held food's ticking fields abort the put.")
-CFG_INT(container_act_insert_notready, "container_act_insert_notready", "dev", 0, 0, 2, "VOTVCOOP_CONTAINER_ACT_INSERT_NOTREADY",
-    "Drill knob for the put drill's putowed (HOST): 1 -- the insert of a put's record answers NotReady every time, so "
-    "the put goes the owed path and is given up after 30 tries; an escrow's restore is not affected. 2 -- the host's "
-    "restores (Source::Host) answer NotReady too, and the arm's second phase asserts a restore owed that way is never "
-    "given up; the drill then sets the knob back to 0 and the record lands.")
 CFG_STRING(container_route_census, "container_route_census", "dev", "", "VOTVCOOP_CONTAINER_ROUTE_CENSUS", false,
     "Census (BOTH peers): counts each container verb on a shared world container by the route on its stack (the "
     "slot press, the take key, hold+run, the overlap, the vacuum; none is the game's own logic) and the slices "
@@ -173,20 +135,3 @@ CFG_FLAG(container_throw_stepped_rows, "container_throw_stepped_rows", "dev", fa
 CFG_FLAG(container_throw_join_nohold, "container_throw_join_nohold", "dev", false, "VOTVCOOP_CONTAINER_THROW_JOIN_NOHOLD",
     "Red arm for the throwjoin arm (HOST): no hold on the second client's world-ready answer, and the throw waits for "
     "its world-ready, so the joiner is seeded before the flight and the arm must fail with 'the joiner was not in flight'.")
-CFG_FLAG(container_arming_measure, "container_arming_measure", "dev", false, "VOTVCOOP_CONTAINER_ARMING_MEASURE",
-    "Measure round for a container's box arming (BOTH peers, with container_intent_drill=throwinto and "
-    "container_route_census=1): a native post hook on UPrimitiveComponent::SetCollisionEnabled prints every call on a shared "
-    "container's overlap component (the baskets, a roomba), counts every call game-wide and prints the rate every 5 s; a PRE "
-    "watch on dingus logs the inline call and its caller; after the five sub-runs a tail fills a basket, the client takes from it "
-    "through the opened screen (the slot's pressButton) and a basket that already holds a drive is armed. Measures only: nothing is "
-    "cancelled. The host's last line is the answer line, prefixed arming.")
-CFG_FLAG(container_overlap_no_cancel, "container_overlap_no_cancel", "dev", false, "VOTVCOOP_CONTAINER_OVERLAP_NO_CANCEL",
-    "Red arm for the throwinto arm (CLIENT): the client's cancel of the container's own putObjectIn_overlap on a shared mirror is "
-    "skipped, so the BP body runs on the client as it did before the host judged the put: the client files the prop into its mirror "
-    "and destroys it, and the host's copy is not put.")
-CFG_FLAG(container_throwinto_unarmed, "container_throwinto_unarmed", "dev", false, "VOTVCOOP_CONTAINER_THROWINTO_UNARMED",
-    "Red arm for the throwinto arm (BOTH peers): the host does not arm the fixtures' baskets and the client does not wait for the mirror's box, "
-    "so a thrown drive meets an unarmed box, the engine fires no overlap and n=1 is not recorded.")
-CFG_FLAG(container_overlap_reach_red, "container_overlap_reach_red", "dev", false, "VOTVCOOP_CONTAINER_OVERLAP_REACH_RED",
-    "Red arm for the throwinto arm (HOST): the host's overlap judge reads the reach term of a held or claimed driver as out of reach, so a held "
-    "drive lowered into a box is refused as put_overlap_reach and n=3 is not recorded.")

@@ -176,7 +176,7 @@ const ClassCheck kClasses[] = {
 const FunctionCheck kFunctions[] = {
     // --- Critical engine UFunctions ---
     {P::name::KismetSystemLibraryClass, P::name::ExecuteConsoleCommandFn,    Severity::Critical, "level open + autotest harness"},
-    {P::name::GameplayStaticsClass,     P::name::LoadGameFromSlotFn,         Severity::Critical, "STORY save load"},
+    {P::name::CompressedSaveLoadLibClass, P::name::LoadGameCompressedFn,     Severity::Critical, "save folder load"},
     {P::name::GameplayStaticsClass,     P::name::SpawnObjectFn,              Severity::Critical, "NewObject (widget tree construction)"},
     {P::name::GameInstanceClass,        P::name::SetSaveSlotObjectFn,        Severity::Critical, "save apply on BeginPlay"},
     {P::name::ActorClass,               P::name::GetActorLocationFn,         Severity::Critical, "pose snapshot read"},
@@ -361,6 +361,104 @@ void RunAssetChecks(int& ok, int& fail, int& failPriority) {
     }
 }
 
+// ---- the fixed Blueprint offsets of sdk_profile.h, against the live reflection ------------------
+// A recook that adds or removes a Blueprint variable moves every member after it while every name still resolves, so
+// each offset the mod reads by number is asked for by name and compared.
+struct OffsetRow {
+    const wchar_t* cls;
+    const wchar_t* field;
+    size_t expected;
+    Severity sev;
+    const char* purpose;
+};
+
+const OffsetRow kOffsets[] = {
+    {P::name::MainPlayerClass, L"mesh_playerVisible", P::off::AmainPlayer_mesh_playerVisible, Severity::Important, "puppet body mesh"},
+    {P::name::MainPlayerClass, L"PostProcess_overlays_OBSOLETE", P::off::AmainPlayer_PostProcess_overlays_OBSOLETE, Severity::Important, "puppet post-process off"},
+    {P::name::MainPlayerClass, L"mic", P::off::AmainPlayer_mic, Severity::Important, "puppet mic teardown"},
+    {P::name::MainPlayerClass, L"PostProcess_pl", P::off::AmainPlayer_PostProcess_pl, Severity::Important, "puppet post-process off"},
+    {P::name::MainPlayerClass, L"arms", P::off::AmainPlayer_arms, Severity::Important, "puppet first-person arms"},
+    {P::name::MainPlayerClass, L"playermodel", P::off::AmainPlayer_playermodel, Severity::Important, "puppet equipment overlay"},
+    {P::name::MainPlayerClass, L"gamemode", P::off::AmainPlayer_GameMode, Severity::Important, "puppet gamemode null"},
+    {P::name::MainPlayerClass, L"Camera", P::off::AmainPlayer_Camera, Severity::Important, "camera reads"},
+    {P::name::MainPlayerClass, L"light_R", P::off::AmainPlayer_light_R, Severity::Important, "flashlight beam"},
+    {P::name::MainPlayerClass, L"lag_fl", P::off::AmainPlayer_lag_fl, Severity::Important, "flashlight arm"},
+    {P::name::MainPlayerClass, L"flashlight", P::off::AmainPlayer_flashlight, Severity::Important, "flashlight state"},
+    {P::name::MainPlayerClass, L"flashlightMode", P::off::AmainPlayer_flashlightMode, Severity::Important, "flashlight mode"},
+    {P::name::GamemodeClass, L"mainPlayer", P::off::mainGamemode_mainPlayer, Severity::Important, "the local player ref"},
+    {P::name::GamemodeClass, L"redSky", P::off::AmainGamemode_redSky, Severity::Important, "red sky sync"},
+    {P::name::GamemodeClass, L"save_slot", P::off::AmainGamemode_saveSlot, Severity::Important, "the live save slot"},
+    {P::name::PropClass, L"propData", P::off::Aprop_propData, Severity::Important, "prop heavy flag"},
+    {P::name::PropClass, L"name", P::off::Aprop_Name, Severity::Important, "prop name"},
+    {P::name::PropClass, L"static", P::off::Aprop_Static, Severity::Important, "prop static flag"},
+    {P::name::PropClass, L"removeWOrespawn", P::off::Aprop_removeWOrespawn, Severity::Important, "prop despawn flag"},
+    {P::name::PropClass, L"frozen", P::off::Aprop_frozen, Severity::Important, "prop frozen flag"},
+    {P::name::PropClass, L"sleep", P::off::Aprop_sleep, Severity::Important, "prop sleep flag"},
+    {P::name::PropClass, L"key", P::off::Aprop_Key, Severity::Important, "prop key"},
+    {P::name::PropClass, L"StaticMesh", P::off::Aprop_StaticMesh, Severity::Important, "prop mesh"},
+    {P::name::PropClass, L"physicsImpact", P::off::Aprop_physicsImpact, Severity::Important, "impact sounds"},
+    {L"comp_physicsImpact_C", L"physMat", P::off::CompPhysImpact_PhysMat, Severity::Cosmetic, "impact sounds"},
+    {P::name::DaynightCycleClass, L"eff_rain", P::off::AdaynightCycle_eff_rain, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"rain", P::off::AdaynightCycle_rain, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"isRaining", P::off::AdaynightCycle_isRaining, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"isSnow", P::off::AdaynightCycle_isSnow, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"enableSunlight", P::off::AdaynightCycle_enableSunlight, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"rainStrength", P::off::AdaynightCycle_rainStrength, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"rainLightningChance", P::off::AdaynightCycle_rainLightningChance, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"rainDeactivateChance", P::off::AdaynightCycle_rainDeactivateChance, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"rainWindSpeed", P::off::AdaynightCycle_rainWindSpeed, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"permanentRain", P::off::AdaynightCycle_permanentRain, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"enableMoonlight", P::off::AdaynightCycle_enableMoonlight, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"enable_fog", P::off::AdaynightCycle_enable_fog, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"enable_superfog", P::off::AdaynightCycle_enable_superfog, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"enable_rain", P::off::AdaynightCycle_enable_rain, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"thickFog", P::off::AdaynightCycle_thickFog, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"fogEventObject", P::off::AdaynightCycle_fogEventObject, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"finalFogDensity", P::off::AdaynightCycle_finalFogDensity, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"fogProbability", P::off::AdaynightCycle_fogProbability, Severity::Important, "weather"},
+    {P::name::DaynightCycleClass, L"permanentFog", P::off::AdaynightCycle_permanentFog, Severity::Important, "weather"},
+    {L"weatherFogController_C", L"time", P::off::WeatherFogController_Time, Severity::Important, "rolling fog"},
+    {L"weatherFogController_C", L"alpha", P::off::WeatherFogController_Alpha, Severity::Important, "rolling fog"},
+    {L"weatherFogController_C", L"duration", P::off::WeatherFogController_Duration, Severity::Important, "rolling fog"},
+    {L"weatherFogController_C", L"fogPhase", P::off::WeatherFogController_fogPhase, Severity::Important, "rolling fog"},
+    {L"weatherFogController_C", L"strength", P::off::WeatherFogController_Strength, Severity::Important, "rolling fog"},
+    {P::name::DirectionalWindClass, L"windTarget", P::off::DirectionalWind_windTarget, Severity::Cosmetic, "wind"},
+    {P::name::DirectionalWindClass, L"windSpeed_rain", P::off::DirectionalWind_windSpeed_rain, Severity::Cosmetic, "wind"},
+    {P::name::DirectionalWindClass, L"windStrength_rain", P::off::DirectionalWind_windStrength_rain, Severity::Cosmetic, "wind"},
+    {P::name::DirectionalWindClass, L"windSpeed_background", P::off::DirectionalWind_windSpeed_background, Severity::Cosmetic, "wind"},
+    {P::name::DirectionalWindClass, L"windStrength_background", P::off::DirectionalWind_windStrength_background, Severity::Cosmetic, "wind"},
+};
+
+void RunOffsetChecks(int& ok, int& fail, int& failPriority, int& skipped) {
+    UE_LOGI("sdk-check: --- BLUEPRINT OFFSET verification ---");
+    g_report << "--- BLUEPRINT OFFSET verification ---\n";
+    for (const auto& o : kOffsets) {
+        void* const cls = R::FindClass(o.cls);
+        if (!cls) {   // a class that loads later: its name check reports it, its offsets wait for it
+            ++skipped;
+            continue;
+        }
+        const int32_t live = R::FindPropertyOffset(cls, o.field);
+        if (live >= 0 && static_cast<size_t>(live) == o.expected) {
+            ++ok;
+            continue;
+        }
+        ++fail;
+        Failed(o.sev);
+        if (o.sev != Severity::Cosmetic) ++failPriority;
+        char buf[512];
+        if (live < 0)
+            std::snprintf(buf, sizeof(buf), "  [%s] OFFSET %s.%s is GONE (profile 0x%zX) -- breaks %s", SevTag(o.sev),
+                          Narrow(o.cls).c_str(), Narrow(o.field).c_str(), o.expected, o.purpose);
+        else
+            std::snprintf(buf, sizeof(buf), "  [%s] OFFSET %s.%s MOVED: profile 0x%zX, live 0x%X -- breaks %s",
+                          SevTag(o.sev), Narrow(o.cls).c_str(), Narrow(o.field).c_str(), o.expected,
+                          static_cast<unsigned>(live), o.purpose);
+        UE_LOGW("sdk-check: %s", buf + 2);
+        ReportLine(buf);
+    }
+}
+
 }  // namespace
 
 int Run() {
@@ -372,6 +470,7 @@ int Run() {
     RunFunctionChecks(ok, fail, failPriority, skipped);
     RunNpcAllowlistCheck(ok, fail, failPriority);
     RunAssetChecks(ok, fail, failPriority);
+    RunOffsetChecks(ok, fail, failPriority, skipped);
     const int total = ok + fail;
     if (failPriority == 0 && fail == 0) {
         UE_LOGI("sdk-check: === HEALTHY %d/%d resolved (no failures) ===", ok, total);

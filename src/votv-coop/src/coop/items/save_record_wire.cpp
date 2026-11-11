@@ -2,8 +2,6 @@
 
 #include "coop/items/save_record_wire.h"
 
-#include "coop/interactables/signal_wire.h"  // reuse the signal-row serializer; rows ride length-prefixed
-
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -95,13 +93,6 @@ void SerSave(std::vector<uint8_t>& b, const SaveRecord& r) {
     SerGroups(b, r.transforms, [](std::vector<uint8_t>& bb, const std::array<float, 10>& e) { for (float f : e) AppF32(bb, f); });
     SerGroups(b, r.bytes,      [](std::vector<uint8_t>& bb, uint8_t e) { AppU8(bb, e); });
     SerGroups(b, r.names,      [](std::vector<uint8_t>& bb, const std::wstring& e) { AppWStr(bb, e); });
-    // signals: reuse signal_wire::Serialize per row, each length-prefixed.
-    AppU32(b, static_cast<uint32_t>(r.signals.size()));
-    for (const auto& row : r.signals) {
-        const std::vector<uint8_t> sub = coop::signal_wire::Serialize(row);
-        AppU32(b, static_cast<uint32_t>(sub.size()));
-        b.insert(b.end(), sub.begin(), sub.end());
-    }
 }
 
 bool DeSave(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r) {
@@ -118,17 +109,6 @@ bool DeSave(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r) {
     if (!DeGroups(b, o, r.transforms,[](const std::vector<uint8_t>& bb, size_t& oo, std::array<float, 10>& e) { for (float& f : e) if (!RdF32(bb, oo, f)) return false; return true; })) return false;
     if (!DeGroups(b, o, r.bytes,   [](const std::vector<uint8_t>& bb, size_t& oo, uint8_t& e) { return RdU8(bb, oo, e); })) return false;
     if (!DeGroups(b, o, r.names,   [](const std::vector<uint8_t>& bb, size_t& oo, std::wstring& e) { return RdWStr(bb, oo, e); })) return false;
-    uint32_t sc; if (!RdU32(b, o, sc) || sc > kMaxElems || !Feasible(sc, b, o)) return false;
-    r.signals.clear(); r.signals.reserve(sc);
-    for (uint32_t i = 0; i < sc; ++i) {
-        uint32_t subLen; if (!RdU32(b, o, subLen) || o + subLen > b.size()) return false;
-        std::vector<uint8_t> sub(b.begin() + static_cast<std::ptrdiff_t>(o),
-                                 b.begin() + static_cast<std::ptrdiff_t>(o + subLen));
-        o += subLen;
-        ue_wrap::signal_dynamic::Row row;
-        if (!coop::signal_wire::Deserialize(sub, row)) return false;
-        r.signals.push_back(std::move(row));
-    }
     return true;
 }
 

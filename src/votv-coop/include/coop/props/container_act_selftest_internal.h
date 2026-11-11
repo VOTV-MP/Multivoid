@@ -6,7 +6,7 @@
 #include "coop/props/container_act_host.h"
 #include "coop/props/container_act_state.h"
 
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/inventory_item.h"
 
 #include <cstdint>
 
@@ -19,7 +19,7 @@ struct Checks {
     void operator()(bool ok, const char* what);
 };
 
-ue_wrap::save_record::SaveRecord Rec(const wchar_t* cls, int32_t n, const wchar_t* text);
+ue_wrap::inventory_item::Item Rec(const wchar_t* cls, int32_t n, const wchar_t* text);
 
 // Every read passes: the grant. A check breaks one field to reach one branch.
 internal::Inputs Ready();
@@ -29,8 +29,5 @@ container_act_state::Hold MakeHold(container_act_state::HoldKind kind, uint8_t s
 
 // The put's checks (container_act_selftest_put.cpp).
 void RunPutSelftest(Checks& check);
-
-// The overlap put's checks (container_act_selftest_overlap.cpp).
-void RunOverlapSelftest(Checks& check);
 
 }  // namespace coop::props::container_act_host::selftest

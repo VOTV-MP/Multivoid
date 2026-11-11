@@ -98,7 +98,7 @@ void Abandon(const char* why) {
 // A container's records and their digest, hashed with no eid so a copy compares to its original. False unread.
 bool Contents(void* container, size_t* count, uint64_t* digest) {
     void* inv = container ? ci::InventoryOf(container) : nullptr;
-    std::vector<ue_wrap::save_record::SaveRecord> recs;
+    std::vector<ci::Item> recs;
     if (!inv || !ci::ReadContents(inv, recs, cw::kMaxRecords)) return false;
     *count = recs.size();
     *digest = cw::RecordsHash(0, recs);
@@ -106,15 +106,7 @@ bool Contents(void* container, size_t* count, uint64_t* digest) {
 }
 
 // The inventory's own put-in, as the player's hand puts an item in. True when it took the item.
-bool AddObject(void* container, void* item) {
-    void* inv = ci::InventoryOf(container);
-    void* fn = inv ? R::FindDispatchFunctionCached(R::ClassOf(inv), L"addObject") : nullptr;
-    ue_wrap::ParamFrame f(fn);
-    if (!fn || !f.valid() || !f.Set<void*>(L"actor", item) || !f.Set<int32_t>(L"insertIndex1", -1) ||
-        !ue_wrap::Call(inv, f))
-        return false;
-    return f.Get<bool>(L"return");
-}
+bool AddObject(void* container, void* item) { return ci::AddItemAsObject(ci::InventoryOf(container), item); }
 
 // HOST: the backpacks standing when the fixture was filled, held by slot and serial, so a copy born at a
 // destroyed one's address still reads as new.
@@ -339,8 +331,8 @@ void ClientTick() {
         E::MainPlayerGrabState hand{};
         // A hold destroys the world mirror and spawns a hand item of its class, so the asked actor is
         // never the one in the hand: the hold is taken when the mirror is gone and the hand has a backpack.
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || g_fixture.Get() ||
-            R::ClassNameOf(hand.holdingActor) != kPackClass) {
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.mainHand || g_fixture.Get() ||
+            R::ClassNameOf(hand.mainHand) != kPackClass) {
             Abandon("the backpack could not be taken into the hand");
             return;
         }

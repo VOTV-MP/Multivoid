@@ -52,7 +52,7 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // Resolution, on demand, game thread: the three classes come from the object index, which answers at
 // once whether or not they are loaded; their members resolve once all three are, on the first pass or
 // never (a renamed symbol on a future game version), so a failed pass latches loudly.
-int32_t g_offSaveSlot = -1;           // mainGamemode.saveSlot (UsaveSlot_C*)
+int32_t g_offSaveSlot = -1;           // mainGamemode.save_slot (UsaveSlot_C*)
 int32_t g_offEventer = -1;            // mainGamemode.eventer  (Atrigger_eventer_C*)
 int32_t g_offPassEvents = -1;         // saveSlot.passEvents (TArray<FName>)
 int32_t g_offAllEvents = -1;          // saveSlot.allEvents  (TArray<FName>)
@@ -133,7 +133,7 @@ bool ResolvePass() {
     void* ssCls = OI::ClassByName(L"saveSlot_C");
     void* evCls = OI::ClassByName(L"trigger_eventer_C");
     if (!gmCls || !ssCls || !evCls) return false;  // the world has not loaded them yet
-    g_offSaveSlot = R::FindPropertyOffset(gmCls, L"saveSlot");
+    g_offSaveSlot = R::FindPropertyOffset(gmCls, L"save_slot");
     g_offEventer = R::FindPropertyOffset(gmCls, L"eventer");
     g_offPassEvents = R::FindPropertyOffset(ssCls, L"passEvents");
     if (g_offAllEvents < 0) g_offAllEvents = R::FindPropertyOffset(ssCls, L"allEvents");

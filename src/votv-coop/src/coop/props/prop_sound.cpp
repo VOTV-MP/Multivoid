@@ -33,35 +33,40 @@ void* ResolveAttenuation() {
     return sAtt;
 }
 
-// Which row of the material's Fstruct_physSound to pull.
+// Which of the material's cues to pull.
 enum class PhysCue { kSoft, kImpact };
 
-// The FRESH DataTable lookup the local grab itself does (mainPlayer uber
-// @100003: lib_C::physSound(hit.PhysMat)). The lookup's `return` bool is the
-// @100067 row-miss gate: false -> NO sound, same as the local grabber hears
-// for unmapped materials. Null physmat / unresolved lib -> null. `which`
-// selects the row: kSoft = the grab pickup cue; kImpact = the land/impact thud.
+// The cue of a physmat_soundsandparticles_C, read by name: sound_soft (the grab pickup cue) or sound_impact (the
+// land thud). Null for a null object or an unresolved member.
+void* CueOf(void* audioPhysMat, PhysCue which) {
+    if (!audioPhysMat || !R::IsLive(audioPhysMat)) return nullptr;
+    static R::InstanceOffset sSoft{L"sound_soft"};
+    static R::InstanceOffset sImpact{L"sound_impact"};
+    const int32_t off = (which == PhysCue::kImpact ? sImpact : sSoft).Of(audioPhysMat);
+    if (off < 0) return nullptr;
+    void* cue = *reinterpret_cast<void**>(static_cast<uint8_t*>(audioPhysMat) + off);
+    return (cue && R::IsLive(cue)) ? cue : nullptr;
+}
+
+// The lookup the local grab itself does (mainPlayer_C.pickUpObject): lib_C::getPhysicalAsAudio(PhysMat) gives the
+// material's physmat_soundsandparticles_C, whose cue is played; a material without one plays nothing, as for the
+// grabber. Null physmat / unresolved lib -> null.
 void* CueFromPhysMat(void* physmat, void* worldCtx, PhysCue which) {
     if (!physmat || !R::IsLive(physmat)) return nullptr;
     static void* sLibCdo = nullptr;
-    static void* sPhysSoundFn = nullptr;
-    if (!sLibCdo || !sPhysSoundFn) {
+    static void* sAsAudioFn = nullptr;
+    if (!sLibCdo || !sAsAudioFn) {
         if (void* cls = R::FindClass(L"lib_C")) {
             sLibCdo = R::FindClassDefaultObject(L"lib_C");
-            sPhysSoundFn = R::FindFunction(cls, L"physSound");
+            sAsAudioFn = R::FindFunction(cls, L"getPhysicalAsAudio");
         }
     }
-    if (!sLibCdo || !sPhysSoundFn) return nullptr;
-    ue_wrap::ParamFrame f(sPhysSoundFn);
-    f.Set<void*>(L"PhysMat", physmat);
+    if (!sLibCdo || !sAsAudioFn) return nullptr;
+    ue_wrap::ParamFrame f(sAsAudioFn);
+    f.Set<void*>(L"physicalMaterial", physmat);
     f.Set<void*>(L"__WorldContext", worldCtx);
-    if (!ue_wrap::Call(sLibCdo, f) || !f.Get<bool>(L"return")) return nullptr;
-    // The head of the Fstruct_physSound out-param, in field order: three cue rows,
-    // of which we read the impact one and the soft one (soft_30).
-    struct PhysSoundHead { void* step; void* impact; void* soft; };
-    const PhysSoundHead head = f.Get<PhysSoundHead>(L"Data");
-    void* cue = (which == PhysCue::kImpact) ? head.impact : head.soft;
-    return (cue && R::IsLive(cue)) ? cue : nullptr;
+    if (!ue_wrap::Call(sLibCdo, f) || !f.Get<bool>(L"isAudioPhysical")) return nullptr;
+    return CueOf(f.Get<void*>(L"audioPhysMat"), which);
 }
 
 }  // namespace
@@ -71,10 +76,9 @@ void PlayGrabSound(void* propActor) {
     void* soft = nullptr;
     const char* path = nullptr;
     if (ue_wrap::prop::IsDescendantOfProp(propActor)) {
-        // prop_C path: the physicsImpact component caches both the material row and the
-        // PhysMat. Tier 1 (fast) reads the CACHED physSoundData.soft_30 -- but a
-        // never-impacted prop's cache can be EMPTY, since it fills lazily, so a null
-        // cache is NOT a row miss and tier 2 redoes the fresh lookup from the
+        // prop_C path: the physicsImpact component caches the material's sounds object (audioPhysMat) and the
+        // PhysMat. Tier 1 reads the cached object's sound_soft -- but a never-impacted prop's cache can be EMPTY,
+        // since setPhysSoundData fills it lazily, so a null cache is NOT a miss and tier 2 redoes the lookup from the
         // component's own PhysMat.
         void* impactComp = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(propActor) + P::off::Aprop_physicsImpact);
@@ -82,11 +86,13 @@ void PlayGrabSound(void* propActor) {
             UE_LOGI("prop_sound: grab cue SKIP -- physicsImpact null/dead (prop=%p)", propActor);
             return;
         }
-        soft = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(impactComp) +
-            P::off::CompPhysImpact_physSoundData + P::off::FstructPhysSound_soft);
+        static R::InstanceOffset sAudioPhysMat{L"audioPhysMat"};
+        const int32_t audioOff = sAudioPhysMat.Of(impactComp);
+        soft = audioOff >= 0
+                   ? CueOf(*reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(impactComp) + audioOff), PhysCue::kSoft)
+                   : nullptr;
         path = "cache";
-        if (!soft || !R::IsLive(soft)) {
+        if (!soft) {
             path = "fresh";
             void* physmat = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(impactComp) + P::off::CompPhysImpact_PhysMat);
@@ -97,7 +103,7 @@ void PlayGrabSound(void* propActor) {
         // name, so pile and clump grabs were silent on peers while the grabber natively
         // heard the garbage soft cue. Resolve the physmat the way the grabber's trace
         // did -- root surface material -> physical material -- and feed the same
-        // physSound lookup.
+        // getPhysicalAsAudio lookup.
         path = "root-mat";
         soft = CueFromPhysMat(
             ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor, PhysCue::kSoft);
@@ -169,10 +175,10 @@ void PlayThrowWhoosh(void* propActor) {
 
 void PlayLandSound(void* propActor) {
     if (!propActor || !R::IsLive(propActor)) return;
-    // The pile's landed-material IMPACT cue (physSound.impact) -- the sibling of the
+    // The pile's landed-material IMPACT cue (sound_impact) -- the sibling of the
     // grab's soft cue. A pile is a plain actor (not Aprop_C), so resolve the physmat
     // the same way the generic-actor grab path does: root surface material ->
-    // physical material -> the physSound row. Silent on a row miss (native parity,
+    // physical material -> its sounds object. Silent on a row miss (native parity,
     // the @100067 gate). Neither the clump-to-pile conversion nor the pile's
     // BeginPlay and init play an explicit sound; the native "thud" IS this material
     // impact.

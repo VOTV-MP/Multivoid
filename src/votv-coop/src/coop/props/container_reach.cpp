@@ -3,10 +3,13 @@
 #include "coop/props/container_reach.h"
 
 #include "coop/element/element.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/net/session.h"
+#include "coop/props/container_target.h"
 #include "ue_wrap/actors/container_openers.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/drone.h"
 
 #include <set>
 #include <utility>
@@ -14,9 +17,8 @@
 namespace coop::props::container_reach {
 namespace {
 
-// A container the game opens through another actor stands where no player does -- the drone's and the
-// ATV's, tens to hundreds of metres from them -- and its author reaches it through the actor that opens
-// it: the game's own field on the opener, never the author's claim.
+// A container the game opens through another actor stands where no player does -- the ATV's, tens to hundreds of
+// metres from it -- and its author reaches it through the actor that opens it: the game's own field on the opener, never the author's claim.
 void* OpenerInReach(const coop::element::IntentTarget& tok, void* container) {
     struct Ctx {
         const coop::element::IntentTarget* tok;
@@ -37,6 +39,28 @@ std::set<std::pair<uint32_t, uint8_t>> g_reachedThrough;
 }  // namespace
 
 ReachResult Judge(coop::net::Session& session, uint8_t authorSlot, uint32_t eid) {
+    if (container_target::IsDroneCargo(eid)) {
+        // The drone's cargo is opened at the drone itself, by the same look-at trace.
+        const auto tok = coop::element::IntentTarget::ForClientIntent(session, authorSlot, kReachUU);
+        void* const drone = ue_wrap::drone::Find();
+        if (!drone) return {Reach::Reached, coop::element::IntentOutcome::NoRow, -1.f, kReachUU};
+        const auto sub = tok.Authorize(drone);
+        const Reach reach = sub.outcome == coop::element::IntentOutcome::NoBody ? Reach::NoBody
+                            : sub.outcome == coop::element::IntentOutcome::Ok  ? Reach::Reached
+                                                                               : Reach::Unreachable;
+        return {reach, sub.outcome, sub.distUU, sub.reachUU};
+    }
+    if (container_target::IsAtvTrunk(eid)) {
+        // An ATV's trunk is opened at the ATV itself (its open option), by the same look-at trace.
+        const auto tok = coop::element::IntentTarget::ForClientIntent(session, authorSlot, kReachUU);
+        void* const atv = coop::atv_trunk_sync::AtvOfEid(eid);
+        if (!atv) return {Reach::Reached, coop::element::IntentOutcome::NoRow, -1.f, kReachUU};
+        const auto sub = tok.Authorize(atv);
+        const Reach reach = sub.outcome == coop::element::IntentOutcome::NoBody ? Reach::NoBody
+                            : sub.outcome == coop::element::IntentOutcome::Ok  ? Reach::Reached
+                                                                               : Reach::Unreachable;
+        return {reach, sub.outcome, sub.distUU, sub.reachUU};
+    }
     // REACH, and only where it is answerable. NoRow and StaleDead are not refusals here: they mean
     // the element has not arrived (or has gone), which is the hold's question, not this one.
     const auto tok = coop::element::IntentTarget::ForClientIntent(session, authorSlot, kReachUU);

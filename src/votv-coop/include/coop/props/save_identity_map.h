@@ -7,8 +7,8 @@
 // and the client binds each loaded native to its host eid.
 //
 // ORDER: the build walks the two save arrays in the order the client's own load replays
-// them -- objectsData (off-kerfurs and keyed world objects), then primitivesData (the
-// chipPiles, which ignoreSave keeps out of objectsData) -- concatenating their keyless chip
+// them -- betterObjectsData (off-kerfurs and keyed world objects), then betterPrimitivesData
+// (the chipPiles, which ignoreSave keeps out of the objects array) -- concatenating their keyless chip
 // and kerfur entries. That sequence IS the client's keyless spawn order, and an entry's
 // position in it is the cross-peer ordinal. Each eid comes from a host-LOCAL class-and-
 // location join against the live actors captured in the same instant; that location is the
@@ -69,8 +69,8 @@ struct IdEntry {
 
 using IdMap = std::vector<IdEntry>;
 
-// HOST (game thread, at save-capture): build `outMap` by walking objectsData and then
-// primitivesData in index order, keeping the keyless chip and kerfur entries, and joining
+// HOST (game thread, at save-capture): build `outMap` by walking betterObjectsData and then
+// betterPrimitivesData in index order, keeping the keyless chip and kerfur entries, and joining
 // each to its host eid by a host-local class-and-location match against the live actors
 // (CollectTracked{Pile,Kerfur}Transforms). Logs a per-family summary with the keyed-excluded,
 // unmatched and ambiguous-location counts. Returns the entry count. Reads engine-owned memory

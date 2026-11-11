@@ -35,6 +35,8 @@
 #include "coop/props/prop_drive_stream.h"  // IsParked: a prop the host's driven stream owns
 #include "coop/props/prop_snapshot.h"      // ExpressIncrementalSpawn, the handback re-express
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
+#include "coop/props/wire_class.h"         // Resolve: the lookup, then the load of the class's content path
+#include "coop/net/wire_class_path.h"      // HasPath
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_stick_sync.h"    // ConvergeStuck, a wall-attach copy's stuck state
 #include "coop/props/prop_throw.h"         // SeqFor: the actor this peer just threw or swung is not converged
@@ -241,6 +243,12 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             payload.locX, payload.locY, payload.locZ,
             payload.rotPitch, payload.rotYaw, payload.rotRoll,
             static_cast<int>(payload.physFlags));
+    // A class this peer has not loaded is loaded from the content path the payload carries, here, before anything below
+    // asks for it by name (the trash test, the dedupe's class compares, the spawn): the lookup misses a class the game
+    // has not yet needed, and every spawn of it was dropped. Rooted by the load, so the next spawn finds it. A payload
+    // with no path (an old peer's) is the lookup alone, as before; a class that is loaded costs the one lookup.
+    if (coop::net::wire_class_path::HasPath(payload.className))
+        (void)coop::wire_class::Resolve(payload.className, classResolve);
     // A trash clump rides this pipeline identified by eid, not key (setKey does not stick on it):
     // key None, elementId set. Aprop_C keeps the keyed path.
     const bool eidOnly = (keyW.empty() || keyW == L"None");
@@ -491,9 +499,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // Adopting it rekeys the mirror to the wire key and binds the wire eid to an actor the hand
     // lane destroys one message later: the dropped prop never appears here, and its pose stream
     // addresses an actor that is gone. The same set prop_census hoists out of its own walk.
-    void* handAxis[1 + coop::players::kMaxPeers];
+    void* handAxis[coop::hand_item::kHandAxisCap];
     const ue_wrap::prop::NearbyExclusion notAdoptable{
-        handAxis, coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers)};
+        handAxis, coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap)};
     // The fuzzy query reads the object index as it stands. The exact-key read caught it up on its
     // miss, unless it answered before reaching the catch-up (the key index not seeded, no world), so
     // it is caught up here too; with nothing queued that costs a check.

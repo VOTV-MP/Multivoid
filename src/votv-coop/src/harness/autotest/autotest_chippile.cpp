@@ -291,7 +291,7 @@ void RunAutonomousChipPileTest() {
         d.store(1);
     });
 
-    // 6. The field-routing probe: which field the spawned clump lands in. holding_actor means the
+    // 6. The field-routing probe: which field the spawned clump lands in. holdingActor_main means the
     // held-object channel sees it; grabbing_actor means it rode the physics-handle path.
     bool sawClumpHolding = false, sawClumpGrabbing = false;
     void* heldClump = nullptr;   // captured for the Phase B re-pile throw
@@ -300,28 +300,28 @@ void RunAutonomousChipPileTest() {
         GT::RunAndWait([rsv, &sawClumpHolding, &sawClumpGrabbing, &heldClump, i](std::atomic<int>& d) {
             E::MainPlayerGrabState gs{};
             if (E::ReadMainPlayerGrabState(rsv->player, gs)) {
-                const bool holdClump = gs.holdingActor && ue_wrap::prop::IsGarbageClump(gs.holdingActor);
+                const bool holdClump = gs.mainHand && ue_wrap::prop::IsGarbageClump(gs.mainHand);
                 const bool grabClump = gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor);
                 if (holdClump)  sawClumpHolding  = true;
                 if (grabClump)  sawClumpGrabbing = true;
-                if (!heldClump) heldClump = grabClump ? gs.grabbingActor : (holdClump ? gs.holdingActor : nullptr);
+                if (!heldClump) heldClump = grabClump ? gs.grabbingActor : (holdClump ? gs.mainHand : nullptr);
                 // The grab state is logged on the first four polls and on any clump edge.
                 if (i < 4 || holdClump || grabClump) {
                     UE_LOGI("chippile_test: PROBE poll %d -- grabbing_actor=%p(%ls)[clump=%d] "
-                            "holding_actor=%p(%ls)[clump=%d]", i,
+                            "holdingActor_main=%p(%ls)[clump=%d]", i,
                             gs.grabbingActor, gs.grabbingActor ? R::ClassNameOf(gs.grabbingActor).c_str() : L"-", grabClump ? 1 : 0,
-                            gs.holdingActor,  gs.holdingActor  ? R::ClassNameOf(gs.holdingActor).c_str()  : L"-", holdClump ? 1 : 0);
+                            gs.mainHand,  gs.mainHand  ? R::ClassNameOf(gs.mainHand).c_str()  : L"-", holdClump ? 1 : 0);
                 }
             }
             d.store(1);
         });
     }
     // The measured answer: the clump rides grabbing_actor (the physics-handle path), which
-    // local_streams reads first, holding_actor being its fallback.
-    UE_LOGI("chippile_test: FIELD-ROUTING VERDICT -- clump-in-grabbing_actor=%d clump-in-holding_actor=%d -- %s",
+    // local_streams reads first, holdingActor_main being its fallback.
+    UE_LOGI("chippile_test: FIELD-ROUTING VERDICT -- clump-in-grabbing_actor=%d clump-in-holdingActor_main=%d -- %s",
             sawClumpGrabbing ? 1 : 0, sawClumpHolding ? 1 : 0,
             sawClumpGrabbing ? "clump rides grabbing_actor (PHC path); local_streams reads it first so the morph adopts it -- CORRECTED premise, morph OK"
-          : sawClumpHolding  ? "clump rides holding_actor (the old assumed field)"
+          : sawClumpHolding  ? "clump rides holdingActor_main (the old assumed field)"
                              : "NEITHER -- no clump was held (playerGrabbed did not run, or the clump self-freed before the first poll)");
 
     // 6.5. A sustained moving carry: the probe above is stationary, so a client drive that never
@@ -351,7 +351,7 @@ void RunAutonomousChipPileTest() {
                 E::MainPlayerGrabState gs{};
                 if (E::ReadMainPlayerGrabState(rsv->player, gs) &&
                     ((gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ||
-                     (gs.holdingActor  && ue_wrap::prop::IsGarbageClump(gs.holdingActor))))
+                     (gs.mainHand  && ue_wrap::prop::IsGarbageClump(gs.mainHand))))
                     held = 1;
                 d.store(1);
             });
@@ -506,7 +506,7 @@ void RunPuppetGrabProbe() {
             E::MainPlayerGrabState gs{};
             if (!E::ReadMainPlayerGrabState(pup->actor, gs)) { d.store(1); return; }
             void* clump = (gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ? gs.grabbingActor
-                        : (gs.holdingActor  && ue_wrap::prop::IsGarbageClump(gs.holdingActor))  ? gs.holdingActor : nullptr;
+                        : (gs.mainHand  && ue_wrap::prop::IsGarbageClump(gs.mainHand))  ? gs.mainHand : nullptr;
             const bool engaged = (clump != nullptr);
             if (engaged) ++engagedPolls;
             float dist = -1.f, dz = -1e9f;
@@ -521,9 +521,9 @@ void RunPuppetGrabProbe() {
                 if (dist < distMin) distMin = dist;
             }
             if (i < 6 || (engaged && (i % 8) == 0)) {
-                UE_LOGI("puppet_grab_probe: poll %d -- grabbing_actor=%p[clump=%d] holding_actor=%p dist=%.0fcm dZ=%.0fcm grabLen=%.1f",
+                UE_LOGI("puppet_grab_probe: poll %d -- grabbing_actor=%p[clump=%d] holdingActor_main=%p dist=%.0fcm dZ=%.0fcm grabLen=%.1f",
                         i, gs.grabbingActor, (gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ? 1 : 0,
-                        gs.holdingActor, dist, dz, gs.grabLen);
+                        gs.mainHand, dist, dz, gs.grabLen);
             }
             d.store(1);
         });
@@ -544,7 +544,7 @@ void RunPuppetGrabProbe() {
             distFirst, distLast, distMin, dzFirst, dzLast, grabLenLast, pulledIn ? 1 : 0);
     if (!engaged)
         UE_LOGW("puppet_grab_probe: RESULT = NOT-ENGAGED -- playerGrabbed(puppet) did not leave a clump in "
-                "grabbing_actor/holding_actor. The RE predicted ENGAGED; investigate (param frame? clump self-freed?).");
+                "grabbing_actor/holdingActor_main. The RE predicted ENGAGED; investigate (param frame? clump self-freed?).");
     else if (readPolls == 0)
         UE_LOGW("puppet_grab_probe: RESULT = UNREAD -- a clump was held, but no poll could read both the puppet's and "
                 "the clump's location; no verdict on where it was held");

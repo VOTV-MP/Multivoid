@@ -35,11 +35,14 @@ namespace WI = ue_wrap::world_identity;
 using ue_wrap::prop::KeyField;
 using Clock = std::chrono::steady_clock;
 
-// The four bodies after which a prop's key may have changed (the header says why each).
-UE_FACT_FN(kRowInit,     "prop_key_index", nullptr, L"init",     AnyClass);
-UE_FACT_FN(kRowSetKey,   "prop_key_index", nullptr, L"setKey",   AnyClass);
-UE_FACT_FN(kRowGetKey,   "prop_key_index", nullptr, L"getKey",   AnyClass);
-UE_FACT_FN(kRowLoadData, "prop_key_index", nullptr, L"loadData", AnyClass);
+// The five bodies after which a prop's key may have changed (the header says why each).
+UE_FACT_FN(kRowInit,           "prop_key_index", nullptr, L"init",           AnyClass);
+UE_FACT_FN(kRowSetKey,         "prop_key_index", nullptr, L"setKey",         AnyClass);
+UE_FACT_FN(kRowGetKey,         "prop_key_index", nullptr, L"getKey",         AnyClass);
+UE_FACT_FN(kRowLoadData,       "prop_key_index", nullptr, L"loadData",       AnyClass);
+UE_FACT_FN(kRowBetterLoadData, "prop_key_index", nullptr, L"betterLoadData", AnyClass);
+const ue_wrap::facts::Function* const kKeyRows[] = {&kRowInit, &kRowSetKey, &kRowGetKey, &kRowLoadData,
+                                                    &kRowBetterLoadData};
 constexpr int kTag = 0x504B4958;  // 'PKIX'
 
 bool SameName(const R::FName& a, const R::FName& b) {
@@ -137,10 +140,10 @@ KeyField FieldOf(void* cls) {
 
 // The hands (the local player's held item and every peer's display copy), read once per session tick: a hand
 // carries the held item's key and is never the world prop a key names.
-void* g_hand[1 + coop::players::kMaxPeers];
+void* g_hand[coop::hand_item::kHandAxisCap];
 size_t g_handN = 0;
 
-void RefreshHand() { g_handN = coop::hand_item::CollectHandAxisActors(g_hand, 1 + coop::players::kMaxPeers); }
+void RefreshHand() { g_handN = coop::hand_item::CollectHandAxisActors(g_hand, coop::hand_item::kHandAxisCap); }
 
 bool IsHand(void* obj) {
     for (size_t i = 0; i < g_handN; ++i)
@@ -464,11 +467,23 @@ void ForgetOneIfAsked() {
 
 // ---- the session ----
 
-bool WatchLive(const ue_wrap::facts::Function& row) { return SG::NameWatchLive(row, kTag); }
+bool AllWatchesLive() {
+    for (const ue_wrap::facts::Function* row : kKeyRows)
+        if (!SG::NameWatchLive(*row, kTag)) return false;
+    return true;
+}
 // Dead for good: settled and not live once no name is still resolving (a placeholder can read settled
 // while its live entry is still resolving).
-bool WatchDead(const ue_wrap::facts::Function& row) {
-    return SG::PendingNameCount() == 0 && SG::NameWatchSettled(row, kTag) && !SG::NameWatchLive(row, kTag);
+bool AnyWatchDead() {
+    if (SG::PendingNameCount() != 0) return false;
+    for (const ue_wrap::facts::Function* row : kKeyRows)
+        if (SG::NameWatchSettled(*row, kTag) && !SG::NameWatchLive(*row, kTag)) return true;
+    return false;
+}
+bool AllNamesSettled() {
+    for (const ue_wrap::facts::Function* row : kKeyRows)
+        if (!SG::NameWatchSettled(*row, kTag)) return false;
+    return true;
 }
 
 // [dev] key_index_seed_hold_sec: the session's seed waits that long from Begin, so the index is not Live and a
@@ -484,8 +499,7 @@ void TrySeed() {
     // names on, and waits while the script gate itself is not armed.
     Install();
     if (!g_installed || g_deadSaid) return;
-    if (g_watchRefused || !g_listening || WatchDead(kRowInit) || WatchDead(kRowSetKey) || WatchDead(kRowGetKey) ||
-        WatchDead(kRowLoadData)) {
+    if (g_watchRefused || !g_listening || AnyWatchDead()) {
         g_unavailable.store(true, std::memory_order_release);
         if (!g_deadSaid) {
             g_deadSaid = true;
@@ -494,8 +508,7 @@ void TrySeed() {
         }
         return;
     }
-    if (!WatchLive(kRowInit) || !WatchLive(kRowSetKey) || !WatchLive(kRowGetKey) || !WatchLive(kRowLoadData))
-        return;  // a name still resolving: the next tick
+    if (!AllWatchesLive()) return;  // a name still resolving: the next tick
     if (SeedHeldForDrill()) return;
     // Caught up first: the seed is the moment the index promises to hold every live keyed prop, and the
     // host's uniqueness check reads it as it stands in the very ticks the census enrols the world. Seeding
@@ -557,21 +570,18 @@ void SummaryIfDue() {
 
 void Install() {
     if (g_installed) {
-        // A name watch resolves on the game thread when someone drives it; until all four have settled
+        // A name watch resolves on the game thread when someone drives it; until all five have settled
         // (live, or dead for good), this tick does.
         if (!g_namesSettled) {
             SG::ResolvePendingNames();
-            g_namesSettled = SG::NameWatchSettled(kRowInit, kTag) && SG::NameWatchSettled(kRowSetKey, kTag) &&
-                             SG::NameWatchSettled(kRowGetKey, kTag) && SG::NameWatchSettled(kRowLoadData, kTag);
+            g_namesSettled = AllNamesSettled();
         }
         return;
     }
     if (!SG::IsInstalled()) return;
     g_installed = true;
-    const bool ok = SG::WatchName(kRowInit, kTag, nullptr, &OnPost) &&
-                    SG::WatchName(kRowSetKey, kTag, nullptr, &OnPost) &&
-                    SG::WatchName(kRowGetKey, kTag, nullptr, &OnPost) &&
-                    SG::WatchName(kRowLoadData, kTag, nullptr, &OnPost);
+    bool ok = true;
+    for (const ue_wrap::facts::Function* row : kKeyRows) ok = SG::WatchName(*row, kTag, nullptr, &OnPost) && ok;
     g_watchRefused = !ok;
     g_listening = OI::AddListener(OI::Listener{nullptr, &OnCreated, &OnDeleted});
     if (g_watchRefused || !g_listening) g_unavailable.store(true, std::memory_order_release);

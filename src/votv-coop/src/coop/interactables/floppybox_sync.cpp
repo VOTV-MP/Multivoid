@@ -321,7 +321,7 @@ void ReapDeniedPop(uint32_t eid, uint64_t hash) {
     void* localPlayer = coop::players::Registry::Get().Local();
     ue_wrap::engine::MainPlayerGrabState gs{};
     if (localPlayer && ue_wrap::engine::ReadMainPlayerGrabState(localPlayer, gs)) {
-        void* held = gs.grabbingActor ? gs.grabbingActor : gs.holdingActor;
+        void* held = gs.grabbingActor ? gs.grabbingActor : gs.mainHand;
         if (held && R::IsLive(held) &&
             ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(held))) {
             coop::prop_lifecycle::DestroyLocalProp(held, /*deferred*/true);

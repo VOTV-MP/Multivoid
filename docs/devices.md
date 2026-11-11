@@ -179,13 +179,12 @@ cameras off until the creature mirror stops running the wisp's world writes `[?]
 
 ### What is inside a container
 
-A container's contents are not on the container. Every one of them reads from a single global
-per-peer array, `saveSlot.GObjStack`, addressed by an index the actor holds alongside a cached
-volume. That array reaches a client once, inside the join save-transfer blob, and never again on
-its own, because every verb that mutates it dispatches internally to the Blueprint, where neither
-hook seam can intercept it and only the script-body gate can watch it
-(`docs/coop-dispatch-visibility.md`). Without a lane of its own, a
-drone delivery landed full on the host and empty on the client.
+A container's contents are the entries of its inventory component (`canvasInventory`,
+[props.md](props.md), Containers). They reach a client once, inside the join save-transfer blob,
+and never again on their own, because every verb that mutates them dispatches internally to the
+Blueprint, where neither hook seam can intercept it and only the script-body gate can watch it
+(`docs/coop-dispatch-visibility.md`). Without a lane of its own, a drone delivery landed full on
+the host and empty on the client.
 
 The seam is a gate on the Blueprint body of the add and take verbs, and it only marks the
 container dirty -- it reads no arguments and takes no action, which is what makes it correct for
@@ -212,9 +211,9 @@ a thrown container's first contents that arrive faster than their arrival budget
 the same pen rather than being turned down, since they are the thrower's only copy. A client's pen is bounded per
 author; the host's own slices are not bounded, the way nothing of the host's is.
 
-A container that is thrown changes hands without either verb: the game rebinds the thrown actor to
-its old slot of the thrower's own array, and the drop intent carries no contents, so the host's copy
-of a client's throw was born empty and every later client slice for it was refused for its base.
+A container that is thrown changes hands without a mutating verb: the game respawns it and loads
+its entries back, and the drop intent carries no contents, so the host's copy of a client's throw
+was born empty and every later client slice for it was refused for its base.
 The host's copy of a client's throw is now a transfer in progress: it is not published, to a joiner
 either, until the thrower's slice lands. The thrower ships its slice once the host's echo binds the
 container, and retries while its own slot is not readable yet; every slice of that author for the
@@ -230,20 +229,15 @@ seconds or when the thrower leaves. A peer that joins during a transfer gets the
 fan-out that completes it, not from its seed. A container the host throws publishes its contents at the express, since the
 mirrors are born empty, retrying while its slot is not readable.
 
-Applying a slice raw-writes the receiver's own array slot and then re-derives everything a setter
-owns through the game's own verbs -- the volume and mass recalculation and the display-name
-rebuild -- rather than writing those fields directly. The add verb cannot be the apply verb: it
-takes a live actor and serialises it itself, so it cannot ingest a record off the wire. The
-overflow check is not called on apply either: it ejects contents.
+Applying a slice writes the entries over the receiver's own component array, and a screen
+showing the container is rebuilt from them (otherwise the volumes are re-derived through the
+game's own verb) rather than written field by field. The add verb cannot be the apply verb: it
+takes a live actor and serialises it itself, so it cannot ingest a record off the wire.
 
-Two boundaries, both fail-closed. Personal inventory is not this lane's business even though it
-is backed by the same global array, so a container whose component is flagged as a player's -- or
-whose flag cannot be resolved at all -- is skipped; writing over another peer's slice would wipe
-that player's inventory. And a nested container's own index into that array never travels: it
-names a slot in the sender's array and would resolve to an unrelated container on the receiver. A
-record whose class descends from the container class carries a sentinel there instead -- written
-when a slice is sent and again when one is applied, since enforcing it only on the way out would
-trust every sender to be this build -- and the nested container arrives empty rather than broken.
+The boundary is fail-closed. Only a world container's own component is this lane's: a player's
+pockets, a drone's cargo and an ATV's component are never written from here, and a component
+that does not resolve as a world container's is refused, since writing over a player's inventory
+would wipe it. The drone's cargo has a lane of its own (below).
 
 ### Keypads and locks
 
@@ -411,10 +405,26 @@ generators and puts the kept row back onto the tower after each.
 The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not
 worth reproducing, so the host streams its transform while it moves (it glides on after its active
 flag drops) and its state the moment it changes, the client suppresses
-the drone's own tick and drives the streamed transform through an interpolation window, and the
-cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
+the drone's own tick and drives the streamed transform through an interpolation window
+(`coop/interactables/drone_sync`). The drone's sale
 runs on the host only, which is what makes selling into it the one economy path that credits the
 group correctly.
+
+The cargo is the drone's own inventory component (`drone_C.inventoryComponent`, the same entry array a world
+container holds). The host's tick fills it when the drone lands (`compileOrder` spawns each ordered item and files
+it with `addItemAsObject`); the open option shows it on the inventory screen; the sack option (`dropSack`) spawns a
+`prop_dronesack_C` and moves the entries into it; a sack that touches the drone moves them back (`putSackOn`); and the
+sale clears the component. The sack is a container like any other and rides the prop and container lanes. The
+drone's component belongs to no container, so it has a lane of its own (`coop/interactables/drone_cargo_sync`): the
+host reads the entries twice a second and sends them whole when they changed, and to a joiner at its ready edge; a
+client writes them over its copy of the component, which is what its open option then shows. The client's verbs that
+would write its copy are the host's: its sack option goes to the host as an intent (the host tests that the sender is
+within reach of the parked drone with its sack aboard, then runs `dropSack`), and a sack touching its copy of the
+drone, or a hand item put into it, is refused at the script-body gate. The open option stays local, and what the
+player does on its screen is the container act lane's, with the cargo as the target (`coop/props/container_target`): a
+take, a take of part of a stack, a merge of two entries and a drop onto its canvas are asked of the host, which judges
+the sender's reach of the drone, writes the cargo and publishes it at once ([props.md](props.md), Containers). The sack
+on the drone's body is shown or hidden from the streamed `hasSack` flag, as `dropSack` and `putSackOn` would.
 
 The garage console calls and sends it. Its one action option dispatches on what the presser is
 looking at -- the keyboard runs the drone's own call-or-send verb, the other face toggles the
@@ -518,7 +528,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
-| the drone | the host | a transform stream; the client's tick suppressed |
+| the drone | the host | a transform stream; the client's tick suppressed; its cargo whole when it changes |
 | a woodchipper's fuel and on/off | the host | a client's pour and press are intents the host judges; the host's state when it changes and every second while its fuel moves |
 
 ## Wire messages
@@ -542,7 +552,9 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `SpillState`, `SpillIntent` | the host to all; a client to the host | a spill's class, transform, decal turn and dirt, or that it was wiped away; a client's spill from its hand, or its wipe |
 | `SpillPour`, `SpillPourIntent` | the host to all; a client to the host | where a bottle poured and who poured it; a pour of a bottle in a client's hand |
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
-| `DroneFlyIntent` | a client to the host | the face pressed, the keyboard or the leave timer; the host finds the console by the sender's reach |
+| `DroneFlyIntent` | a client to the host | the face pressed, the keyboard or the leave timer, or the drone's own sack option; the host finds the console by the sender's reach, or tests the drone's |
+| `DroneCargo` | the host to all | the drone's inventory entries, whole, as a chunked blob in the container slice grammar |
+| `AtvTrunk` | the host to all | one ATV's trunk (its own inventory component's entries), whole, as a chunked blob in the container slice grammar, element id = the trunk's target id |
 | `WoodchipperState`, `WoodchipperIntent` | the host to all; a client to the host | a chipper's key, its fuel and on/off, or to a joiner which are on; a client's pour (the fuel its copy gained) or press (the state it wanted) |
 
 ## Late join
@@ -578,8 +590,8 @@ state it shows, and the first rows a world takes play no sound.
 | spilled liquids | `coop/world/spill_sync`, `ue_wrap/actors/grime_spill` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the fuse towers | `coop/world/fuse_tower_rows`, `coop/world/fuse_tower_ops`, `coop/world/fuse_tower_kind`, `ue_wrap/devices/coord_tower`, `ue_wrap/devices/radio_tower` |
-| the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
+| the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_cargo_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
 | the woodchipper | `coop/interactables/woodchipper_sync`, `coop/interactables/woodchipper_gate`, `ue_wrap/actors/woodchipper` |
 | the signal servers | `coop/interactables/serverbox_sync`, `coop/interactables/server_upgrade_sync`, `ue_wrap/devices/serverbox` |
 | identity | `coop/element/portable_identity` |
-| tests and probes | `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/tower_drill` |
+| tests and probes | `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/tower_drill` |

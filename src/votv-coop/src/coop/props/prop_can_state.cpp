@@ -7,7 +7,7 @@
 #include "coop/props/prop_save_data.h"
 
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/prop_record.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -141,8 +141,8 @@ void OnInitPost(const sg::Call& c) {
     }
     // A record landing here is the far side's change arriving, not a new one. Not `fromOurCode` as in
     // prop_record_refresh: the drill runs a can's own verbs through our CallFunction, so that flag would be true for the
-    // change under test too; IsApplying is true only inside ApplyRecord.
-    if (ue_wrap::save_record::IsApplying()) {
+    // change under test too; IsApplying is true only inside prop_record::Apply.
+    if (ue_wrap::prop_record::IsApplying()) {
         g_known[key] = now;
         ++g_landed;
         UE_LOGI("prop_can_state: a record landed on '%ls' -> opened=%d foods=%d", key.c_str(), now.opened ? 1 : 0,

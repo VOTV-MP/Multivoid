@@ -38,7 +38,7 @@ struct PlayerContext {
     bool              possessed = false;
     ue_wrap::FVector  pos{};
     void*             held      = nullptr;   // grabbing_actor (PHC-held prop) => a full hand
-    void*             holding   = nullptr;   // holding_actor (chipPile/clump morph carry)
+    void*             holding   = nullptr;   // holdingActor_main (chipPile/clump morph carry)
     bool              placeMode = false;     // drop_place (R-hold placement mode)
     bool              posUnread = false;     // possessed, but its location read failed
 
@@ -173,30 +173,6 @@ void RunWalkGrabDirector();
 
 // Worker-thread wrapper for the harness dispatch. Pass to ::CreateThread / SpawnIf.
 DWORD WINAPI WalkGrabDirectorThread(LPVOID arg);
-
-// The container-take INPUT PROBE (container_take_probe.cpp): resolve a placed, non-empty,
-// nav-reachable world container, walk to it (the brain), then drive the FAITHFUL human take
-// chain (openContainer -> slot pressButton -> em_take) and MEASURE whether the take executed
-// (the container's GObjStack item count decremented). extract(Index) is a NON-FAITHFUL
-// diagnostic fallback. Records the container's baked FName + a positive/negative control.
-// A HALT-style drivability probe: its verdict decides whether the container concurrent-take
-// race is buildable on the reflected-verb model. Env-gated (VOTVCOOP_RUN_CTAKE_PROBE=1), solo.
-void RunContainerTakeProbe();
-DWORD WINAPI ContainerTakeProbeThread(LPVOID arg);
-
-// The two-peer CONTAINER concurrent-take RACE (container_race.cpp), the director's reason for
-// existing. Both peers walk to the SAME container (a deterministic shared target), open it,
-// log ARRIVED, wait on an orchestrator GO sentinel -- a future-timestamp file, good for
-// sub-millisecond simultaneity on one box -- then fire the faithful take (openContainer, then
-// setHoverContainerSlot on the bound slot, then pressButton) at the same instant. Each peer
-// counts X locally afterwards and the driver sums across peers: 1 is correct, 2 a duplicate, 0
-// means X vanished, more is worse. Modes: "race" (both take) and "control" (only the host
-// takes, whose solo sum must be 1 before the summation is trusted). The host picks the
-// container and names it in a sentinel file beside the GO file; the client takes that one. Env:
-// VOTVCOOP_RUN_CTAKE_RACE=1, VOTVCOOP_RACE_MODE, VOTVCOOP_RACE_ROLE, VOTVCOOP_RACE_GO_FILE.
-// Greppable as "director/ctake-race:".
-void RunContainerRace();
-DWORD WINAPI ContainerRaceThread(LPVOID arg);
 
 // The two-peer GRAB race (grab_race_probe.cpp), the measure of the one-holder rule: the host names a loose keyed
 // prop in a peer_signal signal, both peers walk to it and aim, the host names a GO instant, then both run the grab

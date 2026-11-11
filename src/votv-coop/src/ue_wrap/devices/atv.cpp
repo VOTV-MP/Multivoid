@@ -1,11 +1,12 @@
 // ue_wrap/devices/atv.cpp -- see ue_wrap/devices/atv.h. Engine access for the ATV/quadbike
-// (AATV_C). Offsets are resolved from the live class through reflection, with the Alpha
-// 0.9.0-n values kept as logged fallbacks. Transform reads and writes go through
+// (AATV_C). Offsets are resolved from the live class by member name; a member the name does not
+// find turns the ATV lane off, said once, and no offset is guessed. Transform reads and writes go through
 // ue_wrap::engine at the actor level: the root Mesh IS the actor root, so the actor transform
 // is the physics body transform.
 
 #include "ue_wrap/devices/atv.h"
 
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/fname_utils.h"  // StringToFName -- SpawnMirror's key
 #include "ue_wrap/engine/engine.h"
@@ -13,6 +14,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
@@ -25,25 +27,17 @@ namespace {
 
 namespace R = reflection;
 
-std::atomic<bool> g_resolved{false};
-int32_t g_keyOff      = -1;       // Key      (Alpha 0.9.0-n: 0x0618, FName)
-int32_t g_playerOff   = -1;       // Player   (0x05B0, AmainPlayer_C*)
-int32_t g_isDrivenOff = -1;       // isDriven (0x05F7, bool)
-int32_t g_fuelOff     = -1;       // fuel     (0x05D4, float)
-int32_t g_healthOff   = -1;       // health   (0x05E4, float)
-int32_t g_brakeOff    = -1;       // Brake    (0x05D9, bool)
+std::atomic<bool> g_resolved{false};  // the class has been read (once)
+bool g_usable = false;                // ...and every member the lane needs was found; written before g_resolved
+int32_t g_keyOff      = -1;       // Key      (FName)
+int32_t g_playerOff   = -1;       // Player   (AmainPlayer_C*)
+int32_t g_isDrivenOff = -1;       // isDriven (bool)
+int32_t g_fuelOff     = -1;       // fuel     (float)
+int32_t g_healthOff   = -1;       // health   (float)
+int32_t g_brakeOff    = -1;       // Brake    (bool)
 int32_t g_trapOff     = -1;       // trap     (a bool bit: the byte, with its mask below)
 uint8_t g_trapMask    = 0;
 int32_t g_tpOff       = -1;       // tp       (a UBillboardComponent*: where `explode` places its blast)
-
-int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
-    int32_t o = R::FindPropertyOffset(cls, name);
-    if (o < 0) {
-        UE_LOGW("atv: %ls offset not found -- using fallback 0x%04X", name, fallback);
-        o = fallback;
-    }
-    return o;
-}
 
 // ATV_C as the object index holds it, looked up where it is used -- one lookup that walks nothing --
 // and never kept: a Blueprint class can come back as a new object after a world change (127 did in
@@ -54,32 +48,38 @@ void* AtvClass() { return object_index::ClassByName(L"ATV_C"); }
 }  // namespace
 
 bool EnsureResolved() {
-    if (g_resolved.load(std::memory_order_acquire)) return true;
+    if (g_resolved.load(std::memory_order_acquire)) return g_usable;
 
     void* cls = AtvClass();
     if (!cls) return false;
 
-    g_keyOff      = ResolveOff(cls, L"Key",      0x0618);
-    g_playerOff   = ResolveOff(cls, L"Player",   0x05B0);
-    g_isDrivenOff = ResolveOff(cls, L"isDriven", 0x05F7);
-    g_fuelOff     = ResolveOff(cls, L"fuel",     0x05D4);
-    g_healthOff   = ResolveOff(cls, L"health",   0x05E4);
-    g_brakeOff    = ResolveOff(cls, L"Brake",    0x05D9);
-    // No fallback: a miss leaves the trap host-only, as it was before it travelled. The flag is a bit packed with its
+    g_keyOff      = R::FindPropertyOffset(cls, L"Key");
+    g_playerOff   = R::FindPropertyOffset(cls, L"Player");
+    g_isDrivenOff = R::FindPropertyOffset(cls, L"isDriven");
+    g_fuelOff     = R::FindPropertyOffset(cls, L"fuel");
+    g_healthOff   = R::FindPropertyOffset(cls, L"health");
+    g_brakeOff    = R::FindPropertyOffset(cls, L"Brake");
+    g_usable = g_keyOff >= 0 && g_playerOff >= 0 && g_isDrivenOff >= 0 && g_fuelOff >= 0 && g_healthOff >= 0 &&
+               g_brakeOff >= 0;
+    if (!g_usable)
+        UE_LOGE("atv: members not all found by name (Key=%d Player=%d isDriven=%d fuel=%d health=%d Brake=%d) -- "
+                "the ATV lane stays off", g_keyOff, g_playerOff, g_isDrivenOff, g_fuelOff, g_healthOff, g_brakeOff);
+    // A miss on the trap leaves it host-only, as it was before it travelled. The flag is a bit packed with its
     // neighbours (inWater, floater), so its byte and mask are both resolved.
     if (!R::FindBoolProperty(cls, L"trap", g_trapOff, g_trapMask) || g_trapOff < 0 || g_trapMask == 0) {
         g_trapOff = -1;
         UE_LOGW("atv: trap offset not found -- the story event's trap stays host-only");
     }
-    // No fallback: a miss leaves a client's ATV explosion unrequested, since the host has no place to put it.
+    // A miss leaves a client's ATV explosion unrequested, since the host has no place to put it.
     g_tpOff = R::FindPropertyOffset(cls, L"tp");
     if (g_tpOff < 0) UE_LOGW("atv: tp offset not found -- a client's ATV explosion cannot be requested");
 
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("atv: resolved ATV_C=%p Key@0x%04X Player@0x%04X isDriven@0x%04X fuel@0x%04X "
-            "health@0x%04X Brake@0x%04X",
-            cls, g_keyOff, g_playerOff, g_isDrivenOff, g_fuelOff, g_healthOff, g_brakeOff);
-    return true;
+    if (g_usable)
+        UE_LOGI("atv: resolved ATV_C=%p Key@0x%04X Player@0x%04X isDriven@0x%04X fuel@0x%04X "
+                "health@0x%04X Brake@0x%04X",
+                cls, g_keyOff, g_playerOff, g_isDrivenOff, g_fuelOff, g_healthOff, g_brakeOff);
+    return g_usable;
 }
 
 bool IsAtv(void* obj) {
@@ -109,6 +109,31 @@ size_t ForEachAtv(void (*fn)(void* ctx, void* actor, int32_t idx), void* ctx) {
         }, &walk);
     }
     return walk.loading;
+}
+
+void* InventoryOf(void* atv) {
+    static R::InstanceOffset s_invOff{L"inventoryComponent"};
+    if (!atv) return nullptr;
+    const int32_t off = s_invOff.Of(atv);
+    if (off < 0) return nullptr;
+    void* const inv = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(atv) + off);
+    return inv && R::IsLive(inv) ? inv : nullptr;
+}
+
+bool ReadTrunk(void* atv, std::vector<ue_wrap::inventory_item::Item>& out, size_t maxItems) {
+    void* const inv = InventoryOf(atv);
+    return inv && container_inventory::ReadContents(inv, out, maxItems);
+}
+
+TrunkWrite WriteTrunk(void* atv, const std::vector<ue_wrap::inventory_item::Item>& items) {
+    void* const inv = InventoryOf(atv);
+    if (!inv) return TrunkWrite::NotReady;
+    switch (container_inventory::WriteContents(inv, items)) {
+        case container_inventory::WriteResult::Written:  return TrunkWrite::Written;
+        case container_inventory::WriteResult::NotReady: return TrunkWrite::NotReady;
+        case container_inventory::WriteResult::Refused:  break;
+    }
+    return TrunkWrite::Refused;
 }
 
 std::wstring GetKeyString(void* atv) {

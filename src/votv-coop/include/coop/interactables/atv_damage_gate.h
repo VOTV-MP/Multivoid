@@ -31,6 +31,9 @@ struct Counters {
 };
 Counters ReadCounters();
 
+// How many calls of `row` this copy let run on `actor` itself (the totals above add every copy's).
+unsigned long long RanOnActor(void* actor, int row);
+
 // Zero the counters; the watches stay registered for the process.
 void Reset();
 

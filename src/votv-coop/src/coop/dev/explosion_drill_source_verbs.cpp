@@ -64,8 +64,8 @@ bool ReadInt(void* obj, const wchar_t* name, int& out) {
 // once, so false is its steady value and the arm puts back false, never a true it found inside that window. The arm
 // sets it on the acting player, so a pipe bomb's own blast (radius 1500) leaves the legs after it a live player.
 // Blueprint prop_funGun, playerHoldPost: in the story game modes a gun that the date and
-// gamemode.unlockFungunsInStory do not allow calls the player's forceDrop() with the hint "the g*ns are prohibited!",
-// so the gun is dropped as a world prop in the tick it was taken. The arm sets the gamemode's unlockFungunsInStory (the
+// gamemode.unlockFungunsInStory do not allow drops the hand's item (the player's dropItem_mainhand) with the hint "the
+// g*ns are prohibited!", so the gun is dropped as a world prop in the tick it was taken. The arm sets the gamemode's unlockFungunsInStory (the
 // cheat menu's own switch) for the same span and puts back the value it found. Each source leg's start and each
 // request arm's first verb re-assert both, so a Delay(5) that landed before them costs no leg.
 
@@ -109,15 +109,15 @@ bool WriteInt(void* obj, const wchar_t* name, int value) {
 void* HeldOf(void* player, const wchar_t* cls) {
     E::MainPlayerGrabState gs{};
     if (!E::ReadMainPlayerGrabState(player, gs)) return nullptr;
-    void* h = gs.holdingActor;
+    void* h = gs.mainHand;
     return h && R::IsLive(h) && R::NameEquals(R::NameOf(R::ClassOf(h)), cls) ? h : nullptr;
 }
 
 // The class name of what the hand holds, or "none"; ASCII, for a log line.
 std::string HeldClassName(void* player) {
     E::MainPlayerGrabState gs{};
-    if (!E::ReadMainPlayerGrabState(player, gs) || !gs.holdingActor || !R::IsLive(gs.holdingActor)) return "none";
-    const std::wstring w = R::ClassNameOf(gs.holdingActor);
+    if (!E::ReadMainPlayerGrabState(player, gs) || !gs.mainHand || !R::IsLive(gs.mainHand)) return "none";
+    const std::wstring w = R::ClassNameOf(gs.mainHand);
     return std::string(w.begin(), w.end());
 }
 
@@ -130,7 +130,7 @@ bool SpawnNativeBlast(ue_wrap::explosion::Cls c, const Vec& at, float damage, fl
         return false;
     }
     const float loc[3] = {at.X, at.Y, at.Z}, rot[3] = {0.f, 0.f, 0.f}, scale[3] = {1.f, 1.f, 1.f};
-    const X::Params p{damage, 1000.f, force, 0.f, 0.f, 0.f, 0.f, 0, true, false};
+    const X::Params p{damage, 1000.f, force, 0.f, 0.f, true, false};
     if (!X::SpawnDeferred(c, loc, rot, scale, p, nullptr)) {
         std::snprintf(what, sizeof(what), "blast class %d did not spawn", static_cast<int>(c));
         if (why) *why = what;

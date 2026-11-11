@@ -7,8 +7,7 @@
 // container slice only for a birth (an item it made, filed into a container), so the slices it sends are charged to
 // the route that last wrote the container and are few. Observe-only: it never cancels a call.
 //
-// Armed by the [dev] row container_route_census (both peers): 1 the census, drill the census plus the drill that
-// drives each route once (coop/dev/container_route_drill). Lines tagged
+// Armed by the [dev] row container_route_census (both peers): 1 the census. Lines tagged
 // [CI-CENSUS]. Game thread.
 
 #pragma once

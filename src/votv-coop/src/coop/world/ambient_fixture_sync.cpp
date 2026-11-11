@@ -45,9 +45,10 @@ namespace fam = coop::net::ambient_fixture;
 constexpr int kSendsPerTick = 64;  // a hexahive's field arrives whole in one tick
 
 // The branch's own edges. getBee binds the nest's `touched` (BeginPlay of a spawned branch, processKeys of a loaded one),
-// loadData reads the saved key, touched forgets the nest when a player takes it, ReceiveDestroyed destroys the nest it holds.
+// betterLoadData (the world load's) restores the saved key, touched forgets the nest when a player takes it, ReceiveDestroyed
+// destroys the nest it holds.
 UE_FACT_FN(kRowGetBeeBeehiveBranch, "ambient_fixture_sync", L"beehiveBranch_C", L"getBee", Declared);
-UE_FACT_FN(kRowLoadDataBeehiveBranch, "ambient_fixture_sync", L"beehiveBranch_C", L"loadData", Declared);
+UE_FACT_FN(kRowLoadDataBeehiveBranch, "ambient_fixture_sync", L"beehiveBranch_C", L"betterLoadData", Declared);
 UE_FACT_FN(kRowTouchedBeehiveBranch, "ambient_fixture_sync", L"beehiveBranch_C", L"touched", Declared);
 UE_FACT_FN(kRowReceiveDestroyedBeehiveBranch, "ambient_fixture_sync", L"beehiveBranch_C", L"ReceiveDestroyed", Declared);
 constexpr int kTag = 0x41465853;  // 'AFXS'
@@ -74,7 +75,7 @@ struct Known {
     Payload  wire{};
     bool     placed = false;
     bool     keyKnown = false;     // a branch: wire.birthKey holds the key
-    uint64_t holdUntil = 0;        // a branch whose key came from loadData waits one tick for the load's own getBee
+    uint64_t holdUntil = 0;        // a branch whose key came from its load waits one tick for the load's own getBee
     bool     sentAny = false;
     uint8_t  sentHasNest = 0;
     bool     pendingAll = true;    // goes to every client

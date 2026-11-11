@@ -5,14 +5,15 @@
 // through ue_wrap::order_economy.
 //
 // MODEL: the economy is host-authoritative. VOTV has no engine replication, so a CLIENT's laptop order
-// would be entirely client-local: makeAnOrder appends to the client's own saveSlot.orders and sends the
+// would be entirely client-local: makeAnOrder appends to the client's own save_slot.orders and sends the
 // client's drone. At the script gate, on a client, makeAnOrder's entry reads the order the player placed
 // from its own parameter and sends its row names to the host, chunked across reliable datagrams of
 // kMaxReliablePayload; the addOrderCart it runs is refused (the client's queue is the host's,
 // order_queue_sync) and so is the drone's sendShop (the host's drone flies). A world event's automatic
 // order is not sent: the host's own copy of the event makes it. The HOST assembles the chunks per
 // (senderSlot, orderId) and re-commits through Uui_laptop_C::makeAnOrder(order, automatic=true). The
-// cargo box rides the existing prop pipeline and the drone body rides DroneState.
+// delivered cargo is the host drone's inventory (coop/interactables/drone_cargo_sync) and the drone body rides
+// DroneState.
 
 #pragma once
 

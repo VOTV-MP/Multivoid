@@ -12,9 +12,8 @@
 #include "coop/props/prop_key_index.h"
 #include "coop/props/remote_prop.h"       // IsOwnedHere: a held prop takes no record
 #include "ue_wrap/actors/prop.h"          // GetInteractableKeyString (the host birth path)
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/prop_record.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"    // ClassByName -- the host's O(1) class resolve for a client's record
 #include "ue_wrap/core/reflection.h"
 
 #include <algorithm>
@@ -29,7 +28,7 @@ namespace coop::prop_save_data {
 namespace {
 
 namespace R  = ue_wrap::reflection;
-namespace SR = ue_wrap::save_record;
+namespace PR = ue_wrap::prop_record;
 namespace SW = coop::save_record_wire;
 namespace PT = coop::prop_element_tracker;
 
@@ -38,16 +37,16 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// The body grammar, version-tagged so a future field is a parse branch and not a guess.
-constexpr uint8_t kBodyVersion = 1;
+// The body grammar, version-tagged so a future field is a parse branch and not a guess:
+// [u8 version][u8 key length][key bytes][u32 n][n bytes of the prop's actorData].
+constexpr uint8_t kBodyVersion = 2;
 
 // A Key is an Aprop_C save key: ASCII, at most WireKey's 31 chars.
 constexpr size_t kMaxKeyChars = 31;
 
-// The record ceiling is disc_record::MaxBodyBytes(), the slot lane's too. A lower bound would be welcome (the codec
-// allocates engine memory per declared group), but a disc of sv.request rows costs 1.5 KB a row (24 rows, 36.8 KB)
-// and takes 32 writes, about 50 KB. A record over it is REFUSED and logged, never truncated: half a record
-// through loadData is worse than none.
+// The record ceiling is disc_record::MaxBodyBytes(), the slot lane's too. A lower bound would be welcome, but a disc
+// of sv.request rows costs 1.5 KB a row (24 rows, 36.8 KB) and takes 32 writes, about 50 KB. A record over it is
+// REFUSED and logged, never truncated: half a stream through betterLoadData is worse than none.
 constexpr size_t kMaxOversizeLogged = 256;
 std::set<std::wstring> g_oversizeLogged;   // keys whose over-ceiling record was logged, one line each
 
@@ -67,20 +66,21 @@ std::wstring HeadKey(const std::vector<uint8_t>& b) {
 constexpr size_t kMaxParkedPerSender  = 2048;
 constexpr size_t kMaxParkBytesPerSender = 4u * 1024u * 1024u;
 
-// An apply is a ProcessEvent into the prop's own loadData, which on the Aprop_C lineage re-runs
+// An apply is a ProcessEvent into the prop's own betterLoadData, which on the Aprop_C lineage re-runs
 // init(), physicsImpact->init() and setNametag() -- the same work a save load does. Measured at
 // ~0.7 ms: applying a whole join's worth in the drain frame that closes the snapshot put 519 ms on
 // a frame already 1.5 s long. So applies are BUDGETED per frame and the surplus waits in the park,
-// which is the queue this lane already has. An apply costs TWO dispatches, the base capture and
-// loadData itself, so 8 a frame is about the same ~11 ms and a 766-record join converges in a
-// second or two with every prop already correct in everything but its save payload.
+// which is the queue this lane already has. An apply costs TWO dispatches, the prop's own
+// betterGetData (the receiver's identity) and betterLoadData itself, so 8 a frame is about the
+// same ~11 ms and a 766-record join converges in a second or two with every prop already correct
+// in everything but its save payload.
 constexpr int    kAppliesPerFrame = 8;
 // How far into the park one frame looks. The park is ordered by Key, so the cursor rotates through
 // it and nothing starves; bounded so a large park is never a per-frame walk of thousands.
 constexpr size_t kParkScanPerFrame = 64;
 
 struct Parked {
-    SR::SaveRecord rec;
+    std::vector<uint8_t> data;   // the prop's actorData (ue_wrap/actors/prop_record)
     uint8_t        senderSlot = 0;
     bool           intent     = false;   // a client's claim the host took, so the class gates judge its sender
     uint64_t       seq        = 0;   // arrival order, for the oldest-first eviction
@@ -195,30 +195,31 @@ void TickBirthLedger(uint64_t now) {
     g_birthWindowStartMs = now;
 }
 
-std::vector<uint8_t> BuildBody(const std::wstring& key, const SR::SaveRecord& rec) {
+std::vector<uint8_t> BuildBody(const std::wstring& key, const std::vector<uint8_t>& data) {
     std::vector<uint8_t> body;
     body.push_back(kBodyVersion);
     body.push_back(static_cast<uint8_t>(key.size()));
     for (wchar_t c : key) body.push_back(static_cast<uint8_t>(c & 0x7F));
-    SW::SerSave(body, rec);
+    SW::AppU32(body, static_cast<uint32_t>(data.size()));
+    body.insert(body.end(), data.begin(), data.end());
     return body;
 }
 
 // Strict on format: an ill-formed body is refused whole (the receive-boundary rule -- strict on
-// format, permissive on state).
-bool ParseBody(const std::vector<uint8_t>& body, std::wstring& key, SR::SaveRecord& rec) {
+// format, permissive on state). The stream is the sender's word about the prop's state and is applied
+// as the game applies a save file's; nothing in it names the receiver's prop, which the head key does.
+bool ParseBody(const std::vector<uint8_t>& body, std::wstring& key, std::vector<uint8_t>& data) {
     size_t o = 0;
     uint8_t ver = 0, keyLen = 0;
+    uint32_t n = 0;
     if (!SW::RdU8(body, o, ver) || ver != kBodyVersion) return false;
     if (!SW::RdU8(body, o, keyLen) || keyLen == 0 || keyLen > kMaxKeyChars) return false;
     if (o + keyLen > body.size()) return false;
     key.assign(body.begin() + static_cast<long>(o), body.begin() + static_cast<long>(o + keyLen));
     o += keyLen;
-    if (!SW::DeSave(body, o, rec)) return false;
-    // The body ADDRESSES a prop by the head key and CARRIES a record whose own key field the
-    // game's loadData would write onto that prop. If the two disagree the message is asking to
-    // rename one prop to another's identity, so it is refused whole rather than reconciled.
-    return rec.key.empty() || rec.key == key;
+    if (!SW::RdU32(body, o, n) || n == 0 || body.size() - o != n) return false;
+    data.assign(body.begin() + static_cast<long>(o), body.end());
+    return true;
 }
 
 // Drop one parked row and give its sender the room back.
@@ -237,7 +238,7 @@ void DropParked(const std::wstring& key) {
 }
 
 // After an apply of a parked record: drop its row only if the row is still that record. A parked
-// apply runs on a COPY of the record, since the node can be replaced or erased while loadData runs,
+// apply runs on a COPY of the record, since the node can be replaced or erased while betterLoadData runs,
 // and a newer record that replaced it there must survive the older one's completion.
 void UnparkIfSame(const std::wstring& key, uint64_t seq) {
     auto it = g_parked.find(key);
@@ -263,7 +264,7 @@ bool DropRowForGates(const std::wstring& key, void* actor) {
     return false;
 }
 
-void Park(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot, size_t bytes, bool intent) {
+void Park(const std::wstring& key, std::vector<uint8_t>&& data, uint8_t senderSlot, size_t bytes, bool intent) {
     DropParked(key);
     SenderUse& use = g_parkUse[senderSlot];
     while (use.count >= kMaxParkedPerSender || use.bytes + bytes > kMaxParkBytesPerSender) {
@@ -280,7 +281,7 @@ void Park(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot, siz
         Unpark(oldest);
     }
     Parked p;
-    p.rec = std::move(rec);
+    p.data = std::move(data);
     p.senderSlot = senderSlot;
     p.intent = intent;
     p.seq = g_parkSeq++;
@@ -321,19 +322,12 @@ bool AllowIntent(uint8_t senderSlot) {
 // class gate belongs with the write and not with the send: `Covers` answers both "does this class
 // carry save state of its own" and "has another lane claimed it", and a record that reaches a
 // claimed class would write the field that lane arbitrates with a compare-and-swap.
-bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
+bool TryApply(void* actor, const std::wstring& key, const std::vector<uint8_t>& data) {
     if (!actor) return false;
     if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
-    // The HOST applies only a CLIENT's record here (its receive edge refuses a canonical from a
-    // client), with its world up and the object index current: it resolves the record's class names
-    // through object_index so an unknown name is an O(1) miss, not a whole-array walk. A CLIENT
-    // applies only the host's own record, possibly mid-load with the index trailing, so it keeps the
-    // authoritative FindClass walk.
-    const SR::ClassResolver resolve =
-        PT::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
-    if (!SR::ApplyRecord(actor, rec, resolve)) return false;
+    if (!PR::Apply(actor, data)) return false;
     ++g_appliedTotal;
-    coop::dev::food_clock_probe::NoteApply(actor, key, rec);
+    coop::dev::food_clock_probe::NoteApply(actor);
     // The author's record has LANDED, so the host may publish this key again, and does so here, from
     // what it now holds: a peer that became ready while the key was awaited was declined by its join
     // seed then. Not at its arrival: a record that arrives before the host's actor is indexed is
@@ -346,15 +340,15 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
 // here, so the predecessor rule is kept in one place. True when the record was applied.
 // `budgeted` spends the per-frame apply budget; the host's take of a client intent does not, its
 // rate being bounded per sender at the door.
-bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot, size_t bytes,
+bool LandRecord(const std::wstring& key, std::vector<uint8_t>&& data, uint8_t senderSlot, size_t bytes,
                 bool budgeted, bool intent) {
-    // The predecessor goes BEFORE the apply, so a record parked under this Key while loadData runs
+    // The predecessor goes BEFORE the apply, so a record parked under this Key while betterLoadData runs
     // can only be a newer one, and nothing below removes it.
     DropParked(key);
     // A join hands this lane hundreds of arrivals at once: a prop the index does not know yet is
     // parked and retried at O(1) on the next frame, never searched for.
     void* actor = (!budgeted || g_applyBudget > 0) ? coop::prop_key_index::Find(key) : nullptr;
-    // A prop in this player's hands (or under a drive) takes no record: loadData restores a wall
+    // A prop in this player's hands (or under a drive) takes no record: betterLoadData restores a wall
     // attachable's stuck state, and a held camera re-stuck ~0.45 s after the grab that way (measured,
     // join tail). The holder is the authority while it holds, so the record waits in the park and
     // the drain applies it once the prop is let go.
@@ -370,18 +364,18 @@ bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
                 key.c_str());
         return false;
     }
-    if (actor && TryApply(actor, key, rec)) {
+    if (actor && TryApply(actor, key, data)) {
         if (budgeted) --g_applyBudget;
         return true;
     }
     if (g_parked.count(key)) return false;   // a newer record arrived during the apply; it stays
-    Park(key, std::move(rec), senderSlot, bytes, intent);
+    Park(key, std::move(data), senderSlot, bytes, intent);
     return false;
 }
 
 bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
-              const SR::SaveRecord& rec, size_t* bytesOut = nullptr) {
-    const std::vector<uint8_t> body = BuildBody(key, rec);
+              const std::vector<uint8_t>& data, size_t* bytesOut = nullptr) {
+    const std::vector<uint8_t> body = BuildBody(key, data);
     if (bytesOut) *bytesOut = body.size();
     if (body.size() > coop::disc_record::MaxBodyBytes()) {
         UE_LOGW("prop_save_data: record for key '%ls' is %zu B, over the %zu cap -- REFUSED, not "
@@ -471,7 +465,7 @@ void DeclareClassOwnedElsewhere(const wchar_t* className) {
 bool Covers(void* actor) {
     if (!actor) return false;
     void* cls = R::ClassOf(actor);
-    if (!SR::OverridesGetData(cls)) return false;
+    if (!PR::CarriesState(cls)) return false;
     if (g_ownedElsewhere.empty()) return true;
     // The claim is by NAME because a lane declares its class before that class is loaded; the
     // resolved answer is cached per UClass, so the name compare happens once per class.
@@ -486,23 +480,27 @@ bool Covers(void* actor) {
     return !owned;
 }
 
+size_t BodyBytes(const std::wstring& key, size_t dataBytes) {
+    return 2 + key.size() + sizeof(uint32_t) + dataBytes;   // BuildBody's grammar: version, key length, key, count, bytes
+}
+
 bool Publish(coop::net::Session* s, void* actor, const std::wstring& key, size_t* bytesOut) {
     if (!s || !actor || key.empty() || key.size() > kMaxKeyChars) return false;
     // Nobody to publish to: return before the capture, not at the send. A host loading its own
-    // world births every keyed prop it owns, and paying getData plus a serialize per prop for a
+    // world births every keyed prop it owns, and paying betterGetData plus a serialize per prop for a
     // send that cannot land is the whole cost of the lane spent on nothing.
     if (!s->connected() || !s->AnyWorldReadyPeer()) return false;
     if (StillAwaited(key)) return false;       // the author's own record is still in flight
     g_session = s;
     if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
-    SR::SaveRecord rec;
-    if (!SR::CaptureRecord(actor, rec)) {
-        UE_LOGW("prop_save_data: getData failed on the prop keyed '%ls' -- no record published",
+    std::vector<uint8_t> data;
+    if (!PR::Capture(actor, data)) {
+        UE_LOGW("prop_save_data: betterGetData failed on the prop keyed '%ls' -- no record published",
                 key.c_str());
         return false;
     }
-    coop::dev::food_clock_probe::NotePublish(actor, key, rec);
-    return SendBody(s, -1, key, rec, bytesOut);
+    coop::dev::food_clock_probe::NotePublish(actor);
+    return SendBody(s, -1, key, data, bytesOut);
 }
 
 bool PublishHostBirth(coop::net::Session* s, void* actor) {
@@ -537,10 +535,10 @@ bool PublishToSlot(coop::net::Session* s, int peerSlot, void* actor, const std::
     if (StillAwaited(key)) return false;       // the author's own record is still in flight
     g_session = s;
     if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
-    SR::SaveRecord rec;
-    if (!SR::CaptureRecord(actor, rec)) return false;
-    coop::dev::food_clock_probe::NotePublish(actor, key, rec);
-    return SendBody(s, peerSlot, key, rec);
+    std::vector<uint8_t> data;
+    if (!PR::Capture(actor, data)) return false;
+    coop::dev::food_clock_probe::NotePublish(actor);
+    return SendBody(s, peerSlot, key, data);
 }
 
 bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireKey& key,
@@ -577,14 +575,14 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     if (intent && !AllowIntent(senderSlot)) return;
 
     std::wstring key;
-    SR::SaveRecord rec;
-    if (!ParseBody(body, key, rec)) {
+    std::vector<uint8_t> data;
+    if (!ParseBody(body, key, data)) {
         UE_LOGW("prop_save_data: ill-formed %s body from slot %u (%zu B) -- dropped whole",
                 intent ? "intent" : "record", static_cast<unsigned>(senderSlot), body.size());
         return;
     }
     if (!intent) {
-        LandRecord(key, std::move(rec), senderSlot, body.size(), /*budgeted=*/true, /*intent=*/false);
+        LandRecord(key, std::move(data), senderSlot, body.size(), /*budgeted=*/true, /*intent=*/false);
         return;
     }
     // The host takes a client's claim: apply or park it locally, then re-publish it as the canonical
@@ -608,7 +606,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     if (actor && !coop::prop_record_gates::IntentAllows(actor, senderSlot)) return;
     // A claim is published to every peer only once it has landed here and passed its class's gates; one
     // that parked is published by its land (Drive, ApplyParked), never at arrival unjudged.
-    const bool landed = LandRecord(key, SR::SaveRecord(rec), senderSlot, body.size(), /*budgeted=*/false,
+    const bool landed = LandRecord(key, std::vector<uint8_t>(data), senderSlot, body.size(), /*budgeted=*/false,
                                    /*intent=*/true);
     if (landed) {
         UE_LOGI("prop_save_data: HOST took a client record (key '%ls', slot %u) -- %s",
@@ -619,24 +617,24 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
                 key.c_str(), static_cast<unsigned>(senderSlot),
                 birth ? "published when it lands" : "published if it lands");
     }
-    if (landed && !birth) SendBody(&s, -1, key, rec);
+    if (landed && !birth) SendBody(&s, -1, key, data);
 }
 
 bool ApplyParked(void* actor, const std::wstring& key) {
     if (!actor || key.empty()) return false;
     auto it = g_parked.find(key);
     if (it == g_parked.end()) return false;
-    // ApplyRecord's bool is the DISPATCH's, not the Blueprint's: Aprop_C::loadData never assigns
-    // its `return` out-param at all, so there is no refusal to read. A failure here is a codec or
-    // reflection failure, and the record stays parked for the next frame to retry.
+    // Apply's bool is the DISPATCH's, not the Blueprint's: the `return` betterLoadData sets is not read.
+    // A failure here is a codec or reflection failure, and the record stays parked for the next frame
+    // to retry.
     if (DropRowForGates(key, actor)) return false;
     const uint64_t seq = it->second.seq;
-    const SR::SaveRecord rec(it->second.rec);
+    const std::vector<uint8_t> data(it->second.data);
     const bool republish = it->second.intent && g_awaiting.count(key) == 0;
-    if (!TryApply(actor, key, rec)) return false;
+    if (!TryApply(actor, key, data)) return false;
     UE_LOGI("prop_save_data: parked record applied at birth (key '%ls')", key.c_str());
     UnparkIfSame(key, seq);
-    if (republish && g_session) SendBody(g_session, -1, key, rec);
+    if (republish && g_session) SendBody(g_session, -1, key, data);
     return true;
 }
 
@@ -693,7 +691,7 @@ void Drive() {
     while (looked < kParkScanPerFrame && g_applyBudget > 0 && !g_parked.empty()) {
         if (it == g_parked.end()) { it = g_parked.begin(); g_parkCursor.clear(); }
         ++looked;
-        // The Key by VALUE, and the walk resumes by it rather than by `it`: loadData re-runs the
+        // The Key by VALUE, and the walk resumes by it rather than by `it`: betterLoadData re-runs the
         // prop's init(), from which a re-entrant apply or land for this same Key can erase or
         // replace the node this iterator names.
         const std::wstring key = it->first;
@@ -709,13 +707,13 @@ void Drive() {
             // failing rows pay a dispatch each, every frame, forever.
             --g_applyBudget;
             const uint64_t seq = it->second.seq;
-            const SR::SaveRecord rec(it->second.rec);
+            const std::vector<uint8_t> data(it->second.data);
             const bool republish = it->second.intent && g_awaiting.count(key) == 0;
-            if (TryApply(actor, key, rec)) {
+            if (TryApply(actor, key, data)) {
                 ++applied;
                 UnparkIfSame(key, seq);
                 // A client's claim that waited in the park is published as the canonical now that it landed.
-                if (republish && g_session) SendBody(g_session, -1, key, rec);
+                if (republish && g_session) SendBody(g_session, -1, key, data);
             } else {
                 auto row = g_parked.find(key);
                 if (row != g_parked.end() && row->second.seq == seq &&
@@ -765,10 +763,10 @@ void OnDisconnect() {
     g_parkUse.clear();
     g_session = nullptr;
     g_awaiting.clear();
-    // The codec's cached prop_C and per-class override answers are world-scoped: a Blueprint class
+    // The codec's cached prop_C and per-class answers are world-scoped: a Blueprint class
     // can be unloaded and reloaded across a level change, and a stale UClass pointer would answer
     // the membership test for a class that no longer exists.
-    SR::ResetCodecCache();
+    PR::ResetCache();
     // Same reason, same keys: g_ownedCache is keyed by UClass pointer, and a recycled address
     // would answer the ownership question for a different class.
     g_ownedCache.clear();

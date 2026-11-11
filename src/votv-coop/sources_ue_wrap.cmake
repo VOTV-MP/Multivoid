@@ -20,6 +20,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/reflection_dispatch.cpp
     src/ue_wrap/core/reflection_props.cpp
     src/ue_wrap/core/asset_load.cpp
+    src/ue_wrap/core/class_load.cpp
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
     src/ue_wrap/core/hook_drill.cpp
@@ -41,10 +42,13 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/script_loop.cpp
     src/ue_wrap/engine/engine.cpp
     src/ue_wrap/engine/engine_save.cpp
+    src/ue_wrap/engine/save_folder.cpp
     src/ue_wrap/engine/data_table.cpp
     src/ue_wrap/actors/begin_equipment.cpp
     src/ue_wrap/actors/container_box.cpp
     src/ue_wrap/actors/container_inventory.cpp
+    src/ue_wrap/actors/inventory_item.cpp
+    src/ue_wrap/actors/prop_record.cpp
     src/ue_wrap/actors/prop_processor.cpp
     src/ue_wrap/actors/container_openers.cpp
     src/ue_wrap/actors/container_view.cpp
@@ -57,7 +61,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
 
 set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/engine/save_capture.cpp
-    src/ue_wrap/engine/save_to_slot_hook.cpp
+    src/ue_wrap/engine/save_write_hook.cpp
     src/ue_wrap/engine/engine_audio.cpp
     src/ue_wrap/engine/engine_bones.cpp
     src/ue_wrap/engine/engine_component.cpp
@@ -141,7 +145,6 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/engine/engine_widget.cpp
     src/ue_wrap/engine/umg_build.cpp
     src/ue_wrap/engine/save_browser.cpp
-    src/ue_wrap/engine/gvas_meta.cpp
     src/ue_wrap/core/reflected_offset.cpp
     src/ue_wrap/core/call.cpp
     src/ue_wrap/core/fname_utils.cpp
@@ -177,6 +180,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/actors/prop_use.cpp
     src/ue_wrap/actors/prop_fire.cpp
     src/ue_wrap/actors/garbage_bag.cpp
+    src/ue_wrap/actors/player_record.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/actors/effects.cpp
     src/ue_wrap/world/game_mode.cpp

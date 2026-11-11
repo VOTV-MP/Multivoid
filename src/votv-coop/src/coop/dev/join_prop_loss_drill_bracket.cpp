@@ -27,6 +27,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -49,6 +51,8 @@ constexpr uint64_t kLateBudgetMs = 10000;   // late: the can shows within this o
 enum class Step : uint8_t { Seek, Spawn, Destroyed, WaitHost, Done };
 
 Step                  g_step = Step::Seek;
+uint64_t              g_trackWaitMs = 0;          // when the bracket began waiting for the join's sweep (0: not waiting)
+constexpr uint64_t    kTrackWaitMs = 60000;       // the sweep decides within seconds; past this the drill gives up
 uint64_t              g_readyMs = 0;        // the key index is asked from here
 uint64_t              g_quietMs = 0;        // the first tick the join was over
 std::wstring          g_key1, g_key2, g_key3;   // rekey A, B / twin A / stack M, L, R / late C
@@ -178,6 +182,34 @@ void DestroyBeforeBracket(void* victim, const char* which) {
     UE_LOGI("[JPL-DRILL] client destroyed %s before the bracket", which);
 }
 
+// While the client seeks its cans: once a second, what it can see, so a drill that finds nothing says why (how many cans
+// the loaded world holds, how far the nearest one and the nearest close pair are).
+void LogSeekState(void* me) {
+    static uint64_t s_nextMs = 0;
+    const uint64_t now = ::GetTickCount64();
+    if (now < s_nextMs) return;
+    s_nextMs = now + 1000;
+    FVector mine{};
+    E::TryGetActorLocation(me, mine);
+    const Pos p = Positions();
+    float nearest = -1.f, pairGap = -1.f, pairMid = -1.f;
+    for (size_t i = 0; i < p.cans.size(); ++i) {
+        const float d = Dist(mine, p.at[i]);
+        if (nearest < 0.f || d < nearest) nearest = d;
+        for (size_t j = i + 1; j < p.cans.size(); ++j) {
+            const float g = Dist(p.at[i], p.at[j]);
+            if (g > kPairMaxCm) continue;
+            const float md = Dist(mine, Mid(p.at[i], p.at[j]));
+            if (pairMid < 0.f || md < pairMid) {
+                pairMid = md;
+                pairGap = g;
+            }
+        }
+    }
+    UE_LOGI("[JPL-DRILL] client seek: at (%.0f,%.0f,%.0f), %zu can(s) live, nearest %.0f cm, nearest pair within %.0f cm: "
+            "gap %.1f at %.0f cm (-1: none)", mine.X, mine.Y, mine.Z, p.cans.size(), nearest, kPairMaxCm, pairGap, pairMid);
+}
+
 void SeekRekey(void* me) {
     void *a = nullptr, *b = nullptr;
     float gap = 0.f;
@@ -220,10 +252,23 @@ void SeekTwin(void* me) {
 void SpawnTwin() {
     std::vector<void*> live;
     Cans(live);
+    static uint64_t s_lastSaidMs = 0;
     for (void* a : live) {
         if (std::find(g_before.begin(), g_before.end(), a) != g_before.end()) continue;
         const std::wstring key = ue_wrap::prop::GetKeyString(a);
-        if (key.empty() || key == L"None") continue;
+        if (key.empty() || key == L"None") {
+            // A can that is new since the destroy and has no key yet: said twice a second, so a run that ends "the twin did
+            // not show with a key" tells whether the spawn made a can at all.
+            const uint64_t now = ::GetTickCount64();
+            if (now - s_lastSaidMs > 500) {
+                s_lastSaidMs = now;
+                FVector at{};
+                E::TryGetActorLocation(a, at);
+                UE_LOGI("[JPL-DRILL] client twin: a new can %p at (%.1f,%.1f,%.1f) has no key yet ('%ls')", a, at.X, at.Y, at.Z,
+                        key.c_str());
+            }
+            continue;
+        }
         FVector at{};
         E::TryGetActorLocation(a, at);
         g_ref2.Set(a);
@@ -299,7 +344,16 @@ void StepJudge(uint64_t now) {
         const char* what = ArmOf() == Arm::Stack ? "stack of cans" : ArmOf() == Arm::Twin ? "lone can" : "pair of cans";
         return Abort("no %s was found before the bracket", what);
     }
-    if (g_step == Step::Spawn) return Abort("the twin did not show with a key before the bracket");
+    if (g_step == Step::Spawn) {
+        std::vector<void*> live;
+        Cans(live);
+        size_t fresh = 0;
+        for (void* a : live)
+            if (std::find(g_before.begin(), g_before.end(), a) == g_before.end()) ++fresh;
+        UE_LOGI("[JPL-DRILL] client twin: at the end of the bracket %zu can(s) are new since the destroy (%zu live in all)", fresh,
+                live.size());
+        return Abort("the twin did not show with a key before the bracket");
+    }
     if (!g_quietMs) g_quietMs = now;
     if (ArmOf() == Arm::Twin && now - g_quietMs < kSweepMs) return;
     if (!g_readyMs) g_readyMs = now;
@@ -362,13 +416,21 @@ void BracketLoadTick() {
     }
     if (g_step != Step::Seek && g_step != Step::Spawn) return;
     if (coop::join_membership_sweep::IsClaimTrackingActive()) {
+        // The join's divergence sweep has not decided the world yet: it clears the claim tracking when it fires (about two
+        // seconds after the snapshot arms it, and at its abort). The bracket waits for that decision, bounded, rather than
+        // racing it; a bracket that opens during the tracking is the drill's own timing, not the mod's.
+        const uint64_t now = ::GetTickCount64();
+        if (g_trackWaitMs == 0) g_trackWaitMs = now;
+        if (now - g_trackWaitMs < kTrackWaitMs) return;
         Abort(g_step == Step::Spawn ? "the bracket began before the twin showed" : "the bracket began before the destroy");
         return;
     }
+    g_trackWaitMs = 0;
     if (g_step == Step::Spawn) return SpawnTwin();
     if (!coop::net_pump::IsWorldSettled() || ue_wrap::object_index::Backlog() != 0) return;
     void* me = LocalPlayer();
     if (!me) return;
+    LogSeekState(me);
     switch (ArmOf()) {
     case Arm::Rekey: SeekRekey(me); break;
     case Arm::Twin:  SeekTwin(me); break;
@@ -387,6 +449,11 @@ void BracketClientTick(uint64_t now) {
         break;
     }
     if (ArmOf() == Arm::Late) return StepLate(now);
+    // The twin is looked for on this tick too: BracketLoadTick, which looks for it, does not run once the world is up, and the
+    // client's join reaches that point within the second the twin is spawned in (drill-jpl_twin_n1-client.log: the destroy at
+    // 13:42:28, the bracket over at 13:42:32 with the new can already in the world, never seen), so the arm ended "the twin did
+    // not show" on every run.
+    if (ArmOf() == Arm::Twin && g_step == Step::Spawn) SpawnTwin();
     StepJudge(now);
 }
 

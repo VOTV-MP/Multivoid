@@ -98,7 +98,12 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_PILE_DRIFT", "host-drift pile scenario", &PileDriftScenarioThread, role);
 
     SpawnIf("VOTVCOOP_RUN_TRASH_PARK", "trash morph gate red/green probe", &TrashParkProbeThread, role);
-    SpawnIf("VOTVCOOP_RUN_DRIVESLOT", "desk drive slot two-peer test", &DriveSlotTestThread, role);
+    // The desk drive-slot test, the arm picked by the value (grab, hold, pocket; 1 is grab).
+    if (DriveSlotArmed()) {
+        UE_LOGI("harness: VOTVCOOP_RUN_DRIVESLOT=%s (%s) -- spawning desk drive slot two-peer test thread",
+                cfg::ReadEnv("VOTVCOOP_RUN_DRIVESLOT").c_str(), RoleStr(role));
+        if (HANDLE h = ::CreateThread(nullptr, 0, &DriveSlotTestThread, nullptr, 0, nullptr)) ::CloseHandle(h);
+    }
     SpawnIf("VOTVCOOP_RUN_BROOM_STROKE", "broom stroke, both peers and both directions", &BroomStrokeProbeThread, role);
     // The flashlight test, both peers: each toggles its own flashlight, and the other's puppet
     // must reflect it through the item-activate path.
@@ -218,14 +223,6 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The director's walked-grab scenario, solo-runnable: the brain walks the possessed player to
     // an open chipPile over the NavMesh and grabs it, clearing a full hand first.
     SpawnIf("VOTVCOOP_RUN_DIRECTOR_WALKGRAB", "bot-director walked grab", &coop::director::WalkGrabDirectorThread, role);
-
-    // The container-take probe, solo: walks to a placed non-empty container, drives the human take
-    // chain, and measures whether the take executed.
-    SpawnIf("VOTVCOOP_RUN_CTAKE_PROBE", "container-take input probe (director Phase-2)", &coop::director::ContainerTakeProbeThread, role);
-
-    // The container race: two peers walk to the same container and take the same item at a
-    // barrier; each counts locally afterwards, and the driver sums across peers.
-    SpawnIf("VOTVCOOP_RUN_CTAKE_RACE", "container concurrent-take race (director Phase-2)", &coop::director::ContainerRaceThread, role);
 
     // The grab race: two peers aim at the same keyed prop and grab it at a barrier; each logs who holds it after.
     SpawnIf("VOTVCOOP_RUN_GRAB_RACE", "prop grab race (one holder)", &coop::director::GrabRaceThread, role);

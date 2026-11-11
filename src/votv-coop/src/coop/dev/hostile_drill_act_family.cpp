@@ -74,7 +74,7 @@ constexpr Req kReqs[] = {
 constexpr size_t kSix = sizeof(kReqs) / sizeof(kReqs[0]);
 
 // The judge's counters of the four refusing terms, in the order the ready line is judged.
-constexpr PAH::Tally kTerms[] = {PAH::Tally::FitNoUseRow, PAH::Tally::FitHeavy, PAH::Tally::FitDenied,
+constexpr PAH::Tally kTerms[] = {PAH::Tally::FitNoUseRow, PAH::Tally::FitTakeRefused, PAH::Tally::FitDenied,
                                  PAH::Tally::FitBadFamily};
 constexpr uint32_t kTermWants[] = {1, 2, 2, 1};
 constexpr size_t kTermCount = sizeof(kTerms) / sizeof(kTerms[0]);
@@ -171,7 +171,7 @@ void TakeBaselines() {
     for (size_t i = 0; i < kTermCount; ++i) g_termBase[i] = PAH::TallyOf(kTerms[i]);
 }
 
-// The targets are announced when each has an eid; then the heater must simulate, or the pocket never reaches the heavy
+// The targets are announced when each has an eid; then the heater must simulate, or the hold never reaches the take
 // term. The baselines are taken and the eids said.
 void AnnounceTargets() {
     if (Bounded(g_armAt, kReadyBound, "the targets never became ready")) return;
@@ -233,7 +233,7 @@ void JudgeSix() {
             return;
         }
     }
-    Finish("PASS", "six forged acts answered WrongFamily by fit_no_use_row 1, fit_heavy 2, fit_denied 2 and "
+    Finish("PASS", "six forged acts answered WrongFamily by fit_no_use_row 1, fit_take_refused 2, fit_denied 2 and "
                    "fit_bad_family 1, and all four targets stand");
 }
 

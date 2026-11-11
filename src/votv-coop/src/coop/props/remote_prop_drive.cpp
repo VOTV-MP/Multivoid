@@ -295,7 +295,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
             mesh ? "Aprop physics-off" : "clump kinematic (generic physics-off)");
     // Both native grab sounds play only in the grabber's own input chain, so the receiver plays
     // them: the fixed `use` click and the per-material soft cue (a plain-actor clump resolves its
-    // root material's physSound row; silent on a miss). Once per hold: a drive that restarts for the
+    // root material's sounds object; silent on a miss). Once per hold: a drive that restarts for the
     // same hold (a local drag of a door ended) is not a new grab, and plays no cue.
     if (pose.holdGen == 0 || hold.cueGen != pose.holdGen) {
         hold.cueGen = pose.holdGen;

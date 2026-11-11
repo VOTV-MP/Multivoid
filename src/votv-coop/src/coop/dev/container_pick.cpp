@@ -7,21 +7,41 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/container_contents_sync.h"
 
-#include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <set>
+#include <string>
 #include <vector>
 
 namespace coop::dev::container_pick {
 
 namespace E  = ue_wrap::engine;
-namespace CV = ue_wrap::container_view;
 namespace CC = coop::props::container_contents_sync;
 using ue_wrap::FVector;
+
+bool IsLocked(void* container, bool* known) {
+    namespace R = ue_wrap::reflection;
+    int32_t off = -1;
+    uint8_t mask = 0;
+    *known = R::FindBoolProperty(R::ClassOf(container), L"locked", off, mask) && off >= 0;
+    return *known && (*(static_cast<const uint8_t*>(container) + off) & mask) != 0;
+}
+
+bool SkipLocked(void* actor) {
+    namespace R = ue_wrap::reflection;
+    bool known = false;
+    if (!IsLocked(actor, &known)) return false;
+    static std::set<std::wstring> s_said;   // once per class: a save holds hundreds of them
+    const std::wstring cls = R::ClassNameOf(actor);
+    if (s_said.insert(cls).second)
+        UE_LOGI("[CONTAINER-PICK] the pick leaves out the locked %ls (and any other of its class)", cls.c_str());
+    return true;
+}
 
 int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 100.f) + 60, 90, kWalkMaxS); }
 bool WalkFits(float routeCm) { return static_cast<int>(routeCm / 100.f) + 60 <= kWalkMaxS; }
@@ -63,7 +83,8 @@ bool PickContainer(const Want& want, Pick& out) {
         if (RecordsOf(eid) < want.minRecords) continue;
         void* const actor = coop::element::LivePropActor(eid);
         FVector pos{};
-        if (!actor || CV::IsOwnInventory(actor) || !E::TryGetActorLocation(actor, pos)) continue;
+        if (!actor || !E::TryGetActorLocation(actor, pos)) continue;
+        if (want.skips && want.skips(actor)) continue;
         ++out.qualified;
         const float dx = pos.X - me.X, dy = pos.Y - me.Y, dz = pos.Z - me.Z;
         const float sq = dx * dx + dy * dy + dz * dz;

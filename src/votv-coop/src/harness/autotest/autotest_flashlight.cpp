@@ -76,10 +76,8 @@ void RunAutonomousFlashlightTest() {
     // ---- Setup. The local flashlight must be equipped and charged before any
     // toggle path can flip the light. The save should carry one, and
     // coop::dev::flashlight_setup::EnsureFlashlightReady() makes sure of it: it
-    // reads hasFlashlight and calls addPropToPlayer when false, writes
-    // saveSlot.battery = 100 (the scale is 0-100, not 0-1) and
-    // saveSlot.flashlightBattery = prop_batts_C, and logs the state before and
-    // after.
+    // equips the flashlight when none is worn, writes the worn flashlight's
+    // `battery` to 100 (the scale is 0-100, not 0-1), and logs the state before and after.
     {
         auto ensureDone = std::make_shared<std::atomic<int>>(0);
         GT::Post([rsv, ensureDone] {

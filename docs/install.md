@@ -41,7 +41,7 @@ uninstall.
 
 ## What you need
 
-- **Voices of the Void 0.9.0n** (each mod build targets one game version; the
+- **Voices of the Void 0.10.0** (each mod build targets one game version; the
   release page and the in-game Multiplayer entry both show the pair).
 - A mod manager -- [r2modman](https://thunderstore.io/c/voices-of-the-void/) or
   the Thunderstore Mod Manager. Every route below except the last one uses it,

@@ -37,6 +37,8 @@ std::vector<ParamInfo> FunctionParams(void* function) {
             p.size = *reinterpret_cast<int32_t*>(field + O::FProperty_ElementSize) *
                      *reinterpret_cast<int32_t*>(field + O::FProperty_ArrayDim);
             p.flags = flags;
+            const uint8_t* const fieldClass = *reinterpret_cast<const uint8_t* const*>(field + O::FField_ClassPrivate);
+            if (fieldClass) p.type = ToString(*reinterpret_cast<const FName*>(fieldClass + O::FFieldClass_Name));
             params.push_back(std::move(p));
         }
         field = *reinterpret_cast<uint8_t**>(field + O::FField_Next);
@@ -205,6 +207,21 @@ void* PropertyInnerStruct(void* owningClass, const wchar_t* propName) {
                     cand, propName, ToString(NameOf(p)).c_str());
             return p;
         }
+    }
+    return nullptr;
+}
+
+void* ArrayInnerStruct(void* owningClass, const wchar_t* propName) {
+    uint8_t* field = FindPropertyField(owningClass, propName);
+    if (!field) return nullptr;
+    // FArrayProperty::Inner and FStructProperty::Struct both sit at the first payload slot after the
+    // FProperty base, so the one calibrated boundary serves both reads.
+    for (int32_t cand : { 0x70, 0x78 }) {
+        if (g_structPropSlot >= 0 && cand != g_structPropSlot) continue;
+        auto* inner = *reinterpret_cast<uint8_t**>(field + cand);
+        if (!PlausibleHeapPtr(inner)) continue;
+        void* p = *reinterpret_cast<void**>(inner + cand);
+        if (LooksLikeScriptStruct(p)) return p;
     }
     return nullptr;
 }

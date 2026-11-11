@@ -34,10 +34,13 @@ Nothing about a prop is reflected as replication, so the mod watches four seams:
 
 A birth message carries the prop's class, key, id, transform and physics flags. For a class that
 keeps save state of its own -- a tape reel's progress, a floppy disc's files -- a second message
-follows it on the same lane with the prop's whole save record, the bytes the prop's own `getData`
-produces, addressed by key (`coop/props/prop_save_data`). Which classes those are is not a list we
-keep: it is whether the class declares a `getData` of its own, read from the live class chain, so a
-save-backed class the game adds is carried without a change here. A record that arrives for a prop
+follows it on the same lane with the prop's save record, addressed by key (`coop/props/prop_save_data`).
+The record is the stream of SaveGame properties the prop's own `betterGetData` writes, the pair the
+game's world load uses (`ue_wrap/actors/prop_record`); it is applied through the prop's own
+`betterLoadData` on the receiving peer's own identity, so a record can change a prop's state and never
+its class, name, key or place. Which classes carry one is not a list we keep: it is whether a class
+below `Aprop_C` declares a SaveGame property or a `betterGetData`, read from the live class chain, so a
+save-backed class the game adds is carried without a change here. `[RD]` A record that arrives for a prop
 this peer has not created yet waits under its key until that prop appears, because a key survives
 the destroy-and-recreate that made the record need to travel in the first place. A newer record
 for the same key replaces the waiting one whether it applies at once or waits too, so an older
@@ -70,8 +73,7 @@ ejected reached every client blank. The drain logs its traffic once a minute
 Point-sack redemption is a client intent: the host authorizes reach, destroys its copy, and pays
 only once that incarnation has stopped being live (`coop/items/point_sack_intent`). A successful dispatch with the sack still live pays
 nothing. A joining client's action is also intercepted: a refused send leaves the sack intact
-for another press after joining. `[?]` Concurrent redemption needs a two-peer test; a consumed sack whose payment fails
-has no automatic recovery.
+for another press after joining. `[?]` Concurrent redemption needs a two-peer test; a consumed sack whose payment fails has no recovery.
 
 ### How a birth finds its local actor
 
@@ -84,6 +86,16 @@ key match falls back to a scan for a prop of the same class, carrying the same `
 within 30 cm of where the birth says it is; the first such prop is adopted, re-keyed to the wire
 key and bound. With no candidate at all, a fresh mirror is made
 (`coop/props/remote_prop_spawn`, `coop/props/prop_fresh_spawn`).
+
+A class this peer has not loaded is not a reason to drop the birth. The game loads a Blueprint class on first use, so the
+host can spawn a food subclass the client has never needed, and a lookup by name finds only a loaded class. The sender
+therefore puts the class's content path on the spawn, in the spare bytes of the class-name field (the leaf name, a zero,
+then a length byte and the package directory, `coop/net/wire_class_path`), and the receiver resolves the class through one
+seam (`coop/props/wire_class`, over `ue_wrap/core/class_load`): the name lookup first, and on a miss the load of that
+path, once per class, rooted so the collector does not free it before the next spawn. A failed load is remembered for
+fifteen seconds. The same seam serves a client's placed prop on the host (`PropDropIntent` carries the path too) and a
+container put (a record already carries its whole class path). A peer that predates the path reads the leaf and ignores
+the rest; a spawn from one has no path, and its miss is the drop it always was.
 
 What that scan must never take is an actor that only looks like a world prop. A player's hand
 item is one: it is a real actor of the right class, it stands at that player's hands, and it
@@ -120,14 +132,14 @@ the world's own churn, which every peer produces for itself.
 
 ### The data row a prop carries
 
-A prop resolves one row of the game's master table when it initialises -- `list_props`, 2,471 rows,
+A prop resolves one row of the game's master table when it initialises -- `list_props`, 2,471 rows on 0.9.0n,
 keyed by the prop's own name -- and copies the whole row into `propData` (all but one path: a prop
 spawned with `ingoreFix` set takes only the mesh from the row and keeps its own flags). Four of
 its seventeen fields are switches the game itself reads on the interaction path: `heavy` picks
 lift versus drag,
 `canHold` refuses the grab with the same "too heavy" hint a heavy prop gets, `canCollect` keeps the
 prop out of the pocket, and `ignoreInteractions` makes the prop no target at all -- the use press
-plays the deny sound and returns, and the look-at prompt never appears over it. In the shipped
+plays the deny sound and returns, and the look-at prompt never appears over it. In the 0.9.0n
 table 188 rows are heavy, 196 refuse holding, 28 refuse collecting and 8 ignore interactions; a
 prop whose name matches no row is holdable and collectable.
 
@@ -285,60 +297,113 @@ receiver re-poses the prop and dispatches the component's own force-stick, so th
 and the destroy binding are the game's (`coop/props/prop_stick_sync`). The unstick crosses too,
 since a crowbar's pry frees a pryable sign with nobody holding it: the script gate watches the
 component's unstick on every route, the unsticking peer broadcasts the prop's pose and velocity, and
-a receiver runs the same unstick with the tool and lets its copy go.
+a receiver runs the same unstick with the tool and lets its copy go. `[V]` `coop/dev/pry_drill` (`VOTVCOOP_PRY_DRILL=client|host`, both peers) pries one stuck banister with no crowbar: the acting peer says where its copy rests in the lobby chat, and the watching peer prints `[PRY-DRILL] [H|C] PASS` when its own copy left the wall, is no longer stuck and rests within 25 cm of that place (measured pairs rested 4 and 11 cm apart, 172 cm off the wall), else `FAIL`.
 
 ### Containers
 
-A container's contents are not on the container: every container reads them from one global
-per-peer array in the save object, addressed by an index the container holds, and every mutating
-verb runs inside the Blueprint, below the two dispatch seams a hook can intercept. The
-script-body gate does see it -- that is how this lane learns a container changed -- but it runs on
-the presser's own machine, and no local body can wait for an answer from across the network. So
-the host publishes the contents (`coop/props/container_contents_sync`): one slice of its
-array per live container is sent at a joiner's ready edge and on change, and a client's mirror is
-display only. A client's only slice is a thrown container's birth, bounded by its arrival rate;
-the host refuses every other client slice and answers the author with its own truth
-(`coop/props/container_truth`). A change a client makes to a shared container is an act the host
-judges, and an extraction on a client is a container-extract birth through the intent door above. The game arms a
-container's overlap box (the trigger a thrown prop enters to be filed) when a record leaves the container by a player's
-take, through the container's own `dingus`; the host's raw record edit never runs it, so the host calls `dingus` once a
-client's take is final (`container_act_host`) `[?]`. Whether that box is armed is the host's own physical state: every
-slice the host publishes carries it in a flags byte (`coop/props/container_arming`, `container_slice_wire`), a native hook
-on `SetCollisionEnabled` marks the container for publication when the box changes (a host take, a broken container, a
-roomba's own writes included), and a client's mirror takes its box from the byte and cancels its own `dingus` on a shared
-container, so a mirror's trigger is never armed by a client alone `[?]`. A prop a client drives into an armed box is
-judged by the host at the host's own overlap, with no client message: the host's copy is kinematic there, so the box's
-own body would refuse it, and a PRE on `putObjectIn_overlap` judges it instead (the box is armed, a held or claimed
-driver is within reach, no client holds the container, the body's silent gates pass, the prop fits), ends the driver's
-row or drive so the copy simulates, and lets the game's body file it. Every such put is filed, refused with its reason, or
-dropped and counted. A put that cannot be judged yet waits for the edge it needs: a client's hold ending, the prop's id
-binding, or the container changing (the last two for at most 2 s, then it is refused as unread); the host's own put on a
-held container waits too. A prop still in the box by then with no driver is pre-checked the same way and the game's body
-runs on it, since it fires no second overlap, and the game's own body may still refuse it. A refusal stands while the
-same drive does, until the container changes. A client's own copy of the call on a shared mirror is cancelled when it
-comes from the container's own overlap graph. A joiner needs no replay: the put is one host step, so a joiner seeded
-before it receives the prop's destroy and the container's publication, and one seeded after receives the container with
-the record `[?]`. The open and closed state is a keyed-device channel like a
-door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
-and designed and not built.
+A container's contents are on its inventory component: `canvasInventory`, an array of inventory entries (a
+`struct_betterSave` record of the item, its place on the inventory canvas and its amount; `ue_wrap/actors/inventory_item`),
+which the container serialises into its own save record, so a nested container's contents travel inside its entry. Every
+mutating verb (`addItemAsObject`, `addItemAdvanced`, `removeInventoryItem`, `trimInventory`, `transferFromInvToInf`) runs
+inside the Blueprint, below the two dispatch seams a hook can intercept. The script-body gate does see it -- that is how
+this lane learns a container changed -- but it runs on the presser's own machine, and no local body can wait for an answer
+from across the network. So the host publishes the contents (`coop/props/container_contents_sync`): one slice of its array
+per live container is sent at a joiner's ready edge and on change, and a client's mirror is display only. A client's only
+slice is a thrown container's birth, bounded by its arrival rate; the host refuses every other client slice and answers the
+author with its own truth (`coop/props/container_truth`). A change a client makes to a shared container is an act the host
+judges, and an extraction on a client is a container-extract birth through the intent door above.
+
+The only way a player takes from or puts into a container is the inventory screen, `ui_FreeLayoutInventory_C`, which the
+container's own `openContainer` opens onto its inventory component. Dragging an entry out of the container's canvas runs, in
+one synchronous flow, `addItemAdvanced` on the player's bag (the copy the drag then holds), then the item widget's
+`removeItem`, which is `removeInventoryItem` on the container's component: it blanks the entry in place, and `trimInventory`
+drops the blanks when the screen closes. A mass selection runs the same pair per entry, a drop onto the world spawns the
+item in `dropItems` and removes it from its owner the same way, and a crafting combination removes both items from theirs.
+`removeInventoryItem` on the container's component is therefore the one place every take passes, with the component, the
+entry's index and the entry in hand (`coop/props/container_act_request`). On a client, for a shared container, that call
+runs at once, so the drag goes on without a wait, and the entry's address (its index and the hash of its wire form) goes to
+the host as a take in the same step. The host judges it as before (the sender's world, the holds, the reach, the container,
+the address), takes the entry out of the container into escrow and grants; the client's commit ends the escrow. A refusal
+gives the take back: the copy the drag filed in the player's bag is taken out again (the item widget's own `removeItem`, and
+the screen's `dropDragged` when it was the one being dragged), a line is shown, and the host sends its truth of the
+container, which the client's mirror applies and the screen rebuilds from. A take the transport could not carry, or one past
+the sixty-four a client keeps pending, is cancelled and its copy taken out at once; one the host does not answer in 10 s is
+given back the same way, and kept so that a grant still to come is answered with an abort. The host's own take is
+authoritative: the writer watch marks the container and the sweep publishes it. Dragging with the right button or the stack
+key takes part of a stack: `takeFromStack` lowers the entry in place and a copy with the part goes in the bag. The seat asks
+the host before the body runs (`TakeStack`); the host keeps the part in escrow like a whole entry, a refusal takes the copy
+out of the bag, and a restore files the part as an entry of its own. The canvas's combine-stacks action runs `addToStack` on
+the entry that stays, then `removeItem` on the other: the seat waits for the body to raise the stack, asks the host to fold
+the one entry into the other (`MergeStack`: one write, nothing held, no commit), and lets the removal that follows pass as
+the merge's own. The host merges only entries of one class and name.
+
+A put by dragging an entry onto the canvas runs the inventory's `addItemAdvanced` (the screen's `enddrag`, or `clickoff` for
+a mass selection), then the bag widget's `removeItem`. The seat cancels `addItemAdvanced`, which the screen reads as a drop
+that did not fit (the widget stays in the bag), and asks the host with the entry as the inventory would store it, in the
+`PutRecord` family. On a grant the verb runs again under the replay latch if the widget still holds that item in the bag;
+the widget leaves the bag once the inventory has stored the entry, and the commit says where. A refusal undoes nothing. An
+entry dropped back on the canvas it lies on (a mass selection moved inside one container) is not carried and snaps back. An
+`addItemAdvanced` the screen did not make (a prop a container absorbs, the vacuum, a flashlight's battery taken out over the
+canvas) is not a drop and runs natively `[?]`.
+
+The other guarded put is hold and run (the container's `playerUsedOn` with the run key down): the client cancels it and asks
+the host with the record, the host reserves room, and on the grant the same verb runs again under the replay latch if the
+hand still holds that actor; the commit says where the container stored the record. The host's own hold-and-run put waits while a client holds the container.
+The host's room test for a put is the inventory's own: the volume of the record's name times its amount against the container's
+`totalVolume` and `maxVolume`. The volume is the game's `lib_C::Get Volume` asked with the name as the gamemode's `propRenderer.Names`
+spells it (no name is made for a string a peer sent); a name that list lacks is refused. In 0.10 that function returns `valid` for every
+name and answers by mesh only with `getVolume` set. On build b284 it answers 0 for every name and mesh until the game's volume tables arrive, about 2.5 minutes after a world loads (just after the game's own "Icons finished and saved" / "Render finished" / "Cleanup" hints; measured on a client: crowbar 2986, kerfurO 105905, mre 3245, soap 751 once they had, against the player's `maxVolume` 50000), and until then a container's `totalVolume` stays 0 with records in it, so the game's own room test never refuses and the host's mirrors it `[V]` (the drill logs `put fit:` lines; the honest act drill's `kerfur pocket` and `full` rows wait for the tables, because the game's refusal, "Not enough space", exists only after them). `[V]` the container take drill (`coop/dev/container_take_drill`, env
+`VOTVCOOP_CONTAINER_TAKE_DRILL=1` on both peers) walks a client to a world container, takes a record the way the screen's drag does
+(the bag's `addItemAdvanced`, then `removeInventoryItem` on the container), and puts a held prop back with the run input down; it
+reads both peers' record counts. `[V]` The stack acts run on the screen's own widgets under `coop/dev/container_stack_drill` (`VOTVCOOP_CONTAINER_STACK_DRILL=1`, both peers, it mutates the container): the host seeds a stack of 6 and two of 3, the client drags one unit off the 6 (`dragRMB`, then the screen's `beginDrag` on that stack's widget, which runs `takeFromStack`), then merges the two 3s (`addToStack`, then the other entry leaves); each leg is granted by the host, stands on the client at a second read, and the host's container reads `[5, 3, 3]` and then `[5, 6]`. `[V]` The drone's cargo take is run by `coop/dev/drone_cargo_take_drill` (`VOTVCOOP_DRONE_CARGO_TAKE_DRILL=1` with `join_at_host=1`): the host seeds the cargo with two records and sets the dormant drone (parked far off, where no route leads) down beside its player, and the client's take is granted, stands, and leaves the host's cargo one record fewer. An ATV's trunk is covered by `coop/dev/atv_trunk_drill` (`VOTVCOOP_ATV_TRUNK_DRILL=1` with `join_at_host=1`, both peers, it mutates the first ATV's trunk): the host fills the trunk with two records, sets the ATV down beside its player and says the trunk's id; the client takes the first record the way the screen's drag does and the host reads the trunk one record fewer; the client then opens the screen on the trunk (`begin(component)`) and drops the bag item on its canvas (the screen's own `enddrag`, which calls `addItemAdvanced` from the screen's script, the put seat's caller test) and the host reads the count again; last the host adds a record itself and the client's mirror shows it `[V]`.
+The off hand is driven by `coop/dev/offhand_drill` (`VOTVCOOP_OFFHAND_DRILL=1`, both peers): the off-hand key's handler moves a held crowbar into `holdingActor_offhand`, the host logs the `off-hand mirror SPAWNED` of the hand lane, and `dropItem_offhand` lands a keyed prop the host resolves `[V]`.
+
+The drone's cargo is the same lane with a reserved target id (`coop/props/container_target`): the host reads and writes it
+through `ue_wrap/devices/drone`, judges reach of the drone itself, and publishes a granted act through `drone_cargo_sync`.
+
+An ATV's trunk is a third shared target of the same lane. In 0.10 the ATV opens its own `inventoryComponent` (the open option runs
+the inventory screen's `begin(atv.inventoryComponent)`); the `spawnedContainer` prop of 0.9 is never created, so no element, no
+container lane and no `container_openers` pair exists for it. The trunk is keyed by the ATV's game key (`coop/interactables/atv_sync` names
+every ATV by it on every peer): its target id is `container_target::kAtvTrunkBase` (0xFFE00000) plus 20 bits of an FNV hash of the key
+(`atv_trunk_sync::EidOfKey`; two live ATVs that map to one id are neither shared, said once). The host reads each ATV's trunk through
+`ue_wrap/devices/atv` (`InventoryOf`, `ReadTrunk`, `WriteTrunk`: `container_inventory::ReadContents` / `WriteContents` on the ATV's
+component, the entry array a world container holds), twice a second, and sends it whole as a chunked blob in the container slice grammar
+(`ReliableKind::AtvTrunk`, host to client, never relayed, element id = the target id) when its hash changed; a joiner gets every trunk at
+its connect replay (`connect_replay`). A client holds the newest blob per trunk until the ATV it names is live and writes it over its
+component. A client's take, put, stack and merge on the open trunk are the same seats as a world container's (`container_act_request`:
+`SharedTargetOfInventory` names the trunk, the host judges and writes through `container_record_edit` with the ATV's component as the
+target) and the reach is judged at the ATV itself (`container_reach::Judge`, the same look-at trace, `kReachUU` plus the ATV's bounds).
+A client's hand put (the ATV's `playerUsedOn` drops the main hand and files the dropped actor with `addItemAsObject` on the trunk) writes
+a copy the host never sees, so it is cancelled at `inventoryComponent_C::addItemAsObject` when the component is a trunk (the dropped
+item stays in the world, as the drone's `playerUsedOn` is refused); the host's own put runs and the next read publishes it.
+`container_view_close` closes a client's trunk view when the ATV leaves its reach, as for a container. `[V]` (`atv_trunk` drill: take and
+put granted, trunk reads on both peers, the host's own add reaches the client). `container_opener_probe` names each ATV's trunk both ways
+and logs every client's reach to it; `container_view_drill` opens the screen on the trunk.
+
+The game's overlap box, the trigger a thrown prop entered to be filed, is not a path in 0.10: `putObjectIn_overlap` has no
+body and nothing calls `dingus`, so a prop thrown into a container is not filed and the lane carries no arming. A client
+whose screen shows a container the host moves out of reach has its view closed (`coop/props/container_view_close`), so a
+take is not refused for reach. When contents arrive for a container whose screen is open, the entries are written under the
+screen's widgets taken off and shown again (`DetachDisplay`, `AttachDisplay`), since the widgets are indexed like the array.
+A joiner needs no replay: a take is one host step, so a joiner seeded before it receives the container's publication after,
+and one seeded after receives the container without the entry `[?]`. The open and closed state is a keyed-device channel
+like a door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are
+reverse-engineered and designed and not built.
 
 ### A record that changes in place
 
-A prop's save record crosses on every birth path and on no other, so a prop whose record changes
-while it sits there tells no one. Two classes do that under a player's hand: the drive box and
-the tape reel case. Each has a lid and its contents in the record, taking the lid off spawns it
-in the presser's hands, and putting a drive or a reel in destroys the held one and stores it in
-the record. The lane watches each class's own `upd()`, which every mutation ends in, and
-republishes the record: the host broadcasts it, a client's goes to the host as an intent the
-host re-publishes. The far side applies it through the prop's `loadData`, whose `upd()` redraws
-the reel case; the drive box's look follows its name, which a record does not carry, so the
-receiver re-derives it from `opened` (`coop/props/prop_record_refresh`).
+A prop's save record crosses on every birth path and on no other, so a prop whose record changes while it sits there tells
+no one. Two classes do that under a player's hand: the drive box and the tape reel case. Each has a lid and its contents in
+the record, taking the lid off spawns it in the presser's hands, and putting a drive or a reel in destroys the held one and
+stores it in the record. The lane watches each class's own `upd()`, which every mutation ends in, and republishes the
+record: the host broadcasts it, a client's goes to the host as an intent the host re-publishes. The far side applies it
+through the prop's `betterLoadData`, whose `upd()` redraws the reel case; the drive box's look follows its name, which a
+record does not carry, so the receiver re-derives it from `opened` (`coop/props/prop_record_refresh`).
 
 ### Notebook
 
-A notebook's pages are `text` on the prop, which its own `getData` and `loadData` save, so the
-text is the prop's save record and crosses on the record lane above with no message of its own.
-`coop/interactables/notebook_sync` adds what that lane cannot know, the editor.
+A notebook's pages are `text` on the prop, a SaveGame property its own `betterGetData` stream carries, so the text is the
+prop's save record and crosses on the record lane above with no message of its own. `coop/interactables/notebook_sync` adds what that lane cannot know, the editor.
 
 - **One editor at a time.** The open editor claims the notebook, a claim keyed by the prop
   (`coop/interactables/device_occupancy`); a second peer pressing E on it is denied.
@@ -448,25 +513,27 @@ hertz); or an anchor, a start stamp every peer computes from, valid only while t
 constant ([architecture.md](architecture.md), where the authority is going). The reel corrector
 and the food's tick gate are built; concrete is designed and not built.
 
-A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls temperature and spoilage and, at the
-ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the
-script gate (`coop/props/food_tick_gate`: `prop_food_C.ReceiveTick` and the four subclasses that declare their own, a
-switch on the actor's tick being undone by the food's `init` and the coffee cup's BeginPlay) and takes the host's
-temperature, ripeness and uses, sent when they move. A client's bite runs on its copy, for its own hunger and effects, and goes to the host as `FoodBite`; the host
-judges it within 400 uu of the sender's body (the door's and the coffee's reach) and takes at most one bite per 200 ms
-from a slot, and its count answers. A bite it refuses changes nothing there and is answered with the food's own
-`FoodState` to that slot, once a second at most, which puts the client's count back; the client's hunger and effects
-stay its own. A last bite is already the host's through the prop act lane. A joiner gets every food again at its ready
-edge, and a value whose copy is not born yet waits for it with no time limit (512 at most; at the cap the oldest is dropped and logged). A copy whose tick is refused paints what the tick would, its steam and its frozen look. A food in a hand is its
-holder's: it keeps its tick, its condition goes out as `FoodHand`, and the copy the others show in that hand is refused
-its tick on every peer and takes it. A client that lets a food go sends `FoodRelease`, taken from the player's drop bodies (`simulateDrop`,
-`forceDrop`), since the host's new copy has none of what the hand kept, and the host takes over `[V]`
-(`harness/autotest/autotest_food_state.cpp`: conditions, bites from each peer, a last bite, one burnt food on both, a
-burn written on a client's copy, steam and the frozen flag, a held food shown both ways, a throw from each peer, a
-rejoin; the verbs by reflection and the food `prop_food_C`). The host judges a release as a bite, within reach, with
-its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use count no higher than the host copy's;
-one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
-answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
+A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls temperature and spoilage and, at the ends
+of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the script gate
+(`coop/props/food_tick_gate`: `prop_food_C.ReceiveTick` and the four subclasses that declare their own, a switch on the
+actor's tick being undone by the food's `init` and the coffee cup's BeginPlay) and takes the host's temperature, freshness
+(`freshnessAlpha`, the fraction of the current stage, and the stages left), uses and spoiled flag, sent when they move. A
+client's bite runs on its copy, for its own hunger and effects, and goes to the host as `FoodBite`; the host judges it
+within 400 uu of the sender's body (the door's and the coffee's reach) and takes at most one bite per 200 ms from a slot,
+and its count answers. A bite it refuses changes nothing there and is answered with the food's own `FoodState` to that slot,
+once a second at most, which puts the client's count back; the client's hunger and effects stay its own. A last bite is
+already the host's through the prop act lane. A joiner gets every food again at its ready edge, and a value whose copy is
+not born yet waits for it with no time limit (512 at most; at the cap the oldest is dropped and logged). A copy whose tick
+is refused paints what the tick would, its steam and its frozen look. A food in a hand is its holder's: it keeps its tick,
+its condition goes out as `FoodHand`, and the copy the others show in that hand is refused its tick on every peer and takes
+it. A client that lets a food go sends `FoodRelease`, taken from the one body every drop runs, from either hand (`Place Drop
+Object from Hotbar Slot`, which spawns the dropped food anew from the slot's data), since the host's new copy has none of
+what the hand kept, and the host takes over `[V]` (`harness/autotest/autotest_food_state.cpp`: conditions, bites from each
+peer, a last bite, one burnt food on both, a burn written on a client's copy, steam and the frozen flag, a held food shown
+both ways, a throw from each peer, a rejoin; the verbs by reflection and the food `prop_food_C`). The host judges a release
+as a bite, within reach, with its temperature in 0 to 2000, its freshness finite and in -1 to 1, its stage count in -1 to
+100000, and its use count no higher than the host copy's; one whose copy is not born yet waits 30 s for it, judged against
+where the sender stood, and a refused release is answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
 
 ## Who owns what
 
@@ -489,15 +556,16 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | Kind | Direction | Carries |
 |---|---|---|
 | `PropPose` (stream) | the holder to all | the held prop's world transform, per frame, and its hold's generation |
-| `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class, key, id, transform, physics flags, the birth scalar; the key and id |
+| `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class (its leaf name and, in the spare bytes after it, its content path), key, id, transform, physics flags, the birth scalar; the key and id |
 | `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, the hold it closes and the throw sequence (0 = not a throw); a client's goes through the host, which clamps it and sends it on |
 | `PropHoldRefused` | the host to every client | a hold the host refused, by its holder's slot and generation, the prop's key, and the slot whose hold keeps the prop |
-| `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, ripeness and uses; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
+| `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, freshness and uses; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
 | `PropPropsIntent`, `PropPropsState` | a client to the host; the host to all, or to the sender alone for a refusal | a client's press of the prop-properties tool with the tool's four values; a prop's static, frozen and sleep read back from the host's copy, or the reason the press was refused `[?]` |
 | `PropDrivePose` (stream) | the host to all; a syncing client to the host | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation; a client's rows of the prop its own interaction moves, which the host judges before it relays one `[?]` |
 | `PropDriveEnd` | the host to all; a syncing client to the host | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation; a client's End is admitted when it is the row's syncer `[?]` |
 | `PropSyncClaim`, `PropSyncAnswer` | a client to the host; the host to that client | a client's request to sync a prop its interaction moves, and the host's grant, refusal (with the reason) or revoke (with the generation); the host also grants a thrown prop to its thrower unasked, `seq` being the throw sequence `[?]` |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, a throw or an unavoidable birth, for the host to author, with the placed root's velocity and the throw sequence |
+| `PropSaveData`, `PropSaveDataIntent` | the host to all or one joiner; a client to the host | a prop's save record, chunked as a blob: its key and the actorData stream of its own `betterGetData`; a client's is a claim the host lands and re-publishes `[RD]` |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
@@ -532,6 +600,7 @@ prop resolves.
 | Another peer's hold can carry away the chair this peer sits in at the laptop, which single player never allows: the laptop freezes the seat only on the machine whose player sits | `[V]` the laptop Blueprint: `stabilizeSeat` sets the seat frozen, and the exit's `setPropProps` clears it; `coop/props/remote_prop` unfreezes a held copy at the hold's first pose |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
+| A record is the stream the game's own `ActorToBytes` writes and a peer applies it through `BytesIntoActor`, as the game applies a save file: the host cannot read a client's stream before applying it, so a client that sends a crafted one is as trusted as a save file it loaded. The receiver keeps its own class, name, key, place and remaining lifespan whatever the stream says | `[RD]` `ue_wrap/actors/prop_record`; the Blueprint bodies of `prop_C.betterGetData` and `betterLoadData` |
 | Concrete and every other local-accumulator prop drift between peers; only the tape reel and the world food have one author | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync` |
 | A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
 | A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
@@ -558,6 +627,7 @@ prop resolves.
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
+| a prop's save record | `coop/props/prop_save_data`, `coop/props/prop_record_gates`, `ue_wrap/actors/prop_record` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |

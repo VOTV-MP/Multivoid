@@ -25,7 +25,7 @@ void* g_deskCls = nullptr;
 // the two cues it references, all loaded with it. The atlas's text blocks are
 // read off the atlas widget in hand (see AtlasTextBlock).
 int32_t g_offCompProgress = -1;        // comp_progress (float, 0..100)
-int32_t g_offCompData0 = -1;           // comp_data_0 (Fstruct_signalDataDynamic 0x70)
+int32_t g_offCompData0 = -1;           // comp_data_0 (Fstruct_signalDataDynamic)
 int32_t g_offCompDownloading = -1;     // comp_downloading (float; B\s readout)
 int32_t g_offCompIsDecodeActive = -1;  // comp_isDecodeActive (bool; the decode latch)
 // Opportunistic:

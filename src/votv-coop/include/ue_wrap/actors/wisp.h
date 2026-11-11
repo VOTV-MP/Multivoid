@@ -21,7 +21,7 @@ namespace ue_wrap::wisp {
 
 // Resolve the killerwisp class and the field offsets. Idempotent; true once everything
 // resolved (false while the blueprint class is not loaded yet, and the caller retries).
-// Offsets come from reflection, with documented fallbacks. Game thread.
+// Offsets come from reflection by member name; one not found leaves this false, said once. Game thread.
 bool EnsureResolved();
 
 // True if `obj`'s class is killerwisp_C or a subclass. Cheap, a bounded super walk with no

@@ -160,7 +160,7 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride, int for
                 ue_wrap::game_mode::NameOrOrdinal(freshMode).c_str());
         HandFreshGameRules();
     } else
-        UE_LOGI("harness: target SAVE slot '%ls' (its name carries its mode)", slot.c_str());
+        UE_LOGI("harness: target SAVE folder '%ls' (its metadata carries its mode)", slot.c_str());
     for (int i = 0; i < 80; ++i) {  // ~120 s cap (boot + omega + level load)
         if (coop::shutdown::IsShuttingDown()) {
             UE_LOGI("harness: BootStorySaveBlocking aborting -- shutdown signaled");

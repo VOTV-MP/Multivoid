@@ -46,6 +46,7 @@ using Payload = coop::net::PropIgniteIntentPayload;
 
 constexpr uint32_t kFloodCount = 40;   // the flood arm's messages, sent in one tick
 constexpr int      kScanKeep = 4;      // the instances a scan keeps (the drill expects one or two)
+constexpr float    kTargetRadiusCm = 8000.f;   // the host's targets stand within this of the sender (the far rocket ~3000)
 
 enum class CStep : uint8_t { Run, Done };
 CStep    g_step = CStep::Run;
@@ -181,7 +182,10 @@ struct Scan {
     void*                                     skip;
     void*                                     hits[kScanKeep];
     int                                       n;
+    ue_wrap::FVector                          from;   // the sender's place: only instances near it are the host's targets
 };
+
+float DistTo(void* actor, const ue_wrap::FVector& from);
 
 void ScanClass(const wchar_t* cls, void* skip, Scan& sc) {
     sc.skip = skip;
@@ -193,6 +197,10 @@ void ScanClass(const wchar_t* cls, void* skip, Scan& sc) {
         if (obj == sn->skip || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
         for (const ue_wrap::CachedObjRef& old : *sn->start)
             if (old.Is(obj)) return;
+        // The host spawns its targets round the sender's puppet. A rocket or lighter born elsewhere (0.10's host
+        // world has a lighter far from the base that reaches a client's world with the connect snapshot, after the
+        // start set was taken) is not one of the three.
+        if (DistTo(obj, sn->from) > kTargetRadiusCm) return;
         if (sn->n < kScanKeep) sn->hits[sn->n] = obj;
         ++sn->n;
     }, &sc);
@@ -223,10 +231,10 @@ enum class Found : uint8_t { Wait, Ok, Bad };
 Found FindTargets(const Spec& sp, void* player, Targets& out) {
     ue_wrap::FVector from{};
     if (!E::TryGetActorLocation(player, from)) return Found::Wait;
-    Scan rockets{&g_start, nullptr, {}, 0};
+    Scan rockets{&g_start, nullptr, {}, 0, from};
     ScanClass(kRocketCls, nullptr, rockets);
     void* held = sp.hand == Hand::Lighter ? XD::HeldOf(player, kLighterCls) : nullptr;
-    Scan lighters{&g_start, nullptr, {}, 0};
+    Scan lighters{&g_start, nullptr, {}, 0, from};
     ScanClass(kLighterCls, held, lighters);
     if (rockets.n > 2 || lighters.n > 1) return Found::Bad;
     if (rockets.n < 2 || lighters.n < 1) return Found::Wait;

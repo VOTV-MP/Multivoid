@@ -10,10 +10,10 @@ beyond being the loader, UE4SS is the everyday reverse-engineering tool.
 
 | Path | Role | Use |
 |---|---|---|
-| `Game_0.9.0n_HOST/` | host | hosting a play session |
-| `Game_0.9.0n_CLIENT_1/` | client | joining a play session |
-| `Game_0.9.0n_CLIENT_2/` | second client | three-peer runs |
-| `Game_0.9.0n_CLIENT_3/` | development | scripted runs, Live View, Lua probes, Blueprint dumps |
+| `Game_<version>_HOST/` | host | hosting a play session |
+| `Game_<version>_CLIENT_1/` | client | joining a play session |
+| `Game_<version>_CLIENT_2/` | second client | three-peer runs |
+| `Game_<version>_CLIENT_3/` | development | scripted runs, Live View, Lua probes, Blueprint dumps |
 
 Each copy keeps its own saved games, logs and screenshots, so a scripted run never collides
 with a play session. The development copy also carries UE4SS's bundled Lua mods and the UE4SS

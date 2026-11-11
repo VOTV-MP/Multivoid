@@ -89,7 +89,7 @@ constexpr float kBurnDrop = 0.2f;
 constexpr float kChipperRouteCm = 400.f;   // a world chipper this near the host by route is the drill's; else one is spawned
 constexpr float kChipperStandCm = 150.f;   // a route's end this near the chipper is a place its use reaches
 constexpr float kOverPourSpare = 20.f;     // g5 pours 80: a tank holding more than this has no room for all of it
-constexpr float kCanFuel = 100.f;          // the full tank the drill's can loads with; a hold record without it loads empty
+constexpr float kCanFuel = 100.f;          // the full tank the drill's can is taken with
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -336,8 +336,22 @@ bool DropPropOverHopper(const std::wstring& key, std::wstring& paperKey) {
         ue_wrap::asset_load::LoadObjectByPath(kPropPath);
         void* cls = R::FindClass(L"prop_paper_C");
         if (!eat || !cls) return;
-        ue_wrap::FVector at = E::GetComponentLocation(eat);
-        at.Z += 120.f;
+        // The paper starts inside the intake, at the `eat` component's own place: a sheet let go 120 cm above it came to rest 18 cm
+        // above it, 18 cm to the side, on the hopper (drill-woodchipper_feed_m1-host.log "FEED diagnosis": speed 0, simulating, the
+        // chipper active with process clear), so the overlap that eats (BndEvt__eat) never began. A prop that starts inside the
+        // volume begins its overlap with it when it is spawned.
+        const ue_wrap::FVector at = E::GetComponentLocation(eat);
+        // A clump is dropped when the garbage the chipper has taken in reaches 1.5 (`garbaccumulate`: chip adds power * power2 * dt
+        // each frame it chips, droptrash fires at 1.5 and takes 1.5 off, capture-0.10.0-b284.txt woodchipper_c.executeubergraph),
+        // and one item adds 5 * (vol / 40)^3 in all, vol being the mean of its bounds' extents + 1: a sheet of paper (about 10 cm)
+        // adds 0.07, so the chipper ate the paper in drill-woodchipper_feed_n1 and made no clump in 60 s. The chipper is brought to
+        // 1.45 of the 1.5 first, a state the game reaches by itself after enough feeding, so that this one sheet is what tips it.
+        static R::InstanceOffset sGarb{L"garbaccumulate"};
+        const int32_t go = sGarb.Of(chipper);
+        if (go >= 0) {
+            const float tank = 1.45f;
+            std::memcpy(static_cast<uint8_t*>(chipper) + go, &tank, sizeof(tank));
+        }
         paper.Set(E::SpawnActor(cls, at));
     });
     if (!paper.Raw()) return false;
@@ -353,6 +367,34 @@ bool DropPropOverHopper(const std::wstring& key, std::wstring& paperKey) {
     return true;
 }
 
+// Where the paper is against the chipper's intake when the chipper never ate it: the intake is the `eat` component's overlap
+// (BndEvt__eat), which needs the paper's body inside it, with the chipper active, its `process` flag clear and fuel in the tank
+// (woodchipper_c.executeubergraph, capture-0.10.0-b284.txt). The paper's place, its speed, whether it simulates, and the chipper's
+// own flags separate a paper that never reached the intake from one that did and was refused.
+void LogFeedDiagnosis(const std::wstring& key, const std::wstring& paperKey) {
+    OnGameThread([&] {
+        void* const chipper = ChipperOf(key);
+        void* const paper = coop::prop_key_index::Find(paperKey);
+        static R::InstanceOffset sEat{L"eat"}, sProcess{L"process"}, sActive{L"active"}, sFuel{L"fuel"};
+        ue_wrap::FVector eatAt{}, paperAt{}, vel{};
+        void* eat = nullptr;
+        const int32_t eo = chipper ? sEat.Of(chipper) : -1;
+        if (eo >= 0) std::memcpy(&eat, static_cast<const uint8_t*>(chipper) + eo, sizeof(eat));
+        if (eat) eatAt = E::GetComponentLocation(eat);
+        const bool havePaper = paper && E::TryGetActorLocation(paper, paperAt);
+        if (paper) vel = E::GetActorVelocity(paper);
+        const int32_t po = chipper ? sProcess.Of(chipper) : -1, ao = chipper ? sActive.Of(chipper) : -1;
+        const int process = po >= 0 ? (static_cast<const uint8_t*>(chipper)[po] != 0) : -1;
+        const int active = ao >= 0 ? (static_cast<const uint8_t*>(chipper)[ao] != 0) : -1;
+        UE_LOGI("woodchipper: FEED diagnosis: paper %s at (%.0f,%.0f,%.0f) speed %.0f simulating=%d; the intake component %p at "
+                "(%.0f,%.0f,%.0f); the paper is %.0f cm flat and %.0f cm above it; chipper active=%d process=%d",
+                paper ? (havePaper ? "alive" : "alive, place unread") : "GONE", paperAt.X, paperAt.Y, paperAt.Z,
+                std::sqrt(vel.X * vel.X + vel.Y * vel.Y + vel.Z * vel.Z), paper && E::IsActorRootSimulatingPhysics(paper) ? 1 : 0,
+                eat, eatAt.X, eatAt.Y, eatAt.Z, std::hypot(paperAt.X - eatAt.X, paperAt.Y - eatAt.Y), paperAt.Z - eatAt.Z,
+                active, process);
+    });
+}
+
 // The host's half of the feed arm, verdict 'woodchipper-feed'. PASS: the dropped paper is gone from the host and from
 // the client, and a clump new against the baseline is on both. INVALID: the chipper was not running, or never ate the
 // paper (nothing was measured). FAIL: it ate the paper and the change did not cross, or no clump followed.
@@ -363,6 +405,22 @@ void HostFeed(const std::wstring& key) {
         PS::Mark("g3_go", "none");
         RV::Say(kTagFeed, RV::Outcome::Invalid, "the chipper was not running when the paper was dropped (%s)", Text(running).c_str());
         return;
+    }
+    // The chipper chips at power * power2, and power2 is the spin-up timeline's value (woodchipper_c.executeubergraph, timeline_0): at 0
+    // it eats and never chips (drill-woodchipper_feed_p1-host.log "FEED no clump": power2=0.00), so the clump the arm waits for cannot
+    // come. The arm waits for the spin-up to reach 0.9, bounded, saying what it read.
+    {
+        float p2 = -1.f;
+        PS::WaitFor("the chipper's spin-up (power2)", 40, [&] {
+            OnGameThread([&] {
+                void* const c = ChipperOf(key);
+                static R::InstanceOffset sPow2{L"power2"};
+                const int32_t off = c ? sPow2.Of(c) : -1;
+                if (off >= 0) std::memcpy(&p2, static_cast<const uint8_t*>(c) + off, sizeof(p2));
+            });
+            return p2 >= 0.9f;
+        }, false);
+        UE_LOGI("woodchipper: FEED the chipper's power2 is %.2f when the paper is dropped", p2);
     }
     std::wstring paperKey;
     if (!DropPropOverHopper(key, paperKey) || paperKey.empty()) {
@@ -375,6 +433,7 @@ void HostFeed(const std::wstring& key) {
     PS::Mark("g3_go", "paper=" + Narrow(paperKey));
     if (!PS::WaitFor("the host's chipper eats the dropped paper", kEatSec, [&] { return KeySeen(paperKey, nullptr) == Seen::No; }, false)) {
         PS::Mark("g3_host", "none");
+        LogFeedDiagnosis(key, paperKey);
         RV::Say(kTagFeed, RV::Outcome::Invalid, "the host's chipper did not eat the dropped prop_paper_C %s in %d s",
                 Narrow(paperKey).c_str(), kEatSec);
         return;
@@ -383,6 +442,18 @@ void HostFeed(const std::wstring& key) {
     PS::WaitFor("a clump new against the baseline", kEatSec, [&] { return NewClumpAgainst(base, clumpKey); }, false);
     if (clumpKey.empty()) {
         PS::Mark("g3_host", "none");
+        OnGameThread([&] {
+            void* const c = ChipperOf(key);
+            static R::InstanceOffset sVol{L"vol"}, sGarb2{L"garbaccumulate"}, sPow{L"power"}, sPow2{L"power2"};
+            auto f = [&](R::InstanceOffset& o) {
+                float v = -1.f;
+                const int32_t off = c ? o.Of(c) : -1;
+                if (off >= 0) std::memcpy(&v, static_cast<const uint8_t*>(c) + off, sizeof(v));
+                return v;
+            };
+            UE_LOGI("woodchipper: FEED no clump: vol=%.1f garbaccumulate=%.3f power=%.2f power2=%.2f (a clump drops at 1.5)", f(sVol),
+                    f(sGarb2), f(sPow), f(sPow2));
+        });
         RV::Say(kTagFeed, RV::Outcome::Fail, "the host's chipper ate the paper %s, and no clump new against the baseline of %zu appeared in %d s",
                 Narrow(paperKey).c_str(), base.objects.size(), kEatSec);
         return;
@@ -567,10 +638,10 @@ bool CanInHand() {
     return in;
 }
 
-// The can's fuel, its `amount` property; -1 when the property does not resolve. Game thread.
+// The can's fuel, its `invRead_amount` property; -1 when the property does not resolve. Game thread.
 float CanAmount(void* can) {
     static int32_t off = -2;
-    if (off == -2) off = can ? R::FindPropertyOffset(R::ClassOf(can), L"amount") : -2;
+    if (off == -2) off = can ? R::FindPropertyOffset(R::ClassOf(can), L"invRead_amount") : -2;
     if (!can || off < 0) return -1.f;
     float v = -1.f;
     std::memcpy(&v, static_cast<const uint8_t*>(can) + off, sizeof(v));

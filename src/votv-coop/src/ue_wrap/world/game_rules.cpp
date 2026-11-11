@@ -17,6 +17,9 @@
 namespace ue_wrap::game_rules {
 namespace {
 
+// The saved copy of the rules: save_metadata_C.rules, the copy main.meta carries.
+constexpr const wchar_t* kSavedRules = L"rules";
+
 namespace R = ue_wrap::reflection;
 
 // The member name with its blueprint tail cut: "fallDamage_8_AEEA..." -> "fallDamage". The cut is
@@ -147,11 +150,11 @@ bool ReadLocal(Snapshot& out) {
 
     out.valid = ReadRulesAt(gi, L"gameRules", out.fields, /*withNames=*/true);
 
-    // The saved copy, off the save object the GameInstance holds for this world.
-    const int32_t saveOff = R::FindPropertyOffset(giClass, L"save_gameInst");
-    if (saveOff >= 0) {
-        void* save = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gi) + saveOff);
-        if (save && R::IsLive(save)) out.savedValid = ReadRulesAt(save, L"localGameRules", out.saved, /*withNames=*/true);
+    // The saved copy, off the metadata object the GameInstance holds for this world.
+    const int32_t metaOff = R::FindPropertyOffset(giClass, L"metadataObject");
+    if (metaOff >= 0) {
+        void* meta = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gi) + metaOff);
+        if (meta && R::IsLive(meta)) out.savedValid = ReadRulesAt(meta, kSavedRules, out.saved, /*withNames=*/true);
     }
     return out.valid;
 }
@@ -188,27 +191,27 @@ const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n
     return nullptr;
 }
 
-int ApplySavedToProcess(void* gameInstance, void* save) {
-    if (!gameInstance || !save || !R::IsLive(save)) return -1;
+int ApplySavedToProcess(void* gameInstance, void* metadata) {
+    if (!gameInstance || !metadata || !R::IsLive(metadata)) return -1;
     void* giClass = R::ClassOf(gameInstance);
-    void* saveClass = R::ClassOf(save);
-    if (!giClass || !saveClass) return -1;
+    void* metaClass = R::ClassOf(metadata);
+    if (!giClass || !metaClass) return -1;
     const int32_t dstOff = R::FindPropertyOffset(giClass, L"gameRules");
-    const int32_t srcOff = R::FindPropertyOffset(saveClass, L"localGameRules");
+    const int32_t srcOff = R::FindPropertyOffset(metaClass, kSavedRules);
     void* dstStruct = R::PropertyInnerStruct(giClass, L"gameRules");
-    void* srcStruct = R::PropertyInnerStruct(saveClass, L"localGameRules");
+    void* srcStruct = R::PropertyInnerStruct(metaClass, kSavedRules);
     const int32_t size = R::StructSize(dstStruct);
     // One struct type on both sides, or the bytes do not mean the same thing.
     if (dstOff < 0 || srcOff < 0 || !dstStruct || dstStruct != srcStruct || size <= 0) return -1;
 
     uint8_t* dst = reinterpret_cast<uint8_t*>(gameInstance) + dstOff;
-    const uint8_t* src = reinterpret_cast<const uint8_t*>(save) + srcOff;
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(metadata) + srcOff;
     // The boot loop re-asserts this on every poll: equal bytes are the common case and cost nothing.
     if (std::memcmp(dst, src, static_cast<size_t>(size)) == 0) return 0;
 
     std::vector<RuleField> before, saved;
     ReadRulesAt(gameInstance, L"gameRules", before, /*withNames=*/false);
-    ReadRulesAt(save, L"localGameRules", saved, /*withNames=*/false);
+    ReadRulesAt(metadata, kSavedRules, saved, /*withNames=*/false);
     int changed = 0;
     for (size_t i = 0; i < before.size() && i < saved.size(); ++i) {
         const RuleField& a = before[i];
@@ -220,13 +223,13 @@ int ApplySavedToProcess(void* gameInstance, void* save) {
     return changed;
 }
 
-WriteResult WriteSavedRule(void* save, const std::string& key, const std::string& value) {
-    if (!save || !R::IsLive(save)) return WriteResult::Unresolved;
-    void* saveClass = R::ClassOf(save);
-    const int32_t off = saveClass ? R::FindPropertyOffset(saveClass, L"localGameRules") : -1;
-    void* structObj = saveClass ? R::PropertyInnerStruct(saveClass, L"localGameRules") : nullptr;
+WriteResult WriteSavedRule(void* metadata, const std::string& key, const std::string& value) {
+    if (!metadata || !R::IsLive(metadata)) return WriteResult::Unresolved;
+    void* metaClass = R::ClassOf(metadata);
+    const int32_t off = metaClass ? R::FindPropertyOffset(metaClass, kSavedRules) : -1;
+    void* structObj = metaClass ? R::PropertyInnerStruct(metaClass, kSavedRules) : nullptr;
     if (off < 0 || !structObj) return WriteResult::Unresolved;
-    uint8_t* base = reinterpret_cast<uint8_t*>(save) + off;
+    uint8_t* base = reinterpret_cast<uint8_t*>(metadata) + off;
 
     for (const R::StructFieldInfo& fi : R::EnumerateStructFields(structObj)) {
         if (TrimmedKey(fi.name) != key) continue;

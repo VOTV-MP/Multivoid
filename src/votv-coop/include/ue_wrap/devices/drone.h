@@ -16,7 +16,12 @@
 
 #pragma once
 
+#include "ue_wrap/actors/inventory_item.h"
 #include "ue_wrap/core/types.h"  // FVector, FRotator
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 namespace ue_wrap::drone {
 
@@ -62,7 +67,7 @@ void RestoreTick(void* drone);
 // alarm cue fires on the canTakeOff false->true edge (drone within 25cm of its drop).
 
 // stateBits packing (DroneStatePayload.stateBits): bit0 = dust active, bit1 = canTakeOff (arrived /
-// the interaction gate), bit2 = hasSack (cargo aboard / the action-option prerequisite), bit3 =
+// the interaction gate), bit2 = hasSack (the sack is aboard / the action-option prerequisite), bit3 =
 // leaveAfter5min (the delivery drone's five-minute departure setting).
 inline constexpr uint8_t kFxDust     = 0x01;
 inline constexpr uint8_t kFxArrived  = 0x02;
@@ -96,16 +101,43 @@ void SetSignalLight(void* drone, bool on);
 
 // CLIENT mirror: write the interaction-gate fields (canTakeOff, hasSack) onto the
 // mirror drone so a PARKED drone is interactable (else the gate prints "drone is in motion" + offers
-// no options -- the suppressed tick never sets them). Game thread.
+// no options -- the suppressed tick never sets them), and show or hide the sack on its body as
+// dropSack and putSackOn do. Game thread.
 void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 
-// CLIENT mirror: point the mirror drone's container field at the already-prop-mirrored cargo
-// container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
-void RepointContainer(void* drone);
+// ---- the cargo ---------------------------------------------------------------------------------
+// The drone's cargo is its own inventoryComponent_C (drone_C.inventoryComponent): the order fills it at the
+// drop (compileOrder spawns each item and files it with addItemAsObject), a player opens it on the inventory
+// screen, dropSack empties it into a sack, putSackOn refills it from one and the sale clears it. Its contents
+// are canvasInventory, the same entry array a world container holds (ue_wrap/actors/inventory_item).
 
-// The container (Aprop_inventoryContainer_drone_C) the drone's `container` field names, or null when the field
-// is null or dead. Game thread.
-void* ContainerOf(void* drone);
+using CargoItem = ue_wrap::inventory_item::Item;
+
+// The drone's inventory component, live, or null.
+void* InventoryOf(void* drone);
+
+// The cargo entries, read whole, blanks included. False when the component, the array or the entry layout does
+// not resolve, or when it holds more than `maxItems` (nothing is read then). Game thread.
+bool ReadCargo(void* drone, std::vector<CargoItem>& out, size_t maxItems);
+
+// Is `inventory` the delivery drone's cargo component?
+bool IsCargo(void* inventory);
+
+enum class CargoWrite : uint8_t {
+    Written,   // the entries are in the array and the shown state is re-derived
+    NotReady,  // the component, the array or the entry layout does not resolve yet -- the caller waits
+    Refused,   // not written: no allocator, or an allocation or an entry failed
+};
+// Replace the cargo with `items` (container_inventory::WriteContents: the old buffer is orphaned, never freed, and an
+// inventory screen showing the cargo is rebuilt from the new entries). Game thread.
+CargoWrite WriteCargo(void* drone, const std::vector<CargoItem>& items);
+
+// The drone's own verbs on the cargo, run as the game runs them: dropSack (the sack leaves and takes the cargo with
+// it) and putSackOn (a sack comes aboard, with its own root as the velocity source, and gives its cargo up; the verb
+// does nothing unless the drone has no sack aboard and its sack interaction has re-armed). False when the verb does
+// not resolve or the call fails. Game thread.
+bool DropSack(void* drone);
+bool PutSackOn(void* drone, void* sack);
 
 // The drone a droneSellLocation_C instance names through its `drone` field, or null when it is null or dead.
 // Game thread.

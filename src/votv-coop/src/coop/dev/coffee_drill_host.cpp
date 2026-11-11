@@ -129,7 +129,18 @@ void HostPlug() {
     void* maker = Maker();
     void* sock = Sock();
     if (!maker || !sock) return Fail("stage", "the maker or the socket is gone");
-    if (NowMs() - g_h.phaseMs > kArmFailMs) return Fail("stage", "the maker was not plugged and powered in time");
+    if (NowMs() - g_h.phaseMs > kArmFailMs) {
+        // What the maker's cord looks like when it never appears: a drill that waits on a field names the field it saw.
+        namespace R = ue_wrap::reflection;
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(maker), L"obj_cord");
+        void* const raw = off >= 0 ? *reinterpret_cast<void**>(static_cast<char*>(maker) + off) : nullptr;
+        const int32_t coff = R::FindPropertyOffset(R::ClassOf(maker), L"cord");
+        void* const comp = coff >= 0 ? *reinterpret_cast<void**>(static_cast<char*>(maker) + coff) : nullptr;
+        UE_LOGW("[COFFEE] diag: maker class=%ls corded=%d obj_cord@%d=%p live=%d, cord component@%d=%p", 
+                R::ClassNameOf(maker).c_str(), CD::IsCordedProp(maker) ? 1 : 0, off, raw,
+                raw && R::IsLive(raw) ? 1 : 0, coff, comp);
+        return Fail("stage", "the maker was not plugged and powered in time");
+    }
     void* cord = CD::IsCordedProp(maker) ? CD::CordOf(maker) : nullptr;
     if (!cord) return;
     if (g_h.sub == 0) {

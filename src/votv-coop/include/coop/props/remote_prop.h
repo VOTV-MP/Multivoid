@@ -58,11 +58,6 @@ void CloseHold(int slot, uint16_t holdGen);
 // frame, a visible pop.
 bool IsActorUnderAnyDrive(void* actor);
 
-// The drive of `slot` ends because the host files its prop (a put by overlap, container_act_host_overlap): the copy
-// simulates again and the drive clears, as an implicit release does, so the container's body finds a simulating body.
-// A no-op for a slot with no drive. Game thread.
-void EndDriveForPut(int slot);
-
 // The hold generation of `slot`'s drive, 0 when it has none: a new hold is a new generation. Game thread.
 uint16_t HoldGenOf(int slot);
 

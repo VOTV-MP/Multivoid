@@ -312,7 +312,7 @@ void RunQueryReplyCodec(Tally& check) {
           "codec: a NaN value clears its bit and reads 0");
     p = PackQueryReply(1, Result::Applied, seven);
     p.validMask = 0xFFFFFFFFu;
-    check(UnpackQueryReply(&p, sizeof p, &token, &r, &out) && out.validMask == 0x3FFFFFu, "codec: validMask is masked to 22 bits");
+    check(UnpackQueryReply(&p, sizeof p, &token, &r, &out) && out.validMask == 0xFFFFFu, "codec: validMask is masked to 20 bits");
     p = PackQueryReply(1, Result::Applied, seven);
     p.effects[0].name[1] = 0x07;
     check(UnpackQueryReply(&p, sizeof p, &token, &r, &out) && out.effects.size() == 5 && out.effects[0].name == "v?ccine",

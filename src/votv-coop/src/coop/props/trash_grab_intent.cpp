@@ -336,7 +336,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
     }
 
     // Read the clump the puppet now holds: grabbing_actor, the physics-handle slot, not
-    // holding_actor.
+    // holdingActor_main.
     ue_wrap::engine::MainPlayerGrabState gs{};
     void* clump = nullptr;
     if (ue_wrap::engine::ReadMainPlayerGrabState(puppet, gs))

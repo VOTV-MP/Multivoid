@@ -25,6 +25,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -82,8 +83,9 @@ bool DispatchMenuTravel(void* author) {
     }
     // `option` is left as the frame built it (an empty FString): the seam never reads it, and the
     // body does not run on the path this drill asserts.
+    // 0.10 dropped `clearSubArea` from loadLevel(level, option, __WorldContext); it is set only where the build still has it.
+    if (R::FindParamOffset(fn, L"clearSubArea") >= 0) f.Set<bool>(L"clearSubArea", true);
     const bool okArgs = f.SetRaw(L"level", &menu, sizeof(menu)) &&
-                        f.Set<bool>(L"clearSubArea", true) &&
                         f.SetRaw(L"__WorldContext", &author, sizeof(author));
     if (!okArgs) { UE_LOGE("[RUNEND] loadLevel argument write failed"); return false; }
     return ue_wrap::Call(cdo, f);

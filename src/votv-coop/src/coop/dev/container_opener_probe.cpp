@@ -5,6 +5,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
@@ -13,6 +14,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <cmath>
@@ -36,7 +38,7 @@ struct Kind {
     const wchar_t* cls;
     const wchar_t* field;
 };
-const Kind kKinds[] = {{L"drone_C", L"container"}, {L"prop_dronesack_C", L"container"}, {L"ATV_C", L"spawnedContainer"}};
+const Kind kKinds[] = {{L"ATV_C", L"spawnedContainer"}};
 
 // Each kind's classes with live instances, its subclasses included (the ATV has five), found in the index's
 // class set and kept until that set changes or a kind's class is not the object they were found from.
@@ -128,6 +130,31 @@ void OnOpener(void* ctx, void* opener, int32_t index) {
         if (p.session->IsSlotWorldReady(slot) && Body(slot)) JudgeReach(*p.session, slot, container, opener);
 }
 
+// 0.10: an ATV opens its own inventory component, its trunk, and a trunk is a shared target of the container act lane
+// (coop/interactables/atv_trunk_sync). The pair is the ATV and its trunk's target id: the lookup by id must name the
+// ATV, and the lookup by the component must name the id; each client's reach is the one the act lane judges by.
+void OnTrunk(void* ctx, uint32_t eid, void* atv) {
+    Pass& p = *static_cast<Pass*>(ctx);
+    ++p.pairs;
+    void* const inv = ue_wrap::atv::InventoryOf(atv);
+    const bool reverse = coop::atv_trunk_sync::AtvOfEid(eid) == atv;
+    const bool forward = coop::atv_trunk_sync::EidOfInventory(inv) == eid;
+    if (reverse && forward) ++p.listed;
+    FVector at{};
+    E::TryGetActorLocation(atv, at);
+    UE_LOGI("container_opener_probe: %ls at (%.0f, %.0f, %.0f) opens its own inventory component, the trunk %08x -- %s by "
+            "the lookup of the id, %s by the lookup of the component", R::ClassNameOf(atv).c_str(), at.X, at.Y, at.Z, eid,
+            reverse ? "named" : "MISSED", forward ? "named" : "MISSED");
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        if (!p.session->IsSlotWorldReady(slot) || !Body(slot)) continue;
+        const auto r = coop::props::container_reach::Judge(*p.session, static_cast<uint8_t>(slot), eid);
+        UE_LOGI("container_opener_probe: slot %d -- the trunk %08x is %s (%s, dist=%.0f allowed=%.0f)", slot, eid,
+                r.reach == coop::props::container_reach::Reach::Reached ? "reached"
+                : r.reach == coop::props::container_reach::Reach::NoBody ? "unmeasured" : "out of reach",
+                EL::OutcomeName(r.outcome), r.distUU, r.reachUU);
+    }
+}
+
 // The census pass: every opener, the reverse lookup, each client's reach.
 void CensusPass(coop::net::Session& session) {
     Pass pass{&session, -1, 0, 0};
@@ -137,6 +164,7 @@ void CensusPass(coop::net::Session& session) {
         pass.off = k.off;
         for (void* cls : k.classes) ue_wrap::object_index::ForEachInstance(cls, &OnOpener, &pass);
     }
+    coop::atv_trunk_sync::ForEachTrunk(&OnTrunk, &pass);
     UE_LOGI("container_opener_probe: VERDICT %s (%d of %d openers found by the reverse lookup)",
             pass.pairs > 0 && pass.listed == pass.pairs ? "PASS" : "FAIL", pass.listed, pass.pairs);
 }
@@ -157,7 +185,7 @@ void* OpenerAt(void* body) {
                 Near& x = *static_cast<Near*>(ctx);
                 if (x.opener || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)))
                     return;
-                if (!ue_wrap::container_openers::Opens(obj)) return;
+                if (!ue_wrap::container_openers::Opens(obj) && !ue_wrap::atv::InventoryOf(obj)) return;
                 FVector c{};
                 float r = 0.f;
                 if (!E::ActorReachSphere(obj, c, r)) return;
@@ -201,7 +229,14 @@ void Tick(coop::net::Session* session) {
         void* const at = body ? OpenerAt(body) : nullptr;
         if (at && at != s_at[slot]) {
             UE_LOGI("container_opener_probe: slot %d stands at the %ls", slot, R::ClassNameOf(at).c_str());
-            if (void* const container = ue_wrap::container_openers::Opens(at)) JudgeReach(*session, slot, container, at);
+            if (void* const container = ue_wrap::container_openers::Opens(at)) {
+                JudgeReach(*session, slot, container, at);
+            } else if (const uint32_t eid = coop::atv_trunk_sync::EidOfInventory(ue_wrap::atv::InventoryOf(at))) {
+                const auto r = coop::props::container_reach::Judge(*session, static_cast<uint8_t>(slot), eid);
+                UE_LOGI("container_opener_probe: slot %d -- the trunk %08x is %s (%s, dist=%.0f allowed=%.0f)", slot, eid,
+                        r.reach == coop::props::container_reach::Reach::Reached ? "reached" : "out of reach",
+                        EL::OutcomeName(r.outcome), r.distUU, r.reachUU);
+            }
         }
         s_at[slot] = at;
     }

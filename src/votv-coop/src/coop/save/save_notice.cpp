@@ -6,6 +6,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // Local: the pawn whose movement mode the mid-air test reads
+#include "coop/save/save_scratch.h"        // IsScratch: the join capture is not the hosted world saved
 
 #include "ue_wrap/actors/inventory.h"           // ResolveSaveSlot: the hosted world's save object
 #include "ue_wrap/actors/puppet.h"              // ReadCharacterIsWalking
@@ -15,13 +16,12 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/save_capture.h"        // GameEventState: whether this save is refused or gathers
-#include "ue_wrap/engine/save_to_slot_hook.h"
+#include "ue_wrap/engine/save_write_hook.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <cstdint>
 #include <cstring>
-#include <cwchar>
 
 namespace coop::save_notice {
 namespace {
@@ -76,14 +76,14 @@ void Report(coop::net::Session& s, coop::net::WorldSaveOutcome outcome) {
             sent ? "sent" : "had no peer");
 }
 
-// HOST: the engine wrote a world save. Only THE world counts -- the live save object under a slot of the
-// game's own: the join capture writes it to a zcoop_ scratch slot, and the save-slot menu writes save objects
-// of its own; neither is the hosted world saved.
-void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
+// HOST: the engine wrote the world's container. Only THE world counts -- the live save object, in a save of the
+// game's own: the join capture writes it to a scratch save, and the save-slot menu writes save objects of its
+// own; neither is the hosted world saved.
+void OnWorldSaveWritten(const ue_wrap::save_write_hook::Write& write) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (std::wcsncmp(slotName, L"zcoop_", 6) == 0) return;
-    if (saveObject != ue_wrap::inventory::ResolveSaveSlot()) return;
+    if (coop::save_scratch::IsScratch(write.folder)) return;
+    if (write.object != ue_wrap::inventory::ResolveSaveSlot()) return;
     // The write is the tail of the game's save, in the same call as its world gather, which skips while the game
     // counts an event as running: the slot is then written with the world as the last gather left it, and the
     // host sees the game's error. An event state that cannot be read is neither "saved" nor an event: it is its own
@@ -98,8 +98,8 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
                                            : coop::net::WorldSaveOutcome::Saved);
 }
 
-// The tests the game's save runs before its event test, in its order (mainGamemode.cpp, the save ubergraph at label
-// 67457 with bypassEvent false): dreaming returns silently, the Custom mode shows "invalid mode", a player not walking
+// The tests the game's save runs before its event test, in its order (the `save` entry of mainGamemode_C's
+// ubergraph with bypassEvent false): dreaming returns silently, the Custom mode shows "invalid mode", a player not walking
 // shows "Cannot save in mid air", and only then is the event asked. Null when none of them refuses; else why, so the
 // event is blamed only when it is the test that refuses. A test that cannot be read is not a pass.
 const char* EarlierRefusal() {
@@ -140,7 +140,7 @@ sg::Verdict OnSavePre(const sg::Call& c) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (!g_subscribed) g_subscribed = ue_wrap::save_to_slot_hook::AddWritten(&OnWorldSaveWritten);
+    if (!g_subscribed) g_subscribed = ue_wrap::save_write_hook::AddWritten(&OnWorldSaveWritten);
     if (g_reg == Reg::Pending)
         g_reg = sg::WatchName(kRowSave, kTag, &OnSavePre, nullptr) ? Reg::Registered : Reg::Refused;
 }

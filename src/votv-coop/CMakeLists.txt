@@ -20,7 +20,7 @@ project(votv_coop LANGUAGES CXX C ASM_MASM)  # C for the MinHook sources (third_
 # between cooks, so the mod is incompatible across game versions. Update on
 # every game-recook adaptation. (The old project-VERSION mod semver was
 # retired 2026-07-19 -- Paper-Minecraft pair, user decision.)
-set(VOTVCOOP_GAME_TARGET "0.9.0n")
+set(VOTVCOOP_GAME_TARGET "0.10.0")
 
 # The BUILD NUMBER (the identity's other half) is kProtocolVersion -- parsed
 # out of protocol.h so the Paper-style pair lands in the generated

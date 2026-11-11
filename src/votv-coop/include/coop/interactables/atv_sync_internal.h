@@ -164,7 +164,7 @@ void ApplyPendingSet();
 // half, and the park's hand-back, which is not a new arrival.
 void ResolveSpawn(const std::wstring& key, const coop::net::AtvSpawnPayload& payload);
 
-// Whether the local player's grav hand holds `actor` (its grabbing_actor; holding_actor is the hand item the player
+// Whether the local player's grav hand holds `actor` (its grabbing_actor; holdingActor_main is the hand item the player
 // spawns, never a world ATV): the one carry read the lane's Tick and the host's takeover test share. False for a null
 // player or actor. Game thread.
 bool IsLocalGrabber(void* actor, void* localPlayer);

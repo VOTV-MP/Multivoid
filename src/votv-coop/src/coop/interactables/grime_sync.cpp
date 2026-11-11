@@ -147,12 +147,13 @@ uint64_t g_lastLogHash = 0;        // GT-only
 // The cross-peer identity of a static grime decal: its quantised world position and type.
 // The same save gives the identical saved transform, so the identical key on both peers.
 // Fits the wire key for any in-base coordinate. `exact` is this peer's own name for the one decal
-// (ExactKey). False when the location read fails: a key is never made from the origin a failed read
-// leaves.
+// (ExactKey). False when the location or type read fails: a key is never made from the origin a failed
+// read leaves, nor shared by two types.
 bool KeysOf(void* grime, std::wstring& key, ExactKey& exact) {
     ue_wrap::FVector loc{};
     if (!E::TryGetActorLocation(grime, loc)) return false;
-    int32_t type = 0; G::ReadType(grime, type);
+    int32_t type = 0;
+    if (!G::ReadType(grime, type)) return false;  // the type is part of the key: two kinds would share one
     auto q = [](float v) -> long { return std::lround(static_cast<double>(v) / kPosGrid); };
     key = L"g_";
     key += std::to_wstring(q(loc.X)); key += L'_';

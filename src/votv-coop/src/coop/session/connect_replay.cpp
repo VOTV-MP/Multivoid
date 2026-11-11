@@ -38,6 +38,7 @@
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/atv_sync.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/creatures/ambient_creature_sync.h"
@@ -122,6 +123,7 @@ void ConnectReplayForSlot(int slot) {
     coop::power_panel::QueueConnectBroadcastForSlot(slot);  // the panel's canonical
     coop::fuse_tower_rows::QueueConnectBroadcastForSlot(slot);  // every tower's row
     coop::atv_sync::QueueConnectBroadcastForSlot(slot);  // ATV body pose, stamped with the host's seat and syncer (adopt=1)
+    coop::atv_trunk_sync::QueueConnectBroadcastForSlot(slot);  // every ATV trunk, the host's entries (after the ATV set)
     coop::drone_sync::QueueConnectBroadcastForSlot(slot);  // delivery drone pose (adopt=1)
     coop::order_queue_sync::QueueConnectBroadcastForSlot(slot);  // the delivery order queue: a reset + every queued order
     coop::turbine_sync::QueueConnectBroadcastForSlot(slot);  // wind-turbine facing/spin snap

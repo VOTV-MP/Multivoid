@@ -85,7 +85,7 @@ void Fail(const char* why) {
 
 void* HeldActor(void* player) {
     E::MainPlayerGrabState gs{};
-    return (player && E::ReadMainPlayerGrabState(player, gs)) ? gs.holdingActor : nullptr;
+    return (player && E::ReadMainPlayerGrabState(player, gs)) ? gs.mainHand : nullptr;
 }
 
 float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -171,7 +171,7 @@ void ClientTick(void* player) {
         if (!E::TryGetActorLocation(player, at)) { Abandon("the player's place is unread"); return; }
         void* prop = SB::SpawnUpgradeProp({at.X, at.Y, at.Z + 60.f});
         bool collected = false;
-        if (!prop || !E::CallMainPlayerHoldObject(player, prop, collected) || !collected) {
+        if (!prop || !E::CallMainPlayerAddObjectToFreeHotbarSlot(player, prop, ue_wrap::engine::HotbarAdd{}, collected) || !collected) {
             Abandon("an upgrade could not be spawned and taken into the hand");
             return;
         }

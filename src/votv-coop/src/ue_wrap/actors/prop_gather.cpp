@@ -1,8 +1,8 @@
 // ue_wrap/actors/prop_gather.cpp -- see ue_wrap/actors/prop_gather.h.
 //
-// Every read here is pure: the BP functions it calls (canBeCollected, canBePickedUp, ignoreSave, Get Volume)
-// only answer, and getData, which can add components or write save state, is never called. A frozen prop's
-// flags come from its list_props row, the row the game's init() resets a frozen prop from before it reads them.
+// Every read here is pure: the BP functions it calls (canBeCollectedOrPickedUp, ignoreSave, Get Volume) only
+// answer, and getData, which can add components or write save state, is never called. A frozen prop's flags come
+// from its list_props row, the row the game's init() resets a frozen prop from before it reads them.
 
 #include "ue_wrap/actors/prop_gather.h"
 
@@ -17,6 +17,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/data_table.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -27,7 +28,6 @@
 #include <iterator>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -35,10 +35,10 @@ namespace ue_wrap::prop_gather {
 
 // The functions the reads call on the prop: a Dispatch row is resolved on the prop's own class, so an override
 // (a battery that is plugged in, a pot with a plant) answers instead of prop_C's.
-UE_FACT_FN(kRowCanBeCollected, "prop_act", L"prop_C", L"canBeCollected", Dispatch);
-UE_FACT_FN(kRowCanBePickedUp, "prop_act", L"prop_C", L"canBePickedUp", Dispatch);
+// One answer for both takes: the game asks the same function before a pocket and before a hold.
+UE_FACT_FN(kRowCanBeCollectedOrPickedUp, "prop_act", L"prop_C", L"canBeCollectedOrPickedUp", Dispatch);
 UE_FACT_FN(kRowIgnoreSave, "prop_act", L"prop_C", L"ignoreSave", Dispatch);
-// lib_C's pure volume lookup by mesh, the call addObject makes for the volume it adds.
+// lib_C's pure volume lookup by mesh, the volume a container sums for a prop.
 UE_FACT_FN(kRowGetVolume, "prop_act", L"lib_C", L"Get Volume", Declared);
 
 namespace {
@@ -119,7 +119,7 @@ bool ResolvePropData() {
     return true;
 }
 
-// ---- list_props and list_weapons ---------------------------------------------------------------
+// ---- list_props ---------------------------------------------------------------------------------
 
 // A DataTable is an asset that outlives a world, so a set built from one is kept until its table is no longer
 // alive. SOFT: the table or a reflected path is not resolvable yet, tried again no sooner than the throttle (its
@@ -140,9 +140,7 @@ struct PropRow {
 };
 
 Table g_propsTable{L"list_props", {}};
-Table g_weaponsTable{L"list_weapons", {}};
 std::unordered_map<std::wstring, PropRow> g_propRows;
-std::unordered_set<std::wstring>          g_weaponKeys;
 
 void* TableObject(Table& t) {
     if (!t.ref.Alive()) t.ref.Set(R::FindObject(t.name, L"DataTable"));
@@ -210,19 +208,6 @@ Outcome BuildProps(Table& t) {
     return Outcome::Valid;
 }
 
-Outcome BuildWeapons(Table& t) {
-    void* table = TableObject(t);
-    if (!table) return Outcome::Soft;
-    std::vector<DT::RowRef> refs;
-    if (!DT::Rows(table, refs, "prop_gather")) return Outcome::Soft;
-    std::unordered_set<std::wstring> keys;
-    keys.reserve(refs.size());
-    for (const DT::RowRef& ref : refs) keys.insert(Lower(R::ToString(ref.key)));
-    g_weaponKeys = std::move(keys);
-    UE_LOGI("prop_gather: list_weapons read, %zu rows", g_weaponKeys.size());
-    return Outcome::Valid;
-}
-
 // The set is built at the first query and again only when its table is no longer alive; a Hard verdict is final.
 bool Ready(Table& t, Outcome (*build)(Table&)) {
     if (t.outcome == Outcome::Valid && t.ref.Alive()) return true;
@@ -244,13 +229,6 @@ bool ListPropsRow(const std::wstring& name, PropDataFlags& flags, void** rowMesh
         flags = it->second.flags;
         *rowMesh = it->second.mesh;
     }
-    return true;
-}
-
-// Does the game's addEquip find a row by `name` (lowercased) in list_weapons or list_props? False: unreadable.
-bool HasEquipRow(const std::wstring& name, bool* has) {
-    if (!Ready(g_weaponsTable, BuildWeapons) || !Ready(g_propsTable, BuildProps)) return false;
-    *has = g_weaponKeys.count(name) != 0 || g_propRows.count(name) != 0;
     return true;
 }
 
@@ -312,14 +290,16 @@ bool EnsureLib() {
 }
 
 // The volume the game's Get Volume answers for `mesh`, as addObject asks it (the name left None). A prop with no
-// mesh adds none. The function's `valid` out is ignored, as the game ignores it.
+// mesh adds none. The 0.10 function answers by mesh only with getVolume set (else it answers 0). The function's `valid`
+// out is ignored, as the game ignores it.
 bool VolumeOfMesh(void* prop, void* mesh, float& volume) {
     volume = 0.f;
     if (!mesh) return true;
     if (!EnsureLib()) return false;
     ParamFrame f(g_getVolume.Fn());
     float out = 0.f;
-    if (!f.valid() || !f.Set<void*>(L"mesh", mesh) || !f.Set<void*>(L"__WorldContext", prop) ||
+    if (!f.valid() || !f.Set<void*>(L"mesh", mesh) || !f.Set<bool>(L"getVolume", true) ||
+        !f.Set<void*>(L"__WorldContext", prop) ||
         !Call(g_libCdo.Get(), f) || !f.GetRaw(L"volume", &out, static_cast<int32_t>(sizeof out)))
         return false;
     volume = out;
@@ -428,6 +408,18 @@ bool IsHosePlacing(void* prop) {
 
 bool LiveProp(void* prop) { return prop && R::IsLive(prop); }
 
+// The answers both takes read: ignoreSave, canBeCollectedOrPickedUp, the child-actor flag and the save guard.
+bool ReadTakeFacts(void* prop, bool& takeRefused, bool& ignoreSave, bool& child, bool& saveClass) {
+    if (!AskRefusal(kRowIgnoreSave, prop, L"ignoreSave", ignoreSave) ||
+        !AskRefusal(kRowCanBeCollectedOrPickedUp, prop, L"ignore", takeRefused))
+        return false;
+    bool childRead = false;
+    child = engine::IsChildActor(prop, childRead);
+    if (!childRead) return false;
+    saveClass = !IsEmptySaveClass(prop) && !IsHosePlacing(prop);
+    return true;
+}
+
 }  // namespace
 
 bool ReadPropData(void* prop, PropDataFlags& out) {
@@ -462,24 +454,10 @@ bool ReadPocketFacts(void* prop, PocketFacts& out) {
     out = PocketFacts{};
     if (!LiveProp(prop)) return false;
     PocketFacts f{};
-    if (!AskRefusal(kRowCanBeCollected, prop, L"ignore", f.collectRefused)) return false;
-    bool childRead = false;
-    f.child = engine::IsChildActor(prop, childRead);
-    if (!childRead) return false;
-    f.frozen = prop::IsFrozen(prop);
-    void* root = engine::RootComponentOf(prop);   // read once: the physics test and the mesh both use it
-    f.simulating = root && engine::IsComponentSimulatingPhysics(root);
-    PropDataFlags flags;
-    void* mesh = nullptr;
-    const std::wstring name = f.frozen ? Lower(prop::GetPropNameString(prop)) : std::wstring();
-    if (!FlagsAndMesh(prop, f.frozen, root, name, flags, mesh)) return false;
-    f.canCollect = flags.canCollect;
-    f.heavy = flags.heavy;
-    f.meshRoot = IsStaticMeshComponent(root);
-    float volume = 0.f, bound = 0.f;
-    if (!VolumeOfMesh(prop, mesh, volume) || !Bound(bound)) return false;
-    f.volumeFits = volume <= bound;
-    f.saveClass = !IsEmptySaveClass(prop) && !IsHosePlacing(prop);
+    if (!ReadTakeFacts(prop, f.takeRefused, f.ignoreSave, f.child, f.saveClass)) return false;
+    void* parent = nullptr;
+    if (!engine::GetAttachParentActor(prop, parent)) return false;
+    f.attached = parent != nullptr;
     out = f;
     return true;
 }
@@ -489,22 +467,8 @@ bool ReadHoldFacts(void* prop, HoldFacts& out) {
     out = HoldFacts{};
     if (!LiveProp(prop)) return false;
     HoldFacts f{};
-    if (!AskRefusal(kRowCanBePickedUp, prop, L"ignore", f.pickupRefused) ||
-        !AskRefusal(kRowIgnoreSave, prop, L"ignoreSave", f.ignoreSave))
-        return false;
-    bool childRead = false;
-    f.child = engine::IsChildActor(prop, childRead);
-    if (!childRead) return false;
-    f.frozen = prop::IsFrozen(prop);
+    if (!ReadTakeFacts(prop, f.takeRefused, f.ignoreSave, f.child, f.saveClass)) return false;
     f.simulating = engine::IsActorRootSimulatingPhysics(prop);
-    PropDataFlags flags;
-    void* mesh = nullptr;
-    const std::wstring name = Lower(prop::GetPropNameString(prop));   // once: the row lookup and the equip row use it
-    if (!FlagsAndMesh(prop, f.frozen, nullptr, name, flags, mesh)) return false;
-    f.canHold = flags.canHold;
-    f.heavy = flags.heavy;
-    f.saveClass = !IsEmptySaveClass(prop) && !IsHosePlacing(prop);
-    if (!HasEquipRow(name, &f.equipRow)) return false;
     out = f;
     return true;
 }
@@ -519,24 +483,23 @@ bool ReadRowFlags(const std::wstring& name, PropDataFlags& out, bool& found) {
 
 namespace {
 
-// The game's own name -> volume table: the gamemode's propRenderer names (TArray<FName>) beside the gamemode's
-// prop_volumes (TArray<float>), which Get Volume with no mesh reads as prop_volumes[Array_Find(names, name)]. It is
-// read into a map from lowercased name to index (an FName compares without case; the first name wins, as Array_Find
-// does); the volume is read from prop_volumes[index] on each call, and the map is built again when the renderer or the
-// names array changes. A name the table lacks is unknown with no engine call.
-struct VolumeTable {
-    void* gmCls = nullptr;       // the gamemode class the offsets below were read from
-    int32_t renderer = -1;       // mainGamemode_C.propRenderer
-    int32_t volumes = -1;        // mainGamemode_C.prop_volumes
-    void* rendererCls = nullptr;
-    int32_t names = -1;          // propProcessor_C.names
-    void* builtFor = nullptr;    // the renderer the map was built from
+// The game's own list of prop names: the gamemode's propRenderer (a propProcessor_C) holds every prop's name in `Names`
+// (TArray<FName>). A name is KNOWN when that list has it, found in a map from lowercased name to index (an FName
+// compares without case; the first name wins, as Array_Find does); the map is built again when the list changes. The
+// volume is not read from a table here: it is the game's own Get Volume, asked with the list's own FName (no name is made
+// for a string a peer sent), as the inventory's addItemAdvanced asks it of a put's name. In 0.10 that function answers
+// from the game instance's prop_names and prop_volumes and returns `valid` true for every name, so the list is what
+// tells an unknown name.
+struct NameTable {
+    void* rendererCls = nullptr;   // the renderer class the offset below was read from
+    int32_t names = -1;            // propProcessor_C.Names
+    void* builtFor = nullptr;      // the renderer the map was built from
     int32_t namesNum = -1;
-    std::unordered_map<std::wstring, int32_t> byName;   // lowercased name -> its index in both arrays
+    std::unordered_map<std::wstring, int32_t> byName;   // lowercased name -> its index in `Names`
 };
-VolumeTable g_volumeTable;
+NameTable g_nameTable;
 
-void RebuildVolumeTable(VolumeTable& t, const save_record::Arr& names) {
+void RebuildNameTable(NameTable& t, const save_record::Arr& names) {
     t.byName.clear();
     t.byName.reserve(static_cast<size_t>(names.num));
     for (int32_t i = 0; i < names.num; ++i) {
@@ -554,33 +517,63 @@ bool VolumeOfName(const std::wstring& name, float& out, bool& valid) {
     valid = false;
     void* const gm = world_singleton::Gamemode();
     if (!gm) return false;
-    VolumeTable& t = g_volumeTable;
-    if (void* const gmCls = R::ClassOf(gm); gmCls != t.gmCls) {
-        t.gmCls = gmCls;
-        t.renderer = R::FindPropertyOffset(gmCls, L"propRenderer");
-        t.volumes = R::FindPropertyOffset(gmCls, L"prop_volumes");
+    NameTable& t = g_nameTable;
+    static int32_t sRenderer = -1;
+    static void* sGmCls = nullptr;
+    if (void* const gmCls = R::ClassOf(gm); gmCls != sGmCls) {
+        sGmCls = gmCls;
+        sRenderer = R::FindPropertyOffset(gmCls, L"propRenderer");
     }
-    if (t.renderer < 0 || t.volumes < 0) return false;
-    void* const renderer = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(gm) + t.renderer);
+    if (sRenderer < 0) return false;
+    void* const renderer = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(gm) + sRenderer);
     if (!renderer || !R::IsLive(renderer)) return false;
     if (void* const rCls = R::ClassOf(renderer); rCls != t.rendererCls) {
         t.rendererCls = rCls;
-        t.names = R::FindPropertyOffset(rCls, L"names");
+        t.names = R::FindPropertyOffset(rCls, L"Names");
     }
     if (t.names < 0) return false;
     const save_record::Arr names = save_record::ReadArr(renderer, t.names);
-    const save_record::Arr volumes = save_record::ReadArr(gm, t.volumes);
-    if (names.num <= 0 || volumes.num <= 0) return false;   // the game has not filled its table yet
+    if (names.num <= 0) return false;   // the game has not filled its list yet
     if (renderer != t.builtFor || names.num != t.namesNum) {
-        RebuildVolumeTable(t, names);
+        RebuildNameTable(t, names);
         t.builtFor = renderer;
         t.namesNum = names.num;
     }
     const auto it = t.byName.find(Lower(name));
-    if (it == t.byName.end() || it->second >= volumes.num) return true;   // unknown: valid stays false
-    // The value is read live, so a volume the game changes is seen without a rebuild.
-    std::memcpy(&out, volumes.data + static_cast<size_t>(it->second) * sizeof out, sizeof out);
+    if (it == t.byName.end()) return true;   // unknown: valid stays false
+    if (!EnsureLib()) return false;
+    R::FName known{};
+    std::memcpy(&known, names.data + static_cast<size_t>(it->second) * sizeof(R::FName), sizeof known);
+    ParamFrame f(g_getVolume.Fn());
+    float volume = 0.f;
+    if (!f.valid() || !f.Set<R::FName>(L"name", known) || !f.Set<bool>(L"getVolume", true) ||
+        !f.Set<void*>(L"__WorldContext", gm) || !Call(g_libCdo.Get(), f) ||
+        !f.GetRaw(L"volume", &volume, static_cast<int32_t>(sizeof volume)))
+        return false;
+    out = volume;
     valid = true;
+    return true;
+}
+
+bool ListNames(std::vector<std::wstring>& out) {
+    UE_ASSERT_GAME_THREAD("prop_gather::ListNames");
+    out.clear();
+    void* const gm = world_singleton::Gamemode();
+    if (!gm) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(gm), L"propRenderer");
+    if (off < 0) return false;
+    void* const renderer = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(gm) + off);
+    if (!renderer || !R::IsLive(renderer)) return false;
+    const int32_t names = R::FindPropertyOffset(R::ClassOf(renderer), L"Names");
+    if (names < 0) return false;
+    const save_record::Arr arr = save_record::ReadArr(renderer, names);
+    if (arr.num <= 0) return false;
+    out.reserve(static_cast<size_t>(arr.num));
+    for (int32_t i = 0; i < arr.num; ++i) {
+        R::FName n{};
+        std::memcpy(&n, arr.data + static_cast<size_t>(i) * sizeof(R::FName), sizeof n);
+        out.push_back(R::ToString(n));
+    }
     return true;
 }
 

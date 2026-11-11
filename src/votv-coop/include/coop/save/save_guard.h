@@ -1,7 +1,7 @@
 // coop/save/save_guard.h -- pre-session backup of the VOTV save directory.
 //
-// VOTV writes saves NON-ATOMICALLY: stock GameplayStatics::SaveGameToSlot truncates and
-// overwrites the .sav in place -- four in-place writes per save through
+// VOTV writes saves NON-ATOMICALLY: CompressedSaveLoadLib::SaveGameCompressed truncates and
+// overwrites the .sav in place -- several in-place writes per save through
 // saveSlot_C::saveToSlot, with no temp-and-rename -- so a crash or a bad coop-era write
 // leaves a corrupt save and the engine has no recovery of its own. A pre-session snapshot is
 // therefore the ONLY recovery path.

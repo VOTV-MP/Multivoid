@@ -10,7 +10,7 @@
 #include "coop/props/container_act_selftest_internal.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_act_wire.h"
-#include "coop/props/prop_record_wire.h"
+#include "coop/items/inventory_item_wire.h"
 #include "coop/props/container_record_edit.h"
 #include "coop/props/container_slice_wire.h"
 #include "coop/props/container_truth.h"
@@ -25,12 +25,13 @@ namespace coop::props::container_act_host {
 
 namespace H   = coop::props::container_act_host::internal;
 namespace caw = coop::props::container_act_wire;
-namespace prw = coop::props::prop_record_wire;
+namespace IW = coop::inventory_item_wire;
 namespace cas = coop::props::container_act_state;
 namespace cre = coop::props::container_record_edit;
 namespace cr  = coop::props::container_reach;
 namespace CS  = coop::props::container_truth;
 namespace SR  = ue_wrap::save_record;
+namespace II  = ue_wrap::inventory_item;
 
 namespace selftest {
 
@@ -40,14 +41,15 @@ void Checks::operator()(bool ok, const char* what) {
     UE_LOGE("container_act_selftest FAIL: %s", what);
 }
 
-SR::SaveRecord Rec(const wchar_t* cls, int32_t n, const wchar_t* text) {
-    SR::SaveRecord r;
-    r.className = cls;
+II::Item Rec(const wchar_t* cls, int32_t n, const wchar_t* text) {
+    II::Item r;
+    r.classPath = std::wstring(L"/Game/objects/x.") + cls;
     r.key = L"key";
     r.xform = {0.f, 0.f, 0.f, 1.f, 10.f, 20.f, 30.f, 1.f, 1.f, 1.f};
-    r.ints = {{n, 2}};
-    r.floats = {{1.5f}};
-    r.strings = {{text}};
+    r.index = n;
+    r.name = text;
+    for (const wchar_t* c = text; *c; ++c) r.actorData.push_back(static_cast<uint8_t>(*c));
+    r.amount = 1;
     return r;
 }
 
@@ -86,11 +88,9 @@ using coop::net::ContainerActReplyPayload;
 constexpr uint8_t kTake = static_cast<uint8_t>(ContainerActFamily::Take);
 constexpr uint8_t kPutRecord = static_cast<uint8_t>(ContainerActFamily::PutRecord);
 
-bool SameRecord(const SR::SaveRecord& a, const SR::SaveRecord& b) {
-    std::vector<uint8_t> x, y;
-    coop::save_record_wire::SerSave(x, a);
-    coop::save_record_wire::SerSave(y, b);
-    return x == y && a.className == b.className && a.key == b.key && a.ints == b.ints && a.strings == b.strings;
+bool SameRecord(const II::Item& a, const II::Item& b) {
+    return coop::inventory_item_wire::ItemWire(a) == coop::inventory_item_wire::ItemWire(b) &&
+           a.classPath == b.classPath && a.key == b.key && a.index == b.index && a.actorData == b.actorData;
 }
 
 }  // namespace
@@ -120,6 +120,36 @@ void RunSelftest() {
         check(caw::ParseRequest(caw::PackRequest(in), out, &why) == caw::Parse::Ok, "codec: a put record parses");
         check(out.id == 8 && out.family == kPutRecord && out.eid == 10 && SameRecord(out.record, in.record),
               "codec: a put record round-trips field for field");
+
+        in = caw::Request{};
+        in.id = 20;
+        in.family = static_cast<uint8_t>(ContainerActFamily::TakeStack);
+        in.eid = 0xFFFFFFFEu;   // the drone's cargo
+        in.index = 5;
+        in.hash = 0xAABBCCDD11223344ull;
+        in.amount = 3;
+        check(caw::ParseRequest(caw::PackRequest(in), out, &why) == caw::Parse::Ok && out.id == 20 &&
+                  out.family == in.family && out.eid == in.eid && out.index == 5 && out.hash == in.hash &&
+                  out.amount == 3,
+              "codec: a take of part of a stack round-trips field for field");
+        std::vector<uint8_t> cut = caw::PackRequest(in);
+        cut.pop_back();
+        check(caw::ParseRequest(cut, out, &why) == caw::Parse::Malformed, "codec: a short take-stack tail is malformed");
+
+        in = caw::Request{};
+        in.id = 21;
+        in.family = static_cast<uint8_t>(ContainerActFamily::MergeStack);
+        in.eid = 11;
+        in.index = 1;
+        in.hash = 0x0102030405060708ull;
+        in.indexB = 4;
+        in.hashB = 0x1112131415161718ull;
+        check(caw::ParseRequest(caw::PackRequest(in), out, &why) == caw::Parse::Ok && out.index == 1 &&
+                  out.hash == in.hash && out.indexB == 4 && out.hashB == in.hashB,
+              "codec: a merge round-trips field for field");
+        cut = caw::PackRequest(in);
+        cut.push_back(0);
+        check(caw::ParseRequest(cut, out, &why) == caw::Parse::Malformed, "codec: a byte after a merge is malformed");
 
         caw::Commit c;
         c.id = 12;
@@ -201,16 +231,15 @@ void RunSelftest() {
         big.family = kPutRecord;
         big.eid = 10;
         big.record = Rec(L"prop_apple_C", 4, L"");
-        big.record.strings = {{std::wstring(6000, L'x')}};
+        big.record.name.assign(IW::kMaxItemBytes, L'x');
         std::vector<uint8_t> bigRec;
-        coop::save_record_wire::SerSave(bigRec, big.record);
-        check(bigRec.size() > prw::kMaxRecordBytes && bigRec.size() <= 0xFFFF,
-              "codec: the long record is over the cap and still fits a u16 n");
+        IW::SerItem(bigRec, big.record);
+        check(bigRec.size() > IW::kMaxItemBytes, "codec: the long entry is over the cap");
         b.assign(goodPut.begin(), goodPut.begin() + 8);
-        coop::save_record_wire::AppU16(b, static_cast<uint16_t>(bigRec.size()));
+        coop::save_record_wire::AppU32(b, static_cast<uint32_t>(bigRec.size()));
         b.insert(b.end(), bigRec.begin(), bigRec.end());
-        check(caw::ParseRequest(b, rq, &why) == caw::Parse::Malformed && std::strcmp(why, "record past the byte cap") == 0,
-              "codec: a valid record past the byte cap, with its true n, is malformed for its size");
+        check(caw::ParseRequest(b, rq, &why) == caw::Parse::Malformed && std::strcmp(why, "entry past the byte cap") == 0,
+              "codec: a valid entry past the byte cap, with its true n, is malformed for its size");
         check(caw::PackRequest(big).empty(), "codec: a request with a record past the cap packs to nothing");
 
         // A real record and 4 junk bytes, n equal to the whole remainder: the record ends before its n does.
@@ -218,7 +247,7 @@ void RunSelftest() {
         b[8] = static_cast<uint8_t>(b[8] + 4);
         b.insert(b.end(), {1, 2, 3, 4});
         check(caw::ParseRequest(b, rq, &why) == caw::Parse::Malformed &&
-                  std::strcmp(why, "record shorter than its length") == 0,
+                  std::strcmp(why, "entry shorter than its length") == 0,
               "codec: a record that leaves junk inside its n is malformed");
 
         caw::Commit good;
@@ -251,22 +280,14 @@ void RunSelftest() {
               "codec: family 9 is UnknownFamily with its id kept");
     }
 
-    // ---- RecordHash, NeuterIfNested, ClampIndex ----
+    // ---- RecordHash, ClampIndex ----
     {
         namespace csw = coop::props::container_slice_wire;
-        const SR::SaveRecord a = Rec(L"prop_apple_C", 4, L"juice");
-        SR::SaveRecord b = Rec(L"prop_apple_C", 4, L"juice");
+        const II::Item a = Rec(L"prop_apple_C", 4, L"juice");
+        II::Item b = Rec(L"prop_apple_C", 4, L"juice");
         check(csw::RecordHash(a) == csw::RecordHash(b), "hash: equal records hash equal");
-        b.strings[0][0] = L'k';
+        b.name[0] = L'k';
         check(csw::RecordHash(a) != csw::RecordHash(b), "hash: one changed character changes the hash");
-
-        // A plain record is unchanged. A container record's index clears to -1 through the engine's class test,
-        // which this pure run cannot ask.
-        SR::SaveRecord plain;
-        plain.ints = {{7}};
-        cre::internal::NeuterIfNested(plain);
-        check(plain.ints.size() == 1 && plain.ints[0].size() == 1 && plain.ints[0][0] == 7,
-              "neuter: a record with no class is unchanged");
 
         check(cre::internal::ClampIndex(5, 3) == 3, "clamp: past the end clamps to the length");
         check(cre::internal::ClampIndex(2, 3) == 2, "clamp: inside the array is kept");
@@ -423,25 +444,7 @@ void RunSelftest() {
               "decide-reply: granted with a reason is a bad reason");
     }
 
-    // ---- the take's replay: the check before the press, and the commit after it ----
-    {
-        namespace RQ = coop::props::container_act_request::internal;
-        check(RQ::CheckTake(true, true, true, true, true) == RQ::TakeCheck::Replay, "check-take: all true replays");
-        check(RQ::CheckTake(true, false, true, true, true) == RQ::TakeCheck::Abort, "check-take: a dead slot aborts");
-        check(RQ::CheckTake(true, true, false, true, true) == RQ::TakeCheck::Abort,
-              "check-take: another container on the screen aborts");
-        check(RQ::CheckTake(true, true, true, false, true) == RQ::TakeCheck::Abort, "check-take: another id aborts");
-        check(RQ::CheckTake(true, true, true, true, false) == RQ::TakeCheck::Abort, "check-take: another record aborts");
-        check(RQ::CheckTake(false, true, true, true, true) == RQ::TakeCheck::Abort, "check-take: a stale grant aborts");
-        check(RQ::TakeCommitted(false, true, 3, 2) == 0, "take-committed: a press that did not run is abort");
-        check(RQ::TakeCommitted(true, true, 3, 3) == 0, "take-committed: a press that took nothing is abort");
-        check(RQ::TakeCommitted(true, true, 3, 2) == 1, "take-committed: one record fewer is done");
-        check(RQ::TakeCommitted(true, true, 3, 1) == 1, "take-committed: two records fewer is done");
-        check(RQ::TakeCommitted(true, false, 3, 0) == 1, "take-committed: a press whose count was unread is done");
-    }
-
     RunPutSelftest(check);
-    RunOverlapSelftest(check);
 
     if (check.pass == check.total) UE_LOGI("container_act_selftest: ALL PASS (%d checks)", check.total);
 }

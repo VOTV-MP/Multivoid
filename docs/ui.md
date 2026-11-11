@@ -152,23 +152,22 @@ host-authored and driven into each client's server boxes, so a client never auth
 "server down". The purely local notices (an item that cannot be used while held) are left
 alone.
 
-### The quick-slot bar's icons
+### The hotbar's icons
 
-The bar across the top of the screen draws one icon per carried item, and those icons could be
-blank after a world load until the player touched something. One Blueprint verb
-rebuilds the bar whole: it lists what the player carries, clears every slot image to the engine's
-placeholder black, then writes each icon from a lookup into two tables that must agree -- a name
-table on the prop renderer actor, and a texture array on the game instance.
+The hotbar is a row of slots on the inventory screen
+(`ui_FreeLayoutInventory_C.hotbarSlots`), one icon per slot, and those icons could be blank after a
+world load until the player touched something. A slot's own `upd` draws its icon: it
+clears the slot image to the engine's placeholder black, then writes the icon from a lookup into
+two tables that must agree -- a name table on the prop renderer actor, and a texture array on the
+game instance.
 
 Those tables are not ready when the world is. The renderer draws every prop in the game to a
 texture and publishes the pair when it has finished, which takes seconds, and the game's own
-post-load refresh of the bar runs before that. Measured on the test rig, that refresh ran about
-eleven seconds after the world came up with the texture array still empty; every lookup came back
-with nothing and the black stayed. Nothing rebuilt the bar afterwards either: at the moment it
-publishes, the renderer refreshes the equipment panel and not the bar, nothing binds the delegate
-it broadcasts, and the game mode's handler for the matching event is empty. So the bar stayed blank
-until some ordinary action -- a pickup, a drop, opening the inventory -- rebuilt it, which is why
-touching an item cured it.
+post-load draw of the slots runs before that. Measured on the test rig (0.9.0n), that refresh ran
+about eleven seconds after the world came up with the texture array still empty; every lookup came
+back with nothing and the black stayed. Nothing redrew the bar afterwards either: the renderer's
+publication tells the bar nothing. So the bar stayed blank until some ordinary action -- a pickup,
+a drop, opening the inventory -- redrew it, which is why touching an item cured it.
 
 That ordering goes wrong without the mod as well. Measured on a first load with the mod's own
 library absent -- the loader, one read-only script and nothing else in the process -- the name table
@@ -178,9 +177,9 @@ save, loaded the same way with the library present, published them 274 ms apart 
 identically. So the window is the game's, and nothing the mod does per frame widens it.
 
 The mod supplies the notification the renderer never sends. Once per world, when both tables are
-ready and the bar is showing no icon for something the player is carrying, it calls the game's own
-rebuild verb once and stops asking. It reimplements nothing and edits no asset. The trigger is the
-bar disagreeing with what the player carries rather than the moment the tables fill, because a
+ready and a slot that names an item is showing no icon, it calls each slot's own `upd` once and
+stops asking. It reimplements nothing and edits no asset. The trigger is the
+bar disagreeing with its own items rather than the moment the tables fill, because a
 world load runs as one long blocking call and a run was measured where the tables filled inside
 that window, between the game's refresh and the mod's first look; asking whether the bar is wrong
 still answers correctly afterwards. The texture array lives on the game instance rather than the
@@ -231,7 +230,7 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 | The native screens' frames do not yet reproduce the game's bevelled, nested border material; the flat border was measured wrong | `[V]` [votv-ui-style.md](votv-ui-style.md), the frame section |
 | The game's own toasts a client self-generates from diverged world state are not suppressed or mirrored; only the server state behind one family is driven | `[V]` `coop/interactables/serverbox_sync` is the one family |
 | The old ImGui browser is kept as a fallback, a deliberate exception to retiring replaced code | `[V]` `ui/server_browser_surface` |
-| The quick-slot bar's rebuild has been confirmed on a load issued through the game's own load call, not on a click of the menu's Load button; a second load in one process cannot close that, since the texture array survives the world | `[V]` `harness/world_boot`, the same call the button ends at |
+| The hotbar's redraw is confirmed only on a load issued through the game's own load call, not on a click of the menu's Load button; a second load in one process cannot close that, since the texture array survives the world | `[V]` on 0.9.0n (`harness/world_boot`, the same call the button ends at); the 0.10 slots' `upd` redraw is `[?]` until measured |
 
 ## Code map
 

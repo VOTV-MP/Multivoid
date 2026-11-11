@@ -31,7 +31,7 @@ constexpr int32_t kEmailStride    = 0x50;
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
 void* g_gamemodeCls = nullptr;
-int32_t g_offSaveSlot = -1;   // mainGamemode_C::saveSlot
+int32_t g_offSaveSlot = -1;   // mainGamemode_C::save_slot
 int32_t g_offEmails = -1;     // saveSlot_C::emails
 int32_t g_offLaptop = -1;     // mainGamemode_C::laptop (Uui_laptop_C*)
 void* g_saveSlotCls = nullptr;
@@ -52,7 +52,7 @@ void ResolvePass() {
     if (!g_textLib) g_textLib = FT::Resolved();
     if (!g_gamemodeCls) g_gamemodeCls = R::FindClass(L"mainGamemode_C");
     if (!g_gamemodeCls) return;
-    if (g_offSaveSlot < 0) g_offSaveSlot = R::FindPropertyOffset(g_gamemodeCls, L"saveSlot");
+    if (g_offSaveSlot < 0) g_offSaveSlot = R::FindPropertyOffset(g_gamemodeCls, L"save_slot");
     if (g_offLaptop < 0) g_offLaptop = R::FindPropertyOffset(g_gamemodeCls, L"laptop");
     if (!g_addEmailFn) g_addEmailFn = R::FindFunction(g_gamemodeCls, L"addEmail");
     if (!g_saveSlotCls) g_saveSlotCls = R::FindClass(L"saveSlot_C");

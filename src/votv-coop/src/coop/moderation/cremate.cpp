@@ -77,6 +77,7 @@ struct Trip {
     // Set in OnPose, on a pose that arrived with the burning bit while the drained state was past the arrival; it is
     // set before the drain judges any life edge.
     bool                      burnSeen = false;
+    uint32_t                  allPoses = 0, burnPoses = 0;   // the poses of this trip, and those that carried the burning bit
 };
 
 std::array<Trip, coop::players::kMaxPeers> g_trips;
@@ -154,6 +155,10 @@ void OnPose(uint8_t slot, const coop::net::PoseSnapshot& pose) {
     // and that begin-overlap is the Overlap event drained first. A target already burning from another fire before it
     // lands is not latched, rightly.
     Trip& t = g_trips[slot];
+    ++t.allPoses;
+    if (e.flag && ++t.burnPoses == 1)
+        UE_LOGI("cremate: #%u first burning pose after %u pose(s), state=%s", static_cast<unsigned>(t.target.playerNo), t.allPoses,
+                StateName(t.state));
     if (e.flag && !t.burnSeen && t.state != State::Ordered && t.state != State::Arrived) {
         t.burnSeen = true;
         UE_LOGI("cremate: #%u burning seen (state=%s)", static_cast<unsigned>(t.target.playerNo), StateName(t.state));
@@ -299,7 +304,11 @@ void Landed(Trip& t) {
 // A death after the landing is a cremation only when the target's own burning bit was seen set first: the machine's
 // ignite reached it. MTA's wasted packet names the killer and weapon (CGame.cpp:2141); the pose stream carries no cause,
 // so this bit is the evidence there is.
-Outcome DeathAfterLanding(const Trip& t) { return t.burnSeen ? Outcome::Cremated : Outcome::DiedNotByFire; }
+Outcome DeathAfterLanding(const Trip& t) {
+    UE_LOGI("cremate: #%u died after %u pose(s) of this trip, %u of them with the burning bit%s", static_cast<unsigned>(t.target.playerNo),
+            t.allPoses, t.burnPoses, t.burnSeen ? "" : " (none after the landing)");
+    return t.burnSeen ? Outcome::Cremated : Outcome::DiedNotByFire;
+}
 
 void OnLifeEvent(Trip& t, bool alive) {
     if (alive) return;

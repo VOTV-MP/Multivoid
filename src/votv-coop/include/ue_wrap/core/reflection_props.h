@@ -21,6 +21,7 @@ struct ParamInfo {
     int32_t offset;   // byte offset within the parameter frame (Offset_Internal)
     int32_t size;     // ElementSize * ArrayDim
     uint64_t flags;   // EPropertyFlags (test cpf::Parm / OutParm / ReturnParm)
+    std::wstring type;  // the property's FFieldClass name ("StrProperty", "ObjectProperty"...); empty with none
 };
 
 // All CPF_Parm properties of `function` (a UFunction*) in declaration order, the return value
@@ -103,6 +104,12 @@ int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
 // wrong slot holds an FField*, which never validates), and caches the slot process-wide. Null
 // if the property is not found or no slot validates.
 void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
+
+// The element UScriptStruct* of a TArray-of-struct instance property (FArrayProperty::Inner, then
+// that inner FStructProperty::Struct): a save array's record type, for member-offset resolution
+// and the element stride (StructSize). Null if the property is not found, is not an array of
+// structs, or no slot validates. Cache the result.
+void* ArrayInnerStruct(void* owningClass, const wchar_t* propName);
 
 // The UEnum* behind a byte-typed enum property (FByteProperty::Enum), e.g. a blueprint struct's
 // TEnumAsByte member: the object to ask for an enumerator's display name. It is the first payload

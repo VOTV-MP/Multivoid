@@ -47,13 +47,13 @@ bool ReadMainPlayerCameraLocation(void* mainPlayer, FVector& out);
 // pawn or an unresolved field. Game thread.
 bool ReadMainPlayerArmLength(void* mainPlayer, float& out);
 
-// The AmainPlayer_C grab-state properties, read in one dispatch: grabbingActor and holdingActor
-// cover the two carry paths (the physics handle vs the chipPile/clump carry). False on a null or
-// dead pawn; `holdingActor` stays null when MainPlayer_holding_actor() is unresolved (a later
-// recook added it). Game thread.
+// The AmainPlayer_C grab-state properties, read in one dispatch: grabbingActor is the physics-handle carry, mainHand
+// and offHand the actors the two hands hold. False on a null or dead pawn; a hand stays null when its field does not
+// resolve. Game thread.
 struct MainPlayerGrabState {
     void*  grabbingActor;  // AmainPlayer_C::grabbing_actor (PHC-held prop, or null)
-    void*  holdingActor;   // AmainPlayer_C::holding_actor  (chipPile/clump morph carry, or null)
+    void*  mainHand;       // AmainPlayer_C::holdingActor_main    (the hand actor of the selected hotbar slot, or null)
+    void*  offHand;        // AmainPlayer_C::holdingActor_offhand (the off-hand slot's hand actor, or null)
     bool   grabsHeavy;     // AmainPlayer_C::grabsHeavy     (PCC heavy-grab BP flag)
     bool   heavy;          // AmainPlayer_C::Heavy          (BP-side heavy state mirror)
     float  grabLen;        // AmainPlayer_C::grabLen        (Timeline current grab length)
@@ -61,20 +61,20 @@ struct MainPlayerGrabState {
 
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 
-// AmainPlayer_C::holding_actor, written as a field: the hand of a pawn the host holds for a remote player, which runs
-// no updateHold of its own (updateHold reads the LOCAL save's hold slot). The caller owns what it writes and restores
-// what it replaced; `actor` may be null. False on a null or dead pawn or an unresolved field, with nothing written. Game
-// thread.
-bool WriteMainPlayerHoldingActor(void* mainPlayer, void* actor);
+// Whether `actor` is the hand actor of either hand. False for a null actor.
+inline bool InEitherHand(const MainPlayerGrabState& g, void* actor) {
+    return actor && (g.mainHand == actor || g.offHand == actor);
+}
+
+// AmainPlayer_C::holdingActor_main, written as a field: the main hand of a pawn the host holds for a remote player,
+// which runs no better_holdItem_mainhand of its own (that reads the LOCAL inventory's hotbar). The caller owns what it
+// writes and restores what it replaced; `actor` may be null. False on a null or dead pawn or an unresolved field, with
+// nothing written. Game thread.
+bool WriteMainPlayerMainHandActor(void* mainPlayer, void* actor);
 
 // mainPlayer_C's input_run, the run key's flag (a packed bitfield bool), which prop_container_C's playerUsedOn reads
 // to tell a put from a look. False on a null or dead pawn or an unresolved field. Game thread.
 bool ReadInputRun(void* mainPlayer, bool& out);
-
-// The player's own updateHold: the hand item rebuilt from the save slot's first hold slot, the one
-// held before destroyed. A dev drill's equip, after ue_wrap/actors/inventory::WriteHeldItem.
-// False when the function does not resolve or the call fails. Game thread.
-bool CallMainPlayerUpdateHold(void* mainPlayer);
 
 // The player's useSelectedAction, where the dispatch of E ends once its handler's own gating passes
 // (InpActEvt_use: nothing grabbed, a look-at actor that answers): the selected action sent to whatever
@@ -92,15 +92,24 @@ bool CallMainPlayerSetActionIndex(void* mainPlayer, int32_t index);
 // say which actor the look took: the caller compares the hit. Game thread.
 bool MainPlayerHasSelectedAction(void* mainPlayer);
 
-// The player's own pickup of `target`: `Hold Object` with `manual` set, which it takes before whatever the
-// player looks at, ending in the hand slot's equip (addEquip writes hold[0], updateHold spawns the hand item
-// as holding_actor) with the world actor destroyed. `collected` is the verb's own answer, false on each of
-// its refusals. False when the function does not resolve or the call fails. Game thread.
-bool CallMainPlayerHoldObject(void* mainPlayer, void* target, bool& collected);
+// The flags of `Add Object to Free Hotbar Slot`; the defaults are the player's own pickup (the drop key's release).
+struct HotbarAdd {
+    bool autoselect = true;         // select the slot it lands in, so the item goes to the main hand
+    bool destroyOnSuccess = true;   // the world actor is destroyed once its data is in the slot
+    bool stack = false;
+    bool equipment = false;
+};
 
-// mainPlayer_C's putObjectInventory2(InputPin, noNotify) on `target`; `taken` is its return. False when the call could
-// not run (the player not live, the function unresolved). Game thread.
-bool CallPutObjectInventory2(void* mainPlayer, void* target, bool noNotify, bool& taken);
+// The player's own pickup of `target` into the hotbar: `Add Object to Free Hotbar Slot`, which every take into the
+// hands reaches (the drop key, `Quick Hold Object`, a device handing an item over). It refuses what
+// canBeCollectedOrPickedUp refuses; else the item's data goes into a free slot, the world actor is destroyed, and a
+// selected slot spawns its hand actor through better_holdItem_mainhand. `success` is the verb's own answer. False when
+// the function does not resolve or the call fails. Game thread.
+bool CallMainPlayerAddObjectToFreeHotbarSlot(void* mainPlayer, void* target, const HotbarAdd& how, bool& success);
+
+// mainPlayer_C's addObjectToInventory(object) on `target`, the bag take every pocket reaches; `success` is its
+// answer. False when the call could not run (the player not live, the function unresolved). Game thread.
+bool CallMainPlayerAddObjectToInventory(void* mainPlayer, void* target, bool& success);
 
 // AmainPlayer_C::hitResult's actor -- the RAW interaction trace, the field the game's own tool
 // bodies break when they decide what a press is on. It is not the same answer as lookAtActor
@@ -226,13 +235,21 @@ bool ReadFlashlightSnapshot(void* light, FlashlightSnapshot& out);
 // The AmainPlayer_C flashlight bools and mode byte the wire payload mirrors, read in one call. Game
 // thread.
 struct MainPlayerFlashlightState {
-    bool flashlight;       // AmainPlayer_C::flashlight     (canonical on/off)
-    bool hasFlashlight;    // AmainPlayer_C::hasFlashlight  (equipped guard)
-    bool crankFlashlight;  // AmainPlayer_C::crankFlashlight (_c variant marker)
-    uint8_t mode;          // AmainPlayer_C::flashlightMode (focused/spread enum)
+    bool flashlight;          // AmainPlayer_C::flashlight          (canonical on/off)
+    bool equippedFlashlight;  // AmainPlayer_C::equipped_flashlight (updateEquipment sets it for any
+                              // prop_equipment_flashlight_C; Flashlight Update returns without it)
+    uint8_t mode;             // AmainPlayer_C::flashlightMode      (focused/spread enum)
 };
 
 bool ReadMainPlayerFlashlightState(void* mainPlayer, MainPlayerFlashlightState& out);
+
+// The game keeps ONE ticker_playerFlashlight_C (the actor that drains the worn flashlight's battery and switches the light off at
+// empty), and every mainPlayer_C's BeginPlay points its `player` at itself (mainPlayer_C.ReceiveBeginPlay, capture-0.10.0-b284.txt:
+// the ticker is found by GetActorOfClass and, if there, `player = Self`). A puppet is a mainPlayer_C, so the last puppet to
+// spawn takes the ticker from the local player and the local flashlight never drains. This points the ticker back at `mainPlayer`
+// (the local pawn) when it points elsewhere; true when it wrote. False when the pawn is not live, there is no ticker, or it already
+// points there. Game thread.
+bool RepointFlashlightTicker(void* mainPlayer);
 
 // Direct write of AmainPlayer_C::flashlight (the dev auto-toggle; the BP's input-guarded toggle is
 // out of reach). Game thread.

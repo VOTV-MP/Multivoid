@@ -60,7 +60,8 @@ bool InvokeAddPlayerDamage(void* target, float damage) {
     if (!fn) { UE_LOGW("dmghazard: 'Add Player Damage' UFunction did not resolve"); return false; }
     ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
-    f.Set<float>(L"Damage", damage);  // damageLocation/fullBody/blood/Source stay zero-init
+    f.Set<float>(L"Damage", damage);  // damageLocation/fullBody/blood/Source/damageFromBloodLoss stay zero-init
+    f.Set<bool>(L"callDamageEvent", true);  // as every game caller passes it
     return ue_wrap::Call(target, f);
 }
 

@@ -9,8 +9,12 @@
 #include "coop/player/players_registry.h"
 
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine_player_verbs.h"
@@ -91,6 +95,17 @@ bool Refused(RefusedWhy why, uint8_t slot) {
     return false;
 }
 
+// lib_C's yes/no question about the player (isUnderwater): 1, 0, or -1 when it was not asked or did not run.
+int AskLib(void* body, const wchar_t* fnName, const wchar_t* actorParam) {
+    void* const lib = R::FindClassDefaultObject(L"lib_C");
+    void* const fn = lib ? R::FindFunction(R::ClassOf(lib), fnName) : nullptr;
+    if (!fn) return -1;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<void*>(actorParam, body) || !f.Set<void*>(L"__WorldContext", body) || !ue_wrap::Call(lib, f))
+        return -1;
+    return f.Get<bool>(L"returnValue") ? 1 : 0;
+}
+
 // The verb on this machine's own player, as the cremator's Blueprint would have run it on the player it burns. The
 // host's own split read the host's save slot, so none of its numbers cross. Game thread.
 void Apply(const coop::net::CrematorHitPayload& p) {
@@ -106,13 +121,78 @@ void Apply(const coop::net::CrematorHitPayload& p) {
     }
     if (p.verb == coop::net::kCrematorHitVerbIgnite) {
         const float seconds = std::clamp(p.igniteSeconds, kIgniteMinS, kIgniteMaxS);
+        // Why the fire may be put out at once, asked before the ignite so the state it runs in is on record.
+        const int underwaterBefore = AskLib(body, L"isUnderwater", L"itemToFind");
+        float burnBefore = -1.f;
+        ue_wrap::vitals::Read(ue_wrap::vitals::Field::BurningTime, &burnBefore);
         const bool ok = EN::InvokeMainPlayerIgnite(body, seconds);
         if (ok) ++g_applied;
         else if (++g_failedApplies == 1) UE_LOGW("[CREMATOR-HIT] ignite did not run on the local player");
+        {
+            static uint32_t sIgnites = 0;
+            float burnAfter = -1.f;
+            ue_wrap::vitals::Read(ue_wrap::vitals::Field::BurningTime, &burnAfter);
+            if (++sIgnites <= 4)
+                UE_LOGI("[CREMATOR-HIT] ignite #%u: burningTime %.2f -> %.2f (fuel %.1f)", sIgnites, burnBefore, burnAfter,
+                        seconds);
+        }
         if (!g_igniteSaid) {
             g_igniteSaid = true;
-            UE_LOGI("[CREMATOR-HIT] applied verb=ignite seconds=%.1f ok=%d (first; the rest are counted, #%u applied)",
-                    seconds, ok ? 1 : 0, g_applied);
+            float burn = -1.f;
+            const bool burnRead = ue_wrap::vitals::Read(ue_wrap::vitals::Field::BurningTime, &burn);
+            UE_LOGI("[CREMATOR-HIT] applied verb=ignite seconds=%.1f ok=%d (first; the rest are counted, #%u applied); the local burningTime reads %.2f (read=%d)",
+                    seconds, ok ? 1 : 0, g_applied, burn, burnRead ? 1 : 0);
+            // Why the body may have put the fire out at once: ignite ends by asking lib_C::`has equipment by name`(firesuit)
+            // and, when it holds one, calling extinguishFire (and by asking isUnderwater). Said once with the first ignite.
+            {
+                int firesuit = -1;
+                void* const lib = R::FindClassDefaultObject(L"lib_C");
+                void* const fn = lib ? R::FindFunction(R::ClassOf(lib), L"has equipment by name") : nullptr;
+                if (fn) {
+                    ue_wrap::ParamFrame hf(fn);
+                    const R::FName suit = ue_wrap::fname_utils::StringToFName(L"firesuit");
+                    if (hf.valid() && hf.Set<R::FName>(L"name", suit) && hf.Set<void*>(L"__WorldContext", body) &&
+                        ue_wrap::Call(lib, hf))
+                        firesuit = hf.Get<bool>(L"return") ? 1 : 0;
+                }
+                {   // the water the body stands in: its own flags, the water volumes nearest to it
+                    auto flag = [&](const wchar_t* name) -> int {
+                        int32_t off = -1;
+                        uint8_t mask = 0;
+                        if (!R::FindBoolProperty(R::ClassOf(body), name, off, mask) || off < 0 || !mask) return -1;
+                        return (*(static_cast<const uint8_t*>(body) + off) & mask) ? 1 : 0;
+                    };
+                    ue_wrap::FVector at{};
+                    ue_wrap::engine::TryGetActorLocation(body, at);
+                    UE_LOGI("[CREMATOR-HIT] water diag: body at (%.0f,%.0f,%.0f) inWater=%d onWater=%d", at.X, at.Y, at.Z,
+                            flag(L"inWater"), flag(L"onWater"));
+                    struct Near { ue_wrap::FVector at; int n = 0; } near{at, 0};
+                    void* const vcls = ue_wrap::object_index::ClassByName(L"waterVolume_C");
+                    if (vcls)
+                        ue_wrap::object_index::ForEachInstance(vcls, [](void* ctx, void* obj, int32_t index) {
+                            Near& x = *static_cast<Near*>(ctx);
+                            if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
+                            ue_wrap::FVector c{};
+                            float r = 0.f;
+                            if (!ue_wrap::engine::ActorReachSphere(obj, c, r)) return;
+                            const float dx = c.X - x.at.X, dy = c.Y - x.at.Y, dz = c.Z - x.at.Z;
+                            const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                            if (d > r + 2000.f || x.n >= 6) return;
+                            ++x.n;
+                            UE_LOGI("[CREMATOR-HIT] water diag: waterVolume centre (%.0f,%.0f,%.0f) radius %.0f, %.0f from the body "
+                                    "(%s)", c.X, c.Y, c.Z, r, d, d <= r ? "INSIDE the reach sphere" : "outside");
+                        }, &near);
+                    UE_LOGI("[CREMATOR-HIT] water diag: %d water volume(s) within 2000 uu of the body (class %s)", near.n,
+                            vcls ? "found" : "NOT loaded");
+                }
+                float burnNow = -1.f, burningFlag = -1.f, healthNow = -1.f;
+                ue_wrap::vitals::Read(ue_wrap::vitals::Field::BurningTime, &burnNow);
+                ue_wrap::vitals::Read(ue_wrap::vitals::Field::Burning, &burningFlag);
+                ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &healthNow);
+                UE_LOGI("[CREMATOR-HIT] ignite diag: lib_C.has equipment by name(firesuit)=%d, isUnderwater before=%d after=%d, "
+                        "burningTime=%.2f isBurning=%.0f health=%.1f (-1 = not asked)", firesuit, underwaterBefore,
+                        AskLib(body, L"isUnderwater", L"itemToFind"), burnNow, burningFlag, healthNow);
+            }
         }
         return;
     }

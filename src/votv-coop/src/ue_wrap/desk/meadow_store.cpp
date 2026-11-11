@@ -26,7 +26,7 @@ struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 // are looked up per call on the widget's class (Verb), by slot and serial, since a class kept for the
 // process can be a new object in the next world.
 int32_t g_offGmLaptop = -1;             // mainGamemode_C::laptop (the widget ptr)
-int32_t g_offGmSaveSlot = -1;           // mainGamemode_C::saveSlot
+int32_t g_offGmSaveSlot = -1;           // mainGamemode_C::save_slot
 int32_t g_offSlotSignals = -1;          // saveSlot_C::savedSignals_0
 int32_t g_offWidgetLaptop = -1;         // ui_laptop_C::laptop (device back-ptr)
 
@@ -47,7 +47,7 @@ void ResolvePass() {
     void* gm = world_singleton::Gamemode();
     if (!gm) return;
     if (g_offGmLaptop < 0) g_offGmLaptop = R::FindPropertyOffset(R::ClassOf(gm), L"laptop");
-    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
+    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(R::ClassOf(gm), L"save_slot");
     if (g_offWidgetLaptop < 0) {
         if (void* w = LiveAt(gm, g_offGmLaptop)) g_offWidgetLaptop = R::FindPropertyOffset(R::ClassOf(w), L"laptop");
     }

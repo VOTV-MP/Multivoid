@@ -89,9 +89,7 @@ bool ReadSpill(void* decal, Spill& out) {
     if (!E::TryGetActorLocation(decal, out.location) || !E::TryGetActorRotation(decal, out.rotation)) return false;
     out.scale = E::GetActorScale3D(decal);
     if (void* comp = DecalComponent(decal)) E::TryGetComponentWorldRotation(comp, out.decalRotation);
-    G::ReadProcess(decal, out.process);
-    G::ReadType(decal, out.type);
-    return true;
+    return G::ReadProcess(decal, out.process) && G::ReadType(decal, out.type);
 }
 
 void* FindSpill(const std::wstring& className, const FVector& location, float toleranceCm) {

@@ -6,7 +6,6 @@
 // container_intent_drill_throw.h for what is measured.
 
 #include "container_intent_drill_throw.h"
-#include "container_route_drill_detail.h"
 
 #include "coop/dev/container_route_census.h"
 #include "coop/dev/director/aimed_grab.h"
@@ -41,7 +40,7 @@ namespace R   = ue_wrap::reflection;
 namespace ci  = ue_wrap::container_inventory;
 namespace DR  = coop::director;
 namespace DC  = coop::dev::drill_chat;
-namespace RD  = coop::dev::container_route_drill::detail;
+namespace RD  = coop::dev::container_intent_drill::detail;
 namespace cen = coop::dev::container_route_census;
 using ue_wrap::FVector;
 

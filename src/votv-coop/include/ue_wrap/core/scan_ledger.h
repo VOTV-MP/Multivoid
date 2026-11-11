@@ -24,7 +24,6 @@ enum class Scan : uint8_t {
     ProcessEvent,    // reflection::Resolve
     FMemoryRealloc,  // ResolveEngineHeap
     ScriptGate,      // script_gate::Patch: GNatives' dispatch site, then the VM loop found by code from it
-    SaveGameToSlot,  // save_to_slot_hook::Install
     OverlayDraw,     // imgui_overlay::Init: any of the three present seams resolved; missed again at the first
                      // world milestone when none has fired
     OverlayResize,   // imgui_overlay::Init: D3D11 Resize or D3D12 ResizeInternal

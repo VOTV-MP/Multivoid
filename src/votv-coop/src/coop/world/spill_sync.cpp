@@ -155,7 +155,7 @@ GS::Spill FromWire(const Payload& p) {
 bool HeldHere(void* actor) {
     void* me = coop::players::Registry::Get().Local();
     E::MainPlayerGrabState gs{};
-    return actor && me && E::ReadMainPlayerGrabState(me, gs) && (gs.holdingActor == actor || gs.grabbingActor == actor);
+    return actor && me && E::ReadMainPlayerGrabState(me, gs) && (ue_wrap::engine::InEitherHand(gs, actor) || gs.grabbingActor == actor);
 }
 
 // The slot of another player whose hold this copy is: a prop its hold drives through the pose stream, or the

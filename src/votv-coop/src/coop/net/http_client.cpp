@@ -2,6 +2,7 @@
 
 #include "coop/net/http_client.h"
 #include "coop/net/endpoint_log.h"
+#include "coop/version.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -105,7 +106,10 @@ Response Request(const std::string& hostPort, const std::string& path,
         return out;
     }
 
-    WinHttpHandle session(::WinHttpOpen(L"multivoid/0.9.0n",
+    // The user agent names the game target the build was made for, as the boot banner does.
+    const std::string target = coop::version::kGameTarget;
+    const std::wstring agent = L"multivoid/" + std::wstring(target.begin(), target.end());
+    WinHttpHandle session(::WinHttpOpen(agent.c_str(),
                                         WINHTTP_ACCESS_TYPE_NO_PROXY,
                                         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session) return out;

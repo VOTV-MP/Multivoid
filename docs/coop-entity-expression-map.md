@@ -111,18 +111,19 @@ are peer-gated. `[V]`
   entry to the drain and crosses as an ordinary drop intent -- not a fresh birth, which would
   sleep the host's copy, while a menu prop must fall on the host as it falls here. `[V]`
 - **The prop's own save record, beside its birth.** A class that keeps save state of its own --
-  a reel's progress, a disc's files -- has that state serialized by the game's own `getData` and
-  carried on its own message, addressed by Key and sent behind the spawn row on the same lane, so
-  a mirror never starts from a class default. Membership is the class declaring a `getData` below
-  `Aprop_C`, read off the live class chain rather than from a list. A record whose prop has not
+  a reel's progress, a disc's files -- has that state serialized by the game's own `betterGetData`
+  (the stream of its SaveGame properties) and carried on its own message, addressed by Key and sent
+  behind the spawn row on the same lane, so a mirror never starts from a class default. Membership
+  is a class below `Aprop_C` declaring a SaveGame property or a `betterGetData`, read off the live
+  class chain rather than from a list. `[RD]` A record whose prop has not
   arrived parks by Key with no expiry: an element id names an actor, and the whole reason the
   record has to travel is that the actor is destroyed and remade. `[V]` For a birth the host
   spawns from a client's intent, the client's record is the record: the host awaits it and
   publishes nothing for the key until it LANDS, applied at once or from the park, and the land
   publishes it; a joiner seeded inside the wait gets it from that publish. `[V]`
-- **A container's contents are not its record.** They are a slice of the shared GObjStack, the
-  contents lane's ([devices.md](devices.md)). A thrown container is rebound to its slot of the
-  thrower's own array by `loadData`, with no verb fired, so its contents travel as the thrower's
+- **A container's contents are not its record.** They are the entries of the container's
+  inventory component, a slice on the contents lane ([devices.md](devices.md)). A thrown container
+  is respawned and loaded with no mutating verb fired, so its contents travel as the thrower's
   birth slice after the host's echo binds it, and the host's copy is a transfer in progress until
   that slice lands. A container the host throws publishes its slice at its express. `[RD]`
 - **Destroy.** The engine's destroy call is caught before it runs on either role, on every

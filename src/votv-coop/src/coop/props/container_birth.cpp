@@ -10,7 +10,7 @@
 #include "coop/props/container_slice_wire.h"
 #include "coop/props/prop_element_tracker.h"   // SessionIsHost
 #include "ue_wrap/actors/container_inventory.h"
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/inventory_item.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 
@@ -152,7 +152,7 @@ void NoteHostBirth(void* actor) {
     if (!inv || !ci::IsWorldInventory(inv)) return;
     const auto eid = coop::element::Registry::Get().EidForActor(actor);
     if (eid == coop::element::kInvalidId) return;
-    std::vector<ue_wrap::save_record::SaveRecord> recs;
+    std::vector<ue_wrap::inventory_item::Item> recs;
     const bool readable = ci::ReadContents(inv, recs, cw::kMaxRecords);
     if (readable && recs.empty()) return;   // the mirrors are born empty too
     // Not readable yet is not empty: the publication is owed and retried until it is.

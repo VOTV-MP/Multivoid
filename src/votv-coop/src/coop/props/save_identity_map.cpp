@@ -9,7 +9,6 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"            // FindClass, IsDescendantOfAny, NameEquals, ClassNameOf
 #include "ue_wrap/world/world_singleton.h"
-#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"                 // ue_wrap::FVector
 
 #include <algorithm>
@@ -22,23 +21,57 @@
 namespace coop::save_identity_map {
 
 namespace R  = ue_wrap::reflection;
-namespace P  = ue_wrap::profile;
 namespace PT = coop::prop_element_tracker;
 
 namespace {
 
-// The two save-array element structs share an identical prefix -- the UClass at the element base,
-// an FTransform whose translation is the location, and the FName key -- and differ only in STRIDE.
-// A TArray element stride is the 16-ALIGNED struct size, never the raw one:
-//   Fstruct_save          (objectsData)    stride 0x100  (struct_save.hpp)
-//   Fstruct_primitiveSave (primitivesData) stride 0x60   (struct_primitiveSave.hpp)
-// Each TArray header at saveSlot+off is {Data, Num, Max}. The strides are gated at runtime below.
-constexpr size_t kOffClass    = 0x00;
-constexpr size_t kOffLocation = 0x20;  // the FTransform's translation within the element
-constexpr size_t kOffKey      = 0x40;
+// Both save arrays, betterObjectsData and betterPrimitivesData, are TArray<struct_bettersave>. A
+// record's class is a soft class reference (TSoftClassPtr: a weak pointer, a tag, then the
+// FSoftObjectPath whose AssetPathName names "/Game/...Pkg.Class_C"), its transform an FTransform
+// (rotation quat, then the translation), its key an FName. The member offsets are read off the
+// struct by reflection; the stride is its size on the FTransform's 16-byte alignment.
+constexpr size_t kSoftPathNameOff  = 0x10;  // FSoftObjectPtr: FWeakObjectPtr(8) + tag(4) + pad(4)
+constexpr size_t kTransformTransOff = 0x10;  // FTransform: FQuat Rotation(16), then Translation
+struct RecordLayout {
+    void*   cls = nullptr;  // the saveSlot_C class it was resolved for
+    int32_t objects = -1, primitives = -1;
+    int32_t stride = 0, klass = -1, transform = -1, key = -1;
+};
+RecordLayout g_layout;
+
+const RecordLayout& LayoutFor(void* saveSlot) {
+    void* cls = R::ClassOf(saveSlot);
+    if (cls == g_layout.cls) return g_layout;
+    g_layout = RecordLayout{};
+    g_layout.cls = cls;
+    g_layout.objects = R::FindPropertyOffset(cls, L"betterObjectsData");
+    g_layout.primitives = R::FindPropertyOffset(cls, L"betterPrimitivesData");
+    if (void* rec = R::ArrayInnerStruct(cls, L"betterObjectsData")) {
+        g_layout.stride = (R::StructSize(rec) + 15) & ~15;
+        g_layout.klass = R::FindPropertyOffsetByPrefix(rec, L"class_");
+        g_layout.transform = R::FindPropertyOffsetByPrefix(rec, L"transform_");
+        g_layout.key = R::FindPropertyOffsetByPrefix(rec, L"key_");
+    }
+    if (R::ArrayInnerStruct(cls, L"betterPrimitivesData") != R::ArrayInnerStruct(cls, L"betterObjectsData"))
+        g_layout.primitives = -1;  // not the record type the walk reads
+    UE_LOGI("save_identity_map: record layout objects@%d primitives@%d stride=%d class@%d transform@%d key@%d",
+            g_layout.objects, g_layout.primitives, g_layout.stride, g_layout.klass, g_layout.transform,
+            g_layout.key);
+    return g_layout;
+}
+
+// A record's class, from its soft reference's asset path: the class named after the '.', when it is
+// loaded (every class a live world holds is). Null for an empty reference or an unloaded class.
+void* RecordClass(const uint8_t* rec, int32_t klassOff) {
+    const R::FName path = *reinterpret_cast<const R::FName*>(rec + klassOff + kSoftPathNameOff);
+    if (R::NameEquals(path, L"None")) return nullptr;
+    const std::wstring s = R::ToString(path);
+    const size_t dot = s.rfind(L'.');
+    return R::FindClass(dot == std::wstring::npos ? s.c_str() : s.c_str() + dot + 1);
+}
 
 // Quantize a world location to a 0.01-unit grid so the host-local join tolerates any sub-0.01 FP jitter
-// between saveObjects' getTransform (-> objectsData) and TryGetActorLocation (-> the eid bridge) while keeping
+// between saveObjects' record transform (-> betterObjectsData) and TryGetActorLocation (-> the eid bridge) while keeping
 // distinct piles distinct. Two props within the quantum collapse into one bucket -> resolved by the
 // same-class-same-location tiebreak (a deterministic rank-pairing; benign -- they are physically identical).
 struct LocKey {
@@ -59,21 +92,12 @@ LocKey Quantize_(const ue_wrap::FVector& v) {
 }
 
 // One quantized-location bucket: the host eids of each keyless family whose live actor sits at this location,
-// sorted ASCENDING. The objectsData walk consumes them via a cursor so M identical entries at one location
+// sorted ASCENDING. The save-array walk consumes them via a cursor so M identical entries at one location
 // pair to the M eids by RANK -- a deterministic bijection (see the tiebreak note in BuildHostMap).
 struct Bucket {
     std::vector<uint32_t> chip;   size_t chipCur = 0;
     std::vector<uint32_t> kerfur; size_t kerfurCur = 0;
 };
-
-// The stride/offset sanity gate: is `cls` plausibly a UClass*? A cheap pointer check FIRST (8-aligned, above
-// the null page) so a wrong-stride garbage value is rejected WITHOUT dereferencing it (ClassNameOf on a wild
-// ptr would AV -- the gate must fail cleanly, not crash). Only then read the name (a real UClass has one).
-bool PlausibleClass_(void* cls) {
-    const uintptr_t p = reinterpret_cast<uintptr_t>(cls);
-    if (p < 0x10000 || (p & 0x7) != 0) return false;  // null / wild / misaligned -> not a UObject pointer
-    return !R::ClassNameOf(cls).empty();
-}
 
 }  // namespace
 
@@ -87,9 +111,16 @@ int BuildHostMap(IdMap& outMap) {
     //    ordinal. The 2b smoke FALSIFIED the live-gather order; the bind tripwire caught it at k=0.
     void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) { UE_LOGW("save_identity_map: cannot build -- gamemode not found"); return 0; }
-    void* saveSlot = *reinterpret_cast<void* const*>(
-        reinterpret_cast<const uint8_t*>(gm) + P::off::AmainGamemode_saveSlot);
-    if (!saveSlot) { UE_LOGW("save_identity_map: cannot build -- saveSlot null (no capture yet?)"); return 0; }
+    static R::InstanceOffset sSaveSlot(L"save_slot");
+    const int32_t saveOff = sSaveSlot.Of(gm);
+    void* saveSlot = saveOff >= 0 ? *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(gm) + saveOff)
+                                  : nullptr;
+    if (!saveSlot) { UE_LOGW("save_identity_map: cannot build -- save_slot null (no capture yet?)"); return 0; }
+    const RecordLayout& L = LayoutFor(saveSlot);
+    if (L.objects < 0 || L.stride <= 0 || L.klass < 0 || L.transform < 0 || L.key < 0) {
+        UE_LOGE("save_identity_map: the save record layout did not resolve -- no map, no bind");
+        return 0;
+    }
 
     // 2. Build the location->eid bridge from the LIVE keyless actors ONCE (self-seeding -- the same idempotent
     //    mint CollectTracked{Pile,Kerfur}Transforms do; they ran at this capture instant). eid->location is
@@ -106,46 +137,31 @@ int BuildHostMap(IdMap& outMap) {
         std::sort(kv.second.kerfur.begin(), kv.second.kerfur.end());
     }
 
-    // 3. Parse the two save arrays IN THE CLIENT'S LOAD ORDER and concatenate their keyless chip/kerfur entries.
-    //    objectsData (Fstruct_save, the off-kerfurs + keyed world objects) is loaded by Load Objects FIRST, then
-    //    primitivesData (Fstruct_primitiveSave, the chipPiles) by Load Primitives. chipPile.ignoreSave returns
-    //    TRUE unconditionally -> chipPiles are EXCLUDED from objectsData and persist via the dedicated primitives
-    //    path (RE: mainGamemode Save/Load Primitives; saveSlot.hpp:108 primitivesData@0xE30). The order
-    //    objectsData -> primitivesData is confirmed by the 2b smoke's kerfur-first spawn (objectsData's only
-    //    keyless entries are the 4 off-kerfurs; the 870 chips all come from primitivesData after). The emitted
-    //    SEQUENCE == the client's keyless fresh-spawn order. TIEBREAK (same-class-same-location, the user's
-    //    explicit requirement): M identical entries at one quantized location (M>1) pair to the M ascending-
-    //    sorted eids by RANK (i-th entry <-> i-th-smallest eid) -- a deterministic BIJECTION, BENIGN because the
-    //    M props are physically identical (any consistent pairing is correct; the eid stays the identity).
-    struct ArraySpec { size_t off; size_t stride; const wchar_t* name; };
+    // 3. Parse the two save arrays IN THE CLIENT'S LOAD ORDER and concatenate their keyless chip/kerfur entries:
+    //    betterObjectsData (the off-kerfurs + keyed world objects) is replayed by mainGamemode_C::loadObjects
+    //    FIRST, then betterPrimitivesData (the chipPiles, which ignoreSave keeps out of the objects array) by its
+    //    `load primitives`. The emitted SEQUENCE == the client's keyless fresh-spawn order. TIEBREAK (same-class-
+    //    same-location): M identical entries at one quantized location (M>1) pair to the M ascending-sorted eids
+    //    by RANK (i-th entry <-> i-th-smallest eid) -- a deterministic BIJECTION, BENIGN because the M props are
+    //    physically identical (any consistent pairing is correct; the eid stays the identity).
+    struct ArraySpec { int32_t off; const wchar_t* name; };
     const ArraySpec kArrays[] = {
-        { P::off::UsaveSlot_objectsData, 0x100, L"objectsData" },     // Fstruct_save          -- off-kerfurs
-        { 0x0E30,                        0x60,  L"primitivesData" },  // Fstruct_primitiveSave -- chipPiles
+        { L.objects,    L"betterObjectsData" },     // off-kerfurs and keyed world objects
+        { L.primitives, L"betterPrimitivesData" },  // chipPiles
     };
+    const size_t stride = static_cast<size_t>(L.stride);
     int chip = 0, kerfur = 0, missed = 0, ambiguousLocs = 0, nonKeyless = 0, totalRecords = 0;
     uint32_t ordinal = 0;  // running keyless ordinal across arrays (== the client bind's k; logged as index)
     for (const ArraySpec& spec : kArrays) {
+        if (spec.off < 0) { UE_LOGW("save_identity_map: %ls unresolved -- skipped", spec.name); continue; }
         const uint8_t* hdr = reinterpret_cast<const uint8_t*>(saveSlot) + spec.off;
         void* const data = *reinterpret_cast<void* const*>(hdr + 0x0);
         const int32_t num = *reinterpret_cast<const int32_t*>(hdr + 0x8);
         if (!data || num <= 0) { UE_LOGI("save_identity_map: %ls empty (num=%d) -- skipped", spec.name, num); continue; }
-        // Stride/offset sanity gate (the one load-bearing assumption): element 0..4's class_3 must be plausible
-        // UClasses. A wrong stride reads junk here -> ABORT rather than emit a garbage map that could mis-bind.
-        for (int32_t i = 0; i < num && i < 5; ++i) {
-            void* cls = *reinterpret_cast<void* const*>(
-                reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * spec.stride + kOffClass);
-            if (!PlausibleClass_(cls)) {
-                UE_LOGE("save_identity_map: %ls element %d class_3 not a plausible UClass (cls=%p) -- stride/"
-                        "offset WRONG for this build (expected stride 0x%zX); ABORTING (no map, no bind).",
-                        spec.name, i, cls, spec.stride);
-                outMap.clear();
-                return 0;
-            }
-        }
         totalRecords += num;
         for (int32_t i = 0; i < num; ++i) {
-            const uint8_t* e = reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * spec.stride;
-            void* cls = *reinterpret_cast<void* const*>(e + kOffClass);
+            const uint8_t* e = reinterpret_cast<const uint8_t*>(data) + static_cast<size_t>(i) * stride;
+            void* cls = RecordClass(e, L.klass);
             if (!cls) continue;
             Family fam;
             if (chipBase && R::IsDescendantOfAny(cls, &chipBase, 1)) fam = Family::ChipPile;
@@ -157,13 +173,13 @@ int BuildHostMap(IdMap& outMap) {
             // load from this same blob, so the client pairs its loading off-kerfur to this eid BY KEY (the
             // cursor-float retire regression fix). A key==None off-kerfur (untracked/jUuC) leaves the entry
             // keyless -> the client falls back to the ordinal cursor for it (unchanged from v2 behaviour).
-            const R::FName key = *reinterpret_cast<const R::FName*>(e + kOffKey);
+            const R::FName key = *reinterpret_cast<const R::FName*>(e + L.key);
             const bool keyed = !R::NameEquals(key, L"None");
             if (keyed) ++nonKeyless;
             std::wstring entryKey;
             if (fam == Family::KerfurOff && keyed) entryKey = R::ToString(key);
 
-            const ue_wrap::FVector loc = *reinterpret_cast<const ue_wrap::FVector*>(e + kOffLocation);
+            const ue_wrap::FVector loc = *reinterpret_cast<const ue_wrap::FVector*>(e + L.transform + kTransformTransOff);
             auto it = byLoc.find(Quantize_(loc));
             std::vector<uint32_t>* vec = nullptr; size_t* curp = nullptr;
             if (it != byLoc.end()) {
@@ -194,7 +210,7 @@ int BuildHostMap(IdMap& outMap) {
         undrained += static_cast<int>(kv.second.kerfur.size() - kv.second.kerfurCur);
     }
     UE_LOGI("save_identity_map: HOST map built (Phase A, parse save arrays) -- %zu entries (%d chipPile + %d "
-            "kerfurOff) from %d records across objectsData+primitivesData [%d non-None key (diag), %d unmatched, "
+            "kerfurOff) from %d records across betterObjectsData+betterPrimitivesData [%d non-None key (diag), %d unmatched, "
             "%d undrained bridge eid(s), %d ambiguous same-loc]. index = keyless ordinal (== client loadObjects "
             "spawn order); eid via host-local class+location join (bridge: %zu pile + %zu kerfur live eids).",
             outMap.size(), chip, kerfur, totalRecords, nonKeyless, missed, undrained, ambiguousLocs,

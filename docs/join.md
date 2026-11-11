@@ -87,7 +87,7 @@ world -- a quick rejoin after a rehost lands seconds after the host is up -- wai
 host saying it is capturing, and then gets the live capture, with the join snapshots the seeds diff
 against; a host world that never comes in ends that join as the host never preparing it. If the live
 capture cannot run otherwise, at the menu or with the world identity unreadable, the host streams its
-slot file as it is on disk (the stale fallback; the reconcile in step 6 owns the difference, and the
+save folder as it is on disk (the stale fallback; the reconcile in step 6 owns the difference, and the
 meadow, signal and email seeds are skipped).
 If the host has no save at all, the header says so and the joiner boots a fresh world.
 
@@ -95,12 +95,19 @@ Prepended to the blob, under the same checksum, is the identity sidecar: the map
 array index to the host's element id for the objects the save keeps without a key (chip piles and
 powered-off kerfur bodies).
 
-The client verifies the checksum, writes the blob as `zcoop_<pid>.sav`, a prefix the game's load
-menu never lists and a name two peers on one machine cannot share, and loads it through the game's
-own loader with the host's game mode. Every prop is placed by the engine, at rest, with the host's
-keys. The slot lives for the session (the game re-reads it for sub-level saves), is deleted at
-disconnect, and a boot sweep removes stale ones older than an hour. The global progression file
-is never transferred.
+The blob is the save folder's load set packed into one stream (`coop/save/save_folder_pack`):
+`main.sav` (the world), `persistent.sav` and `main.meta` (mode, rules, starter map), and, for a host
+standing inside an area (its metadata naming one), `areas/<area>.sav`, the area's own world, which the
+load swaps in for `main.sav` the way the game's slot menu does (`lib_C::createAreaSlot`). The live
+capture writes the host's area slot there beside a copy of the host's own `main.sav`. The client
+verifies the checksum, unpacks it into the scratch save `zcoop_<pid>`, a name two peers on one machine
+cannot share, and loads it through the game's own loader with the host's game mode; the load points
+the save's own path fields at that folder. Every prop is placed by the engine, at rest, with the host's
+keys. The scratch saves live in `Saved/multivoid_session/`, beside `SaveGames/` rather than in it, so
+the game's save menu, which lists the folders under `SaveGames/`, never shows them; the game takes the
+folder by a name that steps out of `SaveGames/`. The folder lives for the session and is deleted at
+disconnect, and a boot sweep removes those whose process is gone. The global progression file is never
+transferred.
 
 The loading screen (`coop/session/join_progress`, `ui/loading_screen`) shows four phases, the first
 naming its step: connecting, downloading in bytes, loading the world, receiving the snapshot.

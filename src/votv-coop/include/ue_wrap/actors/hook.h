@@ -192,10 +192,12 @@ bool AttachTailTo(void* mirror, void* ownerRootActor);
 
 // ---- the actor's own save record --------------------------------------------------------------
 //
-// NOT save_record's CaptureRecord / ApplyRecord: those are gated to the Aprop_C lineage, and their
+// NOT save_record's CaptureOwnRecord / ApplyRecord: those are gated to the Aprop_C lineage, and the
 // apply deliberately splices the receiver's own base half over the sender's, because for a prop the
 // base fields already ride the spawn row. A hook is the opposite case -- an Aactor_save_C with no
-// spawn row, where the base half IS the thing being moved. Same codec, different operation.
+// spawn row, where the base half IS the thing being moved. Same codec, different operation. The hook
+// stays on the typed getData / loadData pair (not prop_record's betterGetData stream) because the lane
+// arbitrates two of its typed groups, the attach keys and the cable length, before it applies.
 
 // Capture `hookActor`'s record as the actor itself serializes it. One dispatch.
 bool CaptureRecord(void* hookActor, ue_wrap::save_record::SaveRecord& out);

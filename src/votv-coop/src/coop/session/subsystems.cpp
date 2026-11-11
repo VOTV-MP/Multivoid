@@ -104,6 +104,7 @@
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/atv_sync.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
@@ -261,6 +262,7 @@ void Install(coop::net::Session& session) {
     coop::fuse_tower_rows::Install(&session);  // the towers roll and judge on the host: their rows to every peer
     coop::fuse_tower_ops::Install(&session);  // a client's presses and fuse claims, and its refused rolls
     coop::atv_sync::Install(&session);  // ATV body pose (the syncer the host assigned streams a keyed pose)
+    coop::atv_trunk_sync::Install(&session);  // an ATV's trunk: the host's inventory component, mirrored on the clients
     coop::drone_sync::Install(&session);  // delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
@@ -525,6 +527,7 @@ DisconnectStats DisconnectAll() {
     coop::fuse_tower_ops::OnDisconnect();
     coop::fuse_tower_rows::OnDisconnect();
     coop::atv_sync::OnDisconnect();
+    coop::atv_trunk_sync::OnDisconnect();
     coop::drone_sync::OnDisconnect();
     coop::order_sync::OnDisconnect();
     coop::coingun_sync::OnDisconnect();  // dump the lane summary + drop the sold-set, the barrier queue and the cached gun
@@ -667,7 +670,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_panel::Tick(); coop::power_grid::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:towers"}; coop::fuse_tower_ops::Tick(); coop::fuse_tower_rows::Tick(); }  // the towers: the gates settle, the host's ops and rows, a client's panels  // the panel's and the grid's gates settle; what came before the panel or the generators resolved is taken
     coop::dish_calib_sync::Tick();  // settle the precision lane's three watches
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: the host judges its own seat and grab, a client asks the host; the syncer streams its pose (host+client)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); coop::atv_trunk_sync::Tick(); }  // ATV (and its trunk, the host's): the host judges its own seat and grab, a client asks the host; the syncer streams its pose (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:woodchipper"}; coop::woodchipper_sync::Tick(); }  // woodchippers: the host's intents and its changed chippers, the burn read once a second / the client's held states
@@ -757,7 +760,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pause_guard"}; coop::pause_guard::Tick(isConnected); }  // coop no-pause invariant -- un-pause the world while connected (ESC menu stays usable; a paused peer froze its pose stream)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:run_end"}; coop::player::run_end_travel::Tick(); }  // the run-ending seam's session-scoped work: publish the seam's readiness (the verdict itself runs in the VM's body loop)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameToSlot disk hook stays as the belt
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameCompressed write gate stays as the belt
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); }  // the local rest-state poll + its send + the client's dream hold
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep_rest"}; coop::sleep_rest::Tick(); }  // a client's rest: the sleep watch until live, then the effects' factor and food and coffee while it lasts
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)

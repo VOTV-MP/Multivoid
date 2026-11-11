@@ -1,9 +1,8 @@
 // ue_wrap/devices/base_window.cpp -- see ue_wrap/devices/base_window.h. Engine access for VOTV's
 // base observation window (AbaseWindow_C).
 //
-// Offsets are resolved from the live class via reflection (FindPropertyOffset) with
-// the documented Alpha 0.9.0-n CXX-dump values as a logged fallback, matching the
-// door wrapper (version-tagging rule -- offsets stay correct across game recooks).
+// Offsets are resolved from the live class by member name (FindPropertyOffset). A member the name
+// does not find leaves its lane off, said once; no offset is guessed.
 
 #include "ue_wrap/devices/base_window.h"
 
@@ -25,13 +24,9 @@ namespace R = reflection;
 std::atomic<bool> g_resolved{false};
 
 void*   g_winCls     = nullptr;  // baseWindow_C UClass
-int32_t g_cleanOff   = -1;       // AbaseWindow_C::clean  (Alpha 0.9.0-n: 0x0260)
-int32_t g_keyOff     = -1;       // Aactor_save_C::Key    (Alpha 0.9.0-n: 0x0230)
+int32_t g_cleanOff   = -1;       // AbaseWindow_C::clean
+int32_t g_keyOff     = -1;       // Aactor_save_C::Key
 void*   g_setCleanFn = nullptr;  // AbaseWindow_C::setClean() -- SetCustomPrimitiveDataFloat(0, clean)
-
-// Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/baseWindow.hpp + actor_save.hpp).
-constexpr int32_t kCleanOffFallback = 0x0260;
-constexpr int32_t kKeyOffFallback   = 0x0230;
 
 }  // namespace
 
@@ -42,17 +37,11 @@ bool EnsureResolved() {
     if (!winCls) return false;  // BP class not loaded yet -- caller retries
 
     // `clean` is declared on AbaseWindow_C itself.
-    int32_t cleanOff = R::FindPropertyOffset(winCls, L"clean");
-    if (cleanOff < 0) {
-        UE_LOGW("base_window: reflected clean offset not found -- using fallback 0x%04X", kCleanOffFallback);
-        cleanOff = kCleanOffFallback;
-    }
+    const int32_t cleanOff = R::FindPropertyOffset(winCls, L"clean");
+    if (cleanOff < 0) UE_LOGE("base_window: 'clean' not found by name -- window wipes stay off");
     // `Key` is declared on the Aactor_save_C parent, which the property lookup climbs to.
-    int32_t keyOff = R::FindPropertyOffset(winCls, L"Key");
-    if (keyOff < 0) {
-        UE_LOGW("base_window: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
-        keyOff = kKeyOffFallback;
-    }
+    const int32_t keyOff = R::FindPropertyOffset(winCls, L"Key");
+    if (keyOff < 0) UE_LOGE("base_window: 'Key' not found by name -- windows carry no key, so none is synced");
     void* setCleanFn = R::FindFunction(winCls, L"setClean");
     if (!setCleanFn)
         UE_LOGW("base_window: setClean UFunction not found -- a mirrored clean won't repaint the shader");

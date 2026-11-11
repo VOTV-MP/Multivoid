@@ -24,8 +24,8 @@ namespace R = ue_wrap::reflection;
 // npc_zombie_C
 constexpr int32_t kZombie[] = {
     // step: the walk's footstep notify reaches it through the animation-events interface. It calls the library's
-    // step (a footstep sound and emitter) and the zombie's own empty `stepped`; it spawns nothing.
-    19490,
+    // step (a footstep sound and emitter); it spawns nothing.
+    19440,
 };
 
 // npc_zombie_alienSummoner_C, npc_zombie_corpse_C and npc_zombie_skerfuro_C own a graph of their own and allow none
@@ -35,12 +35,12 @@ constexpr int32_t kZombie[] = {
 // fossilhound_C
 constexpr int32_t kFossilhound[] = {
     // step: the footstep notify. A trace, a physical-material sound, a sound, and every fourth step the voice.
-    8427,
+    8433,
     // the per-viewer loop: the camera-distance test and its event count, re-entering itself on a 0.25 s delay. Our
     // setup starts it (ue_wrap::fossilhound), and each client counts its own view, as the class does.
     ue_wrap::fossilhound::kPerViewerEntry,
     // ReceiveDestroyed: the `false` of the loop's `true` when the hound was in view, so the count comes back.
-    10636,
+    10655,
 };
 
 // geomOcta_C

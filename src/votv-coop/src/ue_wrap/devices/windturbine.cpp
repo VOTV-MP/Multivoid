@@ -12,7 +12,10 @@ namespace {
 
 namespace R = reflection;
 
+// Offsets are resolved from the class by member name. A member the name does not find leaves the
+// wrapper unresolved (said once), so the turbine lane stays off rather than touching a guessed offset.
 std::atomic<bool> g_resolved{false};
+bool g_missing = false;             // a member is not on the class: said once, never retried
 
 void*   g_cls = nullptr;            // windturbine_C UClass
 int32_t g_offHeadRotation  = -1;    // float headRotation
@@ -21,24 +24,6 @@ int32_t g_offRot           = -1;    // float rot (servo integrator)
 int32_t g_offAlphaBlades   = -1;    // float alpha_blades
 int32_t g_offBladesMomentum= -1;    // float bladesMomentum
 int32_t g_offMult          = -1;    // float mult
-
-// Alpha 0.9.0-n fallbacks (CXXHeaderDump/windturbine.hpp).
-constexpr int32_t kHeadRotationFallback   = 0x0300;
-constexpr int32_t kTargetRotFallback      = 0x030C;
-constexpr int32_t kRotFallback            = 0x0340;
-constexpr int32_t kAlphaBladesFallback    = 0x02F8;
-constexpr int32_t kBladesMomentumFallback = 0x0334;
-constexpr int32_t kMultFallback           = 0x0328;
-
-int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
-    int32_t off = R::FindPropertyOffset(cls, name);
-    if (off < 0) {
-        UE_LOGW("windturbine: reflected %ls offset not found -- using fallback 0x%04X",
-                name, fallback);
-        off = fallback;
-    }
-    return off;
-}
 
 inline float ReadF(const void* obj, int32_t off) {
     return *reinterpret_cast<const float*>(reinterpret_cast<const char*>(obj) + off);
@@ -51,15 +36,24 @@ inline void WriteF(void* obj, int32_t off, float v) {
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
+    if (g_missing) return false;
     void* cls = R::FindClass(L"windturbine_C");
     if (!cls) return false;  // BP class not loaded yet -- retry
 
-    g_offHeadRotation   = ResolveOff(cls, L"headRotation",   kHeadRotationFallback);
-    g_offTargetRot      = ResolveOff(cls, L"targetRot",      kTargetRotFallback);
-    g_offRot            = ResolveOff(cls, L"rot",            kRotFallback);
-    g_offAlphaBlades    = ResolveOff(cls, L"alpha_blades",   kAlphaBladesFallback);
-    g_offBladesMomentum = ResolveOff(cls, L"bladesMomentum", kBladesMomentumFallback);
-    g_offMult           = ResolveOff(cls, L"mult",           kMultFallback);
+    g_offHeadRotation   = R::FindPropertyOffset(cls, L"headRotation");
+    g_offTargetRot      = R::FindPropertyOffset(cls, L"targetRot");
+    g_offRot            = R::FindPropertyOffset(cls, L"rot");
+    g_offAlphaBlades    = R::FindPropertyOffset(cls, L"alpha_blades");
+    g_offBladesMomentum = R::FindPropertyOffset(cls, L"bladesMomentum");
+    g_offMult           = R::FindPropertyOffset(cls, L"mult");
+    if (g_offHeadRotation < 0 || g_offTargetRot < 0 || g_offRot < 0 || g_offAlphaBlades < 0 ||
+        g_offBladesMomentum < 0 || g_offMult < 0) {
+        g_missing = true;
+        UE_LOGE("windturbine: members not all found by name (headRotation=%d targetRot=%d rot=%d alpha_blades=%d "
+                "bladesMomentum=%d mult=%d) -- the turbine lane stays off",
+                g_offHeadRotation, g_offTargetRot, g_offRot, g_offAlphaBlades, g_offBladesMomentum, g_offMult);
+        return false;
+    }
     g_cls = cls;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("windturbine: resolved windturbine_C=%p headRotation@0x%04X targetRot@0x%04X "

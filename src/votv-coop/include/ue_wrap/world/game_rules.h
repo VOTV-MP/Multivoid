@@ -1,16 +1,15 @@
 // ue_wrap/world/game_rules.h -- the world rules of the running world (engine substrate).
 //
-// The per-world settings are one struct, Fstruct_gameRules: 36 members, fall damage, difficulty,
-// seasons, food spoilage, the minigame and decay toggles. The game keeps it twice. The SAVED copy is
-// saveSlot.localGameRules, and a save file names only the rules that differ from the defaults. The
-// PER-PROCESS copy is mainGameInstance.gameRules, never saved, and it is the one nearly every rule
-// is read from (three are read off the save object: blood loss, experimental WIP, cold swap). One
-// blueprint writes the process copy, the game's slot menu on its way into a world, so a load that
-// does not pass that menu puts the rules in force itself: ApplySavedToProcess, called by the two
-// boots in ue_wrap/engine/engine_save.cpp, on the host and on a joiner alike. A joiner loads the
-// host's captured save, whose saved copy is the host's, so every peer ends under the host's rules.
-// ReadLocal reads BOTH copies of the local peer, so a rule whose copies differ stays visible.
-// Members are enumerated by reflection, so the list adapts if a patch adds or removes a rule.
+// The per-world settings are one struct, Fstruct_gameRules: fall damage, difficulty, seasons, food
+// spoilage, the minigame and decay toggles. The game keeps it twice. The SAVED copy is
+// save_metadata_C.rules, carried by a save folder's main.meta. The PER-PROCESS copy is
+// mainGameInstance.gameRules, never saved, and it is the one nearly every rule is read from. The
+// game's slot menu copies the saved one over the process one on its way into a world (tryLaunch),
+// so a load that does not pass that menu puts the rules in force itself: ApplySavedToProcess,
+// called by the two boots in ue_wrap/engine/engine_save.cpp, on the host and on a joiner alike. A
+// joiner loads the host's metadata, so every peer ends under the host's rules. ReadLocal reads BOTH
+// copies of the local peer, so a rule whose copies differ stays visible. Members are enumerated by
+// reflection, so the list adapts if a patch adds or removes a rule.
 // Principle 7: the engine read and write only -- ui/ owns the render. Game thread.
 #pragma once
 
@@ -40,8 +39,8 @@ struct Snapshot {
     int                    gamemode = -1;   // mainGameInstance.GameMode ordinal
     std::string            gamemodeName;    // "Story"/"Sandbox"/... or "#N"
     std::vector<RuleField> fields;          // gameRules members, declaration order
-    bool                   savedValid = false;  // the save object was up and `saved` was read
-    std::vector<RuleField> saved;           // the same members off the save object's localGameRules
+    bool                   savedValid = false;  // the metadata object was up and `saved` was read
+    std::vector<RuleField> saved;           // the same members off the metadata object's rules
 };
 
 // Snapshot the local peer's world rules into `out`. Returns false (out.valid
@@ -58,21 +57,20 @@ const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n
 // struct: no snapshot, no allocation. -1 while the GameInstance or its rules struct is not resolvable. Game thread.
 int ReadDifficulty();
 
-// Put the save's rules in force: copy `save.localGameRules` over `gameInstance.gameRules`. The
-// game does this in its slot menu on the way into a world (ui_saveSlots, the one blueprint that
-// writes the process copy), so a load that does not pass that menu has to do it itself, and BEFORE
-// the travel: difficulty, fall damage, water fall damage, nightmares and the grass rule are latched
-// on a BeginPlay. Returns how many rules the copy changed, 0 when the two already agreed, -1 when
-// either struct could not be resolved (nothing written). Game thread.
-int ApplySavedToProcess(void* gameInstance, void* save);
+// Put the save's rules in force: copy `metadata.rules` (a save_metadata_C) over
+// `gameInstance.gameRules`, as the game's slot menu does on the way into a world, and BEFORE the
+// travel: difficulty, fall damage, water fall damage, nightmares and the grass rule are latched on a
+// BeginPlay. Returns how many rules the copy changed, 0 when the two already agreed, -1 when either
+// struct could not be resolved (nothing written). Game thread.
+int ApplySavedToProcess(void* gameInstance, void* metadata);
 
 // The outcome of WriteSavedRule.
 enum class WriteResult { Written, UnknownKey, BadValue, Unresolved };
 
-// Write one rule into `save.localGameRules`, the saved copy a new game starts from: `key` is a
+// Write one rule into `metadata.rules`, the saved copy a new game starts from: `key` is a
 // RuleField.key, `value` the text of the member's kind (a bool "0" or "1", an enum's ordinal, a
-// float). Nothing is written unless the key and the value both parse. Unresolved: the save or its
-// rules struct could not be read. Game thread.
-WriteResult WriteSavedRule(void* save, const std::string& key, const std::string& value);
+// float). Nothing is written unless the key and the value both parse. Unresolved: the metadata or
+// its rules struct could not be read. Game thread.
+WriteResult WriteSavedRule(void* metadata, const std::string& key, const std::string& value);
 
 }  // namespace ue_wrap::game_rules

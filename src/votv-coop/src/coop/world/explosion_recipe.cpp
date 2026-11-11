@@ -17,8 +17,6 @@ ue_wrap::explosion::Params Defaults() {
     p.force      = 10000.0f;
     p.radius     = 1000.0f;
     p.damage     = 50.0f;
-    p.innerShake = 1000.0f;
-    p.outerShake = 2000.0f;
     return p;
 }
 

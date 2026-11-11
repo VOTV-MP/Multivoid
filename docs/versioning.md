@@ -9,7 +9,7 @@ runbook for porting to a new game version.
 ## The version pair
 
 The mod is identified by two numbers, the way Paper identifies a Minecraft build: the game
-version it targets and its own build number, displayed as `Multivoid 0.9.0n b152`. There is no
+version it targets and its own build number, displayed as `Multivoid 0.10.0 b285`. There is no
 separate semantic version. The game target is set once in `src/votv-coop/CMakeLists.txt` and
 generated into a header; the build number is the wire protocol's version in `coop/net/protocol.h`,
 bumped by every change to any wire format and by every release. The pair is stamped into the
@@ -55,15 +55,18 @@ version-specific knowledge is deliberately in two files:
 
 | Knowledge | Where | Count | Moves when |
 |---|---|---|---|
-| signatures for the engine primitives (the object array, the name table, function dispatch, allocation, the save call, the present call) | `ue_wrap/core/sdk_profile.h` | six | any recompile of the game |
+| signatures for the engine primitives (the object array, the name table, function dispatch, allocation, the present call) | `ue_wrap/core/sdk_profile.h` | five | any recompile of the game |
 | engine struct offsets | the same file | about forty | an engine version bump, not a recook |
-| game Blueprint offsets | the same file | about thirty | a recook that adds or removes a property before them |
-| content names (classes, functions, properties, levels, assets) | `ue_wrap/core/sdk_profile_names.h` | about two hundred | a rename or a removal |
+| game Blueprint offsets | the same file | about fifty, each checked by name | a recook that adds or removes a property before them |
+| content names (classes, functions, properties, levels, assets) | `ue_wrap/core/sdk_profile_names.h` | about two hundred and fifty | a rename or a removal |
 | every other lookup | the whole tree | over a thousand | only if the name changes; nothing to re-derive |
 
-So a recook costs six signatures, thirty offsets and whatever names moved: one file plus a name
-file, not a sweep. An engine version bump moves the forty together and has never happened to
-this project; the game has run one engine version its whole life.
+So a recook costs the signatures it recompiled, the Blueprint offsets it shifted and whatever
+names moved: one file plus a name file, not a sweep. The move from 0.9.0n to 0.10.0 is the
+measured case: the five signatures and the engine offsets held, the Blueprint offsets shifted
+(every `mainPlayer` and `prop` member moved), and the names changed where a class was reworked
+(the save, the hands, the inventory) `[V]`. An engine version bump moves the forty engine
+offsets together and has never happened to this project; both game versions run UE4.27.
 
 ## How a broken build says so
 
@@ -74,15 +77,18 @@ can match the wrong site and still "succeed". It also logs the executable's vers
 warns when they differ from the build the mod was built against. A compatibility report is
 written beside the DLL on every boot with every resolved address, class, function and offset and
 a verdict per primitive; a second check runs once gameplay has loaded and resolves every content
-name, since many classes load only on the first level transition. A diff step compares two
-reports, or two SDK dumps, and names the constant each change belongs to.
+name, since many classes load only on the first level transition, and then reads every fixed
+Blueprint offset of `sdk_profile.h` back from the live reflection by property name
+(`harness/sdk_check`, the offset section): a moved offset prints the profile value, the live one
+and the system it breaks, and a removed property says so. A diff step compares two reports, or
+two SDK dumps, and names the constant each change belongs to.
 
 | Symptom | Almost certainly | Look at |
 |---|---|---|
-| the health check fails a signature | one of the six | the signatures section of the profile |
+| the health check fails a signature | one of the five | the signatures section of the profile |
 | signatures pass but the object array reads tiny | an engine offset, an engine bump | the struct offsets |
 | a name round trip or a known class fails | the name file, or the name layout | the health-check output |
-| everything resolves and one system reads garbage | a game offset moved, or a name changed | the diff against the previous report |
+| everything resolves and one system reads garbage | a game offset moved, or a name changed | the offset section of the SDK check, then the diff against the previous report |
 | a hooked Blueprint function never fires | it was renamed, or its dispatch changed | the dispatch map and a fresh dump |
 | no chat, no scoreboard, no F1 at all | the present-call signature, which fails closed by design | the overlay's seam |
 
@@ -94,25 +100,34 @@ reports, or two SDK dumps, and names the constant each change belongs to.
 3. Take a fresh SDK dump from UE4SS installed into a copy of the new build (the header dump and
    the object dump); UE4SS is the dump tool here, and the shipped install carries it only as
    the loader.
-4. Diff the two dumps and transcribe the offsets that moved.
-5. Re-derive the signatures only if the health check failed: the loader's log gives ground-truth
-   addresses, a disassembler confirms each, and a unique byte pattern with wildcarded
-   displacements replaces the old one. An open-source signature resolver for Unreal executables
-   is a useful independent first answer.
-6. Update the identity: the game target, the new build's row (its link stamp and pak hash, from
+4. Diff the two dumps and transcribe the offsets that moved. The SDK check's offset section
+   lists each one by class and property, so the transcription is checked against the live game,
+   not against the dump alone.
+5. Keep the signatures and the engine offsets unless the health check failed: they carried over
+   unchanged between 0.9.0n and 0.10.0 `[V]`. When one does fail, the loader's log gives
+   ground-truth addresses, a disassembler confirms each, and a unique byte pattern with
+   wildcarded displacements replaces the old one. An open-source signature resolver for Unreal
+   executables is a useful independent first answer.
+6. Find the hooks whose logic changed while their names held: run the build with
+   `VOTVCOOP_FINGERPRINT_CAPTURE` on the old game and on the new one, and diff the two capture
+   files function by function ([bytecode-fingerprint.md](bytecode-fingerprint.md)). A function
+   whose fingerprint differs is a hook to re-read; a function that is gone or new is a rename.
+   The reference table for the new build (`ue_wrap/facts/fingerprints_<target>.inc`) is
+   generated from its capture.
+7. Update the identity: the game target, the new build's row (its link stamp and pak hash, from
    the boot's `game-build:` line) with the profile's `kTargetBuild` naming it, the last Multivoid
    build for the previous game version, the build number, and the game target named on
    [install.md](install.md), which a lint checks in CI.
-7. Run the gates in order: the health check all green, the config self-test, the two-peer smoke,
+8. Run the gates in order: the health check all green, the config self-test, the two-peer smoke,
    the launcher's scenarios for the systems the diff said moved, and a play session by a person.
-8. Write down what it cost. Nothing here has been done for real yet: the mod has only ever run
-   against one game version, so every duration is unknown, not small.
 
 ## Standing risks
 
-The six signatures are the real bill; they need someone who can read a disassembler, and
-everything else in a migration is mechanical. The runbook is untested and will change on first
-contact. Do not publish a duration for a migration nobody has done.
+The signatures are the real bill when they break; they need someone who can read a
+disassembler, and everything else in a migration is mechanical. Two builds is one measured
+migration, not a schedule: a recook that reworks a system moves its offsets, names and logic
+together, and that system's sync is rewritten rather than retuned. Do not publish a duration
+for the next one.
 
 ## The loader
 

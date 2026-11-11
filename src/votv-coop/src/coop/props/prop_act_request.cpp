@@ -176,16 +176,14 @@ void SendCommit(uint8_t committed) {
 
 // The record's verb, as the player's press runs it, on the target. False when the verb could not run at all (a
 // function that does not resolve, a player or target that is not live), as distinct from a verb that ran and bailed.
-bool RunVerb(void* target, void* local) {
+// `taken` is the pocket's or the hotbar's own return (false for the other rows, which return none).
+bool RunVerb(void* target, void* local, bool& taken) {
+    taken = false;
     switch (g_rec.row) {
-    case kPocket: {
-        bool taken = false;
-        return E::CallPutObjectInventory2(local, target, g_rec.noNotify, taken);
-    }
-    case kHold: {
-        bool collected = false;
-        return E::CallMainPlayerHoldObject(local, target, collected);
-    }
+    case kPocket:
+        return E::CallMainPlayerAddObjectToInventory(local, target, taken);
+    case kHold:
+        return E::CallMainPlayerAddObjectToFreeHotbarSlot(local, target, g_rec.hotbar, taken);
     case kFood:
     case kMre:
     case kPills:
@@ -196,7 +194,7 @@ bool RunVerb(void* target, void* local) {
         E::MainPlayerGrabState g{};
         if (!E::ReadMainPlayerGrabState(local, g)) return false;
         return PU::CallPlayerUsedOn(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.lookAt.Get(),
-                                    g.holdingActor, g_rec.holdPropName);
+                                    g.mainHand, g_rec.holdPropName);
     }
     default:
         return false;
@@ -215,9 +213,10 @@ void Replay() {
     void* const local = coop::players::Registry::Get().Local();
     bool destroyed = false;
     bool ran = false;
+    bool taken = false;
     {
         Latched scope(target);
-        ran = RunVerb(target, local);
+        ran = RunVerb(target, local, taken);
         // A drill's second destroy, inside the latch: it is not the target, so the seam treats it as any destroy.
         if (void* const extra = g_destroyInReplay.Get()) E::DestroyActor(extra);
         g_destroyInReplay.Reset();
@@ -230,6 +229,8 @@ void Replay() {
         coop::remote_prop::UnregisterPropMirror(g_rec.eid);
     } else {
         if (!ran) UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
+        else UE_LOGI("prop_act: the replay of row %u ran (the verb returned %d) and left its target alive -- aborted",
+                     static_cast<unsigned>(g_rec.row), taken ? 1 : 0);
         SendCommit(0);
     }
     Close();
@@ -252,8 +253,8 @@ void NoteStale(const coop::net::PropActReplyPayload& p) {
 
 // Every verb that takes a shared prop into a player's hands, pockets or mouth, watched at the entry of its body by
 // name. A Declared row is the class's own body: prop_food_C's is reached too by the descendants that inherit it.
-UE_FACT_FN(kRowPocket, "prop_act", L"mainPlayer_C",      L"putObjectInventory2", Declared);
-UE_FACT_FN(kRowHold,   "prop_act", L"mainPlayer_C",      L"Hold Object",         Declared);
+UE_FACT_FN(kRowPocket, "prop_act", L"mainPlayer_C",      L"addObjectToInventory",           Declared);
+UE_FACT_FN(kRowHold,   "prop_act", L"mainPlayer_C",      L"Add Object to Free Hotbar Slot", Declared);
 UE_FACT_FN(kRowFood,   "prop_act", L"prop_food_C",       L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowMre,    "prop_act", L"prop_food_mre_C",   L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowPills,  "prop_act", L"prop_sleeppills_C", L"actionOptionIndex",   Declared);
@@ -281,6 +282,15 @@ bool ReadParam(R::ParamOffset& offset, const sg::Call& c, T& out) {
     if (o < 0 || !c.locals) return false;
     std::memcpy(&out, c.locals + o, sizeof(T));
     return true;
+}
+
+// A take the host is asked for is in progress, not refused: the cancelled body answers `success` true, so the caller
+// (the drop key's pickup) does not show its "Cannot collect" hint for an item that arrives once the grant replays.
+void AnswerAsked(const sg::Call& c) {
+    static R::ParamOffset sSuccess{L"success"};
+    const int32_t o = sSuccess.Of(c.function);
+    if (o < 0) return;
+    if (uint8_t* const out = sg::OutParamPtr(c, o)) *reinterpret_cast<bool*>(out) = true;
 }
 
 // The parameters of an actionOptionIndex body, each in the offset cache of its own function.
@@ -406,8 +416,7 @@ sg::Verdict RunUnreadable(const ue_wrap::facts::Function& row, bool& said) {
 sg::Verdict PrePocket(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
     if (!s || !coop::players::Registry::Get().IsLocal(c.object)) return sg::Verdict::Run;
-    static R::ParamOffset sTarget{L"InputPin"};
-    static R::ParamOffset sNoNotify{L"noNotify"};
+    static R::ParamOffset sTarget{L"object"};
     static bool sSaid = false;
     void* target = nullptr;
     const bool readable = ReadParam(sTarget, c, target);
@@ -420,36 +429,39 @@ sg::Verdict PrePocket(const sg::Call& c) {
     p.eid = eid;
     p.row = kPocket;
     p.target.Set(target);
-    uint8_t noNotify = 0;
-    ReadParam(sNoNotify, c, noNotify);
-    p.noNotify = noNotify != 0;
-    Ask(p, PropActFamily::Pocket);
+    if (Ask(p, PropActFamily::Pocket)) AnswerAsked(c);
     return sg::Verdict::Cancel;
 }
 
-// The target Hold Object takes, by the body's own rule: `manual`, else the grabbed actor when `useHold`, else the one
-// looked at. `readable` is false when the frame lacks a parameter that decides it.
-void* HoldTarget(const sg::Call& c, bool& readable) {
-    static R::ParamOffset sManual{L"manual"};
-    static R::ParamOffset sUseHold{L"useHold"};
-    void* manual = nullptr;
-    readable = ReadParam(sManual, c, manual);
-    if (manual) return manual;
-    uint8_t useHold = 0;
-    readable = ReadParam(sUseHold, c, useHold) && readable;
-    if (!useHold) return E::ReadMainPlayerLookAtActor(c.object);
-    E::MainPlayerGrabState grab{};
-    return E::ReadMainPlayerGrabState(c.object, grab) ? grab.grabbingActor : nullptr;
+// The flags of the press, which the replay passes back: whether the slot is selected decides whether the item goes to
+// the hand. `readable` is false when the frame lacks one.
+ue_wrap::engine::HotbarAdd HotbarFlags(const sg::Call& c, bool& readable) {
+    static R::ParamOffset sAutoselect{L"autoselect"};
+    static R::ParamOffset sDestroy{L"destroyOnSuccess"};
+    static R::ParamOffset sStack{L"stack"};
+    static R::ParamOffset sEquipment{L"equipment"};
+    uint8_t autoselect = 0, destroy = 0, stack = 0, equipment = 0;
+    readable = ReadParam(sAutoselect, c, autoselect) && ReadParam(sDestroy, c, destroy) &&
+               ReadParam(sStack, c, stack) && ReadParam(sEquipment, c, equipment);
+    ue_wrap::engine::HotbarAdd how;
+    how.autoselect = autoselect != 0;
+    how.destroyOnSuccess = destroy != 0;
+    how.stack = stack != 0;
+    how.equipment = equipment != 0;
+    return how;
 }
 
 sg::Verdict PreHold(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
     if (!s || !coop::players::Registry::Get().IsLocal(c.object)) return sg::Verdict::Run;
+    static R::ParamOffset sTarget{L"object"};
     static bool sSaid = false;
-    bool readable = true;
-    void* const target = HoldTarget(c, readable);
+    void* target = nullptr;
+    bool readable = ReadParam(sTarget, c, target);
     if (s->role() == coop::net::Role::Host) return HostPre(target);
-    if (!readable) return RunUnreadable(kRowHold, sSaid);
+    bool flagsRead = false;
+    const ue_wrap::engine::HotbarAdd how = HotbarFlags(c, flagsRead);
+    if (!readable || !flagsRead) return RunUnreadable(kRowHold, sSaid);
     EL::ElementId eid = EL::kInvalidId;
     const Gate g = ClientGate(c, target, nullptr, eid);
     if (g != Gate::Ask) return ToVerdict(g);
@@ -457,7 +469,8 @@ sg::Verdict PreHold(const sg::Call& c) {
     p.eid = eid;
     p.row = kHold;
     p.target.Set(target);
-    Ask(p, PropActFamily::Hold);
+    p.hotbar = how;
+    if (Ask(p, PropActFamily::Hold)) AnswerAsked(c);
     return sg::Verdict::Cancel;
 }
 

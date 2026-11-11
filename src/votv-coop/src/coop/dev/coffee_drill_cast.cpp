@@ -170,7 +170,7 @@ bool ReadFlags(void* maker, Flags& out) {
         s_layout = MakerLayout{};
         s_layout.cls = cls;
         s_layout.ok = ResolveBool(cls, L"hasCup", s_layout.cup) && ResolveBool(cls, L"hasCoffee", s_layout.coffee) &&
-                      ResolveBool(cls, L"coffeeReady", s_layout.ready) && ResolveBool(cls, L"hasPower", s_layout.power);
+                      ResolveBool(cls, L"coffeeReady", s_layout.ready) && (ResolveBool(cls, L"cordPowered", s_layout.power) || ResolveBool(cls, L"hasPower", s_layout.power));   // 0.10 moved the power flag onto prop_corded_C (cordPowered); 0.9 kept hasPower on the maker
     }
     if (!s_layout.ok) return false;
     out.cup = ReadBool(maker, s_layout.cup);
@@ -186,7 +186,7 @@ bool FlagsAre(const Flags& f, int cup, int coffee, int ready) {
 
 std::string FlagsText(const Flags& f) {
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "hasCup=%d hasCoffee=%d coffeeReady=%d hasPower=%d", f.cup, f.coffee, f.ready,
+    std::snprintf(buf, sizeof(buf), "hasCup=%d hasCoffee=%d coffeeReady=%d power=%d", f.cup, f.coffee, f.ready,
                   f.power);
     return buf;
 }

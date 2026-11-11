@@ -2,15 +2,15 @@
 
 #include "coop/props/container_act_wire.h"
 
+#include "coop/items/inventory_item_wire.h"
 #include "coop/items/save_record_wire.h"
 #include "coop/net/protocol.h"
-#include "coop/props/prop_record_wire.h"
 
 namespace coop::props::container_act_wire {
 namespace {
 
 namespace W   = coop::save_record_wire;
-namespace prw = coop::props::prop_record_wire;
+namespace IW = coop::inventory_item_wire;
 using coop::net::ContainerActFamily;
 
 constexpr size_t kHeadBytes = 8;
@@ -53,7 +53,18 @@ std::vector<uint8_t> PackRequest(const Request& r) {
             W::AppU64(b, r.hash);
             break;
         case ContainerActFamily::PutRecord:
-            if (!prw::AppRecord(b, r.record)) return {};
+            if (!IW::AppItem(b, r.record)) return {};
+            break;
+        case ContainerActFamily::TakeStack:
+            W::AppU16(b, r.index);
+            W::AppU64(b, r.hash);
+            W::AppU8(b, r.amount);
+            break;
+        case ContainerActFamily::MergeStack:
+            W::AppU16(b, r.index);
+            W::AppU64(b, r.hash);
+            W::AppU16(b, r.indexB);
+            W::AppU64(b, r.hashB);
             break;
         default:
             break;   // an unknown family is the head alone
@@ -74,7 +85,20 @@ Parse ParseRequest(const std::vector<uint8_t>& b, Request& out, const char** why
             }
             break;
         case ContainerActFamily::PutRecord:
-            if (!prw::RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
+            if (!IW::RdItem(b, o, out.record, why)) return Parse::Malformed;
+            break;
+        case ContainerActFamily::TakeStack:
+            if (!W::RdU16(b, o, out.index) || !W::RdU64(b, o, out.hash) || !W::RdU8(b, o, out.amount)) {
+                Fail(why, "short take-stack tail");
+                return Parse::Malformed;
+            }
+            break;
+        case ContainerActFamily::MergeStack:
+            if (!W::RdU16(b, o, out.index) || !W::RdU64(b, o, out.hash) || !W::RdU16(b, o, out.indexB) ||
+                !W::RdU64(b, o, out.hashB)) {
+                Fail(why, "short merge-stack tail");
+                return Parse::Malformed;
+            }
             break;
         default:
             return Parse::UnknownFamily;
@@ -91,7 +115,7 @@ std::vector<uint8_t> PackCommit(const Commit& c) {
     AppHead(b, c.id, c.committed, c.eid);
     if (c.hasRecord && c.committed == 1) {
         W::AppU16(b, c.index);
-        if (!prw::AppRecord(b, c.record)) return {};
+        if (!IW::AppItem(b, c.record)) return {};
     }
     return b;
 }
@@ -114,7 +138,11 @@ Parse ParseCommit(const std::vector<uint8_t>& b, Commit& out, const char** why) 
         Fail(why, "short record tail");
         return Parse::Malformed;
     }
-    if (!prw::RdRecordToEnd(b, o, out.record, why)) return Parse::Malformed;
+    if (!IW::RdItem(b, o, out.record, why)) return Parse::Malformed;
+    if (o != b.size()) {
+        Fail(why, "bytes after the entry");
+        return Parse::Malformed;
+    }
     out.hasRecord = true;
     return Parse::Ok;
 }

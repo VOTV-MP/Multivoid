@@ -30,7 +30,7 @@
 namespace coop::device_occupancy {
 namespace {
 
-UE_FACT_FN(kRowUseInput, "device_occupancy", L"mainPlayer_C", L"InpActEvt_use_K2Node_InputActionEvent_41", Declared);
+UE_FACT_FN(kRowUseInput, "device_occupancy", L"mainPlayer_C", L"InpActEvt_use_K2Node_InputActionEvent_37", Declared);
 
 namespace R  = ue_wrap::reflection;
 namespace P  = ue_wrap::profile;

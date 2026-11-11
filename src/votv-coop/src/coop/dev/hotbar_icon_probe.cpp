@@ -3,7 +3,6 @@
 #include "coop/dev/hotbar_icon_probe.h"
 
 #include "coop/config/config.h"
-#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -20,14 +19,13 @@ namespace {
 
 namespace R   = ue_wrap::reflection;
 namespace HB  = ue_wrap::hotbar;
-namespace INV = ue_wrap::inventory;
 namespace sg  = ue_wrap::script_gate;
 
 // 8 Hz: fast enough to place the icon tables' arrival against the bar's last rebuild, cheap
 // enough that it is not a per-frame reader. Every read goes through ue_wrap::hotbar.
 constexpr int kPollTicks = 15;
 constexpr int kWatchTag  = 0x0F121;
-UE_FACT_FN(kRowUpdateSlotInv, "dev.hotbar_icon_probe", nullptr, L"updateSlotInv", AnyClass);
+UE_FACT_FN(kRowSlotUpd, "dev.hotbar_icon_probe", L"uicomp_FLI_itemSlot_C", L"upd", Declared);
 
 std::chrono::steady_clock::time_point g_bootT0 = std::chrono::steady_clock::now();
 
@@ -54,11 +52,11 @@ std::string SlotLine(const HB::State& s) {
 }
 
 std::string Summary(const HB::State& s) {
-    return "slotInv=" + std::to_string(s.slots) + " slotTexts=" + std::to_string(s.slotTexts) +
+    return "hotbarSlots=" + std::to_string(s.slots) + " firstFilled=" + std::to_string(s.firstFilled) +
            " propNames=" + std::to_string(s.iconNames) +
            " texs_GAMEINST=" + std::to_string(s.iconTextures) +
            " fins=" + std::to_string(s.rendererPhases) +
-           " carried=" + std::to_string(s.carried);
+           " filled=" + std::to_string(s.filled);
 }
 
 // ---- the refresh verb's own dispatches ---------------------------------------------------------
@@ -68,9 +66,9 @@ std::string Summary(const HB::State& s) {
 // joining client). So no tick of ours -- world-up-gated or not -- reliably gets a sample while the
 // game is loading, and the first cut of this probe proved it by landing its earliest sample well
 // after the save was loaded, with the bar already broken. The seam that fires INSIDE that body is
-// the VM's own script loop. `updateSlotInv` is called from ten Blueprint sites -- the game mode,
-// the player and the inventory screen -- and every one of them is a Blueprint-to-Blueprint call
-// that ProcessEvent never sees; the watch is by NAME, so it catches all ten.
+// the VM's own script loop. A hotbar slot's `upd` is called from the slot's own construction and
+// from every change of its item, each a Blueprint-to-Blueprint call that ProcessEvent never sees;
+// the watch is by NAME, so it catches them all.
 int g_calls = 0;
 
 sg::Verdict OnRefreshPre(const sg::Call& c) {
@@ -107,17 +105,17 @@ void EnsureWatch() {
         if (!sg::IsInstalled()) return;
         static bool s_held = false;  // the watch below may retry; the hold is taken once
         if (!s_held) { sg::Acquire("the hotbar icon probe"); s_held = true; }
-        if (!sg::WatchName(kRowUpdateSlotInv, kWatchTag, OnRefreshPre, OnRefreshPost)) return;
+        if (!sg::WatchName(kRowSlotUpd, kWatchTag, OnRefreshPre, OnRefreshPost)) return;
         s_armed = true;
         UE_LOGI("hotbar_probe: watching %ls at the script loop (registered; name resolve pending)",
-                kRowUpdateSlotInv.Name());
+                kRowSlotUpd.Name());
     }
     static bool s_live = false;
     if (s_live) return;
     sg::ResolvePendingNames();
-    if (sg::NameWatchLive(kRowUpdateSlotInv, kWatchTag)) {
+    if (sg::NameWatchLive(kRowSlotUpd, kWatchTag)) {
         s_live = true;
-        UE_LOGI("hotbar_probe: %ls watch is LIVE at t=%llums", kRowUpdateSlotInv.Name(),
+        UE_LOGI("hotbar_probe: %ls watch is LIVE at t=%llums", kRowSlotUpd.Name(),
                 static_cast<unsigned long long>(SinceBootMs()));
     }
 }

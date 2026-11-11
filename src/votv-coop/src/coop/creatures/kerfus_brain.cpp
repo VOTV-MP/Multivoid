@@ -38,8 +38,8 @@ UE_FACT_FN(kRowJump, "kerfus_brain", L"p_kerfus_C", L"jump", Declared);
 UE_FACT_FN(kRowRCjump, "kerfus_brain", L"p_kerfus_C", L"RCjump", Declared);
 UE_FACT_FN(kRowPossess, "kerfus_brain", L"p_kerfus_C", L"possess", Declared);
 UE_FACT_FN(kRowPossessTimer, "kerfus_brain", L"p_kerfus_C", L"possessTimer", Declared);
-UE_FACT_FN(kRowCordPlugged, "kerfus_brain", L"p_kerfus_C", L"cordPlugged", Declared);
-UE_FACT_FN(kRowCordUnplugged, "kerfus_brain", L"p_kerfus_C", L"cordUnplugged", Declared);
+UE_FACT_FN(kRowCordPlugged, "kerfus_brain", L"p_kerfus_C", L"cordPlugged_obj", Declared);
+UE_FACT_FN(kRowCordUnplugged, "kerfus_brain", L"p_kerfus_C", L"cordUnplugged_obj", Declared);
 const ue_wrap::facts::Function* const kBrain[] = {
     &kRowReceiveTick, &kRowCheckJump, &kRowUpdatePath, &kRowMovePawnTo, &kRowFindBrokenServer, &kRowTask,
     &kRowJump, &kRowRCjump, &kRowPossess, &kRowPossessTimer, &kRowCordPlugged, &kRowCordUnplugged,

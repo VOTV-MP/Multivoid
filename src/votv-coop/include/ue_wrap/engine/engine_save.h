@@ -18,26 +18,28 @@ namespace ue_wrap::engine {
 // the travel so the detour does not stall the world teardown. Game thread.
 bool ReturnToMainMenu();
 
-// Load a save slot through the game's own entry (LoadGameFromSlot, setSaveSlotObject with
-// loadObjects=true, then untitled_1; the save selects the mode). `forceGameMode` >= 0 writes that
-// enum_gamemode ordinal instead of deriving it from the slot-name prefix, which the coop slot
-// `zcoop_<pid>` lacks. False if the slot is missing or the load cannot dispatch. Game thread.
-bool LoadStorySave(const wchar_t* slot, int forceGameMode = -1);
+// Load save folder `folderName` (SaveGames/<folderName>/) the way the game's slot menu does:
+// main.sav, persistent.sav and main.meta through CompressedSaveLoadLib, setSaveSlotObject, an area
+// slot swapped in when the metadata names one, the save's day, rules and mode put in force, then
+// the starter map (or the area's level) opened with loadObjectsFromSlot set. `forceGameMode` >= 0
+// writes that enum_gamemode ordinal instead of the metadata's gamemode_type. False until the player
+// is in the loaded world, and while a file is missing or the load cannot dispatch. Game thread.
+bool LoadStorySave(const wchar_t* folderName, int forceGameMode = -1);
 
-// Drop the cached USaveGame* and the GameMode latch so a second in-process LoadStorySave re-loads
-// from disk. Game thread.
+// Drop the cached save objects so a second in-process LoadStorySave re-loads from disk. Game
+// thread.
 void ResetCachedSave();
 
-// A fresh New Game in `gameMode` (an enum_gamemode ordinal): LoadStorySave with a blank save
-// object (CreateSaveGameObject(saveSlot_C)); a fresh client world holds only level-default props,
-// so the host's snapshot mirrors onto it with nothing to reconcile away. The blank save has no
-// slot file, so the mode is named rather than derived from a prefix. Game thread.
+// A fresh New Game in `gameMode` (an enum_gamemode ordinal): LoadStorySave with a blank saveSlot_C
+// and save_metadata_C (CreateSaveGameObject) registered under no slot name, so the game's own save
+// never writes it; a fresh client world holds only level-default props, so the host's snapshot
+// mirrors onto it with nothing to reconcile away. Game thread.
 bool StartFreshGame(int gameMode);
 
-// The rules the next StartFreshGame writes into its blank save's localGameRules before the save's
-// rules are put in force: (game_rules key, value text) pairs, as game_rules::WriteSavedRule takes
-// them. Consumed by the one fresh save that call creates, then cleared; a save loaded from a slot
-// is never touched. Set before the call, from the thread that drives the boot; empty clears.
+// The rules the next StartFreshGame writes into its blank metadata's rules before they are put in
+// force: (game_rules key, value text) pairs, as game_rules::WriteSavedRule takes them. Consumed by
+// the one fresh game that call creates, then cleared; a save loaded from a folder is never touched.
+// Set before the call, from the thread that drives the boot; empty clears.
 void SetFreshGameRules(const std::vector<std::pair<std::string, std::string>>& rules);
 
 // ---- Save-object-ready hook ----
@@ -48,17 +50,5 @@ void SetFreshGameRules(const std::vector<std::pair<std::string, std::string>>& r
 using SaveObjectReadyHook = void(*)(void* saveSlotObject);
 
 void SetSaveObjectReadyHook(SaveObjectReadyHook hook);
-
-// The game encodes a save's mode only in the slot-name prefix (story "s_", infinite "i_", sandbox
-// "b_", halloween "SPOOKY_", ambience "a_", solar "l_"); both functions wrap
-// Uui_saveSlots_C::getSavePrefix on the CDO, which resolves lazily (false / -1 until the menu or a
-// gameplay transition loads it). enum_gamemode ordinals are not the submenu order (story=0,
-// infinite=1, sandbox=4). Game thread.
-
-// The prefix for `mode` (a TEnumAsByte<enum_gamemode::Type>) into `out`.
-bool GetSavePrefix(uint8_t mode, std::wstring& out);
-
-// The ordinal of `slot` from its prefix (the longest match wins): 0..7, or -1.
-int DeriveModeFromSlot(const wchar_t* slot);
 
 }  // namespace ue_wrap::engine

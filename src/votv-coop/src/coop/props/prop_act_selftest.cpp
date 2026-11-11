@@ -42,12 +42,7 @@ H::ActTraits Fitting() {
     H::ActTraits t{};
     t.read = true;
     t.simulating = true;
-    t.canCollect = true;
-    t.canHold = true;
-    t.meshRoot = true;
-    t.volumeFits = true;
     t.saveClass = true;
-    t.equipRow = true;
     t.offered = true;
     return t;
 }
@@ -61,46 +56,25 @@ struct Term {
 
 const Term kPocketTerms[] = {
     {"pocket: an unread fact refuses", [](H::ActTraits& t) { t.read = false; }, Tally::FitUnread},
-    {"pocket: a refused collect refuses", [](H::ActTraits& t) { t.collectRefused = true; }, Tally::FitCollectRefused},
+    {"pocket: a prop that ignores the save refuses", [](H::ActTraits& t) { t.ignoreSave = true; },
+     Tally::FitIgnoreSave},
     {"pocket: a child actor refuses", [](H::ActTraits& t) { t.child = true; }, Tally::FitChild},
-    {"pocket: neither frozen, simulating nor driven refuses", [](H::ActTraits& t) { t.simulating = false; },
-     Tally::FitPhysics},
-    {"pocket: a prop the data row does not collect refuses", [](H::ActTraits& t) { t.canCollect = false; },
-     Tally::FitCanCollect},
-    {"pocket: a heavy prop refuses", [](H::ActTraits& t) { t.heavy = true; }, Tally::FitHeavy},
-    {"pocket: a root that is not a static mesh refuses", [](H::ActTraits& t) { t.meshRoot = false; },
-     Tally::FitMeshRoot},
-    {"pocket: a volume past the bound refuses", [](H::ActTraits& t) { t.volumeFits = false; }, Tally::FitVolume},
+    {"pocket: an attached prop refuses", [](H::ActTraits& t) { t.attached = true; }, Tally::FitAttached},
+    {"pocket: a refused take refuses", [](H::ActTraits& t) { t.takeRefused = true; }, Tally::FitTakeRefused},
     {"pocket: a class that saves nothing refuses", [](H::ActTraits& t) { t.saveClass = false; },
      Tally::FitSaveClass},
 };
 
 const Term kHoldTerms[] = {
     {"hold: an unread fact refuses", [](H::ActTraits& t) { t.read = false; }, Tally::FitUnread},
-    {"hold: a refused pickup refuses", [](H::ActTraits& t) { t.pickupRefused = true; }, Tally::FitPickupRefused},
-    {"hold: neither frozen, simulating nor driven refuses", [](H::ActTraits& t) { t.simulating = false; },
-     Tally::FitPhysics},
-    {"hold: a child actor that is not frozen refuses", [](H::ActTraits& t) { t.child = true; }, Tally::FitChild},
-    {"hold: a heavy prop that is not frozen refuses", [](H::ActTraits& t) { t.heavy = true; }, Tally::FitHeavy},
-    {"hold: a prop the data row does not hold refuses", [](H::ActTraits& t) { t.canHold = false; },
-     Tally::FitCanHold},
     {"hold: a prop that ignores the save refuses", [](H::ActTraits& t) { t.ignoreSave = true; },
      Tally::FitIgnoreSave},
+    {"hold: a child actor refuses", [](H::ActTraits& t) { t.child = true; }, Tally::FitChild},
+    {"hold: neither simulating nor driven refuses", [](H::ActTraits& t) { t.simulating = false; },
+     Tally::FitPhysics},
+    {"hold: a refused take refuses", [](H::ActTraits& t) { t.takeRefused = true; }, Tally::FitTakeRefused},
     {"hold: a class that saves nothing refuses", [](H::ActTraits& t) { t.saveClass = false; },
      Tally::FitSaveClass},
-    {"hold: a name with no equip row refuses", [](H::ActTraits& t) { t.equipRow = false; }, Tally::FitEquipRow},
-};
-
-// The hold terms a frozen prop still meets: broken with `frozen` set, each must still refuse.
-const Term kFrozenHoldTerms[] = {
-    {"hold: a frozen prop with a refused pickup refuses", [](H::ActTraits& t) { t.pickupRefused = true; },
-     Tally::FitPickupRefused},
-    {"hold: a frozen prop that ignores the save refuses", [](H::ActTraits& t) { t.ignoreSave = true; },
-     Tally::FitIgnoreSave},
-    {"hold: a frozen prop of a class that saves nothing refuses", [](H::ActTraits& t) { t.saveClass = false; },
-     Tally::FitSaveClass},
-    {"hold: a frozen prop with no equip row refuses", [](H::ActTraits& t) { t.equipRow = false; },
-     Tally::FitEquipRow},
 };
 
 const Term kUseTerms[] = {
@@ -142,6 +116,11 @@ void RunSelftest() {
         check(H::Decide(in) == H::ActVerdict::Wait, "decide: a slot with no body waits");
         in.live = false;
         check(H::Decide(in) == H::ActVerdict::Wait, "decide: no body with a dead prop waits (the body is read first)");
+    }
+    {
+        H::ActInputs in = Ready();
+        in.seated = true;
+        check(H::Decide(in) == H::ActVerdict::Wait, "decide: a drive still seated in its slot waits for the eject line");
     }
     {
         H::ActInputs in = Ready();
@@ -216,46 +195,17 @@ void RunSelftest() {
         check(H::FirstRefusal(kUse, t) == term.refusal, term.what);
     }
     {
-        // A frozen prop is held whatever it weighs and whatever its row says, as the game's Hold Object does.
-        H::ActTraits t = Fitting();
-        t.frozen = true;
-        t.heavy = true;
-        t.canHold = false;
-        t.child = true;
-        t.simulating = false;
-        check(H::HoldFits(t), "fits: a frozen heavy hold that the row does not hold still fits");
-        check(!H::FirstRefusal(kHold, t), "refusal: a frozen hold names no term");
-        // A frozen prop is pocketed, but never a heavy one.
-        H::ActTraits p = Fitting();
-        p.frozen = true;
-        p.simulating = false;
-        check(H::PocketFits(p), "fits: a frozen pocket fits");
-        p.heavy = true;
-        check(!H::PocketFits(p), "fits: a frozen heavy pocket does not fit");
-    }
-    {
-        // The frozen skip leaves the other terms in force: the game's frozen branch jumps to the ignoreSave test.
-        for (const Term& term : kFrozenHoldTerms) {
-            H::ActTraits t = Fitting();
-            t.frozen = true;
-            term.breaks(t);
-            check(!H::HoldFits(t), term.what);
-            check(H::FirstRefusal(kHold, t) == term.refusal, term.what);
-        }
-        // The pocket has no frozen arm for a child actor.
-        H::ActTraits p = Fitting();
-        p.frozen = true;
-        p.child = true;
-        check(!H::PocketFits(p), "fits: a frozen child actor does not pocket");
-        check(H::FirstRefusal(kPocket, p) == Tally::FitChild, "refusal: a frozen child pocket is named child");
-    }
-    {
-        // A prop a peer drags has its host copy parked with physics off: it fits by the drive.
+        // A prop a peer drags has its host copy parked with physics off: its hold fits by the drive.
         H::ActTraits p = Fitting();
         p.simulating = false;
         p.driven = true;
-        check(H::PocketFits(p), "fits: a pocket fits only by a peer's drive");
         check(H::HoldFits(p), "fits: a hold fits only by a peer's drive");
+        // The pocket reads no physics, and the hold no attach parent.
+        p.driven = false;
+        check(H::PocketFits(p), "fits: a pocket fits with no physics");
+        H::ActTraits h = Fitting();
+        h.attached = true;
+        check(H::HoldFits(h), "fits: a hold fits while attached");
     }
     {
         H::ActTraits t = Fitting();
@@ -267,19 +217,17 @@ void RunSelftest() {
     }
     {
         H::ActTraits t = Fitting();
-        t.heavy = true;
-        check(H::FirstRefusal(kPocket, t) == Tally::FitHeavy, "refusal: a heavy pocket is named heavy");
-        t = Fitting();
-        t.simulating = false;
-        check(H::FirstRefusal(kPocket, t) == Tally::FitPhysics, "refusal: a pocket with no physics is named so");
-        t = Fitting();
         t.read = false;
-        t.heavy = true;
+        t.takeRefused = true;
         check(H::FirstRefusal(kPocket, t) == Tally::FitUnread, "refusal: an unread fact is named before any term");
         t = Fitting();
-        t.collectRefused = true;
-        t.heavy = true;
-        check(H::FirstRefusal(kPocket, t) == Tally::FitCollectRefused, "refusal: the first term in order is named");
+        t.ignoreSave = true;
+        t.takeRefused = true;
+        check(H::FirstRefusal(kPocket, t) == Tally::FitIgnoreSave, "refusal: the first term in order is named");
+        t = Fitting();
+        t.child = true;
+        t.simulating = false;
+        check(H::FirstRefusal(kHold, t) == Tally::FitChild, "refusal: a hold names the child before the physics");
     }
     check(!H::KnownFamily(0), "family: 0 is not a verb");
     check(H::KnownFamily(1) && H::KnownFamily(2) && H::KnownFamily(3), "family: 1..3 are verbs");

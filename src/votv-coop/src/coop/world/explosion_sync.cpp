@@ -97,7 +97,6 @@ bool AllFinite(const float* v, int n) {
 bool InRange(float v, float lo, float hi) { return v >= lo && v <= hi; }
 
 constexpr float kMaxRadius = 100000.f;
-constexpr float kMaxShake  = 1.0e6f;
 constexpr float kMaxForce  = 1.0e8f;
 constexpr float kMaxDamage = 1.0e30f;
 constexpr float kMaxFire   = 1.0e6f;
@@ -216,14 +215,11 @@ SG::Verdict OnCapturePre(const SG::Call& c) {
     }
     p.classId = static_cast<uint8_t>(classId);
     p.flags = static_cast<uint8_t>((params.ignoreWalls ? 1u : 0u) | (params.skipSetting ? 2u : 0u));
-    p.objType = static_cast<uint8_t>(params.objType < 0 ? 0 : (params.objType > 255 ? 255 : params.objType));
     p.damage = params.damage;
     p.radius = params.radius;
     p.force = params.force;
     p.fireStrength = params.fireStrength;
     p.fireFuel = params.fireFuel;
-    p.innerShake = params.innerShake;
-    p.outerShake = params.outerShake;
     // The actor the blast must not hurt: an element by its id, else a server box by its list index.
     if (void* ignore = X::FirstIgnore(c.object)) {
         const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(ignore);
@@ -364,7 +360,7 @@ bool OnSpawnReceived(const uint8_t* data, size_t len) {
     }
     if (!AllFinite(p.loc, 3) || !AllFinite(p.rot, 3) || !AllFinite(p.scale, 3) || !std::isfinite(p.damage) ||
         !std::isfinite(p.radius) || !std::isfinite(p.force) || !std::isfinite(p.fireStrength) ||
-        !std::isfinite(p.fireFuel) || !std::isfinite(p.innerShake) || !std::isfinite(p.outerShake)) {
+        !std::isfinite(p.fireFuel)) {
         Drop(DropReason::NonFinite, "receive");
         return false;
     }
@@ -381,8 +377,7 @@ bool OnSpawnReceived(const uint8_t* data, size_t len) {
             return false;
         }
     }
-    if (!InRange(p.radius, 0.f, kMaxRadius) || !InRange(p.innerShake, 0.f, kMaxShake) ||
-        !InRange(p.outerShake, 0.f, kMaxShake) || !InRange(p.force, -kMaxForce, kMaxForce) ||
+    if (!InRange(p.radius, 0.f, kMaxRadius) || !InRange(p.force, -kMaxForce, kMaxForce) ||
         !InRange(p.damage, 0.f, kMaxDamage) || !InRange(p.fireStrength, 0.f, kMaxFire) ||
         !InRange(p.fireFuel, 0.f, kMaxFire)) {
         Drop(DropReason::Range, "receive");
@@ -401,8 +396,8 @@ void Apply(const coop::net::ExplosionSpawnPayload& p) {
     if (!coop::explosion_parking::Live()) return Drop(DropReason::Parking, "apply");
     const X::Cls cls = static_cast<X::Cls>(p.classId);
     if (!X::ResolveNow(cls)) return Drop(DropReason::Class, "apply");
-    const X::Params params{p.damage, p.radius, p.force, p.fireStrength, p.fireFuel, p.innerShake, p.outerShake,
-                           static_cast<int32_t>(p.objType), (p.flags & 1u) != 0, (p.flags & 2u) != 0};
+    const X::Params params{p.damage, p.radius, p.force, p.fireStrength, p.fireFuel, (p.flags & 1u) != 0,
+                           (p.flags & 2u) != 0};
     void* actor = nullptr;
     {
         LaneSpawnScope scope;  // the birth seam leaves the lane's own spawn alone

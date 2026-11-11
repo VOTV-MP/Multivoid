@@ -1,6 +1,6 @@
 // coop/interactables/notebook_sync.h -- a notebook's page text across peers.
 //
-// The page text is the notebook's own save record (`text`, read by getData, written by loadData), which
+// The page text is the notebook's own save record (`text`, in the stream betterGetData writes and betterLoadData reads), which
 // already crosses on the prop record lane (coop/props/prop_save_data). This module adds the editor:
 //   - one editor at a time: ui_notebook_C open on a notebook holds the notebook's occupancy claim;
 //   - what the editor wrote reaches the record: the editing peer publishes at the editor's close and, while it

@@ -6,6 +6,7 @@
 
 #include "coop/props/prop_save_data.h"
 #include "coop/props/trash_collect_sync.h"
+#include "coop/props/wire_class.h"  // the class name and its content path on the wire
 
 #include "coop/dev/spawn_order_probe.h"  // the client load-spawn coverage probe
 #include "coop/props/save_identity_bind.h"     // the client eid bind
@@ -326,9 +327,7 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     PT::MarkPropElement(heldActor, keyStr, cls, PT::EnrollSource::kExpressSeam);
 
     coop::net::PropSpawnPayload p{};
-    p.className.len = 0;
-    for (size_t i = 0; i < cls.size() && i < 63; ++i)
-        p.className.data[p.className.len++] = static_cast<char>(cls[i]);
+    coop::wire_class::FillFromClass(p.className, cls, R::ClassOf(heldActor));
     p.key.len = 0;
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i)
         p.key.data[p.key.len++] = static_cast<char>(keyStr[i]);

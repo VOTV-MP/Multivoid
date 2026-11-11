@@ -442,20 +442,20 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     // peer re-enables physics without waiting for the 500 ms stream-stop timeout.
     ue_wrap::engine::MainPlayerGrabState gs{};
     void* heldActor = nullptr;
-    void* hotbarProp = nullptr;  // holding_actor when it is the HAND item (Aprop_C)
+    void* hotbarProp = nullptr;  // holdingActor_main when it is the HAND item (Aprop_C)
     if (ue_wrap::engine::ReadMainPlayerGrabState(local, gs)) {
         heldActor = gs.grabbingActor;
-        // grabbing_actor is the physics-handle grab and comes first; holding_actor is the
+        // grabbing_actor is the physics-handle grab and comes first; holdingActor_main is the
         // fallback, gated on IsKeyedInteractable since it can point at other carry targets. An
-        // Aprop_C in holding_actor is the hotbar hand item, player expression rather than a world
-        // entity (updateHold respawns it per switch), and goes to coop::hand_item; only the trash
+        // Aprop_C in holdingActor_main is the hotbar hand item, player expression rather than a world
+        // entity (better_holdItem_mainhand respawns it per switch), and goes to coop::hand_item; only the trash
         // lineage stays here.
-        if (gs.holdingActor && R::IsLive(gs.holdingActor) &&
-            ue_wrap::prop::IsKeyedInteractable(gs.holdingActor)) {
-            if (ue_wrap::prop::IsDescendantOfProp(gs.holdingActor))
-                hotbarProp = gs.holdingActor;
+        if (gs.mainHand && R::IsLive(gs.mainHand) &&
+            ue_wrap::prop::IsKeyedInteractable(gs.mainHand)) {
+            if (ue_wrap::prop::IsDescendantOfProp(gs.mainHand))
+                hotbarProp = gs.mainHand;
             else if (!heldActor)
-                heldActor = gs.holdingActor;
+                heldActor = gs.mainHand;
         }
     }
     // The hand-item axis: the owner announces a change, the peers maintain their mirrors; both idle
@@ -475,15 +475,15 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     // zero-key poses the receivers drop.
     if (heldActor && ue_wrap::atv::IsAtv(heldActor)) heldActor = nullptr;
     // The garbage-pickup probe (ini garbage_pickup_probe=1): which of grabbing_actor and
-    // holding_actor a clump pickup sets, plus the held class, key and keyed verdict; while
+    // holdingActor_main a clump pickup sets, plus the held class, key and keyed verdict; while
     // something is held, about 4 Hz; one bool load when off.
     static const bool sProbeGarbage =
         ::coop::config::ResolveFlag(::coop::config_registry::rows::garbage_pickup_probe);
-    if (sProbeGarbage && (gs.grabbingActor || gs.holdingActor)) {
+    if (sProbeGarbage && (gs.grabbingActor || gs.mainHand)) {
         static uint32_t sN = 0;
         if ((sN++ % 30) == 0) {
             void* ga = gs.grabbingActor;
-            void* ha = gs.holdingActor;
+            void* ha = gs.mainHand;
             const bool gaLive = ga && R::IsLive(ga);
             const bool haLive = ha && R::IsLive(ha);
             const int haKeyed =
@@ -492,7 +492,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 ? ue_wrap::prop::GetInteractableKeyString(ha)
                 : std::wstring(L"-");
             UE_LOGI("[probe garbage_pickup]: grabbing_actor=%p(%ls) "
-                    "holding_actor=%p(%ls) holdingKeyed=%d holdingKey='%ls'",
+                    "holdingActor_main=%p(%ls) holdingKeyed=%d holdingKey='%ls'",
                     ga, gaLive ? R::ClassNameOf(ga).c_str() : L"-",
                     ha, haLive ? R::ClassNameOf(ha).c_str() : L"-",
                     haKeyed, hKey.c_str());
@@ -667,9 +667,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         if (g_heldSwinger) FeedSwingerParent(heldActor);
         g_coasting = false;  // a re-grab of the coasting door ends the coast; the next one starts afresh
     } else if (g_lastHeldProp.Raw()) {
-        // The carry latch owns "carrying", not the flickering holding_actor: a churn re-pile
+        // The carry latch owns "carrying", not the flickering holdingActor_main: a churn re-pile
         // destroys the held clump and the field is empty for a frame, and the held-puppet
-        // recreation (updateHold rebuilds holding_actor) does the same, so this edge would clear
+        // recreation (better_holdItem_mainhand rebuilds holdingActor_main) does the same, so this edge would clear
         // the cached eid and send a spurious PropRelease, churning the context until the client
         // held every carry pose and froze. No IsLive on the just-destroyed clump.
         const bool carrying_ = coop::trash_channel::IsCarrying(g_lastHeldEid);

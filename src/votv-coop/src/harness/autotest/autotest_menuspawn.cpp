@@ -13,6 +13,7 @@
 // measurement -- it gains one only if the client's birth crossed.
 
 #include "harness/autotest.h"
+#include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"          // ReadEnv -- the early arm's switch
 #include "coop/player/players_registry.h"
@@ -45,6 +46,10 @@ namespace GT = ue_wrap::game_thread;
 // a prop that -- before the fix -- never arrives. A negative result IS the measurement, so the
 // wait has to end by itself; it is reported with the verdict rather than left to the rig's budget.
 constexpr int kCrossCeilingMs = 20000;
+// The catalog (propProcessor.propsNames) and the menu widget are filled by the game's own startup, which on 0.10 ends
+// with the volume and icon tables about 2.5 minutes after a world loads (the game prints "Icons finished and saved",
+// "Render finished", "Cleanup" just before); the drill waited 20 s and ended "never became readable" on every run.
+constexpr int kCatalogCeilingMs = 240000;
 // The host's wait for somebody to measure: a seated peer. Long, because it covers the client's
 // whole boot, download and world load, and it is the rig that kills a peer that never arrives.
 constexpr int kPeerCeilingMs = 300000;
@@ -203,6 +208,11 @@ void RunMenuSpawnDrill() {
     const bool isClient = IsClientRole();
     const char* role = isClient ? "client" : "host";
     UE_LOGI("menuspawn: drill start (%s, waiting for this peer to be ready)", role);
+    // The host's crossing window starts when the client has driven the menu, not when the client's puppet appears: a client's
+    // join and world load take longer than the window, and the host's 20 s ran out first (drill-menuspawn_m1-host.log: DONE
+    // spawned=0 at 13:25:07, the client still loading). The peers order themselves by the rig's shared folder when it is set.
+    namespace PS = harness::autotest::peer_signal;
+    const bool signals = !coop::config::ReadEnv("VOTVCOOP_CAN_DIR").empty() && PS::Begin("menuspawn");
     for (int waited = 0;; waited += 250) {
         bool ready = false;
         OnGameThread([&ready] { ready = PeerIsReady(); });
@@ -243,7 +253,7 @@ void RunMenuSpawnDrill() {
             CollectRowActors(row, before);
         });
         if (!rowText.empty()) break;
-        if (waited >= kCrossCeilingMs) {
+        if (waited >= kCatalogCeilingMs) {
             UE_LOGW("menuspawn: DONE role=%s row='' spawned=0 crossed=0 key='' waited=%ds "
                     "-- the catalog or the spawn-menu widget never became readable", role,
                     waited / 1000);
@@ -342,6 +352,8 @@ void RunMenuSpawnDrill() {
     // either way. The client already knows -- it made the thing -- and re-scanning on the client
     // would answer with whichever new actor of the row it met first, which after the negative arm
     // is the replaceProp birth rather than the menu's, and report a key the host never saw.
+    if (isClient && signals) PS::Mark("menuspawn_driven");
+    if (!isClient && signals) PS::Await("menuspawn_driven", kPeerCeilingMs / 1000);
     int waitedMs = 0;
     bool crossed = isClient && spawned;
     std::wstring crossedKey = spawnedKey;

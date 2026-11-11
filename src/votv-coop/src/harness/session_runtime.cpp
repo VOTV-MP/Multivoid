@@ -47,9 +47,11 @@
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/net/stream_slot.h"
+#include "coop/net/wire_class_path.h"
 #include "coop/net/apply_pause.h"
 #include "coop/permissions/permission_host.h"
 #include "coop/permissions/permissions_selftest.h"
+#include "coop/items/inventory_wire.h"
 #include "coop/player/hand_history.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/player_profile_store.h"
@@ -262,6 +264,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the deferred-destroy table's retire rule: a destroy naming an element leaves with a spawn of
     // that element only, a key-only destroy with a spawn of its key, a None or empty key with nothing.
     coop::element::quiescence_drain::RunDestroyDeferSelftest();
+    // And the class content path a wire name carries in its spare bytes: the round trips, the whole-package form, a path
+    // that does not fit, an old peer's name and the hostile bytes that must read as no path.
+    coop::net::wire_class_path::RunSelftest();
     // And a client's chat rate, Source's two tiers: the interval, a burst's debt, the slowed refill, tier 2's long run
     // and both floors, each row from a stated state -- arithmetic no honest run reaches.
     coop::chat_rate::RunChatRateSelftest();
@@ -283,6 +288,9 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the per-slot hand history: a ring that forgets a held class early, or keeps one forever,
     // answers "held it within N ms" wrongly in both directions, and no honest run notices.
     coop::hand_history::RunSelftest();
+    // And the player profile blob: the deflated envelope, the version-4 read an old profile file needs, a hostile length
+    // refused before it allocates, and the parts a profile past one transport blob travels as.
+    coop::inventory_wire::RunSelftest();
     // And the explosion recipes: a source whose numbers are off, or a pill level left unclamped, blasts
     // with parameters its Blueprint never uses, and no honest run notices.
     coop::explosion_recipe::RunSelftest();

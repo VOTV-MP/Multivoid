@@ -93,7 +93,7 @@ public:
 
 private:
     void* puppet_ = nullptr;
-    void* previous_ = nullptr;  // the puppet's holding_actor before the write
+    void* previous_ = nullptr;  // the puppet's holdingActor_main before the write
     bool wrote_ = false;
     bool ok_ = false;
     bool closed_ = false;

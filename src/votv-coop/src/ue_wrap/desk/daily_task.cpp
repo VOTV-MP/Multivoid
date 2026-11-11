@@ -31,16 +31,19 @@ struct TArrayRaw {
     int32_t max;
 };
 
-int32_t g_offTaskNew = -1;  // saveSlot_C::taskNew (reflected; fallback 0x0CA8)
+int32_t g_offTaskNew = -1;  // saveSlot_C::taskNew, read from the class by name
+bool g_taskNewMissing = false;  // the class lacks it: said once, then every call declines
 
 uint8_t* TaskNewBase() {
     void* save = ue_wrap::economy::SaveSlotPtr();
-    if (!save) return nullptr;
+    if (!save || g_taskNewMissing) return nullptr;
     if (g_offTaskNew < 0) {
         g_offTaskNew = R::FindPropertyOffset(R::ClassOf(save), L"taskNew");
         if (g_offTaskNew < 0) {
-            UE_LOGW("daily_task: taskNew offset not found -- using fallback 0x0CA8");
-            g_offTaskNew = 0x0CA8;
+            // Not guessed at: a write at a stale offset lands in whatever the save slot keeps there now.
+            g_taskNewMissing = true;
+            UE_LOGE("daily_task: 'taskNew' not found by name -- the daily task stays unsynced");
+            return nullptr;
         }
     }
     return reinterpret_cast<uint8_t*>(save) + g_offTaskNew;
@@ -107,7 +110,7 @@ bool WriteArray(Which which, const int32_t* vals, int32_t count) {
         return true;
     }
     // Length changed (a fresh rollover mints new arrays): rebuild the engine
-    // allocation (int32 POD; the inventory.cpp ApplyToSaveObject precedent).
+    // allocation (int32 POD, minted and freed through the engine's allocator as player_record's MintBytes does).
     void* buf = nullptr;
     if (count > 0) {
         buf = R::EngineAlloc(sizeof(int32_t) * static_cast<size_t>(count));

@@ -1,7 +1,7 @@
-// ue_wrap/actors/food.h -- a food's live condition: temperature, ripeness and use count.
+// ue_wrap/actors/food.h -- a food's live condition: temperature, freshness and use count.
 //
-// These live on the actor and its tick moves them. Reads and writes go straight to the fields, never through loadData,
-// which reads the capturing peer's clock stamp as elapsed time. Engine-wrapper layer: no network. Game thread.
+// These live on the actor and its tick moves them. Reads and writes go straight to the fields, never through
+// betterLoadData, which ages the food by the saved clock stamp. Engine-wrapper layer: no network. Game thread.
 
 #pragma once
 
@@ -10,9 +10,11 @@
 namespace ue_wrap::food {
 
 struct Condition {
-    float   temperature = 0.f;  // kelvin
-    float   ripeness = 0.f;
-    int32_t uses = 0;
+    float   temperature = 0.f;      // kelvin
+    float   freshness = 0.f;        // freshnessAlpha: the fraction of the current freshness stage left
+    int32_t freshnessSteps = 0;     // invRead_Freshness: the stages left; the food spoils when the last is spent
+    int32_t uses = 0;               // invRead_Uses
+    bool    spoiled = false;        // isSpoiled, written through the food's own setSpoiled
 };
 
 // True for prop_food_C and every class below it; the answer is kept per class.

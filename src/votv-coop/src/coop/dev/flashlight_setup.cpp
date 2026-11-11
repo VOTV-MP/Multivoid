@@ -3,12 +3,13 @@
 
 #include "coop/dev/flashlight_setup.h"
 
+#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <cstdint>
 
@@ -20,12 +21,6 @@ namespace R = ue_wrap::reflection;
 
 // Cached reflection state (resolved on first call, then constant).
 struct Cache {
-    ue_wrap::CachedObjRef mainGameInstance;  // UmainGameInstance_C*
-    int32_t saveGameInstOff = -1;       // mainGameInstance_C::save_gameInst
-    void* saveSlotClass = nullptr;
-    int32_t batteryOff = -1;            // saveSlot.battery (float)
-    int32_t flashlightBatteryOff = -1;  // saveSlot.flashlightBattery (TSubclassOf<Aprop_batts_C>)
-    void* battsClass = nullptr;         // UClass* for prop_batts_C
     void* flashlightClass = nullptr;    // UClass* for prop_equipment_flashlight_C
     R::FName flashlightClassName{0, 0}; // FName of that UClass (= "prop_equipment_flashlight_C")
     void* mainPlayerClass = nullptr;
@@ -36,48 +31,6 @@ Cache g_cache;
 bool EnsureReflectionResolved(void* mainPlayer) {
     if (!mainPlayer) return false;
 
-    if (g_cache.mainGameInstance.Raw() && !g_cache.mainGameInstance.Alive())
-        g_cache.mainGameInstance.Reset();
-    if (!g_cache.mainGameInstance.Raw()) {
-        g_cache.mainGameInstance.Set(R::FindObjectByClass(P::name::GameInstanceClass));
-        if (!g_cache.mainGameInstance.Raw()) {
-            UE_LOGW("flashlight_setup: mainGameInstance_C not yet alive");
-            return false;
-        }
-    }
-    if (g_cache.saveGameInstOff < 0) {
-        void* giClass = R::ClassOf(g_cache.mainGameInstance.Raw());
-        if (giClass) g_cache.saveGameInstOff = R::FindPropertyOffset(giClass, L"save_gameInst");
-        if (g_cache.saveGameInstOff < 0) {
-            UE_LOGW("flashlight_setup: save_gameInst offset not found on mainGameInstance");
-            return false;
-        }
-    }
-    if (!g_cache.saveSlotClass) {
-        g_cache.saveSlotClass = R::FindClass(P::name::SaveSlotClass);
-        if (!g_cache.saveSlotClass) {
-            UE_LOGW("flashlight_setup: saveSlot_C class not yet alive");
-            return false;
-        }
-    }
-    if (g_cache.batteryOff < 0)
-        g_cache.batteryOff = R::FindPropertyOffset(g_cache.saveSlotClass, L"battery");
-    if (g_cache.flashlightBatteryOff < 0)
-        g_cache.flashlightBatteryOff =
-            R::FindPropertyOffset(g_cache.saveSlotClass, L"flashlightBattery");
-    if (g_cache.batteryOff < 0 || g_cache.flashlightBatteryOff < 0) {
-        UE_LOGW("flashlight_setup: saveSlot offsets unresolved "
-                "(battery=%d flashlightBattery=%d)",
-                g_cache.batteryOff, g_cache.flashlightBatteryOff);
-        return false;
-    }
-    if (!g_cache.battsClass) {
-        g_cache.battsClass = R::FindClass(P::name::BattsClass);
-        if (!g_cache.battsClass) {
-            UE_LOGW("flashlight_setup: prop_batts_C class not yet alive");
-            return false;
-        }
-    }
     if (!g_cache.flashlightClass) {
         g_cache.flashlightClass = R::FindClass(P::name::FlashlightEquipmentClass);
         if (!g_cache.flashlightClass) {
@@ -103,12 +56,6 @@ bool EnsureReflectionResolved(void* mainPlayer) {
     return true;
 }
 
-void* GetLiveSaveSlot() {
-    if (!g_cache.mainGameInstance.Raw() || g_cache.saveGameInstOff < 0) return nullptr;
-    return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(g_cache.mainGameInstance.Raw()) + g_cache.saveGameInstOff);
-}
-
 }  // namespace
 
 bool GiveFlashlight(void* mainPlayer) {
@@ -129,74 +76,38 @@ bool GiveFlashlight(void* mainPlayer) {
 
 bool SetBatteryFull(void* mainPlayer) {
     if (!EnsureReflectionResolved(mainPlayer)) return false;
-    void* slot = GetLiveSaveSlot();
-    if (!slot) {
-        UE_LOGW("flashlight_setup: SetBatteryFull: saveSlot null (save not loaded yet)");
-        return false;
-    }
-    auto* slotBytes = reinterpret_cast<uint8_t*>(slot);
-    const float prevBattery = *reinterpret_cast<float*>(slotBytes + g_cache.batteryOff);
-    void* prevBatteryClass = *reinterpret_cast<void**>(
-        slotBytes + g_cache.flashlightBatteryOff);
-
-    // VOTV's battery scale is 0-100 (a percentage), NOT 0-1 -- a fresh save reads about 98.7. 100.0
-    // is a full charge; a 1.0 default would set it to 1%.
-    *reinterpret_cast<float*>(slotBytes + g_cache.batteryOff) = 100.f;
-    *reinterpret_cast<void**>(slotBytes + g_cache.flashlightBatteryOff) = g_cache.battsClass;
-
-    UE_LOGI("flashlight_setup: SetBatteryFull: saveSlot=%p battery %.2f->100.00 "
-            "flashlightBattery %p->%p (prop_batts_C)",
-            slot, prevBattery, prevBatteryClass, g_cache.battsClass);
-    return true;
+    // VOTV's battery scale is 0-100 (a percentage), NOT 0-1. The charge is the worn flashlight's own `battery`,
+    // inside its inventory entry, which ticker_playerFlashlight drains.
+    const bool ok = ue_wrap::inventory::WriteWornItemProperty(P::name::FlashlightEquipmentClass, L"battery", L"100");
+    UE_LOGI("flashlight_setup: SetBatteryFull: the worn flashlight's battery -> 100 (%s)",
+            ok ? "written" : "NOT written: no flashlight worn, or the write failed");
+    return ok;
 }
 
 bool EnsureFlashlightReady(void* mainPlayer) {
     if (!EnsureReflectionResolved(mainPlayer)) return false;
 
-    // Read current state: hasFlashlight + saveSlot.battery + flashlightBattery.
-    const bool hadFlashlight = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(mainPlayer) + P::off::AmainPlayer_hasFlashlight);
-    const bool crankFlashlight = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(mainPlayer) + P::off::AmainPlayer_crankFlashlight);
+    ue_wrap::engine::MainPlayerFlashlightState fl{};
+    ue_wrap::engine::ReadMainPlayerFlashlightState(mainPlayer, fl);
+    const bool hadFlashlight = fl.equippedFlashlight;
+    UE_LOGI("flashlight_setup: pre-state: equipped_flashlight=%d", hadFlashlight ? 1 : 0);
 
-    void* slot = GetLiveSaveSlot();
-    float battery = -1.f;
-    void* batteryClass = nullptr;
-    if (slot) {
-        battery = *reinterpret_cast<float*>(
-            reinterpret_cast<uint8_t*>(slot) + g_cache.batteryOff);
-        batteryClass = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(slot) + g_cache.flashlightBatteryOff);
-    }
-    UE_LOGI("flashlight_setup: pre-state: hasFlashlight=%d crank=%d battery=%.2f "
-            "batteryClass=%p saveSlot=%p",
-            hadFlashlight ? 1 : 0, crankFlashlight ? 1 : 0, battery, batteryClass, slot);
-
-    // Give the flashlight if missing. addPropToPlayer is idempotent in
-    // intent (cheat menu calls it freely) but may stack duplicates --
-    // skip the call if hasFlashlight is already true so we don't
-    // accumulate items.
+    // Give the flashlight if missing. addPropToPlayer may stack duplicates, so it is skipped while
+    // equipped_flashlight is already true.
     if (!hadFlashlight) {
         GiveFlashlight(mainPlayer);
     } else {
-        UE_LOGI("flashlight_setup: hasFlashlight already true -- skipping GiveFlashlight");
+        UE_LOGI("flashlight_setup: equipped_flashlight already true -- skipping GiveFlashlight");
     }
 
-    // Always top off the battery -- save may have a discharged one.
-    SetBatteryFull(mainPlayer);
+    // Always top off the battery -- the save may have a discharged one.
+    const bool charged = SetBatteryFull(mainPlayer);
 
-    // Re-read for post-state log.
-    const bool nowHasFlashlight = *reinterpret_cast<bool*>(
-        reinterpret_cast<uint8_t*>(mainPlayer) + P::off::AmainPlayer_hasFlashlight);
-    float nowBattery = -1.f;
-    if (slot) {
-        nowBattery = *reinterpret_cast<float*>(
-            reinterpret_cast<uint8_t*>(slot) + g_cache.batteryOff);
-    }
-    UE_LOGI("flashlight_setup: post-state: hasFlashlight=%d battery=%.2f -- ready=%d",
-            nowHasFlashlight ? 1 : 0, nowBattery,
-            (nowHasFlashlight && nowBattery > 1.f) ? 1 : 0);
-    return nowHasFlashlight && nowBattery > 1.f;
+    ue_wrap::engine::ReadMainPlayerFlashlightState(mainPlayer, fl);
+    const bool nowHasFlashlight = fl.equippedFlashlight;
+    UE_LOGI("flashlight_setup: post-state: equipped_flashlight=%d charged=%d -- ready=%d",
+            nowHasFlashlight ? 1 : 0, charged ? 1 : 0, (nowHasFlashlight && charged) ? 1 : 0);
+    return nowHasFlashlight && charged;
 }
 
 }  // namespace coop::dev::flashlight_setup

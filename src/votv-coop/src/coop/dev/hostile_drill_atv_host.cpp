@@ -262,6 +262,15 @@ void Judge(coop::net::Session* s, Arm a) {
     if (coop::roster_ledger::Get(kSlot).playerNo != g.playerNo)
         return Finish(a, "INCONCLUSIVE", "slot-replaced (the judged slot's occupant changed)");
     const Account acc = Judged(ph.expect, Take());
+    // A phase that needs the host seated judges nothing once the seat is gone: the game can throw the host out of the
+    // ATV (a ragdoll from the spawn's landing was measured), and a takeover of an empty seat is then rightly
+    // admitted. That is a rig loss, not a hole: the verdict is INCONCLUSIVE (the table is read as it stands).
+    if (ph.prep.hostSits && g.sat && (!acc.over.empty() || !acc.under.empty())) {
+        TableView t;
+        if (!coop::atv_sync::ReadTable(g.key[0], t) || t.occupantSlot != 0)
+            return Finish(a, "INCONCLUSIVE", "the host's seat was lost before the verdict (the game ejected the host): "
+                                             "the takeovers met an empty seat");
+    }
     const std::string head = "phase " + std::to_string(g.phase) + " of " + std::to_string(PhaseCount(a)) + ":";
     if (!acc.over.empty())
         return Finish(a, "FAIL", head + " more than the table:" + acc.over + (acc.under.empty() ? "" : " short:" + acc.under));

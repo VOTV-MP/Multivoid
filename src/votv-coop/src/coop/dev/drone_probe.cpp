@@ -8,6 +8,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/drone.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <array>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace coop::dev::drone_probe {
 namespace {
@@ -72,8 +74,7 @@ UE_FACT_FN(kRowIsButtonUsedDroneConsole, "dev.drone_probe", L"droneConsole_C", L
 UE_FACT_FN(kRowSpawnOrderOrderPlace, "dev.drone_probe", L"orderPlace_C", L"spawnOrder", Dispatch);
 UE_FACT_FN(kRowInitOrderbox, "dev.drone_probe", L"prop_container_orderbox_C", L"Init", Dispatch);
 UE_FACT_FN(kRowInitGiftbox, "dev.drone_probe", L"prop_container_giftbox_C", L"Init", Dispatch);
-UE_FACT_FN(kRowReceiveBeginPlayItembox, "dev.drone_probe", L"prop_inventoryContainer_drone_C", L"ReceiveBeginPlay",
-           Dispatch);
+UE_FACT_FN(kRowReceiveDestroyedDroneSack, "dev.drone_probe", L"prop_dronesack_C", L"ReceiveDestroyed", Dispatch);
 UE_FACT_FN(kRowSendDriveBoxDaynight, "dev.drone_probe", L"daynightCycle_C", L"sendDriveBox", Dispatch);
 UE_FACT_FN(kRowMakeDefaultOrderDaynight, "dev.drone_probe", L"daynightCycle_C", L"Make Default Order", Dispatch);
 UE_FACT_FN(kRowCreateNewTaskDaynight, "dev.drone_probe", L"daynightCycle_C", L"createNewTask", Dispatch);
@@ -126,7 +127,7 @@ T ReadAt(void* obj, int32_t off) {
 
 // Transition tracking (so we log on CHANGE, not every tick).
 int g_lastActive = -2, g_lastHasOrder = -2, g_lastHasSack = -2, g_lastFlyingType = -2, g_lastPickedUp = -2;
-int g_lastOrdersNum = -2;   // saveSlot.orders.Num edge tracking (the economy signal -- see Tick)
+int g_lastOrdersNum = -2;   // save_slot.orders.Num edge tracking (the economy signal -- see Tick)
 bool g_dronePresenceLogged = false;
 bool g_droneAbsenceLogged  = false;
 int  g_radarLast = -2;
@@ -153,7 +154,7 @@ constexpr uint64_t kCpfOutOrReturn  = 0x100u | 0x400u;  // CPF_OutParm | CPF_Ret
 // Build a default order via daynightCycle "Make Default Order" (a no-input, pure-default builder
 // that fills 6-8 real Aprop_C line items). Copies the 0x18 struct into `out`; the inner items
 // TArray points at engine-allocated heap we intentionally leak for this one-shot (makeAnOrder/
-// addOrderCart deep-copy the struct into saveSlot.orders). False if unresolved.
+// addOrderCart deep-copy the struct into save_slot.orders). False if unresolved.
 bool BuildDefaultOrder(void* gm, void* gmCls, uint8_t out[kOrderStructSize]) {
     const int32_t offDnc = Off(gmCls, L"daynightCycle");
     if (offDnc < 0) return false;
@@ -215,7 +216,7 @@ void TriggerHostDelivery(void* gm, void* gmCls, void* drone, void* dCls) {
             "Active/orders.Num++ now + cargo Init + DRAINED at arrival.", ok ? 1 : 0);
 }
 
-// CLIENT: commit one shop order (the only writer of saveSlot.orders), NO fly. Confirms [#7] (the
+// CLIENT: commit one shop order (the only writer of save_slot.orders), NO fly. Confirms [#7] (the
 // client shop path works + the order stays client-local -> the OrderRequest edge is needed).
 void PlaceClientOrder(void* gm, void* gmCls) {
     uint8_t order[kOrderStructSize];
@@ -229,7 +230,7 @@ void PlaceClientOrder(void* gm, void* gmCls) {
     if (!f.valid()) return;
     f.SetRaw(L"NewItem", order, kOrderStructSize);
     const bool ok = ue_wrap::Call(laptop, f);
-    UE_LOGI("[drone_probe] DRIVE(client): addOrderCart(default) ok=%d -- watch saveSlot.orders.Num++ "
+    UE_LOGI("[drone_probe] DRIVE(client): addOrderCart(default) ok=%d -- watch save_slot.orders.Num++ "
             "(ORDER PLACED [#7] = shop reachable + order is CLIENT-LOCAL).", ok ? 1 : 0);
 }
 
@@ -260,7 +261,7 @@ void Install() {
     RegisterOn(kRowSpawnOrderOrderPlace,      "orderPlace.spawnOrder", false);
     RegisterOn(kRowInitOrderbox,              "orderbox.Init",         false);
     RegisterOn(kRowInitGiftbox,               "giftbox.Init",          false);
-    RegisterOn(kRowReceiveBeginPlayItembox,   "itembox.BeginPlay",     false);
+    RegisterOn(kRowReceiveDestroyedDroneSack, "dronesack.Destroyed",   false);
     // Auto-drive schedule + gift injection ([#8],[#9]).
     RegisterOn(kRowSendDriveBoxDaynight,      "daynight.sendDriveBox",     false);
     RegisterOn(kRowMakeDefaultOrderDaynight,  "daynight.MakeDefaultOrder", false);
@@ -330,22 +331,22 @@ void Tick(bool connected, bool isHost) {
     }
 
     // Advance the throttle counter once per drone-present tick, NOT inside the save guard below: a
-    // transiently-null saveSlot would otherwise stall the SAVE-dump cadence.
+    // transiently-null save_slot would otherwise stall the SAVE-dump cadence.
     ++g_tickCounter;
 
     // ---- order queue: the load-bearing economy signal ([#6][#7]) -------------
     // The only persistent order write is ui_laptop.makeAnOrder -> addOrderCart -> orders.Add on the
     // LOCAL GameMode (VOTV has no UE replication), so a CLIENT's order is client-local and never
     // reaches the host. The drain is ui_laptop.removeOrderCart, which does orders.Remove(0). So
-    // poll saveSlot.orders.Num EVERY tick (two cheap derefs) and report the EDGE:
+    // poll save_slot.orders.Num EVERY tick (two cheap derefs) and report the EDGE:
     //   INCREMENT on a CLIENT = [#7] the laptop shop works AND the order stayed local -> confirms
     // the
     //                           OrderRequest client->host edge is required (+ dump order[0] so we
     // see
     //                           what an order carries / that the TSubclassOf `object` reads).
     //   DECREMENT             = a cart removal, the queue's only drain.
-    // droneOrder is dumped throttled below purely as a runtime cross-check.
-    const int32_t offSave = Off(gmCls, L"saveSlot");
+    // The drone's order and its cargo are dumped throttled below purely as a runtime cross-check.
+    const int32_t offSave = Off(gmCls, L"save_slot");
     void* save = offSave >= 0 ? ReadAt<void*>(gm, offSave) : nullptr;
     if (save && R::IsLive(save)) {
         void* sCls = R::ClassOf(save);
@@ -371,13 +372,13 @@ void Tick(bool connected, bool isHost) {
                                                                : std::wstring(L"<null/unresolved>");
                         }
                     }
-                    UE_LOGI("[drone_probe] ORDER PLACED [#7]: saveSlot.orders.Num %d->%d "
+                    UE_LOGI("[drone_probe] ORDER PLACED [#7]: save_slot.orders.Num %d->%d "
                             "(order[0]: items=%d obj0='%ls' time=%.1f). On a CLIENT this proves the shop "
                             "works + the order is CLIENT-LOCAL (host never sees it) -> OrderRequest needed; "
                             "obj0 readable confirms the TSubclassOf serializes for the wire.",
                             g_lastOrdersNum, ordersNum, itemsNum, objName.c_str(), etaTime);
                 } else {
-                    UE_LOGI("[drone_probe] ORDER QUEUE DRAINED: saveSlot.orders.Num %d->%d "
+                    UE_LOGI("[drone_probe] ORDER QUEUE DRAINED: save_slot.orders.Num %d->%d "
                             "(the drain point -- where the static RE lost the queue consume).",
                             g_lastOrdersNum, ordersNum);
                 }
@@ -385,16 +386,19 @@ void Tick(bool connected, bool isHost) {
             }
         }
 
-        // throttled economy cross-check (Points / dailyDelivery / droneOrder) -- ~ every 300 ticks.
+        // throttled economy cross-check (Points / dailyDelivery, the drone's order and its cargo) -- ~ every
+        // 300 ticks. The drone's order is its own field now, and the cargo its inventory component.
         if ((g_tickCounter % 300) == 0) {
-            const int32_t offActive = Off(sCls, L"droneOrder");  // Fstruct_storeOrder { items[]@0; time@0x10 }
+            const int32_t offActive = Off(dCls, L"order");  // Fstruct_storeOrder { items[]@0; time@0x10 }
             const int32_t offPoints = Off(sCls, L"Points");
             const int32_t offDaily  = Off(sCls, L"dailyDelivery");
-            const int activeItems = offActive >= 0 ? ReadAt<int32_t>(save, offActive + 8) : -1;
+            const int activeItems = offActive >= 0 ? ReadAt<int32_t>(drone, offActive + 8) : -1;
             const int points      = offPoints >= 0 ? ReadAt<int32_t>(save, offPoints)     : -1;
             const int daily       = offDaily  >= 0 ? (int)ReadAt<uint8_t>(save, offDaily) : -1;
-            UE_LOGI("[drone_probe] SAVE [#6]: orders.Num=%d droneOrder.items=%d Points=%d dailyDelivery=%d",
-                    g_lastOrdersNum, activeItems, points, daily);
+            std::vector<ue_wrap::drone::CargoItem> cargo;
+            const int cargoEntries = ue_wrap::drone::ReadCargo(drone, cargo, 4096) ? static_cast<int>(cargo.size()) : -1;
+            UE_LOGI("[drone_probe] SAVE [#6]: orders.Num=%d drone.order.items=%d cargo entries=%d Points=%d "
+                    "dailyDelivery=%d", g_lastOrdersNum, activeItems, cargoEntries, points, daily);
         }
     }
 

@@ -97,7 +97,7 @@ void Tick(coop::net::Session& s, void* localPlayer) {
         // a clump that died with a settle pending has re-piled and the commit will say so.
         if (!coop::trash_channel::IsCarrying(static_cast<coop::element::ElementId>(it->eid)) ||
             !R::IsLiveByIndex(it->clump, it->idx) ||
-            it->clump == hand.grabbingActor || it->clump == hand.holdingActor) {
+            it->clump == hand.grabbingActor || ue_wrap::engine::InEitherHand(hand, it->clump)) {
             ++g_ended;
             it = g_rolling.erase(it);
         } else {

@@ -1,10 +1,8 @@
 // coop/items/inventory_wire.h -- serialize the per-player profile <-> a byte blob.
 //
-// Turns coop::player_profile::Profile (items, vitals and pose, read off the live save object
-// and the pawn) into a self-contained, version-prefixed little-endian byte blob, and back. FNames and UClasses
-// are wired as STRINGS -- pointers are not portable -- and re-interned or FindClass'd on apply,
-// with the exact case preserved. The FTransform packs as 10 floats, and the 0x70 signal
-// sub-element reuses the coop/signal_wire serializer rather than a second one.
+// Turns coop::player_profile::Profile (the player's own save record, the vitals and the pose) into
+// a self-contained, version-prefixed little-endian byte blob, and back. The record is the game's
+// own stream and rides whole (deflated); the vitals' food names ride as strings.
 //
 // The blob is what coop/blob_chunks carries in chunks (client->host), what persists to
 // <mod data dir>/coop_players/<hostSlot>/<guid>.json, and what the join apply reads back.
@@ -15,36 +13,61 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace coop::inventory_wire {
 
-// Current blob format version (the first byte). Bump on any change of layout OR meaning.
-//   1 -- the inventory third was saveSlot.inventoryData, a save-side projection the game never
-//        reads back; equipment and hold were live data. Still parsed (same layout), so the host
-//        can lift a stored profile out of it; see Deserialize's `outVersion`.
-//   2 -- the inventory third became what the player carries (saveSlot.GObjStack[0]); three
-//        arrays and nothing else. Never released, and not parsed.
-//   3 -- the vitals (behind a present byte) and the pose follow the three arrays.
-inline constexpr uint8_t kVersion = 3;
-inline constexpr uint8_t kVersionProjection = 1;
+// Current blob format version (the first byte). Bump on any change of layout OR meaning. Version 5 is a u32 length and
+// then the DEFLATE of what version 4 held after its version byte: the player's own save record, then the vitals (behind a
+// present byte) and the pose. A full inventory's record is the game's tagged-property stream, one ~2.4 KB record per
+// item, which a profile blob of version 4 carried raw (13 crowbars already passed the 56100-byte transport ceiling); the
+// deflate takes it to ~50 bytes per item. Version 4 is still READ (a profile file of an earlier build); Serialize writes
+// it only when deflate fails. The versions before 4 held the save object's item arrays of a game build whose saves this
+// one does not load, and are not parsed.
+inline constexpr uint8_t kVersion      = 5;
+inline constexpr uint8_t kVersionPlain = 4;
+// What a body may claim to hold once inflated: the largest byte array the game's own record reader accepts.
+inline constexpr uint32_t kMaxBodyBytes = 64u * 1024u * 1024u;
 
-// Serialize `p` into a fresh blob (always succeeds; bounded by the inventory size).
+// Serialize `p` into a fresh blob (always succeeds; bounded by the record's size).
 std::vector<uint8_t> Serialize(const coop::player_profile::Profile& p);
 
-// The same blob in its two halves, for a caller that polls: the items change when the player
-// acts and the vitals every second, so the items half is built and hashed on its own, and the
-// state half is appended only when the blob is going to be sent.
-std::vector<uint8_t> SerializeItems(const ue_wrap::inventory::PlayerInventory& items);
-void AppendState(std::vector<uint8_t>& blob, const ue_wrap::vitals::Snapshot* vitals,
-                 const coop::player_profile::Pose& pose);  // null vitals = none were read
+// Parse `blob` back into `out` (cleared first). False on a truncated / malformed / unknown-version
+// blob (a corrupt or hostile blob must never over-read or over-allocate).
+bool Deserialize(const std::vector<uint8_t>& blob, coop::player_profile::Profile& out);
 
-// Parse `blob` back into `out` (cleared first). False on a truncated / malformed / unknown-
-// version blob (a corrupt or hostile blob must never over-read or over-allocate). With
-// `outVersion` null only kVersion parses; with it set, a kVersionProjection blob parses too and
-// the caller is told which it got -- its inventory third is then NOT what the player carried,
-// and it has no vitals and no pose (`out` keeps default ones).
-bool Deserialize(const std::vector<uint8_t>& blob, coop::player_profile::Profile& out,
-                 uint8_t* outVersion = nullptr);
+// ---- a blob past the transport ceiling: parts ----
+//
+// One transport blob is at most blob_chunks::MaxBlobBytes (255 chunks). A deflated profile past that (a bag of thousands
+// of the smallest items) travels as PARTS, each a transport blob of its own that begins with kPartMarker (a byte no
+// profile blob begins with), a u16 group, the part's index and the count, then the bytes of the profile blob it is a
+// slice of. SplitParts cuts; PartJoiner puts the parts of one group back together per sender, and passes a blob that is
+// not a part through unchanged, so every receiver feeds every completed transport blob through it.
+inline constexpr uint8_t kPartMarker = 0xF5;
+inline constexpr size_t  kPartHeader = 5;   // marker, u16 group, index, count
+inline constexpr size_t  kMaxParts   = 24;
+
+// `blob` cut into parts of at most `maxPart` bytes each (header included), or none at all when that takes more than
+// kMaxParts. A blob that fits `maxPart` is returned as it is, as the one element.
+std::vector<std::vector<uint8_t>> SplitParts(const std::vector<uint8_t>& blob, size_t maxPart, uint16_t group);
+
+class PartJoiner {
+public:
+    // Feed one completed transport blob from `slot`. True when `out` is a whole profile blob: `blob` itself when it is
+    // not a part, else the join of the group's parts when this one was the last. A part out of order, of another group
+    // or malformed drops the group in progress and is refused (a group restarts at its first part).
+    bool Feed(uint8_t slot, std::vector<uint8_t>& blob, std::vector<uint8_t>& out);
+    void Clear() { slots_.clear(); }
+    void ClearSlot(uint8_t slot);
+
+private:
+    struct Group { uint16_t id = 0; uint8_t count = 0, got = 0; std::vector<uint8_t> bytes; };
+    std::vector<std::pair<uint8_t, Group>> slots_;
+};
+
+// The un-gated selftest (coop/items/inventory_wire_selftest.cpp), once per process: the envelope round-trips, a version 4
+// blob still reads, a hostile length is refused, and parts join byte for byte.
+bool RunSelftest();
 
 }  // namespace coop::inventory_wire

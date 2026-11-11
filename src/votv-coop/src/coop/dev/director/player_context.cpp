@@ -26,7 +26,7 @@ bool PlayerContext::Refresh() {
     possessed = true;
     if (!E::TryGetActorLocation(p, pos)) { posUnread = true; return false; }
     E::MainPlayerGrabState gs{};
-    if (E::ReadMainPlayerGrabState(p, gs)) { held = gs.grabbingActor; holding = gs.holdingActor; }
+    if (E::ReadMainPlayerGrabState(p, gs)) { held = gs.grabbingActor; holding = gs.mainHand; }
     if (g_dropPlaceOff == -2) {
         void* cls = R::FindClass(P::name::MainPlayerClass);
         g_dropPlaceOff = cls ? R::FindPropertyOffset(cls, L"drop_place") : -1;

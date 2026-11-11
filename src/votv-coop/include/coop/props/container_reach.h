@@ -32,9 +32,10 @@ struct ReachResult {
     float                        reachUU;
 };
 
-// Judge the author's reach of the prop `eid`. A container's contents are mutated through the player's
+// Judge the author's reach of the prop `eid`, or of the delivery drone for the drone cargo's target id
+// (container_target::kDroneCargoEid), or of the ATV for a trunk's target id (container_target::IsAtvTrunk). A container's contents are mutated through the player's
 // own look-at trace, so an author that is neither at the container nor at an actor that opens it (the
-// drone, its sack, the ATV) did not run the verb it is reporting. Logs, once per container and author,
+// ATV) did not run the verb it is reporting. Logs, once per container and author,
 // the first time an author reaches it through an opener.
 ReachResult Judge(coop::net::Session& session, uint8_t authorSlot, uint32_t eid);
 

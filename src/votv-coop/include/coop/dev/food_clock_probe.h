@@ -1,36 +1,24 @@
-// coop/dev/food_clock_probe.h -- what a food's save record does to its own state on arrival.
+// coop/dev/food_clock_probe.h -- whether the food family stays off the prop-record lane.
 //
-// Aprop_food_C::loadData does not simply restore temperature and ripeness: it runs a CATCH-UP
-// against a timestamp the sender wrote with its own UGameplayStatics::GetTimeSeconds, and both
-// branches compute `my GetTimeSeconds() - the sender's`. Two peers' worlds start at different
-// moments, so that difference is not the elapsed time it is read as.
-//
-// The post-apply read is the actor's own getData called again, so the numbers and the receiver's
-// clock both come from the game's codec rather than a field offset kept here. It costs one extra
-// dispatch per applied record, over the two the lane's apply budget is sized for.
-//
-// The publish and apply seams sit BEHIND the lane's class gate, and the food family is claimed off
-// that lane, so on a shipping build they never fire: what this reads there is the gate's REFUSALS,
-// which is the claim measured rather than inferred from silence.
+// A food keeps its temperature and ripeness in state that ages with the world's clock, and the food lane
+// (coop/props/prop_food_state) owns it: the prop-record lane declares the family claimed and turns every
+// food away at its class gate. The record seams sit BEHIND that gate, so on a shipping build the publish and
+// apply counts stay zero and what this reads there is the gate's REFUSALS, which is the claim measured
+// rather than inferred from silence.
 
 #pragma once
-
-#include <string>
-
-namespace ue_wrap::save_record { struct SaveRecord; }
 
 namespace coop::dev::food_clock_probe {
 
 bool IsEnabled();
 
-// A record about to leave this peer, at the one send seam. Prints only for a food.
-void NotePublish(void* actor, const std::wstring& key, const ue_wrap::save_record::SaveRecord& rec);
+// A record about to leave this peer, at a send seam. Counts only a food.
+void NotePublish(void* actor);
 
-// A record that has just been applied to `actor`, at the one apply seam. Re-captures the actor to
-// read what the catch-up left behind. Prints only for a food.
-void NoteApply(void* actor, const std::wstring& key, const ue_wrap::save_record::SaveRecord& sent);
+// A record that has just been applied to `actor`, at the one apply seam. Counts only a food.
+void NoteApply(void* actor);
 
-// The record lane's class gate turned `actor` away, at any of its three refusal points. Counted
+// The record lane's class gate turned `actor` away, at any of its refusal points. Counted
 // only for a food, so the tally is the ownership claim doing its job.
 void NoteRefused(void* actor);
 

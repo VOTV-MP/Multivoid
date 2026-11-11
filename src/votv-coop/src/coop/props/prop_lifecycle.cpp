@@ -3,6 +3,7 @@
 // seam body lives in prop_destroy_seam.cpp.
 
 #include "coop/props/prop_lifecycle.h"
+#include "coop/props/wire_class.h"  // the class name and its content path on the wire
 
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
@@ -163,10 +164,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         coop::kerfur_form_assembler::IsCapturedForm(self);
 
     coop::net::PropSpawnPayload p{};
-    p.className.len = 0;
-    for (size_t i = 0; i < cls.size() && i < 63; ++i) {
-        p.className.data[p.className.len++] = static_cast<char>(cls[i]);
-    }
+    coop::wire_class::FillFromClass(p.className, cls, R::ClassOf(self));
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(self);
     // A non-Aprop_C interactable whose BP mints no Key gets a synthetic one before the None guard
     // (clump.GetKey returns NAME_None on a fresh spawn, and the guard would drop every chipPile

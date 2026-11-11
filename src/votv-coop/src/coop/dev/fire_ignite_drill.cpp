@@ -332,8 +332,8 @@ void ClientTake() {
     CNext(CStep::Hold);
 }
 
-// The lighter in the hand, its lid opened and its uses set: its loadData reads both from the hold record the hand
-// left empty, so a taken lighter would otherwise be shut and spent.
+// The lighter in the hand, its lid opened and its uses set: a lit lighter needs both, and the written values are the
+// ones the left click then reads.
 void ClientHold(void* player) {
     void* lighter = XD::HeldOf(player, kLighterCls);
     if (!lighter) {

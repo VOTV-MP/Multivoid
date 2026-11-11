@@ -8,6 +8,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_syncer.h"
 #include "coop/props/prop_throw.h"
+#include "coop/props/remote_prop.h"
 
 #include "ue_wrap/actors/growing_plant.h"
 #include "ue_wrap/actors/prop.h"
@@ -32,12 +33,16 @@ namespace sg = ue_wrap::script_gate;
 // comp_physicsImpact_C's own two damage entries: fireDamage ends in the owner's destroy without passing impactDamage.
 UE_FACT_FN(kRowImpact, "prop_damage_gate", L"comp_physicsImpact_C", L"impactDamage", Declared);
 UE_FACT_FN(kRowFire, "prop_damage_gate", L"comp_physicsImpact_C", L"fireDamage", Declared);
+// The owner's own fireDamage, the event spreading fire calls through int_objects: prop_C's forwards to the component,
+// but a class that overrides it can break itself after that call (the closed dynamite box spawns its sticks and calls
+// the component's forceDestroy), so the owner's call is judged too.
+UE_FACT_FN(kRowOwnerFire, "prop_damage_gate", nullptr, L"fireDamage", AnyClass);
 
-enum Row { kImpact, kFire };
-constexpr int kRows = 2;
-constexpr int kTag[kRows] = {0x50444731, 0x50444732};  // 'PDG1', 'PDG2'
-const ue_wrap::facts::Function* const kRowOf[kRows] = {&kRowImpact, &kRowFire};
-const char* const kVerb[kRows] = {"impactDamage", "fireDamage"};
+enum Row { kImpact, kFire, kOwnerFire };
+constexpr int kRows = 3;
+constexpr int kTag[kRows] = {0x50444731, 0x50444732, 0x50444733};  // 'PDG1', 'PDG2', 'PDG3'
+const ue_wrap::facts::Function* const kRowOf[kRows] = {&kRowImpact, &kRowFire, &kRowOwnerFire};
+const char* const kVerb[kRows] = {"impactDamage", "fireDamage", "owner fireDamage"};
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
@@ -57,11 +62,12 @@ bool Strict() {
 unsigned long long                g_cancelled[kRows] = {};
 unsigned long long                g_held[kRows] = {};   // lethal calls cancelled while a grant is awaited
 unsigned long long                g_replayed = 0;
+unsigned long long                g_hostCancelled = 0;   // HOST: impactDamage calls cancelled on a prop a client holds
 unsigned long long                g_plantCancelled = 0;   // the cancelled calls, either verb, whose owner was a plant
 ue_wrap::ObjKeyedCache<bool, 24>  g_said[kRows];   // the owner classes whose first cancelled call has been said
 ue_wrap::ObjKeyedCache<bool, 24>  g_heldSaid[kRows];
 
-R::ParamOffset g_damageOff[kRows] = {R::ParamOffset{L"damage"}, R::ParamOffset{L"damage"}};
+R::ParamOffset g_damageOff[kRows] = {R::ParamOffset{L"damage"}, R::ParamOffset{L"damage"}, R::ParamOffset{L"damage"}};
 R::ParamOffset g_impactOff{L"impact"};
 R::ParamOffset g_hitOff{L"hit"};
 R::ParamOffset g_actorOff{L"actor"};
@@ -157,11 +163,30 @@ sg::Verdict HoldLethal(Row row, const sg::Call& c, void* owner) {
     return sg::Verdict::Cancel;
 }
 
-sg::Verdict Judge(Row row, const sg::Call& c) {
+// The host's side of the same rule. A prop a client holds is moved on the host by that client's pose stream, as a body
+// that cannot be pushed back, so whatever it is moved into takes an impact the game reads as damage (a drive, with
+// little health, broke on its first pose into a desk's clutter: an impulse of 8700 where a drive at rest takes 20). The
+// holder's own copy is the truth while it holds, and its break arrives here as its destroy, so the mirror's
+// impactDamage is cancelled for as long as a peer's drive moves it. A fire is the host's own.
+sg::Verdict JudgeHost(Row row, void* owner) {
+    if (row != kImpact || !owner || !ue_wrap::prop::IsDescendantOfProp(owner)) return sg::Verdict::Run;
+    if (!coop::remote_prop::IsActorUnderAnyDrive(owner)) return sg::Verdict::Run;
+    ++g_hostCancelled;
+    void* const cls = R::ClassOf(owner);
+    if (!g_said[row].Find(cls)) {
+        g_said[row].Insert(cls, true);
+        UE_LOGI("prop_damage_gate: the host's impactDamage on a prop a client holds is the holder's (cls=%ls)",
+                R::ClassNameOf(owner).c_str());
+    }
+    return sg::Verdict::Cancel;
+}
+
+sg::Verdict Judge(Row row, const sg::Call& c, void* owner) {
     if (Off()) return sg::Verdict::Run;
     coop::net::Session* s = LoadSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
-    void* owner = R::OuterOf(c.object);
+    if (!s || !s->connected()) return sg::Verdict::Run;
+    if (s->role() == coop::net::Role::Host) return JudgeHost(row, owner);
+    if (s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     if (!owner) return sg::Verdict::Run;
     // A plant is the host's alone: no client authors one, so its damage is never decided here.
     const bool isProp = ue_wrap::prop::IsDescendantOfProp(owner);
@@ -169,8 +194,9 @@ sg::Verdict Judge(Row row, const sg::Call& c) {
     if (!isProp && !isPlant) return sg::Verdict::Run;
     if (isProp && !Strict() && AuthoredHere(owner)) {
         // A non-lethal call runs; a lethal one waits for the grant, since a break before it would delete the host's
-        // prop even when the host refuses the election.
-        if (AuthoredByPendingSeqOnly(owner) && Lethal(row, c)) return HoldLethal(row, c, owner);
+        // prop even when the host refuses the election. The owner's call carries no health to judge it by: the
+        // component's own call, which it makes, is judged instead.
+        if (row != kOwnerFire && AuthoredByPendingSeqOnly(owner) && Lethal(row, c)) return HoldLethal(row, c, owner);
         return sg::Verdict::Run;
     }
 
@@ -190,13 +216,15 @@ sg::Verdict Judge(Row row, const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
-sg::Verdict OnImpactPre(const sg::Call& c) { return Judge(kImpact, c); }
-sg::Verdict OnFirePre(const sg::Call& c) { return Judge(kFire, c); }
+sg::Verdict OnImpactPre(const sg::Call& c) { return Judge(kImpact, c, R::OuterOf(c.object)); }
+sg::Verdict OnFirePre(const sg::Call& c) { return Judge(kFire, c, R::OuterOf(c.object)); }
+// Every class's fireDamage reaches here: the component's runs on (it is neither a prop nor a plant; kFire judges it).
+sg::Verdict OnOwnerFirePre(const sg::Call& c) { return Judge(kOwnerFire, c, c.object); }
 
-const sg::PreFn kPre[kRows] = {&OnImpactPre, &OnFirePre};
+const sg::PreFn kPre[kRows] = {&OnImpactPre, &OnFirePre, &OnOwnerFirePre};
 
 enum class Reg : uint8_t { Pending, Registered, Refused };
-Reg  g_reg[kRows] = {Reg::Pending, Reg::Pending};
+Reg  g_reg[kRows] = {Reg::Pending, Reg::Pending, Reg::Pending};
 bool g_settled[kRows] = {};
 
 }  // namespace
@@ -228,14 +256,18 @@ void ReplayAtGrant(void* actor) {
     ue_wrap::Call(comp, f);
 }
 
-Counts GetCounts() { return Counts{g_cancelled[kImpact], g_cancelled[kFire], g_plantCancelled}; }
+Counts GetCounts() {
+    return Counts{g_cancelled[kImpact], g_cancelled[kFire] + g_cancelled[kOwnerFire], g_plantCancelled};
+}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (!session || session->role() != coop::net::Role::Client) return;
-    // A client cancels the call by these watches; the gate refuses a watch it cannot keep for the process.
+    if (!session || (session->role() != coop::net::Role::Client && session->role() != coop::net::Role::Host)) return;
+    // A client cancels the call by these watches, and the host by the first, for a prop a client holds; the gate
+    // refuses a watch it cannot keep for the process.
+    const bool host = session->role() == coop::net::Role::Host;
     for (int i = 0; i < kRows; ++i)
-        if (g_reg[i] == Reg::Pending)
+        if (g_reg[i] == Reg::Pending && (!host || i == kImpact))
             g_reg[i] = sg::WatchName(*kRowOf[i], kTag[i], kPre[i], nullptr) ? Reg::Registered : Reg::Refused;
 }
 
@@ -249,7 +281,7 @@ void Tick() {
         }
         if (g_reg[i] == Reg::Registered && sg::NameWatchLive(*kRowOf[i], kTag[i])) {
             g_settled[i] = true;
-            UE_LOGI("prop_damage_gate: the comp_physicsImpact_C %s watch is live", kVerb[i]);
+            UE_LOGI("prop_damage_gate: the %s watch is live", kVerb[i]);
         } else if (g_reg[i] == Reg::Refused || sg::NameWatchSettled(*kRowOf[i], kTag[i])) {
             g_settled[i] = true;
             UE_LOGE("prop_damage_gate: the %s watch is dead -- a client's %s on a prop or plant it does not author runs",
@@ -265,6 +297,10 @@ void OnDisconnect() {
     if (g_held[kImpact] != 0 || g_held[kFire] != 0 || g_replayed != 0)
         UE_LOGI("prop_damage_gate: %llu lethal impactDamage held and %llu replayed, %llu lethal fireDamage dropped "
                 "while a grant was awaited this session", g_held[kImpact], g_replayed, g_held[kFire]);
+    if (g_hostCancelled != 0)
+        UE_LOGI("prop_damage_gate: %llu impactDamage calls on props a client held cancelled on the host this session",
+                g_hostCancelled);
+    g_hostCancelled = 0;
     g_replayed = 0;
     g_plantCancelled = 0;
     for (int i = 0; i < kRows; ++i) {

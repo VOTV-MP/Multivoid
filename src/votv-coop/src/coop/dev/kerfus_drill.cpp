@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/drill_place.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -22,6 +23,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <memory>
 
@@ -43,6 +45,11 @@ constexpr float    kAwayMaxCm       = 3000.f;
 constexpr float    kApartCm         = 1000.f;
 constexpr float    kFollowCm        = 200.f;   // settled by a player: its 100 uu stop, the puppet's lag
 constexpr float    kArriveCm        = 400.f;   // the possess's own arrival test
+// A possessed Kerfus that moves less than this in kStallMs has stalled. 150 cm was broken by one 170 cm step of a Kerfus that was
+// otherwise still (drill-kerfus_p2-client.log 14:16:50: 1025 -> 1193 cm from where it settled, 60 s of "on, 1000 cm away" lines), so
+// the stall never held and the run ended "neither went off nor followed"; the pass already needs it 1000 cm from where it settled.
+constexpr float    kStallMoveCm     = 300.f;
+constexpr uint64_t kStallMs         = 15000;
 constexpr float    kMovedCm         = 500.f;   // the client's copy moved this far on the host's drive
 constexpr uint64_t kSettleMs        = 5000;    // and stayed: one driving past leaves in under 2 s
 constexpr uint64_t kHostSettleMs    = kSettleMs + 2000;  // the host's own settle: the client judges first
@@ -59,6 +66,12 @@ constexpr uint64_t kPinWindowMs     = 30000;   // from the client's settle: the 
 constexpr uint64_t kWatchWindowMs   = 60000;   // from the client's walk back
 constexpr uint64_t kPossessWindowMs = 150000;  // the host's own: the pin wait, the walk back, the watch
 constexpr uint64_t kSampleMs        = 100;
+// Both peers stand where the verified runs stood before the walks (drill_place.cpp: the rig save's start moved on 2026-11-10, and
+// from the join's own places (5608, 818, 6180) for the host and (-2405, 856, 6163) for the client the walk to the Kerfus
+// ended "did not arrive", drill-kerfus_m1-client.log 13:27:28; kerfus_throw reached the Kerfus from these spots).
+constexpr drill_place::Spot kHostSpot{-1692.f, 560.f, 6318.f, 102.3f};
+constexpr drill_place::Spot kClientSpot{-535.f, 310.f, 6665.f, 0.f};
+drill_place::Placement g_hostPlace, g_clientPlace;
 constexpr uint64_t kReportMs        = 5000;
 constexpr int      kWalkDeadlineS   = 60;
 
@@ -179,6 +192,10 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
     if (ms - g_hostSampleMs < kSampleMs) return;
     g_hostSampleMs = ms;
     if (g_host == HostStep::WaitSettled) {
+        const drill_place::Result placed = drill_place::Run(g_hostPlace, coop::players::Registry::Get().Local(), kHostSpot, ms,
+                                                            "the host's place for the Kerfus drill");
+        if (placed == drill_place::Result::Pending) return;
+        if (placed == drill_place::Result::Failed) { HostInvalid("the host's placement did not land"); return; }
         // A Kerfus that is on and settled by the client, the client standing at its pile, apart from me: one
         // trailing a client still on its walk decides nothing. The client's own verdict bounds this wait.
         ue_wrap::FVector cp{}, hp{};
@@ -201,6 +218,23 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
     if (!R::IsLiveByIndex(g_hostKerfus, g_hostKerfusIdx)) { HostInvalid("the possessed Kerfus is gone"); return; }
     ue_wrap::FVector kp{};
     const float fromPoint = E::TryGetActorLocation(g_hostKerfus, kp) ? Dist(kp, g_possessAt) : -1.f;
+    {   // what the possess leaves in the Kerfus, every 5 s: its goal, its nav pawn's place, who it is near
+        static uint64_t sNextMs = 0;
+        if (ms >= sNextMs) {
+            sNextMs = ms + 5000;
+            ue_wrap::FVector pl{}, np{}, cp{}, hp{};
+            const int32_t off = R::FindPropertyOffset(R::ClassOf(g_hostKerfus), L"possessLoc");
+            if (off >= 0) std::memcpy(&pl, static_cast<const uint8_t*>(g_hostKerfus) + off, sizeof(pl));
+            void* const nav = UK::NavPawn(g_hostKerfus);
+            const bool haveNav = nav && E::TryGetActorLocation(nav, np);
+            float energy = -1.f;
+            UK::ReadEnergy(g_hostKerfus, energy);
+            const bool haveC = BodyAt(g_joined, cp), haveH = BodyAt(0, hp);
+            UE_LOGI("[KERFUS-DRILL] host: possessed -- possessLoc=(%.0f,%.0f,%.0f) energy=%.1f; the Kerfus is %.0f cm from the point, "
+                    "its nav pawn %.0f, %.0f cm from the client, %.0f from the host", pl.X, pl.Y, pl.Z, energy, fromPoint,
+                    haveNav ? Dist(np, g_possessAt) : -1.f, haveC ? Dist(kp, cp) : -1.f, haveH ? Dist(kp, hp) : -1.f);
+        }
+    }
     if (!IsOn(g_hostKerfus)) {
         UE_LOGI("[KERFUS-DRILL] host: the possess arrived -- it went off %.0f cm from the point", fromPoint);
         g_host = HostStep::Idle;
@@ -224,6 +258,8 @@ bool g_stood = false;
 bool g_moved = false;  // the client's copy moved kMovedCm while the host's drive stream held it
 ue_wrap::FVector g_awayStart{};  // where the Kerfus stood when this client walked away: where it pressed it
 ue_wrap::FVector g_settleAt{};   // where the Kerfus settled by this client
+ue_wrap::FVector g_stallAt{};     // where the watched Kerfus last stood still
+uint64_t g_stallSince = 0;
 uint64_t g_stepMs = 0, g_sampleMs = 0, g_reportMs = 0, g_byMeSince = 0, g_byHostSince = 0, g_movedSampleMs = 0;
 
 void ClientInvalid(const char* why) {
@@ -319,9 +355,15 @@ void TickPinned(uint64_t ms) {
     float energy = 0.f;
     if (!UK::ReadEnergy(g_kerfus, energy)) { ClientInvalid("the Kerfus's energy did not read"); return; }
     if (std::fabs(energy - kPinnedEnergy) < kPinTolerance) {
-        UE_LOGI("[KERFUS-DRILL] client: the host possessed it (its energy is pinned at %.1f) -- walking back to where "
-                "I pressed it", energy);
-        StartWalk(g_awayStart, kPressReachCm);
+        // The walk back ends at the host: the possess point lies 10 m from the host and 10 to 30 m from where this client
+        // settled, so a Kerfus that drives to the point never passes through the client's place. (Ending at the press
+        // place put the client in the Kerfus's way on a save whose point lies beyond it: the Kerfus drove 4 m from the
+        // point, stood against the client's body and read as having followed it.)
+        ue_wrap::FVector hostAt{};
+        if (!BodyAt(0, hostAt)) { ClientInvalid("the host's place did not read"); return; }
+        UE_LOGI("[KERFUS-DRILL] client: the host possessed it (its energy is pinned at %.1f) -- walking back to the host",
+                energy);
+        StartWalk(hostAt, kPressReachCm);
         g_client = ClientStep::WalkBack;
         return;
     }
@@ -359,12 +401,28 @@ void TickLeft(uint64_t ms) {
     }
     float toMe = 0.f, toHost = 0.f;
     if (!Distances(toMe, toHost)) { ClientInvalid("a place did not read"); return; }
-    const bool byMe = toMe <= kFollowCm && toHost > 2.f * kFollowCm;
+    // This client stands at the host now, so a Kerfus beside it is a Kerfus that came to a player, not to the point.
+    const bool byMe = toMe <= kFollowCm;
     g_byMeSince = byMe ? (g_byMeSince ? g_byMeSince : ms) : 0;
     if (g_byMeSince && ms - g_byMeSince >= kSettleMs) {
         UE_LOGI("[KERFUS-DRILL] client: after the possess it settled %.0f cm from me again, on", toMe);
         ClientDone(false, "the host's possess did not take it: it followed this client back");
         return;
+    }
+    // A possessed Kerfus whose path ends short of the point (the point is a pile the player's nav reached; the Kerfus's own
+    // nav pawn may stall some metres off, where the 400 uu arrival test never holds) stands still far from both players
+    // and from where it settled: it was taken away by the possess, which is what this drill asks, though it never goes off.
+    {
+        const float fromSettle = Dist(k, g_settleAt);
+        if (Dist(k, g_stallAt) > kStallMoveCm) { g_stallAt = k; g_stallSince = ms; }
+        if (!byMe && g_moved && fromSettle >= kAwayMinCm - kArriveCm && toMe > 2.f * kFollowCm && g_stallSince &&
+            ms - g_stallSince >= kStallMs) {
+            UE_LOGI("[KERFUS-DRILL] client: the possessed Kerfus stands still %.0f cm from where it settled, %.0f cm from me "
+                    "and %.0f cm from the host, on -- its path ended short of the point", fromSettle, toMe, toHost);
+            ClientDone(true, "its press stood, it followed this client, and the host's possess took it away from both "
+                             "players toward the point, where its path ended");
+            return;
+        }
     }
     if (ms - g_stepMs >= kWatchWindowMs) {
         UE_LOGW("[KERFUS-DRILL] client: %llu s after the walk back it is on, %.0f cm from me",
@@ -403,6 +461,12 @@ void TickClient() {
         g_eid = static_cast<uint32_t>(EL::Registry::Get().EidForActor(k));
         if (!UK::ReadActive(k, on)) { ClientInvalid("the Kerfus's `active` did not resolve"); return; }
         if (on) { ClientInvalid("the save's Kerfus is already on -- the drill starts from off"); return; }
+        {
+            const drill_place::Result placed = drill_place::Run(g_clientPlace, coop::players::Registry::Get().Local(), kClientSpot,
+                                                                ms, "the client's walk to the Kerfus");
+            if (placed == drill_place::Result::Pending) return;
+            if (placed == drill_place::Result::Failed) { ClientInvalid("the client's placement before the walk did not land"); return; }
+        }
         UE_LOGI("[KERFUS-DRILL] client: Kerfus mirror eid=%u %p is off -- walking to it", g_eid, g_kerfus);
         if (!WalkToKerfus()) { ClientInvalid("the Kerfus's place did not read"); return; }
         g_client = ClientStep::WalkOn;
@@ -487,6 +551,8 @@ void OnDisconnect() {
     g_possessAt = ue_wrap::FVector{};
     g_clientAt = ue_wrap::FVector{};
     g_hostSampleMs = g_hostSince = g_hostStepMs = 0;
+    g_hostPlace = drill_place::Placement{};
+    g_clientPlace = drill_place::Placement{};
     g_client = ClientStep::WaitQuiet;
     g_kerfus = nullptr;
     g_kerfusIdx = -1;
@@ -494,6 +560,8 @@ void OnDisconnect() {
     g_stood = false;
     g_moved = false;
     g_awayStart = ue_wrap::FVector{};
+    g_stallAt = ue_wrap::FVector{};
+    g_stallSince = 0;
     g_settleAt = ue_wrap::FVector{};
     g_stepMs = g_sampleMs = g_reportMs = g_byMeSince = g_byHostSince = g_movedSampleMs = 0;
 }

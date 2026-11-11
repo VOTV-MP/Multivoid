@@ -1,19 +1,20 @@
 // coop/save/save_transfer.h -- the save-transfer join bootstrap: the host's save to the joining
 // client. A menu-mode joining client does not generate its own fresh world (its first-run
 // spawns and litter would never match the host's): it connects at the menu, requests the
-// host's save, receives it chunked on the Transfer lane, writes it as the ephemeral slot
-// zcoop_<pid>, loads it through the game's own story load (the engine places every prop at
-// rest, with the host's keys), then announces world-ready, and the host runs the connect
-// replay (the key diff, the snapshot bracket, the state broadcasts) as a thin true-up for
-// whatever moved since the save was written. The zcoop_ prefix is one the game's save menu
-// never lists, per instance so same-machine peers cannot collide. The slot lives for the
-// session (the game re-reads it after the first load); a boot sweep removes stale zcoop_*
-// older than an hour, never a concurrent sibling's. Clients are
-// blocked from saving during coop, so the game never refreshes it; only the slot file is
-// transferred, never the global progression file; a copy of the bytes mid-session is not
-// prevented. The host side runs on the game thread; the client side spans the net thread (the
-// chunk and begin sinks) and the harness join loop (the polls), behind one small mutex.
-
+// host's save, receives it chunked on the Transfer lane, unpacks it as the ephemeral scratch save
+// zcoop_<pid> (main.sav, persistent.sav, main.meta, and areas/<area>.sav for a host standing in an area:
+// coop/save/save_folder_pack), loads it through
+// the game's own save load (the engine places every prop at rest, with the host's keys), then
+// announces world-ready, and the host runs the connect replay (the key diff, the snapshot
+// bracket, the state broadcasts) as a thin true-up for whatever moved since the save was written.
+// The scratch save lives beside SaveGames (coop/save/save_scratch), so the game's save menu, which lists
+// the folders under SaveGames, never shows it; it is per instance so same-machine peers cannot collide,
+// lives for the session, and a boot sweep removes the ones a crashed session left.
+// Clients are blocked from saving during coop, so the game never refreshes it; only the save
+// folder's load set is transferred, never the global progression file; a copy of the bytes
+// mid-session is not prevented. The host side runs on the game thread; the client side spans the
+// net thread (the chunk and begin sinks) and the harness join loop (the polls), behind one small
+// mutex.
 #pragma once
 
 #include "coop/net/protocol.h"
@@ -25,10 +26,9 @@ namespace coop::net { class Session; }
 
 namespace coop::save_transfer {
 
-// The ephemeral client-side slot name, per instance: zcoop_<pid>. The prefix is outside the
-// game's menu-listed families, so it never shows in the load menu; the game mode comes from
-// the begin payload (the host's), threaded through the story load's forced mode, since the
-// prefix match cannot map an unknown prefix.
+// The ephemeral client-side scratch save, per instance, by the folder name the game takes
+// (coop/save/save_scratch::FolderName of zcoop_<pid>). The game mode comes from
+// the begin payload (the host's), threaded through the load's forced mode.
 std::wstring CoopSlotName();
 
 // Register the chunk and begin sinks with the session and remember the session pointer for
@@ -37,9 +37,9 @@ void Install(coop::net::Session* session);
 
 // Host side, game thread.
 
-// The slot name the host's world was loaded from (harness boot or the host picker set it), empty
-// for a New Game that has no file yet. The transfer reads the slot's .sav under the save directory
-// fresh per request.
+// The save folder the host's world was loaded from (harness boot or the host picker set it), empty
+// for a New Game that has no folder yet. The transfer's fallback reads that folder fresh per
+// request.
 void SetHostSlot(const std::wstring& slot);
 
 // The host slot name; the per-player inventory keys its per-save directory on it. Empty until
@@ -52,11 +52,11 @@ const std::wstring& HostSlot();
 uint32_t HostSlotSerial();
 
 // A client asked for the save. The host's live world is captured at once, or, while the host is still
-// loading its world, once it is in (TickHost). A capture that cannot run arms the canonical slot's
-// stream; the file read happens in TickHost under the torn-read guard (the game writes saves
-// non-atomically in place, so the file is trusted only when its size and mtime are stable across
-// consecutive polls and two full reads are CRC-identical). A missing file sends a zero-byte begin: the
-// fresh-world fallback.
+// loading its world, once it is in (TickHost). A capture that cannot run arms the save folder's
+// stream; the read happens in TickHost under the torn-read guard on its main.sav (the game writes
+// saves non-atomically in place, so the file is trusted only when its size and mtime are stable
+// across consecutive polls and two full reads are CRC-identical). A missing file sends a zero-byte
+// begin: the fresh-world fallback.
 void OnRequest(int peerSlot);
 
 // The host pump: per waiting slot, the capture once the host's world is in (one a tick); per active
@@ -83,9 +83,9 @@ enum class ClientState : int {
     Idle = 0,         // not armed (an env or script client, or the host role)
     WaitingBegin,     // armed and the request sent or queued; nothing received yet
     Receiving,        // Begin seen and/or chunks flowing
-    ReadySlotWritten,  // blob complete, CRC ok, the zcoop slot written: load it
+    ReadySlotWritten,  // blob complete, CRC ok, the zcoop folder unpacked: load it
     NoSaveAvailable,  // the host has no save (a zero-byte begin): the fresh-world fallback
-    Failed,           // CRC mismatch or write failure: the fresh-world fallback, logged
+    Failed,           // CRC mismatch or unpack failure: the join ends, logged
 };
 
 // Arm the transfer (a menu-mode browser join only; before the session starts). Env and script
@@ -110,14 +110,10 @@ ClientState GetClientState();
 void GetProgress(uint32_t& doneBytes, uint32_t& totalBytes);
 
 // The host's game mode for the transferred save (from the begin; 0 is the story default). The
-// harness threads it into the story load's forced mode for the zcoop slot.
+// harness threads it into the load's forced mode for the zcoop folder.
 uint8_t ReceivedGameMode();
 
-// Boot-time sweep: delete stale zcoop_*.sav older than an hour (crash leftovers), never a
-// fresh one (a concurrent same-machine sibling may be mid-join).
-void CleanupStaleSlotsAtBoot();
-
-// Full client-side reset and delete this instance's zcoop_<pid>.sav.
+// Full client-side reset and delete this instance's zcoop_<pid> scratch save.
 void OnDisconnect();
 
 }  // namespace coop::save_transfer

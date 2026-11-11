@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/inventory_item.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -32,7 +32,7 @@ struct Hold {
     uint16_t id = 0;
     uint32_t eid = 0;
     uint16_t index = 0;                       // Escrow: where the record was; Reservation: set from the commit's done
-    ue_wrap::save_record::SaveRecord record;  // Escrow: the record taken, not neutered; Reservation: the record asked
+    ue_wrap::inventory_item::Item record;  // Escrow: the record taken, not neutered; Reservation: the record asked
     uint64_t grantedMs = 0;
 };
 

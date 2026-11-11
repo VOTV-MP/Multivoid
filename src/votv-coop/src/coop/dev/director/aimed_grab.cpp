@@ -4,7 +4,9 @@
 
 #include "coop/dev/director/director.h"  // LookAt
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
@@ -105,6 +107,14 @@ GrabState AimedGrab::Tick() {
     }
     if (Grabbing(player) == prop) return GrabState::Grabbed;
     if (grabTicks_ > kGrabVerifyTicks) {
+        // What the chain did, for a flake: which calls ran, what the player's trace and hand hold, and the prop's own state.
+        E::MainPlayerGrabState gs{};
+        const bool read = E::ReadMainPlayerGrabState(player, gs);
+        UE_LOGW("[AIMED-GRAB] the chain did not hold the prop after %d ticks: playerGrabbed_pre ran=%d, useAction ran=%d, "
+                "playerGrabbed ran=%d; the trace hits %p (the prop is %p, %ls), the grab state reads=%d grabbing=%p; the prop "
+                "simulates=%d, frozen=%d", grabTicks_ - 1, chainPre_ ? 1 : 0, chainUse_ ? 1 : 0, chainPost_ ? 1 : 0,
+                E::ReadMainPlayerHitActor(player), prop, R::ClassNameOf(prop).c_str(), read ? 1 : 0, gs.grabbingActor,
+                E::IsActorRootSimulatingPhysics(prop) ? 1 : 0, ue_wrap::prop::IsFrozen(prop) ? 1 : 0);
         why_ = "the grab chain did not put the prop in the hand";
         return GrabState::Failed;
     }

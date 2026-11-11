@@ -2,6 +2,7 @@
 #include "coop/props/container_view_close.h"
 
 #include "coop/element/registry.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
 #include "ue_wrap/actors/container_openers.h"
@@ -89,8 +90,15 @@ float ViewReachMargin(void* player, void* container) {
 
 void Tick() {
     if (coop::roster::LocalIsHost()) return;
-    void* const container = CV::Viewed();
-    if (!container || CV::IsOwnInventory(container)) return;
+    // The view is a container's, or an ATV's trunk (0.10: the ATV opens its own inventory component, so the screen shows
+    // no container; the ATV itself is what the player must stay within reach of).
+    void* container = CV::Viewed();
+    if (!container) {
+        void* const component = CV::ViewedInventory();
+        const uint32_t trunk = component ? coop::atv_trunk_sync::EidOfInventory(component) : 0;
+        container = trunk ? coop::atv_trunk_sync::AtvOfEid(trunk) : nullptr;
+    }
+    if (!container) return;
     // A screen whose close does not resolve is not measured at all: there is nothing to do with the answer.
     if (!CV::CanClose()) {
         static bool s_noClose = false;

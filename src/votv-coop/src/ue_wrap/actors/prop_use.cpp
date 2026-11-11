@@ -70,7 +70,7 @@ bool CallPlayerUsedOn(void* prop, void* player, void* hitComponent, const FVecto
 }
 
 bool ReadFoodUse(void* prop, int32_t& uses, bool& notEdible) {
-    static R::InstanceOffset sUses{L"uses"};
+    static R::InstanceOffset sUses{L"invRead_Uses"};
     static BoolField sNotEdible{L"notEdible", {}};
     if (!prop || !R::IsLive(prop)) return false;
     int32_t u = 0;

@@ -16,6 +16,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"   // FName
 #include "ue_wrap/core/types.h"        // FVector
+#include "ue_wrap/engine/engine_mainplayer.h"   // HotbarAdd
 
 #include <cstddef>
 #include <cstdint>
@@ -52,7 +53,7 @@ struct Pending {
     uint8_t row = 0;                               // a Row
     ue_wrap::CachedObjRef target;
     uint64_t sentMs = 0;
-    bool noNotify = false;                         // kPocket
+    ue_wrap::engine::HotbarAdd hotbar{};           // kHold: the flags the press passed
     ue_wrap::CachedObjRef hitComponent;            // the use rows and kSoap
     ue_wrap::FVector hitLocation{};
     uint8_t action = 0;

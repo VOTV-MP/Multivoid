@@ -12,7 +12,8 @@
 // stream, and drives the streamed transform kinematically through the interpolation window. Host to
 // client only and never relayed; the host refuses a client's copy at its receive edge. Identity is the
 // singleton found by class: both peers load the same placed drone, and a joiner gets the current pose
-// with adopt=1. The CARGO (orderbox, giftbox, crate, dronesack, all Aprop_C) rides the prop pipeline.
+// with adopt=1. The drone's CARGO is its inventory component (coop/interactables/drone_cargo_sync); the sack it
+// drops is a world container and rides the prop and container lanes.
 
 #pragma once
 

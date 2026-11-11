@@ -9,7 +9,6 @@
 // by the miss along the line to the target. Both throws are traced and reported. Lines are tagged [CI-DRILL].
 
 #include "container_intent_drill_throw.h"
-#include "container_route_drill_detail.h"
 #include "drive_drill_verbs.h"  // Throw: the player's own throw (co-located private header)
 
 #include "coop/dev/container_route_census.h"
@@ -50,7 +49,7 @@ namespace R   = ue_wrap::reflection;
 namespace DV  = coop::dev::drive_drill_verbs;
 namespace DR  = coop::director;
 namespace DC  = coop::dev::drill_chat;
-namespace RD  = coop::dev::container_route_drill::detail;
+namespace RD  = coop::dev::container_intent_drill::detail;
 namespace cen = coop::dev::container_route_census;
 using ue_wrap::FVector;
 
@@ -121,7 +120,7 @@ void CFail(const char* fmt, ...) {
 
 void* HeldActor(void* player) {
     E::MainPlayerGrabState hand{};
-    return player && E::ReadMainPlayerGrabState(player, hand) ? hand.holdingActor : nullptr;
+    return player && E::ReadMainPlayerGrabState(player, hand) ? hand.mainHand : nullptr;
 }
 
 uint32_t WireEid(void* actor) {
@@ -580,10 +579,6 @@ void ThrowClientTick(const coop::net::Session& session) {
         HostGrabClientTick(session);
         return;
     }
-    if (ArmOf() == Arm::ThrowInto) {
-        IntoClientTick(session);
-        return;
-    }
     if (DepartRejoinedIdle()) {   // throwdepart, relaunched: it reports the seed of the prop it threw before it left
         DepartRejoinedTick();
         return;
@@ -639,7 +634,6 @@ void ThrowReset() {
     ThrowHostReset();
     ArmsReset();
     HostGrabReset();
-    IntoReset();
     g_step = Step::WaitLine;
     g_stepMs = g_nextMs = 0;
     g_n = 1;

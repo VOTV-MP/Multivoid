@@ -1,7 +1,7 @@
 // coop/props/prop_food_state.h -- the food family's live state, and who is allowed to author it.
 //
 // A food does not hold still: its own tick lerps `temperature` toward a value it re-rolls every
-// frame, rolls `ripeness` down against a random spoilage rate, and at the ends of that range
+// frame, spends `freshnessAlpha` against its spoilage duration, and at the ends of the temperature range
 // decides on its own to burn or freeze the actor. Every peer running that tick is a separate
 // author of the same food.
 //

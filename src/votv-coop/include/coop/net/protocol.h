@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 285;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -412,6 +412,7 @@ enum class ReliableKind : uint8_t {
 
     // Client to host: the peer's serialized inventory, on change; the host persists it under the
     // peer's guid. Host to client on join with the stored inventory. BlobChunkPayload; never relayed.
+    // The blob is coop::inventory_wire's version 5 (deflated; build 285), in parts when it passes one blob.
     PlayerInventoryBlob = 69,
 
     // Client to host: a kerfur radial-menu verb for this kerfur. The host runs it; Follow follows
@@ -494,10 +495,11 @@ enum class ReliableKind : uint8_t {
     // pre-world sendable.
     NickColorChange = 88,
 
-    // What a player's hand shows: [u8 slot][u8 has][u8 clsLen][cls][u8 nameLen][name][u8 itemLen]
-    // [item], then, when it has one, the hold transform (relPos, relRot: six floats). `item` is the
-    // name the hold slot holds it under. The trust shape of SkinChange. Receivers keep a display-only
-    // mirror on the puppet; the host replays every non-empty hand to a joiner.
+    // What one of a player's two hands shows: [u8 slot][u8 hand: 0 main, 1 off][u8 has][u8 clsLen]
+    // [cls][u8 nameLen][name][u8 itemLen][item], then, for the main hand when it has one, the hold
+    // transform (relPos, relRot: six floats) (coop/player/hand_item_wire.h). `item` is the hand's
+    // item name (holdingObjectName_*). The trust shape of SkinChange. Receivers keep a display-only
+    // mirror per hand on the puppet; the host replays every non-empty hand to a joiner.
     HandItem = 89,
 
     // Client to host: I placed this keyed prop I had picked up; spawn it by key at this transform
@@ -612,8 +614,7 @@ enum class ReliableKind : uint8_t {
     // A world container's contents as state, eid-addressed. The host publishes it; a client authors
     // one kind only, the birth slice of a container it threw, which the host applies and relays to
     // everyone but the author. Any other client slice is refused and answered with the host's truth.
-    // Chunked blob; personal inventories are skipped. The blob's header is [u8 op][u32 eid][u16 n][u8 flags]: the
-    // flags byte is the host's reading of the container's overlap arming (bit 0 armed; coop/props/container_arming).
+    // Chunked blob; personal inventories are skipped. The blob's header is [u8 op][u32 eid][u16 n].
     ContainerContents = 118,
 
     // Host to all, the origin included: one chat line with the host-assigned sequence that orders
@@ -784,9 +785,11 @@ enum class ReliableKind : uint8_t {
     // The host runs the keyboard's own verb, drone.triggerFly, whose body owns every condition, and
     // the flight reaches the peers on the pose stream that already carries it; the timer face flips
     // the host drone's leaveAfter5min, which reaches the peers as DroneState bit 3, and its click
-    // plays on the presser's machine and on the host. Late join: nothing to replay, since a press
-    // the host has not run changed nothing, and the timer's value rides every DroneState.
-    // DroneFlyIntentPayload.
+    // plays on the presser's machine and on the host. The drone's own drop-sack option is the third verb: it
+    // names no console, and the host re-tests that the sender is within reach of the drone and that the drone is
+    // parked with its sack aboard, then runs dropSack, whose sack and cargo reach the peers on the prop lanes and
+    // on DroneCargo. Late join: nothing to replay, since a press the host has not run changed nothing, and the
+    // timer's value rides every DroneState. DroneFlyIntentPayload.
     DroneFlyIntent = 145,
 
     // Host to all: the signal machine's eighteen upgrade levels, absolute. The levels are one
@@ -1366,6 +1369,20 @@ enum class ReliableKind : uint8_t {
     // change of either and again to a joiner alone at its ready edge. A client holds one for a copy that is not here yet and
     // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
     WalkerState = 231,
+
+    // HOST->CLIENT: the delivery drone's cargo, the entries of its inventory component, as a chunked blob in the
+    // container slice grammar with the element id 0 (BlobChunkPayload; coop/props/container_slice_wire). Sent whole
+    // when the cargo changed and to a joiner at its ready edge. A client writes it over its copy so the inventory
+    // screen it opens on the drone shows the host's cargo. Host-authored: refused at the host's receive edge; never
+    // relayed; not pre-world.
+    DroneCargo = 237,
+
+    // HOST->CLIENT: one ATV's trunk, the entries of the ATV's own inventory component, as a chunked blob in the container
+    // slice grammar whose element id is the trunk's target id (container_target::kAtvTrunkBase | a hash of the ATV's key;
+    // BlobChunkPayload; coop/props/container_slice_wire). Sent whole when that trunk changed and to a joiner at its ready
+    // edge. A client writes it over its copy of the ATV's component so the inventory screen it opens on the ATV shows the
+    // host's trunk. Host-authored: refused at the host's receive edge; never relayed; not pre-world.
+    AtvTrunk = 238,
 };
 
 #pragma pack(push, 1)
@@ -1519,7 +1536,10 @@ struct CordLinkPayload {
 };
 static_assert(sizeof(CordLinkPayload) == 104, "CordLinkPayload must be 104 bytes");
 
-// A Blueprint class leaf name ("Aprop_equipment_flashlight_C"). Bytes beyond len are zero.
+// A Blueprint class leaf name ("Aprop_equipment_flashlight_C"). Bytes beyond len are zero, except where a sender that
+// knows the class's content path has put it after the leaf (coop/net/wire_class_path.h: a zero, a length byte, the
+// package directory), so a peer that has not loaded the class can load it. Every reader stops at len; a name from a peer
+// that predates the path has zeros there and reads as "no path". The struct and the protocol number are unchanged.
 struct WireClassName {
     uint8_t len;       // 0..63 chars in `data`
     char    data[63];  // ASCII (VOTV class names are ASCII)
@@ -2069,14 +2089,17 @@ struct PropHoldRefusedPayload {
 static_assert(sizeof(PropHoldRefusedPayload) == 36, "PropHoldRefusedPayload must be 36 bytes");
 static_assert(sizeof(PropHoldRefusedPayload) <= 256 - 20 - 8,
               "PropHoldRefusedPayload must fit in one reliable datagram");
-// A world food's condition (FoodState): the food by key, and the three fields its tick and its bites move.
+// A world food's condition (FoodState): the food by key, and the fields its tick and its bites move.
 struct FoodStatePayload {
-    WireKey key;          // 32 -- the food's Key
-    float   temperature;  // 4  -- kelvin
-    float   ripeness;     // 4
-    int32_t uses;         // 4
+    WireKey key;             // 32 -- the food's Key
+    float   temperature;     // 4  -- kelvin
+    float   freshness;       // 4  -- freshnessAlpha, the fraction of the current stage left
+    int32_t freshnessSteps;  // 4  -- invRead_Freshness, the stages left
+    int32_t uses;            // 4
+    uint8_t spoiled;         // 1  -- isSpoiled
+    uint8_t pad[3];
 };
-static_assert(sizeof(FoodStatePayload) == 44, "FoodStatePayload must be 44 bytes");
+static_assert(sizeof(FoodStatePayload) == 52, "FoodStatePayload must be 52 bytes");
 static_assert(sizeof(FoodStatePayload) <= 256 - 20 - 8, "FoodStatePayload must fit in one reliable datagram");
 
 // A client's bite of a world food (FoodBite).
@@ -2087,11 +2110,14 @@ static_assert(sizeof(FoodBitePayload) == 32, "FoodBitePayload must be 32 bytes")
 
 // The food in the sender's hand (FoodHand).
 struct FoodHandPayload {
-    float   temperature;  // 4  -- kelvin
-    float   ripeness;     // 4
-    int32_t uses;         // 4
+    float   temperature;     // 4  -- kelvin
+    float   freshness;       // 4  -- freshnessAlpha
+    int32_t freshnessSteps;  // 4  -- invRead_Freshness
+    int32_t uses;            // 4
+    uint8_t spoiled;         // 1  -- isSpoiled
+    uint8_t pad[3];
 };
-static_assert(sizeof(FoodHandPayload) == 12, "FoodHandPayload must be 12 bytes");
+static_assert(sizeof(FoodHandPayload) == 20, "FoodHandPayload must be 20 bytes");
 namespace plant_edit {
 inline constexpr uint8_t kGrow = 1, kFertilizer = 2, kWater = 4, kFruitGrow = 8, kDryness = 16, kAmount = 32, kRow = 64;
 }  // namespace plant_edit
@@ -2267,7 +2293,7 @@ struct WirePileLook {
 static_assert(sizeof(WirePileLook) == 12, "WirePileLook must be 12 bytes");
 
 struct PropSpawnPayload {
-    WireClassName className;       // 64 -- "Aprop_equipment_flashlight_C" etc.
+    WireClassName className;       // 64 -- "Aprop_equipment_flashlight_C" etc., and after it the class's content path
     WireKey       key;             // 32 -- the persistent cross-peer Key
     // The list_props row name: an Aprop_C's mesh, mass and collision are resolved by init() from the
     // row named here (the class default is the cube row), so a mirror must carry it or it renders as
@@ -2727,12 +2753,15 @@ struct PropActCommitPayload {
 };
 static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8 bytes");
 
-// A client's ask to take a record out of a world container, or to put one in (ContainerActRequest), the host's
+// A client's ask to take a record out of a shared inventory, or to put one in (ContainerActRequest), the host's
 // answer (ContainerActReply) and the client's closing word (ContainerActCommit). The request and the commit are
 // chunked blobs (coop::props::container_act_wire), since a put carries a record; only the answer is a fixed payload.
 // `id` is the client's own, nonzero, and pairs the three. The family names the verb, and the host judges each by its
 // own conditions; a family it does not serve is answered WrongFamily.
-enum class ContainerActFamily : uint8_t { Take = 1, PutRecord = 2 };
+// Take: a whole entry out. PutRecord: one entry in. TakeStack: part of a stack out. MergeStack: one entry of a container
+// folded into another of the same item. The target is a world container's element id, or the delivery drone's cargo
+// (coop/props/container_target).
+enum class ContainerActFamily : uint8_t { Take = 1, PutRecord = 2, TakeStack = 3, MergeStack = 4 };
 enum class ContainerActReason : uint8_t { Granted = 0, Gone = 1, Reach = 2, NoSpace = 3, Locked = 4, Refused = 5,
                                           QueueFull = 6, WrongFamily = 7, Lapsed = 8 };
 // Lapsed: the sender let a reservation of the host's run out its deadline, so its next put is refused for a spell.
@@ -3939,14 +3968,15 @@ struct GrabRefusedPayload {
 };
 static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 bytes");
 
-// A drone-call intent (DroneFlyIntent): the press itself, with which of the console's two faces it
-// was. Which face is the sender's reading of its own cursor, the only machine that has one, and the
+// A drone intent (DroneFlyIntent): the press itself, with which of the console's two faces it
+// was, or the drone's own drop-sack option. Which face is the sender's reading of its own cursor, the only machine that has one, and the
 // console carries no identity to name (see the kind's comment), so the host resolves the console
 // the sender stands at and re-tests the lid there.
 namespace drone_verb {
 constexpr uint8_t kCall = 0;        // the keyboard's call/send
 constexpr uint8_t kLeaveTimer = 1;  // the leave timer face, a toggle on the host
-constexpr uint8_t kMax = kLeaveTimer;
+constexpr uint8_t kDropSack = 2;    // the drone's own drop-sack option: no console, the drone itself within reach
+constexpr uint8_t kMax = kDropSack;
 }  // namespace drone_verb
 struct DroneFlyIntentPayload {
     uint8_t verb;        // 1 -- drone_verb::k*
@@ -4425,13 +4455,13 @@ static_assert(sizeof(LightningStrikePayload) <= 256 - 20 - 8,
 struct ExplosionSpawnPayload {
     uint8_t  classId;                    // ue_wrap::explosion::Cls
     uint8_t  flags;                      // bit0 ignoreWalls, bit1 Skip Setting
-    uint8_t  objType;                    // explosion_C.objType, 0..255
     uint8_t  ignoreKind;                 // 0 none, 1 an element id, 2 a server box's index in the gamemode's list
+    uint8_t  pad;
     float    loc[3], rot[3], scale[3];   // rot = pitch, yaw, roll
-    float    damage, radius, force, fireStrength, fireFuel, innerShake, outerShake;
+    float    damage, radius, force, fireStrength, fireFuel;
     uint32_t ignoreId;                   // per ignoreKind; 0 when none
 };
-static_assert(sizeof(ExplosionSpawnPayload) == 72, "ExplosionSpawnPayload must be 72 bytes");
+static_assert(sizeof(ExplosionSpawnPayload) == 64, "ExplosionSpawnPayload must be 64 bytes");
 static_assert(sizeof(ExplosionSpawnPayload) <= 256 - 20 - 8,
               "ExplosionSpawnPayload must fit in one reliable datagram");
 
@@ -4526,7 +4556,7 @@ static_assert(sizeof(JoinPhaseNotePayload) == 12, "JoinPhaseNotePayload must be 
 // and StatQueryReply). The packing, every check of a client's answer and the table of the tokens
 // awaiting an answer live in coop/player/stat_orders_wire; an order is judged by the client that
 // takes it, which answers Refused and never drops it.
-constexpr int kStatRows = 22;        // the stat table's rows (ue_wrap::vitals::Field::Count), carried by a query reply
+constexpr int kStatRows = 20;        // the stat table's rows (ue_wrap::vitals::Field::Count), carried by a query reply
 constexpr int kStatEffectName = 12;  // an effect name: up to 11 ASCII characters and a NUL
 
 // Host to one client: set a row, add an effect or remove one. `token` is the host's, echoed in the reply.
@@ -4574,7 +4604,7 @@ struct StatEffectEntry {
 static_assert(sizeof(StatEffectEntry) == 21, "StatEffectEntry must be 21 bytes");
 
 // Client to host: every row's value with a mask of the rows that read, the first five effect
-// entries and the total. 23 bytes are left: five more rows (row 27); a 28th row changes this layout.
+// entries and the total. 31 bytes are left: seven more rows (row 26); a 28th row changes this layout.
 struct StatQueryReplyPayload {
     uint32_t token;
     uint32_t validMask;               // bit i: row i read
@@ -4585,7 +4615,7 @@ struct StatQueryReplyPayload {
     uint8_t  pad;
     StatEffectEntry effects[5];
 };
-static_assert(sizeof(StatQueryReplyPayload) == 205, "StatQueryReplyPayload must be 205 bytes");
+static_assert(sizeof(StatQueryReplyPayload) == 197, "StatQueryReplyPayload must be 197 bytes");
 static_assert(sizeof(StatQueryReplyPayload) <= 256 - 20 - 8, "StatQueryReplyPayload must fit in one reliable datagram");
 
 // A spilled liquid's decal (SpillState), or a client's (SpillIntent).

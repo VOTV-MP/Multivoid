@@ -14,12 +14,12 @@
    into Direct Connect. If the host set a password, type it in the box beside it.
 
 That is the whole setup. Everyone needs their own copy of Voices of the Void on the
-version this build targets (**0.9.0n**), and the same Multivoid build — the server
+version this build targets (**0.10.0**), and the same Multivoid build — the server
 browser marks mismatched lobbies before you click.
 
 | | |
 |--|--|
-| **Game target** | Voices of the Void Alpha **0.9.0n** |
+| **Game target** | Voices of the Void Alpha **0.10.0** |
 | **Players** | up to **4** (host + 3) — LAN + Internet, no port forwarding needed |
 | **Status** | Alpha — dev builds; everyone playing one is a tester |
 | **Website** | [multivoid.dev](https://multivoid.dev) |

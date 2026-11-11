@@ -28,8 +28,6 @@ struct Opener {
     std::vector<void*> classes;  // the kind's class and its descendants that have live instances
 };
 Opener g_openers[] = {
-    {L"drone_C", L"container"},
-    {L"prop_dronesack_C", L"container"},
     {L"ATV_C", L"spawnedContainer"},
 };
 constexpr size_t kKinds = std::size(g_openers);

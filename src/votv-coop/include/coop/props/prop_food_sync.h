@@ -1,4 +1,4 @@
-// coop/props/prop_food_sync.h -- one author for a world food's temperature, ripeness and use count: the host.
+// coop/props/prop_food_sync.h -- one author for a world food's temperature, freshness and use count: the host.
 //
 // A food's tick rolls its own temperature and spoilage, and at the ends of the range spawns a burnt or frozen copy and
 // destroys itself, so every peer running it is a separate author, and a second burnt food. A client's world food is

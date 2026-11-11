@@ -17,7 +17,7 @@ inline constexpr const wchar_t* kDisc = L"prop_floppyDisc_R_C";
 void ClientInvalid(const char* why, const char* tag);
 void HostInvalid(const char* why, const char* tag);
 
-// The actor the player's hand holds (holding_actor), or null. Game thread.
+// The actor the player's hand holds (holdingActor_main), or null. Game thread.
 void* HoldingActor(void* player);
 
 // The Omega mirror nearest the host's body, within the spawn's reach of it; null when none. Game thread.

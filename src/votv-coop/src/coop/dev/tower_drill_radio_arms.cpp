@@ -93,7 +93,7 @@ bool FuseOverdue(uint64_t bound) { return NowMs() - g_fuseMs > bound; }
 void* HeldActor(void* player) {
     ue_wrap::engine::MainPlayerGrabState gs{};
     if (!ue_wrap::engine::ReadMainPlayerGrabState(player, gs)) return nullptr;
-    void* held = gs.grabbingActor ? gs.grabbingActor : gs.holdingActor;
+    void* held = gs.grabbingActor ? gs.grabbingActor : gs.mainHand;
     return (held && R::IsLive(held)) ? held : nullptr;
 }
 

@@ -1,18 +1,14 @@
 // ue_wrap/engine/save_browser.h -- VOTV save enumeration + creation. Engine-wrapper layer
-// (principle 7): NO coop, network or gameplay state lives here. The UFunction-driven
-// parts -- create, exists, and the scan's stage A -- are GAME THREAD ONLY.
+// (principle 7): NO coop, network or gameplay state lives here. GAME THREAD ONLY unless a
+// declaration says otherwise.
 //
-// EnumerateSaves lists <SavedDir>/SaveGames/*.sav -- directory from the native
-// GetProjectSavedDirectory, subsaves excluded through lib_C::processSaveNameIntoSubsave
-// -- and reads each row's metadata DIRECTLY from the file's GVAS tag stream
-// (ue_wrap/gvas_meta), taking saveSlot_C CDO defaults for delta-omitted properties.
-// Driving loadSlots instead means N calls to LoadGameFromSlot, a full 15-20 MB
-// deserialize per save on the game thread, which froze the picker for seconds once
-// real saves accumulated. Non-saveSlot_C slots and subsaves are excluded; b_* is the
-// SANDBOX prefix and is never filtered.
+// A save is a folder under <SavedDir>/SaveGames/ (ue_wrap/engine/save_folder.h), listed when it
+// holds a main.meta, as the game's slot menu lists it. A row is read off that metadata
+// (save_metadata_C: mode, day, version, last saved): a few hundred bytes per save, so the scan reads
+// it through the game's own CompressedSaveLoadLib on the game thread, never the world save.
 //
-// CreateNamedSave mirrors VOTV's create primitive: CreateSaveGameObject(saveSlot_C)
-// + SaveGameToSlot(obj, "<prefix><name>", 0), a persisted-at-creation blank save.
+// CreateNamedSave is the game's own create: lib_C::createSaveSlotTreeDirectory, which builds the
+// folder with its metadata, its main and autosave slots and its persistent save.
 
 #pragma once
 
@@ -22,33 +18,30 @@
 
 namespace ue_wrap::save_browser {
 
-// One existing save, with the metadata a picker row needs (read off UsaveSlot_C).
+// One existing save, with the metadata a picker row needs (read off its main.meta).
 struct SaveInfo {
-    std::wstring slot;         // slot name (== the <slot>.sav filename minus extension)
-    std::wstring displayName;  // slot minus the mode prefix (for the list)
-    int          mode = -1;    // enum_gamemode ordinal (story=0, ...); -1 = unknown
-    std::wstring modeLabel;    // "Story" / "Sandbox" / "Infinite" / ... (display)
-    int          day = 0;      // UsaveSlot_C::Day
-    int          points = 0;   // UsaveSlot_C::Points
-    float        health = 0.f; // UsaveSlot_C::health
-    float        maxHealth = 0.f;  // UsaveSlot_C::maxHealth
-    std::wstring version;      // UsaveSlot_C::Version
-    bool         versionConflict = false;  // Version differs from the running game's (GameVersion):
+    std::wstring slot;         // the save's folder name, what engine::LoadStorySave takes
+    std::wstring displayName;  // the name the list shows (the folder name)
+    int          mode = -1;    // save_metadata_C::gamemode_type, an enum_gamemode ordinal; -1 = unknown
+    std::wstring modeLabel;    // "Story" / "Sandbox" / ... (display)
+    int          day = 0;      // save_metadata_C::savedtime.Z + 1, as the slot row shows it
+    std::wstring version;      // save_metadata_C::version
+    bool         versionConflict = false;  // version differs from the running game's (GameVersion):
                                            // the case the game's own slot menu warns about
-    int64_t      lastPlayedTicks = 0;  // UsaveSlot_C::lastDate (FDateTime ticks, 100ns)
+    int64_t      lastPlayedTicks = 0;  // save_metadata_C::lastSaved (FDateTime ticks, 100ns)
 };
 
 // Enumerate all existing top-level saves with metadata (synchronous convenience
 // path -- the picker uses RefreshAsync instead). `out` is replaced, sorted
-// newest-first. Returns false if the save system can't be resolved yet (saveSlot_C
-// not loaded / dir unresolved) -- `out` is then left empty. Game thread.
+// newest-first. Returns false if the save system can't be resolved yet (the saved
+// directory unresolved) -- `out` is then left empty. Game thread.
 bool EnumerateSaves(std::vector<SaveInfo>& out);
 
-// Create a brand-new, NAMED, mode-correct, PERSISTED save and return its full slot
-// name ("<prefix><name>") in `outSlot`. `mode` is an enum_gamemode ordinal (story=0).
-// Returns false on name collision (slot already exists) or if the save system isn't
-// resolvable. Game thread only. The caller enters gameplay via the SAME path as any
-// existing save: engine::LoadStorySave(outSlot).
+// Create a brand-new, NAMED, mode-correct, PERSISTED save folder and return its name in
+// `outSlot`. `mode` is an enum_gamemode ordinal (story=0), which the game stamps into the
+// metadata from the GameInstance's mode. Returns false on a name collision (the folder already
+// exists) or if the save system isn't resolvable. Game thread only. The caller enters gameplay
+// via the SAME path as any existing save: engine::LoadStorySave(outSlot).
 bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSlot);
 
 // The same creation, from a BASE name the caller does not need to have checked: probes
@@ -66,16 +59,14 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
 // closes. Game thread.
 bool CreateNamedSaveUnique(const std::wstring& baseName, uint8_t mode, std::wstring& outSlot);
 
-// True iff a save slot already exists on disk (UGameplayStatics::DoesSaveGameExist).
-// Game thread only. Used by the picker to validate a typed New-Game name live.
+// True iff a save folder of that name already exists on disk. Game thread only. Used by the
+// picker to validate a typed New-Game name live.
 bool SlotExists(const std::wstring& slot);
 
 // --- async cache for the render-thread picker (mirrors lobby_client) -------------
 
-// Kick a scan: stage A (dir/classify/CDO defaults) on the game thread, stage B
-// (per-file GVAS metadata reads, mtime-cached) on a worker thread; the result is
-// cached for CopySaves. Non-blocking, safe from the render thread. Coalesces (no
-// overlapping scans). Call on picker-open / explicit refresh / after
+// Kick a scan on the game thread; the result is cached for CopySaves. Non-blocking, safe
+// from the render thread. Coalesces (no overlapping scans). Call on picker-open / explicit refresh / after
 // CreateNamedSave -- not from the per-frame ImGui draw (the coalesce prevents
 // OVERLAP, not a re-post-every-frame churn).
 void RefreshAsync();
@@ -85,7 +76,7 @@ void RefreshAsync();
 uint64_t CopySaves(std::vector<SaveInfo>& out);
 
 // The running game's version as its own slot menu compares it against a save's Version:
-// lib_C::gameVersion with an empty prefix and suffix, which is the project version ("0.9.0").
+// lib_C::gameVersion with an empty prefix and suffix, which is the project version.
 // Resolved on the game thread by a scan; empty until one has. Any thread.
 std::wstring GameVersion();
 

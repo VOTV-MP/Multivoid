@@ -1,16 +1,20 @@
 // coop/items/player_profile.h -- everything about one player that is theirs and not the world's:
-// what they carry, wear and hold, their vitals, and where they stood.
+// their own save record (their vitals, what they carry, wear and hold), a readable copy of their
+// vitals, and where they stood.
 //
-// The game keeps all of it on the one save object a world is built from, and a joiner's world is
-// built from a capture of the HOST's. So each part is replaced on the joiner's side before the
-// world exists, or the joiner starts as a copy of the host: the host's items under the host's
-// keys, the host's hunger, the host's position. coop/items/inventory_wire carries this value,
-// coop/items/player_inventory_sync stores it per player on the host and hands it back at a join.
+// The game keeps the player's record among the saved actors of the save object a world is built
+// from, and a joiner's world is built from a capture of the HOST's. So it is replaced on the
+// joiner's side before the world exists, or the joiner starts as a copy of the host: the host's
+// items under the host's keys, the host's hunger, the host's position. coop/items/inventory_wire
+// carries this value, coop/items/player_inventory_sync stores it per player on the host and hands
+// it back at a join.
 
 #pragma once
 
-#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/vitals.h"
+
+#include <cstdint>
+#include <vector>
 
 namespace coop::player_profile {
 
@@ -24,9 +28,13 @@ struct Pose {
 };
 
 struct Profile {
-    ue_wrap::inventory::PlayerInventory items;
-    // The vitals as read, or none: a save object whose vitals do not resolve must not stop the
-    // items from being stored. A profile without them is applied with the game's defaults.
+    // The player's own save record as the game wrote it (ue_wrap/actors/player_record.h): the
+    // pawn's saved properties, its inventory component's among them. Empty for a player the host
+    // has nothing of (a first join), who starts as a new game's player does.
+    std::vector<uint8_t>                record;
+    // The vitals as read, or none: a pawn whose vitals do not resolve must not stop the record
+    // from being stored. Read by the join (a player who left dead starts afresh) and the admin's
+    // stat orders; a profile without them is applied with the game's defaults.
     bool                                hasVitals = false;
     ue_wrap::vitals::Snapshot           vitals;
     Pose                                pose;

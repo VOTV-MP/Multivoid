@@ -107,7 +107,7 @@ bool BodyAt(int slot, ue_wrap::FVector& at) {
 
 void* HoldingActor(void* player) {
     E::MainPlayerGrabState gs{};
-    return (player && E::ReadMainPlayerGrabState(player, gs)) ? gs.holdingActor : nullptr;
+    return (player && E::ReadMainPlayerGrabState(player, gs)) ? gs.mainHand : nullptr;
 }
 
 // ---- host ----
@@ -139,7 +139,7 @@ bool TakeDisc() {
     }
     void* disc = E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z});
     bool collected = false;
-    if (!disc || !E::CallMainPlayerHoldObject(me, disc, collected) || !collected) {
+    if (!disc || !E::CallMainPlayerAddObjectToFreeHotbarSlot(me, disc, ue_wrap::engine::HotbarAdd{}, collected) || !collected) {
         HostInvalid("the host's pickup of a red disc did not take");
         return false;
     }

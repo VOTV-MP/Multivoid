@@ -6,9 +6,12 @@
 // and whichever peer re-authored the prop won with an empty copy.
 //
 // Three properties, each answered by the game rather than by a table kept here: capture is the
-// actor's own getData, apply is its own loadData, and membership is "this class declares a
-// getData of its own below Aprop_C". That last is why this is not a class list -- a list goes
-// stale the first time VOTV adds a save-backed prop, and it goes stale silently.
+// actor's own betterGetData, apply is its own betterLoadData (ue_wrap/actors/prop_record), and
+// membership is "a class below Aprop_C declares SaveGame state or a betterGetData of its own". That
+// last is why this is not a class list -- a list goes stale the first time VOTV adds a save-backed
+// prop, and it goes stale silently. What crosses is the stream the game's ActorToBytes writes, the
+// bytes of the prop's state; the receiver's own record supplies the rest, so a body names the prop by
+// its Key and carries nothing that could rename or move it.
 //
 // Authority: the host publishes; a client that authors a prop's state sends an intent the host
 // validates and re-publishes. Game thread for capture and apply (both dispatch UFunctions).
@@ -39,13 +42,17 @@ void DeclareClassOwnedElsewhere(const wchar_t* className);
 // Cheap after the first call per class; safe to ask on a birth path.
 bool Covers(void* actor);
 
+// The size of the body that carries an actorData stream of `dataBytes` for `key`: what Publish would send.
+size_t BodyBytes(const std::wstring& key, size_t dataBytes);
+
 // Publish `actor`'s record. On the host that is PropSaveData to every peer; on a client it is
 // PropSaveDataIntent to the host, whose re-publish is also the acknowledgement. False when the class
 // is not covered, no peer could receive it, the capture fails, or the send did not take every chunk.
 // A caller may ignore it: a refused send is registered and re-sent from the live actor on a widening
 // backoff, and only a give-up past that ceiling is logged as a divergence. `bytesOut`, when given,
-// receives the body size of a record that was built, sent or not. The record-as-payload precedent
-// is named in ue_wrap/actors/save_record.h, on CaptureRecord.
+// receives the body size of a record that was built, sent or not. An actor's own record as the payload
+// that carries it to another peer is the pair Relay, Moddy's VOTV mod, publishes as a rule's spawn
+// payload on its README Blueprint page (docs/credits.md).
 bool Publish(coop::net::Session* s, void* actor, const std::wstring& key,
              size_t* bytesOut = nullptr);
 
@@ -99,7 +106,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
 bool ApplyParked(void* actor, const std::wstring& key);
 
 // Per frame: spends a bounded apply budget on the park (an apply is a ProcessEvent into the prop's
-// own loadData, so a join's worth of them in one frame is a stall), and sweeps the chunk
+// own betterLoadData, so a join's worth of them in one frame is a stall), and sweeps the chunk
 // assemblers at 1 Hz. The parked records are never swept -- only applied (see above).
 void Drive();
 

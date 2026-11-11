@@ -31,12 +31,13 @@ int32_t MainPlayer_grabLen();
 int32_t MainPlayer_Camera();    // the first-person UCameraComponent: the native hold point's origin
 int32_t MainPlayer_armLength(); // the look-at trace's length: 200, or the held item's own
 int32_t MainPlayer_Heavy();
-// holding_actor is the hotbar HAND ITEM pointer. updateHold is what fills it: it destroys the
+// holdingActor_main is the hotbar HAND ITEM pointer. better_holdItem_mainhand is what fills it: it destroys the
 // previous item, spawns the new one from the equip data and attaches it to `weapon`; the only
 // other writer clears it, on the place-and-undo path. A chipPile or clump grab does not touch
 // it -- the grab path writes grabbing_actor from the aim hit result -- so the pose emit reads
-// holding_actor only as a fallback when grabbing_actor is null, for any other carry.
-int32_t MainPlayer_holding_actor();
+// holdingActor_main only as a fallback when grabbing_actor is null, for any other carry.
+int32_t MainPlayer_holdingActor_main();
+int32_t MainPlayer_holdingActor_offhand();
 // The actor the local player is aiming at. On an E-press (InpActEvt_use) this is the door or
 // interactable being used; the use observer reads it there to name the door for the
 // host-authoritative sync.
@@ -70,6 +71,9 @@ int32_t MainPlayer_dead();
 // pointer the enter chain casts; the deny gate nulls that for one InpActEvt_use dispatch.
 int32_t MainPlayer_activeInterface();
 int32_t MainPlayer_HitResult();
+// The flashlight's equipped guard: updateEquipment clears it and sets it for any equipped
+// prop_equipment_flashlight_C, and Flashlight Update does nothing but hint while it is false.
+int32_t MainPlayer_equipped_flashlight();
 
 // AnimBlueprint_kerfurOmega_regular_C field accessors (VOTV BP).
 int32_t AnimBP_kerfur_walkSpeed();

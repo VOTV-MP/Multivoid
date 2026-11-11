@@ -2,7 +2,6 @@
 
 #include "ue_wrap/hotbar/icons.h"
 
-#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -17,22 +16,23 @@ namespace {
 
 namespace R   = ue_wrap::reflection;
 namespace P   = ue_wrap::profile;
-namespace INV = ue_wrap::inventory;
 namespace SR  = ue_wrap::save_record;
 
-constexpr const wchar_t* kUiClass    = L"ui_UI_C";
+constexpr const wchar_t* kUiClass    = L"ui_FreeLayoutInventory_C";
+constexpr const wchar_t* kSlotClass  = L"uicomp_FLI_itemSlot_C";
 constexpr const wchar_t* kPropProc   = L"propProcessor_C";
 constexpr const wchar_t* kGameInst   = L"mainGameInstance_C";
 constexpr const wchar_t* kMatInst    = L"MaterialInstance";   // owns TextureParameterValues
-constexpr const wchar_t* kTexParam   = L"tex";                // the parameter updateSlotInv writes
-constexpr const wchar_t* kRefreshFn  = L"updateSlotInv";
+constexpr const wchar_t* kTexParam   = L"tex";                // the parameter a slot's upd writes
+constexpr const wchar_t* kRefreshFn  = L"upd";
 
 struct Offsets {
     bool    ok              = false;
-    int32_t playerInterface = -1;
+    int32_t fliInventory    = -1;   // mainGamemode.ui_FLI_inventory
     int32_t propRenderer    = -1;
-    int32_t slotInv         = -1;
-    int32_t slotTexts       = -1;
+    int32_t hotbarSlots     = -1;
+    int32_t slotImage       = -1;   // uicomp_FLI_itemSlot_C.image_item
+    int32_t slotItemName    = -1;   // uicomp_FLI_itemSlot_C.slotItemName
     int32_t iconNames       = -1;
     int32_t rendererPhases  = -1;
     int32_t texsGameInst    = -1;
@@ -60,16 +60,18 @@ bool Resolve() {
 
     void* gmCls = R::FindClass(P::name::GamemodeClass);
     void* uiCls = R::FindClass(kUiClass);
+    void* slotCls = R::FindClass(kSlotClass);
     void* ppCls = R::FindClass(kPropProc);
     void* giCls = R::FindClass(kGameInst);
     g_matInstClass = R::FindClass(kMatInst);
-    if (!gmCls || !uiCls || !ppCls || !giCls || !g_matInstClass) return false;
+    if (!gmCls || !uiCls || !slotCls || !ppCls || !giCls || !g_matInstClass) return false;
 
     Offsets o;
-    o.playerInterface = R::FindPropertyOffset(gmCls, L"playerInterface");
+    o.fliInventory    = R::FindPropertyOffset(gmCls, L"ui_FLI_inventory");
     o.propRenderer    = R::FindPropertyOffset(gmCls, L"propRenderer");
-    o.slotInv         = R::FindPropertyOffset(uiCls, L"slotInv");
-    o.slotTexts       = R::FindPropertyOffset(uiCls, L"slotTexts");
+    o.hotbarSlots     = R::FindPropertyOffset(uiCls, L"hotbarSlots");
+    o.slotImage       = R::FindPropertyOffset(slotCls, L"image_item");
+    o.slotItemName    = R::FindPropertyOffset(slotCls, L"slotItemName");
     o.iconNames       = R::FindPropertyOffset(ppCls, L"names");
     o.rendererPhases  = R::FindPropertyOffset(ppCls, L"fins");
     o.texsGameInst    = R::FindPropertyOffset(giCls, L"texs_GAMEINST");
@@ -82,18 +84,18 @@ bool Resolve() {
         o.texParamInfo   = R::FindPropertyOffset(elem, L"ParameterInfo");
         o.texParamValue  = R::FindPropertyOffset(elem, L"ParameterValue");
     }
-    g_refreshFn = R::FindFunction(uiCls, kRefreshFn);
+    g_refreshFn = R::FindFunction(slotCls, kRefreshFn);
 
-    if (o.playerInterface < 0 || o.propRenderer < 0 || o.slotInv < 0 || o.slotTexts < 0 ||
+    if (o.fliInventory < 0 || o.propRenderer < 0 || o.hotbarSlots < 0 || o.slotImage < 0 || o.slotItemName < 0 ||
         o.iconNames < 0 || o.texsGameInst < 0 || o.texParams < 0 || o.texParamStride <= 0 ||
         o.texParamInfo < 0 || o.texParamValue < 0 || !g_refreshFn) {
         static bool s_said = false;
         if (!s_said) {
             s_said = true;
-            UE_LOGW("hotbar: unresolved -- the quick-slot icon edge is inert (playerInterface=%d "
-                    "propRenderer=%d slotInv=%d slotTexts=%d names=%d texs=%d texParams=%d "
+            UE_LOGW("hotbar: unresolved -- the hotbar icon edge is inert (ui_FLI_inventory=%d "
+                    "propRenderer=%d hotbarSlots=%d image_item=%d slotItemName=%d names=%d texs=%d texParams=%d "
                     "stride=%d info=%d value=%d verb=%p)",
-                    o.playerInterface, o.propRenderer, o.slotInv, o.slotTexts, o.iconNames,
+                    o.fliInventory, o.propRenderer, o.hotbarSlots, o.slotImage, o.slotItemName, o.iconNames,
                     o.texsGameInst, o.texParams, o.texParamStride, o.texParamInfo, o.texParamValue,
                     g_refreshFn);
         }
@@ -113,6 +115,14 @@ SR::Arr ArrayAt(const void* base, int32_t off) {
     return SR::ReadArr(base, off);
 }
 
+// Hotbar slot `i`'s widget, live, or null.
+void* SlotAt(void* ui, int i) {
+    const SR::Arr slots = ArrayAt(ui, g_off.hotbarSlots);
+    if (i < 0 || i >= slots.num) return nullptr;
+    void* slot = reinterpret_cast<void* const*>(slots.data)[i];
+    return slot && R::IsLive(slot) ? slot : nullptr;
+}
+
 }  // namespace
 
 bool Read(State& out) {
@@ -121,11 +131,18 @@ bool Read(State& out) {
     if (!gm) return false;
 
     State s;
-    s.ui       = *reinterpret_cast<void* const*>(static_cast<uint8_t*>(gm) + g_off.playerInterface);
+    s.ui       = *reinterpret_cast<void* const*>(static_cast<uint8_t*>(gm) + g_off.fliInventory);
     s.renderer = *reinterpret_cast<void* const*>(static_cast<uint8_t*>(gm) + g_off.propRenderer);
     if (s.ui && R::IsLive(s.ui)) {
-        s.slots     = ArrayAt(s.ui, g_off.slotInv).num;
-        s.slotTexts = ArrayAt(s.ui, g_off.slotTexts).num;
+        s.slots = ArrayAt(s.ui, g_off.hotbarSlots).num;
+        for (int i = 0; i < s.slots; ++i) {
+            void* const slot = SlotAt(s.ui, i);
+            if (!slot) continue;
+            const R::FName& item = *reinterpret_cast<const R::FName*>(static_cast<uint8_t*>(slot) + g_off.slotItemName);
+            if (item.ComparisonIndex == 0) continue;   // NAME_None: an empty slot
+            if (s.firstFilled < 0) s.firstFilled = i;
+            ++s.filled;
+        }
     } else {
         s.ui = nullptr;
     }
@@ -140,7 +157,6 @@ bool Read(State& out) {
     // texs_GAMEINST lives on the GAME INSTANCE, which outlives the world: that is why a second
     // world load in one process finds the icons already built and never shows this defect.
     if (void* gi = world_singleton::GameInstance()) s.iconTextures = ArrayAt(gi, g_off.texsGameInst).num;
-    s.carried = INV::LivePersonalStoreCount();
 
     out = s;
     return true;
@@ -148,16 +164,16 @@ bool Read(State& out) {
 
 std::wstring SlotTexture(const State& s, int i) {
     if (!g_off.ok || !s.ui || i < 0 || i >= s.slots || !R::IsLive(s.ui)) return std::wstring();
-    const SR::Arr slots = ArrayAt(s.ui, g_off.slotInv);
-    if (i >= slots.num) return std::wstring();
-    void* img = reinterpret_cast<void* const*>(slots.data)[i];
+    void* const slot = SlotAt(s.ui, i);
+    if (!slot) return std::wstring();
+    void* img = *reinterpret_cast<void* const*>(static_cast<uint8_t*>(slot) + g_off.slotImage);
     if (!img || !R::IsLive(img)) return std::wstring();
 
     const uint8_t* brush = static_cast<const uint8_t*>(img) + P::off::UImage_Brush;
     void* res = *reinterpret_cast<void* const*>(brush + P::off::FSlateBrush_ResourceObject);
     if (!res || !R::IsLive(res)) return L"no-material";
     // Only a material instance carries the parameter array; the designer's own material does not,
-    // and a slot still holding it has never been through a rebuild.
+    // and a slot still holding it has never been drawn.
     bool isMat = false;
     for (void* c = R::ClassOf(res); c; c = R::SuperStructOf(c))
         if (c == g_matInstClass) { isMat = true; break; }
@@ -176,8 +192,14 @@ std::wstring SlotTexture(const State& s, int i) {
 
 bool Rebuild(const State& s) {
     if (!g_off.ok || !g_refreshFn || !s.ui || !R::IsLive(s.ui)) return false;
-    ue_wrap::ParamFrame f(g_refreshFn);
-    return f.valid() && ue_wrap::Call(s.ui, f);
+    bool ok = true;
+    for (int i = 0; i < s.slots; ++i) {
+        void* const slot = SlotAt(s.ui, i);
+        if (!slot) continue;
+        ue_wrap::ParamFrame f(g_refreshFn);
+        ok = f.valid() && ue_wrap::Call(slot, f) && ok;
+    }
+    return ok;
 }
 
 }  // namespace ue_wrap::hotbar

@@ -43,9 +43,6 @@ constexpr ScanCost kCosts[] = {
      "no multiplayer session starts (MV-J32), since a prop's key is never seen written, and Blueprint-internal "
      "calls are neither watched nor refused: every script_gate watch is off",
      "not tried yet"},
-    {"SaveGameToSlot", CR::Severity::Important,
-     "the world-save gate: a client in a session can save the host's world over its own",
-     "tried when a multiplayer session starts"},
     {"OverlayDraw", CR::Severity::Important, "the overlay: no Multivoid menu, chat, HUD or dialogs",
      "tried when the overlay starts"},
     {"OverlayResize", CR::Severity::Important,

@@ -7,7 +7,7 @@
 // saved one, marking a rule whose copies differ, then waits for the values the local player keeps
 // from the rules to agree with them. Ends on `worldrules: DONE role=<r> rules=<n>
 // mismatches=<m> latch-disagreements=<k>`. It tells something only on a world whose rules are not
-// the defaults, which a save names in its localGameRules.
+// the defaults, which a save names in its metadata's rules.
 
 #include "harness/autotest.h"
 
@@ -102,7 +102,7 @@ int LatchDisagreements(std::string& text) {
 
 // --- World-rules probe (VOTVCOOP_RUN_WORLDRULES_PROBE=1) ----------------------
 //
-// The game keeps the world rules twice: the SAVED copy on the save object (localGameRules) and the
+// The game keeps the world rules twice: the SAVED copy on the save's metadata (rules) and the
 // PER-PROCESS copy on the GameInstance (gameRules), which is the one nearly every rule is read
 // from. The probe logs both on each peer, one line per rule, and marks a rule whose copies differ;
 // then it waits for the values the local player keeps from the rules to agree with them. It can

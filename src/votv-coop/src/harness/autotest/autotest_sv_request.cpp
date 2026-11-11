@@ -20,14 +20,14 @@
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
-#include "coop/items/save_record_wire.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/disc_record_ceiling.h"
+#include "coop/props/prop_save_data.h"
 #include "coop/session/rig_verdict.h"
 #include "harness/session_runtime.h"
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/prop_record.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
@@ -60,7 +60,7 @@ namespace PS = harness::autotest::peer_signal;
 namespace R = ue_wrap::reflection;
 namespace SB = ue_wrap::serverbox;
 namespace SC = ue_wrap::sat_console;
-namespace SR = ue_wrap::save_record;
+namespace PR = ue_wrap::prop_record;
 using disc_drill::OnGameThread;
 using PS::Await;
 using PS::AwaitText;
@@ -256,19 +256,16 @@ void* SpawnDisc(int rows, int writesLeft) {
     return disc;
 }
 
-// What a disc's record weighs on the wire, built as prop_save_data's body is: the version byte, the key's length, the key,
-// then the record. Zero when the disc cannot be made or captured.
+// What a disc's record weighs on the wire: prop_save_data's body for the disc's own betterGetData stream. Zero when the
+// disc cannot be made or captured.
 size_t RecordBytes(int rows, int writesLeft) {
     size_t bytes = 0;
     OnGameThread([&] {
         void* disc = SpawnDisc(rows, writesLeft);
         if (!disc) return;
-        SR::SaveRecord rec;
-        if (SR::CaptureRecord(disc, rec)) {
-            std::vector<uint8_t> body;
-            coop::save_record_wire::SerSave(body, rec);
-            bytes = 2 + ue_wrap::prop::GetKeyString(disc).size() + body.size();
-        }
+        std::vector<uint8_t> stream;
+        if (PR::Capture(disc, stream))
+            bytes = coop::prop_save_data::BodyBytes(ue_wrap::prop::GetKeyString(disc), stream.size());
         E::DestroyActor(disc);
     });
     return bytes;

@@ -5,26 +5,29 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/element/registry.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/props/container_act_state.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
-#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/container_target.h"
 #include "coop/session/net_pump.h"
 
 #include "l10n/l10n.h"
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/container_view.h"
-#include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/actors/inventory_item.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/devices/drone.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
@@ -44,27 +47,24 @@ namespace caw = coop::props::container_act_wire;
 namespace ci  = ue_wrap::container_inventory;
 namespace cio = coop::props::container_contents_io;
 namespace csw = coop::props::container_slice_wire;
+namespace ct  = coop::props::container_target;
 namespace cv  = ue_wrap::container_view;
+namespace D   = ue_wrap::drone;
 namespace EL  = coop::element;
-namespace SR  = ue_wrap::save_record;
+namespace II  = ue_wrap::inventory_item;
+namespace R   = ue_wrap::reflection;
 namespace sg  = ue_wrap::script_gate;
 using coop::net::ContainerActFamily;
 using coop::net::ContainerActReason;
 using coop::net::ReliableKind;
 
-// The take family's watch: the slot's own pressButton, entered by the player's click or by the take hotkey.
-UE_FACT_FN(kRowTake, "container_act", L"uicomp_playerInvContainerSlot_C", L"pressButton", Declared);
+// The take's watch: the component's removeInventoryItem, which the inventory screen calls on the component an entry
+// leaves, for every drag out of a container, a mass selection and a drop into the world alike.
+UE_FACT_FN(kRowTake, "container_act", L"inventoryComponent_C", L"removeInventoryItem", Declared);
 constexpr int kTagTake = 0x43414331;   // "CAC1"
 
 // A refused commit is sent again at most this often.
 constexpr uint64_t kCommitRetryMs = 250;
-
-// A grant older than the host's hold deadline less this is not replayed. The host restores the record by itself at its
-// deadline, so a replay after that makes the item twice. The age is counted from the reply's receipt here, which
-// underestimates the grant's age by at most the one-way latency; the margin covers that. The replay runs inline at the
-// receipt today, so the guard fires only for a replay held on the client (the drill's hold, or any future deferral):
-// that is why it exists.
-constexpr uint64_t kGrantMarginMs = 5000;
 
 // The replay's apply latch, for the length of one synchronous verb call: the verb watches ask it whether a verb is the
 // replay's.
@@ -73,14 +73,9 @@ struct Latch {
 };
 Latch g_latch;
 
-uint32_t g_takeDoneUnread = 0;   // takes committed done although the press's count could not be read back
-uint32_t g_staleGrantAborts = 0; // grants aborted for their age instead of replayed
-uint8_t g_lastRefusal = 0;       // the reason of the refusal of the open or last ask, 0 when none
-bool g_holdReplay = false;       // dev (dev:: below): a take's or a put's grant parks its replay
-bool g_doubleAbort = false;      // dev: a take's abort commit is sent twice
-dev::Take g_lastTake;            // the last take's commit as it was sent; the drills read it
-uint32_t g_acts[3] = {};   // done, aborted, refused: how the client's acts ended (dev::ActsDone ...)
-dev::Put g_lastPut;        // the last put act's stand, as the put seats noted it; the drills read it
+constexpr size_t kMaxTakes = 64;
+// A drag's puts waiting at once: a mass selection dropped on the canvas asks one per entry.
+constexpr size_t kMaxPuts = 8;
 
 // A request whose wait ran out, kept until the host answers it, so a grant that still arrives is answered with an
 // abort and the host's escrow is always ended. Dropped once the host's own deadline has passed: a grant that late finds
@@ -103,19 +98,29 @@ struct QueuedCommit {
 };
 
 coop::net::Session* g_session = nullptr;
-Pending g_rec;
+std::vector<Pending> g_puts;
+std::vector<Take> g_takes;
 uint16_t g_nextId = 0;   // the last request id; 0 is never an id
 uint32_t g_nextRequestSeq = 1;
 uint32_t g_nextCommitSeq = 1;
 std::vector<Expired> g_expired;
 std::deque<QueuedCommit> g_commits;
 
+// A merge's source entry: the removal of it that follows the merge is the merge's own.
+struct MergeNote {
+    bool open = false;
+    bool asked = false;
+    ue_wrap::CachedObjRef inventory;
+    uint64_t hash = 0;
+};
+MergeNote g_mergeNote;
+
 // ---- the lines ------------------------------------------------------------------------------------------------
 
 // A line is shown at most once per kind per window.
 enum Line : size_t { kLineGone, kLineReach, kLineNoSpace, kLineLocked, kLineRefused, kLineQueueFull, kLineCantNow,
                      kLineNotAsked, kLineNotReady, kLineLapsed, kLineBusy,
-                     kLineEmptyFirst, kLineCount };
+                     kLineCount };
 constexpr uint64_t kShowEveryMs = 5000;
 uint64_t g_shownAt[kLineCount] = {};
 bool g_shown[kLineCount] = {};
@@ -128,18 +133,9 @@ void Show(Line which, const char* line) {
     coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
 }
 
-// The reply refused the open act: when it is a put, dev::LastPut says so.
-void NoteRefusedPut() {
-    if (g_rec.open && static_cast<ContainerActFamily>(g_rec.family) == ContainerActFamily::PutRecord &&
-        g_lastPut.id == g_rec.id)
-        g_lastPut.outcome = dev::PutOutcome::Refused;
-}
-
 }  // namespace
 
 namespace detail {
-
-Pending& Rec() { return g_rec; }
 
 Latched::Latched() { g_latch.on = true; }
 Latched::~Latched() { g_latch = Latch{}; }
@@ -180,7 +176,6 @@ void ShowNotReady() { Show(kLineNotReady, l10n::T("Not ready yet, try again in a
 coop::net::Session* LinkedSession() { return g_session && g_session->connected() ? g_session : nullptr; }
 
 void ShowBusy() { Show(kLineBusy, l10n::T("Another player is using that item.")); }
-void ShowEmptyFirst() { Show(kLineEmptyFirst, l10n::T("Empty it before putting it in a shared container.")); }
 
 Target SharedTarget(void* container, uint32_t& eid) {
     eid = EL::kInvalidId;
@@ -197,23 +192,46 @@ Target SharedTarget(void* container, uint32_t& eid) {
     return coop::props::container_birth::IsBirthSlice(eid) ? Target::Own : Target::Shared;
 }
 
-// The host's own player beside a client's hold (the pocket's HostPre, prop_act_request.cpp): a put is cancelled on a
-// container any client holds anything on, since the restore of an escrow could overflow it; a take is cancelled on
-// one a client holds reserved. Everything else runs natively. MTA never refuses its server body for a client's seat
-// claim (CGame.cpp:3340 refuses only the second client); here the host player is a participant on the same container,
-// whose restore of an escrow could overflow it.
-sg::Verdict HostPre(void* container, bool anyHold) {
+Target SharedTargetOfInventory(void* inventory, uint32_t& eid) {
+    eid = EL::kInvalidId;
+    if (!inventory) return Target::Own;
+    if (D::IsCargo(inventory)) {
+        eid = ct::kDroneCargoEid;
+        return Target::Shared;
+    }
+    if (const uint32_t trunk = coop::atv_trunk_sync::EidOfInventory(inventory)) {
+        eid = trunk;
+        return Target::Shared;
+    }
+    return ci::IsWorldInventory(inventory) ? SharedTarget(ci::OwnerOf(inventory), eid) : Target::Own;
+}
+
+// The host's own put beside a client's hold (the pocket's HostPre, prop_act_request.cpp): a put is cancelled on a
+// container any client holds anything on, since the restore of an escrow could overflow it. Everything else runs
+// natively. MTA never refuses its server body for a client's seat claim (CGame.cpp:3340 refuses only the second
+// client); here the host player is a participant on the same container, whose restore of an escrow could overflow it.
+sg::Verdict HostPre(void* container) {
     if (!container || !ci::IsContainer(container)) return sg::Verdict::Run;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(container);
-    if (eid == EL::kInvalidId) return sg::Verdict::Run;
-    const bool busy = anyHold ? container_act_state::Live().HoldOn(eid)
-                              : container_act_state::Live().ReservedByOther(eid, 0);
-    if (!busy) return sg::Verdict::Run;
+    if (eid == EL::kInvalidId || !container_act_state::Live().HoldOn(eid)) return sg::Verdict::Run;
     ShowBusy();
     return sg::Verdict::Cancel;
 }
 
-void Close() { g_rec = Pending{}; }
+void NoteMergeSource(void* inventory, uint64_t recordHash, bool asked) {
+    g_mergeNote.open = true;
+    g_mergeNote.asked = asked;
+    g_mergeNote.inventory.Set(inventory);
+    g_mergeNote.hash = recordHash;
+}
+
+MergeSource ConsumeMergeSource(void* inventory, uint64_t recordHash) {
+    if (!g_mergeNote.open || g_mergeNote.hash != recordHash || !g_mergeNote.inventory.Is(inventory))
+        return MergeSource::None;
+    const MergeSource which = g_mergeNote.asked ? MergeSource::Asked : MergeSource::NotAsked;
+    g_mergeNote = MergeNote{};
+    return which;
+}
 
 }  // namespace detail
 
@@ -250,20 +268,10 @@ void DrainCommits() {
 
 namespace detail {
 
-void NotePut(const Pending& p, dev::PutOutcome outcome, uint16_t index, uint64_t replayHash, const float (&floats)[3]) {
-    const dev::Put was = g_lastPut;
-    g_lastPut = dev::Put{p.id, static_cast<uint8_t>(p.route + 1), outcome, index, p.hash, replayHash};
-    float(&dst)[3] = outcome == dev::PutOutcome::Asked ? g_lastPut.askFloats : g_lastPut.replayFloats;
-    std::memcpy(dst, floats, sizeof(dst));
-    if (outcome != dev::PutOutcome::Asked && was.id == p.id)
-        std::memcpy(g_lastPut.askFloats, was.askFloats, sizeof(was.askFloats));
-}
-
 bool QueueCommit(const caw::Commit& c) {
     QueuedCommit q;
     q.blob = caw::PackCommit(c);   // packed once, here
     if (q.blob.empty()) return false;
-    ++g_acts[c.committed ? 0 : 1];
     q.id = c.id;
     q.queuedMs = coop::net::NowMs();
     g_commits.push_back(std::move(q));
@@ -315,23 +323,15 @@ const char* ReplyActionName(ReplyAction a) {
     return "";
 }
 
-TakeCheck CheckTake(bool grantFresh, bool slotLive, bool screenShowsContainer, bool sameId, bool hashMatches) {
-    return grantFresh && slotLive && screenShowsContainer && sameId && hashMatches ? TakeCheck::Replay : TakeCheck::Abort;
-}
-
-uint8_t TakeCommitted(bool pressed, bool afterRead, size_t countBefore, size_t countAfter) {
-    if (!pressed) return 0;
-    if (!afterRead) return 1;
-    return countAfter < countBefore ? 1 : 0;
-}
-
 }  // namespace internal
 
-bool Ask(caw::Request r) {
-    UE_ASSERT_GAME_THREAD("container_act_request::Ask");
-    // A second press while one is pending is the player's double press: cancelled with nothing sent and no line.
-    if (g_rec.open || !g_session) return false;
-    uint16_t id = ++g_nextId;
+namespace {
+
+// Sends `r` under a fresh id (ids skip 0), written into it and into `id`. False, with the player's line shown, when the
+// record cannot be packed or the transport refused the send.
+bool SendRequest(caw::Request& r, uint16_t& id) {
+    if (!g_session) return false;
+    id = ++g_nextId;
     if (id == 0) id = ++g_nextId;
     r.id = id;
     const std::vector<uint8_t> blob = caw::PackRequest(r);
@@ -345,132 +345,155 @@ bool Ask(caw::Request r) {
         ShowNotAsked();
         return false;
     }
-    g_rec.open = true;
-    g_rec.id = id;
-    g_rec.eid = r.eid;
-    g_rec.family = r.family;
-    g_rec.sentMs = coop::net::NowMs();
-    g_lastRefusal = 0;   // per press: a refusal read after this ask is this ask's
     return true;
 }
 
+}  // namespace
+
+namespace detail {
+
+bool Ask(caw::Request r, Pending p) {
+    UE_ASSERT_GAME_THREAD("container_act_request::Ask");
+    if (p.kind == PutKind::HoldAndRun) {
+        // A second press while one is pending is the player's double press: cancelled with nothing sent and no line.
+        for (const Pending& open : g_puts)
+            if (open.kind == PutKind::HoldAndRun) return false;
+    } else if (g_puts.size() >= kMaxPuts) {
+        ShowRefusal(static_cast<uint8_t>(ContainerActReason::QueueFull));
+        return false;
+    }
+    if (!SendRequest(r, p.id)) return false;
+    p.eid = r.eid;
+    p.sentMs = coop::net::NowMs();
+    g_puts.push_back(std::move(p));
+    return true;
+}
+
+bool AskTake(caw::Request r, Take t) {
+    UE_ASSERT_GAME_THREAD("container_act_request::AskTake");
+    if (g_takes.size() >= kMaxTakes) {
+        ShowRefusal(static_cast<uint8_t>(ContainerActReason::QueueFull));
+        return false;
+    }
+    if (!SendRequest(r, t.id)) return false;   // the send showed its own line
+    t.eid = r.eid;
+    t.family = r.family;
+    t.sentMs = coop::net::NowMs();
+    g_takes.push_back(std::move(t));
+    // The mirror changes with the call that follows; the host's next publication or truth is applied whatever the last
+    // one was.
+    ct::ForgetApplied(r.eid);
+    return true;
+}
+
+void AttachCopies() {
+    for (Take& t : g_takes) {
+        if (!t.awaitCopy) continue;
+        t.awaitCopy = false;
+        t.copy.Set(cv::CopyOf(t.part, t.from.Get()));
+    }
+}
+
+}  // namespace detail
+
 namespace {
 
-// A client's click on an inventory-screen slot of a shared container: cancelled, and asked of the host. The slot is
-// kept for the replay. Everything that is not such a click runs natively.
-// Unlike the pocket's gate there is no mirror-prop rule: the container's element id and its world inventory are the
-// test, and one latch serves the one pending act (prop_act_request.cpp:352-360 is the shape it follows).
+// The player's bag gives the copy back: the drag filed it there before it took the entry out of the container, and the
+// entry stays in the container. Nothing to do for an entry the drag did not copy (a craft that consumed it, a drop into
+// the world).
+void GiveBack(const Take& t) {
+    void* const copy = t.copy.Alive() ? t.copy.Raw() : nullptr;
+    if (copy && cv::Discard(copy))
+        UE_LOGI("container_act: take id=%u eid=%u refused -- the copy is out of the bag again",
+                static_cast<unsigned>(t.id), static_cast<unsigned>(t.eid));
+}
+
+// A client's drag out of a shared inventory (a world container, the drone's cargo or an ATV's trunk). The screen files the entry's copy
+// in the player's bag, then calls removeInventoryItem on the inventory's component; the call runs here at once, so the
+// drag goes on without a wait, and the entry's address goes to the host in the same step. The host takes the entry out
+// into escrow and grants, or refuses, and the answer decides whether the move stands (OnReply). A take that cannot be
+// asked is not left to run: the copy is taken out of the bag again and the call cancelled. Everything that is not a take
+// out of a shared inventory runs natively, and so does the removal of a merge's source, which the merge's request covers.
 sg::Verdict PreTake(const sg::Call& c) {
-    if (g_latch.on) return sg::Verdict::Run;
-    if (!g_session || !g_session->connected()) return sg::Verdict::Run;
-    cv::Slot s{};
-    if (!cv::ReadSlot(c.object, s)) return sg::Verdict::Run;
-    if (g_session->role() == coop::net::Role::Host) return HostPre(s.container, /*anyHold=*/false);
-    // The player's own pane, a container this lane does not share and one the client threw take natively.
-    EL::ElementId eid = EL::kInvalidId;
-    switch (SharedTarget(s.container, eid)) {
-    case Target::Own:
+    if (!g_session || !g_session->connected() || g_session->role() == coop::net::Role::Host) return sg::Verdict::Run;
+    void* const inv = c.object;
+    if (!inv || !(D::IsCargo(inv) || ci::IsWorldInventory(inv) || coop::atv_trunk_sync::EidOfInventory(inv)))
         return sg::Verdict::Run;
-    case Target::NotReady:
-        ShowNotReady();
-        return sg::Verdict::Cancel;
-    case Target::Shared:
-        break;
+    static R::ParamOffset sFind{L"itemToFind"};
+    static R::ParamOffset sIndex{L"indexToRemove"};
+    static R::ParamOffset sBar{L"slotbar"};
+    const int32_t findOff = sFind.Of(c.function);
+    const int32_t indexOff = sIndex.Of(c.function);
+    const int32_t barOff = sBar.Of(c.function);
+    std::vector<II::Item> recs;
+    if (findOff < 0 || indexOff < 0 || barOff < 0 || !c.locals || !cio::ReadRecords(inv, recs)) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGW("container_act: the take seat could not read removeInventoryItem's parameters or the inventory's "
+                    "records -- takes from a shared inventory run unasked");
+        }
+        return sg::Verdict::Run;
     }
-    void* const inv = ci::InventoryOf(s.container);
-    std::vector<SR::SaveRecord> recs;
-    if (!cio::ReadRecords(inv, recs, /*neuterNested=*/true) || s.id < 0 || static_cast<size_t>(s.id) >= recs.size()) {
-        // No ask goes out, so no truth comes: the next publication must apply even when identical to the last.
-        coop::props::container_contents_sync::ForgetApplied(eid);
-        ShowRefusal(static_cast<uint8_t>(ContainerActReason::Gone));
+    if (c.locals[barOff] != 0) return sg::Verdict::Run;   // a hotbar slot's array, not an inventory's entries
+    // The entry the call blanks, found as the body finds it: the index it is given, else the first entry equal to the one
+    // it is given.
+    int32_t index = 0;
+    std::memcpy(&index, c.locals + indexOff, sizeof(index));
+    if (index < 0) {
+        const uint8_t* find = sg::OutParamPtr(c, findOff);
+        if (!find) find = c.locals + findOff;
+        II::Item want;
+        if (!II::Read(find, want)) return sg::Verdict::Run;
+        const uint64_t wantHash = csw::RecordHash(want);
+        for (size_t i = 0; i < recs.size() && index < 0; ++i)
+            if (csw::RecordHash(recs[i]) == wantHash) index = static_cast<int32_t>(i);
+    }
+    if (index < 0 || static_cast<size_t>(index) >= recs.size() || II::IsEmpty(recs[static_cast<size_t>(index)]))
+        return sg::Verdict::Run;
+    const II::Item& taken = recs[static_cast<size_t>(index)];
+
+    uint32_t eid = EL::kInvalidId;
+    const Target target = SharedTargetOfInventory(inv, eid);
+    if (target == Target::Own) return sg::Verdict::Run;
+    switch (ConsumeMergeSource(inv, csw::RecordHash(taken))) {
+    case MergeSource::Asked:    return sg::Verdict::Run;
+    case MergeSource::NotAsked: return sg::Verdict::Cancel;
+    case MergeSource::None:     break;
+    }
+    Take t;
+    t.copy.Set(cv::CopyOf(taken, inv));
+    if (target == Target::NotReady) {
+        GiveBack(t);
+        ShowNotReady();
         return sg::Verdict::Cancel;
     }
     caw::Request r;
     r.family = static_cast<uint8_t>(ContainerActFamily::Take);
     r.eid = eid;
-    r.index = static_cast<uint16_t>(s.id);
-    r.hash = csw::RecordHash(recs[static_cast<size_t>(s.id)]);
-    if (Ask(r)) {
-        g_rec.slot.Set(c.object);
-        g_rec.container.Set(s.container);
-        g_rec.index = r.index;
-        g_rec.hash = r.hash;
+    r.index = static_cast<uint16_t>(index);
+    r.hash = csw::RecordHash(taken);
+    if (!AskTake(r, std::move(t))) {   // the ask showed its own line
+        Take back;
+        back.copy.Set(cv::CopyOf(taken, inv));
+        GiveBack(back);
+        return sg::Verdict::Cancel;
     }
-    // A refused ask has shown its own line, and an open act shows nothing.
-    return sg::Verdict::Cancel;
+    return sg::Verdict::Run;
 }
 
-// The take's commit goes out: the id, what it said, and how many takes have said it this session.
-void SendTakeCommit(uint16_t id, uint32_t eid, uint8_t committed) {
-    g_lastTake = dev::Take{id, committed, g_lastTake.count + 1};
-    SendCommit(id, eid, committed);
-    if (g_doubleAbort && !committed) SendCommit(id, eid, committed);
-}
-
-// The granted take: the same slot is pressed again, under the latch, if it still names the record the host granted;
-// the commit then says whether the record left the container.
-void ReplayTake() {
-    cv::Slot s{};
-    void* const slot = g_rec.slot.Get();
-    const bool slotLive = slot && cv::ReadSlot(slot, s);
-    void* const container = g_rec.container.Get();
-    void* const inv = container ? ci::InventoryOf(container) : nullptr;
-    std::vector<SR::SaveRecord> recs;
-    const bool read = inv && cio::ReadRecords(inv, recs, /*neuterNested=*/true);
-    const bool hashMatches = read && g_rec.index < recs.size() && csw::RecordHash(recs[g_rec.index]) == g_rec.hash;
-    const bool shows = container && cv::Viewed() == container;
-    const bool sameId = slotLive && s.id >= 0 && static_cast<uint32_t>(s.id) == g_rec.index;
-    const uint64_t grantAge = coop::net::NowMs() - g_rec.grantedMs;
-    const bool grantFresh = grantAge < container_act_state::kHoldDeadlineMs - kGrantMarginMs;
-    if (internal::CheckTake(grantFresh, slotLive, shows, sameId, hashMatches) == internal::TakeCheck::Abort) {
-        if (!grantFresh) {
-            ++g_staleGrantAborts;
-            UE_LOGW("container_act: take id=%u eid=%u index=%u grant %llu ms old -- not replayed past the host's hold, "
-                    "aborted", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
-                    static_cast<unsigned>(g_rec.index), static_cast<unsigned long long>(grantAge));
-        } else {
-            // Which input failed, and what each side held: one line per take, player-paced.
-            void* const viewed = cv::Viewed();
-            UE_LOGI("container_act: take id=%u eid=%u index=%u not replayed (slotLive=%d screenShows=%d sameId=%d "
-                    "hashMatches=%d grantFresh=%d) slotId=%d grantIndex=%u shown=%ls asked=%ls -> aborted",
-                    static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
-                    static_cast<unsigned>(g_rec.index), slotLive, shows, sameId, hashMatches, grantFresh,
-                    slotLive ? s.id : -1, static_cast<unsigned>(g_rec.index),
-                    ue_wrap::reflection::ClassNameOf(viewed).c_str(),
-                    ue_wrap::reflection::ClassNameOf(container).c_str());
-        }
-        SendTakeCommit(g_rec.id, g_rec.eid, 0);
-        ShowBadReason();   // the click is lost, never the record: the escrow restores it; the player clicks again
+// The host's answer to a take that has already run here. A grant ends the host's escrow with the commit; a refusal
+// gives the entry back.
+void TakeReply(const Take& t, internal::ReplyAction action, const coop::net::ContainerActReplyPayload& p) {
+    if (action == internal::ReplyAction::Granted) {
+        // A merge is one write on the host and holds nothing, so there is no escrow to end.
+        if (t.family != static_cast<uint8_t>(ContainerActFamily::MergeStack)) SendCommit(t.id, t.eid, 1);
         return;
     }
-    const size_t countBefore = recs.size();
-    bool pressed = false;
-    {
-        Latched latch;
-        pressed = cv::PressSlot(slot);
-    }
-    // A replay on a shared mirror changes it under the latch, where no verb watch marks it, so the host's next truth for
-    // this container must apply even when it equals the last one applied. Only a press that dispatched can have changed it.
-    if (pressed) coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
-    std::vector<SR::SaveRecord> after;
-    void* const invAfter = g_rec.container.Get() ? ci::InventoryOf(g_rec.container.Get()) : nullptr;
-    const bool afterRead = invAfter && cio::ReadRecords(invAfter, after, /*neuterNested=*/true);
-    const uint8_t done = internal::TakeCommitted(pressed, afterRead, countBefore, after.size());
-    if (done && pressed && afterRead && after.size() + 1 < countBefore) {
-        UE_LOGW("container_act: take id=%u eid=%u index=%u the count fell %zu -> %zu, by more than the one record",
-                static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid), static_cast<unsigned>(g_rec.index),
-                countBefore, after.size());
-    }
-    if (done && pressed && !afterRead) {
-        ++g_takeDoneUnread;
-        UE_LOGW("container_act: take id=%u eid=%u widget=%u index=%u done UNREAD (%ls): the press ran and the count did "
-                "not read back", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
-                static_cast<unsigned>(g_rec.slot.Idx()), static_cast<unsigned>(g_rec.index),
-                recs[g_rec.index].className.c_str());
-    }
-    SendTakeCommit(g_rec.id, g_rec.eid, done);
-    UE_LOGI("container_act: take id=%u eid=%u index=%u replayed -> %s", static_cast<unsigned>(g_rec.id),
-            static_cast<unsigned>(g_rec.eid), static_cast<unsigned>(g_rec.index), done ? "done" : "aborted");
+    GiveBack(t);
+    ct::ForgetApplied(t.eid);
+    if (action == internal::ReplyAction::Refused) ShowRefusal(p.reason);
+    else ShowBadReason();
 }
 
 enum class WatchState : uint8_t { Pending, Registered, Refused, Settled };
@@ -481,7 +504,7 @@ struct Watch {
     sg::PostFn post;
     WatchState state;
 };
-std::vector<Watch> g_watches;   // the take's, then the put seats': filled by the first Install
+std::vector<Watch> g_watches;   // the take's, then the put seat's: filled by the first Install
 bool g_watchesSettled = false;
 
 // Says once per watch whether the gate took it. The names resolve on the game thread, so a tick drives them.
@@ -517,10 +540,12 @@ void Install(coop::net::Session* session) {
     g_session = session;
     if (g_watches.empty()) {
         g_watches.push_back(Watch{kRowTake, kTagTake, &PreTake, nullptr, WatchState::Pending});
-        size_t puts = 0;
-        const WatchRow* const rows = PutWatches(puts);
-        for (size_t i = 0; i < puts; ++i)
-            g_watches.push_back(Watch{rows[i].row, rows[i].tag, rows[i].pre, rows[i].post, WatchState::Pending});
+        for (const WatchRow* w : {&PutWatch(), &DragWatch()})
+            g_watches.push_back(Watch{w->row, w->tag, w->pre, w->post, WatchState::Pending});
+        size_t n = 0;
+        const WatchRow* stack = StackWatches(n);
+        for (size_t i = 0; i < n; ++i)
+            g_watches.push_back(Watch{stack[i].row, stack[i].tag, stack[i].pre, stack[i].post, WatchState::Pending});
     }
     // The gate refuses a watch it cannot keep for the process; a refused one is said dead at the settle.
     for (Watch& w : g_watches) {
@@ -531,7 +556,8 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     SettleWatches();
-    if (!g_rec.open && g_commits.empty() && g_expired.empty()) return;
+    g_mergeNote.open = false;   // a merge's removal follows it in the same call, never a later tick
+    if (g_puts.empty() && g_takes.empty() && g_commits.empty() && g_expired.empty()) return;
     UE_ASSERT_GAME_THREAD("container_act_request::Tick");
     DrainCommits();
     const uint64_t now = coop::net::NowMs();
@@ -544,86 +570,87 @@ void Tick() {
                 static_cast<unsigned>(it->id), static_cast<unsigned>(it->eid));
         it = g_expired.erase(it);
     }
-    if (!g_rec.open || g_rec.replayHeld) return;   // a parked replay is a drill's to release
-    const uint64_t waited = now - g_rec.sentMs;
-    if (waited < container_act_state::kReplyWaitMs) return;
-    UE_LOGI("container_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(g_rec.id),
-            static_cast<unsigned>(g_rec.eid), static_cast<unsigned long long>(waited));
-    g_expired.push_back(Expired{g_rec.id, g_rec.eid, now});
-    coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
-    ShowNotAsked();
-    Close();
+    // A take whose wait ran out is given back, and kept as expired so that a grant still to come is answered with an abort
+    // (a merge holds nothing on the host, so there is nothing to end).
+    for (auto it = g_takes.begin(); it != g_takes.end();) {
+        const uint64_t waited = now - it->sentMs;
+        if (waited < container_act_state::kReplyWaitMs) {
+            ++it;
+            continue;
+        }
+        UE_LOGI("container_act: take id %u eid %u expired after %llu ms", static_cast<unsigned>(it->id),
+                static_cast<unsigned>(it->eid), static_cast<unsigned long long>(waited));
+        GiveBack(*it);
+        if (it->family != static_cast<uint8_t>(ContainerActFamily::MergeStack))
+            g_expired.push_back(Expired{it->id, it->eid, now});
+        ct::ForgetApplied(it->eid);
+        ShowNotAsked();
+        it = g_takes.erase(it);
+    }
+    // A put whose wait ran out has changed nothing here: the entry is still where it was.
+    for (auto it = g_puts.begin(); it != g_puts.end();) {
+        const uint64_t waited = now - it->sentMs;
+        if (waited < container_act_state::kReplyWaitMs) {
+            ++it;
+            continue;
+        }
+        UE_LOGI("container_act: request id %u eid %u expired after %llu ms", static_cast<unsigned>(it->id),
+                static_cast<unsigned>(it->eid), static_cast<unsigned long long>(waited));
+        g_expired.push_back(Expired{it->id, it->eid, now});
+        ct::ForgetApplied(it->eid);
+        ShowNotAsked();
+        it = g_puts.erase(it);
+    }
 }
 
 void OnReply(const coop::net::ContainerActReplyPayload& p) {
     UE_ASSERT_GAME_THREAD("container_act_request::OnReply");
-    const internal::ReplyAction action = internal::DecideReply(g_rec.open, g_rec.id, p);
-    const uint64_t after = g_rec.open ? coop::net::NowMs() - g_rec.sentMs : 0;
+    const auto take = std::find_if(g_takes.begin(), g_takes.end(), [&](const Take& t) { return t.id == p.id; });
+    if (take != g_takes.end()) {
+        const internal::ReplyAction action = internal::DecideReply(true, take->id, p);
+        UE_LOGI("container_act: reply id %u -> %s after %llu ms", static_cast<unsigned>(p.id),
+                internal::ReplyActionName(action),
+                static_cast<unsigned long long>(coop::net::NowMs() - take->sentMs));
+        TakeReply(*take, action, p);
+        g_takes.erase(take);
+        return;
+    }
+    const auto put = std::find_if(g_puts.begin(), g_puts.end(), [&](const Pending& o) { return o.id == p.id; });
+    const internal::ReplyAction action = internal::DecideReply(put != g_puts.end(), p.id, p);
+    const uint64_t after = put != g_puts.end() ? coop::net::NowMs() - put->sentMs : 0;
     UE_LOGI("container_act: reply id %u -> %s after %llu ms", static_cast<unsigned>(p.id),
             internal::ReplyActionName(action), static_cast<unsigned long long>(after));
-    switch (action) {
-    case internal::ReplyAction::Stale:
+    if (action == internal::ReplyAction::Stale) {
         NoteStale(p);
         return;
+    }
+    const Pending open = std::move(*put);
+    g_puts.erase(put);
+    switch (action) {
+    case internal::ReplyAction::Stale:
+        return;
     case internal::ReplyAction::BadReason:
-        ++g_acts[2];
-        NoteRefusedPut();
-        coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
+        ct::ForgetApplied(open.eid);
         ShowBadReason();
-        Close();
         return;
     case internal::ReplyAction::Refused:
-        g_lastRefusal = p.reason;
-        ++g_acts[2];
-        NoteRefusedPut();
         // Only a Gone reason brings the host's truth; the call is harmless for the others. With the applied
         // hash forgotten, a truth identical to the last publication still applies, so a ghost converges.
-        coop::props::container_contents_sync::ForgetApplied(g_rec.eid);
+        ct::ForgetApplied(open.eid);
         ShowRefusal(p.reason);
-        Close();
         return;
     case internal::ReplyAction::Granted:
-        // The take and the put-record families replay; any other family has no replay yet, so its grant is answered
-        // with an abort: the host's hold is ended, not kept.
-        switch (static_cast<ContainerActFamily>(g_rec.family)) {
-        case ContainerActFamily::Take:
-            g_rec.grantedMs = coop::net::NowMs();
-            if (g_holdReplay) {
-                g_rec.replayHeld = true;
-                return;
-            }
-            ReplayTake();
-            break;
-        case ContainerActFamily::PutRecord:
-            if (g_holdReplay) {
-                g_rec.replayHeld = true;
-                return;
-            }
-            ReplayPut();
-            break;
-        default:
-            SendCommit(g_rec.id, g_rec.eid, 0);
-            break;
-        }
-        Close();
+        if (open.kind == PutKind::HoldAndRun) ReplayPut(open);
+        else ReplayDrag(open);
         return;
     }
 }
 
 void OnDisconnect() {
-    Close();
+    g_puts.clear();
+    g_takes.clear();
+    g_mergeNote = MergeNote{};
     g_latch = Latch{};
-    // Said once at the session's end: each one trusted that a press took a record it could not count.
-    if (dev::TakeDoneUnread())
-        UE_LOGW("container_act: this session committed %u take(s) done UNREAD", dev::TakeDoneUnread());
-    g_takeDoneUnread = 0;
-    g_staleGrantAborts = 0;
-    g_lastRefusal = 0;
-    g_holdReplay = false;
-    g_doubleAbort = false;
-    g_lastTake = dev::Take{};
-    std::memset(g_acts, 0, sizeof(g_acts));
-    g_lastPut = dev::Put{};
     ResetPutLines();
     g_nextId = 0;
     g_nextRequestSeq = 1;
@@ -632,49 +659,5 @@ void OnDisconnect() {
     g_commits.clear();
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
 }
-
-namespace dev {
-
-uint32_t TakeDoneUnread() { return g_takeDoneUnread; }
-uint32_t ActsDone() { return g_acts[0]; }
-uint32_t ActsAborted() { return g_acts[1]; }
-uint32_t ActsRefused() { return g_acts[2]; }
-
-uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
-
-uint32_t StaleGrantAborts() { return g_staleGrantAborts; }
-
-uint8_t LastRefusal() { return g_lastRefusal; }
-
-void HoldReplay(bool on) { g_holdReplay = on; }
-
-bool ReplayParked() { return g_rec.open && g_rec.replayHeld; }
-
-void ReleaseReplay() {
-    if (!ReplayParked()) return;
-    g_rec.replayHeld = false;
-    if (static_cast<ContainerActFamily>(g_rec.family) == ContainerActFamily::PutRecord) ReplayPut();
-    else ReplayTake();
-    Close();
-}
-
-void DoubleAbort(bool on) { g_doubleAbort = on; }
-
-Take LastTake() { return g_lastTake; }
-
-Put LastPut() { return g_lastPut; }
-
-const char* PutOutcomeName(PutOutcome o) {
-    switch (o) {
-    case PutOutcome::None:    return "none";
-    case PutOutcome::Asked:   return "asked";
-    case PutOutcome::Done:    return "done";
-    case PutOutcome::Aborted: return "aborted";
-    case PutOutcome::Refused: return "refused";
-    }
-    return "none";
-}
-
-}  // namespace dev
 
 }  // namespace coop::props::container_act_request

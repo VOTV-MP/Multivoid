@@ -18,6 +18,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 
@@ -78,7 +79,8 @@ Phase   g_phase = Phase::Unpicked;
 FVector g_start{};
 void*   g_atv = nullptr;
 int32_t g_atvIdx = -1;
-void*   g_container = nullptr;
+void*   g_container = nullptr;   // 0.9: the prop container the ATV opens
+void*   g_trunk = nullptr;       // 0.10: the ATV's own inventory component
 int     g_openWithin = 0;  // ticks the view was open with the ATV within reach
 int     g_openBeyond = 0;  // ticks the view was open with the ATV past it
 float   g_lastMargin = 0.f;
@@ -127,7 +129,7 @@ bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& len
     OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
         Gather& x = *static_cast<Gather*>(ctx);
         if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
-        if (!ue_wrap::container_openers::Opens(obj)) return;
+        if (!ue_wrap::container_openers::Opens(obj) && !ue_wrap::atv::InventoryOf(obj)) return;
         FVector p{};
         if (!E::TryGetActorLocation(obj, p)) return;
         x.cands.push_back({obj, p, HorizDist(p, *x.at)});
@@ -240,24 +242,27 @@ void ClientTick() {
             Done("the ATV is gone after the walk -- INCONCLUSIVE");
             return;
         }
+        // 0.9: the ATV hands its spawned container prop to openPropInv. 0.10: it opens its own inventory component on the
+        // screen (begin(component)), the shared trunk of coop/interactables/atv_trunk_sync.
         g_container = ue_wrap::container_openers::Opens(g_atv);
+        g_trunk = g_container ? nullptr : ue_wrap::atv::InventoryOf(g_atv);
         float m = 0.f;
-        if (!g_container || !Margin(m)) {
-            Done("the ATV opens no readable container -- FAIL");
+        if ((!g_container && !g_trunk) || !Margin(m)) {
+            Done("the ATV opens no readable container or trunk -- FAIL");
             return;
         }
-        if (!CV::Open(g_container)) {
-            Done("openPropInv did not dispatch -- FAIL");
+        if (g_container ? !CV::Open(g_container) : !CV::OpenInventory(g_trunk)) {
+            Done("the screen did not open on the ATV's container -- FAIL");
             return;
         }
         UE_LOGI("[CVIEW-DRILL] client opened %ls through the ATV, standing %.0f uu inside the reach",
-                R::ClassNameOf(g_container).c_str(), -m);
+                g_container ? R::ClassNameOf(g_container).c_str() : L"its trunk", -m);
         g_phase = Phase::Opened;
         return;
     }
     float m = 0.f;
     const bool haveMargin = Margin(m);
-    const bool open = CV::Viewed() == g_container;
+    const bool open = g_container ? CV::Viewed() == g_container : CV::ViewedInventory() == g_trunk;
     if (g_phase == Phase::Opened) {
         if (!open) {
             Done("the screen does not show the ATV's container after openPropInv -- FAIL");
@@ -266,6 +271,20 @@ void ClientTick() {
         if (!haveMargin || m > 0.f) {
             Done("the ATV is not within reach where the view was opened -- INCONCLUSIVE");
             return;
+        }
+        // The walk back must end past the reach of the ATV, or it proves nothing: where the client started may lie beside the
+        // ATV (join_at_host puts both at the host), so the walk ends at a pile 12 to 40 m from the client that lies at least
+        // 12 m from the ATV, and falls back to the start only when there is none.
+        {
+            void* const me = coop::players::Registry::Get().Local();
+            FVector atvAt{};
+            DR::DirectorGoal pile;
+            if (me && E::TryGetActorLocation(g_atv, atvAt) &&
+                DR::PickReachablePile(me, 1200.f, 4000.f, pile, &atvAt, 1200.f)) {
+                g_start = pile.targetPos;
+                UE_LOGI("[CVIEW-DRILL] client: the walk away ends at a pile at (%.0f,%.0f,%.0f)", g_start.X, g_start.Y,
+                        g_start.Z);
+            }
         }
         StartWalk(Walk::Back);
         g_phase = Phase::WalkingAway;
@@ -327,6 +346,7 @@ void OnDisconnect() {
     g_atv = nullptr;
     g_atvIdx = -1;
     g_container = nullptr;
+    g_trunk = nullptr;
     g_openWithin = g_openBeyond = 0;
     g_lastMargin = 0.f;
 }

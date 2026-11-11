@@ -1,6 +1,6 @@
 // ue_wrap/world/skysphere.cpp -- see ue_wrap/world/skysphere.h. Engine access for the night-sky
-// actor (Anewsky_C). The two actor offsets are resolved from the live class via reflection,
-// with the Alpha 0.9.0-n values as logged fallbacks; saveSlot.moonPhase is resolved lazily, by
+// actor (Anewsky_C). The two actor offsets are resolved from the live class by member name, and one the
+// name does not find leaves its reads off (said once); saveSlot.moonPhase is resolved lazily, by
 // name only, and stays inert if it cannot be found. Mirrors ue_wrap/world/daynightcycle.cpp's cache
 // + resolve shape.
 
@@ -29,9 +29,6 @@ int32_t g_skyCompOff     = -1;       // Anewsky_C::sky (UStaticMeshComponent*)
 int32_t g_moonPhaseOff   = -1;       // Anewsky_C::moonPhase_mirror (float)
 int32_t g_saveMoonOff    = -2;       // UsaveSlot_C::moonPhase (float); -2 = not looked at yet, -1 = looked and failed
 void*   g_timerClearedFor = nullptr; // the newsky actor whose setMoonPhase timer we already cleared
-
-constexpr int32_t kSkyCompOffFallback   = 0x0250;
-constexpr int32_t kMoonPhaseOffFallback = 0x02BC;
 
 ue_wrap::CachedObjRef g_skyCache;  // cached singleton; game thread only
 
@@ -86,16 +83,10 @@ bool EnsureResolved() {
     void* cls = R::FindClass(L"newsky_C");
     if (!cls) return false;  // not loaded yet -- caller retries
 
-    int32_t skyOff = R::FindPropertyOffset(cls, L"sky");
-    if (skyOff < 0) {
-        UE_LOGW("skysphere: reflected sky offset not found -- using fallback 0x%04X", kSkyCompOffFallback);
-        skyOff = kSkyCompOffFallback;
-    }
-    int32_t moonOff = R::FindPropertyOffset(cls, L"moonPhase_mirror");
-    if (moonOff < 0) {
-        UE_LOGW("skysphere: reflected moonPhase_mirror offset not found -- using fallback 0x%04X", kMoonPhaseOffFallback);
-        moonOff = kMoonPhaseOffFallback;
-    }
+    const int32_t skyOff = R::FindPropertyOffset(cls, L"sky");
+    if (skyOff < 0) UE_LOGE("skysphere: 'sky' not found by name -- the star orientation is not synced");
+    const int32_t moonOff = R::FindPropertyOffset(cls, L"moonPhase_mirror");
+    if (moonOff < 0) UE_LOGE("skysphere: 'moonPhase_mirror' not found by name -- the sky is not synced");
 
     g_skyCompOff     = skyOff;
     g_moonPhaseOff   = moonOff;

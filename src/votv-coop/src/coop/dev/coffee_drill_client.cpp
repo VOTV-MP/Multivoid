@@ -4,6 +4,7 @@
 // arm's state.
 
 #include "coffee_drill_detail.h"  // co-located private header (src tree, not include/)
+#include "coop/dev/drill_place.h"
 #include "cord_drill_detail.h"    // co-located private header: Wide, Token and the stand reads
 
 #include "coop/dev/director/aimed_grab.h"
@@ -22,6 +23,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -57,6 +59,12 @@ struct Client {
     std::unique_ptr<D::AimedGrab> grab;
     int         grabTries = 0;
     uint64_t    cancelled0 = 0;   // arm 4: the cancel counter when the cup was lifted
+    drill_place::Placement place;   // arm 1: the placement before the walk
+    int         restands = 0;       // arm 5: how often the player has been moved to bring the cup over the maker
+    bool        shiftOn = false;
+    drill_place::Placement shift;
+    drill_place::Spot shiftSpot{};
+    float       aimExtraCm = 0.f; // arm 5: how far above the maker's over-point the carry's camera aims (the hold's reach is fixed)
 };
 Client g_c;
 
@@ -195,6 +203,9 @@ void BeginArm() {
     c.closable = c.seen = false;
     c.pre = true;
     c.cup.Reset();
+    c.aimExtraCm = 0.f;
+    c.restands = 0;
+    c.shiftOn = false;
     c.cupKey.clear();
 }
 
@@ -219,6 +230,14 @@ void ArmVending(void* player) {
     if (c.sub == 0) {
         ue_wrap::FVector at{};
         if (!Vending() || !E::TryGetActorLocation(Vending(), at)) return FailArm("the vending machine's place is unread");
+        // The walk starts from the spot the verified runs started from (drill_place.cpp): from the join's own place (5580, 790,
+        // 6179) the route ended on the floor below the vending machine, within the 250 cm flat arrival (the player at z 6528, the
+        // machine at 6747), and the carry to the maker (z 6780) then failed on arm 3 (drill-coffee_m1-client.log 13:07:11). From
+        // (-1716, 536, 6318) the walks reached the machine's own floor (z 6834).
+        constexpr drill_place::Spot kStart{-1716.f, 536.f, 6318.f, 0.f};
+        const drill_place::Result placed = drill_place::Run(c.place, player, kStart, NowMs(), "the coffee walk");
+        if (placed == drill_place::Result::Pending) return;
+        if (placed == drill_place::Result::Failed) return FailArm("the placement before the walk to the vending machine did not land");
         StartWalk(at, kVendReachCm);
         c.sub = 1;
     } else if (c.sub == 1) {
@@ -386,12 +405,47 @@ void ArmCarry(void* player) {
             return FailArm("no controller, maker, cup or player place to aim with");
         // The carry's reach is flat: the walker has arrived only when it stands at the maker's height too.
         if (std::fabs(me.Z - mp.Z) > kFeetCm) return;
-        const ue_wrap::FVector over{mp.X, mp.Y, mp.Z + kAboveCm};
-        E::SetControlRotation(ctrl, D::LookAt(E::GetCameraLocation(), over));
+        // The hold carries the cup a fixed reach along the camera's ray, so a player standing nearer than that reach holds it past
+        // the over-point and low (measured on 0.10: 22 cm beyond, 9 cm above the origin). The aim is walked up or down, a few
+        // cm a tick, until the cup hangs inside the release window.
         const float up = cp.Z - mp.Z;
-        if (std::hypot(cp.X - mp.X, cp.Y - mp.Y) > kOverMakerCm || up < kReleaseMinCm || up > kReleaseMaxCm) return;
+        const float flat = std::hypot(cp.X - mp.X, cp.Y - mp.Y);
+        // The hold carries the cup a fixed reach along the camera's ray (87 to 127 cm flat on 0.10, by where the camera points), so a player
+        // who stops anywhere near the maker holds the cup past it or short of it by that reach less its distance, and the walker stops
+        // within 120 cm of its target at best (coffee_i: the cup 53 cm beyond, past the 45 cm window; coffee_q1: 28 cm off, let go, and
+        // the cup missed the maker). Once the cup hangs still, the player is moved by the flat vector from the cup to the maker, so the
+        // cup it holds comes to hang over the maker; the walker cannot place a player that finely, a teleport (drill_place) can.
+        if (c.shiftOn) {
+            const drill_place::Result r = drill_place::Run(c.shift, player, c.shiftSpot, NowMs(), "the cup over the maker");
+            if (r == drill_place::Result::Pending) return;
+            c.shiftOn = false;
+            if (r == drill_place::Result::Failed) return FailArm("the placement that brings the cup over the maker did not land");
+            return;   // the cup hangs still again before it is read
+        }
+        if (flat > kSquareOverCm && c.restands < 4 && up >= kReleaseMinCm && up <= kReleaseMaxCm) {
+            const ue_wrap::FVector v0 = E::GetActorVelocity(cup);
+            if (std::sqrt(v0.X * v0.X + v0.Y * v0.Y + v0.Z * v0.Z) <= kReleaseMaxSpeedCm) {
+                ue_wrap::FRotator rot{};
+                E::TryGetActorRotation(player, rot);
+                c.shiftSpot = {me.X + (mp.X - cp.X), me.Y + (mp.Y - cp.Y), me.Z, rot.Yaw};
+                c.shift = drill_place::Placement{};
+                c.shiftOn = true;
+                ++c.restands;
+                UE_LOGI("[COFFEE] client: the cup hangs %.0f cm from the maker; the player is moved %.0f cm so that it hangs over it (move %d)",
+                        flat, std::hypot(mp.X - cp.X, mp.Y - cp.Y), c.restands);
+                return;
+            }
+        }
+        const ue_wrap::FVector over{mp.X, mp.Y, mp.Z + kAboveCm + c.aimExtraCm};
+        E::SetControlRotation(ctrl, D::LookAt(E::GetCameraLocation(), over));
+        if (flat > kOverMakerCm || up < kReleaseMinCm || up > kReleaseMaxCm) return;
+        // A cup let go while it still swings on the hold's handle carries that speed into its fall and lands off the maker
+        // (measured on 0.10: released at 844 cm/s, 45 cm from the maker's origin, it missed): it is let go once it hangs still.
+        const ue_wrap::FVector v = E::GetActorVelocity(cup);
+        if (std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z) > kReleaseMaxSpeedCm) return;
         if (!D::CallOnPlayer(player, L"dropGrabObject")) return FailArm("dropGrabObject did not run");
-        UE_LOGI("[COFFEE] client let go of the cup over the maker");
+        UE_LOGI("[COFFEE] client let go of the cup over the maker: %.0f cm flat, %.0f cm above its origin, %d restand(s)", flat, up,
+                c.restands);
         c.sub = 7;
     } else if (c.due) {
         Flags f;
@@ -425,6 +479,16 @@ void ClientArm(void* player) {
     } else if (now - c.armMs > kArmFailMs) {
         std::string why = "not closed within " + std::to_string(kArmFailMs) + " ms of its bound's start: " + Saw();
         if (c.arm == 4) return Inconclusive(4, why.c_str());
+        if (c.arm == 5 && c.sub == 7) {
+            // The cup let go over the maker and not taken: where it lies tells a drop that missed (the drill's geometry: the maker's
+            // intake is a small box and the hold's reach moves the cup 20 to 50 cm off the aim; coffee_p2, coffee_q1) from a lane that
+            // did not take a cup that fell in.
+            why += "; " + CarryPlaces();
+            ue_wrap::FVector mk{}, cp{};
+            if (Maker() && c.cup.Get() && E::TryGetActorLocation(Maker(), mk) && E::TryGetActorLocation(c.cup.Get(), cp) &&
+                std::hypot(cp.X - mk.X, cp.Y - mk.Y) > kMissedCm)
+                return Inconclusive(5, (why + "; the cup came to rest off the maker: the drop missed").c_str());
+        }
         if (c.arm == 5 && (c.sub == 5 || c.sub == 6)) {
             // The carry never arrived at the maker's height, or the cup never came over it: the drill's own
             // geometry, not the lane's.

@@ -34,10 +34,13 @@ inline constexpr float   kCupReachCm = 150.f;   // ... near the cup it grabs
 inline constexpr float   kMakerReachCm = 90.f;  // ... near the maker it carries a cup to
 inline constexpr float   kAboveCm = 60.f;       // a drop over the maker starts this far above its origin
 inline constexpr float   kCupLiftCm = 30.f;     // the host's spare cups start this far above the stand point
+inline constexpr float   kSquareOverCm = 12.f;  // a carried cup this near the maker, flat, is let go at once; farther, the player is first moved by the cup's offset
+inline constexpr float   kMissedCm = 30.f;      // a cup that lies this far from the maker's origin (flat) after the drop missed it
 inline constexpr float   kOverMakerCm = 45.f;   // a carried cup counts as over the maker within this, flat
 inline constexpr float   kFeetCm = 150.f;       // a carry has arrived only with the player this near the maker's height
 inline constexpr float   kReleaseMinCm = 10.f;  // a cup is let go only this far above the maker's origin ...
 inline constexpr float   kReleaseMaxCm = 120.f; // ... and not farther
+inline constexpr float   kReleaseMaxSpeedCm = 60.f; // ... and only once it hangs nearly still on the hold (cm/s)
 
 // ---- the cast (coffee_drill_cast.cpp) ----
 

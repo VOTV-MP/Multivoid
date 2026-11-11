@@ -357,7 +357,7 @@ bool ReadBoxSlot(void* box, BoxSlot& out) {
     out.floppyType    = st.floppyType;
     out.readWrites    = st.readWrites;
     out.dataNum       = static_cast<int32_t>(c.data.size());
-    out.objectDataLen = static_cast<int32_t>(c.objectData.size());
+    out.objectDataLen = static_cast<int32_t>(c.objectData.size() + c.objectBytes.size());   // 0.9 JSON, 0.10 stream
     return true;
 }
 
@@ -371,7 +371,11 @@ std::wstring SlotDiscKey(void* device, bool laptop) {
     FS::Content c;
     if (!device || !FS::EnsureResolved(kind) || !FS::ReadScalars(kind, device, st)) return {};
     if (st.floppyType < 0 || !FS::ReadContent(kind, device, c)) return {};
-    return FS::ObjectDataKey(c.objectData);
+    if (const std::wstring json = FS::ObjectDataKey(c.objectData); !json.empty()) return json;
+    // 0.10 keeps the disc as its ActorToBytes stream: the key is the instrument's own disc the stream carries.
+    for (int d = 0; d < kDiscs; ++d)
+        if (!g_discKey[d].empty() && FS::BytesCarryKey(c.objectBytes, g_discKey[d])) return g_discKey[d];
+    return {};
 }
 
 int MarkedDiscCount() {
@@ -395,7 +399,7 @@ bool ReadLaptopSlot(BoxSlot& out) {
     out.floppyType    = st.floppyType;
     out.readWrites    = st.readWrites;
     out.dataNum       = static_cast<int32_t>(c.data.size());
-    out.objectDataLen = static_cast<int32_t>(c.objectData.size());
+    out.objectDataLen = static_cast<int32_t>(c.objectData.size() + c.objectBytes.size());   // 0.9 JSON, 0.10 stream
     return true;
 }
 

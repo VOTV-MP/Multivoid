@@ -11,6 +11,7 @@
 #include "coop/props/prop_act_request.h"
 #include "coop/props/remote_prop.h"
 
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/prop_flags.h"
 #include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/asset_load.h"
@@ -71,7 +72,10 @@ bool g_hintWatch = false;
 sg::Verdict OnHintPre(const sg::Call& c) {
     static R::ParamOffset sText{L"InText"};
     const int32_t o = sText.Of(c.function);
-    if (o >= 0 && c.locals && ue_wrap::ftext_utils::FTextToString(c.locals + o) == kNoSpace) g_hintSeen = true;
+    if (o < 0 || !c.locals) return sg::Verdict::Run;
+    const std::wstring text = ue_wrap::ftext_utils::FTextToString(c.locals + o);
+    UE_LOGI("%s game hint: '%ls'", kTag, text.c_str());
+    if (text == kNoSpace) g_hintSeen = true;
     return sg::Verdict::Run;
 }
 
@@ -90,7 +94,7 @@ bool WriteField(R::InstanceOffset& field, void* obj, T value) {
 
 // The client's copy has a use to spare, so an eat of it destroys nothing and runs natively.
 const char* SetTwoUses(void*, void* mirror) {
-    static R::InstanceOffset sUses{L"uses"};
+    static R::InstanceOffset sUses{L"invRead_Uses"};
     return WriteField<int32_t>(sUses, mirror, 2) ? nullptr : "the copy's uses could not be written";
 }
 
@@ -104,12 +108,12 @@ const char* SetUpSoap(void* player, void* mirror) {
     if (!cls || !E::TryGetActorLocation(player, at)) return "the sponge class did not load or the player's place is unread";
     void* const sponge = E::SpawnActor(cls, {at.X, at.Y, at.Z + 60.f});
     bool collected = false;
-    if (!sponge || !E::CallMainPlayerHoldObject(player, sponge, collected) || !collected)
+    if (!sponge || !E::CallMainPlayerAddObjectToFreeHotbarSlot(player, sponge, ue_wrap::engine::HotbarAdd{}, collected) || !collected)
         return "this client's own sponge could not be spawned and held";
     if (coop::prop_act_request::dev::PendingId() != 0) return "the hold of this client's own sponge opened a request";
     E::MainPlayerGrabState hand{};
-    if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor) return "the hand holds no sponge";
-    if (!WriteField<float>(sSpongeSoap, hand.holdingActor, 0.f)) return "the sponge's soapAmount could not be written";
+    if (!E::ReadMainPlayerGrabState(player, hand) || !hand.mainHand) return "the hand holds no sponge";
+    if (!WriteField<float>(sSpongeSoap, hand.mainHand, 0.f)) return "the sponge's soapAmount could not be written";
     return WriteField<int32_t>(sSoapAmount, mirror, 1) ? nullptr : "the soap copy's soapAmount could not be written";
 }
 
@@ -127,8 +131,17 @@ const char* MakeOwnCrowbar(void* player, void** out) {
     return nullptr;
 }
 
-// One own crowbar pocketed with no notice (its refusal is the step's, not the fill's); false from the native call ends it.
-const char* FillStep(void* player, bool* full) {
+// The player's pockets: mainPlayer_C.inventoryComponent_player, and its volume fields as the game reads them.
+void* PlayerInventoryComponent(void* player) {
+    static R::InstanceOffset sComp{L"inventoryComponent_player"};
+    const int32_t o = player ? sComp.Of(player) : -1;
+    void* const comp = o < 0 ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(player) + o);
+    return comp && R::IsLive(comp) ? comp : nullptr;
+}
+
+// One own crowbar spawned and pocketed with no notice (its refusal is the step's, not the fill's); `taken` is the
+// native return.
+const char* PocketOwnCrowbar(void* player, bool* taken) {
     // The class is loaded once and held: a load per tick is a reflected call the fill need not make.
     static ue_wrap::CachedObjRef sCrowbar;
     void* cls = sCrowbar.Get();
@@ -139,9 +152,20 @@ const char* FillStep(void* player, bool* full) {
     FVector at{};
     if (!cls || !E::TryGetActorLocation(player, at)) return "the class did not load or the player's place is unread";
     void* const own = E::SpawnActor(cls, {at.X, at.Y, at.Z + kOwnLiftCm});
+    *taken = false;
+    if (!own || !E::CallMainPlayerAddObjectToInventory(player, own, *taken)) return "an own spawn could not be spawned or pocketed";
+    return nullptr;
+}
+
+// The inventory is filled the way a player fills it: one own crowbar pocketed per tick until the game's own volume rule
+// refuses ("Not enough space": totalVolume + Get Volume(name) over maxVolume). On 0.10 build b284 that rule works only
+// once the game's volume tables have arrived (the row waits for VolumesReady): before, Get Volume answers 0 for every name
+// and no number of pockets fills the inventory. After, a crowbar is 2986 of the player's 50000.
+const char* FillStep(void* player, bool* full) {
     bool taken = false;
-    if (!own || !E::CallPutObjectInventory2(player, own, true, taken)) return "an own spawn could not be spawned or pocketed";
+    if (const char* why = PocketOwnCrowbar(player, &taken)) return why;
     *full = !taken;
+    if (*full) LogPlayerVolumes(player, "when the pocket was refused");
     return nullptr;
 }
 
@@ -197,10 +221,11 @@ const char* BinFail(void* bin, const char* why) {
     return why;
 }
 
-// The wastebasket is loaded as the game loads it: an item dropped into its Box settles, and the bin's own tick freezes it
-// and attaches it, which turns the bin's canCollect off (checkPickup). The bin must first have come to rest (its place
-// unchanged across two polls) and stand upright; then a small item (the pills) is dropped above it and awaited to rest in
-// turn; the step is done once the bin's data reads canCollect false, and a miss names the cause.
+// The wastebasket is loaded as the game loads it: an item dropped into its Box settles, and the bin's own tick freezes
+// it, attaches it and lists it in itemsInside, after which checkPickup turns the bin's own canHold and canCollect off
+// (so its canBeCollectedOrPickedUp answers refused). The bin must first have come to rest (its place unchanged across
+// two polls) and stand upright; then a small item (the pills) is dropped above it and awaited to rest in turn; the step
+// is done once the bin's data reads canCollect false, and a miss names the cause.
 const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
     if (sinceMs == 0) g_bin = BinLoad{};
     FVector binAt{};
@@ -246,20 +271,22 @@ const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
     return sinceMs - g_bin.phaseMs > kBinTakeBoundMs ? BinFail(bin, "the bin never took the item") : nullptr;
 }
 
-// A frozen heavy prop, on the host's copy and on the client's (frozen is not synced, and the client's own hold of a
-// heavy prop would answer "too heavy"): the game's own setter, with active off.
+// A frozen heavy prop, on the host's copy, which is the one the host's judge reads (frozen is not synced): the game's
+// own setter, with active off. canBeCollectedOrPickedUp then refuses the hold twice over, as heavy and as frozen; and the
+// freeze leaves the body not simulating, which the host's hold judge reads first (fit_physics, ahead of fit_take_refused in
+// the order of coop/props/prop_act_host.cpp FirstRefusal), so that is the tally of the refusal the row asks for.
 const char* FreezeHost(void* actor, uint64_t, bool* done) {
     if (!ue_wrap::prop::CallSetPropProps(actor, false, true, false, false)) return "setPropProps could not freeze the host's copy";
     *done = true;
     return nullptr;
 }
 
-const char* FreezeCopy(void*, void* mirror) {
-    return ue_wrap::prop::CallSetPropProps(mirror, false, true, false, false) ? nullptr : "setPropProps could not freeze this client's copy";
-}
-
 constexpr Row kRows[] = {
     {"pocket",       kCrowbar, L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr},
+    // The bin is second: it is dropped and must stand, and the rows walk the puppet on along a line whose far end slopes,
+    // where a bin spawned there came to rest on its side (a placement the row cannot judge), so it goes early on the flat.
+    {"loaded bin",   kBin,     L"prop_openContainer_wastebasket_C", Verb::Pocket, Ends::Refused, nullptr, Target::Host, true,
+     false, nullptr, nullptr, false, PAH::Tally::FitTakeRefused, &LoadBin},
     {"hold crowbar", kCrowbar, L"prop_crowbar_C",     Verb::Hold,   Ends::Hand,      nullptr},
     {"hold food",    kFood,    L"prop_food_C",        Verb::Hold,   Ends::Hand,      nullptr},
     {"hold pills",   kPills,   L"prop_sleeppills_C",  Verb::Hold,   Ends::Hand,      nullptr},
@@ -268,25 +295,31 @@ constexpr Row kRows[] = {
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},
     // The plush offers no option, so its last use is asked and refused. Then the classes the judge reads by their own
-    // data: a food subclass, a loaded bin, a prop the client drags, and last a frozen heavy prop (its hold leaves a
-    // heater in the client's hand, and the drag must start from an empty one).
+    // data: a food subclass, a prop the client drags, and last a frozen heavy prop, whose hold the
+    // host refuses (fit_physics: the freeze stops the body, and that term is judged before canBeCollectedOrPickedUp's
+    // fit_take_refused) and leaves in the world.
     {"erie plush",   kPlush,   L"prop_eriePlush_C",   Verb::Use,    Ends::Refused,   &SetLastUse, Target::Host, true, false,
      nullptr, nullptr, false, PAH::Tally::FitDenied},
     {"food subclass", kMreAB,  L"prop_food_mre_AB_C", Verb::Use,    Ends::Gone,      &SetLastUse},
-    {"loaded bin",   kBin,     L"prop_openContainer_wastebasket_C", Verb::Pocket, Ends::Refused, nullptr, Target::Host, true,
-     false, nullptr, nullptr, false, PAH::Tally::FitCanCollect, &LoadBin},
     {"dragged pocket", kCrowbar, L"prop_crowbar_C",   Verb::Pocket, Ends::Inventory, nullptr, Target::Host, true, false,
      nullptr, nullptr, true},
-    {"frozen heavy hold", kHeater, L"prop_heater_C",  Verb::Hold,   Ends::Taken,     &FreezeCopy, Target::Host, true, false,
-     nullptr, nullptr, false, PAH::Tally::kCount, &FreezeHost},
-    // The calls that are the client's own (no request), the pocket and the hold of a kerfur's prop (the pocket stays, the
-    // hold is taken), a use that also destroys a second prop inside the latch, and last the full inventory, which stays
-    // full for whatever would follow it.
+    {"frozen heavy hold", kHeater, L"prop_heater_C",  Verb::Hold,   Ends::Refused,   nullptr, Target::Host, true, false,
+     nullptr, nullptr, false, PAH::Tally::FitPhysics, &FreezeHost},
+    // The calls that are the client's own (no request), a use that also destroys a second prop inside the latch, and last
+    // the full inventory (FillStep: on b284 Get Volume answers 0, so the fill writes the volume over the limit), which
+    // stays full for whatever would follow it.
     {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
     {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::NativeGone, &SetShrimpLastEat, Target::Host, false},
     {"non-last use",    kFood,     L"prop_food_C",        Verb::Use,    Ends::Unchecked, &SetTwoUses, Target::Host, false, true},
     {"trash native",    kChipPile, L"actorChipPile_C",    Verb::Hold,   Ends::Unchecked, nullptr, Target::Host, false},
-    {"kerfur pocket",   nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Stays,     nullptr, Target::HostKerfur},
+    // The kerfur pocket is a bail: its volume (Get Volume 105905) is over the player's whole inventory (maxVolume 50000), so
+    // additemadvanced refuses it with "Not enough space" and additemasobject leaves the actor alone (capture-0.10.0-b284.txt,
+    // inventorycomponent_c.additemadvanced / additemasobject). That holds only once the game's volume tables have arrived,
+    // about 2.5 minutes after a world loads (before, Get Volume answers 0 and the kerfur is taken, which an earlier version
+    // of this row mistook for 0.10's rule): the row waits for them. The host's judge grants it (its bound is the largest
+    // container any player can wear, 250000), so the client asks, is granted, and its own game bails: the abort path.
+    {"kerfur pocket",   nullptr,   L"prop_kerfurOmega_C", Verb::Pocket, Ends::Stays,     nullptr, Target::HostKerfur, true, false,
+     nullptr, nullptr, false, PAH::Tally::kCount, nullptr, true},
     {"kerfur hold",     nullptr,   L"prop_kerfurOmega_C", Verb::Hold,   Ends::Taken,     nullptr, Target::HostKerfur},
     {"second destroy",  kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::HostTwo},
     {"full",            kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Stays,     nullptr, Target::Host, true, false, nullptr, &FillStep},
@@ -422,7 +455,7 @@ Judged Judge(const Row& row, coop::element::ElementId eid, const Baseline& base,
 }  // namespace
 
 const char* SetLastUse(void*, void* mirror) {
-    static R::InstanceOffset sUses{L"uses"};
+    static R::InstanceOffset sUses{L"invRead_Uses"};
     return WriteField<int32_t>(sUses, mirror, 1) ? nullptr : "the copy's uses could not be written";
 }
 
@@ -441,6 +474,19 @@ void HintWatchOff() {
 
 void ClearHint() { g_hintSeen = false; }
 bool HintSeen() { return g_hintSeen; }
+
+bool VolumesReady() {
+    float v = 0.f;
+    bool known = false;
+    return ue_wrap::prop_gather::VolumeOfName(L"crowbar", v, known) && known && v > 0.f;
+}
+
+void LogPlayerVolumes(void* player, const char* when) {
+    void* const comp = PlayerInventoryComponent(player);
+    float total = -1.f, max = -1.f;
+    const bool ok = comp && ue_wrap::container_inventory::CurrentVolume(comp, total) && ue_wrap::container_inventory::MaxVolume(comp, max);
+    UE_LOGI("%s player inventory %s: totalVolume=%.1f maxVolume=%.1f (read=%d)", kTag, when, total, max, ok ? 1 : 0);
+}
 
 void* FindKerfurProp(EL::ElementId kerfurId) {
     void* const cls = ue_wrap::object_index::ClassByName(kKerfurProp);

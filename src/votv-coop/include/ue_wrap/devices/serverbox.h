@@ -157,7 +157,7 @@ void* TakeOutComponent(void* box);
 bool ReadLooksAtTakeOut(void* box, bool& out);
 
 // The box's install and take-out, called as the player's use and E-press call them: playerUsedOn with the
-// player (the body reads the upgrade from the player's hand, `holding_actor`), a hit on the box and the
+// player (the body reads the upgrade from the player's hand, `holdingActor_main`), a hit on the box and the
 // held actor and its name; actionOptionIndex with action 4 and a hit on the take-out component. [dev]
 bool CallInstall(void* box, void* player, void* held, const reflection::FName& heldName);
 bool CallTakeOut(void* box, void* player);

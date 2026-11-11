@@ -12,6 +12,8 @@
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/prop_save_data.h"
 #include "coop/props/remote_prop.h"           // RegisterPropMirror
+#include "coop/props/wire_class.h"             // Resolve: the lookup, then the load of the class's content path
+#include "coop/net/wire_class_path.h"         // HasPath, for the drop log
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
@@ -85,10 +87,12 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         UE_LOGW("remote_prop::OnSpawn: spawn UFunctions unresolved -- dropping");
         return nullptr;
     }
-    void* actorClass = resolve ? resolve(classW.c_str()) : R::FindClass(classW.c_str());
+    // The lookup, then on a miss the load of the content path the payload carries (an old peer's carries none): a class
+    // this peer never loaded is a load, not a dropped prop.
+    void* actorClass = coop::wire_class::Resolve(payload.className, resolve);
     if (!actorClass) {
-        UE_LOGW("remote_prop::OnSpawn: class '%ls' not found -- dropping (likely cooked-content class not loaded)",
-                classW.c_str());
+        UE_LOGW("remote_prop::OnSpawn: class '%ls' not found%s -- dropping (cooked-content class not loaded)",
+                classW.c_str(), coop::net::wire_class_path::HasPath(payload.className) ? " and its load failed" : ", no content path sent");
         return nullptr;
     }
     void* worldCtx = E::GetWorldContext();

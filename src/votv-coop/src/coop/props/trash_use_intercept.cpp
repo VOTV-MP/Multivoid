@@ -48,17 +48,17 @@ namespace P  = ue_wrap::profile;
 namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
 
-// The "use" action has three delegate bindings: _41 = IE_Pressed (the grab press intercepted), _38 = a
-// second IE_Pressed, _42 = IE_Released; all three reach useAction's `use_deny`, so the client suppresses
-// the deny on the two extra seams too (a side-effect-free cancel; _41 stays the sole intent sender). The
+// The "use" action has three delegate bindings: _37 = IE_Pressed (the grab press intercepted), _34 = a
+// second IE_Pressed, _38 = IE_Released; all three reach useAction's `use_deny`, so the client suppresses
+// the deny on the two extra seams too (a side-effect-free cancel; _37 stays the sole intent sender). The
 // fire action has two (_58 press, _59 release). The ordinals are recook-fragile: the census names a
 // renumbering as a row gone.
 UE_FACT_FN(kRowUseEvt41, "trash_use_intercept", L"mainPlayer_C",
-           L"InpActEvt_use_K2Node_InputActionEvent_41", Declared);
+           L"InpActEvt_use_K2Node_InputActionEvent_37", Declared);
 UE_FACT_FN(kRowUseEvt38, "trash_use_intercept", L"mainPlayer_C",
-           L"InpActEvt_use_K2Node_InputActionEvent_38", Declared);
+           L"InpActEvt_use_K2Node_InputActionEvent_34", Declared);
 UE_FACT_FN(kRowUseEvt42, "trash_use_intercept", L"mainPlayer_C",
-           L"InpActEvt_use_K2Node_InputActionEvent_42", Declared);
+           L"InpActEvt_use_K2Node_InputActionEvent_38", Declared);
 UE_FACT_FN(kRowFireEvt58, "trash_use_intercept", L"mainPlayer_C",
            L"InpActEvt_fire_K2Node_InputActionEvent_58", Declared);
 UE_FACT_FN(kRowFireEvt59, "trash_use_intercept", L"mainPlayer_C",
@@ -174,7 +174,7 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                                 static_cast<unsigned>(beid), cloc.X, cloc.Y, cloc.Z, clocRead ? "" : " (unread)",
                                 static_cast<unsigned>(ue_wrap::prop::GetChipType(aimedNative)));
                         coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(beid));
-                        g_cancelPairedUseRelease = true;  // pair: the _42 release of this cancelled press dies too
+                        g_cancelPairedUseRelease = true;  // pair: the _38 release of this cancelled press dies too
                         return true;  // handled: cancel the native InpActEvt_use dispatch entirely
                     }
                 }
@@ -230,7 +230,7 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
             aimed, fwd, mir,
             (fwd != 0 || mir != 0) ? "[TRACKED -> grab will sync]"
                                    : "[UNTRACKED -> grab will NOT sync; tracking gap]",
-            gs.grabbingActor, gs.holdingActor);
+            gs.grabbingActor, gs.mainHand);
     return false;  // HOST: never cancel -- the native grab must run
 }
 
@@ -296,8 +296,8 @@ void Install(coop::net::Session* session) {
         if (GT::RegisterInterceptor(uf38, &OnPileUseDenySuppress)) ++denySeams;
     if (const ue_wrap::facts::Resolved uf42 = ue_wrap::facts::Resolve(kRowUseEvt42))
         if (GT::RegisterInterceptor(uf42, &OnPileUseReleaseSuppress)) ++denySeams;
-    UE_LOGI("trash_use_intercept: use_deny suppressors installed on %d/2 extra 'use' seam(s) (_38 2nd-Pressed = press "
-            "conditions; _42 Released = paired-with-cancelled-press only) -- a cancelled client E-press now dies "
+    UE_LOGI("trash_use_intercept: use_deny suppressors installed on %d/2 extra 'use' seam(s) (_34 2nd-Pressed = press "
+            "conditions; _38 Released = paired-with-cancelled-press only) -- a cancelled client E-press now dies "
             "on ALL its seams incl. its OWN release -> no 'EHHH' on grab OR drop",
             denySeams);
 

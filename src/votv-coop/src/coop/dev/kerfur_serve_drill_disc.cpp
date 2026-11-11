@@ -416,7 +416,7 @@ void SecondPress(void* mirror, int32_t mirrorIdx) {
             if (!me || !cls || !E::TryGetActorLocation(me, at)) return false;
             void* disc = E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z});
             bool collected = false;
-            if (!(disc && E::CallMainPlayerHoldObject(me, disc, collected) && collected)) return false;
+            if (!(disc && E::CallMainPlayerAddObjectToFreeHotbarSlot(me, disc, ue_wrap::engine::HotbarAdd{}, collected) && collected)) return false;
             second = detail::HoldingActor(me);
             secondIdx = second ? R::InternalIndexOf(second) : -1;
             return second != nullptr;
@@ -493,7 +493,7 @@ DWORD WINAPI ClientThread(LPVOID) {
             if (!me || !cls || !E::TryGetActorLocation(me, at)) return false;
             void* disc = E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z});
             bool collected = false;
-            return disc && E::CallMainPlayerHoldObject(me, disc, collected) && collected;
+            return disc && E::CallMainPlayerAddObjectToFreeHotbarSlot(me, disc, ue_wrap::engine::HotbarAdd{}, collected) && collected;
         })) {
         Invalid("the client's pickup of a red disc did not take");
         return 0;
@@ -565,7 +565,7 @@ DWORD WINAPI ClientThread(LPVOID) {
             ue_wrap::FVector at{};
             void* next = (cls && E::TryGetActorLocation(me, at)) ? E::SpawnActor(cls, ue_wrap::FVector{at.X + kDiscAsideCm, at.Y, at.Z}) : nullptr;
             bool collected = false;
-            swapped = next && E::CallMainPlayerHoldObject(me, next, collected) && collected;
+            swapped = next && E::CallMainPlayerAddObjectToFreeHotbarSlot(me, next, ue_wrap::engine::HotbarAdd{}, collected) && collected;
         }
         bool spooky = false;
         uint8_t face = 0;
@@ -597,7 +597,7 @@ DWORD WINAPI ClientThread(LPVOID) {
         UE_LOGW("[KERFUR-SERVE] client: the host's answer to the press did not come in %llu s",
                 static_cast<unsigned long long>(kAnswerWindowMs / 1000));
     // The disc pressed with is gone when its slot no longer holds the live actor: a destroyed actor still named by
-    // holding_actor reads dead by its slot.
+    // holdingActor_main reads dead by its slot.
     bool gone = false;
     Counted c1;
     Run([&] {

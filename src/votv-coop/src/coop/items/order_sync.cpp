@@ -300,7 +300,7 @@ bool ResolveOne(net::Session* s, uint8_t slot, Pending& pe) {
     const int32_t after = OE::OrderCount();
 
     // `dispatched` only says ProcessEvent ran. The ORDER is what we charge for, so the
-    // post-condition is the artifact: exactly one new row in saveSlot.orders. That edge is exact:
+    // post-condition is the artifact: exactly one new row in save_slot.orders. That edge is exact:
     // drone::checkOrders contains no removeOrderCart and no array removal, so nothing pops
     // synchronously inside the commit.
     if (!dispatched || before < 0 || after != before + 1) {

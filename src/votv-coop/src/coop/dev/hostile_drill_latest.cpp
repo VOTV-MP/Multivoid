@@ -6,6 +6,8 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
+#include "coop/player/hand_item_mirror.h"  // kFallbackRelPos
+#include "coop/player/hand_item_wire.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
@@ -63,8 +65,6 @@ constexpr auto     kPrefWindow  = std::chrono::milliseconds(11000);  // one per 
 constexpr auto     kHandWindow  = std::chrono::milliseconds(10250);  // four per 1 s, + 10 s
 constexpr auto     kFailBound   = std::chrono::seconds(180);         // a failure bound, never a wait
 
-// The fallback hold transform the owner ships before its first measure (hand_item.cpp).
-constexpr float kFallbackRel[6] = {45.f, 10.f, -40.f, 0.f, 0.f, 0.f};
 
 // ---- client (sender) ----
 bool g_sent = false;
@@ -81,7 +81,7 @@ void PickClass(void* ctx, void* /*cls*/, void* anyInstance) {
     auto* pick = static_cast<ClassPick*>(ctx);
     if (pick->n >= 2 || !anyInstance || !ue_wrap::prop::IsDescendantOfProp(anyInstance)) return;
     const std::wstring name = R::ClassNameOf(anyInstance);
-    // Within the lane's string cap (hand_item.cpp kMaxStr, 63), so the host keeps the state.
+    // Within the lane's string cap (hand_item_wire.h kMaxStr, 63), so the host keeps the state.
     if (name.empty() || name.size() > 63 || name == L"prop_C" || coop::prop_lifecycle::IsPerPlayerPropClass(name) ||
         coop::prop_lifecycle::IsWireSuppressedPropClass(name))
         return;
@@ -89,7 +89,7 @@ void PickClass(void* ctx, void* /*cls*/, void* anyInstance) {
     pick->names[pick->n++] = name;
 }
 
-// The wire forms (player_handshake_prefs.cpp, hand_item.cpp BuildPayload).
+// The wire forms (player_handshake_prefs.cpp, coop/player/hand_item_wire.h).
 std::vector<uint8_t> SkinPayload(uint8_t slot, const char* name) {
     std::vector<uint8_t> out{slot, static_cast<uint8_t>(std::strlen(name))};
     out.insert(out.end(), name, name + std::strlen(name));
@@ -101,19 +101,12 @@ std::vector<uint8_t> ColorPayload(uint8_t slot, uint32_t packed) {
             coop::nick_color::G(packed), coop::nick_color::B(packed)};
 }
 std::vector<uint8_t> HandPayload(uint8_t slot, const std::wstring* cls) {
-    std::vector<uint8_t> out{slot, static_cast<uint8_t>(cls ? 1 : 0)};
-    if (!cls) {
-        out.insert(out.end(), {0, 0, 0});  // no class, name or item
-        return out;
-    }
-    out.push_back(static_cast<uint8_t>(cls->size()));
-    for (wchar_t c : *cls) out.push_back(static_cast<uint8_t>(c));
-    out.push_back(0);  // name
-    out.push_back(0);  // item
-    const size_t base = out.size();
-    out.resize(base + sizeof(kFallbackRel));
-    std::memcpy(out.data() + base, kFallbackRel, sizeof(kFallbackRel));
-    return out;
+    coop::hand_item_wire::Record r;  // the main hand, at the fallback hold transform the owner ships first
+    r.slot = slot;
+    r.has = cls != nullptr;
+    if (cls) r.cls = *cls;
+    std::memcpy(r.relPos, coop::hand_item::kFallbackRelPos, sizeof(r.relPos));
+    return coop::hand_item_wire::Build(r);
 }
 
 bool Send(coop::net::Session* s, Kind k, const std::vector<uint8_t>& p) {

@@ -61,8 +61,20 @@ void Mark(const char* name, const std::string& text) {
     const std::string tmp = path + ".tmp";
     { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
     const std::wstring from = Widen(tmp), to = Widen(path);
-    if (from.empty() || to.empty() || !::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING))
-        UE_LOGW("%hs: signal '%hs' could not be left (error %lu)", g_tag.c_str(), name, ::GetLastError());
+    // The other peer polls this folder many times a second, and a replace over a file it has open is refused (error 5): ask
+    // again a few times before the signal is given up as lost, which would leave the other peer waiting for a word never said.
+    bool left = false;
+    DWORD err = 0;
+    for (int attempt = 0; attempt < 40 && !left; ++attempt) {
+        if (from.empty() || to.empty()) break;
+        left = ::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+        if (!left) {
+            err = ::GetLastError();
+            ::Sleep(50);
+        }
+    }
+    if (!left)
+        UE_LOGW("%hs: signal '%hs' could not be left (error %lu)", g_tag.c_str(), name, err);
 }
 
 bool Await(const char* name, int seconds) {

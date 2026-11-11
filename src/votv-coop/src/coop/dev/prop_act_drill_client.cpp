@@ -45,7 +45,8 @@ using ue_wrap::FVector;
 
 constexpr uint8_t kEatAction = 4;   // actionOptionIndex's eat, as the watch reads it
 constexpr const char* kSecondTag = " eid2=";   // after the first eid in a pair's ready line
-constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before the inventory is called never full
+constexpr int kFillMax = 60;             // CLIENT: own spawns pocketed before the inventory is called never full (a crowbar is 2986 of 50000)
+constexpr uint64_t kVolumesBoundMs = 150000;   // CLIENT: a row that needs the game's volume tables waits this long for them
 
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
@@ -92,9 +93,9 @@ void ClientPass(const Row& row, const char* what) {
     CEnter(CStep::Say);
 }
 
-// The player's hand item name, as the game passes it to a use (holding_name).
+// The player's hand item name, as the game passes it to a use (holdingObjectName_main).
 bool ReadHoldName(void* player, R::FName* out) {
-    static R::InstanceOffset sOff{L"holding_name"};
+    static R::InstanceOffset sOff{L"holdingObjectName_main"};
     const int32_t o = sOff.Of(player);
     if (o < 0) return false;
     std::memcpy(out, static_cast<const uint8_t*>(player) + o, sizeof(*out));
@@ -123,10 +124,11 @@ void ClientAct(const Row& row, void* player) {
         return;
     }
     ClearHint();
+    LogPlayerVolumes(player, "before the call");
     g_refusedBefore = PAR::dev::RefusedCount(coop::net::PropActReason::WrongFamily);
     E::MainPlayerGrabState handBefore{};
-    g_handHeldBefore = E::ReadMainPlayerGrabState(player, handBefore) && handBefore.holdingActor;
-    g_handBefore.Set(g_handHeldBefore ? handBefore.holdingActor : nullptr);
+    g_handHeldBefore = E::ReadMainPlayerGrabState(player, handBefore) && handBefore.mainHand;
+    g_handBefore.Set(g_handHeldBefore ? handBefore.mainHand : nullptr);
     if (row.target == Target::HostTwo) {
         // The second prop dies inside the replay's latch, so it goes through the destroy seam as any destroy does.
         if (!g_mirror2.Get()) {
@@ -204,8 +206,8 @@ void ClientReadRefused(const Row& row, void* player) {
         return;
     }
     E::MainPlayerGrabState hand{};
-    const bool held = E::ReadMainPlayerGrabState(player, hand) && hand.holdingActor;
-    if (held != g_handHeldBefore || (held && !g_handBefore.Is(hand.holdingActor))) {
+    const bool held = E::ReadMainPlayerGrabState(player, hand) && hand.mainHand;
+    if (held != g_handHeldBefore || (held && !g_handBefore.Is(hand.mainHand))) {
         ClientFail(row, "the hand changed on a refused act");
         return;
     }
@@ -257,7 +259,7 @@ void ClientRead(const Row& row, void* player) {
         }
     } else if (row.ends == Ends::Hand) {
         E::MainPlayerGrabState hand{};
-        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || R::ClassNameOf(hand.holdingActor) != row.leaf) {
+        if (!E::ReadMainPlayerGrabState(player, hand) || !hand.mainHand || R::ClassNameOf(hand.mainHand) != row.leaf) {
             ClientFail(row, "the hand does not hold the item");
             return;
         }
@@ -383,9 +385,9 @@ void* RootOf(void* actor) {
 const char* RunVerb(const Row& row, void* player, void* mirror) {
     bool flag = false;
     if (row.verb == Verb::Pocket)
-        return E::CallPutObjectInventory2(player, mirror, false, flag) ? nullptr : "putObjectInventory2 could not run";
+        return E::CallMainPlayerAddObjectToInventory(player, mirror, flag) ? nullptr : "addObjectToInventory could not run";
     if (row.verb == Verb::Hold)
-        return E::CallMainPlayerHoldObject(player, mirror, flag) ? nullptr : "Hold Object could not run";
+        return E::CallMainPlayerAddObjectToFreeHotbarSlot(player, mirror, ue_wrap::engine::HotbarAdd{}, flag) ? nullptr : "Add Object to Free Hotbar Slot could not run";
     void* const root = RootOf(mirror);
     FVector at{};
     if (!root || !E::TryGetActorLocation(mirror, at)) return "the mirror's root or place could not be read";
@@ -395,7 +397,7 @@ const char* RunVerb(const Row& row, void* player, void* mirror) {
     E::MainPlayerGrabState hand{};
     R::FName name{};
     if (!E::ReadMainPlayerGrabState(player, hand) || !ReadHoldName(player, &name)) return "the hand could not be read";
-    return PU::CallPlayerUsedOn(mirror, player, root, at, root, hand.holdingActor, name) ? nullptr
+    return PU::CallPlayerUsedOn(mirror, player, root, at, root, hand.mainHand, name) ? nullptr
                                                                                        : "playerUsedOn could not run";
 }
 
@@ -414,6 +416,10 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             g_cstep = CStep::Done;
             return;
         }
+        // The client loads nothing for the rows: a class the host spawns that this client has not loaded reaches it
+        // through the product's own class load (the content path on the spawn, ue_wrap/core/class_load.h). A preload
+        // here would hide that seam (the food subclass row was dropped for the want of its class, and passed only
+        // while a preload kept it resident).
         CEnter(CStep::AwaitReady);
         return;
     }
@@ -453,6 +459,11 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             if (CExpired(kMirrorBoundMs)) ClientFail(row, "the addHint watch never went live");
             return;
         }
+        HintWatchLive();   // every row logs the game's hints, so a take that bails says why
+        if (row.needsVolumes && !VolumesReady()) {
+            if (CExpired(kVolumesBoundMs)) ClientFail(row, "the game's volume tables never arrived (Get Volume still answers 0)");
+            return;
+        }
         g_invBefore = InventoryCount(row.leaf);
         if (g_invBefore < 0) {
             ClientFail(row, "the inventory could not be read");
@@ -486,7 +497,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         // A host mirror still driven is parked with physics off, and a take of it bails: act when a press could gather it.
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
-        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), row.verb)) {
+        if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get())) {
             if (CExpired(kGatherBoundMs))
                 ClientFail(row, "the mirror never became gatherable here (the host's drive did not end)");
             return;

@@ -262,8 +262,6 @@ CFG_ENUM(hookdrag_role, "hookdrag_role", "dev", "host", "host|client|both", "VOT
     "value on BOTH peers.")
 CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr,
     "Autonomous selftest: player inventory sync.")
-CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,
-    "Autonomous selftest: starter kit issuance.")
 CFG_FLAG(reseed_orphan_selftest, "reseed_orphan_selftest", "dev", false, nullptr,
     "Autonomous selftest: save-identity reseed/orphan handling.")
 CFG_FLAG(roster_token_selftest, "roster_token_selftest", "dev", false, nullptr,
@@ -318,10 +316,9 @@ CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullp
 CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr,
     "Diagnostic probe: actor spawn ordering.")
 CFG_FLAG(food_clock_probe, "food_clock_probe", "dev", false, "VOTVCOOP_FOOD_CLOCK_PROBE",
-    "Diagnostic probe (BOTH peers): what a food's save record does to its own state on arrival. "
-    "Aprop_food_C::loadData catches the food up against a timestamp the SENDER wrote with its own "
-    "world clock, so this prints the two clocks, their difference, and how far the temperature and "
-    "ripeness moved because of it.")
+    "Diagnostic probe (BOTH peers): counts the foods the prop-record lane turns away at its class "
+    "gate and any it publishes or applies. A food crossing the lane means the food lane's claim "
+    "leaked.")
 CFG_FLAG(lookat_churn_probe, "lookat_churn_probe", "dev", false, "VOTVCOOP_LOOKAT_CHURN_PROBE",
     "Diagnostic probe (BOTH peers): how often the look-at set the interaction UI is rebuilt from "
     "changes while the aim holds still, and which of its five fields moves. A held aim should "
@@ -568,7 +565,7 @@ CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CAL
     "second press, and the client's DONE line says whether the drone flew on its copy; the host logs its "
     "drone's changes. "
     "Lines tagged [DRONE-CALL-DRILL].")
-CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_DRILL",
+CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 3, "VOTVCOOP_DRONESACK_DRILL",
     "Drill (BOTH peers, the same value): the host puts a drone sack on the floor in front of itself and the client "
     "says its mirror of it is bound. 1 -- the host drops a loot crate onto the sack; for 15 s each peer logs the "
     "crate's local destroy (and the caller's class), the client whether its destroy seam sent a PropDestroy, the "
@@ -578,11 +575,7 @@ CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_
     "drone's container. 3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then "
     "calls the drone; both peers take the container census around the sale and log the crate's "
     "inventory index and which containers hold it afterwards. Arms 1 to 3 judge nothing. Lines tagged [SACK-DRILL] and "
-    "[SACK-CENSUS]. 4 -- arm 3, with the client walking to the sack and opening its screen before the sale; at the "
-    "host's sale marker it presses the first slot, a player's take, which is an act, so the press races the sale's "
-    "publication. Both peers judge it: the take is refused Gone and nothing comes out, and the sack stays at 0 on "
-    "the host (a publication that came first leaves nothing to press, which also passes). The client also judges its "
-    "mirror: it reads 0 within 2 s of the sale, or it fails. The mirror is logged 1, 5, 15 and 30 s after the sale.")
+    "[SACK-CENSUS].")
 CFG_STRING(sat_console_drill, "sat_console_drill", "dev", "", "VOTVCOOP_SAT_CONSOLE_DRILL", false,
     "Drill (BOTH peers): run -- a client types sd.cal, sauce.get and sv.hash at its SAT console; the host runs "
     "them on the terminal it keeps for that client and sends the lines back. rejoin -- the client leaves in the "

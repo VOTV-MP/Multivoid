@@ -422,7 +422,7 @@ void Reap(const Claim& c) {
     void* player = coop::players::Registry::Get().Local();
     ue_wrap::engine::MainPlayerGrabState gs{};
     if (player && ue_wrap::engine::ReadMainPlayerGrabState(player, gs)) {
-        void* held = gs.grabbingActor ? gs.grabbingActor : gs.holdingActor;
+        void* held = gs.grabbingActor ? gs.grabbingActor : gs.mainHand;
         if (held && FK::IsPulledFuse(held)) {
             coop::prop_lifecycle::DestroyLocalProp(held, /*deferred*/true);
             ++g_reaped;

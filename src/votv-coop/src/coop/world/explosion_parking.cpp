@@ -11,7 +11,6 @@
 #include "coop/props/prop_wire_parity.h"
 #include "coop/world/spawn_authority.h"
 
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -33,7 +32,6 @@ namespace {
 namespace SG = ue_wrap::script_gate;
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
-namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -43,7 +41,9 @@ UE_FACT_FN(kRowVerbExploded, "explosion", nullptr, L"exploded", AnyClass);
 UE_FACT_FN(kRowVerbReached, "explosion", nullptr, L"reachedByExplosion", AnyClass);
 UE_FACT_FN(kRowVerbIgnite, "explosion", nullptr, L"ignite", AnyClass);
 UE_FACT_FN(kRowRuneCheck, "explosion", L"explosion_C", L"runeCheck", Declared);
-UE_FACT_FN(kRowNarrowBeginPlay, "explosion", L"explosion_C", L"ReceiveBeginPlay", Declared);
+// The object types the explosion's impulse overlaps: its graph asks lib_obj for them just before it hands them to
+// ThingsAndStuffLib::OccludedExplosionImpulse, so this answer is what the force reaches.
+UE_FACT_FN(kRowNarrowImpulseTypes, "explosion", L"lib_obj_C", L"obj_dynphyspawn", Declared);
 
 constexpr int kVerbs = 4;
 constexpr int kVerbsOwnerTakes = 2;    // addDamage and exploded: the first two rows of kTable
@@ -53,7 +53,7 @@ constexpr int kTagNarrow = 0x45584E52; // 'EXNR'
 
 SG::Verdict OnVerbPre(const SG::Call& c);
 SG::Verdict OnRunePre(const SG::Call& c);
-void        OnNarrowPost(const SG::Call& c);
+void        OnImpulseTypesPost(const SG::Call& c);
 
 struct Hook {
     const ue_wrap::facts::Function* row;
@@ -69,7 +69,7 @@ const Hook kTable[kHooks] = {
     {&kRowVerbReached, kTagVerb0 + 2, &OnVerbPre, nullptr, "reachedByExplosion"},
     {&kRowVerbIgnite, kTagVerb0 + 3, &OnVerbPre, nullptr, "ignite"},
     {&kRowRuneCheck, kTagRune, &OnRunePre, nullptr, "runeCheck"},
-    {&kRowNarrowBeginPlay, kTagNarrow, nullptr, &OnNarrowPost, "ReceiveBeginPlay"},
+    {&kRowNarrowImpulseTypes, kTagNarrow, nullptr, &OnImpulseTypesPost, "obj_dynphyspawn"},
 };
 
 constexpr auto kRetry = std::chrono::seconds(1);
@@ -166,30 +166,47 @@ SG::Verdict OnRunePre(const SG::Call& c) {
     return SG::Verdict::Cancel;
 }
 
-// After the Blueprint's own begin-play writes, before the force fires: the force reaches pawns only.
-void OnNarrowPost(const SG::Call& c) {
-    if (!c.object || !coop::spawn_authority::IsActiveClientSession()) return;
-    if (ue_wrap::explosion::NarrowForceToPawn(c.object)) {
-        ++g_counters.narrowed;
-        UE_LOGI("[EXPLOSION] narrowed");
-    } else {
-        // Fail closed: an un-narrowed force would push this client's props. The copy is a cue, so it is destroyed
-        // by a posted task (the begin-play is still on the stack), before its force fires.
-        ++g_counters.narrowFailed;
-        UE_LOGE("[EXPLOSION] the force of an explosion copy could not be narrowed to pawns; the copy is destroyed");
-        void* copy = c.object;
-        const int32_t index = R::InternalIndexOf(copy);
-        GT::Post([copy, index] {
-            if (R::IsLiveByIndex(copy, index)) E::DestroyActor(copy);
-        });
+// The explosion graph's ask for the impulse's object types, answered after lib_obj filled it and before the impulse
+// reads it: on a client's copy the force reaches pawns only. The array is the caller's local, shrunk in place to its
+// Pawn entry, so nothing is allocated; a list with no Pawn entry is emptied, which overlaps nothing.
+constexpr uint8_t kObjectTypePawn = 2;  // EObjectTypeQuery::ObjectTypeQuery3
+struct ObjectTypeArray {
+    uint8_t* data;
+    int32_t  num;
+    int32_t  max;
+};
+
+void OnImpulseTypesPost(const SG::Call& c) {
+    if (!c.callerFunction || !R::NameEquals(R::NameOf(c.callerFunction), L"ExecuteUbergraph_explosion")) return;
+    if (!coop::spawn_authority::IsActiveClientSession()) return;
+    static void*   sFn = nullptr;
+    static int32_t sOutOff = -1;
+    if (c.function != sFn) {
+        sFn = c.function;
+        sOutOff = R::FindParamOffset(c.function, L"obj");
     }
+    auto* types = reinterpret_cast<ObjectTypeArray*>(sOutOff >= 0 ? SG::OutParamPtr(c, sOutOff) : nullptr);
+    if (!types || types->num < 0 || types->num > types->max || (types->num > 0 && !types->data)) {
+        // Nothing to write the answer into: this copy's impulse reaches what the game asked for.
+        ++g_counters.narrowFailed;
+        UE_LOGE("[EXPLOSION] the impulse of an explosion copy could not be narrowed to pawns (its object types are "
+                "out of reach); it can push this client's props");
+        return;
+    }
+    bool pawn = false;
+    for (int32_t i = 0; i < types->num && !pawn; ++i) pawn = types->data[i] == kObjectTypePawn;
+    if (pawn) types->data[0] = kObjectTypePawn;
+    types->num = pawn ? 1 : 0;
+    ++g_counters.narrowed;
+    UE_LOGI("[EXPLOSION] narrowed");
 }
 
 // ---- the coast of flung props ---------------------------------------------------------------------------------------
 
-UE_FACT_FN(kRowFireImpulse, "explosion", L"RadialForceComponent", L"FireImpulse", Declared);
+// The explosion's push: its graph calls the game's native library with its radial force's radius and strength.
+UE_FACT_FN(kRowImpulse, "explosion", L"ThingsAndStuffLib", L"OccludedExplosionImpulse", Declared);
 
-// An explosion whose radial force fired, by pointer and the object index it had. The hook fires inside the
+// An explosion whose impulse fired, by pointer and the object index it had. The hook fires inside the
 // explosion's own body; the props are read and handed on in Tick, outside it. No cap: every flung prop coasts, and a
 // chain blast queues each of its explosions.
 struct Fired {
@@ -214,16 +231,14 @@ bool     g_fireGaveUp = false;
 int      g_fireTries = 0;
 Clock::time_point g_fireNextTry{};
 
-// Every Blueprint call of FireImpulse arrives here; an explosion's is the one whose component's owner is one of
-// ours. A component's outer is the actor that owns it.
-void OnFireImpulsePost(void* component, void* /*sourceObject*/, void* /*result*/) {
+// Every Blueprint call of the impulse arrives here; an explosion's is the one whose calling Blueprint is one of ours.
+void OnImpulsePost(void* /*libDefault*/, void* sourceObject, void* /*result*/) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!component || !s || !s->connected() || s->role() != coop::net::Role::Host || s->connectedPeerCount() <= 0)
+    if (!sourceObject || !s || !s->connected() || s->role() != coop::net::Role::Host || s->connectedPeerCount() <= 0)
         return;
-    void* owner = R::OuterOf(component);
     bool byName = false;
-    if (!owner || ue_wrap::explosion::ClassIdOf(R::ClassOf(owner), byName) < 0) return;
-    g_fired.push_back(Fired{owner, R::InternalIndexOf(owner)});
+    if (ue_wrap::explosion::ClassIdOf(R::ClassOf(sourceObject), byName) < 0) return;
+    g_fired.push_back(Fired{sourceObject, R::InternalIndexOf(sourceObject)});
 }
 
 // What a dead parking watch costs, said only where it applies: a client in a session drops the host's copies.
@@ -232,19 +247,19 @@ const char* kNotApplied() {
 }
 
 // Install under the same policy as the watches: a refused install is retried each second, 30 times, then said once.
-void InstallFireImpulse() {
+void InstallImpulseHook() {
     if (g_fireInstalled || g_fireGaveUp || Clock::now() < g_fireNextTry) return;
     g_fireNextTry = Clock::now() + kRetry;
-    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowFireImpulse);
-    if (fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnFireImpulsePost)) {
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowImpulse);
+    if (fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnImpulsePost)) {
         g_fireInstalled = true;
         g_fired.reserve(16);
         g_blasts.reserve(16);
-        UE_LOGI("[EXPLOSION] coast seam installed on RadialForceComponent::FireImpulse");
+        UE_LOGI("[EXPLOSION] coast seam installed on ThingsAndStuffLib::OccludedExplosionImpulse");
     } else if (++g_fireTries >= kMaxTries) {
         g_fireGaveUp = true;
-        UE_LOGE("[EXPLOSION] the FireImpulse hook did not install in %d tries; the props a host explosion flings are "
-                "not driven to clients", kMaxTries);
+        UE_LOGE("[EXPLOSION] the OccludedExplosionImpulse hook did not install in %d tries; the props a host "
+                "explosion flings are not driven to clients", kMaxTries);
     }
 }
 
@@ -252,7 +267,7 @@ void InstallFireImpulse() {
 
 void Install(coop::net::Session* s) {
     g_session.store(s, std::memory_order_release);
-    InstallFireImpulse();
+    InstallImpulseHook();
     if (g_liveLogged || g_settledDead) return;
     bool pending = false, dead = false;
     if (Clock::now() >= g_nextTry) {

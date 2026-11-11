@@ -11,7 +11,7 @@
 
 namespace ue_wrap::desk_detector {
 
-// The ubergraph entries: the loop's resume (the Delay(0) at @60207) and the statement after the step (@4128).
+// The ubergraph entries: the loop's resume (the Delay(0) at @60420) and the statement after the step (@4128).
 inline constexpr int32_t kLoopEntry = 3541;
 inline constexpr int32_t kPostStepEntry = 4128;
 

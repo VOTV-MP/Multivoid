@@ -59,7 +59,7 @@ std::string ShapeOf(const SR::SaveRecord& r) {
     };
     const std::pair<const char*, size_t> groups[] = {
         {"b", n2(r.bools)},    {"f", n2(r.floats)},     {"i", n2(r.ints)},
-        {"s", n2(r.strings)},  {"sig", r.signals.size()}, {"cls", n2(r.classes)},
+        {"s", n2(r.strings)},  {"cls", n2(r.classes)},
         {"v", n2(r.vectors)},  {"rot", n2(r.rotators)}, {"x", n2(r.transforms)},
         {"by", n2(r.bytes)},   {"nm", n2(r.names)},
     };
@@ -126,7 +126,7 @@ void Tick() {
         static bool s_warned = false;
         if (!s_warned) {
             s_warned = true;
-            UE_LOGI("live_store: not resolvable yet (no gamemode/playerContainer/GObjStack slot) "
+            UE_LOGI("live_store: not resolvable yet (no pawn or inventory component) "
                     "-- will keep polling silently until it is");
         }
         return;
@@ -142,11 +142,7 @@ void Tick() {
                          coop::dev::record_digest::ValuesOf(r));
     std::sort(values.begin(), values.end());
     Bag worn;
-    size_t eqFilled = 0, holdFilled = 0;
-    for (const auto& e : inv.equipment)
-        if (!e.data.className.empty()) { ++eqFilled; ++worn["eq:" + SigOf(e.data)]; }
-    for (const auto& e : inv.hold)
-        if (!e.data.className.empty()) { ++holdFilled; ++worn["hold:" + SigOf(e.data)]; }
+    for (const auto& e : inv.equipment) ++worn["eq:" + SigOf(e)];
 
     // Log only when something CHANGED -- a per-2s heartbeat of an unchanged state is log spam, and
     // the pre-deploy checklist treats a line repeating at a rate the design did not intend as a bug.
@@ -157,11 +153,10 @@ void Tick() {
     const bool first = s_last.empty();
     s_last = now;
 
-    UE_LOGI("live_store: %s carried=%zu | equip=%zu/%zu hold=%zu/%zu (filled/slots)",
-            first ? "FIRST" : "CHANGE", inv.inventory.size(), eqFilled, inv.equipment.size(),
-            holdFilled, inv.hold.size());
+    UE_LOGI("live_store: %s carried=%zu | worn=%zu", first ? "FIRST" : "CHANGE", inv.inventory.size(),
+            inv.equipment.size());
     UE_LOGI("live_store:   carried: %s", Join(carried).c_str());
-    UE_LOGI("live_store:   worn/held: %s", Join(worn).c_str());
+    UE_LOGI("live_store:   worn: %s", Join(worn).c_str());
     for (size_t i = 0; i < values.size() && i < kMaxDiffLines; ++i)
         UE_LOGI("live_store:   values %s", values[i].c_str());
 }

@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/drill_place.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -46,6 +47,10 @@ namespace UK = ue_wrap::kerfus;
 constexpr uint8_t  kActionToggle  = 8;        // the Kerfus's on/off
 constexpr float    kReachCm       = 150.f;    // the use key's trace takes it from here
 constexpr int      kWalkDeadlineS = 60;
+// The walks to the Kerfus start from the spots the verified runs used (drill_place.cpp): the walk is a means, the drill
+// judges the grab and the throw. The host's spot is where its 23 m walk to the Kerfus began on 2026-11-09.
+constexpr drill_place::Spot kHostSpot{-1692.f, 560.f, 6318.f, 102.3f};
+constexpr drill_place::Spot kClientSpot{-535.f, 310.f, 6665.f, 0.f};
 constexpr float    kWalkFloorCmS  = 200.f;    // a walk's deadline grows by its straight length at under half the pace
 constexpr uint64_t kStateWindowMs = 10000;
 constexpr uint64_t kHoldMs        = 1500;     // a player holds it a moment before letting go
@@ -144,12 +149,14 @@ bool SayShape(const char* who, void* k) {
 
 // ---- host ----
 
-enum class HostStep { WaitJoin, SetState, WaitState, Walk, Grab, Hold, Rest, Watch, Idle };
+enum class HostStep { WaitJoin, SetState, WaitState, Place, Walk, Grab, Hold, Rest, Watch, Idle };
 HostStep g_host = HostStep::WaitJoin;
 int g_throw = 0;   // the throw in hand; kThrows is the checking grab
 ue_wrap::CachedObjRef g_hostKerfus;
 std::unique_ptr<D::AimedGrab> g_grab;
 std::shared_ptr<D::BackgroundWalk> g_walk;
+drill_place::Placement g_hostPlace;   // the host's placement, once per drill, before its first walk
+bool g_hostPlaced = false;
 ue_wrap::FRotator g_aim{};
 uint64_t g_stepMs = 0, g_sampleMs = 0, g_restSince = 0;
 Shape g_hostShape;
@@ -171,11 +178,17 @@ void HostInvalid(const char* why) {
 
 bool WantOn() { return g_throw < kThrows ? kPlan[g_throw].on : false; }
 
-void StartWalkToKerfus(void* player, void* k) {
+void WalkToKerfusNow(void* player, void* k) {
     ue_wrap::FVector at{};
     if (!E::TryGetActorLocation(k, at)) { HostInvalid("the Kerfus's place did not read"); return; }
     g_walk = WalkTo(player, at);
     g_host = HostStep::Walk;
+}
+
+// The host is placed at kHostSpot before its first walk; later walks start from where the host stands.
+void StartWalkToKerfus(void* player, void* k) {
+    if (!g_hostPlaced) { g_host = HostStep::Place; return; }
+    WalkToKerfusNow(player, k);
 }
 
 // The aim for the throw: toward a nav-reachable pile 4 to 10 m off, a little upward, so it lands on floor the
@@ -320,6 +333,14 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
         if (ms - g_stepMs >= kStateWindowMs) HostInvalid("the on/off verb did not change its state");
         return;
     }
+    case HostStep::Place: {
+        const drill_place::Result r = drill_place::Run(g_hostPlace, player, kHostSpot, ms, "the host's walk to the Kerfus");
+        if (r == drill_place::Result::Pending) return;
+        if (r == drill_place::Result::Failed) { HostInvalid("the host's placement before the walk did not land"); return; }
+        g_hostPlaced = true;
+        WalkToKerfusNow(player, k);
+        return;
+    }
     case HostStep::Walk: {
         const int w = g_walk ? g_walk->state.load() : 2;
         if (w == 0) return;
@@ -384,6 +405,8 @@ bool g_snapOpen = false;        // a grab began and its snap has not been measur
 int g_ownGrabs = 0;             // this client's own grabs made
 std::unique_ptr<D::AimedGrab> g_clientGrab;
 std::shared_ptr<D::BackgroundWalk> g_clientWalk;
+drill_place::Placement g_clientPlace;   // the client's placement, once per drill, before its first walk
+bool g_clientPlaced = false;
 
 void ClientInvalid(const char* why) {
     g_client = ClientStep::Done;
@@ -472,6 +495,12 @@ void TickOwnGrabs(void* k, uint64_t ms) {
     if (!player) { ClientInvalid("this client's player is gone"); return; }
     switch (g_client) {
     case ClientStep::Walk: {
+        if (!g_clientPlaced) {
+            const drill_place::Result r = drill_place::Run(g_clientPlace, player, kClientSpot, ms, "the client's walk to the Kerfus");
+            if (r == drill_place::Result::Pending) return;
+            if (r == drill_place::Result::Failed) { ClientInvalid("the client's placement before the walk did not land"); return; }
+            g_clientPlaced = true;
+        }
         if (!g_clientWalk) {
             ue_wrap::FVector at{};
             if (!E::TryGetActorLocation(k, at)) { ClientInvalid("the copy's place did not read"); return; }
@@ -580,6 +609,10 @@ void OnDisconnect() {
     g_copyShape = Shape{};
     for (Seen& t : g_seen) t = Seen{};
     g_grabs = 0;
+    g_hostPlace = drill_place::Placement{};
+    g_hostPlaced = false;
+    g_clientPlace = drill_place::Placement{};
+    g_clientPlaced = false;
     g_wasHeld = false;
     g_lastFree = ue_wrap::FVector{};
     g_clientSampleMs = g_grabMs = g_clientRestSince = g_clientStepMs = 0;

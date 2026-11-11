@@ -3,16 +3,17 @@
 #include "coop/props/container_record_edit.h"
 
 #include "coop/element/registry.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/props/container_contents_io.h"
-#include "coop/props/container_contents_sync.h"
 #include "coop/props/container_slice_wire.h"
+#include "coop/props/container_target.h"
 #include "coop/props/prop_element_tracker.h"
 
 #include "ue_wrap/actors/container_inventory.h"
-#include "ue_wrap/actors/container_view.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/devices/atv.h"
+#include "ue_wrap/devices/drone.h"
 
 #include <algorithm>
 #include <utility>
@@ -20,17 +21,41 @@
 namespace coop::props::container_record_edit {
 namespace {
 
-namespace SR = ue_wrap::save_record;
+namespace II = ue_wrap::inventory_item;
 namespace ci = ue_wrap::container_inventory;
 namespace cio = coop::props::container_contents_io;
 namespace cw = coop::props::container_slice_wire;
+namespace ct = coop::props::container_target;
 
-// The host's own role and the container's inventory, or the reason there is none. Role only: the ends that restore
+ci::WriteResult ToWrite(cio::WriteResult r) {
+    switch (r) {
+        case cio::WriteResult::Written:  return ci::WriteResult::Written;
+        case cio::WriteResult::NotReady: return ci::WriteResult::NotReady;
+        case cio::WriteResult::Refused:  break;
+    }
+    return ci::WriteResult::Refused;
+}
+
+// The host's own role and the target's inventory, or the reason there is none. Role only: the ends that restore
 // run while a session is stopping, after it stops running.
 EditResult Resolve(uint32_t eid, void*& outInv) {
     UE_ASSERT_GAME_THREAD("container_record_edit");
     outInv = nullptr;
     if (!coop::prop_element_tracker::SessionIsHost()) return EditResult::NotHost;
+    if (ct::IsDroneCargo(eid)) {
+        void* const drone = ue_wrap::drone::Find();
+        void* const inv = drone ? ue_wrap::drone::InventoryOf(drone) : nullptr;
+        if (!inv) return EditResult::NoElement;
+        outInv = inv;
+        return EditResult::Done;
+    }
+    if (ct::IsAtvTrunk(eid)) {
+        void* const atv = coop::atv_trunk_sync::AtvOfEid(eid);
+        void* const inv = atv ? ue_wrap::atv::InventoryOf(atv) : nullptr;
+        if (!inv) return EditResult::NoElement;
+        outInv = inv;
+        return EditResult::Done;
+    }
     void* actor = coop::element::LivePropActor(eid);
     if (!actor || !ci::IsContainer(actor)) return EditResult::NoElement;
     void* inv = ci::InventoryOf(actor);
@@ -39,19 +64,18 @@ EditResult Resolve(uint32_t eid, void*& outInv) {
     return EditResult::Done;
 }
 
-// Write `recs` over the container and publish it.
-EditResult Commit(uint32_t eid, void* inv, const std::vector<SR::SaveRecord>& recs, const char* what,
+// Write `recs` over the target and publish it.
+EditResult Commit(uint32_t eid, void* inv, const std::vector<II::Item>& recs, const char* what,
                   size_t index) {
     if (recs.size() > cw::kMaxRecords) return EditResult::Refused;
-    switch (cio::WriteRecords(eid, inv, recs, &ue_wrap::object_index::ClassByName)) {
-        case cio::WriteResult::NotReady: return EditResult::NotReady;
-        case cio::WriteResult::Refused:  return EditResult::Refused;
-        case cio::WriteResult::Written:  break;
+    const ci::WriteResult written = ct::IsVehicleInventory(eid) ? ci::WriteContents(inv, recs)
+                                                          : ToWrite(cio::WriteRecords(eid, inv, recs));
+    switch (written) {
+        case ci::WriteResult::NotReady: return EditResult::NotReady;
+        case ci::WriteResult::Refused:  return EditResult::Refused;
+        case ci::WriteResult::Written:  break;
     }
-    coop::props::container_contents_sync::MarkHostWrite(eid);
-    // An open screen onto this container does not rebuild on a raw write; with none open this does nothing,
-    // which is also the case when a session's teardown restores a record.
-    ue_wrap::container_view::Redraw(coop::element::LivePropActor(eid));
+    ct::MarkWritten(eid);
     UE_LOGI("container_record_edit: eid=%u %s index=%zu -> %zu records", eid, what, index, recs.size());
     return EditResult::Done;
 }
@@ -64,39 +88,81 @@ EditResult Probe(uint32_t eid) {
     return ci::ContentsSlot(inv) ? EditResult::Done : EditResult::NotReady;
 }
 
-EditResult ReadRecords(uint32_t eid, std::vector<SR::SaveRecord>& out, bool neuterNested) {
+EditResult ReadRecords(uint32_t eid, std::vector<II::Item>& out) {
     void* inv = nullptr;
     if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
-    return cio::ReadRecords(inv, out, neuterNested) ? EditResult::Done : EditResult::Unreadable;
+    return cio::ReadRecords(inv, out) ? EditResult::Done : EditResult::Unreadable;
 }
 
-EditResult RemoveAt(uint32_t eid, uint16_t index, uint64_t expectedHash, SR::SaveRecord& outRecord) {
+EditResult RemoveAt(uint32_t eid, uint16_t index, uint64_t expectedHash, II::Item& outRecord) {
     void* inv = nullptr;
     if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
-    std::vector<SR::SaveRecord> recs;
-    if (!cio::ReadRecords(inv, recs, /*neuterNested=*/false)) return EditResult::Unreadable;
+    std::vector<II::Item> recs;
+    if (!cio::ReadRecords(inv, recs)) return EditResult::Unreadable;
     if (index >= recs.size()) return EditResult::OutOfRange;
-    {   // the judge's hash is over the wire form, so the check is too
-        SR::SaveRecord wireForm = recs[index];
-        internal::NeuterIfNested(wireForm);
-        if (cw::RecordHash(wireForm) != expectedHash) return EditResult::Mismatch;
-    }
-    SR::SaveRecord taken = std::move(recs[index]);
+    if (cw::RecordHash(recs[index]) != expectedHash) return EditResult::Mismatch;
+    II::Item taken = std::move(recs[index]);
     recs.erase(recs.begin() + index);
     const EditResult r = Commit(eid, inv, recs, "remove", index);
     if (r == EditResult::Done) outRecord = std::move(taken);
     return r;
 }
 
-EditResult InsertAt(uint32_t eid, uint16_t index, const SR::SaveRecord& record, Source src) {
+EditResult TakeFromStackAt(uint32_t eid, uint16_t index, uint64_t expectedHash, uint8_t amount, II::Item& outRecord) {
     void* inv = nullptr;
     if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
-    std::vector<SR::SaveRecord> recs;
-    if (!cio::ReadRecords(inv, recs, /*neuterNested=*/false)) return EditResult::Unreadable;
-    SR::SaveRecord copy = record;
-    if (src == Source::Wire) internal::NeuterIfNested(copy);
+    std::vector<II::Item> recs;
+    if (!cio::ReadRecords(inv, recs)) return EditResult::Unreadable;
+    if (index >= recs.size()) return EditResult::OutOfRange;
+    if (cw::RecordHash(recs[index]) != expectedHash) return EditResult::Mismatch;
+    if (amount == 0 || amount >= recs[index].amount) return EditResult::Refused;
+    II::Item taken = recs[index];
+    taken.amount = amount;
+    recs[index].amount = static_cast<uint8_t>(recs[index].amount - amount);
+    const EditResult r = Commit(eid, inv, recs, "take-from-stack", index);
+    if (r == EditResult::Done) outRecord = std::move(taken);
+    return r;
+}
+
+EditResult MergeAt(uint32_t eid, uint16_t toIndex, uint64_t toHash, uint16_t fromIndex, uint64_t fromHash) {
+    void* inv = nullptr;
+    if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
+    std::vector<II::Item> recs;
+    if (!cio::ReadRecords(inv, recs)) return EditResult::Unreadable;
+    if (toIndex >= recs.size() || fromIndex >= recs.size()) return EditResult::OutOfRange;
+    if (cw::RecordHash(recs[toIndex]) != toHash || cw::RecordHash(recs[fromIndex]) != fromHash)
+        return EditResult::Mismatch;
+    II::Item& to = recs[toIndex];
+    const II::Item& from = recs[fromIndex];
+    if (toIndex == fromIndex || to.classPath != from.classPath || to.name != from.name ||
+        to.amount + from.amount > 255)
+        return EditResult::Refused;
+    to.amount = static_cast<uint8_t>(to.amount + from.amount);
+    recs.erase(recs.begin() + fromIndex);
+    return Commit(eid, inv, recs, "merge", toIndex);
+}
+
+bool PutTermsOf(uint32_t eid, ci::PutTerms& out) {
+    out = ci::PutTerms{};
+    if (ct::IsDroneCargo(eid)) {
+        void* const drone = ue_wrap::drone::Find();
+        return ci::ReadInventoryPutTerms(drone ? ue_wrap::drone::InventoryOf(drone) : nullptr, out);
+    }
+    if (ct::IsAtvTrunk(eid)) {
+        void* const atv = coop::atv_trunk_sync::AtvOfEid(eid);
+        return ci::ReadInventoryPutTerms(atv ? ue_wrap::atv::InventoryOf(atv) : nullptr, out);
+    }
+    void* const actor = coop::element::LivePropActor(eid);
+    return actor && ci::ReadPutTerms(actor, out);
+}
+
+EditResult InsertAt(uint32_t eid, uint16_t index, const II::Item& record) {
+    void* inv = nullptr;
+    if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
+    std::vector<II::Item> recs;
+    if (!cio::ReadRecords(inv, recs)) return EditResult::Unreadable;
     const size_t at = internal::ClampIndex(index, recs.size());
-    recs.insert(recs.begin() + static_cast<std::ptrdiff_t>(at), std::move(copy));
+    recs.insert(recs.begin() + static_cast<std::ptrdiff_t>(at), record);
     return Commit(eid, inv, recs, "insert", at);
 }
 
@@ -121,10 +187,10 @@ EditResult Clear(uint32_t eid, size_t& cleared) {
     cleared = 0;
     void* inv = nullptr;
     if (const EditResult r = Resolve(eid, inv); r != EditResult::Done) return r;
-    std::vector<SR::SaveRecord> recs;
-    if (!cio::ReadRecords(inv, recs, /*neuterNested=*/false)) return EditResult::Unreadable;
+    std::vector<II::Item> recs;
+    if (!cio::ReadRecords(inv, recs)) return EditResult::Unreadable;
     cleared = recs.size();
-    return Commit(eid, inv, std::vector<SR::SaveRecord>{}, "clear", 0);
+    return Commit(eid, inv, std::vector<II::Item>{}, "clear", 0);
 }
 
 }  // namespace dev
@@ -132,10 +198,6 @@ EditResult Clear(uint32_t eid, size_t& cleared) {
 namespace internal {
 
 size_t ClampIndex(uint16_t index, size_t length) { return std::min<size_t>(index, length); }
-
-void NeuterIfNested(SR::SaveRecord& r) {
-    if (ci::IsContainerRecord(r)) ci::ClearInventoryIndex(r);
-}
 
 }  // namespace internal
 

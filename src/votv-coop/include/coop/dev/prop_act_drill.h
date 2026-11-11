@@ -65,7 +65,7 @@ inline constexpr uint64_t kJudgeBoundMs = 30000;    // HOST: the done line to th
 inline constexpr const wchar_t* kCrowbar = L"/Game/objects/prop_crowbar.prop_crowbar_C";
 inline constexpr const wchar_t* kFood    = L"/Game/objects/prop_food.prop_food_C";
 
-enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2, Hold Object, actionOptionIndex 4, playerUsedOn
+enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // addObjectToInventory, Add Object to Free Hotbar Slot, actionOptionIndex 4, playerUsedOn
 
 // Where a consumed target ends, on the client's own copies: the inventory gains one of its class, the hand holds one
 // of its class, or nowhere (an eaten or used-up prop). Stays: the take bails (a full inventory) and the mirror and the
@@ -103,6 +103,9 @@ struct Row {
     // HOST, after the target is announced and before the ready line: called each poll until `*done`. `sinceMs` is 0 on
     // the first call, then the time since it. A non-null return FAILs the step with it.
     const char* (*hostPrep)(void* actor, uint64_t sinceMs, bool* done) = nullptr;
+    // CLIENT, before the act: the step waits (bounded) until the game's volume tables have arrived (VolumesReady). A row
+    // whose outcome is the game's volume rule is judged on its answers, which are 0 until then.
+    bool needsVolumes = false;
 };
 
 // The host's commit counters for the client's slot when it said the step was ready, and the second prop's eid; the
@@ -170,12 +173,11 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out);
 bool ClientPuppetReady();
 
 // True when the mirror is there and the host's drive no longer parks it: the state a player meets it in. The host's
-// drive of a prop that fell parks the mirror with physics off until the drive ends, and a take then bails. A pocket
-// also needs the game's own gather test (ue_wrap::prop_gather::IsGatherable). CLIENT.
-bool MirrorGatherable(void* mirror, Verb verb);
+// drive of a prop that fell parks the mirror with physics off until the drive ends, and a hold then bails on its
+// simulating term. CLIENT.
+bool MirrorGatherable(void* mirror);
 
-// The mirror's state for a FAIL line, " (child=%d frozen=%d simulating=%d parked=%d)" from the reads MirrorGatherable
-// makes, or " (no mirror)". CLIENT.
+// The mirror's state for a FAIL line, " (child=%d frozen=%d simulating=%d parked=%d)", or " (no mirror)". CLIENT.
 std::string MirrorState(void* mirror);
 
 // What a client's steps use (prop_act_drill_client.cpp). HostSaid reads the text after `head` in the first row of this
@@ -202,6 +204,8 @@ bool HintWatchLive();   // registered and its names resolved; a tick drives the 
 void HintWatchOff();    // retired when the phase ends: a live name watch costs every script call
 void ClearHint();
 bool HintSeen();        // the hint was shown since ClearHint
+bool VolumesReady();    // the game's Get Volume answers a real volume for a crowbar (it answers 0 until its volume tables arrive)
+void LogPlayerVolumes(void* player, const char* when);   // the player's inventory totalVolume and maxVolume, one log line
 void* FindKerfurProp(coop::element::ElementId kerfurId);        // the live prop whose eid names that kerfur record
 
 }  // namespace detail

@@ -442,7 +442,7 @@ void LegTick(Arm arm, bool host) {
         if (HeldOf(player, d.cls)) return Enter(LStep::Aim);
         if (Late(kStepBound)) {
             std::snprintf(g_src.r.skipText, sizeof(g_src.r.skipText),
-                          "the hand never held the item: holding_actor is %s, the row builds %ls",
+                          "the hand never held the item: holdingActor_main is %s, the row builds %ls",
                           HeldClassName(player).c_str(), d.cls);
             Skip(g_src.r.skipText);
         }

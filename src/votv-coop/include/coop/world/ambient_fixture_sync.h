@@ -7,7 +7,7 @@
 // (coop/world/spawn_authority), so it rolls neither; its sus hole spawner is not, and the hole it rolls is its player's roll,
 // sent to the host and made there (coop/world/sus_hole_intent), so that hole crosses here as any other.
 // A branch is one branch by the key its nest was born with: the host reads it at the branch's own edges (the watches on getBee
-// and loadData) and keeps it after a player takes the nest, which clears the branch's own. A client binds the loaded branch
+// and betterLoadData) and keeps it after a player takes the nest, which clears the branch's own. A client binds the loaded branch
 // whose saved key is that key and spawns a copy only when none is, then gives the branch its nest by the key (the game's own
 // getBee, once the nest's mirror is in the prop key index). A joiner is sent every fixture and then a census-end, by which it
 // ends each loaded branch nothing named. A branch's end on a client leaves the nest to the prop lane.

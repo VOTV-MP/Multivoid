@@ -1,6 +1,6 @@
 // coop/world/explosion_parking.h -- the explosion copy on a client writes nothing in the world but its own
 // player's damage, the damage of an ATV whose tick this client owns (addDamage and exploded) and the scorch grime:
-// the four interface verbs it calls on anything else are refused, its rune check is refused, and its radial force is
+// the four interface verbs it calls on anything else are refused, its rune check is refused, and its impulse is
 // narrowed to pawns. The watches are installed from the load watchers; every refusal acts only on an active client
 // session.
 #pragma once
@@ -13,8 +13,8 @@ class Session;
 
 namespace coop::explosion_parking {
 
-// Store the session and install the six watches (the four verbs, the rune check, the begin-play narrowing) and the
-// FireImpulse post-hook. Idempotent. A watch that is refused is retried on a one-second throttle, at most 30 tries each, then said once
+// Store the session and install the six watches (the four verbs, the rune check, the impulse's object types) and the
+// OccludedExplosionImpulse post-hook. Idempotent. A watch that is refused is retried on a one-second throttle, at most 30 tries each, then said once
 // and left out for the process. Game thread, every pump tick.
 void Install(coop::net::Session* s);
 
@@ -22,9 +22,9 @@ void Install(coop::net::Session* s);
 // must not begin before this holds.
 bool Live();
 
-// Host, game thread, every gameplay tick: for each explosion whose radial force fired since the last tick, the
+// Host, game thread, every gameplay tick: for each explosion whose impulse fired since the last tick, the
 // simulating, enrolled props within its radius are handed to the driven-prop channel to coast, so every client
-// sees them fly. A cheap return when nothing fired. The FireImpulse hook this reads is not part of Live(): a
+// sees them fly. A cheap return when nothing fired. The impulse hook this reads is not part of Live(): a
 // missing coast costs smoothness and never writes a client's world.
 void Tick(coop::net::Session* s);
 
@@ -33,8 +33,8 @@ void Tick(coop::net::Session* s);
 void OnDisconnect();
 
 // Per verb (addDamage, exploded, reachedByExplosion, ignite): the calls the watch saw on a client session and the
-// ones it refused. runeRefused: the rune checks refused. narrowed: the explosion instances whose force was narrowed.
-// narrowFailed: those whose narrowing failed, so the copy was destroyed.
+// ones it refused. runeRefused: the rune checks refused. narrowed: the explosion instances whose impulse was narrowed.
+// narrowFailed: those whose impulse could not be narrowed.
 struct Counters {
     uint32_t verbCalls[4], verbRefused[4], runeRefused, narrowed, narrowFailed;
 };

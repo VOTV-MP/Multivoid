@@ -8,11 +8,13 @@
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/interactables/atv_sync.h"
+#include "coop/interactables/atv_trunk_sync.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/world/email_sync.h"
 #include "coop/items/player_inventory_sync.h"  // the inventory blob receiver
 #include "coop/voice/voice_chat.h"
+#include "coop/interactables/drone_cargo_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
@@ -233,6 +235,36 @@ bool HandleStateEvent(net::Session& session,
             break;
         }
         coop::drone_sync::OnReliable(dp);
+        break;
+    }
+    case net::ReliableKind::DroneCargo: {
+        // The delivery drone's cargo, the host's: host to client only, refused from a client at the host's receive
+        // edge. A client writes the entries over its drone's inventory component.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: DroneCargo payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload dc{};
+        std::memcpy(&dc, msg.payload, sizeof(dc));
+        coop::drone_cargo_sync::OnChunk(dc, (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                                                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                                : static_cast<uint8_t>(0xFF));
+        break;
+    }
+    case net::ReliableKind::AtvTrunk: {
+        // An ATV's trunk, the host's: host to client only, refused from a client at the host's receive edge. A client
+        // writes the entries over the ATV's inventory component.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: AtvTrunk payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload tc{};
+        std::memcpy(&tc, msg.payload, sizeof(tc));
+        coop::atv_trunk_sync::OnChunk(tc, (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                                              ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                              : static_cast<uint8_t>(0xFF));
         break;
     }
     case net::ReliableKind::WindowCleanState: {

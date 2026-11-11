@@ -1,21 +1,28 @@
-// ue_wrap/engine/engine_save.cpp -- the save load, the game-mode derivation, the campaign-scoped
-// save cache, the fresh New Game boot and the return to the main menu. Declared in
-// ue_wrap/engine/engine_save.h, which the engine.h umbrella includes; everything here is
-// game-thread only. The load path is a boot poll: LoadStorySave and
-// StartFreshGame are retried until the save class and the world are live.
+// ue_wrap/engine/engine_save.cpp -- the save load, the campaign-scoped save cache, the fresh New
+// Game boot and the return to the main menu. Declared in ue_wrap/engine/engine_save.h, which the
+// engine.h umbrella includes; everything here is game-thread only. The load path is a boot poll:
+// LoadStorySave and StartFreshGame are retried until the save classes and the world are live.
+//
+// Both boots do what the game's slot menu does on its way into a world (ui_saveSlots_C's Apply,
+// then tryLaunch and lib_C::loadLevel), since neither passes through that menu: register the save
+// objects on the GameInstance, put the save's day, rules and mode in force, name the level, set
+// loadObjectsFromSlot, and open the level.
 
 #include "ue_wrap/engine/engine.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
+#include "ue_wrap/core/fstring_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/save_folder.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/game_mode.h"
 #include "ue_wrap/world/game_rules.h"
 #include "ue_wrap/world/world_singleton.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -28,150 +35,149 @@ namespace P = profile;
 namespace R = reflection;
 
 namespace {
-// Cached across the boot poll. The GameplayStatics CDO and its UFunction are native and rooted;
-// setSaveSlotObject belongs to mainGameInstance_C, whose class lives as long as the persistent
-// GameInstance.
-void* g_storyGsCdo = nullptr;
-void* g_loadGameFn = nullptr;
-void* g_setSaveSlotFn = nullptr;
 
-// The cached save object is campaign-scoped, not process-scoped: a campaign is one continuous poll
-// sequence targeting one slot. Within it the gameInstance.saveSlotObject property we register into
-// keeps the object alive; once the campaign ends the game may replace that reference and the object
-// can be purged at any world transition. So a new campaign forces a disk reload, and IsLiveByIndex
-// guards the reuse within one. Caching across campaigns instead planted a dangling pointer into the
-// GameInstance and the world was rebuilt from freed memory.
-void* g_storySave = nullptr;          // cached USaveGame* (one disk load per campaign)
-int32_t g_storySaveIdx = -1;          // its GUObjectArray index (IsLiveByIndex guard)
-std::wstring g_storySaveSlot;         // campaign identity axis 1: the target slot
+// One live UObject the cache holds, with its GUObjectArray index for the liveness guard.
+struct Held {
+    void* obj = nullptr;
+    int32_t idx = -1;
+    void Set(void* o) { obj = o; idx = o ? R::InternalIndexOf(o) : -1; }
+    bool Live() const { return obj && R::IsLiveByIndex(obj, idx); }
+    void Clear() { obj = nullptr; idx = -1; }
+};
+
+// The campaign's save objects: a campaign is one continuous poll sequence targeting one save.
+// Within it the GameInstance properties setSaveSlotObject writes keep them alive; once it ends the
+// game may replace those references and the objects can be purged at any world transition. So a
+// new campaign reloads from disk, and the liveness guard covers the reuse within one. Caching
+// across campaigns once planted a dangling pointer into the GameInstance and the world was rebuilt
+// from freed memory.
+Held g_save;        // saveSlot_C: main.sav, or the area's slot once createAreaSlot swapped it in
+Held g_persistent;  // save_persistent_C: persistent.sav; null for a fresh game (the gamemode makes one)
+Held g_metadata;    // save_metadata_C: main.meta
+std::wstring g_campaignSave;    // campaign identity axis 1: the save folder name (or the fresh name)
+std::wstring g_loadedSlotName;  // what setSaveSlotObject is told is loaded: "main", the area, or ""
 // The second axis: the non-gameplay world the campaign polls in. Every return to the menu
 // creates a new menu world, so a changed polling world means a world round-trip happened since
 // the cache was built, whether or not any poll saw the gameplay in between.
 void* g_campaignWorld = nullptr;
 int32_t g_campaignWorldIdx = -1;
+bool g_areaSwapped = false;  // createAreaSlot ran for this campaign
 
-// StartFreshGame's pseudo-slot: the blank save is registered under this name, which doubles as
-// that path's campaign identity.
-constexpr const wchar_t* kFreshSlotName = L"coop_client_fresh";
+// StartFreshGame's campaign identity. No folder carries it, and setSaveSlotObject is told no slot
+// is loaded, so the game's own save (saveSlot_C::save returns on an empty loadedSlotName) never
+// writes this world anywhere.
+constexpr const wchar_t* kFreshCampaign = L"<fresh>";
 
 // The coop inventory layer registers this to overwrite a freshly loaded or created save's
 // player inventory before the native loadObjects materialises it.
 SaveObjectReadyHook g_saveObjectReadyHook = nullptr;
-// Fired once per loaded or created save object; the hook self-gates to a no-op off a join.
 void FireSaveObjectReadyHook(void* saveObj) {
     if (!g_saveObjectReadyHook || !saveObj) return;
     UE_LOGI("engine: firing SaveObjectReadyHook on save object %p (pre-materialize)", saveObj);
     g_saveObjectReadyHook(saveObj);
 }
 
-// The game stores a save's mode only in the slot-name prefix: getSavePrefix(mode) yields the
-// prefix for a mode, and a slot whose name starts with it is that mode. The menu writes
-// mainGameInstance.GameMode from this on load; the load bypass here has to do the same, or a
-// story save loads in the default sandbox mode.
-void* g_saveSlotsUiCdo  = nullptr;  // the ui_saveSlots_C CDO; getSavePrefix is a pure mode-to-prefix map
-int32_t g_saveSlotsUiCdoIdx = -1;   // its GUObjectArray index; a BP CDO can be collected with its class
-void* g_getSavePrefixFn = nullptr;  // ui_saveSlots_C::getSavePrefix(mode) -> FString prefix
-bool  g_gameModeApplied = false;    // the GameMode is derived and written once per campaign
-// SetFreshGameRules' pending list; read only on the game thread, in StartFreshGame.
-std::vector<std::pair<std::string, std::string>> g_freshGameRules;
+std::vector<std::pair<std::string, std::string>> g_freshGameRules;  // read on the game thread only
 
-// The ui_saveSlots_C CDO and its getSavePrefix, cached. The widget loads on the first menu or
-// gameplay transition; before that this returns false and the caller retries. getSavePrefix is
-// pure, so the CDO is a valid call target.
-bool ResolveSavePrefixFn() {
-    // A BP class, its CDO and its UFunctions can be collected with the menu world; a later campaign
-    // re-resolves the reloaded class instead of calling into freed memory.
-    if (g_saveSlotsUiCdo && !R::IsLiveByIndex(g_saveSlotsUiCdo, g_saveSlotsUiCdoIdx)) {
-        UE_LOGI("engine: ResolveSavePrefixFn -- ui_saveSlots_C CDO was GC'd; re-resolving");
-        g_saveSlotsUiCdo = nullptr;
-        g_saveSlotsUiCdoIdx = -1;
-        g_getSavePrefixFn = nullptr;
-    }
-    if (!g_saveSlotsUiCdo) {
-        g_saveSlotsUiCdo = R::FindClassDefaultObject(L"ui_saveSlots_C");
-        g_saveSlotsUiCdoIdx = g_saveSlotsUiCdo ? R::InternalIndexOf(g_saveSlotsUiCdo) : -1;
-        g_getSavePrefixFn = nullptr;  // belongs to the (possibly reloaded) class
-    }
-    if (g_saveSlotsUiCdo && !g_getSavePrefixFn) {
-        if (void* c = R::ClassOf(g_saveSlotsUiCdo))
-            g_getSavePrefixFn = R::FindFunction(c, L"getSavePrefix");
-    }
-    return g_saveSlotsUiCdo && g_getSavePrefixFn;
+std::wstring ReadFString(void* obj, const wchar_t* prop) {
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
+    const int32_t off = cls ? R::FindPropertyOffset(cls, prop) : -1;
+    if (off < 0) return {};
+    const R::FString& s = *reinterpret_cast<const R::FString*>(reinterpret_cast<uint8_t*>(obj) + off);
+    return (s.Data && s.Num > 1) ? std::wstring(s.Data, s.Data + (s.Num - 1)) : std::wstring();
 }
 
-// The slot's game mode from its name prefix, as the menu does, written to the GameInstance.
-// Shares the prefix source with the save browser. Retried each poll until the widget is loaded,
-// then runs once. Game thread only.
-void ApplyGameModeFromSlot(void* gi, const wchar_t* slot, int forceGameMode = -1) {
-    if (g_gameModeApplied || !gi || !slot) return;
-    // The save-transfer slot carries a prefix the game's mode map cannot match, and a fresh coop
-    // world has no slot file at all; both name their mode outright instead.
-    if (forceGameMode >= 0) {
-        g_gameModeApplied = true;
-        const int old = ue_wrap::game_mode::WriteTo(gi, forceGameMode);
-        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' FORCED GameMode=%d (was %d; named mode)",
-                slot, forceGameMode, old);
-        return;
+// An FName property: its address, or null when the class does not declare it.
+R::FName* FNameField(void* obj, const wchar_t* prop) {
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
+    const int32_t off = cls ? R::FindPropertyOffset(cls, prop) : -1;
+    return off >= 0 ? reinterpret_cast<R::FName*>(reinterpret_cast<uint8_t*>(obj) + off) : nullptr;
+}
+
+// An FString property set to `value` when it holds something else, the engine minting the new
+// buffer and freeing the old one, as the game's own assignment does. True when it was rewritten.
+bool AssignFString(void* obj, const wchar_t* prop, const std::wstring& value) {
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
+    const int32_t off = cls ? R::FindPropertyOffset(cls, prop) : -1;
+    if (off < 0) return false;
+    R::FString* f = reinterpret_cast<R::FString*>(reinterpret_cast<uint8_t*>(obj) + off);
+    if (ReadFString(obj, prop) == value) return false;
+    void* old = f->Data;
+    *f = R::FString{};
+    if (!ue_wrap::fstring_utils::MintFString(value, f)) {
+        UE_LOGW("engine: %ls could not be rewritten", prop);
+        return false;
     }
-    if (!ResolveSavePrefixFn()) {
-        // The widget is not loaded yet at this boot stage: retried next poll, not latched. Should
-        // it never load, the warning persists and the mode stays as-is, a visible signal.
-        UE_LOGW("engine: ApplyGameModeFromSlot -- ui_saveSlots_C cdo=%p getSavePrefix=%p not loaded yet; "
-                "GameMode left as-is (will retry)", g_saveSlotsUiCdo, g_getSavePrefixFn);
-        return;
-    }
-    const int bestMode = DeriveModeFromSlot(slot);
-    // The widget is loaded and getSavePrefix is deterministic, so this latches whether or not a
-    // prefix matched; a re-run would give the same answer.
-    g_gameModeApplied = true;
-    if (bestMode >= 0) {
-        const int old = ue_wrap::game_mode::WriteTo(gi, bestMode);
-        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' prefix-matched GameMode=%d (was %d); "
-                "the mode a load outside the slot menu would leave at the engine default",
-                slot, bestMode, old);
-    } else {
-        UE_LOGW("engine: ApplyGameModeFromSlot -- NO getSavePrefix prefix matched slot '%ls' "
-                "(GameMode stays %d)", slot, ue_wrap::game_mode::ReadFrom(gi));
-    }
+    if (old) R::EngineFree(old);
+    return true;
+}
+
+// The three objects of a folder save name the folder they write back to: saveSlot_C.savePath (the
+// folder's path), save_persistent_C.pathToFile (the same), save_metadata_C.saveSlot (the folder's
+// name) with metadataName "main". The game sets them when it creates the folder; a folder that was
+// renamed or copied -- a joiner's coop folder carries the host's -- still names the old one, and the
+// game's own saves would write there. They are pointed at the folder they were loaded from.
+void PointAtFolder(void* save, void* persistent, void* metadata, const std::wstring& folder,
+                   const std::wstring& path) {
+    int rewritten = 0;
+    rewritten += AssignFString(save, L"savePath", path) ? 1 : 0;
+    rewritten += AssignFString(persistent, L"pathToFile", path) ? 1 : 0;
+    rewritten += AssignFString(metadata, L"saveSlot", folder) ? 1 : 0;
+    rewritten += AssignFString(metadata, L"metadataName", L"main") ? 1 : 0;
+    if (rewritten > 0)
+        UE_LOGI("engine: LoadStorySave -- %d save path field(s) pointed at '%ls'", rewritten, path.c_str());
+}
+
+void ResetCampaign() {
+    g_save.Clear();
+    g_persistent.Clear();
+    g_metadata.Clear();
+    g_campaignSave.clear();
+    g_loadedSlotName.clear();
+    g_campaignWorld = nullptr;
+    g_campaignWorldIdx = -1;
+    g_areaSwapped = false;
 }
 
 // The campaign scope of the cache, one owner: called at the top of the boot phase with the target
-// slot and the current non-gameplay world. A changed polling world or slot is a new campaign and
-// resets everything, reloading from disk since an autosave may have rewritten the slot. Within a
-// campaign a purge between polls drops only the object; the mode latch stays, the GameInstance
-// already holding the byte.
-void ValidateCachedSaveForCampaign(const wchar_t* slot, void* curWorld) {
+// and the current non-gameplay world. A changed polling world or target is a new campaign and
+// resets everything, reloading from disk since an autosave may have rewritten the folder. Within a
+// campaign a purge between polls drops the objects and the next poll reloads them.
+void ValidateCachedSaveForCampaign(const std::wstring& target, void* curWorld) {
     const bool worldChanged =
         g_campaignWorld &&
         (g_campaignWorld != curWorld || !R::IsLiveByIndex(g_campaignWorld, g_campaignWorldIdx));
-    const bool slotChanged = !g_storySaveSlot.empty() && g_storySaveSlot != slot;
-    if (worldChanged || slotChanged) {
-        UE_LOGI("engine: save cache -- NEW load campaign (target '%ls', cached '%ls'%s%s) -> "
-                "full reset, (re)load from disk",
-                slot, g_storySaveSlot.c_str(),
-                worldChanged ? ", polling world changed" : "",
-                slotChanged ? ", slot changed" : "");
-        ResetCachedSave();
+    const bool targetChanged = !g_campaignSave.empty() && g_campaignSave != target;
+    if (worldChanged || targetChanged) {
+        UE_LOGI("engine: save cache -- NEW load campaign (target '%ls', cached '%ls'%s%s) -> full reset",
+                target.c_str(), g_campaignSave.c_str(), worldChanged ? ", polling world changed" : "",
+                targetChanged ? ", target changed" : "");
+        ResetCampaign();
     }
     if (!g_campaignWorld && curWorld) {
         g_campaignWorld = curWorld;
         g_campaignWorldIdx = R::InternalIndexOf(curWorld);
     }
-    if (g_storySave && !R::IsLiveByIndex(g_storySave, g_storySaveIdx)) {
-        UE_LOGW("engine: save cache -- cached save %p ('%ls') was GC-purged mid-campaign; "
-                "reloading from disk", g_storySave, g_storySaveSlot.c_str());
-        g_storySave = nullptr;
-        g_storySaveIdx = -1;
+    const bool lost = (g_save.obj && !g_save.Live()) || (g_persistent.obj && !g_persistent.Live()) ||
+                      (g_metadata.obj && !g_metadata.Live());
+    if (lost) {
+        UE_LOGW("engine: save cache -- a cached save object of '%ls' was GC-purged mid-campaign; reloading",
+                g_campaignSave.c_str());
+        g_save.Clear();
+        g_persistent.Clear();
+        g_metadata.Clear();
+        g_areaSwapped = false;
     }
 }
+
 // The boot poll's two "where are we?" reads, one owner for LoadStorySave and StartFreshGame.
 // Adopted from archhn0madd's Multifoid fork; see docs/credits.md.
 // After a quit to the menu the dying gameplay world and its player corpse stay in GUObjectArray for
 // tens of seconds and their kill flags can lag, so a class search found the corpse off the origin
 // and answered "in gameplay" while the process sat at the menu. This keys on world identity
 // instead: the current world comes from the GameInstance's local player chain, which a dying world
-// cannot hold alive, and the pawn must be live and belong to it. The legacy first-World scan is
-// kept only for the mid-travel window, where that chain cannot answer.
+// cannot hold alive, and the pawn must be live and belong to it. The first-World scan answers only
+// the mid-travel window, where that chain cannot.
 struct BootWorldView {
     bool inGameplay;       // (a): a LIVE mainPlayer_C of the CURRENT world, off-origin
     bool gameplayLoading;  // (b): a gameplay world is up/loading -> never re-open, wait
@@ -191,8 +197,7 @@ BootWorldView SurveyBootWorld(const char* who) {
         if (currentWorldPawn) {
             FVector p{};
             if (TryGetActorLocation(lp, p) && std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
-                UE_LOGI("engine: %s -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)",
-                        who, p.X, p.Y, p.Z);
+                UE_LOGI("engine: %s -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)", who, p.X, p.Y, p.Z);
                 v.inGameplay = true;
                 return v;
             }
@@ -200,10 +205,8 @@ BootWorldView SurveyBootWorld(const char* who) {
             // yet placed: fall through to (b).
         } else {
             // Throttled: the poll re-runs every second or so and hits the same corpse every time,
-            // so the first three and then a periodic heartbeat. Keyed on the corpse's identity, not
-            // a bare count: this static is shared by both callers and outlives the cache reset, so
-            // a plain counter would mute the second stale corpse of a process, which in the rejoin
-            // case is the one that matters.
+            // so the first three and then a periodic heartbeat, keyed on the corpse's identity so a
+            // second stale corpse in one process is reported too.
             static void* sLastStaleActor = nullptr;
             static unsigned sStaleSkips = 0;
             if (lp != sLastStaleActor) {
@@ -215,51 +218,50 @@ BootWorldView SurveyBootWorld(const char* who) {
                 UE_LOGW("engine: %s -- mainPlayer_C %p is a STALE other-world actor "
                         "(live=%d itsWorld=%p current=%p readerUp=%d) -- the quit-to-menu "
                         "corpse window; ignoring it, continuing the boot (skip #%u)",
-                        who, lp, pawnLive ? 1 : 0, pawnWorld, v.curWorld,
-                        readerUp ? 1 : 0, sStaleSkips);
+                        who, lp, pawnLive ? 1 : 0, pawnWorld, v.curWorld, readerUp ? 1 : 0, sStaleSkips);
             }
         }
     }
     // (b) The gameplay map already up or loading: never re-open, just wait for the player to spawn.
     const ue_wrap::world_identity::WorldKind kind =
-        readerUp ? ue_wrap::world_identity::CurrentWorldKind()
-                 : ue_wrap::world_identity::WorldKind::Unknown;
+        readerUp ? ue_wrap::world_identity::CurrentWorldKind() : ue_wrap::world_identity::WorldKind::Unknown;
     if (kind == ue_wrap::world_identity::WorldKind::Gameplay) {
         v.gameplayLoading = true;
     } else if (kind == ue_wrap::world_identity::WorldKind::Unknown) {
-        // Mid-travel, or a degraded chain: the legacy reader, where the dying gameplay world is the
-        // right "wait" answer.
+        // Mid-travel, or a degraded chain: the first-World reader, where the dying gameplay world is
+        // the right "wait" answer.
         v.curWorld = R::FindObjectByClass(P::name::WorldClass);
-        if (v.curWorld &&
-            R::ToString(R::NameOf(v.curWorld)).find(L"ntitled") != std::wstring::npos)
+        if (v.curWorld && R::ToString(R::NameOf(v.curWorld)).find(L"ntitled") != std::wstring::npos)
             v.gameplayLoading = true;
     }
     // The menu or preLoad: fall through, and the open is issued.
     return v;
 }
 
-// The save's world rules put in force on the GameInstance, which is where the game reads nearly
-// all of them. The game's slot menu does this on its way into a world and both boots below skip
-// that menu. Re-asserted on every poll like the save registration, since the process outlives a
-// campaign and the game's own menu may have loaded another slot in between; it logs when a save is
-// first seen and whenever the copy changed something.
-void PutSaveRulesInForce(void* gi, void* save, const char* who) {
-    static void* sLastSave = nullptr;
-    const int changed = ue_wrap::game_rules::ApplySavedToProcess(gi, save);
-    if (changed < 0) {
-        UE_LOGW("engine: %s -- the save's world rules could not be put in force (struct unresolved)", who);
-    } else if (changed > 0 || save != sLastSave) {
-        UE_LOGI("engine: %s -- the save's world rules are in force (%d rule(s) changed on the GameInstance)",
-                who, changed);
+// mainGameInstance_C::setSaveSlotObject(save, slotName, folderSlotName, metadata, persistent): the
+// five references the gamemode's BeginPlay and the game's own saves read.
+void RegisterSave(void* gi, void* save, const std::wstring& slotName, const std::wstring& folder,
+                  void* metadata, void* persistent, const char* who) {
+    void* fn = R::FindFunction(R::ClassOf(gi), P::name::SetSaveSlotObjectFn);
+    if (!fn) {
+        UE_LOGW("engine: %s -- setSaveSlotObject unresolved", who);
+        return;
     }
-    sLastSave = save;
+    std::wstring a = slotName, b = folder;
+    R::FString fa{a.data(), static_cast<int32_t>(a.size()) + 1, static_cast<int32_t>(a.size()) + 1};
+    R::FString fb{b.data(), static_cast<int32_t>(b.size()) + 1, static_cast<int32_t>(b.size()) + 1};
+    ParamFrame f(fn);
+    f.Set<void*>(L"save_gameInst", save);
+    f.SetRaw(L"SlotName", &fa, sizeof(fa));
+    f.SetRaw(L"folderSlotName", &fb, sizeof(fb));
+    f.Set<void*>(L"metadataObject", metadata);
+    f.Set<void*>(L"save_persistent", persistent);
+    Call(gi, f);
 }
 
-// The save's day handed to the gamemode, the other thing the game's slot menu does on its way into
-// a world: mainGameInstance.startDay = saveSlot.savedtime.Z. The gamemode reads it once on its
-// BeginPlay, marks every scheduled event dated before that day as passed WITHOUT running it, sets
-// its clock's day, and zeroes the field. With the field left at 0 that block does not run, and an
-// event dated before the save's day that is missing from its passed list stays armed.
+// The save's day handed to the gamemode, as tryLaunch does: mainGameInstance.startDay =
+// saveSlot.savedtime.Z. The gamemode reads it once on its BeginPlay, marks every scheduled event
+// dated before that day as passed WITHOUT running it, sets its clock's day, and zeroes the field.
 // Re-asserted on every poll (the boots stop polling once the world is loading, before BeginPlay).
 void PutSaveStartDayInForce(void* gi, void* save, const char* who) {
     static void* sLastSave = nullptr;
@@ -279,13 +281,79 @@ void PutSaveStartDayInForce(void* gi, void* save, const char* who) {
     sLastSave = save;
 }
 
-// The pending new-game rules written into the blank save's saved copy; a rule that did not take is
+// The metadata's world rules put in force on the GameInstance, which is where the game reads nearly
+// all of them; logged when a metadata object is first seen and whenever the copy changed something.
+void PutSaveRulesInForce(void* gi, void* metadata, const char* who) {
+    static void* sLast = nullptr;
+    const int changed = ue_wrap::game_rules::ApplySavedToProcess(gi, metadata);
+    if (changed < 0) {
+        UE_LOGW("engine: %s -- the save's world rules could not be put in force (struct unresolved)", who);
+    } else if (changed > 0 || metadata != sLast) {
+        UE_LOGI("engine: %s -- the save's world rules are in force (%d rule(s) changed on the GameInstance)",
+                who, changed);
+    }
+    sLast = metadata;
+}
+
+// The mode: named outright, else the metadata's gamemode_type (the byte the game's slot list
+// filters on). Re-asserted each poll; logged when it changes.
+void PutModeInForce(void* gi, void* metadata, int forceGameMode, const char* who) {
+    int mode = forceGameMode;
+    if (!ue_wrap::game_mode::IsValid(mode) && metadata) {
+        void* cls = R::ClassOf(metadata);
+        const int32_t off = cls ? R::FindPropertyOffset(cls, L"gamemode_type") : -1;
+        if (off >= 0) mode = *(reinterpret_cast<uint8_t*>(metadata) + off);
+    }
+    if (!ue_wrap::game_mode::IsValid(mode)) {
+        UE_LOGW("engine: %s -- no game mode named or saved; GameMode stays %d", who,
+                ue_wrap::game_mode::ReadFrom(gi));
+        return;
+    }
+    const int old = ue_wrap::game_mode::WriteTo(gi, mode);
+    if (old != mode)
+        UE_LOGI("engine: %s -- GameMode=%d %s (was %d)", who, mode,
+                ue_wrap::game_mode::NameOrOrdinal(mode).c_str(), old);
+}
+
+// lib_C::loadLevel's writes, then the travel: currentLevel on the GameInstance and the metadata,
+// baseLevel for a save that starts on its starter map, newVar_1 = the option tryLaunch passes (the
+// gamemode's BeginPlay quits the game on a level outside its built-in list without it), the
+// loadObjectsFromSlot flag tryLaunch raises, and `open`, re-issued each poll since an open fired
+// during preLoad is dropped.
+void TravelTo(void* gi, void* metadata, const std::wstring& level, bool isBaseLevel, const char* who) {
+    const R::FName lvl = ue_wrap::fname_utils::StringToFName(level);
+    if (R::FName* f = FNameField(gi, L"currentLevel")) *f = lvl;
+    if (isBaseLevel)
+        if (R::FName* f = FNameField(gi, L"baseLevel")) *f = lvl;
+    if (R::FName* f = FNameField(metadata, L"currentLevel")) *f = lvl;
+    void* giClass = R::ClassOf(gi);
+    const int32_t optOff = giClass ? R::FindPropertyOffset(giClass, L"NewVar_1") : -1;
+    if (optOff >= 0) {
+        R::FString* opt = reinterpret_cast<R::FString*>(reinterpret_cast<uint8_t*>(gi) + optOff);
+        const std::wstring want = P::name::LoadLevelOption;
+        if (!(opt->Data && opt->Num == static_cast<int32_t>(want.size()) + 1 &&
+              std::wmemcmp(opt->Data, want.c_str(), want.size()) == 0)) {
+            if (opt->Data) R::EngineFree(opt->Data);
+            *opt = R::FString{};
+            ue_wrap::fstring_utils::MintFString(want, opt);
+        }
+    }
+    const int32_t flagOff = giClass ? R::FindPropertyOffset(giClass, L"loadObjectsFromSlot") : -1;
+    if (flagOff >= 0) *(reinterpret_cast<uint8_t*>(gi) + flagOff) = 1;
+    else UE_LOGW("engine: %s -- loadObjectsFromSlot unresolved; the save's objects will not load", who);
+
+    const std::wstring openCmd = L"open " + level;
+    UE_LOGI("engine: %s -- at preLoad/menu; (re)issuing '%ls'", who, openCmd.c_str());
+    ExecuteConsoleCommand(openCmd.c_str());
+}
+
+// The pending new-game rules written into the blank metadata's rules; a rule that did not take is
 // named, and the list is spent either way.
-void WriteFreshGameRules(void* save) {
+void WriteFreshGameRules(void* metadata) {
     namespace GR = ue_wrap::game_rules;
     int written = 0;
     for (const auto& kv : g_freshGameRules) {
-        switch (GR::WriteSavedRule(save, kv.first, kv.second)) {
+        switch (GR::WriteSavedRule(metadata, kv.first, kv.second)) {
             case GR::WriteResult::Written: ++written; break;
             case GR::WriteResult::UnknownKey:
                 UE_LOGW("engine: StartFreshGame -- new-game rule '%s' names no gameRules member", kv.first.c_str());
@@ -295,15 +363,25 @@ void WriteFreshGameRules(void* save) {
                         kv.second.c_str());
                 break;
             case GR::WriteResult::Unresolved:
-                UE_LOGW("engine: StartFreshGame -- new-game rule '%s': the blank save's rules are unresolved",
+                UE_LOGW("engine: StartFreshGame -- new-game rule '%s': the blank metadata's rules are unresolved",
                         kv.first.c_str());
                 break;
         }
     }
     if (!g_freshGameRules.empty())
-        UE_LOGI("engine: StartFreshGame -- %d of %zu new-game rule(s) written to the blank save", written,
+        UE_LOGI("engine: StartFreshGame -- %d of %zu new-game rule(s) written to the blank metadata", written,
                 g_freshGameRules.size());
     g_freshGameRules.clear();
+}
+
+void* CreateBlank(const wchar_t* className) {
+    void* gs = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    void* fn = gs ? R::FindFunction(R::ClassOf(gs), L"CreateSaveGameObject") : nullptr;
+    void* cls = R::FindClass(className);
+    if (!fn || !cls) return nullptr;
+    ParamFrame f(fn);
+    f.Set<void*>(L"SaveGameClass", cls);
+    return Call(gs, f) ? f.Get<void*>(L"ReturnValue") : nullptr;
 }
 
 }  // namespace
@@ -312,128 +390,115 @@ void SetFreshGameRules(const std::vector<std::pair<std::string, std::string>>& r
     g_freshGameRules = rules;
 }
 
-bool GetSavePrefix(uint8_t mode, std::wstring& out) {
-    out.clear();
-    if (!ResolveSavePrefixFn()) return false;
-    ParamFrame f(g_getSavePrefixFn);
-    f.Set<uint8_t>(L"Index", mode);  // TEnumAsByte<enum_gamemode::Type> = 1 byte
-    if (!Call(g_saveSlotsUiCdo, f)) return false;
-    const R::FString pre = f.Get<R::FString>(L"ReturnValue");
-    if (pre.Data && pre.Num > 1) out.assign(pre.Data, pre.Data + (pre.Num - 1));  // Num counts the null
-    return true;
-}
-
-int DeriveModeFromSlot(const wchar_t* slot) {
-    if (!slot || !ResolveSavePrefixFn()) return -1;
-    const std::wstring slotStr(slot);
-    int    bestMode = -1;
-    size_t bestLen  = 0;
-    for (uint8_t mode = 0; mode < ue_wrap::game_mode::kCount; ++mode) {
-        std::wstring pre;
-        if (!GetSavePrefix(mode, pre)) continue;
-        // The longest matching prefix wins, so one prefix that is a prefix of another (an empty
-        // one, say) cannot win.
-        if (!pre.empty() && slotStr.rfind(pre, 0) == 0 && pre.size() > bestLen) {
-            bestLen  = pre.size();
-            bestMode = static_cast<int>(mode);
-        }
-    }
-    return bestMode;
-}
-
-// Called repeatedly by the boot loop. True only once a mainPlayer_C is in the level; while still
-// at preLoad, the warning screen or the menu it re-issues the open each call, since a single
-// open fired during preLoad is silently dropped. It does not re-open once the gameplay world is
-// loading, which would restart the load.
-bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
-    if (!slot || !*slot) return false;
-
-    // The boot survey, shared with StartFreshGame.
+// Called repeatedly by the boot loop. True only once a mainPlayer_C is in the level; while still at
+// preLoad, the warning screen or the menu it re-issues the open each call. It does not re-open once
+// the gameplay world is loading, which would restart the load.
+bool LoadStorySave(const wchar_t* folderName, int forceGameMode) {
+    if (!folderName || !*folderName) return false;
     const BootWorldView w = SurveyBootWorld("LoadStorySave");
     if (w.inGameplay) return true;
     if (w.gameplayLoading) return false;  // in/loading the gameplay world -> wait, no re-open
 
-    // (c) Still before gameplay: register the save (once per campaign) and re-issue the open. The
-    // campaign scope first, so a re-host never reuses the previous campaign's save object.
-    ValidateCachedSaveForCampaign(slot, w.curWorld);
-    auto makeFStr = [](std::wstring& b) {
-        R::FString fs{};
-        fs.Data = b.data();
-        fs.Num = static_cast<int32_t>(b.size()) + 1;  // FString::Num counts the null
-        fs.Max = fs.Num;
-        return fs;
-    };
-    if (!g_storyGsCdo) g_storyGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    if (g_storyGsCdo && !g_loadGameFn) {
-        if (void* cls = R::ClassOf(g_storyGsCdo)) g_loadGameFn = R::FindFunction(cls, P::name::LoadGameFromSlotFn);
-    }
+    const std::wstring folder(folderName);
+    ValidateCachedSaveForCampaign(folder, w.curWorld);
     void* gi = world_singleton::GameInstance();
-    if (!g_storyGsCdo || !g_loadGameFn || !gi) {
-        UE_LOGW("engine: LoadStorySave -- not up yet (cdo=%p fn=%p gi=%p); retry", g_storyGsCdo, g_loadGameFn, gi);
+    if (!gi) {
+        UE_LOGW("engine: LoadStorySave -- no GameInstance yet; retry");
         return false;
     }
-    if (!g_setSaveSlotFn) {
-        if (void* gicls = R::ClassOf(gi)) g_setSaveSlotFn = R::FindFunction(gicls, P::name::SetSaveSlotObjectFn);
-    }
 
-    // The slot loaded from disk once.
-    if (!g_storySave) {
-        std::wstring b(slot);
-        R::FString fs = makeFStr(b);
-        ParamFrame f(g_loadGameFn);
-        f.SetRaw(L"SlotName", &fs, sizeof(fs));
-        f.Set<int32_t>(L"UserIndex", 0);
-        if (!Call(g_storyGsCdo, f)) { UE_LOGE("engine: LoadStorySave -- LoadGameFromSlot call failed"); return false; }
-        g_storySave = f.Get<void*>(L"ReturnValue");
-        if (!g_storySave) { UE_LOGW("engine: LoadStorySave -- slot '%ls' missing/empty", slot); return false; }
-        g_storySaveIdx = R::InternalIndexOf(g_storySave);  // IsLiveByIndex guard for reuse
-        g_storySaveSlot = slot;                            // campaign identity
-        UE_LOGI("engine: LoadStorySave -- loaded save '%ls' = %p (idx %d)", slot, g_storySave, g_storySaveIdx);
+    // The folder's three files, read from disk once per campaign, as ui_saveSlots_C's Apply reads
+    // them: main.sav, persistent.sav, and main.meta (which the slot row loaded).
+    if (!g_save.obj) {
+        const std::wstring path = save_folder::FolderPath(folder);
+        if (path.empty()) {
+            UE_LOGW("engine: LoadStorySave -- the saved directory is unresolved; retry");
+            return false;
+        }
+        void* save = save_folder::LoadCompressed(L"main", path, L".sav");
+        void* persistent = save_folder::LoadCompressed(L"persistent", path, L".sav");
+        void* metadata = save_folder::LoadCompressed(L"main", path, L".meta");
+        if (!save || !persistent || !metadata) {
+            UE_LOGW("engine: LoadStorySave -- save '%ls' incomplete at '%ls' (main.sav=%p persistent.sav=%p "
+                    "main.meta=%p)", folderName, path.c_str(), save, persistent, metadata);
+            return false;
+        }
+        PointAtFolder(save, persistent, metadata, folder, path);
+        g_save.Set(save);
+        g_persistent.Set(persistent);
+        g_metadata.Set(metadata);
+        g_campaignSave = folder;
+        const std::wstring area = ReadFString(metadata, L"area");
+        g_loadedSlotName = area.empty() ? L"main" : area;
+        UE_LOGI("engine: LoadStorySave -- loaded save '%ls' from '%ls' (slot %p, persistent %p, metadata %p%s%ls)",
+                folderName, path.c_str(), save, persistent, metadata, area.empty() ? "" : ", area ",
+                area.c_str());
         // The save's inventory arrays are present and the world is not yet built from them: the one
-        // moment a coop client can substitute its per-player inventory. Fires once.
-        FireSaveObjectReadyHook(g_storySave);
+        // moment a coop client can substitute its per-player inventory. Fires once, on the save the world
+        // is built from -- main.sav, or the area's slot once createAreaSlot has swapped it in below.
+        if (area.empty()) FireSaveObjectReadyHook(save);
     }
 
-    // Registered on the persistent GameInstance and flagged for the game to apply on BeginPlay;
-    // re-asserted each retry (no disk) so it is fresh at the travel.
-    if (g_setSaveSlotFn) {
-        std::wstring b(slot);
-        R::FString fs = makeFStr(b);
-        ParamFrame f(g_setSaveSlotFn);
-        f.Set<void*>(L"save_gameInst", g_storySave);
-        f.SetRaw(L"SlotName", &fs, sizeof(fs));
-        Call(gi, f);
+    // Registered on the persistent GameInstance and re-asserted each poll, since the menu's own
+    // gamemode clears it on its BeginPlay.
+    RegisterSave(gi, g_save.obj, g_loadedSlotName, folder, g_metadata.obj, g_persistent.obj, "LoadStorySave");
+    const bool inArea = g_loadedSlotName != L"main";
+    if (inArea && !g_areaSwapped) {
+        // A save left inside an area: lib_C::createAreaSlot loads areas/<area>.sav and registers it
+        // in place of main.sav; that object is what later polls re-register.
+        void* lib = R::FindClassDefaultObject(L"lib_C");
+        void* fn = lib ? R::FindFunction(R::ClassOf(lib), P::name::CreateAreaSlotFn) : nullptr;
+        if (!fn) {
+            UE_LOGW("engine: LoadStorySave -- lib_C::createAreaSlot unresolved; retry");
+            return false;
+        }
+        std::wstring a = g_loadedSlotName;
+        R::FString fa{a.data(), static_cast<int32_t>(a.size()) + 1, static_cast<int32_t>(a.size()) + 1};
+        ParamFrame f(fn);
+        f.SetRaw(L"areaName", &fa, sizeof(fa));
+        f.Set<void*>(L"__WorldContext", gi);
+        if (!Call(lib, f) || !f.Get<bool>(L"success")) {
+            UE_LOGW("engine: LoadStorySave -- createAreaSlot('%ls') failed", a.c_str());
+            return false;
+        }
+        void* giClass = R::ClassOf(gi);
+        const int32_t off = giClass ? R::FindPropertyOffset(giClass, L"save_gameInst") : -1;
+        if (off >= 0) g_save.Set(*reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gi) + off));
+        g_areaSwapped = true;
+        UE_LOGI("engine: LoadStorySave -- area '%ls' slot %p swapped in", a.c_str(), g_save.obj);
+        FireSaveObjectReadyHook(g_save.obj);
+    }
+    PutSaveStartDayInForce(gi, g_save.obj, "LoadStorySave");
+    PutSaveRulesInForce(gi, g_metadata.obj, "LoadStorySave");
+    PutModeInForce(gi, g_metadata.obj, forceGameMode, "LoadStorySave");
+
+    // tryLaunch's level: the starter map (None meaning untitled_1) for a save outside an area, the
+    // area's current level inside one.
+    std::wstring level;
+    if (!inArea) {
+        const R::FName* starter = FNameField(g_metadata.obj, L"starterMap");
+        level = (starter && !R::NameEquals(*starter, L"None")) ? R::ToString(*starter)
+                                                               : std::wstring(P::name::GameplayLevel);
     } else {
-        UE_LOGW("engine: LoadStorySave -- setSaveSlotObject unresolved");
+        const R::FName* cur = FNameField(g_metadata.obj, L"currentLevel");
+        if (!cur || R::NameEquals(*cur, L"None")) {
+            UE_LOGW("engine: LoadStorySave -- save '%ls' is in area '%ls' with no current level", folderName,
+                    g_loadedSlotName.c_str());
+            return false;
+        }
+        level = R::ToString(*cur);
     }
-    PutSaveRulesInForce(gi, g_storySave, "LoadStorySave");
-    PutSaveStartDayInForce(gi, g_storySave, "LoadStorySave");
-    *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
-
-    // The game mode from the slot prefix before the travel, retried each poll until the widget is
-    // loaded.
-    ApplyGameModeFromSlot(gi, slot, forceGameMode);
-
-    std::wstring openCmd = L"open ";
-    openCmd += P::name::GameplayLevel;
-    UE_LOGI("engine: LoadStorySave -- at preLoad/menu; (re)issuing '%ls' (save '%ls' registered)",
-            openCmd.c_str(), slot);
-    ExecuteConsoleCommand(openCmd.c_str());
+    TravelTo(gi, g_metadata.obj, level, !inArea, "LoadStorySave");
     return false;  // not in gameplay yet -> caller keeps retrying
 }
 
-// Content invalidation: the next poll reloads the slot from disk even mid-campaign, for a slot
-// file that changed under the same name (a rejoin re-downloads the host's world into the same
-// slot). Staleness across campaigns is handled by the campaign identity.
+// Content invalidation: the next poll reloads the folder from disk even mid-campaign, for files
+// that changed under the same name (a rejoin re-downloads the host's world into the same folder).
+// Staleness across campaigns is handled by the campaign identity.
 void ResetCachedSave() {
-    if (g_storySave) UE_LOGI("engine: ResetCachedSave -- dropping cached save %p ('%ls')",
-                             g_storySave, g_storySaveSlot.c_str());
-    g_storySave = nullptr;
-    g_storySaveIdx = -1;
-    g_storySaveSlot.clear();
-    g_campaignWorld = nullptr;
-    g_campaignWorldIdx = -1;
-    g_gameModeApplied = false;
+    if (g_save.obj) UE_LOGI("engine: ResetCachedSave -- dropping cached save %p ('%ls')", g_save.obj,
+                            g_campaignSave.c_str());
+    ResetCampaign();
 }
 
 void SetSaveObjectReadyHook(SaveObjectReadyHook hook) {
@@ -444,96 +509,58 @@ void SetSaveObjectReadyHook(SaveObjectReadyHook hook) {
     UE_LOGI("engine: SaveObjectReadyHook %s", hook ? "armed" : "disarmed");
 }
 
-// The fresh New Game boot: as LoadStorySave, with a blank save object created in memory rather
-// than a disk slot. A fresh client has only the level-default props, so the host's connect
-// snapshot mirrors its whole world onto it with nothing to reconcile away. Polled like
+// The fresh New Game boot: as LoadStorySave, with a blank saveSlot_C and a blank save_metadata_C
+// created in memory instead of read from a folder, and no persistent save (the gamemode creates one,
+// as it does for any load without). A fresh client has only the level-default props, so the host's
+// connect snapshot mirrors its whole world onto it with nothing to reconcile away. Polled like
 // LoadStorySave. Game thread.
 bool StartFreshGame(int gameMode) {
-    auto makeFStr = [](std::wstring& b) {
-        R::FString fs{};
-        fs.Data = b.data();
-        fs.Num = static_cast<int32_t>(b.size()) + 1;
-        fs.Max = fs.Num;
-        return fs;
-    };
-
-    // The boot survey, shared with LoadStorySave.
     const BootWorldView w = SurveyBootWorld("StartFreshGame");
     if (w.inGameplay) return true;
     if (w.gameplayLoading) return false;  // in/loading the gameplay world -> wait, no re-open
 
-    // (c) Still before gameplay: create the blank save, register it and travel. The campaign scope
-    // first, so a fresh boot after any prior load never reuses the old save object.
-    ValidateCachedSaveForCampaign(kFreshSlotName, w.curWorld);
-    if (!g_storyGsCdo) g_storyGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    ValidateCachedSaveForCampaign(kFreshCampaign, w.curWorld);
     void* gi = world_singleton::GameInstance();
-    if (!g_storyGsCdo || !gi) {
-        UE_LOGW("engine: StartFreshGame -- not up yet (cdo=%p gi=%p); retry", g_storyGsCdo, gi);
+    if (!gi) {
+        UE_LOGW("engine: StartFreshGame -- no GameInstance yet; retry");
         return false;
     }
-    void* gsCls = R::ClassOf(g_storyGsCdo);
-    void* createFn = gsCls ? R::FindFunction(gsCls, L"CreateSaveGameObject") : nullptr;
-    void* saveCls  = R::FindClass(L"saveSlot_C");
-    if (!createFn || !saveCls) {
-        UE_LOGW("engine: StartFreshGame -- CreateSaveGameObject=%p saveSlot_C=%p not resolved; retry", createFn, saveCls);
-        return false;
-    }
-    if (!g_setSaveSlotFn) {
-        if (void* gicls = R::ClassOf(gi)) g_setSaveSlotFn = R::FindFunction(gicls, P::name::SetSaveSlotObjectFn);
-    }
-
-    // The blank save created once per campaign, cached like the loaded one.
-    if (!g_storySave) {
-        ParamFrame f(createFn);
-        f.Set<void*>(L"SaveGameClass", saveCls);
-        if (!Call(g_storyGsCdo, f)) { UE_LOGE("engine: StartFreshGame -- CreateSaveGameObject call failed"); return false; }
-        g_storySave = f.Get<void*>(L"ReturnValue");
-        if (!g_storySave) { UE_LOGW("engine: StartFreshGame -- CreateSaveGameObject returned null"); return false; }
-        g_storySaveIdx = R::InternalIndexOf(g_storySave);  // IsLiveByIndex guard for reuse
-        g_storySaveSlot = kFreshSlotName;                  // campaign identity
-        UE_LOGI("engine: StartFreshGame -- created BLANK saveSlot_C = %p (idx %d, fresh New Game baseline)",
-                g_storySave, g_storySaveIdx);
-        WriteFreshGameRules(g_storySave);
+    if (!g_save.obj) {
+        void* save = CreateBlank(P::name::SaveSlotClass);
+        void* metadata = CreateBlank(L"save_metadata_C");
+        if (!save || !metadata) {
+            UE_LOGW("engine: StartFreshGame -- blank saveSlot_C=%p save_metadata_C=%p not created; retry", save,
+                    metadata);
+            return false;
+        }
+        g_save.Set(save);
+        g_metadata.Set(metadata);
+        g_campaignSave = kFreshCampaign;
+        g_loadedSlotName.clear();
+        UE_LOGI("engine: StartFreshGame -- created BLANK saveSlot_C %p and metadata %p (fresh New Game baseline)",
+                save, metadata);
+        WriteFreshGameRules(metadata);
         // A fresh client join still gets its per-player inventory applied onto the blank save
         // before loadObjects materialises it.
-        FireSaveObjectReadyHook(g_storySave);
+        FireSaveObjectReadyHook(save);
     } else if (!g_freshGameRules.empty()) {
         UE_LOGW("engine: StartFreshGame -- %zu new-game rule(s) named but the blank save already exists; "
                 "not written", g_freshGameRules.size());
         g_freshGameRules.clear();
     }
 
-    // The blank save registered under the pseudo-slot name.
-    const wchar_t* freshSlot = kFreshSlotName;
-    if (g_setSaveSlotFn) {
-        std::wstring b(freshSlot);
-        R::FString fs = makeFStr(b);
-        ParamFrame f(g_setSaveSlotFn);
-        f.Set<void*>(L"save_gameInst", g_storySave);
-        f.SetRaw(L"SlotName", &fs, sizeof(fs));
-        Call(gi, f);
-    } else {
-        UE_LOGW("engine: StartFreshGame -- setSaveSlotObject unresolved");
-    }
-    PutSaveRulesInForce(gi, g_storySave, "StartFreshGame");
-    PutSaveStartDayInForce(gi, g_storySave, "StartFreshGame");
-    // A blank save has empty object and trigger arrays, so restoring it yields the level defaults
-    // through the same load path as a real save.
-    *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_loadObjects) = 1;
-    // The mode outright: the pseudo-slot has no file and so no name for a prefix to be read from,
-    // and every mode has to be reachable here, not the two a story-or-sandbox flag could spell.
+    RegisterSave(gi, g_save.obj, L"", L"", g_metadata.obj, nullptr, "StartFreshGame");
+    PutSaveStartDayInForce(gi, g_save.obj, "StartFreshGame");
+    PutSaveRulesInForce(gi, g_metadata.obj, "StartFreshGame");
     int mode = gameMode;
     if (!ue_wrap::game_mode::IsValid(mode)) {
         UE_LOGE("engine: StartFreshGame -- %d names no game mode; opening in story", gameMode);
         mode = ue_wrap::game_mode::kStory;
     }
-    ApplyGameModeFromSlot(gi, kFreshSlotName, mode);
-
-    std::wstring openCmd = L"open ";
-    openCmd += P::name::GameplayLevel;
-    UE_LOGI("engine: StartFreshGame -- at preLoad/menu; issuing '%ls' (BLANK save registered, mode=%d %s)",
-            openCmd.c_str(), mode, ue_wrap::game_mode::NameOrOrdinal(mode).c_str());
-    ExecuteConsoleCommand(openCmd.c_str());
+    PutModeInForce(gi, g_metadata.obj, mode, "StartFreshGame");
+    // A blank save has empty object and trigger arrays, so loading it yields the level defaults
+    // through the same load path as a real save.
+    TravelTo(gi, g_metadata.obj, P::name::GameplayLevel, true, "StartFreshGame");
     return false;  // not in gameplay yet -> caller keeps retrying
 }
 
@@ -565,8 +592,7 @@ bool ReturnToMainMenu() {
         return false;
     }
     const bool ok = Call(gm, f);
-    UE_LOGI("engine: ReturnToMainMenu -- mainGamemode_C::transition(\"/Game/menu\") dispatched=%d",
-            ok ? 1 : 0);
+    UE_LOGI("engine: ReturnToMainMenu -- mainGamemode_C::transition(\"/Game/menu\") dispatched=%d", ok ? 1 : 0);
     return ok;
 }
 

@@ -22,7 +22,7 @@ namespace E = ue_wrap::engine;
 namespace R = ue_wrap::reflection;
 
 // The use key's release: the game's own release of a held cord (cord used, pressed false -> tryToConnect).
-D::InputStub g_useRelease{L"InpActEvt_use_K2Node_InputActionEvent_42"};
+D::InputStub g_useRelease{L"InpActEvt_use_K2Node_InputActionEvent_38"};
 
 // The release overlaps a 5 uu sphere at the CORD's Sphere with the socket's trigger Sphere, and the dragged head rides
 // the trace's hit minus 5 on z: aimed at a socket is those two spheres within 5 + the socket's radius.

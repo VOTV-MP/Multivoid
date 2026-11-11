@@ -33,9 +33,9 @@ std::vector<ue_wrap::CachedObjRef> g_unreadable;
 // `unread`: keyed props whose location could not be read -- anywhere, since an unread prop has no distance.
 std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm, std::vector<PropRow>& unread) {
     std::vector<PropRow> out;
-    void* handAxis[1 + coop::players::kMaxPeers];
+    void* handAxis[coop::hand_item::kHandAxisCap];
     const size_t handAxisN =
-        coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
+        coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap);
     const float r2 = radiusCm * radiusCm;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {

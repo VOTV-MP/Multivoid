@@ -3,6 +3,7 @@
 #include "coop/dev/pry_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/drill_chat.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 #include "coop/player/roster.h"
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -37,7 +39,7 @@ namespace PR = ue_wrap::prop;
 namespace sg = ue_wrap::script_gate;
 
 enum class Arm { Off, Host, Client, Join };
-enum class Step { WaitJoin, Rest, Done, Invalid };
+enum class Step { WaitJoin, Rest, Settle, Done, Invalid };
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -55,6 +57,7 @@ constexpr int   kWatchEveryTicks = 15;
 constexpr float kWatchMoveCm     = 3.f;
 constexpr int   kRestMinTicks    = 30;
 constexpr int   kRestMaxTicks    = 600;   // ~10 s for a pried prop to come to rest
+constexpr int   kSettleTicks     = 180;   // ~3 s more, for the other peer's last correction of the copy
 constexpr int   kTagHint         = 0x48494E54;  // 'HINT'
 UE_FACT_FN(kRowAddHint, "dev.pry_drill", nullptr, L"addHint", AnyClass);
 
@@ -94,6 +97,7 @@ struct Watched {
 std::vector<Watched> g_watched;
 bool g_watchArmed = false;
 int  g_watchTick = 0;
+std::wstring g_armKey;   // the stuck pryable both peers picked at their arm
 
 // The first key, in order, among the pryables stuck at the watch's arm: both peers load one world,
 // so both pick the same prop without a message between them.
@@ -149,6 +153,7 @@ void ArmWatch(char who) {
     }
     UE_LOGI("[PRY-DRILL] [%c] watching %zu pryables (%d stuck)", who, g_watched.size(), stuck);
     g_watchArmed = true;
+    g_armKey = PickKey();   // latched: a pried prop is no longer stuck, so a later pick would name another
 }
 
 void TickWatch(char who) {
@@ -203,6 +208,54 @@ void RunHandUnstick(char who) {
             g_hints - before);
 }
 
+
+// ---- The verdict: the acting peer says where its pried prop came to rest, the watching peer judges its own ------------
+// Two physics sims settle a pried banister within a few centimetres of each other (a measured host/client pair rested
+// 1 to 3 cm apart); the tolerance leaves room for a different bounce without passing a copy that never moved.
+constexpr float kRestTolCm  = 25.f;
+constexpr float kMovedMinCm = 30.f;    // a pried prop leaves its wall by at least this
+constexpr int   kJudgeWaitTicks = 900; // ~15 s for the watching peer's own copy to come to rest after the acting peer's word
+const char* const kRestPrefix = "pry rest ";
+bool g_judged = false;
+int  g_judgeTicks = 0;
+
+void SayRest(const ue_wrap::FVector& at, bool rested) {
+    char line[96];
+    std::snprintf(line, sizeof(line), "%s%.0f %.0f %.0f %d", kRestPrefix, at.X, at.Y, at.Z, rested ? 1 : 0);
+    coop::dev::drill_chat::Say(line);
+}
+
+void JudgeWatcher(char who) {
+    namespace DC = coop::dev::drill_chat;
+    if (g_judged || g_armKey.empty()) return;
+    std::string rest;
+    if (!DC::SeenRestOf(kRestPrefix, &rest)) return;
+    float ax = 0.f, ay = 0.f, az = 0.f;
+    int actorRested = 0;
+    if (std::sscanf(rest.c_str(), "%f %f %f %d", &ax, &ay, &az, &actorRested) < 3) return;
+    Watched* row = FindWatchedRow(g_armKey);
+    void* o = row ? row->ref.Get() : nullptr;
+    auto verdict = [&](bool pass, const char* fmt, float a, float b) {
+        g_judged = true;
+        char msg[200];
+        std::snprintf(msg, sizeof(msg), fmt, a, b);
+        if (pass) UE_LOGI("[PRY-DRILL] [%c] PASS %s", who, msg);
+        else      UE_LOGW("[PRY-DRILL] [%c] FAIL %s", who, msg);
+    };
+    if (!o) return verdict(false, "this copy is gone (%.0f, %.0f)", 0.f, 0.f);
+    const bool atRest = E::IsActorRootBodyAtRest(o);
+    if (!atRest && ++g_judgeTicks < kJudgeWaitTicks) return;
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(o, at)) return verdict(false, "this copy's location does not read (%.0f, %.0f)", 0.f, 0.f);
+    if (Stuck(o)) return verdict(false, "this copy is still stuck to its wall (static or frozen) (%.0f, %.0f)", 0.f, 0.f);
+    const float moved = Dist(at, row->start);
+    const ue_wrap::FVector theirs{ax, ay, az};
+    const float apart = Dist(at, theirs);
+    if (moved < kMovedMinCm) return verdict(false, "this copy never left its wall: moved %.1f cm, apart %.1f cm", moved, apart);
+    if (apart > kRestTolCm)
+        return verdict(false, "the copies rest apart: %.1f cm (tolerance 25) after moving %.1f cm", apart, moved);
+    verdict(true, "the copies rest %.1f cm apart (tolerance 25); this one moved %.1f cm off its wall", apart, moved);
+}
 // ---- The acting peer's steps -------------------------------------------------------------------
 
 Step g_step = Step::WaitJoin;
@@ -296,6 +349,20 @@ void ActStep(coop::net::Session& s) {
                     g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_targetStart));
         else   // no numbers: an unread place is no place
             UE_LOGI("[PRY-DRILL] [%c] %s key='%ls' at (unread)", Who(), state, g_targetKey.c_str());
+        Go(Step::Settle);
+        return;
+    }
+    case Step::Settle: {
+        // The other peer's drive may put the copy right a moment after it first reads at rest; the word waits for that.
+        if (g_stepTicks < kSettleTicks) return;
+        void* t = g_target.Get();
+        Watched* row = FindWatchedRow(g_targetKey);
+        ue_wrap::FVector at{};
+        if (t && !(row && row->unread) && E::TryGetActorLocation(t, at)) {
+            UE_LOGI("[PRY-DRILL] [%c] SETTLED key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm", Who(), g_targetKey.c_str(),
+                    at.X, at.Y, at.Z, Dist(at, g_targetStart));
+            SayRest(at, true);
+        }
         UE_LOGI("[PRY-DRILL] ACTOR DONE");
         Go(Step::Done);
         return;
@@ -331,6 +398,7 @@ void Tick(coop::net::Session* session) {
         if (ArmOf() != Arm::Join) RunHandUnstick(Who());
     }
     TickWatch(Who());
+    JudgeWatcher(Who());
 }
 
 void OnDisconnect() {
@@ -340,6 +408,9 @@ void OnDisconnect() {
     g_step = Step::WaitJoin;
     g_stepTicks = 0;
     g_target.Reset();
+    g_armKey.clear();
+    g_judged = false;
+    g_judgeTicks = 0;
     g_targetKey.clear();
 }
 

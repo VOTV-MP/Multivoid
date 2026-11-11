@@ -55,11 +55,14 @@ set(VOTVCOOP_SOURCES
     src/coop/save/save_block.cpp
     src/coop/save/save_button_disable.cpp
     src/coop/save/save_notice.cpp
+    src/coop/save/puppet_save_skip.cpp
     src/ui/multiplayer_menu.cpp
     src/coop/player/nameplate.cpp
     src/coop/player/nick_color.cpp
     src/coop/player/nickname_arbiter.cpp
     src/coop/player/hand_item.cpp
+    src/coop/player/hand_item_mirror.cpp
+    src/coop/player/hand_item_wire.cpp
     src/coop/player/hand_history.cpp
     src/coop/player/hand_history_selftest.cpp
     src/coop/player/hand_item_pose.cpp
@@ -123,6 +126,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/fuse_tower_rows.cpp
     src/coop/world/fuse_tower_kind.cpp
     src/coop/interactables/atv_sync.cpp
+    src/coop/interactables/atv_trunk_sync.cpp
     src/coop/interactables/atv_stream_gates.cpp
     src/coop/interactables/atv_authority.cpp
     src/coop/interactables/atv_body.cpp
@@ -134,6 +138,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/atv_hit_guard.cpp
     src/coop/interactables/atv_damage_gate.cpp
     src/coop/interactables/drone_sync.cpp
+    src/coop/interactables/drone_cargo_sync.cpp
     src/coop/items/coingun_sync.cpp
     src/coop/items/coingun_arbiter.cpp
     src/coop/items/coingun_collect.cpp
@@ -267,6 +272,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp
+    src/coop/props/wire_class.cpp
     src/coop/props/prop_wire_parity.cpp
     src/coop/props/remote_prop_spawn.cpp
     src/coop/props/join_membership_sweep.cpp
@@ -347,6 +353,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/identity_key_file.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp
+    src/coop/net/wire_class_path.cpp
     src/coop/net/session_receive.cpp
     src/coop/net/session_streams.cpp
     src/coop/net/net_stats.cpp
@@ -385,6 +392,8 @@ set(VOTVCOOP_SOURCES
     src/coop/net/master_slots.cpp
     src/coop/save/join_window_baseline.cpp
     src/coop/save/save_transfer.cpp
+    src/coop/save/save_folder_pack.cpp
+    src/coop/save/save_scratch.cpp
     src/coop/save/slot_file_read.cpp
     src/coop/save/save_indicator_suppress.cpp
     src/coop/session/session_join.cpp
@@ -463,27 +472,29 @@ set(VOTVCOOP_SOURCES
     src/coop/build_trust/self_identity.cpp
     src/coop/game_build/game_build.cpp
     src/coop/items/inventory_wire.cpp
+    src/coop/items/inventory_wire_selftest.cpp
     src/coop/items/save_record_wire.cpp
+    src/coop/items/inventory_item_wire.cpp
     src/coop/props/container_act_host.cpp
-    src/coop/props/container_act_host_overlap.cpp
+    src/coop/props/container_act_drag.cpp
     src/coop/props/container_act_host_put.cpp
     src/coop/props/container_act_put.cpp
     src/coop/props/container_act_request.cpp
     src/coop/props/container_act_selftest.cpp
-    src/coop/props/container_act_selftest_overlap.cpp
     src/coop/props/container_act_selftest_put.cpp
+    src/coop/props/container_act_stack.cpp
     src/coop/props/container_act_state.cpp
     src/coop/props/container_act_wire.cpp
     src/coop/props/container_apply_hold.cpp
     src/coop/props/container_birth.cpp
     src/coop/props/container_contents_io.cpp
-    src/coop/props/container_arming.cpp
     src/coop/props/container_contents_publish.cpp
     src/coop/props/container_contents_sync.cpp
     src/coop/props/container_park.cpp
     src/coop/props/container_reach.cpp
     src/coop/props/container_record_edit.cpp
     src/coop/props/container_slice_wire.cpp
+    src/coop/props/container_target.cpp
     src/coop/props/container_truth.cpp
     src/coop/props/container_view_close.cpp
     src/coop/props/container_writer_watch.cpp

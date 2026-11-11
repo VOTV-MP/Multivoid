@@ -42,10 +42,15 @@ struct Slot {
     NativeFuncPtr      original  = nullptr;
     PostNativeCallback cb        = nullptr;
     PreNativeCallback  pre       = nullptr;   // set for a pre hook, whose thunk is PreThunk
+    PreNativeDone      done      = nullptr;   // a pre hook's report of a call that ran
     std::atomic<bool>  armed{false};
     // A pre hook's parameters in declaration order, each one's offset in the frame.
     int     paramCount = 0;
     int16_t paramOffsets[kMaxPreParams] = {};
+    // The FString parameters among them, which the thunk frees once the call is over.
+    int     stringCount = 0;
+    int16_t stringOffsets[kMaxPreParams] = {};
+    int     returnSize = 0;   // bytes of the return value a refused call zeroes; 0 for none
     bool    streamMismatchLogged = false;
 };
 
@@ -92,6 +97,15 @@ int PreFaultFilter(EXCEPTION_POINTERS* ep) {
 int RunPreCbSEH(PreNativeCallback cb, void* context, void* src, const uint8_t* parms, Verdict* verdict) {
     __try {
         *verdict = cb(context, src, parms);
+        return 0;
+    } __except (PreFaultFilter(GetExceptionInformation())) {
+        return 1;
+    }
+}
+
+int RunDoneCbSEH(PreNativeDone cb, void* context, void* src, const uint8_t* parms, const void* result) {
+    __try {
+        cb(context, src, parms, result);
         return 0;
     } __except (PreFaultFilter(GetExceptionInformation())) {
         return 1;
@@ -175,6 +189,16 @@ void __fastcall NativeThunk(void* context, void* stack, void* result) {
     }
 }
 
+// The strings a pre hook's stepping built in its frame: the VM copied each into storage the engine's
+// allocator owns, which the original's own locals would have destroyed.
+void FreeFrameStrings(const Slot& s, uint8_t* frame) {
+    for (int i = 0; i < s.stringCount; ++i) {
+        auto* str = reinterpret_cast<R::FString*>(frame + s.stringOffsets[i]);
+        if (str->Data) R::EngineFree(str->Data);
+        *str = R::FString{};
+    }
+}
+
 template <int N>
 void __fastcall PreThunk(void* context, void* stack, void* result) {
     Slot& s = g_slots[N];
@@ -199,6 +223,7 @@ void __fastcall PreThunk(void* context, void* stack, void* result) {
         if (*code != kExEndFunctionParms) {
             const unsigned found = *code;
             code = entry;   // the stream does not match the signature: the original steps it as ever
+            FreeFrameStrings(s, frame);
             if (!s.streamMismatchLogged) {
                 s.streamMismatchLogged = true;
                 UE_LOGE("ufunction_hook: pre slot %d (ufn=%p) stepped %d parameter(s) and found opcode "
@@ -213,10 +238,11 @@ void __fastcall PreThunk(void* context, void* stack, void* result) {
         parms = static_cast<const uint8_t*>(ReadPtr(stack, P::off::FFrame_Locals));
     }
     void* srcObj = ReadPtr(stack, P::off::FFrame_Object);
+    const CallerFrame callerFrame{ReadPtr(stack, P::off::FFrame_Node),
+                                  static_cast<uint8_t*>(ReadPtr(stack, P::off::FFrame_Locals))};
     Verdict verdict = Verdict::Run;
     t_inCb = true;
-    t_frame = CallerFrame{ReadPtr(stack, P::off::FFrame_Node),
-                          static_cast<uint8_t*>(ReadPtr(stack, P::off::FFrame_Locals))};
+    t_frame = callerFrame;
     const int rc = RunPreCbSEH(s.pre, context, srcObj, parms, &verdict);
     t_frame = CallerFrame{nullptr, nullptr};
     t_inCb = false;
@@ -227,10 +253,22 @@ void __fastcall PreThunk(void* context, void* stack, void* result) {
     }
     if (verdict == Verdict::Cancel) {
         if (entry) ++code;   // P_FINISH: the original would have stepped over the end of parameters
+        if (s.returnSize > 0 && result) std::memset(result, 0, static_cast<size_t>(s.returnSize));
+        if (entry) FreeFrameStrings(s, frame);
         return;
     }
     if (entry) code = entry;
     s.original(context, stack, result);
+    if (s.done) {
+        t_inCb = true;
+        t_frame = callerFrame;
+        if (RunDoneCbSEH(s.done, context, srcObj, parms, result) != 0)
+            UE_LOGE("ufunction_hook: pre-native done cb AV absorbed (slot %d, ufn=%p src=%p)", N, s.ufunction,
+                    srcObj);
+        t_frame = CallerFrame{nullptr, nullptr};
+        t_inCb = false;
+    }
+    if (entry) FreeFrameStrings(s, frame);
 }
 
 // One distinct stamped thunk per slot, generated FROM kMaxNativeHooks -- the table can
@@ -272,14 +310,20 @@ NativeFuncPtr* FuncSlotOf(void* ufunction) {
 // The parameters a pre hook steps, into `into`; false with one line naming the first one it cannot.
 bool ReadPreSignature(void* ufunction, Slot& into) {
     int count = 0;
+    into.stringCount = 0;
+    into.returnSize = 0;
     for (const auto& p : R::FunctionParams(ufunction)) {
+        if (p.flags & P::cpf::ReturnParm) {
+            into.returnSize = p.size;   // a refused call answers it with zeros
+            continue;
+        }
         const char* why = nullptr;
         const int32_t written = p.size > 4 ? p.size : 4;   // a bool is written as four bytes
-        if (p.flags & P::cpf::ReturnParm) why = "a return value, which a refused call would leave unwritten";
-        else if ((p.flags & P::cpf::OutParm) && (p.flags & kConstRef) != kConstRef)
+        const bool isString = p.type == L"StrProperty";
+        if ((p.flags & P::cpf::OutParm) && (p.flags & kConstRef) != kConstRef)
             why = "an out parameter, or a reference that is not const";
-        else if (!(p.flags & P::cpf::NoDestructor))
-            why = "a parameter the engine destroys (a raw frame cannot)";
+        else if (!(p.flags & P::cpf::NoDestructor) && !isString)
+            why = "a parameter the engine destroys (a raw frame can free a string, not the rest)";
         else if (count >= kMaxPreParams || p.offset < 0 ||
                  p.offset + written + kPreFrameSlack > kPreFrameBytes)
             why = "past the forwarder's frame";
@@ -288,6 +332,7 @@ bool ReadPreSignature(void* ufunction, Slot& into) {
                     p.name.c_str(), static_cast<unsigned long long>(p.flags), why);
             return false;
         }
+        if (isString) into.stringOffsets[into.stringCount++] = static_cast<int16_t>(p.offset);
         into.paramOffsets[count++] = static_cast<int16_t>(p.offset);
     }
     into.paramCount = count;
@@ -364,7 +409,7 @@ bool InstallPostHookFn(void* ufunction, PostNativeCallback cb, bool armed) {
     return true;
 }
 
-bool InstallPreHookFn(void* ufunction, PreNativeCallback cb, bool armed) {
+bool InstallPreHookFn(void* ufunction, PreNativeCallback cb, bool armed, PreNativeDone done) {
     if (!ufunction || !cb) return false;
     for (int i = 0; i < g_slotCount; ++i) {
         if (g_slots[i].ufunction == ufunction && g_slots[i].pre == cb) return true;
@@ -400,6 +445,7 @@ bool InstallPreHookFn(void* ufunction, PreNativeCallback cb, bool armed) {
     g_slots[n].ufunction = ufunction;
     g_slots[n].original  = original;
     g_slots[n].pre       = cb;
+    g_slots[n].done      = done;
     g_slots[n].armed.store(armed, std::memory_order_relaxed);
     g_slotCount = n + 1;     // slot fully populated before the thunk can be reached
     *funcSlot = PreThunkFor(n);
@@ -424,9 +470,9 @@ bool InstallPostHook(const facts::Resolved& fn, PostNativeCallback cb, bool arme
     return ok;
 }
 
-bool InstallPreHook(const facts::Resolved& fn, PreNativeCallback cb, bool armed) {
+bool InstallPreHook(const facts::Resolved& fn, PreNativeCallback cb, bool armed, PreNativeDone done) {
     if (!fn) return false;
-    const bool ok = InstallPreHookFn(fn.Fn(), cb, armed);
+    const bool ok = InstallPreHookFn(fn.Fn(), cb, armed, done);
     fn.Row()->NoteUse(facts::kUseNativeHook, ok);
     return ok;
 }

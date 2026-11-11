@@ -66,9 +66,9 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
     // (destroyed and respawned per quick-slot switch, carried by the HandItem lane) and every
     // remote peer's display mirror, a real prop whose adoption here would broadcast a phantom
     // PropSpawn with an echo-suppressed destroy. Hoisted once per walk.
-    void* handAxis[1 + coop::players::kMaxPeers];
+    void* handAxis[coop::hand_item::kHandAxisCap];
     const size_t handAxisN =
-        coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
+        coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap);
     const auto isHandAxis = [&](void* obj) {
         for (size_t h = 0; h < handAxisN; ++h)
             if (handAxis[h] == obj) return true;
@@ -400,9 +400,9 @@ void DrainReseedQueue() {
     ++g_reseedDrainTicks;
     // The hand-axis snapshot once per drain tick (at most a few entries; membership churns per
     // quick-slot switch, so it is not evaluated at match time).
-    void* handAxis[1 + coop::players::kMaxPeers];
+    void* handAxis[coop::hand_item::kHandAxisCap];
     const size_t handAxisN =
-        coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
+        coop::hand_item::CollectHandAxisActors(handAxis, coop::hand_item::kHandAxisCap);
     // The budget of about 1 ms, the hub-slice discipline: a fixed item count would comb a mass
     // adoption into a stall.
     static const long long sQpcPerMs = [] {

@@ -1,7 +1,7 @@
 // coop/save/save_indicator_suppress.h -- watch for the native "SAVED..." HUD indicator during
 // the host's client-join scratch-save (save_transfer), and never a manual F5 or menu save.
 //
-// The join scratch-save is save_transfer.cpp -> save_capture::CaptureLiveWorldToScratchSlot ->
+// The join scratch-save is save_transfer.cpp -> save_capture::CaptureLiveWorldToFolder ->
 // mainGamemode.saveObjects; a manual save takes the BP save()/autosave() path the mod never
 // calls, so the two are cleanly discriminable.
 //

@@ -285,7 +285,7 @@ void SaySwingerSeen() {
 }
 
 // The host player's ground point 150 cm ahead, lifted 3 cm. False with the reason printed when there is none.
-bool ComputeSpot() {
+bool ComputeSpot(bool early) {
     void* me = LocalPlayer();
     FVector at{};
     if (!me || !E::TryGetActorLocation(me, at)) return false;
@@ -293,6 +293,8 @@ bool ComputeSpot() {
     const float x = at.X + fwd.X * kAheadCm, y = at.Y + fwd.Y * kAheadCm;
     ue_wrap::trace::Hit hit;
     if (!ue_wrap::trace::LineHitStatDyn(me, {x, y, at.Z + 50.f}, {x, y, at.Z - 300.f}, &hit) || !hit.blocked) {
+        // Before the world settles the floor may not be there yet: an early placement tries again next tick.
+        if (early && !coop::host_world_settle::Settled()) return false;
         Inconclusive("no ground under the placement spot (%.0f,%.0f) near z=%.0f", x, y, at.Z);
         g_hstep = HStep::Done;
         Finish();
@@ -406,8 +408,15 @@ void HostTick() {
     if (g_hstep == HStep::Done) return;
     const uint64_t now = coop::net::NowMs();
     switch (g_hstep) {
-    case HStep::Ready:
-        if (!coop::host_world_settle::Settled() || !LocalPlayer() || !ComputeSpot()) return;
+    case HStep::Ready: {
+        // The bracket arms need their cans in the joining client's world BEFORE the bracket: the client destroys one of
+        // them as a local actor, then the bracket arrives. A join's capture is taken the moment the host's world settles
+        // (host_world_settle.h; on this rig at its 25 s ceiling) and carries what the world holds then, so these arms
+        // place as soon as the host's player stands on a floor, which is earlier. A can placed at the settle, as the other
+        // arms do, lands after the capture and reaches the client only in the bracket (the client then finds no pair
+        // before it, and when it finds a natural one the host's judge names a different can).
+        const bool early = IsBracketArm() && ArmOf() != Arm::Late;
+        if ((!early && !coop::host_world_settle::Settled()) || !LocalPlayer() || !ComputeSpot(early)) return;
         BuildPlan();
         UE_LOGI("[JPL-DRILL] host places at (%.1f,%.1f,%.1f)", g_spot.X, g_spot.Y, g_spot.Z);
         if (ArmOf() == Arm::Late) {
@@ -416,6 +425,7 @@ void HostTick() {
         }
         Place(PlanAt(0), now);
         return;
+    }
     case HStep::WaitBracket:
         if (DC::SeenHas(kClientInconclusiveLine)) {
             Inconclusive("the client ended inconclusive");

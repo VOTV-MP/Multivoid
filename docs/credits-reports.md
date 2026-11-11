@@ -201,7 +201,7 @@ published rules declare, per class, that a spawned actor's payload is captured b
 `getData` and applied by its `loadData`, and that an identity may become readable only once
 `loadData` has run. That is the general form of what this project's prop save-data work was
 building case by case. A prop's save data now crosses as the game's own record
-(`coop/props/prop_save_data`, on `ue_wrap/actors/save_record`), and a grappling hook's record is the
+(`coop/props/prop_save_data`, on `ue_wrap/actors/prop_record`), and a grappling hook's record is the
 payload that hands the hook over between peers (`coop/items/hook_anchor`). The declaration is
 Moddy's published design; the codec, the chunking and the lanes are this project's own.
 

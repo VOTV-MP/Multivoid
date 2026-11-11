@@ -160,7 +160,7 @@ bool HandlePropDriveEvent(net::Session& session,
         net::FoodStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !std::isfinite(p.temperature) ||
-            !std::isfinite(p.ripeness)) {
+            !std::isfinite(p.freshness)) {
             UE_LOGW("event_feed: FoodState malformed -- dropping");
             break;
         }
@@ -201,7 +201,7 @@ bool HandlePropDriveEvent(net::Session& session,
         net::FoodStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !std::isfinite(p.temperature) ||
-            !std::isfinite(p.ripeness)) {
+            !std::isfinite(p.freshness)) {
             UE_LOGW("event_feed: FoodRelease malformed -- dropping");
             break;
         }
@@ -221,7 +221,7 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::FoodHandPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (!std::isfinite(p.temperature) || !std::isfinite(p.ripeness)) {
+        if (!std::isfinite(p.temperature) || !std::isfinite(p.freshness)) {
             UE_LOGW("event_feed: FoodHand malformed -- dropping");
             break;
         }
