@@ -41,6 +41,11 @@ void OnTakeover(const coop::net::AtvTakeoverPayload& p, uint8_t slot);
 // may cheat; it is its own authority). True when the table granted it. Called from atv_sync's Tick.
 bool JudgeLocal(coop::atv_sync::AtvEntry& e, AtvRequest req);
 
+// HOST: the host's own player's passenger sit (`sit`) or leave on `e`, judged by the table's tests only: a sit is
+// refused by `already_seated`, `occupied` and `no_driver`, a leave when the host is not the passenger. True when the
+// table took it. Called from atv_passenger's Tick.
+bool JudgeLocalPassenger(coop::atv_sync::AtvEntry& e, bool sit);
+
 // HOST: whether `slot` is the syncer a hand-back just replaced, inside the window its late block is still honest: a
 // round trip and two sends of it. AdmitBlock counts such a block `late_syncer` and the explosion request's judge
 // admits the death report of that syncer; one window for both.
@@ -70,7 +75,7 @@ void ResetRequests(coop::atv_sync::AtvEntry& e);
 // The session's judgements, for the teardown line and the drills: every refusal by reason (indexed by AtvRefusal),
 // the grants, and the stream's counts.
 struct Counters {
-    unsigned long long refused[16] = {};   // by AtvRefusal; [0] unused
+    unsigned long long refused[32] = {};   // by AtvRefusal; [0] unused
     unsigned long long admitted   = 0;     // any request granted (sit, leave, takeover)
     unsigned long long notSyncer  = 0;     // a block from a slot that does not sync the ATV (also an honest client's
                                            // optimistic blocks for a request the host refused)

@@ -170,6 +170,7 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     p.angVelX = ang.X; p.angVelY = ang.Y; p.angVelZ = ang.Z;
     p.occupantSlot = occupantSlot;
     p.syncerSlot   = syncerSlot;
+    p.passengerSlot = 0xFF;   // the host's StampHost writes its table's
     uint8_t sb = 0;
     if (A::IsDriven(actor)) sb |= 0x1;
     if (A::GetBrake(actor)) sb |= 0x2;
@@ -216,12 +217,13 @@ void OnSlotReplaced(int slot, const coop::roster_ledger::Row& /*outgoing*/,
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
         if (e.occupantSlot == s8 || e.syncerSlot == s8) { AU::ClearTable(e); ++freed; }
+        else if (e.passengerSlot == s8) { e.passengerSlot = 0xFF; e.stampDue = true; ++freed; }
         // The change gate re-arms: the other peers still hold the departed claim, and healing them
         // depends on the host sending something.
         e.haveLastSync = false;
     }
     if (freed > 0)
-        UE_LOGI("atv: slot %d departed -- cleared the seat and syncer of %d ATV(s)", slot, freed);
+        UE_LOGI("atv: slot %d departed -- cleared its seats and syncerships on %d ATV(s)", slot, freed);
 }
 
 void SubscribeDepartures() {
@@ -249,7 +251,7 @@ void SendStamps(coop::net::Session& s, uint64_t nowMs) {
             continue;
         }
         e.stampRetryMs = 0;
-        StampHostTrap(e, p);
+        StampHost(e, p);
         SendToReadyClients(s, p, -1);
         coop::atv_condition_sync::NoteSent(e, p);
         e.stampDue = false;
@@ -324,7 +326,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
         out.syncerSlot = e.syncerSlot;
         out.occupantSlot = e.occupantSlot;
         out.stateBits = static_cast<uint8_t>((payload.stateBits & 0x07) | coop::net::kAtvFromSyncer);
-        StampHostTrap(e, out);
+        StampHost(e, out);
         out.adopt = 0;
         SendToReadyClients(*s, out, senderPeerSlot);
         return;
@@ -334,6 +336,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     e.occupantSlot = payload.occupantSlot;
     e.syncerSlot   = payload.syncerSlot;
+    e.passengerSlot = payload.passengerSlot;
     // The trap rides every block the host sends, so it is taken before the authority return like the rest of the stamp.
     // The developer red arm of the ATV health drill: the bit is ignored, so the drill's `armed` phase must fail.
     // Resolved once.
@@ -443,7 +446,7 @@ SetSent SendSetToSlot(coop::net::Session* s, int peerSlot, bool withPoses) {
             // the air at a join arrives moving and lands.
             coop::net::AtvStatePayload p{};
             if (!ReadPayload(e.actor, h.key, e.occupantSlot, e.syncerSlot, /*adopt*/true, p)) continue;
-            StampHostTrap(e, p);
+            StampHost(e, p);
             s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
             ++r.poses;
         }
@@ -605,7 +608,7 @@ void Tick() {
                 coop::net::AtvStatePayload p{};
                 const uint8_t occ = isHost ? e.occupantSlot : uint8_t{0xFF};   // the host stamps; a client's is overwritten
                 if (ReadPayload(e.actor, kv.first, occ, localSlot, /*adopt*/false, p, /*grabbed*/e.localCarrying)) {
-                    if (isHost) { StampHostTrap(e, p); SendToReadyClients(*s, p, -1); }
+                    if (isHost) { StampHost(e, p); SendToReadyClients(*s, p, -1); }
                     else s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
                     coop::atv_condition_sync::NoteSent(e, p);  // keep the idle gate's baseline fresh across a drive-to-idle handoff
                 }
@@ -621,7 +624,7 @@ void Tick() {
             // host eject (a mask flip, no motion) would otherwise wait out the keepalive.
             coop::net::AtvStatePayload p{};
             const bool readable  = ReadPayload(e.actor, kv.first, e.occupantSlot, /*syncerSlot*/0, /*adopt*/false, p);
-            if (readable) StampHostTrap(e, p);
+            if (readable) StampHost(e, p);
             const bool changed   = IdleWorthSending(e);
             const bool condMoved = readable && coop::atv_condition_sync::CondChangedSinceLastSend(e, p);
             const bool keepalive = nowMs - e.lastIdleSendMs >= kIdleKeepaliveMs;
@@ -729,11 +732,20 @@ void* ActorSeatedBy(uint8_t slot) {
     return nullptr;
 }
 
+void* ActorRiddenBy(uint8_t slot) {
+    if (slot == 0xFF) return nullptr;
+    if (!IndexCurrent()) return nullptr;
+    for (const auto& kv : g_atvs)
+        if (kv.second.passengerSlot == slot && R::IsLiveByIndex(kv.second.actor, kv.second.idx)) return kv.second.actor;
+    return nullptr;
+}
+
 bool ReadTable(const std::wstring& key, TableView& out) {
     if (!IndexCurrent()) return false;
     const auto it = g_atvs.find(key);
     if (it == g_atvs.end() || !R::IsLiveByIndex(it->second.actor, it->second.idx)) return false;
     out.occupantSlot = it->second.occupantSlot;
+    out.passengerSlot = it->second.passengerSlot;
     out.syncerSlot = it->second.syncerSlot;
     out.lastBlockSpeed = it->second.lastBlockSpeed;
     out.localSeated = it->second.localSeated;

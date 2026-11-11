@@ -92,6 +92,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/devices/generator.cpp
     src/ue_wrap/devices/generator_panel.cpp
     src/ue_wrap/devices/atv.cpp
+    src/ue_wrap/devices/atv_passenger_seat.cpp
     src/ue_wrap/devices/atv_condition.cpp
     src/ue_wrap/devices/drone.cpp
     src/ue_wrap/devices/drone_console.cpp

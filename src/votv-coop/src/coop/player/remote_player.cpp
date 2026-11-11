@@ -518,9 +518,9 @@ void RemotePlayer::ApplySkin(const std::string& skinName) {
         appliedSkin_ = skinName;
 }
 
-void RemotePlayer::SetSeat(void* atv) {
+void RemotePlayer::SetSeat(void* atv, bool passenger) {
     if (!valid()) return;
-    if (!seat_.Set(actor_, atv)) return;
+    if (!seat_.Set(actor_, atv, passenger)) return;
     if (!atv) bodyYaw_.Reset(curYaw_);
     dirty_ = true;
 }

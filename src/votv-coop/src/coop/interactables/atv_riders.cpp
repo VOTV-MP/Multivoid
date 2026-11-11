@@ -26,7 +26,7 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 // The host's: each ATV whose kerfurs it called for a client's seat, with that ATV's object slot.
 std::unordered_map<void*, int32_t> g_called;
-uint32_t g_calls = 0, g_releases = 0;
+uint32_t g_calls = 0, g_releases = 0, g_bumps = 0;
 
 void SeatBodies() {
     auto& reg = coop::players::Registry::Get();
@@ -35,19 +35,30 @@ void SeatBodies() {
         if (slot == self) continue;
         coop::RemotePlayer* p = reg.Puppet(slot);
         if (!p || !p->valid()) continue;
-        p->SetSeat(coop::atv_sync::ActorSeatedBy(slot));
+        void* driven = coop::atv_sync::ActorSeatedBy(slot);
+        void* ridden = driven ? nullptr : coop::atv_sync::ActorRiddenBy(slot);
+        p->SetSeat(driven ? driven : ridden, ridden != nullptr);
     }
 }
 
 void CallKerfurs(const uint8_t self) {
-    struct Seen { uint8_t self; std::vector<void*> seated, free; } seen{self, {}, {}};
+    struct Seen { uint8_t self; std::vector<void*> seated, free, ridden; } seen{self, {}, {}, {}};
     coop::atv_sync::ForEachIndexed([](void* ctx, const std::wstring& key, void* actor) {
         auto* s = static_cast<Seen*>(ctx);
         coop::atv_sync::TableView tv;
         if (!coop::atv_sync::ReadTable(key, tv)) return;
+        if (tv.passengerSlot != 0xFF) { s->ridden.push_back(actor); return; }
         const bool client = tv.occupantSlot != 0xFF && tv.occupantSlot != s->self;
         (client ? s->seated : s->free).push_back(actor);
     }, &seen);
+    // A player in the passenger spot has it over a kerfur: the rider gets off, as the ATV's own dismount sends it, and
+    // the rest turn back. The host's own sit calls the kerfurs itself, so one may walk up later and is sent off then.
+    for (void* atv : seen.ridden) {
+        g_called.erase(atv);
+        if (!ue_wrap::atv::RidingKerfur(atv) || !ue_wrap::atv::ReleaseKerfurs(atv)) continue;
+        ++g_bumps;
+        UE_LOGI("atv_riders: a player rides behind the driver of ATV %p -- its kerfur is off", atv);
+    }
     for (void* atv : seen.seated) {
         if (g_called.count(atv)) continue;
         const std::vector<void*> kerfurs = ue_wrap::kerfur::AllKerfurs();
@@ -86,10 +97,10 @@ void OnDisconnect() {
     auto& reg = coop::players::Registry::Get();
     for (uint8_t slot = 0; slot < coop::players::kMaxPeers; ++slot)
         if (coop::RemotePlayer* p = reg.Puppet(slot)) p->SetSeat(nullptr);
-    if (g_calls || g_releases)
-        UE_LOGI("atv_riders: session end -- kerfur calls=%u releases=%u", g_calls, g_releases);
+    if (g_calls || g_releases || g_bumps)
+        UE_LOGI("atv_riders: session end -- kerfur calls=%u releases=%u bumps=%u", g_calls, g_releases, g_bumps);
     g_called.clear();
-    g_calls = g_releases = 0;
+    g_calls = g_releases = g_bumps = 0;
 }
 
 }  // namespace coop::atv_riders

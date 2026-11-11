@@ -30,13 +30,14 @@ constexpr float kIdleMovingCmS = 1.0f;
 
 }  // namespace
 
-// HOST: the bit-4 mark of a block it sends is this copy's own `trap` (the host's state, which every client takes from the
+// HOST: the stamp's passenger spot, and the bit-4 mark of a block it sends is this copy's own `trap` (the host's state, which every client takes from the
 // stamp; a client's bit is never read). Set on the whole byte by mask; `e.actor` is live at every call. A trap that cannot
 // be read stays host-only. MTA keeps the cause of a blow server-side too: the server marks the vehicle awaiting its
 // explosion (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp:5617) and the client
 // reports the blow bit back (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientGame.cpp:5380); here the trap
 // is the host's state.
-void StampHostTrap(const AtvEntry& e, coop::net::AtvStatePayload& p) {
+void StampHost(const AtvEntry& e, coop::net::AtvStatePayload& p) {
+    p.passengerSlot = e.passengerSlot;   // the passenger spot is the host's table too
     bool trap = false;
     A::ReadTrap(e.actor, trap);
     p.stateBits = static_cast<uint8_t>((p.stateBits & ~coop::net::kAtvTrap) | (trap ? coop::net::kAtvTrap : 0));

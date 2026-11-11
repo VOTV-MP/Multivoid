@@ -136,9 +136,9 @@ public:
 
     void* actor() const { return actor_; }
 
-    // The ATV whose seat the host's table gives this peer, or nullptr: the body sits there, not where the stream
-    // stands it (coop/player/puppet_seat.h). Game thread.
-    void SetSeat(void* atv);
+    // The ATV whose seat the host's table gives this peer, or nullptr: the body sits there, at the handlebars or
+    // (`passenger`) behind them, not where the stream stands it (coop/player/puppet_seat.h). Game thread.
+    void SetSeat(void* atv, bool passenger = false);
 
 private:
     // Spawn's before-finish callback (engine::SpawnActor): keeps the deferred actor and registers it

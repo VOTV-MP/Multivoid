@@ -402,6 +402,10 @@ void ForgetSittingKerfur(void* atv, void* kerfur) {
     if (*slot == kerfur) *slot = nullptr;
 }
 
+void* RidingKerfur(void* atv) {
+    return atv && R::IsLive(atv) ? ReadObj(atv, g_sittingKerfuro.Get()) : nullptr;
+}
+
 bool InviteKerfurs(void* atv, const std::vector<void*>& kerfurs) {
     if (!atv || !R::IsLive(atv) || !WriteKerfurList(atv, kerfurs)) return false;
     for (void* k : kerfurs) kerfur::TryToOccupyCar(k, atv);

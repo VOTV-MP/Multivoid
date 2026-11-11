@@ -53,6 +53,12 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
 // grab drops); an older one is logged and changes nothing. Called from event_feed.
 void OnAnswer(const coop::net::AtvAnswerPayload& payload);
 
+// This machine's own passenger sit (`sit`) or leave on `actor`. The host's table judges the host's own at once
+// (Granted or Refused); a client sends AtvSeat for the passenger spot (Sent), whose answer reaches
+// coop::atv_passenger::OnAnswer. Failed when the ATV is not indexed or the send did not go. Game thread.
+enum class PassengerAsk : uint8_t { Granted, Refused, Sent, Failed };
+PassengerAsk AskPassenger(void* actor, bool sit);
+
 // Receiver entry (CLIENT-only): an AtvSpawn arrived. The host announces an ATV of its world under
 // its game Key. A key that cannot name an ATV is dropped. The ATV this world already holds under the
 // Key -- a row of the index, else the game's own key map (the save's copy) -- is adopted and nothing
@@ -121,12 +127,17 @@ bool IsOccupiedByOther(void* actor, uint8_t* outOccupantSlot = nullptr);
 // IsOccupiedByOther; an entry whose actor is no longer live by its index is skipped. Game thread.
 void* ActorSeatedBy(uint8_t slot);
 
+// The indexed ATV whose passenger spot `slot` holds, by the host's table as stamped to this peer, or nullptr. The same
+// guards as ActorSeatedBy. Game thread.
+void* ActorRiddenBy(uint8_t slot);
+
 // What a drill reads of one ATV's table: the seat, the syncer, the speed of the syncer's last admitted block (the
 // host's; a client's stays 0), whether this machine's own body sits in the seat and the actor the entry holds, the
 // story event's trap (the host's: its own copy's, as of its last Tick; a client's: the last stamp's bit as applied) and
 // the host's blown mark with the slot that blew it (0xFF = none; the host's table only, a client's stays unmarked).
 struct TableView {
     uint8_t occupantSlot = 0xFF;
+    uint8_t passengerSlot = 0xFF;
     uint8_t syncerSlot = 0;
     float   lastBlockSpeed = 0.f;
     bool    localSeated = false;

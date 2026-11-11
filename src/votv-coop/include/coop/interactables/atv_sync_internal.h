@@ -38,6 +38,8 @@ struct AtvEntry {
                                    // E-press from it, so a grabber must never appear here.
     uint8_t  syncerSlot   = 0;     // who WRITES it (0 = the host, k = client slot k): the one whose blocks
                                    // the host applies and re-sends, whose copy owns the tick
+    uint8_t  passengerSlot = 0xFF; // the peer slot in the passenger spot behind the driver (0xFF = free). A
+                                   // passenger neither syncs the ATV nor denies the driver's seat.
     // Host only: the judgement's clocks. A block, a grant or a pass moves them (atv_authority.cpp).
     uint8_t  prevSyncerSlot = 0xFF; // the client a hand-back just replaced, for the late-block count
     uint64_t lastBlockMs  = 0;     // when the syncer's last block was applied (a grant counts as one)
@@ -170,10 +172,10 @@ void ResolveSpawn(const std::wstring& key, const coop::net::AtvSpawnPayload& pay
 bool IsLocalGrabber(void* actor, void* localPlayer);
 
 // atv_stream_gates.cpp: the stream's per-block gates, each a function of one entry and its actor and none touching the
-// lane's map. StampHostTrap sets a block's trap bit from the host's own copy; TakeStampTrap is the client's take of
+// lane's map. StampHost sets a block's passenger spot from the host's table and its trap bit from the host's own copy; TakeStampTrap is the client's take of
 // that bit; NoteSyncerHealth is the host's re-arm of an accepted explosion request; IdleWorthSending is the idle
 // syncer's change gate (it updates the entry's baseline on a yes). Game thread.
-void StampHostTrap(const AtvEntry& e, coop::net::AtvStatePayload& p);
+void StampHost(const AtvEntry& e, coop::net::AtvStatePayload& p);
 void TakeStampTrap(AtvEntry& e, bool stamped, bool owns);
 void NoteSyncerHealth(AtvEntry& e, uint8_t syncer, float health);
 bool IdleWorthSending(AtvEntry& e);

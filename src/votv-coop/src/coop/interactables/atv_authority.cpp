@@ -82,13 +82,14 @@ const char* ReasonName(AtvRefusal r) {
     case AtvRefusal::Seated:        return "seated";
     case AtvRefusal::Synced:        return "synced";
     case AtvRefusal::TakeoverPaced: return "takeover_paced";
+    case AtvRefusal::NoDriver:      return "no_driver";
     }
     return "unknown";
 }
 
 // One refusal of a request from `slot`: counted, and said once per burst.
 void Count(uint8_t slot, AtvRefusal r) {
-    ++g_counters.refused[static_cast<unsigned>(r) & 15u];
+    ++g_counters.refused[static_cast<unsigned>(r) & 31u];
     g_refusals.Note(slot, ReasonName(r), std::chrono::steady_clock::now());
 }
 
@@ -103,6 +104,7 @@ void Answer(coop::net::Session& s, uint8_t slot, const coop::net::WireKey& key, 
     a.admitted = why == AtvRefusal::Admitted ? 1 : 0;
     a.occupantSlot = e ? e->occupantSlot : kNoSeat;
     a.syncerSlot = e ? e->syncerSlot : uint8_t{0};
+    a.passengerSlot = e ? e->passengerSlot : kNoSeat;
     a.reason = static_cast<uint8_t>(why);
     if (why == AtvRefusal::Admitted) ++g_counters.admitted; else Count(slot, why);
     s.SendReliableToSlot(slot, coop::net::ReliableKind::AtvAnswer, &a, sizeof(a));
@@ -138,11 +140,22 @@ AtvRefusal ReachTest(coop::net::Session& s, uint8_t slot, void* actor) {
     }
 }
 
-// Whether `slot` sits in any ATV of the index.
+// Whether `slot` sits in any ATV of the index, at the handlebars or behind them.
 bool SeatedAnywhere(uint8_t slot) {
     for (const auto& kv : g_atvs)
-        if (kv.second.occupantSlot == slot && R::IsLiveByIndex(kv.second.actor, kv.second.idx)) return true;
+        if ((kv.second.occupantSlot == slot || kv.second.passengerSlot == slot) &&
+            R::IsLiveByIndex(kv.second.actor, kv.second.idx))
+            return true;
     return false;
+}
+
+// The table's tests for a passenger sit by `who`: one seat at a time, the spot free, and another player at the
+// handlebars. The spot is the riding kerfur's; a kerfur there gets off for the player (atv_riders.cpp).
+AtvRefusal PassengerTests(const AtvEntry& e, uint8_t who) {
+    if (SeatedAnywhere(who)) return AtvRefusal::AlreadySeated;
+    if (e.passengerSlot != kNoSeat) return AtvRefusal::Occupied;
+    if (e.occupantSlot == kNoSeat || e.occupantSlot == who) return AtvRefusal::NoDriver;
+    return AtvRefusal::Admitted;
 }
 
 // The table's tests for a sit by `who`: one seat at a time, and the seat free. `already_seated` comes first, as
@@ -212,8 +225,15 @@ void OnSeat(const coop::net::AtvSeatPayload& p, uint8_t slot) {
     if (!s) return;
     AtvEntry* e = Common(*s, slot, p.key, p.seq, p.action > 1);
     if (!e) return;
-    if (p.seat != 0) return Answer(*s, slot, p.key, p.seq, AtvRefusal::NoSeat, e);
+    if (p.seat > 1) return Answer(*s, slot, p.key, p.seq, AtvRefusal::NoSeat, e);
     const uint64_t nowMs = coop::atv_sync::NowMs();
+    if (p.seat == 1 && p.action == 0) {
+        // A passenger's leave, as the driver's: no token, and nothing else moves.
+        if (e->passengerSlot != slot) return Answer(*s, slot, p.key, p.seq, AtvRefusal::NotOccupant, e);
+        e->passengerSlot = kNoSeat;
+        e->stampDue = true;
+        return Answer(*s, slot, p.key, p.seq, AtvRefusal::Admitted, e);
+    }
     if (p.action == 0) {
         // A leave from the occupant clears the seat and takes no token; the syncer keeps its place.
         if (e->occupantSlot != slot) return Answer(*s, slot, p.key, p.seq, AtvRefusal::NotOccupant, e);
@@ -228,6 +248,13 @@ void OnSeat(const coop::net::AtvSeatPayload& p, uint8_t slot) {
     if (life == coop::players::PuppetLife::None) return Answer(*s, slot, p.key, p.seq, AtvRefusal::NoBody, e);
     if (!g_seatBuckets[slot].Take(kSeatBudget, nowMs))
         return Answer(*s, slot, p.key, p.seq, AtvRefusal::SeatPaced, e);
+    if (p.seat == 1) {
+        // A passenger takes the spot alone: the driver keeps the seat and the syncer.
+        AtvRefusal why = PassengerTests(*e, slot);
+        if (why == AtvRefusal::Admitted) why = ReachTest(*s, slot, e->actor);
+        if (why == AtvRefusal::Admitted) { e->passengerSlot = slot; e->stampDue = true; }
+        return Answer(*s, slot, p.key, p.seq, why, e);
+    }
     AtvRefusal why = SitTests(*e, slot);
     if (why == AtvRefusal::Admitted) why = ReachTest(*s, slot, e->actor);
     if (why == AtvRefusal::Admitted) Grant(*e, slot, /*seat*/true, /*carried*/false, nowMs);
@@ -280,6 +307,19 @@ bool JudgeLocal(AtvEntry& e, AtvRequest req) {
         return true;
     }
     return false;
+}
+
+bool JudgeLocalPassenger(AtvEntry& e, bool sit) {
+    if (!sit) {
+        if (e.passengerSlot != 0) return false;
+        e.passengerSlot = kNoSeat;
+        e.stampDue = true;
+        return true;
+    }
+    if (PassengerTests(e, 0) != AtvRefusal::Admitted) return false;
+    e.passengerSlot = 0;
+    e.stampDue = true;
+    return true;
 }
 
 bool IsLateSyncer(const AtvEntry& e, uint8_t slot, uint64_t nowMs) {
@@ -387,6 +427,7 @@ void RunPass(uint64_t nowMs) {
 
 void ClearTable(AtvEntry& e) {
     e.occupantSlot = kNoSeat;
+    e.passengerSlot = kNoSeat;
     e.syncerSlot = 0;
     e.lastBlockMs = 0;
     e.restSinceMs = 0;
@@ -416,7 +457,7 @@ void LogSummary() {
     unsigned long long refusedTotal = 0;
     char byReason[320] = {};
     size_t used = 0;
-    for (unsigned i = 1; i < 16; ++i) {
+    for (unsigned i = 1; i < 32; ++i) {
         const unsigned long long n = g_counters.refused[i];
         if (n == 0) continue;
         refusedTotal += n;

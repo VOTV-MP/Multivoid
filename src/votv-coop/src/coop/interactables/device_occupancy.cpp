@@ -3,6 +3,7 @@
 #include "coop/interactables/device_occupancy.h"
 
 #include "coop/comms/peer_action_feed.h"  // the busy-notice chat line (AnnounceDirect)
+#include "coop/interactables/atv_passenger.h"  // the passenger spot: the ask, and the use key while riding
 #include "coop/interactables/atv_sync.h"  // IsOccupiedByOther -> ATV seating deny gate
 #include "coop/interactables/desk_input_sync.h"  // PingActiveSlot, the desk FSM-hold
 #include "coop/net/session.h"
@@ -239,9 +240,20 @@ void OnUseInputPre(void* self, void*, void*) {
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
     if (!aimed) return;
 
-    // The ATV occupancy gate: if another peer is already seated on this ATV, deny seating.
+    // A passenger only looks around: the use key does nothing while it rides (or asks to).
+    if (coop::atv_passenger::Riding()) {
+        DS::ClearAimForDispatch(self);
+        return;
+    }
+
+    // The ATV occupancy gate: if another peer is already seated on this ATV, the press asks for the passenger spot
+    // behind them, and a spot that is taken too is denied.
     if (ue_wrap::atv::EnsureResolved() && ue_wrap::atv::IsAtv(aimed)) {
         uint8_t holder = 0xFF;
+        if (coop::atv_sync::IsOccupiedByOther(aimed, &holder) && coop::atv_passenger::OnUseAtOccupied(aimed)) {
+            DS::ClearAimForDispatch(self);
+            return;
+        }
         if (coop::atv_sync::IsOccupiedByOther(aimed, &holder)) {
             g_memoName = L"the ATV";
             g_memoKey = L"atv";

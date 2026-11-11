@@ -136,6 +136,9 @@ void* NearestAtv(const FVector& at, float reachCm);
 // dismount is what clears it. Game thread.
 void ForgetSittingKerfur(void* atv, void* kerfur);
 
+// The kerfur riding the ATV (`sittingKerfuro`), or null. Game thread.
+void* RidingKerfur(void* atv);
+
 // What the ATV's own sit and dismount do for the kerfurs, run on this copy with no player of its own in the seat.
 // InviteKerfurs puts `kerfurs` in `allKerfuros` and asks each to come (its own tryToOccupyCar): the first to reach the
 // ATV sits and turns the rest back. ReleaseKerfurs gets the rider off (its own getOffCar), turns back the rest
