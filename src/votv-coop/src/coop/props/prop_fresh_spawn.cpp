@@ -78,17 +78,16 @@ void* PropSetKeyFn() {
 void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
                   const std::wstring& classW, const std::wstring& keyW,
                   const std::wstring& propNameW, bool skipBind,
-                  void* (*resolve)(const wchar_t*)) {
+                  ue_wrap::class_resolve::Load load) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     if (!ResolveSpawnFns()) {
         UE_LOGW("remote_prop::OnSpawn: spawn UFunctions unresolved -- dropping");
         return nullptr;
     }
-    void* actorClass = resolve ? resolve(classW.c_str()) : R::FindClass(classW.c_str());
+    void* actorClass = ue_wrap::class_resolve::ResolveClass(classW.c_str(), ue_wrap::prop::PropFamily(), load).cls;
     if (!actorClass) {
-        UE_LOGW("remote_prop::OnSpawn: class '%ls' not found -- dropping (likely cooked-content class not loaded)",
-                classW.c_str());
+        UE_LOGW("remote_prop::OnSpawn: class '%ls' is not resolvable on this peer -- dropping", classW.c_str());
         return nullptr;
     }
     void* worldCtx = E::GetWorldContext();

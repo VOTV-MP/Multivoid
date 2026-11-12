@@ -135,12 +135,12 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
     coop::pile_look::OnHostLook(E, payload.look, senderSlot);
     if (!wantClump)
         coop::trash_clump_pose_stream::ClearDriveForEid(E);  // the carry ends at the land
-    // Host mirrors a client's convert with its world up -> object_index; a client keeps FindClass.
-    void* (*classResolve)(const wchar_t*) =
-        coop::prop_element_tracker::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
+    // The host mirrors a client's convert from the classes it holds (a client's name never makes it load); a
+    // client loads a class it has not, as the host named it. This call cannot park: it answers in place.
+    const ue_wrap::class_resolve::Load load = coop::prop_element_tracker::SessionIsHost()
+        ? ue_wrap::class_resolve::Load::LookupOnly : ue_wrap::class_resolve::Load::Immediate;
     void* next = coop::trash_mirror::Materialize(E, cls, payload.chipType, loc, rot, scale,
-                                                 senderSlot, /*skipBind=*/false, /*rebindInPlace=*/true,
-                                                 classResolve);
+                                                 senderSlot, /*skipBind=*/false, /*rebindInPlace=*/true, load);
     if (!next) {
         UE_LOGW("[PILE] CLIENT convert %s eid=%u -- materialize of '%ls' FAILED, E left as the old actor (DESYNC)",
                 edge, E, cls.c_str());

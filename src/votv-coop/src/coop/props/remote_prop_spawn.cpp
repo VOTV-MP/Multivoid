@@ -227,12 +227,6 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     using ue_wrap::Call;
     const std::wstring classW = ClassNameToWString(payload.className);
     const std::wstring keyW   = coop::remote_prop::KeyToWString(payload.key);
-    // The HOST mirrors a CLIENT's spawn with its world up, so it resolves the wire class name through
-    // object_index (a sender's unknown class is an O(1) miss, not a whole-array walk per distinct
-    // name); a CLIENT mirrors the host's spawn and keeps FindClass, its index able to trail a load.
-    // One resolver for every class lookup this spawn makes, on the host game thread.
-    void* (*classResolve)(const wchar_t*) =
-        coop::prop_element_tracker::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
     // The Aprop_C identity row (empty for a non-Aprop_C sender), for the fuzzy identity gate and
     // the pre-Finish write.
     const std::wstring propNameW = coop::remote_prop::KeyToWString(payload.propName);
@@ -251,12 +245,32 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 classW.c_str(), keyW.c_str());
         return;
     }
+    // The class, once, before anything is built. The HOST mirrors a CLIENT's spawn from the classes it holds:
+    // a client's name never makes it load (class_resolve::Load::LookupOnly). A CLIENT mirrors the host's spawn
+    // and loads a class it has not loaded, inside the per-tick load budget: past it the spawn is parked and
+    // runs again next tick. A caller that takes the actor back through outSpawned cannot wait, and loads at once.
+    // The calls below ask again under `load` and are answered from the resolver's cache.
+    namespace CR = ue_wrap::class_resolve;
+    const bool host = coop::prop_element_tracker::SessionIsHost();
+    const CR::Load load = host ? CR::Load::LookupOnly : CR::Load::Immediate;
+    if (CR::ResolveClass(classW.c_str(), ue_wrap::prop::PropFamily(),
+                         host ? CR::Load::LookupOnly : (outSpawned ? CR::Load::Immediate : CR::Load::Budgeted))
+            .state == CR::ClassState::Pending) {
+        const coop::net::PropSpawnPayload held = payload;
+        if (!CR::Park("PropSpawn", [held, senderSlot, fromConvert, deferKerfur, skipBind] {
+                OnSpawn(held, senderSlot, coop::players::Registry::Get().Local(), fromConvert, deferKerfur, nullptr,
+                        skipBind);
+            }))
+            UE_LOGW("remote_prop::OnSpawn: class '%ls' waits on a load and the park queue is full -- dropping",
+                    classW.c_str());
+        return;
+    }
     // The trash path: a chip pile, a garbage clump or a variant, mirrored as the GAME's own actor
     // with its brain parked -- coop/props/trash_morph_gate refuses the three verbs a trash actor
     // uses to author its own morph on a client. It branches before the Aprop_C dedupe, converge
     // and physics machinery, because a pile is keyless and carries its identity as an eid. With
     // skipBind, OnConvert binds the element itself.
-    if (ue_wrap::prop::IsTrashClassName(classW, classResolve)) {
+    if (ue_wrap::prop::IsTrashClassName(classW, load)) {
         // The sender's look of this pile, kept per eid: the bound actor takes it now, and an actor
         // bound later -- a pending own-save bind, a re-bind after GC churn -- takes it at the bind.
         coop::pile_look::OnHostLook(payload.elementId, payload.look, senderSlot);
@@ -272,7 +286,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 return;
             }
         }
-        const bool isClump = ue_wrap::prop::IsClumpClassName(classW, classResolve);
+        const bool isClump = ue_wrap::prop::IsClumpClassName(classW, load);
         const ue_wrap::FVector  loc{payload.locX, payload.locY, payload.locZ};
         const ue_wrap::FVector  scale{payload.scaleX, payload.scaleY, payload.scaleZ};
         const ue_wrap::FRotator rot{payload.rotPitch, payload.rotYaw, payload.rotRoll};
@@ -316,7 +330,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // itself (unless skipBind, OnConvert's), and the bind gives the pile the look kept above.
         void* mirror = coop::trash_mirror::Materialize(payload.elementId, classW, payload.chipType,
                                                        loc, rot, scale, senderSlot, skipBind,
-                                                       /*rebindInPlace=*/false, classResolve);
+                                                       /*rebindInPlace=*/false, load);
         if (!mirror) {
             UE_LOGW("remote_prop::OnSpawn: trash mirror spawn FAILED for eid=%u class='%ls'",
                     payload.elementId, classW.c_str());
@@ -571,7 +585,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // No local match anywhere: materialise a fresh mirror (prop_fresh_spawn); with skipBind,
     // OnConvert binds the element itself.
     void* spawned = coop::prop_fresh_spawn::Materialize(payload, senderSlot, classW, keyW,
-                                                        propNameW, skipBind, classResolve);
+                                                        propNameW, skipBind, load);
     if (spawned && outSpawned) *outSpawned = spawned;
 }
 

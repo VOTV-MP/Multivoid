@@ -14,6 +14,7 @@
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -107,7 +108,9 @@ TailVerdict JudgeTail(const SR::SaveRecord& tail, uint8_t slot, uint64_t arrival
         if (why) *why = "tail name missing or past its bound";
         return TailVerdict::Malformed;
     }
-    void* cls = tail.className.empty() ? nullptr : OI::ClassByName(tail.className.c_str());
+    void* cls = tail.className.empty() ? nullptr
+                 : ue_wrap::class_resolve::ResolveClass(tail.className.c_str(), ue_wrap::prop::PropFamily(),
+                                                        ue_wrap::class_resolve::Load::LookupOnly).cls;
     if (!cls) {
         if (why) *why = "tail class is not loaded here";
         return tail.className.empty() ? TailVerdict::Malformed : TailVerdict::Unavailable;
@@ -146,7 +149,8 @@ HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     puppet_ = (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;
     std::wstring name;
-    void* cls = OI::ClassByName(record.className.c_str());
+    void* cls = ue_wrap::class_resolve::ResolveClass(record.className.c_str(), ue_wrap::prop::PropFamily(),
+                                                    ue_wrap::class_resolve::Load::LookupOnly).cls;
     ue_wrap::FVector loc{};
     if (!puppet_ || !cls || !SR::RecordName(record, name) || !E::TryGetActorLocation(puppet_, loc)) {
         UE_LOGW("kerfur_disc_carry[host]: slot %u's disc has no puppet to stand in the hand of, or no class or name "
@@ -186,8 +190,8 @@ HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
     E::SetActorEnableCollision(actor, false);
     copy_.Set(actor);
     // The record goes onto the finished actor: its own loadData, the leaf half the game keeps (the disc's data and
-    // readWrites), resolved by the host's own class index.
-    if (!SR::ApplyRecord(actor, record, &OI::ClassByName)) {
+    // readWrites), resolved from the classes the host holds (a client's name never makes it load).
+    if (!SR::ApplyRecord(actor, record, SR::ClassLoad::LookupOnly)) {
         UE_LOGW("kerfur_disc_carry[host]: the record of slot %u's disc %ls did not apply -- not carried",
                 static_cast<unsigned>(slot), record.className.c_str());
         return;   // the destructor destroys the copy

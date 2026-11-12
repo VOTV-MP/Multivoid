@@ -146,8 +146,8 @@ inline void* GarbageClumpCls()  { return g_garbageClumpCls.load(std::memory_orde
 inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_order_acquire); }
 
 // The per-class-name trash kind: a spawn burst asks this once per prop, so each distinct class
-// name resolves once the verdict is kept; a name the resolver does not hold is asked again: one
-// lookup through ClassByName, a whole-array walk through the FindClass default. Game-thread
+// name resolves once the verdict is kept; a name the resolver does not hold is asked again (the
+// resolver remembers a known absence per world). Game-thread
 // serial (unless provably off the game thread; before its id is known every thread passes), so no
 // mutex. A verdict is kept only when it can no longer change: a
 // clump match, or both bases resolved. While a base is unresolved the verdict is returned and
@@ -155,7 +155,7 @@ inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_ord
 struct TrashClassKind { bool isTrash = false; bool isClump = false; };
 std::unordered_map<std::wstring, TrashClassKind> g_trashClassKind;
 
-TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
+TrashClassKind ResolveTrashClassKind(const std::wstring& className, class_resolve::Load load) {
     if (className.empty()) return {};
     // The map and the class lookup are game-thread state: a thread provably off the game thread
     // never reads the verdict map, so it is answered "not trash" whatever the game thread has
@@ -168,8 +168,9 @@ TrashClassKind ResolveTrashClassKind(const std::wstring& className, void* (*reso
         return {};
     }
     if (auto it = g_trashClassKind.find(className); it != g_trashClassKind.end()) return it->second;
-    void* cls = resolve ? resolve(className.c_str()) : R::FindClass(className.c_str());
-    if (!cls) return {};  // class not loaded yet -- do NOT memoise (it could load later)
+    const class_resolve::Resolved found = class_resolve::ResolveClass(className.c_str(), PropFamily(), load);
+    void* cls = found.cls;
+    if (!cls) return {};  // not Found (absent, refused or still pending) -- do NOT memoise
     // Only after the name resolves: an unknown name (an attacker's, say) returns above without paying
     // the base resolves, which are their own class-index lookups while a trash base is unloaded.
     ResolveExtraBases();
@@ -197,11 +198,11 @@ bool WalksToBase(void* cls, void* base) {
     return false;
 }
 
-bool IsTrashClassName(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
-    return ResolveTrashClassKind(className, resolve).isTrash;
+bool IsTrashClassName(const std::wstring& className, class_resolve::Load load) {
+    return ResolveTrashClassKind(className, load).isTrash;
 }
-bool IsClumpClassName(const std::wstring& className, void* (*resolve)(const wchar_t*)) {
-    return ResolveTrashClassKind(className, resolve).isClump;
+bool IsClumpClassName(const std::wstring& className, class_resolve::Load load) {
+    return ResolveTrashClassKind(className, load).isClump;
 }
 
 void* ChipPileClass() {
@@ -226,6 +227,11 @@ bool IsClassKeyedInteractable(void* cls) {
     return WalksToBase(cls, TrashBitsPileCls())
         || WalksToBase(cls, GarbageClumpCls())
         || WalksToBase(cls, ActorChipPileCls());
+}
+
+const class_resolve::Family& PropFamily() {
+    static const class_resolve::Family family{L"keyed interactable", nullptr, &IsClassKeyedInteractable};
+    return family;
 }
 
 bool IsKeyedInteractable(void* obj) {

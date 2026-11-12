@@ -17,7 +17,9 @@
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/floppy_disc.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_gather.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 
@@ -96,7 +98,8 @@ void ReadPutInputs(uint8_t slot, uint32_t eid, const SR::SaveRecord& record, boo
     std::wstring name;
     p.nameOk = prw::PutNameOk(record);
     if (!p.nameOk || !SR::RecordName(record, name)) return;
-    void* const cls = ue_wrap::object_index::ClassByName(record.className.c_str());
+    void* const cls = ue_wrap::class_resolve::ResolveClass(record.className.c_str(), ue_wrap::prop::PropFamily(),
+                                                         ue_wrap::class_resolve::Load::LookupOnly).cls;
     p.classResolved = cls != nullptr;
     p.propClass = SR::IsPropClass(cls);
     if (!p.classResolved || !p.propClass) return;
@@ -192,7 +195,8 @@ DoneCheck CheckPutDone(uint32_t eid, const SR::SaveRecord& committed, bool other
         why = "the container is not ready";
         return DoneCheck::NotReady;
     }
-    void* const cls = ue_wrap::object_index::ClassByName(committed.className.c_str());
+    void* const cls = ue_wrap::class_resolve::ResolveClass(committed.className.c_str(), ue_wrap::prop::PropFamily(),
+                                                         ue_wrap::class_resolve::Load::LookupOnly).cls;
     bool filtered = false;
     const bool filterRead = cls && ci::FilterHolds(ci::InventoryOf(coop::element::LivePropActor(eid)), cls, filtered);
     if (otherHolds) why = "another hold stands on it";

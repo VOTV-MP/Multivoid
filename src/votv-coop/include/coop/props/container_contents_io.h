@@ -23,10 +23,10 @@ enum class WriteResult : uint8_t {
     Refused,   // deliberately not written: a personal inventory, no allocator, or an alloc failure
 };
 
-// Write `recs` over the inventory's slice. `eid` is for the log lines only. `resolve` resolves each
-// record's class names (null = reflection::FindClass).
+// Write `recs` over the inventory's slice. `eid` is for the log lines only. `load` governs how each
+// record's class names resolve (a host applying a client's contents passes LookupOnly).
 WriteResult WriteRecords(uint32_t eid, void* inv,
                          const std::vector<ue_wrap::save_record::SaveRecord>& recs,
-                         ue_wrap::save_record::ClassResolver resolve);
+                         ue_wrap::save_record::ClassLoad load);
 
 }  // namespace coop::props::container_contents_io

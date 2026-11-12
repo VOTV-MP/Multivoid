@@ -15,6 +15,7 @@
 #pragma once
 
 #include "coop/net/protocol.h"
+#include "ue_wrap/core/class_resolve.h"
 
 #include <string>
 
@@ -25,13 +26,13 @@ namespace coop::prop_fresh_spawn {
 // morph binds eid E itself (RegisterPropMirror rebindInPlace) -- skip the default bind/index/
 // defer-hide tail. Returns the spawned actor, or nullptr on any failure (unresolved spawn fns /
 // unknown class / no world / engine call failure). Game thread only.
-// `resolve` governs the class-name lookup: null = reflection::FindClass (a whole-array walk on a
-// miss); the host receiving a CLIENT's spawn passes object_index::ClassByName so an attacker's
-// unknown class costs a lookup, not a walk. A client keeps the default (its index can trail a load).
+// The class is resolved by class_resolve::ResolveClass under `load`: the host receiving a CLIENT's spawn
+// passes LookupOnly (a class it has not loaded is a refused spawn, never a load); a client loads a class it
+// has not loaded, since the host sent it.
 void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
                   const std::wstring& classW, const std::wstring& keyW,
                   const std::wstring& propNameW, bool skipBind,
-                  void* (*resolve)(const wchar_t*) = nullptr);
+                  ue_wrap::class_resolve::Load load);
 
 // The Aprop_C-base setKey UFunction (resolved and cached; nullptr while the Aprop_C UClass is
 // not yet loaded -- the engine loads BP classes on demand, so it is retried per call).

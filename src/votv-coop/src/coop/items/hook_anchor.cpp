@@ -263,7 +263,7 @@ CommitResult SendCommit(uint16_t seq, H::Kind kind, void* hookActor) {
         // The host's hook IS the canonical one already -- it is not respawned, only named. The
         // record carries the minted key into it, and the two attached flags are re-asserted for
         // the same reason a client's adoption needs them.
-        if (!H::AdoptRecord(hookActor, applied, &ue_wrap::object_index::ClassByName)) {
+        if (!H::AdoptRecord(hookActor, applied, ue_wrap::save_record::ClassLoad::LookupOnly)) {
             UE_LOGW("hook_anchor: loadData refused on the host's own hook seq %u", (unsigned)seq);
             return CommitResult::Failed;
         }
@@ -334,7 +334,7 @@ void OnCommitChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         return;
     }
     const SaveRecord applied = Arbitrate(rec, senderSlot, seq, kind, H::MaxDistOf(actor));
-    if (!H::AdoptRecord(actor, applied, &ue_wrap::object_index::ClassByName)) {
+    if (!H::AdoptRecord(actor, applied, ue_wrap::save_record::ClassLoad::LookupOnly)) {
         UE_LOGW("hook_anchor: loadData refused on the canonical hook for slot %u seq %u",
                 (unsigned)senderSlot, (unsigned)seq);
         E::DestroyActor(actor);

@@ -89,12 +89,13 @@ bool DestroyIfOurs(void* actor) {
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
                   const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace,
-                  void* (*resolve)(const wchar_t*)) {
+                  ue_wrap::class_resolve::Load load) {
     UE_ASSERT_GAME_THREAD("trash_mirror::Materialize");
-    void* cls = className.empty() ? nullptr
-                : (resolve ? resolve(className.c_str()) : R::FindClass(className.c_str()));
+    void* cls = className.empty()
+        ? nullptr
+        : ue_wrap::class_resolve::ResolveClass(className.c_str(), ue_wrap::prop::PropFamily(), load).cls;
     if (!cls) {
-        UE_LOGW("[PILE] trash_mirror: class '%ls' not loaded -- cannot materialize native eid=%u",
+        UE_LOGW("[PILE] trash_mirror: class '%ls' is not resolvable on this peer -- cannot materialize native eid=%u",
                 className.c_str(), eid);
         return nullptr;
     }

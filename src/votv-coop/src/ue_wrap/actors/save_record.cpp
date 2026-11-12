@@ -2,6 +2,7 @@
 
 #include "ue_wrap/actors/save_record.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/fstring_utils.h"
@@ -46,7 +47,7 @@ std::wstring ReadClassNameAt(const void* base, int32_t off) {
     void* cls = nullptr;
     std::memcpy(&cls, reinterpret_cast<const uint8_t*>(base) + off, sizeof(void*));
     if (!PlausibleObjPtr(cls) || !R::IsLive(cls)) return {};
-    return R::ToString(R::NameOf(cls));  // leaf name; re-resolved via FindClass on apply
+    return R::ToString(R::NameOf(cls));  // leaf name; re-resolved through class_resolve on apply
 }
 std::array<float, 10> ReadXformAt(const void* base, int32_t off) {
     ue_wrap::FTransform t{};
@@ -71,12 +72,13 @@ void ReadGroups(const void* save, int32_t off, int32_t elemSize, std::vector<V>&
     }
 }
 
-// Resolve `leaf` through `resolve` (null = FindClass) and write the UClass (or null) at `dst`.
+// Resolve `leaf` through class_resolve under `load` and write the UClass (or null) at `dst`.
 // Returns false ONLY when a non-empty name did not resolve, so WriteSaveRecord can count the misses
 // and say them once per record rather than once per leaf: a crafted record's `classes` group is
 // thousands of unknown names, and a line each turned the write into its own flood.
-bool WriteClassField(void* dst, const std::wstring& leaf, ClassResolver resolve) {
-    void* cls = leaf.empty() ? nullptr : (resolve ? resolve(leaf.c_str()) : R::FindClass(leaf.c_str()));
+bool WriteClassField(void* dst, const std::wstring& leaf, ClassLoad load) {
+    void* cls = leaf.empty() ? nullptr
+                : ue_wrap::class_resolve::ResolveClass(leaf.c_str(), ue_wrap::prop::PropFamily(), load).cls;
     std::memcpy(dst, &cls, sizeof(void*));
     return cls || leaf.empty();
 }
@@ -178,11 +180,11 @@ void ReadSaveRecord(const void* base, SaveRecord& rec) {
     }
 }
 
-void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) {
+void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassLoad load) {
     int classMiss = 0;          // non-empty class leaves that did not resolve, said once below
     std::wstring firstMiss;     // the first one's name, so an honest single miss is still debuggable
     auto noteMiss = [&](const std::wstring& leaf) { if (firstMiss.empty()) firstMiss = leaf; ++classMiss; };
-    if (!WriteClassField(base + kSave_class, r.className, resolve)) noteMiss(r.className);
+    if (!WriteClassField(base + kSave_class, r.className, load)) noteMiss(r.className);
     ue_wrap::FTransform t;  // identity defaults; we set all 10 packed floats
     t.RotX = r.xform[0]; t.RotY = r.xform[1]; t.RotZ = r.xform[2]; t.RotW = r.xform[3];
     t.TX = r.xform[4]; t.TY = r.xform[5]; t.TZ = r.xform[6];
@@ -198,7 +200,7 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassResolver resolve) 
     WriteGroups(base, kSave_strings, 16, r.strings,
                 [](uint8_t* e, const std::wstring& v) { ue_wrap::fstring_utils::MintFString(v, e); });
     WriteGroups(base, kSave_classes, 8, r.classes,
-                [&](uint8_t* e, const std::wstring& v) { if (!WriteClassField(e, v, resolve)) noteMiss(v); });
+                [&](uint8_t* e, const std::wstring& v) { if (!WriteClassField(e, v, load)) noteMiss(v); });
     // One line per record, not per leaf. A record with a null class is an item the game cannot
     // materialise, said out loud rather than lost -- but a crafted `classes` group is thousands of
     // unknown names, and the old per-leaf line was its own flood on exactly that input. The first
@@ -433,7 +435,7 @@ bool IsPropClass(void* cls) {
     return cls && EnsurePropClass() && R::IsDescendantOfAny(cls, &g_propCls, 1);
 }
 
-bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
+bool ApplyRecord(void* actor, const SaveRecord& r, ClassLoad load) {
     const ApplyingScope applying;
     if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
@@ -476,7 +478,7 @@ bool ApplyRecord(void* actor, const SaveRecord& r, ClassResolver resolve) {
     const int32_t off = f.ParamOffset(L"data");
     if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
     // The frame arrives zeroed, which is WriteSaveRecord's stated precondition.
-    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged, resolve);
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged, load);
     return Call(actor, f);
 }
 
@@ -485,7 +487,7 @@ bool CaptureRecordVia(void* actor, void* recordFn, SaveRecord& out) {
     return CallForRecord(actor, recordFn, out);
 }
 
-bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassResolver resolve) {
+bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassLoad load) {
     if (!actor || !loadFn) return false;
     ParamFrame f(loadFn);
     const int32_t off = f.ParamOffset(L"data");
@@ -493,7 +495,7 @@ bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassResolve
     // The slot must be zeroed before WriteSaveRecord: it constructs engine-owned TArrays in place
     // and reads nothing, so a dirty slot would leave the engine dereferencing whatever was there.
     std::memset(static_cast<uint8_t*>(f.data()) + off, 0, static_cast<size_t>(kSaveRecordBytes));
-    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r, resolve);
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r, load);
     return Call(actor, f);
 }
 

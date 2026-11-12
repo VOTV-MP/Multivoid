@@ -24,6 +24,7 @@
 #include "coop/props/container_birth.h"           // a thrown container's birth slice
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
+#include "ue_wrap/core/class_resolve.h"          // the one class lookup, lookup-only for a client's name
 #include "ue_wrap/core/cached_obj_ref.h"          // dev::LastClientPlaceSpawn
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
 #include "ue_wrap/core/fname_utils.h"            // StringToFName
@@ -234,9 +235,10 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
 // authoritative spawn to every peer. Returns the spawned actor, or null.
 void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::wstring& cls,
                           const std::wstring& key, uint8_t authorSlot) {
-    // Host resolving a CLIENT's placed-prop class: object_index, so an attacker's unknown class is an
-    // O(1) miss, not a whole-array walk. Host world is always up, so the index is current.
-    void* clsObj = ue_wrap::object_index::ClassByName(cls.c_str());
+    // Host resolving a CLIENT's placed-prop class: lookup only, so a client's name never makes the host load and an
+    // unknown class is an index miss.
+    void* clsObj = ue_wrap::class_resolve::ResolveClass(cls.c_str(), ue_wrap::prop::PropFamily(),
+                                                         ue_wrap::class_resolve::Load::LookupOnly).cls;
     if (!clsObj) {
         UE_LOGW("[PROP-DROP] HOST class '%ls' not found -- cannot spawn placed prop key='%ls'",
                 cls.c_str(), key.c_str());
@@ -643,8 +645,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     // (the socket unplug), drives, floppy discs and server upgrades (a box's take-out). Not a general
     // client-spawn door; any other class here is a protocol violation, dropped.
     const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
-    // Host resolving a CLIENT's eject class: object_index, host world up so the index is current.
-    void* clsObj = ue_wrap::object_index::ClassByName(cls.c_str());
+    // Host resolving a CLIENT's eject class: lookup only (a client's name never makes the host load).
+    void* clsObj = ue_wrap::class_resolve::ResolveClass(cls.c_str(), ue_wrap::prop::PropFamily(),
+                                                         ue_wrap::class_resolve::Load::LookupOnly).cls;
     const bool isReel = clsObj && ue_wrap::tape_caddy::EnsureResolved() &&
                         ue_wrap::tape_caddy::IsReelClass(clsObj);
     const bool isModule = clsObj && ue_wrap::phys_mods::EnsureResolved() &&

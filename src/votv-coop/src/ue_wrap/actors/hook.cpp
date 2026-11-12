@@ -4,6 +4,7 @@
 
 #include "ue_wrap/actors/prop.h"        // GetStaticMesh: the O(1) answer to a component name
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/fname_utils.h"    // StringToFName: the Kinds' names, and the component lookup's
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -92,7 +93,6 @@ bool     g_resolved   = false;
 bool     g_latchedOff = false;
 int      g_attempts   = 0;
 uint64_t g_nextTryMs  = 0;
-uint64_t g_nextClassTryMs[static_cast<size_t>(Kind::Count)] = {};   // ClassForKind's retry clock
 
 // Five passes with a class in hand is a version mismatch, not a load-order wait: the members are
 // declared on the class we just found.
@@ -292,15 +292,14 @@ Kind KindOf(void* actor) {
 void* ClassForKind(Kind k) {
     const size_t i = static_cast<size_t>(k);
     if (i >= static_cast<size_t>(Kind::Count)) return nullptr;
-    // A variant loads with the assets that use it, which can be after the resolve that found hook_C,
-    // while KindOf already names its instances; a class still missing is asked for again, at most once
-    // a second, since a lookup that misses walks every object.
+    // A variant loads with the assets that use it, which can be after the resolve that found hook_C, while
+    // KindOf already names its instances: the resolver loads a variant this peer has not loaded. The kind's
+    // name comes from this table and no wire, so the table is the bound; the caller returns the mirror's
+    // actor at once, so the load is not parked.
     if (!g_classes[i] && g_resolved) {
-        const uint64_t now = NowMs();
-        if (now >= g_nextClassTryMs[i]) {
-            g_nextClassTryMs[i] = now + 1000;
-            g_classes[i] = R::FindClass(kClassNames[i]);
-        }
+        const auto r = class_resolve::ResolveClass(kClassNames[i], class_resolve::AnyFamily(),
+                                                   class_resolve::Load::Immediate);
+        if (r.state == class_resolve::ClassState::Found) g_classes[i] = r.cls;
     }
     return g_classes[i];
 }
@@ -348,7 +347,7 @@ void* SpawnMirror(Kind kind, const FVector& aLoc, const FRotator& aRot) {
         const size_t i = static_cast<size_t>(kind);
         if (i < static_cast<size_t>(Kind::Count) && !sSaid[i]) {
             sSaid[i] = true;
-            UE_LOGW("hook: no mirror for kind %u -- its class has not loaded in this world", (unsigned)i);
+            UE_LOGW("hook: no mirror for kind %u -- its class is not resolvable on this peer", (unsigned)i);
         }
         return nullptr;
     }
@@ -452,9 +451,9 @@ bool CaptureRecord(void* hookActor, SR::SaveRecord& out) {
     return SR::CaptureRecordVia(hookActor, g_fnGetData, out);
 }
 
-bool AdoptRecord(void* hookActor, const SR::SaveRecord& r, SR::ClassResolver resolve) {
+bool AdoptRecord(void* hookActor, const SR::SaveRecord& r, SR::ClassLoad load) {
     if (!hookActor || !g_resolved) return false;
-    if (!SR::ApplyRecordVia(hookActor, g_fnLoadData, r, resolve)) return false;
+    if (!SR::ApplyRecordVia(hookActor, g_fnLoadData, r, load)) return false;
 
     // processKeys is what turns the two saved attach KEYS into this world's two actors and
     // re-attaches; without it the record is a pose and nothing else.
@@ -578,7 +577,6 @@ void ResetCache() {
     g_latchedOff = false;
     g_attempts = 0;
     g_nextTryMs = 0;
-    for (auto& t : g_nextClassTryMs) t = 0;
 }
 
 }  // namespace ue_wrap::hook

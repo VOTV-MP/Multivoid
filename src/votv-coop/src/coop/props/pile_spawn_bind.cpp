@@ -172,7 +172,8 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
     // from g_pileBindIndex on a match (lines below), which the non-mutating index-return kernel cannot
     // model; keep it inline. The 1cm + ambiguous(>1)->skip policy is the same as the shared kernel.
     constexpr float kBindR2Cm = coop::save_time_retire_util::kExactMatchR2Cm;  // 1 cm^2 -- bit-exact twin
-    const bool wantClump = ue_wrap::prop::IsClumpClassName(classW);
+    // The class was resolved by remote_prop_spawn::OnSpawn before this runs: a lookup, never a load.
+    const bool wantClump = ue_wrap::prop::IsClumpClassName(classW, ue_wrap::class_resolve::Load::LookupOnly);
     int matchCount = 0, matchIdx = -1;
     for (int i = 0; i < static_cast<int>(g_pileBindIndex.size()); ++i) {
         const auto& c = g_pileBindIndex[i];

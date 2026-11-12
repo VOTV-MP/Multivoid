@@ -43,7 +43,7 @@ EditResult Resolve(uint32_t eid, void*& outInv) {
 EditResult Commit(uint32_t eid, void* inv, const std::vector<SR::SaveRecord>& recs, const char* what,
                   size_t index) {
     if (recs.size() > cw::kMaxRecords) return EditResult::Refused;
-    switch (cio::WriteRecords(eid, inv, recs, &ue_wrap::object_index::ClassByName)) {
+    switch (cio::WriteRecords(eid, inv, recs, SR::ClassLoad::LookupOnly)) {
         case cio::WriteResult::NotReady: return EditResult::NotReady;
         case cio::WriteResult::Refused:  return EditResult::Refused;
         case cio::WriteResult::Written:  break;

@@ -325,13 +325,11 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!actor) return false;
     if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
     // The HOST applies only a CLIENT's record here (its receive edge refuses a canonical from a
-    // client), with its world up and the object index current: it resolves the record's class names
-    // through object_index so an unknown name is an O(1) miss, not a whole-array walk. A CLIENT
-    // applies only the host's own record, possibly mid-load with the index trailing, so it keeps the
-    // authoritative FindClass walk.
-    const SR::ClassResolver resolve =
-        PT::SessionIsHost() ? &ue_wrap::object_index::ClassByName : nullptr;
-    if (!SR::ApplyRecord(actor, rec, resolve)) return false;
+    // client): it resolves the record's class names from the classes it holds, so a client's name
+    // never makes it load (LookupOnly). A CLIENT applies only the host's own record, and loads a class
+    // it has not loaded.
+    const SR::ClassLoad load = PT::SessionIsHost() ? SR::ClassLoad::LookupOnly : SR::ClassLoad::Immediate;
+    if (!SR::ApplyRecord(actor, rec, load)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
     // The author's record has LANDED, so the host may publish this key again, and does so here, from

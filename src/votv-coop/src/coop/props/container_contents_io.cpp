@@ -34,7 +34,7 @@ bool ReadRecords(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested)
 }
 
 WriteResult WriteRecords(uint32_t eid, void* inv, const std::vector<SR::SaveRecord>& recs,
-                         SR::ClassResolver resolve) {
+                         SR::ClassLoad load) {
     if (!ci::IsWorldInventory(inv)) {           // BOUNDARY 1 (fail-closed)
         UE_LOGW("container_contents: eid=%u resolves to a PERSONAL inventory (or an unresolvable "
                 "Player flag) -- refusing to apply", eid);
@@ -59,7 +59,7 @@ WriteResult WriteRecords(uint32_t eid, void* inv, const std::vector<SR::SaveReco
     }
     for (int32_t i = 0; i < n; ++i)
         SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride,
-                            recs[i], resolve);
+                            recs[i], load);
     // The previous buffer is orphaned: freeing the nested sub-arrays, minted FStrings and signal
     // rows recursively is far more crash-prone than leaking them, and the engine never double-frees
     // a buffer it has lost. inventory::ApplyToSaveObject orphans the same way once per join; this
