@@ -331,8 +331,30 @@ void RouteTick(void* player) {
         ue_wrap::FVector at{};
         void* const sack = g_c.sack.Get();
         if (!sack || !E::TryGetActorLocation(sack, at)) return Skip("the sack mirror's place is unread");
-        UE_LOGI("[SACK-DRILL] client put eid=%u: grabbed; carrying it to the sack", eid);
-        g_c.walk = D::StartBackgroundWalk(at, kSackReachCm, kWalkDeadlineS, true);
+        // The hold point is the camera plus its forward times the hold length, so the camera's height over the window's
+        // middle (kOverAimCm above the sack's origin) and that length fix both the pitch and how far from the sack the
+        // carrier must stand: horizontal = sqrt(hold^2 - drop^2) (the sister hold loop's derivation,
+        // container_intent_drill_throw_into_hold.cpp HoldStandCm).
+        E::MainPlayerGrabState grip{};
+        if (!E::ReadMainPlayerGrabState(player, grip) || grip.grabLen <= 0.f) return Skip("the hold length is unread");
+        const float hold = grip.grabLen, drop = E::GetCameraLocation().Z - (at.Z + kOverAimCm);
+        if (std::fabs(drop) >= hold) {
+            char why[112];
+            std::snprintf(why, sizeof(why), "the hold of %.0f cm cannot reach the window from a camera %.0f cm above it", hold, drop);
+            return Skip(why);
+        }
+        g_c.standCm = std::sqrt(hold * hold - drop * drop);
+        g_c.planPitch = -std::asin(drop / hold) * (180.f / 3.14159265f);
+        ue_wrap::FVector me{};
+        if (!E::TryGetActorLocation(player, me)) return Skip("the player's place is unread");
+        // The stand is on the side the carrier is already on, at that distance from the sack's origin.
+        float ux = me.X - at.X, uy = me.Y - at.Y;
+        const float len = std::hypot(ux, uy);
+        if (len < 1.f) { ux = 1.f; uy = 0.f; } else { ux /= len; uy /= len; }
+        const ue_wrap::FVector stand{at.X + ux * g_c.standCm, at.Y + uy * g_c.standCm, me.Z};
+        UE_LOGI("[SACK-DRILL] client put eid=%u: grabbed; carrying it to %.0f cm from the sack (hold %.0f cm, camera %.0f cm "
+                "above the window's middle, planned pitch %.1f)", eid, g_c.standCm, hold, drop, g_c.planPitch);
+        g_c.walk = D::StartBackgroundWalk(stand, kStandReachCm, kWalkDeadlineS, true);
         GoPut(Put::Carry);
         return;
     }
@@ -381,15 +403,18 @@ void RouteTick(void* player) {
             if (speed < g_c.bestSpeed) g_c.bestSpeed = speed;
             if (speed > kSettledCmS) return;   // over the sack, still swinging: wait for it to settle in the hand
             if (!D::CallOnPlayer(player, L"dropGrabObject")) return Skip("dropGrabObject did not run");
-            UE_LOGI("[SACK-DRILL] client put eid=%u: release at flat=%.0f above=%.0f at rest (%.1f cm/s)", eid, flat, above,
-                    speed);
+            UE_LOGI("[SACK-DRILL] client put eid=%u: release at flat=%.0f above=%.0f at rest (%.1f cm/s), pitch %.1f (planned %.1f), "
+                    "stood %.0f cm out (planned %.0f)", eid, flat, above, speed, E::GetControlRotation(ctrl).Pitch, g_c.planPitch,
+                    std::hypot(me.X - sa.X, me.Y - sa.Y), g_c.standCm);
             g_c.letGo = true;
             GoPut(Put::Settle);
             return;
         }
         if (++g_c.aimTicks > kAimTicks) {
-            char why[96];
-            std::snprintf(why, sizeof(why), "closest flat=%.0f above=%.0f", g_c.bestFlat, g_c.bestAbove);
+            char why[160];
+            std::snprintf(why, sizeof(why), "closest flat=%.0f above=%.0f, pitch %.1f (planned %.1f), stood %.0f cm out (planned %.0f)",
+                          g_c.bestFlat, g_c.bestAbove, E::GetControlRotation(ctrl).Pitch, g_c.planPitch,
+                          std::hypot(me.X - sa.X, me.Y - sa.Y), g_c.standCm);
             return Skip(why);
         }
         // A small step: the angle between where the held prop is and where it should be, as seen from the camera.
