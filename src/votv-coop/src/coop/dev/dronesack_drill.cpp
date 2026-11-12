@@ -16,6 +16,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/container_act_request.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
@@ -58,6 +59,7 @@ namespace E  = ue_wrap::engine;
 namespace EL = coop::element;
 namespace R  = ue_wrap::reflection;
 namespace UP = ue_wrap::prop;
+namespace AR = coop::props::container_act_request;
 namespace SR = ue_wrap::save_record;
 namespace CI = ue_wrap::container_inventory;
 using namespace detail;
@@ -168,6 +170,13 @@ bool Arm(bool isHost) {
     if (!g_containerCls) g_containerCls = R::FindClass(L"prop_container_C");
     if (Mode() >= 2 && !g_propCls) g_propCls = R::FindClass(LooseClass());
     g_armed = g_containerCls != nullptr && (Mode() < 2 || g_propCls != nullptr);
+    // Arm 2's red (CLIENT, container_overlap_no_cancel): this client's cancel of an overlap put on the shared mirror is
+    // skipped, so the sack's call runs on the client and its destroy takes the host's copy with no record: the verdict FAILs.
+    static const bool noCancel = coop::config::ResolveFlag(::coop::config_registry::rows::container_overlap_no_cancel);
+    if (g_armed && !isHost && Mode() == 2 && noCancel) {
+        AR::dev::NoOverlapCancel(true);
+        UE_LOGW("[SACK-DRILL] client RED: the overlap put on the shared mirror is not cancelled (container_overlap_no_cancel)");
+    }
     return g_armed;
 }
 

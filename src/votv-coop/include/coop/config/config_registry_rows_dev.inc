@@ -585,7 +585,7 @@ CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_
     "calls the drone; both peers take the container census around the sale and log the crate's "
     "inventory index and which containers hold it afterwards. Arms 1 and 3 judge nothing; arm 2 passes when every prop that "
     "left the floor is a record in the host's drone container at the call (VOTVCOOP_SACK_PROP=drive: zip disks "
-    "instead of cups). Lines tagged [SACK-DRILL] and "
+    "instead of cups), as rig: VERDICT dronesack-arm2; its red is container_overlap_no_cancel=1 on the client. Lines tagged [SACK-DRILL] and "
     "[SACK-CENSUS]. 4 -- arm 3, with the client walking to the sack and opening its screen before the sale; at the "
     "host's sale marker it presses the first slot, a player's take, which is an act, so the press races the sale's "
     "publication. Both peers judge it: the take is refused Gone and nothing comes out, and the sack stays at 0 on "
