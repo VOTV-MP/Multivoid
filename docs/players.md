@@ -201,8 +201,22 @@ the game's own factor, with food and coffee settled to the rate they would have 
 in a bed or fainted, dreaming in a nightmare) with the bed's class name goes from a client to the
 host, which relays it to every other client; the host's own sleeping flag goes to the clients, which show
 one chat line naming the host when it rises. A joiner is sent the host's flag and every peer's
-state that is not awake, and a leaver is told to every client as awake. A client holds its
-nightmare chance at zero, so a nightmare is a roll of the host's machine alone. `[?]`
+state that is not awake, and a leaver is told to every client as awake.
+
+A nightmare is one player's. The game rolls for one every 500 s of sleep counted in world time,
+which the host's sleep runs at 20 and a client's rest keeps at 1, so on a client the game's own
+roll would come once in 500 real seconds, past the end of any rest. A client's roll is held at
+zero and the mod rolls in its place every 25 real seconds of a rest, the host's pace, with the
+chance the game would use: the bed's own, 0.15 with no bed, none when the save turns nightmares
+off. A win runs the game's own wake and dream, on that player's machine alone: only that player
+is woken and teleported into the dream, and every other player sleeps on. A dream is spawned far
+outside the map, so on every other machine the dreamer's copy is hidden while its rest state
+says it dreams (`coop/player/nightmare_roll`). `[V]` for a client's nightmare beside a sleeping
+host, and a host's beside an awake client (the nightmare drill, two runs), and by hand with three
+peers: a client's nightmares played out beside two sleepers, and two clients in different
+nightmares at once, each machine hiding the right dreamer. Any running event ends a dream, the
+game's own rule, and a client counts the host world's events too. A host's dream spawns props
+that are mirrored to every client where it was spawned, far outside the map.
 
 ### Inventory
 
@@ -329,7 +343,7 @@ host. A setting that holds a password is never set or shown by command.
 | damage from contact | the victim's machine | other bodies' impact entries are cancelled |
 | damage from enemies | the host detects, the victim applies | a reliable relay to the hit peer |
 | death and revive | that peer | the native chain; the run-ending travel refused by its author |
-| sleep | each peer sleeps natively; each peer reports its rest state, the host relays it and its own sleeping flag | |
+| sleep | each peer sleeps natively; each peer reports its rest state, the host relays it and its own sleeping flag; a client's nightmare roll is the mod's, at the host's pace | |
 | inventory | that peer; the host stores it | never on the wire as gameplay |
 | roster, kick, ban | the host | rows asserted as state; a ban by id and address at the identity proof |
 
@@ -382,7 +396,7 @@ dead peer through the ragdoll bit of its next pose.
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
 | leaving during an event | `coop/player/leave_in_event` |
-| sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest` |
+| sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest`, `coop/player/nightmare_roll`, `harness/autotest/autotest_nightmare.cpp` (the drill) |
 | inventory | `coop/items/player_inventory_sync` |
 | moderation | `coop/moderation/moderation`, `coop/moderation/ban_list`, `coop/moderation/seen_players` |
 | tests | `harness/autotest/autotest_death.cpp` (the drill) + `death_state_probe.cpp` (the reads it and `autotest_runend.cpp` share), `autotest_damage.cpp`, `autotest_playerdmg.cpp`, `autotest_ragdoll.cpp`, `autotest_puppetframe.cpp` |

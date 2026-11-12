@@ -462,6 +462,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/signal_catch_sync.cpp
     src/coop/player/sleep_rest.cpp
     src/coop/player/sleep_sync.cpp
+    src/coop/player/nightmare_roll.cpp
     src/coop/creatures/wisp_attack_sync.cpp
     src/coop/creatures/wisp_grab_hold.cpp
     src/coop/creatures/wisp_tear_mirror.cpp
@@ -704,6 +705,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_woodchipper.cpp
     src/harness/autotest/autotest_class_resolve.cpp
     src/harness/autotest/autotest_prop_props.cpp
+    src/harness/autotest/autotest_nightmare.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

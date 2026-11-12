@@ -230,4 +230,6 @@ DWORD WINAPI DeskShortThread(LPVOID arg);
 // VOTVCOOP_RUN_WORLD_SOUND, both peers -- harness/autotest/autotest_world_sound.cpp
 // world_sound_drill, both peers -- harness/autotest/autotest_world_sound.cpp
 DWORD WINAPI WorldSoundThread(LPVOID arg);
+// VOTVCOOP_RUN_NIGHTMARE, both peers -- harness/autotest/autotest_nightmare.cpp
+DWORD WINAPI NightmareThread(LPVOID arg);
 }  // namespace harness::autotest
