@@ -77,11 +77,13 @@ bool Resolve() {
 
 // MakeHitResult's value for a blocking hit on `component` of `actor` at `location`, `size` bytes into `hit`. False
 // when the call fails or the hit does not name what it was built on.
-bool Build(void* actor, void* component, const FVector& location, uint8_t* hit, int32_t size) {
+bool Build(void* actor, void* component, const FVector& location, uint8_t* hit, int32_t size,
+           void* physMaterial = nullptr) {
     ParamFrame f(g_makeFn);
     if (!f.valid() || !f.Set<bool>(L"bBlockingHit", true) || !f.Set<void*>(L"HitActor", actor) ||
         !f.Set<void*>(L"HitComponent", component))
         return false;  // ParamFrame logs a name it does not know
+    if (physMaterial && !f.Set<void*>(L"PhysMat", physMaterial)) return false;
     f.Set<FVector>(L"Location", location);
     f.Set<FVector>(L"ImpactPoint", location);
     if (!Call(g_cdo, f)) {
@@ -91,7 +93,8 @@ bool Build(void* actor, void* component, const FVector& location, uint8_t* hit, 
     // Weak pointers and names only: the bytes are the whole value, with nothing to release.
     if (!f.GetRaw(L"ReturnValue", hit, size)) return false;
     // A hit that does not name what it was built on would send the call somewhere else.
-    if (!Names(hit, Member::Component, component) || !Names(hit, Member::Actor, actor)) {
+    if (!Names(hit, Member::Component, component) || !Names(hit, Member::Actor, actor) ||
+        (physMaterial && !Names(hit, Member::PhysMaterial, physMaterial))) {
         UE_LOGW("hit_result: not built: the hit does not resolve back (component=%d actor=%d)",
                 Names(hit, Member::Component, component) ? 1 : 0, Names(hit, Member::Actor, actor) ? 1 : 0);
         return false;
@@ -101,7 +104,8 @@ bool Build(void* actor, void* component, const FVector& location, uint8_t* hit, 
 
 }  // namespace
 
-bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component, const FVector& location) {
+bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component, const FVector& location,
+           void* physMaterial) {
     if (!Resolve() || !frame.valid()) {
         UE_LOGW("hit_result: not built (GameplayStatics CDO=%d MakeHitResult=%d HitResult struct=%d frame=%d)",
                 g_cdo ? 1 : 0, g_makeFn ? 1 : 0, g_hitStruct ? 1 : 0, frame.valid() ? 1 : 0);
@@ -114,7 +118,7 @@ bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component
         return false;
     }
     std::vector<uint8_t> hit(static_cast<size_t>(size));
-    return Build(actor, component, location, hit.data(), size) && frame.SetRaw(param, hit.data(), size);
+    return Build(actor, component, location, hit.data(), size, physMaterial) && frame.SetRaw(param, hit.data(), size);
 }
 
 bool WriteField(void* object, const wchar_t* field, void* actor, void* component, const FVector& location) {
