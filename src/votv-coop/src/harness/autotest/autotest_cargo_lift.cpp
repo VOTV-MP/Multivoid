@@ -145,9 +145,9 @@ bool Step(bool hostPresses, const std::string& name) {
     PS::Mark((name + "_" + Who()).c_str(), mineText);
     std::string other;
     if (!PS::AwaitText((name + "_" + Other()).c_str(), other, kStepBound)) return false;
-    int odir = -1;
-    float oz = 0.f;
-    std::sscanf(other.c_str(), "%d %f", &odir, &oz);
+    char* rest = nullptr;
+    const int odir = static_cast<int>(std::strtol(other.c_str(), &rest, 10));
+    const float oz = std::strtof(rest, nullptr);
     ++g_checks;
     const bool ok = v.dir == wanted && !v.moving && odir == (v.dir ? 1 : 0) && std::fabs(oz - v.platformZ) < 20.f;
     if (!ok) ++g_failed;
