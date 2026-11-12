@@ -29,6 +29,7 @@ constexpr int32_t kFrostDataIndex = 1;
 struct ClassInfo {
     bool    food = false;
     int32_t temperature = -1, ripeness = -1, uses = -1, celsius = -1, steam = -1, impact = -1;
+    int32_t poisonDelay = -1, poisonStrength = -1;
     int32_t frozenOff = -1;   // tempLessThan0 is a Blueprint bool: one bit of a byte it may share with its neighbours
     uint8_t frozenMask = 0;
 };
@@ -58,6 +59,8 @@ ClassInfo& InfoOf(void* cls) {
         info.celsius = R::FindPropertyOffset(cls, L"celsius");
         info.steam = R::FindPropertyOffset(cls, L"eff_steam");
         info.impact = R::FindPropertyOffset(cls, L"physicsImpact");
+        info.poisonDelay = R::FindPropertyOffset(cls, L"poison_delay");
+        info.poisonStrength = R::FindPropertyOffset(cls, L"poison_strength");
         if (!R::FindBoolProperty(cls, L"tempLessThan0", info.frozenOff, info.frozenMask) || !info.frozenMask) {
             info.frozenOff = -1;
             info.frozenMask = 0;
@@ -145,6 +148,26 @@ bool Write(void* actor, const Condition& in) {
     std::memcpy(base + info.ripeness, &in.ripeness, sizeof(float));
     std::memcpy(base + info.uses, &in.uses, sizeof(int32_t));
     std::memcpy(base + info.celsius, &c, sizeof(float));
+    return true;
+}
+
+bool ReadPoison(void* actor, Poison& out) {
+    if (!IsFood(actor)) return false;
+    const ClassInfo& info = InfoOf(R::ClassOf(actor));
+    if (info.poisonDelay < 0 || info.poisonStrength < 0) return false;
+    const auto* base = static_cast<const uint8_t*>(actor);
+    std::memcpy(&out.delay, base + info.poisonDelay, sizeof(float));
+    std::memcpy(&out.strength, base + info.poisonStrength, sizeof(float));
+    return true;
+}
+
+bool WritePoison(void* actor, const Poison& in) {
+    if (!IsFood(actor)) return false;
+    const ClassInfo& info = InfoOf(R::ClassOf(actor));
+    if (info.poisonDelay < 0 || info.poisonStrength < 0) return false;
+    auto* base = static_cast<uint8_t*>(actor);
+    std::memcpy(base + info.poisonDelay, &in.delay, sizeof(float));
+    std::memcpy(base + info.poisonStrength, &in.strength, sizeof(float));
     return true;
 }
 

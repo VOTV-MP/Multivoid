@@ -15,6 +15,15 @@ struct Condition {
     int32_t uses = 0;
 };
 
+// What a bite of the food adds as a foodPoison effect: `poison_delay` and `poison_strength`, floats on prop_food_C that
+// only the MRE's `spawn` writes (on the one content it poisons). Zero is a food with none, which the bite's own test
+// (both above 0) reads as clean. A class with its own poison fields (prop_food_poison_C: poisonStrength, poisonDelay,
+// class defaults) has these two unresolved, and a food of it reads and writes nothing here.
+struct Poison {
+    float delay = 0.f;
+    float strength = 0.f;
+};
+
 // True for prop_food_C and every class below it; the answer is kept per class.
 bool IsFoodClass(void* cls);
 bool IsFood(void* actor);
@@ -24,6 +33,11 @@ bool Read(void* actor, Condition& out);
 
 // Writes the condition, and `celsius`, which the tick derives from the temperature and a copy refused its tick never derives.
 bool Write(void* actor, const Condition& in);
+
+// The poison fields, apart from the condition: a writer that knows only the condition (a hand's copy, a release) must
+// not zero them. False when the actor is not a live food or its class has no such fields.
+bool ReadPoison(void* actor, Poison& out);
+bool WritePoison(void* actor, const Poison& in);
 
 // What the tick paints from the temperature, for a copy whose tick is off: the steam above 50 C and, across 0 C, the
 // frozen flag, the mesh's frost, the impact material, the impact's sound and the class's freezed. A frozen edge is

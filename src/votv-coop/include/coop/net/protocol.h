@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 284;
+inline constexpr uint16_t kProtocolVersion = 285;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1212,9 +1212,10 @@ enum class ReliableKind : uint16_t {
     // edge; never relayed; not pre-world. Late join: none, a refusal is an act; a joiner gets the kept hold's
     // stream. PropHoldRefusedPayload.
     PropHoldRefused = 210,
-    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move. A client's food is refused its tick
-    // at the gate, so these are its values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's
-    // budget. FoodStatePayload.
+    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move, and its poison (the two floats a
+    // bite adds as an effect), which every send carries. A client's food is refused its tick at the gate, so these are its
+    // values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's budget, poison included.
+    // FoodStatePayload.
     FoodState = 217,
     // CLIENT->HOST: this client's player bit a world food. Its copy ran the bite; the host takes one use off its own
     // count and the next FoodState answers. Not relayed, not pre-world. Late join: none. FoodBitePayload.
@@ -2082,12 +2083,14 @@ static_assert(sizeof(PropHoldRefusedPayload) <= 256 - 20 - 8,
               "PropHoldRefusedPayload must fit in one reliable datagram");
 // A world food's condition (FoodState): the food by key, and the three fields its tick and its bites move.
 struct FoodStatePayload {
-    WireKey key;          // 32 -- the food's Key
-    float   temperature;  // 4  -- kelvin
-    float   ripeness;     // 4
-    int32_t uses;         // 4
+    WireKey key;             // 32 -- the food's Key
+    float   temperature;     // 4  -- kelvin
+    float   ripeness;        // 4
+    int32_t uses;            // 4
+    float   poisonDelay;     // 4  -- prop_food_C's poison_delay, 0 when the food carries none: the host's value, and
+    float   poisonStrength;  // 4  -- its poison_strength; a client's FoodRelease sends both as 0 and the host ignores them
 };
-static_assert(sizeof(FoodStatePayload) == 44, "FoodStatePayload must be 44 bytes");
+static_assert(sizeof(FoodStatePayload) == 52, "FoodStatePayload must be 52 bytes");
 static_assert(sizeof(FoodStatePayload) <= 256 - 20 - 8, "FoodStatePayload must fit in one reliable datagram");
 
 // A client's bite of a world food (FoodBite).

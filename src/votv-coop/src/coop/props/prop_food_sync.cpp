@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_food_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/element/intent_authority.h"
 #include "coop/net/session.h"
@@ -194,17 +196,28 @@ void FillKey(const std::wstring& key, coop::net::WireKey& out) {
         out.data[out.len++] = static_cast<char>(key[i]);  // save keys are ASCII
 }
 
-coop::net::FoodStatePayload StatePayload(const std::wstring& key, const F::Condition& now) {
+// Every FoodState carries the food's current poison, read from the actor at the send: the birth (a new food's first
+// send), a change (the next send after a condition moves) and the join (DrainOwed) all pass here, so no send of its own
+// is needed. The only writer of the two fields is the MRE's `spawn` (prop_food_mre.cpp), which writes them on the
+// content it has just spawned, inside the call that births it, so the food's first send already holds them. The poll
+// below compares the condition only: a writer that set poison later on a food already sent would not be announced.
+coop::net::FoodStatePayload StatePayload(const std::wstring& key, void* actor, const F::Condition& now) {
     coop::net::FoodStatePayload p{};
     FillKey(key, p.key);
     p.temperature = now.temperature;
     p.ripeness = now.ripeness;
     p.uses = now.uses;
+    static const bool poisonOff = coop::config::ResolveFlag(coop::config_registry::rows::food_state_poison_off);
+    F::Poison poison;
+    if (!poisonOff && F::ReadPoison(actor, poison)) {
+        p.poisonDelay = poison.delay;
+        p.poisonStrength = poison.strength;
+    }
     return p;
 }
 
-bool Publish(coop::net::Session& s, const std::wstring& key, const F::Condition& now) {
-    const coop::net::FoodStatePayload p = StatePayload(key, now);
+bool Publish(coop::net::Session& s, const std::wstring& key, void* actor, const F::Condition& now) {
+    const coop::net::FoodStatePayload p = StatePayload(key, actor, now);
     if (!s.SendReliable(coop::net::ReliableKind::FoodState, &p, sizeof(p))) return false;
     g_sent[key] = {now};
     ++g_published;
@@ -213,8 +226,8 @@ bool Publish(coop::net::Session& s, const std::wstring& key, const F::Condition&
 
 // One slot's copy put back to the host's value. Not a publish: g_sent stays as it is, since every other peer already
 // holds what it records.
-bool PublishToSlot(coop::net::Session& s, int slot, const std::wstring& key, const F::Condition& now) {
-    const coop::net::FoodStatePayload p = StatePayload(key, now);
+bool PublishToSlot(coop::net::Session& s, int slot, const std::wstring& key, void* actor, const F::Condition& now) {
+    const coop::net::FoodStatePayload p = StatePayload(key, actor, now);
     return s.SendReliableToSlot(slot, coop::net::ReliableKind::FoodState, &p, sizeof(p));
 }
 
@@ -229,7 +242,7 @@ void DrainOwed(coop::net::Session& s) {
             void* const actor = coop::prop_key_index::Find(keys[at]);
             F::Condition now;
             if (actor && F::IsFood(actor) && !coop::hand_item::IsHandAxisActor(actor) && F::Read(actor, now)) {
-                if (!PublishToSlot(s, slot, keys[at], now)) break;
+                if (!PublishToSlot(s, slot, keys[at], actor, now)) break;
                 ++sends;
             }
             ++at;
@@ -258,7 +271,7 @@ void PollHost(coop::net::Session& s) {
         if (key.empty()) continue;
         const auto it = g_sent.find(key);
         if (it != g_sent.end() && !Moved(it->second.condition, now)) continue;
-        if (Publish(s, key, now)) ++sends;
+        if (Publish(s, key, actor, now)) ++sends;
     }
 }
 
@@ -267,6 +280,10 @@ bool Apply(const std::wstring& key, const coop::net::FoodStatePayload& p) {
     if (!actor || !F::IsFood(actor)) return false;
     if (coop::hand_item::IsHandAxisActor(actor)) return true;  // the hand owns it; its record carries it onward
     F::Write(actor, {p.temperature, p.ripeness, p.uses});
+    // The poison goes onto the copy with its condition, so it is there for any bite that reads it. A food's FoodState
+    // follows its PropSpawn on the host's ordered lane: it applies the moment the mirror exists, or waits in g_pending and
+    // applies when it is bound. The window left is the host's poll between the mirror's bind and the food's first send.
+    F::WritePoison(actor, {p.poisonDelay, p.poisonStrength});
     F::PaintLooks(actor);
     ++g_applied;
     return true;
@@ -317,7 +334,7 @@ void Answer(coop::net::Session& s, int slot) {
     void* const actor = coop::prop_key_index::Find(l.answerKey);
     F::Condition condition;
     if (actor && F::IsFood(actor) && !coop::hand_item::IsHandAxisActor(actor) && F::Read(actor, condition) &&
-        PublishToSlot(s, slot, l.answerKey, condition))
+        PublishToSlot(s, slot, l.answerKey, actor, condition))
         l.nextAnswer = now + kSayGap;
     l.answerKey.clear();
 }
@@ -359,7 +376,7 @@ void TakeRelease(coop::net::Session& s, int slot, const std::wstring& key, void*
                  const coop::net::FoodStatePayload& p) {
     const F::Condition condition{p.temperature, p.ripeness, p.uses};
     F::Write(actor, condition);
-    Publish(s, key, condition);
+    Publish(s, key, actor, condition);
     UE_LOGI("prop_food_sync: slot %d let go of '%ls' -- condition taken", slot, key.c_str());
 }
 
@@ -583,7 +600,7 @@ void OnBite(int senderSlot, const coop::net::FoodBitePayload& p) {
         return;
     }
     F::Write(actor, condition);
-    Publish(*s, key, condition);
+    Publish(*s, key, actor, condition);
 }
 
 void OnRelease(int senderSlot, const coop::net::FoodStatePayload& p) {

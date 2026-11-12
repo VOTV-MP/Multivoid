@@ -452,7 +452,9 @@ A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls
 ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the
 script gate (`coop/props/food_tick_gate`: `prop_food_C.ReceiveTick` and the four subclasses that declare their own, a
 switch on the actor's tick being undone by the food's `init` and the coffee cup's BeginPlay) and takes the host's
-temperature, ripeness and uses, sent when they move. A client's bite runs on its copy, for its own hunger and effects, and goes to the host as `FoodBite`; the host
+temperature, ripeness and uses, sent when they move, and the two poison fields a bite reads (written only by an MRE's
+`spawn`, on the content it poisons; every FoodState carries them, so a content's birth, a change and a join all deliver them
+and the SP save record, which holds none, is not their carrier). A client's bite runs on its copy, for its own hunger and effects, and goes to the host as `FoodBite`; the host
 judges it within 400 uu of the sender's body (the door's and the coffee's reach) and takes at most one bite per 200 ms
 from a slot, and its count answers. A bite it refuses changes nothing there and is answered with the food's own
 `FoodState` to that slot, once a second at most, which puts the client's count back; the client's hunger and effects
@@ -492,7 +494,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class, key, id, transform, physics flags, the birth scalar; the key and id |
 | `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, the hold it closes and the throw sequence (0 = not a throw); a client's goes through the host, which clamps it and sends it on |
 | `PropHoldRefused` | the host to every client | a hold the host refused, by its holder's slot and generation, the prop's key, and the slot whose hold keeps the prop |
-| `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, ripeness and uses; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
+| `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, ripeness, uses and poison; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
 | `PropPropsIntent`, `PropPropsState` | a client to the host; the host to all, or to the sender alone for a refusal | a client's press of the prop-properties tool with the tool's four values; a prop's static, frozen and sleep read back from the host's copy, or the reason the press was refused `[?]` |
 | `PropDrivePose` (stream) | the host to all; a syncing client to the host | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation; a client's rows of the prop its own interaction moves, which the host judges before it relays one `[?]` |
 | `PropDriveEnd` | the host to all; a syncing client to the host | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation; a client's End is admitted when it is the row's syncer `[?]` |
