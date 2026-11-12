@@ -1396,12 +1396,12 @@ enum class ReliableKind : uint16_t {
     // pre-world (a pre-world copy waits for its index). A client presses its own copy to the direction, once that copy
     // has stopped. Late join: the connect snapshot sends every indexed lift's direction at the joiner's world-ready edge.
     // KeyedTogglePayload; its action is the direction (1 up, 0 down).
-    CargoLiftState = 256,
+    CargoLiftState = 241,
     // CLIENT->HOST: a client pressed the cargo lift's call button; its action is the direction the press wants. The host
     // resolves the lift by its key, judges the sender's reach and that its own lift is not moving, and presses it; the
     // run reaches every peer as CargoLiftState. Never relayed; not pre-world; a press whose sender has no body on the
     // host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload.
-    CargoLiftIntent = 257,
+    CargoLiftIntent = 242,
 };
 
 #pragma pack(push, 1)
