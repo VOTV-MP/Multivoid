@@ -16,6 +16,7 @@
 
 #include "ue_wrap/core/log.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -33,18 +34,43 @@ constexpr int kSignalSec = 240;   // a step of the other peer
 constexpr int kLiveSec = 120;     // the probe's watches settle with the world
 constexpr int kWalkSec = 420;     // the other peer's director walk
 
+// What the observing peer waits for, bounded, after the actor's signal and before it reads its own copy: the actor's
+// act reaching this copy is a state, and a copy it never reaches is the measurement.
+enum class Settle { None, FuelMoves, HonkPress, HonkRelease };
+
 struct Step {
     const char* name;
     ActFn       run;
+    bool        drainBefore;   // both peers set the ATV's fuel low on their own copy first, so a gain starts from it
+    Settle      settle;
+    const char* extra;         // appended to the MEASURE line
 };
 
 const Step kClientSteps[] = {
-    {"can", &PourCan}, {"toolbox", &UseToolbox}, {"fit", &FitModule}, {"take", &TakeModuleOff}, {"sit", &Sit},
-    {"lights", &Lights}, {"brake", &Brake}, {"turbo", &Turbo}, {"honk", &Honk}, {"leave", &Leave},
+    {"can", &PourCan, true, Settle::FuelMoves, ""},
+    {"overlap", &DropCanInFuelbox, true, Settle::FuelMoves, ""},
+    {"toolbox", &UseToolbox, false, Settle::None, ""},
+    {"fit", &FitModule, false, Settle::None, ""},
+    {"take", &TakeModuleOff, false, Settle::None, ""},
+    {"sit", &Sit, false, Settle::None, ""},
+    {"lights", &Lights, false, Settle::None, ""},
+    {"brake", &Brake, false, Settle::None, ""},
+    {"turbo", &Turbo, false, Settle::None, ""},
+    {"honk", &Honk, false, Settle::None, ""},
+    {"idleburn_client", &IdleBurn, false, Settle::None, "driven_by=client"},
+    {"leave", &Leave, false, Settle::None, ""},
 };
 const Step kHostSteps[] = {
-    {"host_can", &PourCan}, {"host_toolbox", &UseToolbox}, {"host_sit", &Sit}, {"host_lights", &Lights},
-    {"host_brake", &Brake}, {"host_turbo", &Turbo}, {"host_honk", &Honk},
+    {"host_can", &PourCan, true, Settle::FuelMoves, ""},
+    {"host_toolbox", &UseToolbox, false, Settle::None, ""},
+    {"honkreplay_press", &HonkReplayPress, false, Settle::HonkPress, ""},
+    {"honkreplay_release", &HonkReplayRelease, false, Settle::HonkRelease, ""},
+    {"host_sit", &Sit, false, Settle::None, ""},
+    {"host_lights", &Lights, false, Settle::None, ""},
+    {"host_brake", &Brake, false, Settle::None, ""},
+    {"host_turbo", &Turbo, false, Settle::None, ""},
+    {"host_honk", &Honk, false, Settle::None, ""},
+    {"idleburn_host", &IdleBurn, false, Settle::None, "driven_by=host"},
 };
 
 void Invalid(const std::string& why) { RV::Say(kTag, RV::Outcome::Invalid, "%s", why.c_str()); }
@@ -66,46 +92,83 @@ std::string Move(float a, float b) {
     return buf;
 }
 
-// `actor` is this peer's step to do; `issued` is whether the act was issued (the actor's word, for an observer); `acted`
-// is both, this peer having done it. An act that was not issued says why.
-void Measure(const char* step, bool actor, bool issued, const std::string& why, const PR::Counts& c0, const PR::Counts& c1,
-             const Vitals& v0, const Vitals& v1) {
-    UE_LOGI("[ATVG-DRILL] MEASURE %s role=%s actor=%d acted=%d issued=%d sg=%s pe=%s fuel=%s health=%s modules=%d>%d "
-            "seated=%d%s%s", step, harness::autotest::IsClientRole() ? "client" : "host", actor ? 1 : 0,
-            actor && issued ? 1 : 0, issued ? 1 : 0, Delta(c0, c1, true).c_str(), Delta(c0, c1, false).c_str(),
-            Move(v0.fuel, v1.fuel).c_str(), Move(v0.health, v1.health).c_str(), v0.modules, v1.modules,
-            v1.seated ? 1 : 0, issued ? "" : " why=", issued ? "" : why.c_str());
+// fuelUp's script-gate calls told by their caller: gascanFuel's, and any other frame's (the fuelbox's overlap event).
+std::string FuelUpCallers(const PR::Counts& a, const PR::Counts& b) {
+    const uint32_t viaPour = b.fuelUpFromGascanFuel - a.fuelUpFromGascanFuel;
+    const uint32_t other = b.fuelUpOtherCaller - a.fuelUpOtherCaller;
+    if (!viaPour && !other) return "";
+    return " fuelUp_by=gascanFuel:" + std::to_string(viaPour) + ",other:" + std::to_string(other);
 }
 
-PR::Counts Counts() {
-    PR::Counts c;
-    OnGt([&] { c = PR::Snapshot(); });
-    return c;
+// `actor` is this peer's step to do; `issued` is whether the act was issued (the actor's word, for an observer); `acted`
+// is both, this peer having done it. An act that was not issued says why.
+void Measure(const Step& s, bool actor, bool issued, const std::string& why, const PR::Counts& c0, const PR::Counts& c1,
+             const Vitals& v0, const Vitals& v1) {
+    UE_LOGI("[ATVG-DRILL] MEASURE %s role=%s actor=%d acted=%d issued=%d sg=%s pe=%s fuel=%s health=%s modules=%d>%d "
+            "seated=%d alt=%d>%d fly=%d>%d hasFly=%d%s%s%s%s%s", s.name,
+            harness::autotest::IsClientRole() ? "client" : "host", actor ? 1 : 0, actor && issued ? 1 : 0, issued ? 1 : 0,
+            Delta(c0, c1, true).c_str(), Delta(c0, c1, false).c_str(), Move(v0.fuel, v1.fuel).c_str(),
+            Move(v0.health, v1.health).c_str(), v0.modules, v1.modules, v1.seated ? 1 : 0, v0.alt, v1.alt, v0.fly, v1.fly,
+            v1.hasFly, FuelUpCallers(c0, c1).c_str(), *s.extra ? " " : "", s.extra, issued ? "" : " why=",
+            issued ? "" : why.c_str());
 }
 
 constexpr const char kFailPrefix[] = "fail: ";
+constexpr int        kSettleS = 3;
 
-// One step. The actor does the act, then signals "ok" or "fail: <why>"; the other peer reads its own counts at the
-// signal. Both print the MEASURE line for the window. An act that could not be issued is measured and the run goes on:
-// its step name is added to `unissued`. False only when a signal never came (the verdict is said by peer_signal).
+// The observer's bounded wait for the actor's act to reach its copy (see Settle).
+void WaitSettle(const Step& s, const std::wstring& key, const PR::Counts& c0, const Vitals& v0) {
+    if (s.settle == Settle::None) return;
+    PS::WaitFor("the actor's act reaches this copy", kSettleS, [&] {
+        const PR::Counts c = ProbeCounts();
+        switch (s.settle) {
+        case Settle::FuelMoves: return std::fabs(ReadVitals(key).fuel - v0.fuel) > 0.5f;
+        case Settle::HonkPress: return c.gate[PR::kHonkPress] + c.pe[PR::kHonkPress] > c0.gate[PR::kHonkPress] + c0.pe[PR::kHonkPress];
+        case Settle::HonkRelease:
+            return c.gate[PR::kHonkRelease] + c.pe[PR::kHonkRelease] > c0.gate[PR::kHonkRelease] + c0.pe[PR::kHonkRelease];
+        default: return true;
+        }
+    }, false);
+}
+
+// One step. A step that starts from a drained tank has both peers drain their own copy and say so before the act. The
+// actor does the act, then signals "ok" or "fail: <why>" (an "ok" may carry a note for the observer); the other peer waits
+// for its settle state and reads its own counts. Both print the MEASURE line for the window. An act that could not be
+// issued is measured and the run goes on: its step name is added to `unissued`. False only when a signal never came or
+// the drain failed (the verdict is said).
 bool RunStep(const Step& s, bool iAct, const std::wstring& key, std::string& unissued) {
     const std::string done = std::string(s.name) + "_done";
     const std::string seen = std::string(s.name) + "_seen";
-    const PR::Counts c0 = Counts();
-    const Vitals v0 = ReadVitals(key);
+    const std::string ready = std::string(s.name) + "_ready";
     std::string why;
+    if (s.drainBefore) {
+        if (!Drain(key, why)) {
+            Invalid(std::string("step '") + s.name + "': " + why);
+            return false;
+        }
+        if (iAct) {
+            if (!PS::Await(ready.c_str(), kSignalSec)) return false;
+        } else {
+            PS::Mark(ready.c_str());
+        }
+    }
+    const PR::Counts c0 = ProbeCounts();
+    const Vitals v0 = ReadVitals(key);
     bool issued = false;
     if (iAct) {
         issued = s.run(key, why);
-        Measure(s.name, true, issued, why, c0, Counts(), v0, ReadVitals(key));
-        PS::Mark(done.c_str(), issued ? std::string("ok") : kFailPrefix + why);
+        Measure(s, true, issued, why, c0, ProbeCounts(), v0, ReadVitals(key));
+        const std::string note = TakeNote();
+        PS::Mark(done.c_str(), issued ? "ok" + (note.empty() ? std::string() : " " + note) : kFailPrefix + why);
         if (!PS::Await(seen.c_str(), kSignalSec)) return false;
     } else {
         std::string result;
         if (!PS::AwaitText(done.c_str(), result, kSignalSec)) return false;
-        issued = result == "ok";
+        issued = result == "ok" || result.compare(0, 3, "ok ") == 0;
         if (!issued) why = result.compare(0, sizeof(kFailPrefix) - 1, kFailPrefix) == 0 ? result.substr(sizeof(kFailPrefix) - 1) : result;
-        Measure(s.name, false, issued, why, c0, Counts(), v0, ReadVitals(key));
+        WaitSettle(s, key, c0, v0);
+        Measure(s, false, issued, why, c0, ProbeCounts(), v0, ReadVitals(key));
+        if (issued && result.size() > 3) ObserveNote(s.name, result.substr(3));
         PS::Mark(seen.c_str());
     }
     if (!issued) unissued += std::string(unissued.empty() ? "" : ", ") + s.name;

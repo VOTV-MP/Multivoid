@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -26,6 +27,9 @@ enum Fn : int {
 struct Counts {
     uint32_t gate[kFnCount] = {};
     uint32_t pe[kFnCount] = {};
+    // fuelUp's script-gate calls by caller: gascanFuel's, or any other frame (the fuelbox's overlap event).
+    uint32_t fuelUpFromGascanFuel = 0;
+    uint32_t fuelUpOtherCaller = 0;
 };
 
 bool Enabled();                       // the row, latched
@@ -40,6 +44,11 @@ bool AllLive();
 
 // The counts so far, which coop/dev/atv_gate_drill reads around each step. Game thread.
 Counts Snapshot();
+
+// The ATV's health at the entry of each toolboxFix call since the last clear (at most 256), so one held repair shows how
+// many calls it makes and what each does. Game thread.
+void ClearToolboxTrace();
+std::vector<float> ToolboxTrace();
 
 // Session end: the totals are said and cleared.
 void OnDisconnect();

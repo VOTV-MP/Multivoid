@@ -12,6 +12,7 @@
 
 #include "atv_seat.h"  // co-located private header
 
+#include "harness/autotest.h"   // IsClientRole
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/dev/atv_gate_probe.h"
@@ -22,16 +23,22 @@
 #include "coop/interactables/atv_sync.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_key_index.h"
+#include "coop/props/prop_syncer.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -40,7 +47,6 @@
 #include <vector>
 
 namespace coop::dev::atv_gate_drill::detail {
-namespace {
 
 namespace PS = harness::autotest::peer_signal;
 namespace PR = coop::dev::atv_gate_probe;
@@ -52,15 +58,11 @@ using ue_wrap::FVector;
 
 constexpr float kReachCm = 220.f;      // the walk ends this near the ATV's root: its body is wider than that, so the player stands beside it
 constexpr int   kWalkS = 300;
-constexpr int   kAnswerS = 6;          // the game answers a fire press within this, or it did not
 constexpr int   kToolboxHoldS = 30;    // the toolbox fixes while the key is held, for the ATV's own fix time
 constexpr int   kEffectS = 3;          // a state the answer changed shows within this
 constexpr int   kSlotS = 15;           // the upgrades screen's module slot exists within this of the verb
-constexpr float kLowFuel = 20.f;
 constexpr float kLowHealth = 50.f;
-constexpr float kCanFuel = 100.f;      // a gas can's hold record loads empty without it
 constexpr int   kToolboxFixes = 10;    // the toolbox class default; its hold record carries none
-constexpr const wchar_t* kCanClass = L"prop_gascan_C";
 constexpr const wchar_t* kToolboxClass = L"prop_toolbox_C";
 constexpr const wchar_t* kModuleRow = L"atvup_lights";
 constexpr const wchar_t* kModuleClass = L"prop_atvUpgrade_bigLights_C";
@@ -129,7 +131,7 @@ bool HandEmpty() {
 }
 
 // The item in the local hand as a pick leaves it (drill_hand), waited for. Null `cls` empties the hand.
-bool TakeHand(const wchar_t* row, const wchar_t* cls, const float* fuel = nullptr) {
+bool TakeHand(const wchar_t* row, const wchar_t* cls, const float* fuel) {
     bool took = false;
     OnGt([&] { took = coop::dev::drill_hand::TakeIntoHandNow(row, cls, fuel); });
     if (!took) return false;
@@ -192,7 +194,7 @@ bool Rose(const PR::Counts& base, std::initializer_list<PR::Fn> fns) {
     return false;
 }
 
-PR::Counts Counts() {
+PR::Counts ProbeCounts() {
     PR::Counts c;
     OnGt([&] { c = PR::Snapshot(); });
     return c;
@@ -201,7 +203,7 @@ PR::Counts Counts() {
 // The fire key down, held until the game answers one of `fns` (or `boundS`), then let go. False when the key did not
 // dispatch; `answered` says whether the game answered.
 bool HoldFire(std::initializer_list<PR::Fn> fns, int boundS, bool& answered) {
-    const PR::Counts base = Counts();
+    const PR::Counts base = ProbeCounts();
     bool pressed = false;
     OnGt([&] { pressed = DR::PressInputEvent(Me(), g_firePress); });
     if (!pressed) return false;
@@ -221,7 +223,37 @@ bool Lower(const std::wstring& key, std::string& why) {
     return ok;
 }
 
-}  // namespace
+// The director walks the local player to within `reachCm` of `at`; `carry` keeps what the hand holds (the walk set
+// without ClearHand). `what` names the goal in the log and in `why`.
+bool WalkTo(const FVector& at, float reachCm, bool carry, const char* what, std::string& why) {
+    std::shared_ptr<DR::BackgroundWalk> walk;
+    OnGt([&] { walk = DR::StartBackgroundWalk(at, reachCm, kWalkS, carry); });
+    UE_LOGI("[ATVG-DRILL] walking to the %s at (%.0f,%.0f,%.0f)", what, at.X, at.Y, at.Z);
+    PS::WaitFor("the director's walk", kWalkS + 60, [&] { return walk->state.load() != 0; }, false);
+    if (walk->state.load() != 1) {
+        DR::CancelBackgroundWalk(*walk);
+        why = std::string("the director's walk to the ") + what + " did not arrive";
+        return false;
+    }
+    return true;
+}
+
+const char* RoleName() { return harness::autotest::IsClientRole() ? "client" : "host"; }
+
+// A bool property's value on `o`, or -1 when the class has no such field.
+int ReadBoolField(void* o, const wchar_t* name) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!o || !R::FindBoolProperty(R::ClassOf(o), name, off, mask) || off < 0) return -1;
+    return (*(static_cast<const uint8_t*>(o) + off) & mask) != 0 ? 1 : 0;
+}
+
+
+// A pointer property of `o` by name, or null.
+void* ObjProp(void* o, const wchar_t* name) {
+    const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
+    return off < 0 ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(o) + off);
+}
 
 Vitals ReadVitals(const std::wstring& key) {
     Vitals v;
@@ -233,6 +265,9 @@ Vitals ReadVitals(const std::wstring& key) {
         const int32_t off = R::FindPropertyOffset(R::ClassOf(atv), L"modules");
         if (off >= 0) v.modules = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(atv) + off + 8);
         v.seated = coop::atv_sync::ActorSeatedBy(coop::players::Registry::Get().LocalPeerId()) == atv;
+        v.alt = ReadBoolField(atv, L"input_alt");
+        v.fly = ReadBoolField(atv, L"fly");
+        v.hasFly = ReadBoolField(atv, L"hasFly");
     });
     return v;
 }
@@ -279,16 +314,7 @@ bool WalkToAtv(const std::wstring& key, std::string& why) {
         why = "the ATV's place does not read";
         return false;
     }
-    std::shared_ptr<DR::BackgroundWalk> walk;
-    OnGt([&] { walk = DR::StartBackgroundWalk(at, kReachCm, kWalkS); });
-    UE_LOGI("[ATVG-DRILL] walking to the ATV at (%.0f,%.0f,%.0f)", at.X, at.Y, at.Z);
-    PS::WaitFor("the director's walk to the ATV", kWalkS + 60, [&] { return walk->state.load() != 0; }, false);
-    if (walk->state.load() != 1) {
-        DR::CancelBackgroundWalk(*walk);
-        why = "the director's walk to the ATV did not arrive";
-        return false;
-    }
-    return true;
+    return WalkTo(at, kReachCm, false, "ATV", why);
 }
 
 // ---- the acts on the held item ----
@@ -323,12 +349,25 @@ bool UseToolbox(const std::wstring& key, std::string& why) {
         return false;
     }
     if (!AimAtAtv(key, why)) return false;
+    OnGt([] { PR::ClearToolboxTrace(); });
     bool answered = false;
     if (!HoldFire({PR::kToolboxFix}, kToolboxHoldS, answered)) {
         why = "the fire key did not dispatch";
         return false;
     }
     PS::WaitFor("the health rises", kEffectS, [&] { return ReadVitals(key).health > kLowHealth + 0.5f; }, false);
+    // The repeat: how many toolboxFix calls one hold makes, and the ATV's health as each call is entered.
+    std::vector<float> trace;
+    OnGt([&] { trace = PR::ToolboxTrace(); });
+    std::string steps;
+    for (size_t i = 0; i < trace.size() && i < 12; ++i) {
+        char b[24];
+        std::snprintf(b, sizeof(b), "%s%.1f", i ? "," : "", static_cast<double>(trace[i]));
+        steps += b;
+    }
+    UE_LOGI("[ATVG-DRILL] MEASURE toolboxcalls role=%s calls=%u health_at_each_call=%s%s final=%.1f", RoleName(),
+            static_cast<unsigned>(trace.size()), steps.empty() ? "-" : steps.c_str(), trace.size() > 12 ? ",..." : "",
+            static_cast<double>(ReadVitals(key).health));
     UE_LOGI("[ATVG-DRILL] toolbox: the fire key was held on the ATV; toolboxFix answered=%d", answered ? 1 : 0);
     return true;
 }
@@ -353,12 +392,6 @@ bool FitModule(const std::wstring& key, std::string& why) {
 // ---- the take-off ----
 
 namespace {
-
-// A pointer property of `o` by name, or null.
-void* ObjProp(void* o, const wchar_t* name) {
-    const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
-    return off < 0 ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(o) + off);
-}
 
 // `screen` is the upgrades screen that names `atv` as its actor.
 bool ScreenNames(void* screen, void* atv) {
@@ -498,7 +531,7 @@ bool TakeModuleOff(const std::wstring& key, std::string& why) {
         why = "the upgrades screen built no module slot of the ATV in " + std::to_string(kSlotS) + " s (" + what + ")";
         return false;
     }
-    const PR::Counts base = Counts();
+    const PR::Counts base = ProbeCounts();
     bool clicked = false;
     OnGt([&] { clicked = R::IsLive(slot) && CallByName(slot, kSlotClick); });
     if (!clicked) {
@@ -537,8 +570,6 @@ bool Sit(const std::wstring& key, std::string& why) {
     return true;
 }
 
-namespace {
-
 // One of the ATV's own input-action events, called as the engine calls it on the possessed ATV; the player must be seated.
 bool PressAtv(const std::wstring& key, const wchar_t* fn, std::string& why) {
     bool ok = false, seated = false;
@@ -551,7 +582,6 @@ bool PressAtv(const std::wstring& key, const wchar_t* fn, std::string& why) {
     return ok;
 }
 
-}  // namespace
 
 bool Leave(const std::wstring& key, std::string& why) {
     if (!PressAtv(key, L"InpActEvt_dismount_K2Node_InputActionEvent_0", why)) return false;

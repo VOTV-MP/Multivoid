@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::dev::atv_gate_probe {
 namespace {
@@ -51,6 +52,8 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<uint32_t>            g_offThread{0};   // a pe line seen off the game thread, counted and dropped
 Counts                           g_counts;         // game thread
 uint32_t                         g_lines[2][kFnCount] = {};
+std::vector<float>               g_toolboxHealth;  // the ATV's health at each toolboxFix call's entry; game thread
+constexpr size_t                 kMaxTrace = 256;
 
 const char* Role() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -90,6 +93,13 @@ void Fire(int i, int seam, void* self, const sg::Call* c) {
     }
     uint32_t& n = seam == 0 ? g_counts.gate[i] : g_counts.pe[i];
     ++n;
+    if (i == kFuelUp && seam == 0 && c) {
+        const bool viaPour = c->callerFunction && R::IsLive(c->callerFunction) &&
+                             R::ToString(R::NameOf(c->callerFunction)) == L"gascanFuel";
+        ++(viaPour ? g_counts.fuelUpFromGascanFuel : g_counts.fuelUpOtherCaller);
+    }
+    if (i == kToolboxFix && seam == 0 && g_toolboxHealth.size() < kMaxTrace && self && R::IsLive(self))
+        g_toolboxHealth.push_back(ue_wrap::atv::GetHealth(self));
     uint32_t& lines = g_lines[seam][i];
     if (lines >= kMaxLines) {
         if (lines == kMaxLines) {
@@ -198,6 +208,10 @@ bool AllLive() {
 }
 
 Counts Snapshot() { return g_counts; }
+
+void ClearToolboxTrace() { g_toolboxHealth.clear(); }
+
+std::vector<float> ToolboxTrace() { return g_toolboxHealth; }
 
 void Install(coop::net::Session* session) {
     if (!Enabled()) return;
