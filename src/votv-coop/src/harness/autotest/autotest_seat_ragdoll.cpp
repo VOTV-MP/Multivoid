@@ -1,19 +1,21 @@
 // harness/autotest/autotest_seat_ragdoll.cpp -- TEST-ONLY: a device's claim when its user ragdolls.
 //
-// One peer (the client, or the host with VOTVCOOP_SEAT_RAGDOLL_WHO=host) enters a device the way the game's enter ends
-// (setActiveInterface): the laptop, or with VOTVCOOP_SEAT_RAGDOLL_DEVICE=desk or sat the desk's coordinates screen or
-// the SAT console. Once the other peer reads its claim, it ragdolls as a faint does (ragdollMode(true, passOut, false)).
-// Both peers log who holds the device every second for 8 s, then the other peer enters it. Arms:
-// VOTVCOOP_SEAT_RAGDOLL_PING=1 (the host, at the desk) starts a ping before the faint, and VOTVCOOP_SEAT_RAGDOLL_EXIT=1
-// leaves by the game's own exit instead of a ragdoll. The host says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`: PASS
-// when the claim is free within 5 s and the other peer's enter stands, or, with both arms, when the pinger keeps the
-// desk and the enter is refused. Gated by VOTVCOOP_RUN_SEAT_RAGDOLL; the peers' folder is VOTVCOOP_CAN_DIR.
+// One peer (the client, or the host with dev.seat_ragdoll_who=host) enters a device the way the game's enter ends
+// (setActiveInterface): the laptop, or with dev.seat_ragdoll_device=desk or sat the desk's coordinates screen or the
+// SAT console. Once the other peer reads its claim, it ragdolls as a faint does (ragdollMode(true, passOut, false)),
+// and the other peer then waits for the claim to free and enters the device itself. Arms: dev.seat_ragdoll_ping (the
+// host, at the desk) starts a ping before the faint, and dev.seat_ragdoll_exit leaves by the game's own exit instead
+// of a ragdoll. The host says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`: PASS when the claim is free within 5 s and
+// the other peer's enter stands, or, with both arms, when the pinger keeps the desk and the enter is refused. The red:
+// dev.occupancy_pinger_down_off on the host, with the ping arm and the host acting, must FAIL (the claim never frees).
+// Gated by VOTVCOOP_RUN_SEAT_RAGDOLL; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/player/players_registry.h"
@@ -29,7 +31,6 @@
 
 #include <windows.h>
 
-#include <cstdio>
 #include <string>
 
 namespace harness::autotest {
@@ -41,10 +42,10 @@ using disc_drill::OnGameThread;
 
 constexpr const char* kTag = "seat-ragdoll";
 constexpr int kStepSec = 120;
+constexpr int kFreedSec = 5;  // the bound: a freed claim and a standing enter come inside it
 
 std::string Device() {
-    const std::string d = coop::config::ReadEnv("VOTVCOOP_SEAT_RAGDOLL_DEVICE");
-    return d.empty() ? "laptop" : d;
+    return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_device);
 }
 const wchar_t* Key() { return Device() == "desk" ? L"desk" : Device() == "sat" ? L"sat" : L"laptop"; }
 
@@ -94,16 +95,16 @@ void LogState(const char* who, int t) {
     UE_LOGI("seat-ragdoll: %hs t=%d holder=%u inInterface=%d pinger=%u", who, t, Holder(), InInterface() ? 1 : 0, ping);
 }
 
-// Which peer enters and ragdolls (VOTVCOOP_SEAT_RAGDOLL_WHO=host or client, the client by default); the other watches.
-// VOTVCOOP_SEAT_RAGDOLL_PING=1: the actor (the host) starts a ping on the desk before it ragdolls, as a player who faints
+// Which peer enters and ragdolls (dev.seat_ragdoll_who, the client by default); the other watches.
+// dev.seat_ragdoll_ping: the actor (the host) starts a ping on the desk before it ragdolls, as a player who faints
 // mid-ping would; its machine keeps running after the faint.
-bool Ping() { return coop::config::ReadEnv("VOTVCOOP_SEAT_RAGDOLL_PING") == "1"; }
+bool Ping() { return coop::config::ResolveFlag(coop::config_registry::rows::seat_ragdoll_ping); }
 
-// VOTVCOOP_SEAT_RAGDOLL_EXIT=1: the actor leaves the device by the game's own exit instead of a ragdoll. With the ping
+// dev.seat_ragdoll_exit: the actor leaves the device by the game's own exit instead of a ragdoll. With the ping
 // arm the desk stays the pinger's while its machine runs, so the other peer's enter must be refused.
-bool ExitOnly() { return coop::config::ReadEnv("VOTVCOOP_SEAT_RAGDOLL_EXIT") == "1"; }
+bool ExitOnly() { return coop::config::ResolveFlag(coop::config_registry::rows::seat_ragdoll_exit); }
 
-bool HostActs() { return coop::config::ReadEnv("VOTVCOOP_SEAT_RAGDOLL_WHO") == "host"; }
+bool HostActs() { return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_who) == "host"; }
 
 void Act(const char* me) {
     bool entered = false;
@@ -137,10 +138,13 @@ void Act(const char* me) {
     });
     UE_LOGI("seat-ragdoll: %hs %hs (call=%d)", me, ExitOnly() ? "left by the game's exit" : "ragdolled as a faint", rag ? 1 : 0);
     PS::Mark("actor_ragdolled");
-    for (int t = 1; t <= 8; ++t) { ::Sleep(1000); LogState(me, t); }
+    PS::Await("observer_done", kStepSec);  // the actor stays down (or out) while the watcher measures
+    LogState(me, 1);
 }
 
-// The watcher: the actor's claim here, freed after the ragdoll, and this peer's own enter. "claimed freedAt stays".
+// The watcher: the actor's claim here, freed within kFreedSec of the ragdoll, and this peer's own enter standing: held
+// in the interface and the holder of the claim. "claimed freed stays". A claim that never frees, or an enter that is
+// forced out, runs the bound out and reads as a miss.
 std::string Watch(const char* me, unsigned actorSlot) {
     if (!PS::Await("actor_in", kStepSec)) return "";
     PS::WaitFor("the actor's claim here", 10, [actorSlot] { return Holder() == actorSlot; }, false);
@@ -148,31 +152,32 @@ std::string Watch(const char* me, unsigned actorSlot) {
     const bool claimed = Holder() == actorSlot;
     PS::Mark("observer_saw_claim");
     if (!PS::Await("actor_ragdolled", kStepSec)) return "";
-    int freedAt = -1;
-    for (int t = 1; t <= 8; ++t) {
-        ::Sleep(1000);
-        LogState(me, t);
-        if (freedAt < 0 && Holder() == 0xFF) freedAt = t;
-    }
+    const bool freed = PS::WaitFor("the claim freed", kFreedSec, [] { return Holder() == 0xFF; }, false);
+    LogState(me, 1);
     bool entered = false;
-    OnGameThread([&] { entered = EnterDevice(); });
-    ::Sleep(2000);
-    const bool stays = InInterface();
-    LogState(me, 10);
-    UE_LOGI("seat-ragdoll: %hs claimed=%d freedAt=%d enter=%d stays=%d", me, claimed ? 1 : 0, freedAt, entered ? 1 : 0, stays ? 1 : 0);
-    return std::to_string(claimed ? 1 : 0) + " " + std::to_string(freedAt) + " " + std::to_string(stays ? 1 : 0);
+    unsigned mine = 0xFF;
+    OnGameThread([&] {
+        entered = EnterDevice();
+        mine = coop::players::Registry::Get().LocalPeerId();
+    });
+    const bool stays = PS::WaitFor("the enter standing", kFreedSec, [mine] { return InInterface() && Holder() == mine; }, false);
+    LogState(me, 2);
+    UE_LOGI("seat-ragdoll: %hs claimed=%d freed=%d enter=%d stays=%d", me, claimed ? 1 : 0, freed ? 1 : 0, entered ? 1 : 0, stays ? 1 : 0);
+    PS::Mark("observer_done");
+    return std::to_string(claimed ? 1 : 0) + " " + std::to_string(freed ? 1 : 0) + " " + std::to_string(stays ? 1 : 0);
 }
 
 void Judge(const std::string& r) {
-    int claimed = 0, freedAt = -1, stays = 0;
-    if (r.empty() || std::sscanf(r.c_str(), "%d %d %d", &claimed, &freedAt, &stays) != 3)
+    // The watcher's word: three flags, "<claimed> <freed> <stays>", each 0 or 1.
+    if (r.size() != 5 || r[1] != ' ' || r[3] != ' ')
         return coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "the watcher's word never came");
+    const int claimed = r[0] == '1', freed = r[2] == '1', stays = r[4] == '1';
     // The exit arm mid-ping: the pinger's machine keeps the desk, so the other peer is refused and nothing frees it.
-    const bool pass = ExitOnly() && Ping() ? claimed && freedAt < 0 && !stays : claimed && freedAt > 0 && freedAt <= 5 && stays;
+    const bool pass = ExitOnly() && Ping() ? claimed && !freed && !stays : claimed && freed && stays;
     coop::rig_verdict::Say(kTag, pass ? coop::rig_verdict::Outcome::Pass : coop::rig_verdict::Outcome::Fail,
-                           "%s %s at the %s: claimed=%d, freed after %d s, the other peer's enter %s",
+                           "%s %s at the %s: claimed=%d, freed within %d s=%d, the other peer's enter %s",
                            HostActs() ? "the host" : "the client", ExitOnly() ? "left" : "ragdolled", Device().c_str(),
-                           claimed, freedAt,
+                           claimed, kFreedSec, freed,
                            stays ? "stands" : "was refused");
 }
 

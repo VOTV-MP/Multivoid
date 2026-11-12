@@ -100,3 +100,18 @@ CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "join, lockout, lockjoin: the blackout at a join, the desk virus's lockout. red, puzzlered, upgradered: the "
     "controls (the rows applied raw, no puzzle written, installs judged unpaired). Lines tagged [GRID-DRILL]; the "
     "client's DONE line ends it.")
+CFG_ENUM(seat_ragdoll_device, "seat_ragdoll_device", "dev", "laptop", "laptop|desk|sat", "VOTVCOOP_SEAT_RAGDOLL_DEVICE",
+    "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL): the device the acting peer enters before it is knocked down or "
+    "leaves -- the laptop, the desk's coordinates screen or the SAT console.")
+CFG_ENUM(seat_ragdoll_who, "seat_ragdoll_who", "dev", "client", "client|host", "VOTVCOOP_SEAT_RAGDOLL_WHO",
+    "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL): which peer enters the device and ragdolls; the other watches the "
+    "device's claim and enters it after.")
+CFG_FLAG(seat_ragdoll_ping, "seat_ragdoll_ping", "dev", false, "VOTVCOOP_SEAT_RAGDOLL_PING",
+    "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL, the desk): the acting peer starts a ping before it ragdolls, as a "
+    "player who faints mid-ping would; its machine keeps running after.")
+CFG_FLAG(seat_ragdoll_exit, "seat_ragdoll_exit", "dev", false, "VOTVCOOP_SEAT_RAGDOLL_EXIT",
+    "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL): the acting peer leaves the device by the game's own exit instead "
+    "of a ragdoll. With seat_ragdoll_ping the desk stays the pinger's, so the other peer's enter must be refused.")
+CFG_FLAG(occupancy_pinger_down_off, "occupancy_pinger_down_off", "dev", false, "VOTVCOOP_OCCUPANCY_PINGER_DOWN_OFF",
+    "Developer (the host; the seat-ragdoll drill's red): a pinger knocked down keeps the desk claimed for its ping "
+    "until the ping ends, as before the lane, so the drill's faint-mid-ping arm must FAIL.")
