@@ -35,6 +35,10 @@ CFG_INT(desk_diag_ms, "desk_diag_ms", "dev", 1000, 100, 60000, nullptr,
     "Interval in milliseconds for the desk_diag log.")
 CFG_INT(vitals_keepalive_sec, "vitals_keepalive_sec", "dev", 0, 0, 86400, nullptr,
     "Reset player vitals every N seconds (0 = off; long unattended test runs).")
+CFG_FLAG(fill_needs, "fill_needs", "dev", false, "VOTVCOOP_FILL_NEEDS",
+    "Test helper (BOTH peers): once its world is up each peer writes its own food and sleep to 100, and again every "
+    "20 s, so a long drill's player does not faint at 0. Local, nothing crosses the wire. Leave off for a drill about "
+    "food, sleep or fainting.")
 // The drills of a session's join, rejoin and leave: their own file, one concept, included as
 // _dev_port.inc and _dev_boundary.inc are.
 #include "coop/config/config_registry_rows_dev_join.inc"

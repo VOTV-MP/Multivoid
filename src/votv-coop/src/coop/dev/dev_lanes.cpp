@@ -146,6 +146,7 @@
 #include "coop/dev/toggle_drill.h"  // [dev] whether a toggle device's state crosses both ways
 #include "coop/dev/world_first_check.h"  // [dev] client_world_first's verdict
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
+#include "coop/dev/fill_needs.h"  // [dev] each peer's own food and sleep kept at 100 (fill_needs)
 #include "coop/dev/world_roll_drill.h"  // [dev] the day's world rolls: the host's crosses, a client's own is refused
 #include "coop/dev/perf_probe.h"
 #include "coop/net/session.h"
@@ -436,6 +437,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::grime_drill::Tick(&session);  // [dev] the grime drill's legs (a latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
+    coop::dev::fill_needs::Tick();  // [dev] this peer's food and sleep refilled (a latched read when off)
 }
 
 void TickInventory(coop::net::Session& session) {
