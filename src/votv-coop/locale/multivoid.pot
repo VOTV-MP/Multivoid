@@ -585,6 +585,10 @@ msgid ""
 "(default)"
 msgstr ""
 
+#: src/ui/hud.cpp
+msgid "Drop the camera or put it away to close this view."
+msgstr ""
+
 #: src/ui/config_review_panel.cpp
 msgid "Duplicate settings with different values"
 msgstr ""
@@ -1025,6 +1029,10 @@ msgstr ""
 
 #: src/ui/loading_screen.cpp
 msgid "Receiving world from the host"
+msgstr ""
+
+#: src/ui/hud.cpp
+msgid "Recording: the camera keeps recording when dropped."
 msgstr ""
 
 #: src/ui/skins_panel.cpp
@@ -1557,6 +1565,10 @@ msgstr ""
 
 #: src/ui/config_review_panel.cpp
 msgid "Tidy up multivoid.ini"
+msgstr ""
+
+#: src/ui/hud.cpp
+msgid "To stop, look at the camera and press Alt+E. A click or E alone only pauses it."
 msgstr ""
 
 #: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp

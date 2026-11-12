@@ -18,7 +18,9 @@
 #include "coop/player/death_revive.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/revive_protection.h"
+#include "coop/player/leave_in_event.h"
 #include "coop/player/run_end_travel.h"
+#include "coop/player/vidcam_hint.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/shutdown.h"
@@ -54,6 +56,7 @@ void TickShutdownHooks() {
     coop::death_revive::Install(s);
     coop::revive_protection::Install();
     coop::player::run_end_travel::Install(s);
+    coop::player::leave_in_event::Install(s);
 }
 
 // Republishes "does the game own typed text" on two cadences (coop/input/input_owner.h): the cheap
@@ -102,6 +105,7 @@ void PostMenuTick() {
 void TickFrameTail() {
     // Self-clearing and cheap when idle: an empty nameplate snapshot hides the HUD at the menu.
     coop::nameplate::Update();
+    coop::vidcam_hint::Update();  // the video camera overlay's state, for the HUD's hint line
     coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
     coop::chat_feed::Tick();
     // The prop key index's watches' names, driven to resolve (the install itself is harness::Start's first

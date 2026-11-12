@@ -6,6 +6,7 @@
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/player/nameplate.h"
+#include "coop/player/vidcam_hint.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/player/nick_color.h"
 #include "coop/voice/voice_chat.h"
@@ -16,6 +17,7 @@
 #include "ui/voice_icons.h"
 
 #include "imgui.h"
+#include "l10n/l10n.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -290,12 +292,40 @@ bool IsActive() {
            coop::chat_feed::RevealActive() ||
            coop::dev::object_overlay::IsEnabled() ||
            coop::dev::ragdoll_bone_overlay::IsEnabled() ||
-           coop::voice_chat::Enabled();  // the local mic indicator works before a join too
+           coop::voice_chat::Enabled() ||  // the local mic indicator works before a join too
+           coop::vidcam_hint::Current() != ue_wrap::video_camera::View::None;
 }
 
 // The local voice indicator: a compact bottom-left icon (talking, whispering, muted,
 // disconnected; push-to-talk idle shows nothing). Reads the published snapshot, since this
 // runs on the render thread and the live chain walks game-thread state.
+// The video camera's hint, centred low on the screen while its overlay shows: how the overlay goes away, which the
+// game never says (coop/player/vidcam_hint.h).
+void DrawVidcamHint() {
+    namespace VC = ue_wrap::video_camera;
+    const VC::View v = coop::vidcam_hint::Current();
+    if (v == VC::View::None) return;
+    const char* lines[2] = {nullptr, nullptr};
+    if (v == VC::View::Recording) {
+        lines[0] = l10n::T("Recording: the camera keeps recording when dropped.");
+        lines[1] = l10n::T("To stop, look at the camera and press Alt+E. A click or E alone only pauses it.");
+    } else {
+        lines[0] = l10n::T("Drop the camera or put it away to close this view.");
+    }
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    const ImGuiIO& io = ImGui::GetIO();
+    const float px = S(15.f);
+    float y = io.DisplaySize.y * 0.80f;
+    for (const char* line : lines) {
+        if (!line) continue;
+        const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.f, line);
+        TextOutlined(dl, font, px, ImVec2((io.DisplaySize.x - sz.x) * 0.5f, y), IM_COL32(255, 255, 255, 235),
+                     IM_COL32(0, 0, 0, 210), line);
+        y += px + S(4.f);
+    }
+}
+
 void DrawLocalVoiceIcon() {
     coop::voice_chat::UiSnapshot vs;
     coop::voice_chat::GetUiSnapshot(vs);
@@ -355,6 +385,7 @@ void Render() {
     DrawNameplates();
     ui::chat_view::Draw();  // the feed + the T-activated history reveal (ui/chat_view.h)
     DrawLocalVoiceIcon();
+    DrawVidcamHint();
 }
 
 }  // namespace ui::hud

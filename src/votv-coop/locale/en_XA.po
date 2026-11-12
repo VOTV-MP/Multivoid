@@ -471,6 +471,9 @@ msgstr ""
 "[[Dr. Kel\n"
 "(default)]]"
 
+msgid "Drop the camera or put it away to close this view."
+msgstr "[[Drop the camera or put it away to close this view.]]"
+
 msgid "Duplicate settings with different values"
 msgstr "[[Duplicate settings with different values]]"
 
@@ -817,6 +820,9 @@ msgstr "[[Reason]]"
 
 msgid "Receiving world from the host"
 msgstr "[[Receiving world from the host]]"
+
+msgid "Recording: the camera keeps recording when dropped."
+msgstr "[[Recording: the camera keeps recording when dropped.]]"
 
 msgid "Refresh list"
 msgstr "[[Refresh list]]"
@@ -1248,6 +1254,9 @@ msgstr "[[Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under th
 
 msgid "Tidy up multivoid.ini"
 msgstr "[[Tidy up multivoid.ini]]"
+
+msgid "To stop, look at the camera and press Alt+E. A click or E alone only pauses it."
+msgstr "[[To stop, look at the camera and press Alt+E. A click or E alone only pauses it.]]"
 
 msgid "Too many actions at once, try again."
 msgstr "[[Too many actions at once, try again.]]"
