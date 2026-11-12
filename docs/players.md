@@ -246,8 +246,9 @@ the whole game is put back: the save slot's name, the game mode, the event it ra
 A map loaded into the running world brings what a world of its own has, and the visit answers each
 of it. The map's placed player takes the machine's controller as its level begins play: the
 controller goes back to the visitor, and the placed player and the black screen it puts up are
-removed. The world's height fog, dense without bound that far down, is hidden on the visitor's
-machine while it is there. The visitor's own clip check sees the view jump into the map and back
+removed. The world's sky reaches that far down without bound: its height fog covered the map in its
+colour, and its sun, sky light and post process lit a maze the game leaves dark but for the
+lantern. All of it is hidden on the visitor's machine while it is there. The visitor's own clip check sees the view jump into the map and back
 out: the game mode's `backroomsEnabled` is off for the visit and five seconds after it, and a trip
 asked while seated or driving is refused, as the game's own check refuses it. What a map's script
 spawns lands in the world's own level, far below it: it stays out of the prop lanes and is removed
