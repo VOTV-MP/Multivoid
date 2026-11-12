@@ -86,7 +86,7 @@ constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than 
 constexpr float kNpcLiftCm = 60.f;       // a kerfur NPC is placed above the floor so its capsule clears it
 
 const Phase* ActivePhase() {
-    static const Phase* const p = PhaseName() == "honest" ? &Honest() : nullptr;
+    static const Phase* const p = PhaseName() == "honest" ? &Honest() : PhaseName() == "snack" ? &Snack() : nullptr;
     return p;
 }
 
@@ -142,6 +142,8 @@ Baseline TakeBaseline(const Row& row, EL::ElementId eid, EL::ElementId eid2) {
     b.wrongFamily = PAH::AnsweredFor(kClientSlot, coop::net::PropActReason::WrongFamily);
     b.fit = PAH::TallyOf(row.fitTally);
     b.kerfurBound = eid != EL::kInvalidId && KE::GetKerfurIdForEid(eid) != EL::kInvalidId;
+    b.snackApplied = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::SnackApplied);
+    b.snackEnded = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::SnackEnded);
     return b;
 }
 
@@ -197,6 +199,7 @@ void SayReady(const Row& row) {
     g_base = TakeBaseline(row, g_eid, g_eid2);
     std::string line = ReadyHead(row) + std::to_string(Wire(g_eid));
     if (g_eid2 != EL::kInvalidId) line += " eid2=" + std::to_string(Wire(g_eid2));
+    if (row.snack) line += SnackReadyTail(g_target.Get());
     Say(line);
     UE_LOGI("%s host %s said ready: eid %u", kTag, row.name, Wire(g_eid));
     HEnter(row.grab ? HStep::AwaitGrab : HStep::AwaitDone);

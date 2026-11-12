@@ -54,7 +54,9 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
 enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
-                             AwaitReply, AwaitContents, AwaitPoison, Say, Done };
+                             AwaitReply, AwaitContents, AwaitPoison, AwaitCopy, Say, Done };
+constexpr uint64_t kCopyBoundMs = 30000;   // a snack arm: the act's end to this client's copies showing the host's state
+std::string g_readyRest;                   // the text after the host's ready line's eid: a snack arm's uses and open
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
 size_t g_crow = 0;
@@ -162,7 +164,9 @@ void ClientAct(const Row& row, void* player) {
             return;
         }
     }
-    if (row.verb == Verb::Use && !ue_wrap::vitals::Write(ue_wrap::vitals::Field::Food, 0.f)) {
+    // A snack arm with a full eater is fed to the top, so the game's addFood reports full and the use spends nothing.
+    const bool fullEater = row.snack && row.snack->full;
+    if (row.verb == Verb::Use && !ue_wrap::vitals::Write(ue_wrap::vitals::Field::Food, fullEater ? 100.f : 0.f)) {
         // An eat goes through mainPlayer's addFood, which eats nothing once the save slot's food is at 100 ("Im not
         // hungry"; at health 80 or less a food that heals is still eaten): the rows before have fed this player full.
         ClientFail(row, "the player's hunger could not be emptied before the eat");
@@ -278,6 +282,10 @@ void ClientRead(const Row& row, void* player) {
         ClientPass(row, "the call ran natively, opened no request and ate the copy");
         return;
     }
+    if (row.ends == Ends::Applied || row.ends == Ends::Ended || row.ends == Ends::Respawn) {
+        CEnter(CStep::AwaitCopy);   // the host's record and birth reach this client after the call: waited for, bounded
+        return;
+    }
     if (row.ends == Ends::Stays) {
         ClientReadStays(row);
         return;
@@ -310,6 +318,12 @@ void ClientRead(const Row& row, void* player) {
         if (!E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor || R::ClassNameOf(hand.holdingActor) != row.leaf) {
             ClientFail(row, "the hand does not hold the item");
             return;
+        }
+        if (row.snack) {
+            if (const char* why = SnackHeldVerdict(hand.holdingActor, g_readyRest)) {
+                ClientFail(row, why);
+                return;
+            }
         }
     }
     if (row.ends == Ends::Opened) {
@@ -485,6 +499,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             return;
         }
         g_ceid = static_cast<EL::ElementId>(std::strtoul(rest.c_str(), nullptr, 10));
+        g_readyRest = rest;
         if (row.target == Target::HostTwo) {
             const size_t at = rest.find(kSecondTag);
             if (at == std::string::npos) {
@@ -653,6 +668,23 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         ClientPass(row, what.c_str());
         return;
     }
+    case CStep::AwaitCopy: {
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        std::string why;
+        switch (SnackClientCopy(row, g_mirror, g_ceid, g_readyRest, &why)) {
+        case Judged::Wait:
+            if (CExpired(kCopyBoundMs)) ClientFail(row, "still waiting: " + why);
+            return;
+        case Judged::Fail:
+            ClientFail(row, why);
+            return;
+        case Judged::Pass:
+            ClientPass(row, why.c_str());
+            return;
+        }
+        return;
+    }
     case CStep::Say: {
         // A client's chat passes the host's rate limit only at the drills' spacing; a refused line is lost for good.
         if (now < g_nextSayMs) return;
@@ -705,6 +737,7 @@ void ClientReset() {
     g_foodsBefore.clear();
     g_freshContents = 0;
     g_poisonBefore = 0;
+    g_readyRest.clear();
 }
 
 }  // namespace detail

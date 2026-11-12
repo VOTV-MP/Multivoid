@@ -82,6 +82,11 @@ void NoteHostUse(void* actor);
 // its beer). A client has nothing to drain.
 void Tick(coop::net::Session* s);
 
+namespace dev {   // the act drill's snack phase
+// Marks a snack the drill wrote through its record on the host, so the drain publishes it. Game thread.
+void MarkForPublication(void* actor);
+}  // namespace dev
+
 // The session ended: the marks are dropped.
 void OnDisconnect();
 

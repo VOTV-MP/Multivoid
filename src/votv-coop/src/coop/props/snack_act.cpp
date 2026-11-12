@@ -2,6 +2,8 @@
 
 #include "coop/props/snack_act.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -196,7 +198,13 @@ void NoteHostUse(void* actor) {
     if (IsWorldSnack(actor)) Mark(actor);
 }
 
-WrapperRefusal::WrapperRefusal(void* snack) : armed_(snack && g_refuseHookLive) {
+// Dev red arm (never set): the replay keeps the wrapper its own script births, beside the host's.
+static bool RefusalOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::snack_wrapper_refusal_off);
+    return off;
+}
+
+WrapperRefusal::WrapperRefusal(void* snack) : armed_(snack && g_refuseHookLive && !RefusalOff()) {
     if (!armed_) return;
     g_refuseSource = snack;
     UH::SetArmed(g_refuseFn, &OnRefusePost, true);
@@ -221,6 +229,10 @@ void Tick(coop::net::Session* s) {
     }
     g_marks.clear();
 }
+
+namespace dev {
+void MarkForPublication(void* actor) { Mark(actor); }
+}  // namespace dev
 
 void OnDisconnect() {
     g_marks.clear();

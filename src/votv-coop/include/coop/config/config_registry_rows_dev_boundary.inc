@@ -112,8 +112,16 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
 // The act drill: an honest client takes and uses shared props through the real verbs, and the host judges what it
 // answered and committed. Set on BOTH peers (the host spawns and judges, the client acts); it arms the sending side
 // only, like the rows above.
-CFG_ENUM(prop_act_drill, "prop_act_drill", "dev", "off", "off|honest|race|depart|edge", "VOTVCOOP_PROP_ACT_DRILL",
+CFG_ENUM(prop_act_drill, "prop_act_drill", "dev", "off", "off|honest|race|depart|edge|snack", "VOTVCOOP_PROP_ACT_DRILL",
     "Drill (host and clients): A3-D2a -- a client's take or use of a shared prop asks the host first. honest: one client "
     "takes and uses each family; race: two clients and the host contend for one prop (with --observer); depart: a "
-    "client leaves holding a reservation and a newcomer takes its slot (with --rejoin); edge: the windows. Lines "
-    "tagged [ACT-DRILL]; the host's PASS line ends a phase.")
+    "client leaves holding a reservation and a newcomer takes its slot (with --rejoin); edge: the windows; snack: a "
+    "client's use of world snacks (a sip, a full eater, a beer's open and sip, the host's own use cancelled for a "
+    "reservation, a client copy that ends while the host's lives, the last use of a chips, a beer and a wine, the hold "
+    "of a spilled beer). Lines tagged [ACT-DRILL]; the host's PASS line ends a phase.")
+CFG_FLAG(d2a_snacks_off, "d2a_snacks_off", "dev", false, "VOTVCOOP_D2A_SNACKS_OFF",
+    "Developer red arm of the act drill's snack phase: never set. The snack family is routed native: a client's action "
+    "4 on a world snack is not asked of the host, so the copies' uses diverge and the phase must FAIL.")
+CFG_FLAG(snack_wrapper_refusal_off, "snack_wrapper_refusal_off", "dev", false, "VOTVCOOP_SNACK_WRAPPER_REFUSAL_OFF",
+    "Developer red arm of the act drill's snack phase: never set. A client's replay of a snack's last use keeps the "
+    "wrapper its own script births, beside the host's, so two wrappers stand on the client and the phase must FAIL.")

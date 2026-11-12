@@ -3,6 +3,8 @@
 #include "coop/props/prop_act_request.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/net_clock.h"
@@ -522,8 +524,17 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitP
 sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
 sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, g_mreHit, &MreDestroys); }
 sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
-sg::Verdict PreSnack(const sg::Call& c) { return PreAction(c, kSnack, g_snackParams, g_snackHit, &SnackAsks); }
-sg::Verdict PreBeer(const sg::Call& c) { return PreAction(c, kSnack, g_beerParams, g_beerHit, &BeerAsks); }
+// Dev red arm (never set): the snack family runs native, so a client's use is not asked of the host.
+bool SnacksOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::d2a_snacks_off);
+    return off;
+}
+sg::Verdict PreSnack(const sg::Call& c) {
+    return SnacksOff() ? sg::Verdict::Run : PreAction(c, kSnack, g_snackParams, g_snackHit, &SnackAsks);
+}
+sg::Verdict PreBeer(const sg::Call& c) {
+    return SnacksOff() ? sg::Verdict::Run : PreAction(c, kSnack, g_beerParams, g_beerHit, &BeerAsks);
+}
 
 // The host's own eat, sip or open of a world snack changes what every peer shows: the body ran, so the snack is marked
 // for publication (a call the pre cancelled for a reservation never reaches here). The parent's body and the beer's both

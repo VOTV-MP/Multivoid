@@ -1,5 +1,5 @@
 // coop/dev/prop_act_drill.h -- [dev] the act drill: a client's take or use of a shared prop asks the host first
-// (ini prop_act_drill=honest|race|depart|edge, env VOTVCOOP_PROP_ACT_DRILL; BOTH peers, the same value).
+// (ini prop_act_drill=honest|race|depart|edge|snack, env VOTVCOOP_PROP_ACT_DRILL; BOTH peers, the same value).
 //
 //   HOST   -- spawns each step's target in front of the client's puppet, waits until it is announced, preps it, checks
 //             the judge's census of it against the row (logged), says a ready line (step, eid) in the lobby chat, and
@@ -17,6 +17,8 @@
 
 #include "coop/element/element.h"
 #include "coop/props/prop_act_host.h"
+
+#include "ue_wrap/core/cached_obj_ref.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -76,7 +78,23 @@ enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2,
 // they were. Taken: the mirror is gone after the commit and the hand is not asserted (a heavy item's hand view is
 // unmeasured).
 // Opened: Gone, and the host's rolled contents have reached this client as mirrors (an MRE's open).
-enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken, Opened };
+// Snack arms (prop_act_drill_snack.cpp): Applied is the use that leaves the snack on both copies with the host's count;
+// Ended the last use (the snack is gone here and one wrapper, the host's, stands); Respawn the client's copy ending
+// while the host's lives, whose birth the host sends again.
+enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken, Opened, Applied, Ended,
+                            Respawn };
+
+// One snack arm's facts, read by the row's host prep, its client setup and the judges.
+struct SnackArm {
+    int32_t hostUses;     // HOST prep: the host copy's uses, written through its record and published; -1 keeps it
+    int8_t  hostOpen;     // HOST prep: a beer's `open`; -1 keeps it
+    int32_t clientUses;   // CLIENT before the act: the mirror's own uses written (the drill's instrument); -1 none
+    bool    full;         // CLIENT: the eater is full, so the act spends nothing
+    bool    spends;       // the act spends one use of the shared copy
+    bool    opens;        // the act opens a closed beer
+    bool    cancelHost;   // HOST prep: with a reservation held for the client, the host's own action 4 is cancelled
+    bool    spill;        // HOST prep: the beer is tilted until its own tick spills a use, then set upright
+};
 
 // Who makes a step's target: the host, on the floor in front of the client's puppet (HostTwo: a second one beside it;
 // HostKerfur: a kerfur NPC the host turns off into its prop), or the client itself (the host spawns nothing).
@@ -105,6 +123,7 @@ struct Row {
     // HOST, after the target is announced and before the ready line: called each poll until `*done`. `sinceMs` is 0 on
     // the first call, then the time since it. A non-null return FAILs the step with it.
     const char* (*hostPrep)(void* actor, uint64_t sinceMs, bool* done) = nullptr;
+    const SnackArm* snack = nullptr;   // a snack arm: the ready line carries the host copy's uses and open
 };
 
 // The host's commit counters for the client's slot when it said the step was ready, and the second prop's eid; the
@@ -118,6 +137,8 @@ struct Baseline {
     uint32_t fit = 0;           // TallyOf(the row's fitTally)
     bool kerfurBound = false;   // GetKerfurIdForEid(eid) named a kerfur record
     uint32_t mreOpens = 0;      // MreOpens()
+    uint32_t snackApplied = 0;  // CommitsOf(slot, SnackApplied)
+    uint32_t snackEnded = 0;    // CommitsOf(slot, SnackEnded)
 };
 
 enum class Judged : uint8_t { Wait, Pass, Fail };
@@ -134,6 +155,15 @@ struct Phase {
 };
 
 const Phase& Honest();   // prop_act_drill_honest.cpp
+const Phase& Snack();    // prop_act_drill_snack.cpp
+
+// The snack arms' shared reads (prop_act_drill_snack.cpp). HOST: SnackReadyTail is " uses=<n> open=<0|1>" of the copy, kept
+// as what the step was said ready on. CLIENT: SnackClientCopy judges this client's copies against that line (`was` is
+// the mirror the act ran on); SnackHeldVerdict is null when the held item carries the host's uses and open.
+std::string SnackReadyTail(void* hostActor);
+Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, coop::element::ElementId eid,
+                       const std::string& tail, std::string* why);
+const char* SnackHeldVerdict(void* held, const std::string& tail);
 
 // The race phase runs all three peers by itself (prop_act_drill_race.cpp is the host's half,
 // prop_act_drill_race_client.cpp the clients'): the host's steps, then a client's by its slot, 1 or 2. The core routes
