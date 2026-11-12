@@ -13,11 +13,15 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
+#define PSAPI_VERSION 2
 #include <windows.h>
+#include <psapi.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace coop::dev::classload_probe {
@@ -56,6 +60,22 @@ struct Hit {
 };
 
 bool g_done = false;
+
+// Every prop_ and npc_ Blueprint the registry scan lists, for the cold census.
+struct Cand {
+    std::wstring pkg;
+    std::wstring asset;
+};
+std::vector<Cand> g_cands;
+
+constexpr size_t kCensusProps = 12;  // props (the foods among them) not loaded on this client
+constexpr size_t kCensusNpcs = 8;    // npc_ classes not loaded on this client
+
+size_t WorkingSetKb() {
+    PROCESS_MEMORY_COUNTERS pmc{};
+    pmc.cb = sizeof(pmc);
+    return ::GetProcessMemoryInfo(::GetCurrentProcess(), &pmc, sizeof(pmc)) ? pmc.WorkingSetSize / 1024 : 0;
+}
 
 double NowMs() {
     static const double perMs = [] { LARGE_INTEGER f{}; ::QueryPerformanceFrequency(&f); return f.QuadPart / 1000.0; }();
@@ -168,10 +188,22 @@ bool QueryByPath(void* registry, const wchar_t* path, Hit (&hits)[kN]) {
     UE_LOGI("classload: M1 query '%ls' (recursive) -> %d assets in %.3f ms", path, arr.num, ms);
     if (!arr.data || arr.num <= 0) return false;
 
+    std::unordered_map<int32_t, bool> isBlueprint;
     for (int32_t i = 0; i < arr.num; ++i) {
         const uint8_t* row = arr.data + static_cast<size_t>(i) * static_cast<size_t>(stride);
         R::FName assetName{};
         std::memcpy(&assetName, row + offAsset, sizeof(assetName));
+        if (offClass >= 0 && (R::NameStartsWith(assetName, L"prop_") || R::NameStartsWith(assetName, L"npc_"))) {
+            R::FName cls{};
+            std::memcpy(&cls, row + offClass, sizeof(cls));
+            auto it = isBlueprint.find(cls.ComparisonIndex);
+            if (it == isBlueprint.end()) it = isBlueprint.emplace(cls.ComparisonIndex, R::NameEquals(cls, L"Blueprint")).first;
+            if (it->second) {
+                R::FName pkg{};
+                std::memcpy(&pkg, row + offPkg, sizeof(pkg));
+                g_cands.push_back({R::ToString(pkg), R::ToString(assetName)});
+            }
+        }
         for (int t = 0; t < kN; ++t) {
             if (!R::NameEquals(assetName, kTargets[t].stem)) continue;
             Hit& h = hits[t];
@@ -189,6 +221,54 @@ bool QueryByPath(void* registry, const wchar_t* path, Hit (&hits)[kN]) {
     // one-shot probe).
     R::EngineFree(arr.data);
     return true;
+}
+
+// The cold census: Blueprint classes the object index does not hold, loaded one after another, each timed. The
+// first ones in registry order that are not resident, up to the quotas; the working set grows with each.
+void Census() {
+    size_t universe[2] = {}, unloaded[2] = {};  // [0] prop_, [1] npc_
+    for (const Cand& c : g_cands) {
+        const int k = c.asset.compare(0, 4, L"npc_") == 0 ? 1 : 0;
+        ++universe[k];
+        if (!OI::ClassByName((c.asset + L"_C").c_str())) ++unloaded[k];
+    }
+    UE_LOGI("classload: C0 universe prop=%zu (%zu not in the index) npc=%zu (%zu not in the index)", universe[0],
+            unloaded[0], universe[1], unloaded[1]);
+
+    std::vector<double> ms;
+    size_t taken[2] = {};
+    const size_t quota[2] = {kCensusProps, kCensusNpcs};
+    for (const Cand& c : g_cands) {
+        const int k = c.asset.compare(0, 4, L"npc_") == 0 ? 1 : 0;
+        if (taken[k] >= quota[k]) continue;
+        const std::wstring cls = c.asset + L"_C";
+        if (OI::ClassByName(cls.c_str()) || R::FindClass(cls.c_str())) continue;
+        ++taken[k];
+        const std::wstring path = c.pkg + L"." + c.asset + L"_C";
+        const size_t ws0 = WorkingSetKb();
+        const double t0 = NowMs();
+        void* obj = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+        const double cold = NowMs() - t0;
+        const bool indexed = OI::ClassByName(cls.c_str()) != nullptr;
+        OI::Drain();
+        const bool afterDrain = OI::ClassByName(cls.c_str()) != nullptr;
+        const size_t ws1 = WorkingSetKb();
+        if (obj) ms.push_back(cold);
+        UE_LOGI("classload: C0 %ls kind=%ls load=%.3f ms indexed=%d afterDrain=%d loaded=%d workingset=+%lld KB path=%ls",
+                cls.c_str(), k ? L"npc" : L"prop", cold, indexed ? 1 : 0, afterDrain ? 1 : 0, obj ? 1 : 0,
+                static_cast<long long>(ws1) - static_cast<long long>(ws0), path.c_str());
+    }
+    if (ms.empty()) {
+        UE_LOGW("classload: C0 SUMMARY no class was loaded (every candidate was already in the index)");
+        return;
+    }
+    std::sort(ms.begin(), ms.end());
+    double sum = 0;
+    size_t over16 = 0;
+    for (const double v : ms) { sum += v; if (v > 16.0) ++over16; }
+    UE_LOGI("classload: C0 SUMMARY n=%zu max=%.3f ms p50=%.3f ms p95=%.3f ms sum=%.3f ms over16=%zu", ms.size(),
+            ms.back(), ms[ms.size() / 2], ms[(ms.size() * 95) / 100 < ms.size() ? (ms.size() * 95) / 100 : ms.size() - 1],
+            sum, over16);
 }
 
 void Run() {
@@ -236,6 +316,7 @@ void Run() {
         UE_LOGI("classload: M3x %ls findclass=%d indexedAfterDrain=%d", kTargets[t].cls, found ? 1 : 0,
                 indexedAfterDrain ? 1 : 0);
     }
+    Census();
     coop::rig_verdict::Say("classload", coop::rig_verdict::Outcome::Invalid, "measured");
 }
 

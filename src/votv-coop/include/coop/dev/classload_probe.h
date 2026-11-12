@@ -7,6 +7,9 @@
 //   M2 the cost on the game thread of loading that path, cold and then warm;
 //   M3 whether the object index finds the class at once after the load.
 // It reads the registry's own function lists too, so a name that does not resolve is read from the log.
+// Then a cold census (C0): up to 12 prop_ and 8 npc_ Blueprint classes the object index does not hold, each
+// loaded in turn and timed, with whether the index lists it at once and after a drain, and the working-set
+// growth; the summary line carries n, max, p50, p95, the sum and the count over 16 ms.
 //
 // Armed by classload_probe=1 (VOTVCOOP_CLASSLOAD_PROBE). Runs ONCE, on a client, the first frame its
 // world is settled; the loads are synchronous and may hitch that frame. Game thread.
