@@ -12,7 +12,8 @@ namespace ue_wrap::kismet_timer {
 // Whether the library is found, resolving it if not; while it is not, a retry costs a walk, so one comes at most once a second.
 bool Resolved();
 
-// False when the library is not found or the call did not dispatch. A timer the object does not have is no failure.
+// Resolves the library itself on first use, so no caller needs Resolved() first. False when the library is not found or the
+// call did not dispatch. A timer the object does not have is no failure.
 bool Clear(void* object, const wchar_t* function);
 
 }  // namespace ue_wrap::kismet_timer

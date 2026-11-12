@@ -28,12 +28,6 @@ bool Prepare(ParamFrame& f, void* object, const wchar_t* function) {
     return f.SetRaw(L"FunctionName", &name, sizeof(name));
 }
 
-bool Run(void* fn, void* object, const wchar_t* function) {
-    if (!object || !function || !Resolved()) return false;
-    ParamFrame f(fn);
-    return Prepare(f, object, function) && Call(g_library, f);
-}
-
 }  // namespace
 
 bool Resolved() {
@@ -48,6 +42,10 @@ bool Resolved() {
     return g_clear != nullptr;
 }
 
-bool Clear(void* object, const wchar_t* function) { return Run(g_clear, object, function); }
+bool Clear(void* object, const wchar_t* function) {
+    if (!object || !function || !Resolved()) return false;
+    ParamFrame f(g_clear);
+    return Prepare(f, object, function) && Call(g_library, f);
+}
 
 }  // namespace ue_wrap::kismet_timer
