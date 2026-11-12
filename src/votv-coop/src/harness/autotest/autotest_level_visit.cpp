@@ -23,6 +23,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
+#include "harness/screenshot.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -171,10 +172,56 @@ void DumpLevelClasses(const std::string& dir) {
     });
 }
 
+// The map's lantern: where it is and whether it is lit; then a step: 0 face it, 1 take it in hand, 2 light it with its
+// own RMB use, 3 put it down with the player's own forceDrop.
+void LampStep(int step) {
+    void* cls = OI::ClassByName(L"prop_lamp_C");
+    void* lamp = nullptr;
+    if (cls)
+        OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
+            ue_wrap::FVector at{};
+            if (!*static_cast<void**>(ctx) && R::IsLive(o) && E::TryGetActorLocation(o, at) && at.Z < -30000.f)
+                *static_cast<void**>(ctx) = o;
+        }, &lamp);
+    ue_wrap::FVector at{}, me{};
+    if (!lamp || !E::TryGetActorLocation(lamp, at) || !E::TryGetActorLocation(Me(), me)) {
+        UE_LOGI("level-visit: %hs LAMP none in the map", Who());
+        return;
+    }
+    int32_t off = -1;
+    uint8_t mask = 0;
+    const bool lit = R::FindBoolProperty(R::ClassOf(lamp), L"active", off, mask) && off >= 0 &&
+                     (*(static_cast<uint8_t*>(lamp) + off) & mask) != 0;
+    const ue_wrap::FVector cam = E::GetCameraLocation();
+    const float dx = at.X - cam.X, dy = at.Y - cam.Y, dz = at.Z - cam.Z;
+    const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    bool took = false, collected = false;
+    float fuel = -1.f;
+    if (const int32_t fo = R::FindPropertyOffset(R::ClassOf(lamp), L"fuel"); fo >= 0)
+        fuel = *reinterpret_cast<float*>(static_cast<char*>(lamp) + fo);
+    if (step == 1) took = E::CallMainPlayerHoldObject(Me(), lamp, collected);
+    else if (step == 2 || step == 3) {
+        void* who = step == 2 ? lamp : Me();
+        void* fn = step == 2 ? R::FindFunction(R::ClassOf(lamp), L"playerHandUse_RMB")
+                             : R::FindDispatchFunctionCached(R::ClassOf(Me()), L"forceDrop");
+        ue_wrap::ParamFrame pf(fn);
+        took = fn && pf.valid() && (step == 3 || pf.Set<void*>(L"player", Me())) && ue_wrap::Call(who, pf);
+    } else if (void* pc = E::GetController(Me()))
+        E::SetControlRotation(pc, {static_cast<float>(std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * 57.2958),
+                                   static_cast<float>(std::atan2(dy, dx) * 57.2958), 0.f});
+    UE_LOGI("level-visit: %hs LAMP at (%.0f,%.0f,%.0f) %.0f cm from the camera lit=%d fuel=%.1f %hs", Who(), at.X, at.Y,
+            at.Z, dist, lit ? 1 : 0, fuel,
+            step == 0 ? "faced" : step == 1 ? (took ? "taken in hand" : "take failed")
+                        : step == 2 ? (took ? "lit with its RMB use" : "RMB use failed")
+                                    : (took ? "put down" : "put down failed"));
+}
+
 void Visitor() {
     const bool clip = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_START") == "clip";
-    // The camera the host spawned, in hand (a clip run takes none, carrying what its profile holds).
-    if (!clip) OnGameThread([] {
+    // The camera the host spawned, in hand (a clip run takes none, carrying what its profile holds, and neither does a
+    // run that takes the map's lantern in hand).
+    const bool bare = clip || coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_LOOK") == "lamp";
+    if (!bare) OnGameThread([] {
         void* cls = OI::ClassByName(L"prop_vidcam_low_C");
         void* cam = nullptr;
         if (cls)
@@ -186,7 +233,7 @@ void Visitor() {
         if (cam && E::TryGetActorLocation(cam, at)) PlaceMe({at.X - 120.f, at.Y, at.Z + 60.f});
     });
     ::Sleep(1500);
-    if (!clip) OnGameThread([] {
+    if (!bare) OnGameThread([] {
         void* cls = OI::ClassByName(L"prop_vidcam_low_C");
         void* cam = nullptr;
         if (cls)
@@ -260,7 +307,18 @@ void Visitor() {
             inMap.camZ, inMap.black);
     const std::string dump = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_DUMP_DIR");
     if (!dump.empty()) DumpLevelClasses(dump);
-    for (int i = 0; i < 20; ++i) { ::Sleep(1000); Log(Read()); }
+    // The view in the map, as the visitor sees it: once just in, once the eye has adapted. With
+    // VOTVCOOP_LEVEL_VISIT_LOOK=lamp the visitor turns to the map's lantern (prop_lamp_C), takes it in hand, lights it
+    // with the lantern's own RMB use, and puts it down before the end, so it comes back with what it took in.
+    const bool lamp = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_LOOK") == "lamp";
+    for (int i = 0; i < 20; ++i) {
+        ::Sleep(1000);
+        Log(Read());
+        if (i == 1 || i == 15) harness::screenshot::Capture(i == 1 ? L"visit-in-a" : L"visit-in-b");
+        if (lamp && (i == 3 || i == 8 || i == 10)) OnGameThread([i] { LampStep(i == 3 ? 0 : i == 8 ? 1 : 2); });
+        if (lamp && (i == 6 || i == 13)) harness::screenshot::Capture(i == 6 ? L"visit-lamp-faced" : L"visit-lamp-lit");
+        if (lamp && i == 17) OnGameThread([] { LampStep(3); });
+    }
     std::string end = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_END");
     if (end.empty()) end = "end";
     OnGameThread([&end] {

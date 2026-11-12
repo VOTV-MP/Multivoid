@@ -26,8 +26,9 @@ namespace coop::net { class Session; }
 
 // A map loaded into the running world brings what a world of its own has. Its placed player takes this machine's
 // controller as its level begins play: the controller goes back to the visitor, and the placed player and the black
-// screen it put up are removed. The world's height fog, dense without bound that far down, is hidden on this machine
-// for the visit. The game mode's backroomsEnabled is off for the visit and 5 s after it, so the view's jump into the
+// screen it put up are removed. The world's sky, which reaches that far down without bound (its height fog, sun, sky
+// light, atmosphere, clouds and post process), is hidden on this machine for the visit, so the map is as dark as the
+// game leaves it. The game mode's backroomsEnabled is off for the visit and 5 s after it, so the view's jump into the
 // map and back out is not a clip, and a trip asked while seated or riding is refused, as the game's clip check
 // refuses one. What a map's script spawns lands in the world's own level, far below it, and counts as the map's.
 // untitled_untitled's hook check ends the map for a grappling hook in the map only, not for one in the world.
