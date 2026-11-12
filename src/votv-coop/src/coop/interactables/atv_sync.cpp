@@ -21,6 +21,7 @@
 #include "coop/interactables/atv_corrector.h"
 #include "coop/interactables/atv_damage_gate.h"
 #include "coop/interactables/atv_hit_guard.h"
+#include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_index_internal.h"
 #include "coop/interactables/atv_sync_internal.h"
 
@@ -172,7 +173,9 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     p.syncerSlot   = syncerSlot;
     uint8_t sb = 0;
     if (A::IsDriven(actor)) sb |= 0x1;
-    if (A::GetBrake(actor)) sb |= 0x2;
+    if (A::GetBrake(actor)) sb |= coop::net::kAtvBrake;
+    if (A::GetLights(actor)) sb |= coop::net::kAtvLights;
+    if (A::GetTurbo(actor)) sb |= coop::net::kAtvTurbo;
     if (grabbed)            sb |= 0x4;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
@@ -180,6 +183,11 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     // syncer, the idle syncer and the adopt seed cannot fork; a failed read leaves it zeroed
     // with tiresValid 0, and receivers touch nothing.
     coop::atv_condition_sync::FillPayload(actor, p);
+    // Its vitals ack: the host's own blocks carry its copy's current state sequence, a client's the newest state whose
+    // vitals it applied (atv_host_sync.h).
+    const auto* session = g_session.load(std::memory_order_acquire);
+    p.ackSeq = session && session->role() == coop::net::Role::Host ? coop::atv_host_sync::CurrentStateSeq(key)
+                                                                      : coop::atv_host_sync::AppliedStateSeq(key);
     return true;
 }
 
@@ -315,18 +323,23 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     if (s->role() == coop::net::Role::Host) {
         // A client's block: applied only from the ATV's syncer, then re-sent to the other clients with the host's
         // stamp. The stamp is overwritten, never read from the sender, and the bits a client may not set are
-        // masked (bit 3 is the host's own mark, bit 4 its trap).
+        // masked: the re-send carries the syncer's brake, lights and turbo and the host's own mark (bit 3) and trap
+        // (bit 4).
         if (!AU::AdmitBlock(e, payload, senderPeerSlot, NowMs())) return;
-        NoteSyncerHealth(e, senderPeerSlot, payload.health);
         coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ false);
         coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ false);
+        TakeControls(e, payload.stateBits);
+        NoteSyncerHealth(e, senderPeerSlot, A::GetHealth(e.actor));
         coop::net::AtvStatePayload out = payload;
-        // Fuel and health are the host's copy's (atv_host_sync.h): the driver's block lowered them, and the host's go on.
+        // Fuel and health are the host's copy's (atv_host_sync.h), as the syncer's block left them, and the ack is the
+        // host's own current state sequence: the others take the host's absolute, never the syncer's raw values.
         out.fuel = A::GetFuel(e.actor);
         out.health = A::GetHealth(e.actor);
+        out.ackSeq = coop::atv_host_sync::CurrentStateSeq(key);
         out.syncerSlot = e.syncerSlot;
         out.occupantSlot = e.occupantSlot;
-        out.stateBits = static_cast<uint8_t>((payload.stateBits & 0x07) | coop::net::kAtvFromSyncer);
+        out.stateBits =
+            static_cast<uint8_t>((payload.stateBits & coop::net::kAtvControlBits) | coop::net::kAtvFromSyncer);
         StampHostTrap(e, out);
         out.adopt = 0;
         SendToReadyClients(*s, out, senderPeerSlot);
@@ -359,6 +372,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     // The condition block applies after the pose, behind the same gates; every block a client receives is the
     // host's, and its presence is consumed only for the host's own copy (atv_condition_sync.h).
     coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ true);
+    TakeControls(e, payload.stateBits);
 }
 
 // The mirror half (atv_runtime_mirror.cpp) reaches the map through these (atv_sync_internal.h);

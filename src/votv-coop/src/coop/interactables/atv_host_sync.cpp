@@ -63,8 +63,8 @@ struct ApplyScope {
 // ---- the ATV's fields and bodies ----
 
 void* g_cls = nullptr;
-int32_t g_offFuel = -1, g_offHealth = -1, g_offEmpty = -1, g_offBroken = -1, g_offModules = -1, g_offLights = -1,
-        g_offBrake = -1, g_offTurbo = -1, g_offSpeed = -1, g_offSpeedTurbo = -1, g_offInputAlt = -1, g_offFly = -1;
+int32_t g_offFuel = -1, g_offHealth = -1, g_offEmpty = -1, g_offBroken = -1, g_offModules = -1, g_offInputAlt = -1,
+        g_offFly = -1;
 
 bool Resolve() {
     if (g_cls) return true;
@@ -72,9 +72,7 @@ bool Resolve() {
     if (!cls) return false;
     struct { int32_t* off; const wchar_t* name; } rows[] = {
         {&g_offFuel, L"fuel"}, {&g_offHealth, L"health"}, {&g_offEmpty, L"Empty"}, {&g_offBroken, L"brokenn"},
-        {&g_offModules, L"Modules"}, {&g_offLights, L"lights"}, {&g_offBrake, L"Brake"}, {&g_offTurbo, L"turbo"},
-        {&g_offSpeed, L"Speed"}, {&g_offSpeedTurbo, L"speed_turbo"}, {&g_offInputAlt, L"input_alt"},
-        {&g_offFly, L"Fly"},
+        {&g_offModules, L"Modules"}, {&g_offInputAlt, L"input_alt"}, {&g_offFly, L"Fly"},
     };
     for (auto& r : rows) {
         *r.off = R::FindPropertyOffset(cls, r.name);
@@ -138,35 +136,9 @@ void WriteModules(void* a, const std::vector<uint8_t>& mods) {
 
 uint8_t ReadFlags(void* a) {
     uint8_t f = 0;
-    if (GetBool(a, g_offLights)) f |= coop::net::kAtvHostLights;
-    if (GetBool(a, g_offBrake)) f |= coop::net::kAtvHostBrake;
-    if (GetBool(a, g_offTurbo)) f |= coop::net::kAtvHostTurbo;
     if (GetBool(a, g_offEmpty)) f |= coop::net::kAtvHostEmpty;
     if (GetBool(a, g_offBroken)) f |= coop::net::kAtvHostBroken;
     return f;
-}
-
-constexpr uint8_t kControls = coop::net::kAtvHostLights | coop::net::kAtvHostBrake | coop::net::kAtvHostTurbo;
-
-// The ATV's own bodies for the three controls: `upd lights`, setBrake, and unturbo or the turbo key's speed.
-void ApplyControls(void* a, uint8_t want) {
-    const uint8_t have = ReadFlags(a);
-    if ((want ^ have) & coop::net::kAtvHostLights) {
-        PutBool(a, g_offLights, (want & coop::net::kAtvHostLights) != 0);
-        Call(a, L"Upd Lights");
-    }
-    if ((want ^ have) & coop::net::kAtvHostBrake) {
-        PutBool(a, g_offBrake, (want & coop::net::kAtvHostBrake) != 0);
-        Call(a, L"setBrake");
-    }
-    if ((want ^ have) & coop::net::kAtvHostTurbo) {
-        if (want & coop::net::kAtvHostTurbo) {
-            PutBool(a, g_offTurbo, true);
-            Put<float>(a, g_offSpeed, Get<float>(a, g_offSpeedTurbo));
-        } else {
-            Call(a, L"unturbo");
-        }
-    }
 }
 
 // The ATV's own horn on this copy; the press and release also write input_alt and the Fly module's lift, which a copy
@@ -231,7 +203,7 @@ struct Request {
     Payload p{};
 };
 std::vector<Request> g_requests;
-uint32_t g_hostGains = 0, g_hostModules = 0, g_hostControls = 0, g_hostRefused = 0;
+uint32_t g_hostGains = 0, g_hostModules = 0, g_hostRefused = 0;
 
 bool InReach(int slot, void* atv) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
@@ -266,7 +238,7 @@ void HostServe(coop::net::Session& s) {
         coop::atv_sync::ReadTable(key, t);
         g_sent[key].pending = true;   // the answer, whatever it is
         const bool seated = t.occupantSlot == static_cast<uint8_t>(r.slot);
-        const bool driverOp = r.p.op == op::kControls || r.p.op == op::kHornPress || r.p.op == op::kHornRelease;
+        const bool driverOp = r.p.op == op::kHornPress || r.p.op == op::kHornRelease;
         if (driverOp ? !seated : (!seated && !InReach(r.slot, a))) {
             ++g_hostRefused;
             UE_LOGW("atv_host: slot %d's op %u on '%ls' refused -- %s", r.slot, static_cast<unsigned>(r.p.op),
@@ -327,13 +299,6 @@ void HostServe(coop::net::Session& s) {
                     static_cast<unsigned>(r.p.module), key.c_str(), ModulesText(ReadModules(a)).c_str());
             break;
         }
-        case op::kControls:
-            ApplyControls(a, r.p.flags & kControls);
-            ++g_hostControls;
-            UE_LOGI("atv_host: slot %d's controls on '%ls': lights=%d brake=%d turbo=%d", r.slot, key.c_str(),
-                    (r.p.flags & coop::net::kAtvHostLights) ? 1 : 0, (r.p.flags & coop::net::kAtvHostBrake) ? 1 : 0,
-                    (r.p.flags & coop::net::kAtvHostTurbo) ? 1 : 0);
-            break;
         case op::kHornPress:
         case op::kHornRelease: {
             const bool press = r.p.op == op::kHornPress;
@@ -394,11 +359,9 @@ struct Copy {
     bool vitalsKnown = false;
     std::vector<uint8_t> hostModules;     // the host's last modules
     bool modulesKnown = false;
-    uint8_t controls = 0;                 // the controls last sent or taken from the host
-    bool controlsKnown = false;
     bool inputAlt = false;
     uint32_t gen = 0;
-    Clock::time_point holdVitals{}, holdModules{}, holdControls{};
+    Clock::time_point holdVitals{}, holdModules{};
 };
 std::unordered_map<std::wstring, Copy> g_copies;
 
@@ -408,7 +371,11 @@ struct Shown {
 };
 std::unordered_map<std::wstring, Shown> g_shown;   // the host's newest state per ATV, until it is written
 std::vector<Payload> g_outbox;
-uint32_t g_clientGains = 0, g_clientModules = 0, g_clientControls = 0, g_clientDropped = 0;
+uint32_t g_clientGains = 0, g_clientModules = 0, g_clientDropped = 0;
+
+// The state sequences (atv_host_sync.h): the host's per ATV, and the newest this client applied. Both are the
+// session's, never reset by a world change.
+std::unordered_map<std::wstring, uint32_t> g_stateSeq, g_appliedSeq;
 
 void Queue(const Payload& p) {
     if (g_outbox.size() >= kQueueCap) {
@@ -479,20 +446,6 @@ void DetectModules(void* a, const std::wstring& key, Copy& c, Clock::time_point 
     c.holdModules = now + kHold;
 }
 
-// The seated driver's own controls (its horn is read every frame, in Tick).
-void DetectDriver(void* a, const std::wstring& key, Copy& c, Clock::time_point now) {
-    const uint8_t controls = ReadFlags(a) & kControls;
-    if (c.controlsKnown && controls != c.controls) {
-        Payload p = MakeRequest(key, op::kControls);
-        p.flags = controls;
-        Queue(p);
-        c.holdControls = now + kHold;
-        ++g_clientControls;
-    }
-    c.controls = controls;
-    c.controlsKnown = true;
-}
-
 void ApplyState(void* a, const std::wstring& key, Copy& c, const Payload& p, Clock::time_point now, bool syncer) {
     ApplyScope applying;
     // Fuel and health: a copy this client does not sync takes them; the one it drives takes a gain the host made (its
@@ -524,11 +477,6 @@ void ApplyState(void* a, const std::wstring& key, Copy& c, const Payload& p, Clo
         c.hostModules = mods;
         c.modulesKnown = true;
     }
-    if (now >= c.holdControls) {
-        ApplyControls(a, p.flags & kControls);
-        c.controls = p.flags & kControls;
-        c.controlsKnown = true;
-    }
 }
 
 void ClientPoll(coop::net::Session& s, Clock::time_point now) {
@@ -538,9 +486,6 @@ void ClientPoll(coop::net::Session& s, Clock::time_point now) {
         Copy& c = g_copies[x.key];
         DetectGains(x.actor, x.key, c, now);
         DetectModules(x.actor, x.key, c, now);
-        coop::atv_sync::TableView t;
-        if (coop::atv_sync::ReadTable(x.key, t) && t.occupantSlot == self) DetectDriver(x.actor, x.key, c, now);
-        else c.controlsKnown = false;
     }
     for (auto it = g_outbox.begin(); it != g_outbox.end();) {
         if (!s.SendReliable(coop::net::ReliableKind::AtvRequest, &*it, sizeof(*it))) break;
@@ -639,7 +584,6 @@ void OnRequest(int senderSlot, const coop::net::AtvHostPayload& p) {
     case op::kModuleRemove:
         if (p.module >= 64) return;
         break;
-    case op::kControls:
     case op::kHornPress:
     case op::kHornRelease:
         break;
@@ -654,15 +598,15 @@ void QueueConnectBroadcastForSlot(int /*slot*/) {
 }
 
 void OnDisconnect() {
-    if (g_hostGains || g_hostModules || g_hostControls || g_hostRefused || g_clientGains || g_clientModules ||
-        g_clientControls || g_clientDropped)
-        UE_LOGI("atv_host: session end -- host gains=%u modules=%u controls=%u refused=%u; client gains=%u modules=%u "
-                "controls=%u dropped=%u", g_hostGains, g_hostModules, g_hostControls, g_hostRefused, g_clientGains,
-                g_clientModules, g_clientControls, g_clientDropped);
-    g_hostGains = g_hostModules = g_hostControls = g_hostRefused = 0;
-    g_clientGains = g_clientModules = g_clientControls = g_clientDropped = 0;
+    if (g_hostGains || g_hostModules || g_hostRefused || g_clientGains || g_clientModules || g_clientDropped)
+        UE_LOGI("atv_host: session end -- host gains=%u modules=%u refused=%u; client gains=%u modules=%u dropped=%u",
+                g_hostGains, g_hostModules, g_hostRefused, g_clientGains, g_clientModules, g_clientDropped);
+    g_hostGains = g_hostModules = g_hostRefused = 0;
+    g_clientGains = g_clientModules = g_clientDropped = 0;
     g_sent.clear();
     g_gen.clear();
+    g_stateSeq.clear();
+    g_appliedSeq.clear();
     g_copies.clear();
     g_shown.clear();
     g_outbox.clear();
@@ -670,28 +614,22 @@ void OnDisconnect() {
     g_session.store(nullptr);
 }
 
-void FilterVitals(void* actor, const std::wstring& key, bool hostTakingClientBlock, float& fuel, float& health) {
-    if (!actor || !Resolve()) return;
-    const float curFuel = Get<float>(actor, g_offFuel), curHealth = Get<float>(actor, g_offHealth);
-    if (!Finite(curFuel) || !Finite(curHealth)) return;
-    if (hostTakingClientBlock) {
-        // A driver's block lowers them only; a gain is the host's to apply.
-        fuel = std::fmin(fuel, curFuel);
-        health = std::fmin(health, curHealth);
-        return;
-    }
-    // A client taking the host's block: its own refuel or repair goes to the host before the block writes over it.
-    Copy& c = g_copies[key];
-    const Clock::time_point now = Clock::now();
-    DetectGains(actor, key, c, now);
-    if (now < c.holdVitals) {
-        fuel = curFuel;
-        health = curHealth;
-        return;
-    }
-    c.fuel = fuel;
-    c.health = health;
+uint32_t CurrentStateSeq(const std::wstring& key) {
+    const auto it = g_stateSeq.find(key);
+    return it == g_stateSeq.end() ? 0u : it->second;
 }
+
+uint32_t AppliedStateSeq(const std::wstring& key) {
+    const auto it = g_appliedSeq.find(key);
+    return it == g_appliedSeq.end() ? 0u : it->second;
+}
+
+void NoteAppliedStateSeq(const std::wstring& key, uint32_t seq) {
+    uint32_t& held = g_appliedSeq[key];
+    if (static_cast<int32_t>(seq - held) > 0) held = seq;
+}
+
+bool VitalsGated(const std::wstring& /*key*/) { return false; }
 
 uint32_t HornsPlayed() { return g_hornsPlayed; }
 

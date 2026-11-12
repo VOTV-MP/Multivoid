@@ -82,16 +82,20 @@ The rig's pose stays with the peer driving it. Everything else the ATV keeps is 
 its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
 
 - **Fuel and health.** A client's refuel (a gas can's `fuelUp`) or repair (a toolbox's `toolboxFix`) runs on its copy,
-  and the rise its copy shows, read before the host's next block can write over it, goes to the host as a gain. The host
-  checks the sender's world, the ATV and its reach (8 m), or that it is seated, and adds it on its own copy. A client
-  driver's blocks only lower them: the host takes the lower of its value and the driver's, and its own values ride every
-  block it re-sends. `AtvHostState` carries them with a count of the gains the host applied, so the driver's own copy
-  also takes a gain or a lowering the host made.
+  and the rise its copy shows, read at the client's poll, goes to the host as a gain. The host checks the sender's world,
+  the ATV and its reach (8 m), or that it is seated, and adds it on its own copy. A client driver's blocks only lower
+  them: the host takes the lower of its value and the block's, from a block whose `ackSeq` is the ATV's current state
+  sequence (the newest host state whose vitals the driver applied; any other block's vitals are ignored), then runs the
+  ATV's own `checkIfRunout`. The host's own values and sequence ride every block it sends or re-sends, and a client takes
+  them from those blocks. `AtvHostState` carries them with a count of the gains the host applied, so the driver's own
+  copy also takes a gain or a lowering the host made.
 - **Modules.** A fit (`playerUsedOn` with an upgrade in hand) and a take-off (`upgradeTake`) run on the client's copy, and
   each change to its `Modules` goes to the host, which writes its own and runs `updUpgrades`. A fit the host would not
   make is refunded with that module's prop at the ATV; the take-off's module travels as the client's own birth.
-- **Lights, brake and turbo.** The seated driver's keys run on its copy, and the state goes to the host, which takes it
-  from the seated driver alone and runs the ATV's own light, brake and turbo bodies on its copy.
+- **Lights, brake and turbo.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights 0x20, turbo
+  0x40) at each block build. The host takes them from an admitted block and runs the ATV's own light, brake and turbo
+  bodies on its copy for each bit that changed; its re-send carries exactly these three to the other clients, which do the
+  same on their copies. A client never applies them to an ATV it syncs. `[?]` built to the design, not yet run.
 - **The horn.** The seated driver's press and release go to the host, which plays the ATV's own horn and sends it to every
   other peer; the host's own horn goes straight to every client.
 
@@ -116,7 +120,8 @@ the same on both peers; run on the code before it, each of the client's acts sta
 | the condition values | the syncer | overwritten on the mirror, re-derived on edges |
 | fuel and health | the host | a client's refuel or repair is a gain the host adds; a client driver only lowers them |
 | the modules | the host | a client's fit or take-off is a request the host makes on its copy |
-| lights, brake, turbo, the horn | the host, from the seated driver | the driver's keys are requests; the horn plays on every other peer |
+| lights, brake, turbo | the syncer | the syncer's copy's bools ride its block's `stateBits`; the host applies each change and re-sends |
+| the horn | the host, from the seated driver | the press and release are requests; the horn plays on every other peer |
 | tyre and spare presence | the host | consumed from the host's own copy only |
 | a runtime ATV's identity | the host | its game key, announced |
 
@@ -124,14 +129,14 @@ the same on both peers; run on the code before it, each of the client's acts sta
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat and the syncer the host stamps, the host copy's trap, the condition block, an adopt flag |
+| `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat and the syncer the host stamps, the host copy's trap, the syncer's brake, lights and turbo, the condition block with its vitals ack, an adopt flag |
 | `AtvSeat`, `AtvTakeover` | a client to the host | a sit in or leave of the driver's seat; a grab of the ATV |
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
-| `AtvHostState` | the host to all | an ATV's fuel, health and gains applied, its modules, lights, brake and turbo, empty and broken; or a driver's horn |
-| `AtvRequest` | a client to the host | a refuel's or repair's gain, a module fitted or taken off, the seated driver's controls, its horn |
+| `AtvHostState` | the host to all | an ATV's fuel, health and gains applied, its modules, empty and broken; or a driver's horn |
+| `AtvRequest` | a client to the host | a refuel's or repair's gain, a module fitted or taken off, the seated driver's horn |
 
 ## Late join
 
@@ -172,5 +177,6 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | condition | `coop/interactables/atv_condition_sync`, `ue_wrap/devices/atv_condition` |
 | the engine wrapper | `ue_wrap/devices/atv` |
 | the seat | `coop/interactables/device_occupancy` |
-| fuel, health, modules, lights, brake, turbo, the horn | `coop/interactables/atv_host_sync` |
+| fuel, health, modules, the horn | `coop/interactables/atv_host_sync` |
+| lights, brake, turbo (the block's bits taken and applied) | `coop/interactables/atv_stream_gates` (`TakeControls`) |
 | tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; the smoke run with the ATV scenario enabled |

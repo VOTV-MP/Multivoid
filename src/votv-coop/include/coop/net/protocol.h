@@ -1272,12 +1272,12 @@ enum class ReliableKind : uint16_t {
     // when it refused. WoodchipperPayload.
     WoodchipperIntent = 233,
     // HOST->ALL: an ATV of the host's beyond its rig -- its fuel and health with the count of gains the host applied, its
-    // modules, lights, brake and turbo, and whether it is empty or broken -- when any changes, every 2 s, and every ATV
+    // modules, and whether it is empty or broken -- when any changes, every 2 s, and every ATV
     // again at the ready edge (op 0); or its horn pressed or released by a driver, to every peer but that driver (op 1,
     // 2). A client's copy takes it. Not relayed, not pre-world. AtvHostPayload.
     AtvHostState = 240,
     // CLIENT->HOST: this client's player refuelled or repaired an ATV (op 1, 2, the gain), fitted or took off a module
-    // (op 3, 4), or, seated, changed its lights, brake or turbo (op 5) or pressed or released its horn (op 6, 7). Never
+    // (op 3, 4), or, seated, pressed or released its horn (op 6, 7). Never
     // relayed; the host does it on its own copy, and its AtvHostState answers. AtvHostPayload.
     AtvRequest = 239,
 
@@ -3226,8 +3226,8 @@ struct AtvStatePayload {
                            //      it, so a peer merely GRABBING the ATV must not appear here.
     uint8_t  syncerSlot;   // 1  -- who writes this ATV's pose and condition, assigned by the host: 0 = the
                            //      host itself, k = client slot k
-    uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=brake, bit2=grabbed (the sender's grav hand holds it),
-                           //      bit3=kAtvFromSyncer, bit4=kAtvTrap
+    uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=kAtvBrake, bit2=grabbed (the sender's grav hand holds it),
+                           //      bit3=kAtvFromSyncer, bit4=kAtvTrap, bit5=kAtvLights, bit6=kAtvTurbo
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (warp as is), 0 = live stream
     // The condition block: the syncer's accumulators travel; a mirror's own accrual is held at zero,
     // so overwriting never races an irreversible act. Presence (tiresMask, hasSpare) is consumed
@@ -3249,8 +3249,12 @@ struct AtvStatePayload {
     int8_t   tiresFixes[4];       // 4  -- per-wheel repair countdown (int32 in-game, int8 on wire)
     uint8_t  tiresTypes[4];       // 4  -- setWheelsType input (zero runtime writers measured; kept
                                   //      because it IS reducer input and 4 B closes the class)
+    uint32_t ackSeq;              // 4  -- a client syncer: the newest AtvHostState stateSeq whose vitals it APPLIED for this
+                                  //      ATV (0 until the first). The host: its own copy's current stateSeq, on its re-send
+                                  //      of a syncer's block and on every block of its own copy. The host takes a client
+                                  //      syncer's fuel and health only from a block whose ackSeq is its current stateSeq.
 };
-static_assert(sizeof(AtvStatePayload) == 148, "AtvStatePayload must be 148 bytes");
+static_assert(sizeof(AtvStatePayload) == 152, "AtvStatePayload must be 152 bytes");
 
 // stateBits bit 3: the block is the syncer's, re-sent by the host (a client syncer's pose and condition), not the
 // host's own copy. A receiver applies the pose and condition of such a block to an ATV it does not sync; the host's
@@ -3260,6 +3264,14 @@ constexpr uint8_t kAtvFromSyncer = 0x08;
 // stateBits bit 4: the host's own copy has its `trap` set (the story event's explosion). The host writes it in every
 // block it sends and ignores a client's bit; a client copy takes it from the stamp (atv_sync.cpp).
 constexpr uint8_t kAtvTrap = 0x10;
+
+// stateBits bits 1, 5 and 6: the syncer's own copy's brake, lights and turbo, written at each block build. The host takes
+// them from an admitted block and applies a change to its copy; its re-send carries exactly these three to the others
+// (bits 0 and 2 are the syncer's own, read by the host's judgement only).
+constexpr uint8_t kAtvBrake = 0x02;
+constexpr uint8_t kAtvLights = 0x20;
+constexpr uint8_t kAtvTurbo = 0x40;
+constexpr uint8_t kAtvControlBits = kAtvBrake | kAtvLights | kAtvTurbo;
 
 // An ATV (AtvSpawn): the host ATV's own game Key and its class, so the receiver spawns the exact skin
 // under that Key. The Key is at most 31 chars (an ATV's is 22, or "ATV"); a receiver drops a longer one.
@@ -3868,11 +3880,10 @@ static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 b
 // An ATV's host state (AtvHostState), or a client's request (AtvRequest).
 namespace atv_host_op {
 inline constexpr uint8_t kState = 0, kStateHornPress = 1, kStateHornRelease = 2;   // AtvHostState
-inline constexpr uint8_t kFuelGain = 1, kHealthGain = 2, kModuleAdd = 3, kModuleRemove = 4, kControls = 5,
-                         kHornPress = 6, kHornRelease = 7;                         // AtvRequest
+inline constexpr uint8_t kFuelGain = 1, kHealthGain = 2, kModuleAdd = 3, kModuleRemove = 4, kHornPress = 6,
+                         kHornRelease = 7;                                         // AtvRequest
 }  // namespace atv_host_op
-inline constexpr uint8_t kAtvHostLights = 0x01, kAtvHostBrake = 0x02, kAtvHostTurbo = 0x04, kAtvHostEmpty = 0x08,
-                         kAtvHostBroken = 0x10;
+inline constexpr uint8_t kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10;
 struct AtvHostPayload {
     WireKey  key;          // 32 -- the ATV's Key
     float    fuel;         // 4 -- the host's fuel (state)
@@ -3880,7 +3891,7 @@ struct AtvHostPayload {
     float    amount;       // 4 -- a refuel's or a repair's gain (request)
     uint32_t gen;          // 4 -- the gains the host applied to this ATV (state)
     uint8_t  op;           // 1 -- atv_host_op
-    uint8_t  flags;        // 1 -- kAtvHost*: the state's, or the controls a driver asks for
+    uint8_t  flags;        // 1 -- kAtvHost*: the state's
     uint8_t  module;       // 1 -- a fitted or taken-off module (request)
     uint8_t  moduleCount;  // 1 -- how many of `modules` are fitted (state)
     uint8_t  modules[16];  // 16 -- the fitted modules, in the ATV's order (state)

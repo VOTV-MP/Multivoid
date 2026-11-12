@@ -1,6 +1,7 @@
 // coop/interactables/atv_stream_gates.cpp -- the ATV stream's per-block gates (declared in atv_sync_internal.h): what a
 // block carries or skips, read off ONE entry and the actor behind it. The host's trap bit stamped into a block, the
-// client's take of that bit, the re-arm of an accepted explosion request, and the idle syncer's change gate. None of
+// client's take of that bit, the take of the brake, lights and turbo bits, the re-arm of an accepted explosion request,
+// and the idle syncer's change gate. None of
 // them touches the lane's map or its state; atv_sync.cpp calls them where it builds, applies and paces the stream.
 
 #include "coop/interactables/atv_sync_internal.h"
@@ -51,6 +52,23 @@ void TakeStampTrap(AtvEntry& e, bool stamped, bool owns) {
     e.stampTrap = stamped;
     e.haveStampTrap = true;
     if (!owns || first || changed) A::WriteTrap(e.actor, stamped);
+}
+
+// The brake, lights and turbo bits of a block this peer took (the host: an admitted client syncer's; a client: the host's,
+// its own copy's or the re-sent syncer's). A bit is applied when it differs from the last block's -- the first block
+// applies every bit that differs from the copy -- so a copy whose own battery put the lights out is not forced on again
+// by every block. Never called for an ATV this peer syncs: its own copy is where the bits are written from.
+void TakeControls(AtvEntry& e, uint8_t stateBits) {
+    const uint8_t bits = stateBits & coop::net::kAtvControlBits;
+    const uint8_t changed = e.haveControlBits ? static_cast<uint8_t>(bits ^ e.controlBits) : coop::net::kAtvControlBits;
+    e.controlBits = bits;
+    e.haveControlBits = true;
+    const bool lights = (bits & coop::net::kAtvLights) != 0;
+    const bool brake = (bits & coop::net::kAtvBrake) != 0;
+    const bool turbo = (bits & coop::net::kAtvTurbo) != 0;
+    if ((changed & coop::net::kAtvLights) && lights != A::GetLights(e.actor)) A::SetLights(e.actor, lights);
+    if ((changed & coop::net::kAtvBrake) && brake != A::GetBrake(e.actor)) A::SetBrake(e.actor, brake);
+    if ((changed & coop::net::kAtvTurbo) && turbo != A::GetTurbo(e.actor)) A::SetTurbo(e.actor, turbo);
 }
 
 // HOST: the re-arm of an accepted explosion request. The game re-arms at health >= 0 (its explode test is the old value

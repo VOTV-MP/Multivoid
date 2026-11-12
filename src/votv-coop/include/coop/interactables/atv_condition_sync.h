@@ -32,7 +32,10 @@ void FillPayload(void* actor, coop::net::AtvStatePayload& p);
 // Apply a received condition block to this entry's actor. `fromHost` is whether the datagram's sender is the
 // host: a block that is not, or that the host re-sent for a client syncer (kAtvFromSyncer), is clamped to the
 // game's domains; presence is consumed only from the host's own copy, a connect snapshot's block included.
-// Honors tiresValid, the skipTireUpdate defer guard, and the last-expressed change edges. Game thread.
+// Honors tiresValid, the skipTireUpdate defer guard, and the last-expressed change edges. Fuel and health follow the
+// host's copy (atv_host_sync.h): on the host a client syncer's block lowers them, to the lower of the host's and its own,
+// only when its ackSeq is the ATV's current state sequence, and `checkIfRunout` then runs on the host's copy; on a client
+// the host's block sets them unless the ATV's open-request gate is shut, and its ackSeq is recorded as applied. Game thread.
 void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload& p, bool fromHost);
 
 // Idle-syncer change-gate term: true when the payload's condition block differs from the

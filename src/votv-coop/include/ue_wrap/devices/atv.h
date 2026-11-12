@@ -59,6 +59,24 @@ float GetFuel(void* atv);    // fuel, 0..100
 float GetHealth(void* atv);  // health, 0..100
 bool  GetBrake(void* atv);   // the handbrake
 
+// The seated driver's controls on this copy: the lights (`lights`) and the turbo (`turbo`), as the brake above. False on
+// null, an unresolved ATV_C or a class without the property. Game thread.
+bool  GetLights(void* atv);
+bool  GetTurbo(void* atv);
+
+// The ATV's own bodies for those three on a copy nobody drives, each a write of the field and then the game's function
+// that acts on it: `lights` then `Upd Lights` (which clears it again on a flat battery), `Brake` then `setBrake`, and the
+// turbo as the key sets it (`turbo` true, `Speed` := `speed_turbo`) or `unturbo` for off. False, and nothing written, on
+// null, an unresolved field or a function that did not dispatch. Game thread.
+bool  SetLights(void* atv, bool on);
+bool  SetBrake(void* atv, bool on);
+bool  SetTurbo(void* atv, bool on);
+
+// The ATV's own `checkIfRunout`: it calls `runout` when the tank or the health is down. The guard after fuel or health
+// is lowered from outside the game's own tick. False on null, an unresolved function or a call that did not dispatch.
+// Game thread.
+bool  CheckIfRunout(void* atv);
+
 // The story event's flag: while it is set the ATV's own tick explodes it (health to 0, then `explode`) once its driver
 // has moved. Resolved by name with no fallback; both return false, and touch nothing, on null, an unresolved ATV_C or a
 // class without the property. Game thread.

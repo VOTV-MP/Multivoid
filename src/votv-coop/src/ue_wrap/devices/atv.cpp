@@ -8,6 +8,7 @@
 
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/class_resolve.h"
+#include "ue_wrap/core/component_calls.h"  // CallParamlessNamed -- the ATV's own parameterless functions
 #include "ue_wrap/core/fname_utils.h"  // StringToFName -- SpawnMirror's key
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
@@ -33,6 +34,13 @@ int32_t g_isDrivenOff = -1;       // isDriven (0x05F7, bool)
 int32_t g_fuelOff     = -1;       // fuel     (0x05D4, float)
 int32_t g_healthOff   = -1;       // health   (0x05E4, float)
 int32_t g_brakeOff    = -1;       // Brake    (0x05D9, bool)
+uint8_t g_brakeMask   = 0xFF;     // its bit; the whole byte when the bit could not be resolved
+int32_t g_lightsOff   = -1;       // lights, turbo: bool bits, byte and mask each
+uint8_t g_lightsMask  = 0;
+int32_t g_turboOff    = -1;
+uint8_t g_turboMask   = 0;
+int32_t g_speedOff    = -1;       // speed, speed_turbo: floats; the turbo key copies the second onto the first
+int32_t g_speedTurboOff = -1;
 int32_t g_trapOff     = -1;       // trap     (a bool bit: the byte, with its mask below)
 uint8_t g_trapMask    = 0;
 int32_t g_tpOff       = -1;       // tp       (a UBillboardComponent*: where `explode` places its blast)
@@ -59,6 +67,14 @@ bool IsAtvClass(void* cls) {
 }
 constexpr const wchar_t* kAtvBases[] = {L"ATV_C"};
 const class_resolve::Family kAtvFamily{L"ATV", kAtvBases, 1, &IsAtvClass};
+bool ReadBit(void* atv, int32_t off, uint8_t mask) {
+    return (*(reinterpret_cast<const uint8_t*>(atv) + off) & mask) != 0;
+}
+
+void WriteBit(void* atv, int32_t off, uint8_t mask, bool v) {
+    uint8_t& byte = *(reinterpret_cast<uint8_t*>(atv) + off);
+    byte = v ? static_cast<uint8_t>(byte | mask) : static_cast<uint8_t>(byte & ~mask);
+}
 
 }  // namespace
 
@@ -74,6 +90,23 @@ bool EnsureResolved() {
     g_fuelOff     = ResolveOff(cls, L"fuel",     0x05D4);
     g_healthOff   = ResolveOff(cls, L"health",   0x05E4);
     g_brakeOff    = ResolveOff(cls, L"Brake",    0x05D9);
+    {
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (R::FindBoolProperty(cls, L"Brake", off, mask) && off >= 0 && mask != 0) { g_brakeOff = off; g_brakeMask = mask; }
+    }
+    // No fallback for the rest: a miss leaves the copy's lights, turbo or speed unwritten and said once.
+    if (!R::FindBoolProperty(cls, L"lights", g_lightsOff, g_lightsMask) || g_lightsOff < 0 || g_lightsMask == 0) {
+        g_lightsOff = -1;
+        UE_LOGW("atv: lights offset not found -- a copy's lights are not written");
+    }
+    if (!R::FindBoolProperty(cls, L"turbo", g_turboOff, g_turboMask) || g_turboOff < 0 || g_turboMask == 0) {
+        g_turboOff = -1;
+        UE_LOGW("atv: turbo offset not found -- a copy's turbo is not written");
+    }
+    g_speedOff = R::FindPropertyOffset(cls, L"speed");
+    g_speedTurboOff = R::FindPropertyOffset(cls, L"speed_turbo");
+    if (g_speedOff < 0 || g_speedTurboOff < 0) UE_LOGW("atv: speed offsets not found -- a copy's turbo is not set on");
     // No fallback: a miss leaves the trap host-only, as it was before it travelled. The flag is a bit packed with its
     // neighbours (inWater, floater), so its byte and mask are both resolved.
     if (!R::FindBoolProperty(cls, L"trap", g_trapOff, g_trapMask) || g_trapOff < 0 || g_trapMask == 0) {
@@ -153,7 +186,41 @@ float GetHealth(void* atv) {
 
 bool GetBrake(void* atv) {
     if (!atv || g_brakeOff < 0) return false;
-    return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(atv) + g_brakeOff);
+    return ReadBit(atv, g_brakeOff, g_brakeMask);
+}
+
+bool GetLights(void* atv) {
+    return atv && g_lightsOff >= 0 && ReadBit(atv, g_lightsOff, g_lightsMask);
+}
+
+bool GetTurbo(void* atv) {
+    return atv && g_turboOff >= 0 && ReadBit(atv, g_turboOff, g_turboMask);
+}
+
+bool SetLights(void* atv, bool on) {
+    if (!atv || g_lightsOff < 0) return false;
+    WriteBit(atv, g_lightsOff, g_lightsMask, on);
+    return component_calls::CallParamlessNamed(atv, L"Upd Lights");
+}
+
+bool SetBrake(void* atv, bool on) {
+    if (!atv || g_brakeOff < 0) return false;
+    WriteBit(atv, g_brakeOff, g_brakeMask, on);
+    return component_calls::CallParamlessNamed(atv, L"setBrake");
+}
+
+bool SetTurbo(void* atv, bool on) {
+    if (!atv) return false;
+    if (!on) return component_calls::CallParamlessNamed(atv, L"unturbo");
+    if (g_turboOff < 0 || g_speedOff < 0 || g_speedTurboOff < 0) return false;
+    WriteBit(atv, g_turboOff, g_turboMask, true);
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(atv) + g_speedOff) =
+        *reinterpret_cast<const float*>(reinterpret_cast<const char*>(atv) + g_speedTurboOff);
+    return true;
+}
+
+bool CheckIfRunout(void* atv) {
+    return atv && component_calls::CallParamlessNamed(atv, L"checkIfRunout");
 }
 
 bool ReadTrap(void* atv, bool& out) {
