@@ -6,6 +6,7 @@
 #include "coop/props/prop_key_index.h"
 #include "coop/dev/class_lifetime_probe.h"
 #include "coop/dev/classload_probe.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "coop/dev/init_seam_probe.h"
 #include "coop/dev/key_parity_probe.h"
 #include "coop/dev/mannequin_drill.h"
@@ -101,6 +102,8 @@ void PostMenuTick() {
 }
 
 void TickFrameTail() {
+    // The class loads' per-tick budget starts anew, and the spawns parked on a load run again.
+    ue_wrap::class_resolve::Tick();
     // Self-clearing and cheap when idle: an empty nameplate snapshot hides the HUD at the menu.
     coop::nameplate::Update();
     coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();

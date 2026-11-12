@@ -12,6 +12,11 @@ namespace {
 namespace R = ue_wrap::reflection;
 }  // namespace
 
+bool Available() {
+    void* cdo = R::FindClassDefaultObject(L"RyRuntimeObjectHelpers");
+    return cdo && R::FindFunction(R::ClassOf(cdo), L"LoadObject");
+}
+
 void* LoadObjectByPath(const wchar_t* fullObjectPath) {
     if (!fullObjectPath || !*fullObjectPath) return nullptr;
 

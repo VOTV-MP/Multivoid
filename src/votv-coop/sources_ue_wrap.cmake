@@ -20,6 +20,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/reflection_dispatch.cpp
     src/ue_wrap/core/reflection_props.cpp
     src/ue_wrap/core/asset_load.cpp
+    src/ue_wrap/core/class_resolve.cpp
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
     src/ue_wrap/core/hook_drill.cpp

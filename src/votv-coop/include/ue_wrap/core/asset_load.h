@@ -19,4 +19,8 @@ namespace ue_wrap::asset_load {
 // result; this performs no caching of its own.
 void* LoadObjectByPath(const wchar_t* fullObjectPath);
 
+// Whether the loader LoadObjectByPath stands on is there: the game's RyRuntime plugin and its LoadObject function.
+// A caller that wants to tell "no loader" from "no such asset" asks this first. Game thread.
+bool Available();
+
 }  // namespace ue_wrap::asset_load
