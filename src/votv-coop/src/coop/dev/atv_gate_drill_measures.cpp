@@ -8,12 +8,12 @@
 
 #include "coop/dev/atv_gate_probe.h"
 #include "coop/dev/director/director.h"
-#include "coop/dev/director/input_stub.h"
 #include "coop/player/hand_item.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/props/prop_syncer.h"
 
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -25,6 +25,7 @@
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 namespace coop::dev::atv_gate_drill::detail {
@@ -42,13 +43,11 @@ using ue_wrap::FVector;
 namespace {
 
 constexpr int   kBurnS = 10;              // the window a copy's fuel is read over while the other peer sits in the seat
-constexpr int   kDropS = 3;               // the can leaves the hand within this of the drop key
+constexpr int   kDropS = 3;               // the can leaves the hand within this of simulateDrop
+constexpr float kBurnMoveCm = 500.f;      // the ATV drives at least this far in the burn window, or the window measured nothing
 constexpr float kFuelboxReachCm = 100.f;  // the walk to the fuelbox ends this near it
 constexpr float kAimToleranceDeg = 6.f;
 
-// The drop key's press and release, the pair a tap makes.
-DR::InputStub g_dropPress{L"InpActEvt_drop_K2Node_InputActionEvent_0"};
-DR::InputStub g_dropRelease{L"InpActEvt_drop_K2Node_InputActionEvent_1"};
 
 std::string g_note;   // the drill thread's; see TakeNote
 
@@ -161,11 +160,51 @@ bool IdleBurn(const std::wstring& key, std::string& why) {
         void* atv = Atv(key);
         braked = atv && ue_wrap::atv::GetBrake(atv);
     });
-    // The brake on first, so the held throttle moves nothing: the window measures the fuel and not a drive.
-    if (!braked && !PressAtv(key, L"InpActEvt_atv_brake_K2Node_InputActionEvent_22", why)) return false;
+    // The brake OFF first: a parked ATV sits on its handbrake, and a throttle held against it moves nothing.
+    if (braked) {
+        if (!PressAtv(key, L"InpActEvt_atv_brake_K2Node_InputActionEvent_22", why)) return false;
+        const bool off = PS::WaitFor("the brake comes off", 3, [&] {
+            bool on = true;
+            OnGt([&] {
+                void* atv = Atv(key);
+                on = !atv || ue_wrap::atv::GetBrake(atv);
+            });
+            return !on;
+        }, false);
+        if (!off) {
+            why = "the brake key left the handbrake on";
+            return false;
+        }
+    }
+    FVector from{}, to{};
+    float fuel0 = -1.f, fuel1 = -1.f;
+    OnGt([&] {
+        void* atv = Atv(key);
+        if (!atv) return;
+        E::TryGetActorLocation(atv, from);
+        ReadFloat(atv, L"fuel", fuel0);
+    });
     if (!PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_4", why)) return false;
     PS::WaitFor("the idle-burn window", kBurnS, [] { return false; }, false);
-    return PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_5", why);
+    OnGt([&] {
+        void* atv = Atv(key);
+        if (!atv) return;
+        E::TryGetActorLocation(atv, to);
+        ReadFloat(atv, L"fuel", fuel1);
+    });
+    const bool released = PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_5", why);
+    const float moved = std::sqrt((to.X - from.X) * (to.X - from.X) + (to.Y - from.Y) * (to.Y - from.Y) +
+                                  (to.Z - from.Z) * (to.Z - from.Z));
+    UE_LOGI("[ATVG-DRILL] MEASURE idleburn detail role=%s driver_fuel=%.1f>%.1f moved_cm=%.0f", RoleName(),
+            static_cast<double>(fuel0), static_cast<double>(fuel1), static_cast<double>(moved));
+    if (moved < kBurnMoveCm) {
+        char b[160];
+        std::snprintf(b, sizeof(b), "the ATV moved only %.0f cm in %d s with the throttle held (brake off, fuel %.1f>%.1f)",
+                      static_cast<double>(moved), kBurnS, static_cast<double>(fuel0), static_cast<double>(fuel1));
+        why = b;
+        return false;
+    }
+    return released;
 }
 
 bool HonkReplayPress(const std::wstring& key, std::string& why) {
@@ -177,7 +216,7 @@ bool HonkReplayRelease(const std::wstring& key, std::string& why) {
 }
 
 // The can walks to the fuelbox in the hand (the walk set that keeps the hand), the camera turns on the fuelbox, and the
-// drop key is tapped: the game's own release of the held prop. Where the can lands is the game's; the distance from the
+// held prop is released by the game's own simulateDrop. Where the can lands is the game's; the distance from the
 // fuelbox is logged with what the ATV's functions did.
 bool DropCanInFuelbox(const std::wstring& key, std::string& why) {
     if (!TakeHand(L"gascan", kCanClass, &kCanFuel)) {
@@ -219,14 +258,22 @@ bool DropCanInFuelbox(const std::wstring& key, std::string& why) {
     float before = -1.f;
     OnGt([&] { ReadFloat(coop::hand_item::LocalHandActor(), L"amount", before); });
     const PR::Counts base = ProbeCounts();
-    bool tapped = false;
-    OnGt([&] { tapped = DR::PressInputEvent(Me(), g_dropPress) && DR::PressInputEvent(Me(), g_dropRelease); });
-    if (!tapped) {
-        why = "the drop key did not dispatch";
+    // The game's own release of the held prop: mainPlayer_C::simulateDrop(dontWakeup, place, dontCollect), where the drop
+    // key's release ends and the call throwHoldingProp starts with. Not placed, so the can falls from the hand.
+    bool dropped = false;
+    OnGt([&] {
+        void* me = Me();
+        void* fn = me ? R::FindFunction(R::ClassOf(me), L"simulateDrop") : nullptr;
+        ue_wrap::ParamFrame pf(fn);
+        dropped = fn && pf.valid() && pf.Set<bool>(L"dontWakeup", false) && pf.Set<bool>(L"place", false) &&
+                  pf.Set<bool>(L"dontCollect", true) && ue_wrap::Call(me, pf);
+    });
+    if (!dropped) {
+        why = "mainPlayer's simulateDrop did not run";
         return false;
     }
     if (!PS::WaitFor("the can leaves the hand", kDropS, [] { return HandEmpty(); }, false)) {
-        why = "the drop key left the can in the hand";
+        why = "simulateDrop ran and the can stayed in the hand";
         return false;
     }
     void* can = nullptr;

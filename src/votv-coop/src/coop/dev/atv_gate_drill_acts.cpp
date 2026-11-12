@@ -372,8 +372,9 @@ bool UseToolbox(const std::wstring& key, std::string& why) {
     return true;
 }
 
-bool FitModule(const std::wstring& key, std::string& why) {
-    if (!TakeHand(kModuleRow, kModuleClass)) {
+// A module in the hand, the fire key held on the ATV until the game answers: the player's own fit.
+bool FitItem(const std::wstring& key, const wchar_t* row, const wchar_t* cls, std::string& why) {
+    if (!TakeHand(row, cls)) {
         why = "the module did not reach the hand";
         return false;
     }
@@ -387,6 +388,18 @@ bool FitModule(const std::wstring& key, std::string& why) {
     PS::WaitFor("the module count rises", kEffectS, [&] { return ReadVitals(key).modules > before; }, false);
     UE_LOGI("[ATVG-DRILL] fit: the fire key was held on the ATV; playerUsedOn answered=%d", answered ? 1 : 0);
     return true;
+}
+
+bool FitModule(const std::wstring& key, std::string& why) { return FitItem(key, kModuleRow, kModuleClass, why); }
+
+// The Fly module, whose fitting sets the horn's second job (hasFly). Its hold row and class are the list_props pair.
+bool FitFly(const std::wstring& key, std::string& why) {
+    const bool ok = FitItem(key, L"atvup_fly", L"prop_atvUpgrade_fly_C", why);
+    if (ok && ReadVitals(key).hasFly != 1) {
+        why = "the Fly module was used on the ATV and hasFly stayed false";
+        return false;
+    }
+    return ok;
 }
 
 // ---- the take-off ----

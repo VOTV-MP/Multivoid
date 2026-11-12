@@ -54,6 +54,7 @@ bool WalkToAtv(const std::wstring& key, std::string& why);
 bool PourCan(const std::wstring& key, std::string& why);        // a gas can in the hand, the fire key held on the ATV
 bool UseToolbox(const std::wstring& key, std::string& why);     // a toolbox in the hand, the fire key held on the ATV
 bool FitModule(const std::wstring& key, std::string& why);      // a module in the hand, the fire key on the ATV
+bool FitFly(const std::wstring& key, std::string& why);         // the Fly module in the hand, the fire key on the ATV
 bool TakeModuleOff(const std::wstring& key, std::string& why);  // the upgrades screen and a click on a module's button
 bool Sit(const std::wstring& key, std::string& why);            // the game's seat verb
 bool Leave(const std::wstring& key, std::string& why);          // the brake key, then the dismount key

@@ -71,6 +71,10 @@ const Step kHostSteps[] = {
     {"host_turbo", &Turbo, false, Settle::None, ""},
     {"host_honk", &Honk, false, Settle::None, ""},
     {"idleburn_host", &IdleBurn, false, Settle::None, "driven_by=host"},
+    {"host_leave", &Leave, false, Settle::None, ""},
+    {"host_fitfly", &FitFly, false, Settle::None, ""},
+    {"honkreplay_fly_press", &HonkReplayPress, false, Settle::HonkPress, ""},
+    {"honkreplay_fly_release", &HonkReplayRelease, false, Settle::HonkRelease, ""},
 };
 
 void Invalid(const std::string& why) { RV::Say(kTag, RV::Outcome::Invalid, "%s", why.c_str()); }
