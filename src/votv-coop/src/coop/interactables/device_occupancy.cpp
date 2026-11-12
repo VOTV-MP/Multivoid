@@ -10,6 +10,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_events.h"   // AddLifeListener: a client pinger dead
 #include "coop/player/remote_player.h"  // IsRagdollDisplayed: a client pinger knocked down
 #include "coop/props/prop_sound.h"
 #include "coop/session/net_pump.h"  // TickSerial: the aim memo's freshness clock
@@ -138,13 +139,23 @@ std::chrono::steady_clock::time_point g_nextFsmHoldPoll{};
 void SendClaim(coop::net::Session* s, const std::wstring& key, uint8_t slot, bool busy);  // fwd
 uint8_t LocalSlot();                                                                     // fwd
 
+// The clients that lie dead, recorded by the pose stream's death edge (puppet_events: a listener only records). The
+// ragdoll bit leaves a death out (`isRagdoll && !dead`), so a client dying mid-ping is read from here. Cleared when
+// its slot leaves, so the next occupant of the slot starts alive; the stream's first pose after a puppet comes up
+// raises no edge, which is why a revive is the only other writer.
+bool g_deadSlot[coop::players::kMaxPeers] = {};
+void OnPuppetLife(uint8_t slot, bool alive) {
+    if (slot < coop::players::kMaxPeers) g_deadSlot[slot] = !alive;
+}
+
 // HOST: the player of `slot` lies in its ragdoll or is dead. Read at the decision, inside the reconcile poll, which
 // stays a poll: the ping attribution it runs on (PingActiveSlot) is itself polled off the desk machine's flag, so a
-// faint that lands before that attribution does must still be seen, which an edge listener cannot give. What is read
-// is state the announcements already wrote: a client's from its puppet, whose display the pose stream's ragdoll bit
-// drives (RemotePlayer::IsRagdollDisplayed); the host's from its own flags. ragdollMode announces the host's fall, and
-// no watchable function announces its stand-up: the Blueprint dump of mainPlayer_C clears isRagdoll inside its
-// ExecuteUbergraph, so a flag fed by that watch would stay down after a recovery.
+// faint that lands before that attribution does must still be seen, which an edge cannot give. What is read is state
+// the announcements already wrote: a client's from its puppet, whose display the pose stream's ragdoll bit drives
+// (RemotePlayer::IsRagdollDisplayed), and from the death edge recorded above; the host's from its own flags.
+// ragdollMode announces the host's fall, and no watchable function announces its stand-up: the Blueprint dump of
+// mainPlayer_C clears isRagdoll inside its ExecuteUbergraph, so a flag fed by that watch would stay down after a
+// recovery.
 bool PlayerDown(uint8_t slot) {
     if (slot == LocalSlot()) {
         void* local = coop::players::Registry::Get().Local();
@@ -152,7 +163,7 @@ bool PlayerDown(uint8_t slot) {
         return local && ue_wrap::engine::ReadMainPlayerRagdollState(local, ragdoll, dead) && (ragdoll || dead);
     }
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
-    return rp && rp->valid() && rp->IsRagdollDisplayed();
+    return (slot < coop::players::kMaxPeers && g_deadSlot[slot]) || (rp && rp->valid() && rp->IsRagdollDisplayed());
 }
 
 void ReconcileDeskFsmHold(coop::net::Session* s) {
@@ -352,6 +363,8 @@ void InstallObservers() {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     InstallObservers();
+    if (!coop::puppet_events::AddLifeListener(&OnPuppetLife))
+        UE_LOGW("device_occupancy: the life listener list is full -- a client that dies mid-ping keeps the desk");
 }
 
 void Tick() {
@@ -605,6 +618,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void OnDisconnectForSlot(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
+    if (slot >= 0 && slot < coop::players::kMaxPeers) g_deadSlot[slot] = false;
     std::vector<std::wstring> dropped;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
@@ -625,6 +639,7 @@ void OnDisconnectForSlot(int slot) {
 }
 
 void OnDisconnect() {
+    for (bool& dead : g_deadSlot) dead = false;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
         g_busy.clear();

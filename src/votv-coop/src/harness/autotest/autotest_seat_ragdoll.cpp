@@ -3,11 +3,13 @@
 // One peer (the client, or the host with dev.seat_ragdoll_who=host) enters a device the way the game's enter ends
 // (setActiveInterface): the laptop, or with dev.seat_ragdoll_device=desk or sat the desk's coordinates screen or the
 // SAT console. Once the other peer reads its claim, it ragdolls as a faint does (ragdollMode(true, passOut, false)),
-// and the other peer then waits for the claim to free and enters the device itself. Arms: dev.seat_ragdoll_ping (the
-// host, at the desk) starts a ping before the faint, and dev.seat_ragdoll_exit leaves by the game's own exit instead
+// and the other peer then waits for the claim to free and enters the device itself. Arms: dev.seat_ragdoll_ping (at the
+// desk, either peer) starts a ping before the faint, dev.seat_ragdoll_kill dies of a lethal hit instead (a client dying
+// mid-ping), and dev.seat_ragdoll_exit leaves by the game's own exit instead
 // of a ragdoll. The host says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`: PASS when the claim is free within 5 s and
 // the other peer's enter stands, or, with both arms, when the pinger keeps the desk and the enter is refused. The red:
-// dev.occupancy_pinger_down_off on the host, with the ping arm and the host acting, must FAIL (the claim never frees).
+// dev.occupancy_pinger_down_off on the host, with the ping arm (the host acting, or the client with the kill arm), must
+// FAIL if the ping outlasts the knock-down (the claim never frees).
 // Gated by VOTVCOOP_RUN_SEAT_RAGDOLL; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
@@ -20,6 +22,7 @@
 #include "coop/interactables/device_occupancy.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/rig_verdict.h"
+#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -104,6 +107,11 @@ bool Ping() { return coop::config::ResolveFlag(coop::config_registry::rows::seat
 // arm the desk stays the pinger's while its machine runs, so the other peer's enter must be refused.
 bool ExitOnly() { return coop::config::ResolveFlag(coop::config_registry::rows::seat_ragdoll_exit); }
 
+// dev.seat_ragdoll_kill: the actor dies of a lethal hit instead of ragdolling, as a client that dies mid-ping does.
+bool Kill() { return coop::config::ResolveFlag(coop::config_registry::rows::seat_ragdoll_kill); }
+
+const char* Outcome() { return Kill() ? "died of a lethal hit" : ExitOnly() ? "left by the game's exit" : "ragdolled as a faint"; }
+
 bool HostActs() { return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_who) == "host"; }
 
 void Act(const char* me) {
@@ -121,22 +129,31 @@ void Act(const char* me) {
                 wrote = ue_wrap::console_desk::WriteScalars(sc, ue_wrap::console_desk::kPaintNone);
             }
         });
-        const bool running = PS::WaitFor("the desk's ping machine attributed", 10, [] {
+        // The attribution is the host's: a client actor leaves the wait to the watcher (the host), which reads it.
+        const bool running = !HostActs() || PS::WaitFor("the desk's ping machine attributed", 10, [] {
             uint8_t slot = 0xFF;
             OnGameThread([&] { slot = coop::desk_input_sync::PingActiveSlot(); });
             return slot != 0xFF;
         }, false);
-        UE_LOGI("seat-ragdoll: %hs started a ping (write=%d attributed=%d)", me, wrote ? 1 : 0, running ? 1 : 0);
+        UE_LOGI("seat-ragdoll: %hs started a ping (write=%d attributed=%d, -1: the host reads it)", me, wrote ? 1 : 0, HostActs() ? (running ? 1 : 0) : -1);
     }
     PS::Mark("actor_in");
     if (!PS::Await("observer_saw_claim", kStepSec)) return;
     bool rag = false;
     OnGameThread([&] {
         void* p = coop::players::Registry::Get().Local();
-        rag = p && (ExitOnly() ? ue_wrap::device_screen::ForceExitInterface(p)
-                               : ue_wrap::engine::SetMainPlayerRagdollMode(p, true, true, false));
+        if (!p) return;
+        if (Kill()) {
+            // The death drill's lethal hit: twice the max health, the game's own Add Player Damage.
+            float maxHp = 100.f;
+            if (!ue_wrap::vitals::Read(ue_wrap::vitals::Field::MaxHealth, &maxHp) || maxHp <= 0.f) maxHp = 100.f;
+            rag = ue_wrap::engine::InvokeAddPlayerDamage(p, maxHp * 2.f, /*blood=*/true);
+        } else {
+            rag = ExitOnly() ? ue_wrap::device_screen::ForceExitInterface(p)
+                             : ue_wrap::engine::SetMainPlayerRagdollMode(p, true, true, false);
+        }
     });
-    UE_LOGI("seat-ragdoll: %hs %hs (call=%d)", me, ExitOnly() ? "left by the game's exit" : "ragdolled as a faint", rag ? 1 : 0);
+    UE_LOGI("seat-ragdoll: %hs %hs (call=%d)", me, Outcome(), rag ? 1 : 0);
     PS::Mark("actor_ragdolled");
     PS::Await("observer_done", kStepSec);  // the actor stays down (or out) while the watcher measures
     LogState(me, 1);
@@ -148,6 +165,12 @@ void Act(const char* me) {
 std::string Watch(const char* me, unsigned actorSlot) {
     if (!PS::Await("actor_in", kStepSec)) return "";
     PS::WaitFor("the actor's claim here", 10, [actorSlot] { return Holder() == actorSlot; }, false);
+    if (Ping() && !HostActs())
+        PS::WaitFor("the client's ping attributed", 10, [actorSlot] {
+            uint8_t slot = 0xFF;
+            OnGameThread([&] { slot = coop::desk_input_sync::PingActiveSlot(); });
+            return slot == actorSlot;
+        }, false);
     LogState(me, 0);
     const bool claimed = Holder() == actorSlot;
     PS::Mark("observer_saw_claim");
@@ -176,7 +199,7 @@ void Judge(const std::string& r) {
     const bool pass = ExitOnly() && Ping() ? claimed && !freed && !stays : claimed && freed && stays;
     coop::rig_verdict::Say(kTag, pass ? coop::rig_verdict::Outcome::Pass : coop::rig_verdict::Outcome::Fail,
                            "%s %s at the %s: claimed=%d, freed within %d s=%d, the other peer's enter %s",
-                           HostActs() ? "the host" : "the client", ExitOnly() ? "left" : "ragdolled", Device().c_str(),
+                           HostActs() ? "the host" : "the client", Kill() ? "died" : ExitOnly() ? "left" : "ragdolled", Device().c_str(),
                            claimed, kFreedSec, freed,
                            stays ? "stands" : "was refused");
 }

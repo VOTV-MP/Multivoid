@@ -115,3 +115,6 @@ CFG_FLAG(seat_ragdoll_exit, "seat_ragdoll_exit", "dev", false, "VOTVCOOP_SEAT_RA
 CFG_FLAG(occupancy_pinger_down_off, "occupancy_pinger_down_off", "dev", false, "VOTVCOOP_OCCUPANCY_PINGER_DOWN_OFF",
     "Developer (the host; the seat-ragdoll drill's red): a pinger knocked down keeps the desk claimed for its ping "
     "until the ping ends, as before the lane, so the drill's faint-mid-ping arm must FAIL.")
+CFG_FLAG(seat_ragdoll_kill, "seat_ragdoll_kill", "dev", false, "VOTVCOOP_SEAT_RAGDOLL_KILL",
+    "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL): the acting peer dies of a lethal hit (twice its max health through "
+    "the game's own Add Player Damage) instead of ragdolling, so a client that dies mid-ping must free the desk too.")

@@ -62,7 +62,9 @@ client's enter stands; on the code before it the client was force-exited until t
 a plain exit mid-ping still keeps the desk, and a faint without a ping frees any device within 1 s;
 its red, `dev.occupancy_pinger_down_off` on the host, keeps the desk and fails the drill). The knock-down
 is read at the host's 250 ms reconcile, which stays a poll because the ping attribution it runs on is
-itself polled off the desk machine's flag; the host's stand-up has no watchable announcement.
+itself polled off the desk machine's flag; the host's stand-up has no watchable announcement. A client's death rides the
+pose stream's death edge (`coop/player/puppet_events`), recorded by `device_occupancy` and read there `[?]`: the drill's
+`dev.seat_ragdoll_kill` arm covers it and has not been run.
 
 ### The desk: inputs, the simulation, the cursor, the sounds
 
