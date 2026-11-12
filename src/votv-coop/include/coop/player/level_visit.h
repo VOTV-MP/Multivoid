@@ -24,6 +24,14 @@
 
 namespace coop::net { class Session; }
 
+// A map loaded into the running world brings what a world of its own has. Its placed player takes this machine's
+// controller as its level begins play: the controller goes back to the visitor, and the placed player and the black
+// screen it put up are removed. The world's height fog, dense without bound that far down, is hidden on this machine
+// for the visit. The game mode's backroomsEnabled is off for the visit and 5 s after it, so the view's jump into the
+// map and back out is not a clip, and a trip asked while seated or riding is refused, as the game's clip check
+// refuses one. What a map's script spawns lands in the world's own level, far below it, and counts as the map's.
+// untitled_untitled's hook check ends the map for a grappling hook in the map only, not for one in the world.
+
 namespace coop::level_visit {
 
 // Cache the session and register the watches (lib_C::loadLevel and lib_C::End) and the QuitGame hook. Idempotent;
@@ -36,8 +44,9 @@ void Tick();
 // The session ended: a visit in progress is undone and the player put back where it clipped.
 void OnDisconnect();
 
-// True while a visit runs and `actor` belongs to a level other than the world's own: an actor of the visited map,
-// which the prop lanes leave alone (it is this machine's, and goes with the map). Game thread.
+// True while a visit runs and `actor` belongs to a level other than the world's own, or stands far below the world
+// (what the map's script spawned): an actor of the visited map, which the prop lanes leave alone (it is this
+// machine's, and goes with the map). Game thread.
 bool InVisitedMap(void* actor);
 
 // [dev] Instruments for the drill: whether a visit runs (loading or arrived), its map, and how it last ended.

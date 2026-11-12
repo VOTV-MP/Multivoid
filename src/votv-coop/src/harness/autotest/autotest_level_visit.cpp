@@ -34,11 +34,14 @@
 #include "ue_wrap/core/script_fingerprint.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
+#include "ue_wrap/engine/engine_pawn.h"
+#include "ue_wrap/engine/screen_state.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <string>
@@ -99,8 +102,12 @@ struct Now {
     ue_wrap::FVector at{};
     float health = 0.f;
     void* held = nullptr;
+    std::wstring heldName = L"none";  // read on the game thread: the pointer may be gone by the time it is logged
     int inventory = -1, hold = -1;
     bool visiting = false;
+    bool possessed = false;  // the controller holds this player
+    float camZ = 0.f;
+    int black = 0;           // black screens on the viewport
 };
 
 Now Read() {
@@ -110,17 +117,23 @@ Now Read() {
         ue_wrap::vitals::Read(ue_wrap::vitals::Field::Health, &n.health);
         const int32_t off = Me() ? R::FindPropertyOffset(R::ClassOf(Me()), L"holding_actor") : -1;
         n.held = off >= 0 ? *reinterpret_cast<void**>(static_cast<char*>(Me()) + off) : nullptr;
+        if (n.held && R::IsLive(n.held)) n.heldName = R::ClassNameOf(n.held);
+        else n.held = nullptr;
         n.inventory = ArrayNum(L"inventoryData");
         n.hold = ArrayNum(L"hold");
         n.visiting = LV::Visiting();
+        n.possessed = Me() && E::GetController(Me()) != nullptr;
+        n.camZ = E::GetCameraLocation().Z;
+        n.black = ue_wrap::engine::ReadScreenState().blackOnScreen;
     });
     return n;
 }
 
 void Log(const Now& n) {
-    UE_LOGI("level-visit: STATE %hs at=(%.0f,%.0f,%.0f) health=%.0f visiting=%d map=%ls held=%ls inventory=%d hold=%d",
-            Who(), n.at.X, n.at.Y, n.at.Z, n.health, n.visiting ? 1 : 0, LV::CurrentMap().c_str(),
-            n.held ? R::ClassNameOf(n.held).c_str() : L"none", n.inventory, n.hold);
+    UE_LOGI("level-visit: STATE %hs at=(%.0f,%.0f,%.0f) health=%.0f visiting=%d map=%ls held=%ls inventory=%d hold=%d "
+            "possessed=%d camZ=%.0f black=%d", Who(), n.at.X, n.at.Y, n.at.Z, n.health, n.visiting ? 1 : 0,
+            LV::CurrentMap().c_str(), n.heldName.c_str(), n.inventory, n.hold,
+            n.possessed ? 1 : 0, n.camZ, n.black);
 }
 
 // The level script actor of the visited map: what its own End and QuitGame calls name as their context.
@@ -190,6 +203,26 @@ void Visitor() {
     Log(before);
     std::string map = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_MAP");
     if (map.empty()) map = "sl_backroomsObsolete";
+    if (coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_START") == "none") {
+        // The control: no visit, a lethal hit in the world, and what the player holds after the usual revive.
+        OnGameThread([] { E::InvokeAddPlayerDamage(Me(), 1000.f, /*blood=*/true); });
+        Write("visit_in");
+        Now n;
+        bool died = false;
+        for (int t = 0; t < 60; ++t) {
+            ::Sleep(1000);
+            n = Read();
+            Log(n);
+            died = died || n.health <= 0.f;
+            if (died && n.health > 0.f) break;
+        }
+        ::Sleep(3000);
+        n = Read();
+        Write("visit_over");
+        UE_LOGI("level-visit: %hs a death in the world: held before=%ls after=%ls hold %d->%d", Who(),
+                before.heldName.c_str(), n.heldName.c_str(), before.hold, n.hold);
+        return Verdict(died && n.health > 0.f, "a death in the world, revived (the control)");
+    }
     if (clip) OnGameThread([] {
         // The game's own clip: its tick traces from lastLoc to the camera, and a hit on static geometry is the trip.
         // lastLoc 4 m under the floor puts the floor between them.
@@ -219,6 +252,12 @@ void Visitor() {
     }
     if (!(n.visiting && n.at.Z < -30000.f)) { Write("visit_over"); return Verdict(false, "never arrived in the map"); }
     Write("visit_in");
+    ::Sleep(2000);
+    const Now inMap = Read();
+    // In the map the player is this machine's to move: its controller holds it, the view is in the map, uncovered.
+    const bool inOk = inMap.possessed && inMap.camZ < -30000.f && inMap.black == 0;
+    UE_LOGI("level-visit: %hs in the map possessed=%d camZ=%.0f black=%d", Who(), inMap.possessed ? 1 : 0,
+            inMap.camZ, inMap.black);
     const std::string dump = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_DUMP_DIR");
     if (!dump.empty()) DumpLevelClasses(dump);
     for (int i = 0; i < 20; ++i) { ::Sleep(1000); Log(Read()); }
@@ -256,11 +295,17 @@ void Visitor() {
     const bool back = !n.visiting && n.at.Z > -30000.f;
     const bool kept = n.held == nullptr ? before.held == nullptr : (before.held && n.hold == before.hold);
     const bool pockets = n.inventory == before.inventory;
+    const bool view = n.possessed && std::fabs(n.camZ - n.at.Z) < 300.f;
     UE_LOGI("level-visit: %hs back=%d (last end '%ls') held before=%ls after=%ls hold %d->%d inventory %d->%d", Who(),
-            back ? 1 : 0, LV::LastEnd().c_str(), before.held ? R::ClassNameOf(before.held).c_str() : L"none",
-            n.held ? R::ClassNameOf(n.held).c_str() : L"none", before.hold, n.hold, before.inventory, n.inventory);
-    Verdict(back && kept && pockets, !back ? "not back in the world" : !kept ? "the hand item did not come back"
-                                     : !pockets ? "the pockets changed" : "back in the world with what it carried");
+            back ? 1 : 0, LV::LastEnd().c_str(), before.heldName.c_str(),
+            n.heldName.c_str(), before.hold, n.hold, before.inventory, n.inventory);
+    Verdict(back && kept && pockets && inOk && view,
+            !back      ? "not back in the world"
+            : !kept    ? "the hand item did not come back"
+            : !pockets ? "the pockets changed"
+            : !inOk    ? "in the map the player was not its own to move, or its view was covered"
+            : !view    ? "back in the world the view is not the player's"
+                       : "back in the world with what it carried, its view its own throughout");
 }
 
 void Watcher(int visitorSlot) {
