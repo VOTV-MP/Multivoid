@@ -26,7 +26,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -105,18 +107,36 @@ bool IsMre(void* actor) {
     return c && ue_wrap::prop::WalksToBase(R::ClassOf(actor), c);
 }
 
-void OpenMre(void* actor, uint8_t slot, uint32_t eid) {
-    static ue_wrap::CachedObjRef sSpawnFn;
-    if (!sSpawnFn.Alive()) sSpawnFn.Set(R::FindFunction(R::ClassOf(actor), L"spawn"));
-    void* const fn = sSpawnFn.Raw();
-    if (!fn || !R::CallFunction(actor, fn, nullptr)) {
+// `spawn` ends in lib_C::progressAchievement ("jackpot", "rippedOff", "robbed"), which progresses the profile of the
+// machine that runs it: here the host's, for an open it did not do. The watch cancels it for the span of the roll, as
+// player_damage's watch cancels the cremator's for a peer's burn (player_damage.cpp, OnAchievementPre). Named residual:
+// the opener earns none of the three, since its copy no longer runs `spawn` and nothing carries an award to it.
+UE_FACT_FN(kRowAchievement, "prop_act_host", L"lib_C", L"progressAchievement", Declared);
+constexpr int kMreAchievementTag = 0x4D524541;  // 'MREA'
+bool g_rollingMre = false;
+uint32_t g_mreAchievementsRefused = 0;
+
+ue_wrap::script_gate::Verdict OnMreAchievementPre(const ue_wrap::script_gate::Call&) {
+    if (!g_rollingMre) return ue_wrap::script_gate::Verdict::Run;
+    if (++g_mreAchievementsRefused <= 3)
+        UE_LOGI("prop_act: refused an achievement of an MRE's roll for a client's open (#%u) -- it is the opener's",
+                g_mreAchievementsRefused);
+    return ue_wrap::script_gate::Verdict::Cancel;
+}
+
+// True when the contents were rolled. A roll that cannot run still lets the destroy proceed, so it is tallied.
+bool OpenMre(void* actor, uint8_t slot, uint32_t eid) {
+    g_rollingMre = true;
+    const bool rolled = ue_wrap::prop_use::CallMreSpawn(actor);
+    g_rollingMre = false;
+    if (!rolled) {
+        ++g_tally[static_cast<int>(Tally::MreRollFailed)];
         UE_LOGW("prop_act: the MRE eid %u opened for slot %u could not roll its contents", static_cast<unsigned>(eid),
                 static_cast<unsigned>(slot));
-        return;
+        return false;
     }
     ++g_mreOpens;
-    ue_wrap::FVector at{};
-    if (ue_wrap::engine::TryGetActorLocation(actor, at)) coop::prop_sound::PlayMreOpenAt(actor, at);
+    return true;
 }
 
 // Food-body classes that are not offered the use: the plush offers no option (its getActionOptions is empty), and
@@ -432,7 +452,12 @@ const char* CommitName(CommitStep s) {
 
 }  // namespace internal
 
-void Install(coop::net::Session* session) { g_session = session; }
+void Install(coop::net::Session* session) {
+    g_session = session;
+    if (!ue_wrap::script_gate::WatchName(kRowAchievement, kMreAchievementTag, &OnMreAchievementPre, nullptr))
+        UE_LOGE("prop_act: the achievement watch did not register -- the host earns an MRE's achievements for a "
+                "client's open");
+}
 
 void Tick() {
     if (!IsHost()) return;
@@ -508,8 +533,11 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     }
     // The act drill's red arm: the open is skipped, so the drill's MRE step must fail.
     static const bool mreOpenOff = coop::config::ResolveFlag(coop::config_registry::rows::prop_act_mre_open_off);
+    // The roll needs the live actor, so it runs before the destroy; the opening is heard after the destroy's result.
+    ue_wrap::FVector mreAt{};
+    bool mreOpened = false;
     if (!mreOpenOff && g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsMre(actor))
-        OpenMre(actor, senderSlot, p.eid);
+        mreOpened = OpenMre(actor, senderSlot, p.eid) && ue_wrap::engine::TryGetActorLocation(actor, mreAt);
     // The eid alone names the prop (no key), so the key fallback can never pick a sibling.
     ue_wrap::CachedObjRef before;
     before.Set(actor);
@@ -520,6 +548,7 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     if (internal::AfterDestroy(destroyed) == internal::AfterStep::FanOut) {
         coop::kerfur_entity::ReleaseKerfurForEid(p.eid);
         g_session->SendReliable(ReliableKind::PropDestroy, &dp, sizeof(dp), senderSlot);
+        if (mreOpened) coop::prop_sound::PlayMreOpenAt(coop::players::Registry::Get().Local(), mreAt);
     } else {
         ++g_tally[static_cast<int>(Tally::DestroyFailed)];
         UE_LOGE("prop_act: the host could not destroy eid %u for slot %u -- the client holds the item and the prop "
@@ -544,7 +573,7 @@ void OnPeerGone(uint8_t slot) {
 const char* TallyName(Tally t) {
     static const char* const kNames[] = {
         "target_gone", "bad_commit", "held_at_disconnect", "destroy_failed", "queue_full_unready", "bad_sender",
-        "grant_unsent", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
+        "grant_unsent", "mre_roll_failed", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
         "fit_collect_refused", "fit_pickup_refused", "fit_ignore_save", "fit_child", "fit_physics",
         "fit_can_collect", "fit_can_hold", "fit_heavy", "fit_mesh_root", "fit_volume", "fit_save_class",
         "fit_equip_row", "fit_not_edible"};

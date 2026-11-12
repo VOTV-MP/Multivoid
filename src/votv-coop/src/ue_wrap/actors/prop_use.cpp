@@ -69,6 +69,14 @@ bool CallPlayerUsedOn(void* prop, void* player, void* hitComponent, const FVecto
            f.SetRaw(L"holdPropName", &holdPropName, static_cast<int32_t>(sizeof(holdPropName))) && Call(prop, f);
 }
 
+bool CallMreSpawn(void* mre) {
+    if (!mre || !R::IsLive(mre)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mre), L"spawn");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(mre, f);
+}
+
 bool ReadFoodUse(void* prop, int32_t& uses, bool& notEdible) {
     static R::InstanceOffset sUses{L"uses"};
     static BoolField sNotEdible{L"notEdible", {}};
