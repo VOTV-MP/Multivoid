@@ -8,6 +8,8 @@
 #include "coop/props/prop_sound.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv_passenger_seat.h"
 #include "ue_wrap/engine/engine.h"
@@ -18,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace coop::atv_passenger {
 namespace {
@@ -76,6 +79,51 @@ void Reset() {
     g_askedMs = 0;
 }
 
+// AActor::SetActorEnableCollision / GetActorEnableCollision, the whole actor's collision.
+bool ActorCollision(void* actor, int set = -1) {
+    void* cls = R::ClassOf(actor);
+    if (set >= 0) {
+        void* fn = R::FindDispatchFunctionCached(cls, L"SetActorEnableCollision");
+        ue_wrap::ParamFrame pf(fn);
+        if (fn && pf.valid() && pf.Set<bool>(L"bNewActorEnableCollision", set != 0)) ue_wrap::Call(actor, pf);
+    }
+    void* get = R::FindDispatchFunctionCached(cls, L"GetActorEnableCollision");
+    ue_wrap::ParamFrame g(get);
+    return get && g.valid() && ue_wrap::Call(actor, g) && g.Get<bool>(L"ReturnValue");
+}
+
+// The kerfurs within kKerfurAtSeatCm of the seat. The game's sit tests the seat's reach with a capsule swept from the
+// player to it, ignoring only the ATV; a kerfur at the ATV (climbing on to ride the free spot, or standing where it got
+// off; on a client, the host's kerfur's copy) stands in that sweep and the sit is refused as "unreachable".
+constexpr float kKerfurAtSeatCm = 300.f;
+std::vector<void*> KerfursAtSeat(void* box) {
+    struct Ctx { ue_wrap::FVector at; std::vector<void*> out; } c{};
+    if (!E::TryGetActorLocation(box, c.at)) return {};
+    if (void* cls = ue_wrap::object_index::ClassByName(L"kerfurOmega_C"))
+        ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
+            auto* k = static_cast<Ctx*>(ctx);
+            ue_wrap::FVector at{};
+            if (!R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__") || !E::TryGetActorLocation(o, at))
+                return;
+            const float dx = at.X - k->at.X, dy = at.Y - k->at.Y, dz = at.Z - k->at.Z;
+            if (dx * dx + dy * dy + dz * dz < kKerfurAtSeatCm * kKerfurAtSeatCm) k->out.push_back(o);
+        }, &c);
+    return c.out;
+}
+
+// The game's own sit on the box, with the kerfurs at the seat out of its reach test for the length of the call.
+void SitPastKerfurs(void* me, void* box) {
+    std::vector<void*> cleared;
+    for (void* k : KerfursAtSeat(box))
+        if (ActorCollision(k)) {
+            ActorCollision(k, 0);
+            cleared.push_back(k);
+        }
+    PS::Sit(me, g_atv, box);
+    for (void* k : cleared)
+        if (R::IsLive(k)) ActorCollision(k, 1);
+}
+
 // The seat the host granted: the sit box, the game's own sit, then the player's capsule to query only. A sit the game refuses
 // (its own hint says why) gives the spot back.
 void Mount() {
@@ -83,7 +131,7 @@ void Mount() {
     void* sittingOn = nullptr;
     g_box = AtvLive() && me ? PS::SpawnSitBox(g_atv) : nullptr;
     g_boxIdx = g_box ? R::InternalIndexOf(g_box) : -1;
-    if (g_box) PS::Sit(me, g_atv, g_box);
+    if (g_box) SitPastKerfurs(me, g_box);
     if (!g_box || !E::ReadMainPlayerSittingOn(me, sittingOn) || sittingOn != g_atv) {
         UE_LOGI("atv_passenger: the game's sit on ATV %p did not take (box=%p) -- the spot goes back", g_atv, g_box);
         if (AtvLive()) coop::atv_sync::AskPassenger(g_atv, false);
