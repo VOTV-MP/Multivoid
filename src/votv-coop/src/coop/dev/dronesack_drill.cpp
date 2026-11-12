@@ -21,6 +21,7 @@
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
 #include "ue_wrap/actors/container_inventory.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
@@ -56,6 +57,7 @@ namespace DC = coop::dev::drill_chat;
 namespace E  = ue_wrap::engine;
 namespace EL = coop::element;
 namespace R  = ue_wrap::reflection;
+namespace UP = ue_wrap::prop;
 namespace SR = ue_wrap::save_record;
 namespace CI = ue_wrap::container_inventory;
 using namespace detail;
@@ -334,6 +336,7 @@ void RouteTick(void* player) {
         if (w == 2) return Skip("the carry to the sack failed or ran out its deadline");
         g_c.aimTicks = 0;
         g_c.bestMiss = 1e9f;
+        g_c.bestSpeed = 1e9f;
         GoPut(Put::Over);
         return;
     }
@@ -346,29 +349,35 @@ void RouteTick(void* player) {
         if (!ctrl || !sack || !E::TryGetActorLocation(sack, sa) || !E::TryGetActorLocation(p, pp) ||
             !E::TryGetActorLocation(player, me))
             return Skip("no controller, sack, prop or player place to aim with");
-        if (now - g_c.stMs > kDriveBoundMs) return Skip("the prop never came over the sack");
+        if (now - g_c.stMs > kDriveBoundMs) {
+            if (g_c.bestSpeed >= 1e8f) return Skip("the prop never came over the sack");
+            char why[112];
+            std::snprintf(why, sizeof(why), "the prop never came to rest over the sack (slowest %.1f cm/s)", g_c.bestSpeed);
+            return Skip(why);
+        }
         // The carry's reach is flat: the walker has arrived only when it stands at the sack's height too.
         if (std::fabs(me.Z - sa.Z) > kFeetCm) return;
         // Where the held prop is, measured: the release waits for it to be over the sack, not for the aim.
         const float flat = std::hypot(pp.X - sa.X, pp.Y - sa.Y), above = pp.Z - sa.Z;
         const float miss = (std::max)(0.f, flat - kOverFlatCm) + (std::max)(0.f, (std::max)(kOverMinCm - above, above - kOverMaxCm));
         if (miss < g_c.bestMiss) { g_c.bestMiss = miss; g_c.bestFlat = flat; g_c.bestAbove = above; }
-        // A release only once the held prop has hung over the sack for a second with the aim still, as a player lets go:
-        // one let go as the aim's last step lands still swings, and the release throws it.
-        static uint64_t overSince = 0;
-        if (miss != 0.f) overSince = 0;
-        else if (overSince == 0) overSince = now;
-        const uint64_t heldMs = overSince ? now - overSince : 0;
-        if (miss == 0.f && heldMs >= 1000) {
-            overSince = 0;
+        // A release only once the held prop is over the sack and at rest in the hand, as a player lets go: one let go
+        // while it swings throws it, and the throw is what the hold's speed measures. Nothing announces the settling,
+        // so its state is read here.
+        if (miss == 0.f) {
+            const UP::VelocityState v = UP::GetPhysicsVelocity(p, /*linearOnly=*/true);
+            if (!v.ok) return Skip("the held prop's speed is unread");
+            const float speed = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
+                                          v.linearCmS.Z * v.linearCmS.Z);
+            if (speed < g_c.bestSpeed) g_c.bestSpeed = speed;
+            if (speed > kSettledCmS) return;   // over the sack, still swinging: wait for it to settle in the hand
             if (!D::CallOnPlayer(player, L"dropGrabObject")) return Skip("dropGrabObject did not run");
-            UE_LOGI("[SACK-DRILL] client put eid=%u: release at flat=%.0f above=%.0f after %llums over it", eid, flat, above,
-                    static_cast<unsigned long long>(heldMs));
+            UE_LOGI("[SACK-DRILL] client put eid=%u: release at flat=%.0f above=%.0f at rest (%.1f cm/s)", eid, flat, above,
+                    speed);
             g_c.letGo = true;
             GoPut(Put::Settle);
             return;
         }
-        if (miss == 0.f) return;   // over the sack: wait for the prop to settle in the hand
         if (++g_c.aimTicks > kAimTicks) {
             char why[96];
             std::snprintf(why, sizeof(why), "closest flat=%.0f above=%.0f", g_c.bestFlat, g_c.bestAbove);

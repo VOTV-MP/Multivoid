@@ -41,6 +41,7 @@ inline constexpr float    kOverFlatCm = 35.f;
 inline constexpr float    kOverMinCm = 40.f;
 inline constexpr float    kOverMaxCm = 90.f;
 inline constexpr float    kOverAimCm = 65.f;
+inline constexpr float    kSettledCmS = 10.f;      // the held prop is at rest in the hand under this speed: a release throws nothing
 inline constexpr int      kAimTicks = 600;         // the aim is corrected for at most this many ticks per prop
 inline constexpr float    kAimStepDeg = 1.f;       // ... by at most this much on each axis per tick
 inline constexpr float    kAimGain = 0.5f;         // ... and half of the measured angle between the prop and its target
@@ -157,6 +158,7 @@ struct Client {
     ue_wrap::CachedObjRef prop;
     int                   aimTicks = 0;                 // the Over leg: ticks spent steering the held prop
     float                 bestMiss = 1e9f, bestFlat = 0.f, bestAbove = 0.f;   // ... and the nearest it came to the window
+    float                 bestSpeed = 1e9f;   // ... and the slowest it moved while inside it (cm/s)
     bool                  letGo = false;                // the Settle leg: the drop was called, not yet checked
     int                   census = 0;   // 0 none yet, 1 before taken, 2 after taken, 3 after+5s taken and compared
     uint64_t              soldSeenMs = 0;     // arm 4: when this peer first saw the host's sold line

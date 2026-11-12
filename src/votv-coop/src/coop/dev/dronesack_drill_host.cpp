@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/container_act_host.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/asset_load.h"
@@ -201,9 +202,18 @@ void SaleDone() {
     // prop a client's own copy of the container filed is gone from the floor with no record here.
     const int gone = static_cast<int>(g_h.propEids.size()) - PropsOutside();
     const int filed = g_h.recordsAtCall - g_h.recordsAtDrop;
-    if (gone == 0) UE_LOGW("[SACK-DRILL] host arm 2 INCONCLUSIVE: no prop reached the sack");
-    else if (filed == gone) UE_LOGI("[SACK-DRILL] host arm 2 PASS: %d prop(s) left the floor, %d record(s) filed", gone, filed);
-    else UE_LOGW("[SACK-DRILL] host arm 2 FAIL: %d prop(s) left the floor, %d record(s) filed", gone, filed);
+    // Said in the family's own line (arm 4's form) and as the rig's one contract line, which a run ends on.
+    namespace RV = coop::rig_verdict;
+    if (gone == 0) {
+        UE_LOGW("[SACK-DRILL] host arm 2 INCONCLUSIVE: no prop reached the sack");
+        RV::Say("dronesack-arm2", RV::Outcome::Invalid, "no prop reached the sack");
+    } else if (filed == gone) {
+        UE_LOGI("[SACK-DRILL] host arm 2 PASS: %d prop(s) left the floor, %d record(s) filed", gone, filed);
+        RV::Say("dronesack-arm2", RV::Outcome::Pass, "%d prop(s) left the floor, %d record(s) filed", gone, filed);
+    } else {
+        UE_LOGW("[SACK-DRILL] host arm 2 FAIL: %d prop(s) left the floor, %d record(s) filed", gone, filed);
+        RV::Say("dronesack-arm2", RV::Outcome::Fail, "%d prop(s) left the floor, %d record(s) filed", gone, filed);
+    }
     Say(kDoneLine);
     g_h.ph = Ph::Done;
 }
