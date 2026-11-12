@@ -209,7 +209,16 @@ player, and it goes to the host as `PlantEdit`, naming only the values that chan
 applies it (`coop/world/plant_edit_gate`): the key, the row and class, the sender's reach, the pot a planting names and the
 bounds of the values, at a bounded rate per client; it answers a refused edit of a plant it holds with that plant's state. A
 plant is found by its save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
-harvest leaves the host's plant empty and the item with the harvester. Tests: `harness/autotest/autotest_plant_state.cpp`.
+harvest leaves the host's plant empty and the item with the harvester. A ripe crop's harvest (a plant whose row drops a
+crop and is no bush or tree) drops its yield into the world and ends the plant, and a prop born that way on a client
+reaches no other peer: the client's crops gave their yield to that client's screen alone. So a client refuses the game's
+harvest of a ripe crop (a watch on `actionOptionIndex`, action 4) and sends the harvest as an edit
+(`plant_edit::kHarvest`); the host judges it as any edit, checks that its plant is a ripe crop, and runs the plant's own
+harvest, so the yield is the host's births on every peer and the plant's end reaches every client. A bush's berries go to
+the harvester's inventory, and a discard or a tree's no-op changes only the plant: those still run on the client and reach
+the host as edits. `[V]` on the rig (`harness/autotest/autotest_farm_harvest.cpp`): each list_farmPlants row planted ripe
+and taken by each peer; a client's crop yield is seen on the host as the harvester counted it. Tests:
+`harness/autotest/autotest_plant_state.cpp`, `harness/autotest/autotest_farm_harvest.cpp`.
 
 ## Who owns what
 

@@ -47,4 +47,13 @@ bool PaintLooks(void* actor);
 // The steam's state and the frozen flag, as PaintLooks or the tick left them.
 bool ReadLooks(void* actor, bool& steam, bool& frozen);
 
+// A white mushroom's (prop_food_mushroom7_C) own roll to become a puffball, stopped: its BeginPlay sets a looping 180 s
+// timer on Transform, which each time turns it into a prop_puffballMature_C one time in twenty and destroys it. Cleared
+// with K2_ClearTimer, the inverse of the BP's K2_SetTimerDelegate on {self, Transform}, so the roll runs on one peer.
+// Call it after the actor's BeginPlay. False when the clear does not resolve or the call fails. Game thread.
+bool StopPuffballTransform(void* actor);
+
+// Whether that timer is set on `actor` (K2_IsTimerActive): the host's white mushrooms are, a client's are not. Game thread.
+bool PuffballTransformArmed(void* actor);
+
 }  // namespace ue_wrap::food

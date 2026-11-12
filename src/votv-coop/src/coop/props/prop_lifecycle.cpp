@@ -105,16 +105,8 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     }
     PT::MarkProcessedInit(self);
 
-    // Host-authoritative intermediate variants: the client destroys its local one, and the mature
-    // variant arrives on the wire.
     const std::wstring cls = R::ClassNameOf(self);
     if (s->role() == coop::net::Role::Client) {
-        if (IsWireSuppressedPropClass(cls)) {
-            UE_LOGI("spawner-suppress[client.Init]: scheduling deferred destroy for local intermediate variant '%ls' actor=%p (host-authoritative; mature variant will arrive via wire)",
-                    cls.c_str(), self);
-            DestroyLocalProp(self, /*deferred=*/true);
-            return;
-        }
         // The Aprop_C lineage stays host-authoritative (save-persisted; a client's save load is its
         // own copy). The non-Aprop_C interactables (chipPile, clump, trashBitsPile: transient
         // litter with no save lineage) are the client's own creations (the toClump morph) and must
@@ -347,17 +339,13 @@ void SetSession(coop::net::Session* session) {
     PT::SetSession(session);
 }
 
-bool IsWireSuppressedPropClass(const std::wstring& cls) {
-    // The litter classes are deliberately not here. The predicate is symmetric across its three
-    // call sites (the client Init destroy, the host skip, the snapshot enumerate skip):
-    // trashBitsPile would drop the 392 level-placed piles from the connect snapshot and the
-    // adoption sweep would destroy every one on the client, and chipPile would destroy a client's
-    // own convert-born piles at Init. Connect-time divergence is handled by claim tracking instead.
-    // The adoption sweep does not consult this predicate: the growing mushroom is keyed but never
-    // expressed and client-forbidden, so zero client instances is parity.
-    // Compared without case, as the engine compares names: a class name off the wire spelt in other
-    // letters still names this class, and must still be refused (prop_drop_intent, hand_item).
-    return ::_wcsicmp(cls.c_str(), P::name::PropMushroomGrowingClass) == 0;
+bool IsWireSuppressedPropClass(const std::wstring& /*cls*/) {
+    // No class is held off the wire. The one this held, prop_food_mushroom7_C, was taken for a hidden growing stage; in
+    // this game build it is the white mushroom, a plain item a harvest, a spawner, a save or a hand makes, and only the
+    // host's copy turns into a puffball (a client stops its own copies' timers: coop/props/prop_food_sync). The predicate and its call sites stay
+    // for a true intermediate variant. The litter classes are deliberately never here: trashBitsPile would drop the 392
+    // level-placed piles from the connect snapshot, and chipPile would destroy a client's own convert-born piles at Init.
+    return false;
 }
 
 bool IsPerPlayerPropClass(const std::wstring& cls) {

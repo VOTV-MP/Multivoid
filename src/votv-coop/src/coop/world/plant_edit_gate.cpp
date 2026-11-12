@@ -9,6 +9,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/players_registry.h"  // the host's player runs a client's crop harvest
 #include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/props/prop_key_index.h"
 #include "coop/world/plant_sync.h"
@@ -91,6 +92,8 @@ enum ParentWhy : int { kParentNoPot, kParentFar, kParentFull, kParentWhyCount };
 bool g_keySaid[kKeyWhyCount] = {};
 bool g_parentSaid[kParentWhyCount] = {};
 bool g_rowSaid = false, g_rowClassSaid = false;
+uint64_t g_refusedHarvest = 0;
+bool g_harvestSaid = false;
 
 // A refusal that is counted every time and said the first time of a session.
 void RefuseOnce(uint64_t& count, bool& said, uint8_t slot, const wchar_t* what, const std::wstring& key, const wchar_t* why,
@@ -286,6 +289,24 @@ bool ApplyEdit(coop::net::Session& s, EditSlot& sl, uint8_t slot, Payload p, std
         if (gate == Gate::Wait) return false;
         if (gate == Gate::Refused) {
             changed.push_back(key);
+            return true;
+        }
+        // A ripe crop's harvest: the host runs the plant's own, so the yield it drops is the host's and every peer has it. One
+        // that is no ripe crop here is answered with the host's state.
+        if (p.editMask & coop::net::plant_edit::kHarvest) {
+            if (!GP::HarvestTakesPlant(plant)) {
+                RefuseOnce(g_refusedHarvest, g_harvestSaid, slot, L"harvest", key, L"not a ripe crop on the host", key);
+                changed.push_back(key);
+                return true;
+            }
+            if (!GP::RunHarvest(plant, coop::players::Registry::Get().Local())) {
+                UE_LOGW("plant_edit_gate: slot %u's harvest of plant '%ls' did not run on the host", static_cast<unsigned>(slot),
+                        key.c_str());
+                changed.push_back(key);
+                return true;
+            }
+            index.erase(key);
+            UE_LOGI("plant_edit_gate: HOST ran slot %u's harvest of plant '%ls'", static_cast<unsigned>(slot), key.c_str());
             return true;
         }
         // A changed row is one of the host's own, as a planting's is, and one this plant's class grows from.

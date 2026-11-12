@@ -331,8 +331,7 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // By index: a candidate purged since enumeration is rejected without touching freed memory.
     if (internalIdx >= 0 && !R::IsLiveByIndex(obj, internalIdx)) return skip(Skip::kNotLive);
     const std::wstring cls = R::ClassNameOf(obj);
-    // The same wire-suppress and per-player skips as the Init observer: an intermediate variant
-    // (mushroom7_C) and a per-player prop never cross the wire.
+    // The same wire-suppress and per-player skips as the Init observer: a per-player prop never crosses the wire.
     if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return skip(Skip::kWireSuppressed);
     if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return skip(Skip::kPerPlayer);
     p.className.len = 0;

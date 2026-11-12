@@ -10,7 +10,9 @@
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/world_identity.h"
 
+#include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <unordered_map>
 
 namespace ue_wrap::food {
@@ -206,6 +208,34 @@ bool ReadLooks(void* actor, bool& steam, bool& frozen) {
     steam = ComponentActive(component);
     frozen = (*byte & mask) != 0;
     return true;
+}
+
+namespace {
+// KismetSystemLibrary's by-name timer verb `fn` on {actor, Transform}: K2_ClearTimer, K2_IsTimerActive. The FunctionName
+// is an FString {data, num=len+1, max}, the null terminator counted (ue_wrap/actors/kerfur's pattern).
+bool TransformTimerCall(void* actor, const wchar_t* fn, bool* out) {
+    if (!actor || !R::IsLive(actor)) return false;
+    static void* sCdo = nullptr;
+    if (!sCdo) sCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
+    void* kc = R::FindClass(L"KismetSystemLibrary");
+    void* f = kc ? R::FindFunction(kc, fn) : nullptr;
+    if (!sCdo || !f) return false;
+    ParamFrame frame(f);
+    if (!frame.valid() || !frame.Set<void*>(L"Object", actor)) return false;
+    static const wchar_t kTransform[] = L"Transform";
+    struct { const wchar_t* data; int32_t n; int32_t m; } fs{kTransform, static_cast<int32_t>(std::size(kTransform)),
+                                                              static_cast<int32_t>(std::size(kTransform))};
+    if (!frame.SetRaw(L"FunctionName", &fs, sizeof(fs)) || !Call(sCdo, frame)) return false;
+    if (out) *out = frame.Get<bool>(L"ReturnValue");
+    return true;
+}
+}  // namespace
+
+bool StopPuffballTransform(void* actor) { return TransformTimerCall(actor, L"K2_ClearTimer", nullptr); }
+
+bool PuffballTransformArmed(void* actor) {
+    bool armed = false;
+    return TransformTimerCall(actor, L"K2_IsTimerActive", &armed) && armed;
 }
 
 }  // namespace ue_wrap::food

@@ -525,6 +525,25 @@ void WatchWhenLoaded() {
 
 }  // namespace
 
+// CLIENT: a white mushroom's roll to become a puffball (its looping Transform timer) is the host's. Each copy here -- the
+// host's mirror, one this client's save loaded or its hand dropped -- has its timer cleared once its BeginPlay set it; the
+// host's puffball and the mushroom's end arrive on the wire. A poll, since a save load's props do not pass the Init seam.
+void StopClientPuffballs() {
+    static void* sCls = nullptr;
+    if (!sCls || !R::IsLive(sCls)) sCls = ue_wrap::object_index::ClassByName(L"prop_food_mushroom7_C");
+    if (!sCls) return;
+    ue_wrap::object_index::ForEachInstance(sCls, [](void*, void* obj, int32_t) {
+        if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        if (ue_wrap::food::PuffballTransformArmed(obj) && !ue_wrap::food::StopPuffballTransform(obj)) {
+            static bool sSaid = false;
+            if (!sSaid) {
+                sSaid = true;
+                UE_LOGW("prop_food_sync: a white mushroom's puffball timer did not clear here -- it may turn on its own");
+            }
+        }
+    }, nullptr);
+}
+
 void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
 
 void Tick() {
@@ -543,6 +562,7 @@ void Tick() {
         PollHost(*s);
     } else {
         PollClient();
+        StopClientPuffballs();
     }
 }
 

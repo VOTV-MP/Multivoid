@@ -61,6 +61,16 @@ bool HideDirt(void* plant);
 
 bool Read(void* plant, Values& out);
 
+// Whether its harvest takes the whole plant: grown, not a bush or a tree, and its row gives a crop. The game's own `discard`
+// is set by the looking player's view, so this reads the row instead.
+bool HarvestTakesPlant(void* plant);
+
+// Its own harvest, as `player`'s E runs it: actionOptionIndex with action 4. The plant's `discard`, which the looking player's
+// view sets, is cleared first, so a ripe crop is harvested whoever looked at it last. A crop drops its yield into the world and
+// ends itself; a bush puts its berries in `player`'s inventory. False when the function does not resolve or the call fails.
+// Game thread.
+bool RunHarvest(void* plant, void* player);
+
 // Writes the values and refreshes what the plant shows from them: its row's data when the row changed, its grown mesh, its
 // fruit mesh, its size.
 void Apply(void* plant, const std::wstring& row, const Values& v);

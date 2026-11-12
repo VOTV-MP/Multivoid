@@ -474,7 +474,8 @@ registry recycled that id. `[V]`
   the host judges it first (`coop/world/plant_edit_gate`): a key no other holds, a planting of the class of its own
   `list_farmPlants` row, in the sender's reach and, if it names a pot, an empty one it holds, every value inside a bound. A
   passing edit is applied to its plant (a planting is materialised under the client's key) and its next `PlantState`
-  answers. A refused edit of a plant it holds is answered with that state; a refused removal or planting is not answered.
+  answers. A ripe crop's harvest is not run on the client: it goes as an edit the host runs on its plant, so the yield is
+  the host's. A refused edit of a plant it holds is answered with that state; a refused removal or planting is not answered.
   A lethal hit on a plant is refused on a client (`coop/props/prop_damage_gate`): the plant's end is the host's. `[?]`
 - **Expression: the growth area's glow** is the host's alone to spawn and crosses as a cue (`coop/world/event_cue_sync`).
   `[?]`

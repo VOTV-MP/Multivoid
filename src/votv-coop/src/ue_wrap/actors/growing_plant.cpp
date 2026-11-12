@@ -99,6 +99,7 @@ struct BoolAt {
 struct Offsets {
     int32_t grow = -1, fertilizer = -1, water = -1, fruitGrow = -1, dryness = -1, amount = -1;
     int32_t plant = -1, attachParent = -1;   // FName fields
+    int32_t plantType = -1, amountRange = -1;  // in the instance: its `data` row's type byte and crop range (two ints)
     BoolAt hideDirt, grew;
     bool Complete() const { return grow >= 0 && fertilizer >= 0 && water >= 0 && fruitGrow >= 0 && dryness >= 0 && amount >= 0; }
 };
@@ -121,6 +122,13 @@ const Offsets& OffsetsOf(void* plant) {
     o.amount = R::FindPropertyOffset(cls, L"amount");
     o.plant = R::FindPropertyOffset(cls, L"plant");
     o.attachParent = R::FindPropertyOffset(cls, L"attachParent");
+    const int32_t data = R::FindPropertyOffset(cls, L"data");
+    if (void* row = data >= 0 ? R::PropertyInnerStruct(cls, L"data") : nullptr) {
+        const int32_t type = R::FindPropertyOffsetByPrefix(row, L"plantType_");
+        const int32_t range = R::FindPropertyOffsetByPrefix(row, L"amount_range_");
+        if (type >= 0) o.plantType = data + type;
+        if (range >= 0) o.amountRange = data + range;
+    }
     o.hideDirt = FindBool(cls, L"hideDirt");
     o.grew = FindBool(cls, L"grew");
     return s_byClass.emplace(cls, o).first->second;
@@ -307,6 +315,30 @@ bool Read(void* plant, Values& out) {
     out = Values{At<float>(plant, o.grow), At<float>(plant, o.fertilizer), At<float>(plant, o.water),
                  At<float>(plant, o.fruitGrow), At<float>(plant, o.dryness), At<int32_t>(plant, o.amount)};
     return true;
+}
+
+// struct_farmPlant's plantType: 1 a bush, 2 a tree; a harvest takes any other whole.
+constexpr uint8_t kTypeBush = 1, kTypeTree = 2;
+
+bool HarvestTakesPlant(void* plant) {
+    const Offsets& o = OffsetsOf(plant);
+    if (!o.Complete() || o.plantType < 0 || o.amountRange < 0) return false;
+    const uint8_t type = At<uint8_t>(plant, o.plantType);
+    // lookAt's discard: a range of nothing gives no crop.
+    const bool crop = At<int32_t>(plant, o.amountRange) > 0 || At<int32_t>(plant, o.amountRange + 4) > 0;
+    return type != kTypeBush && type != kTypeTree && At<float>(plant, o.grow) >= 1.f && crop;
+}
+
+bool RunHarvest(void* plant, void* player) {
+    if (!plant || !R::IsLive(plant)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(plant), L"actionOptionIndex");
+    if (!fn) return false;
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (R::FindBoolProperty(R::ClassOf(plant), L"discard", off, mask))
+        *(static_cast<uint8_t*>(plant) + off) = static_cast<uint8_t>(*(static_cast<uint8_t*>(plant) + off) & ~mask);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && f.Set<uint8_t>(L"action", 4) && Call(plant, f);
 }
 
 void Apply(void* plant, const std::wstring& row, const Values& v) {

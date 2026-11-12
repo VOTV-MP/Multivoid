@@ -448,6 +448,16 @@ hertz); or an anchor, a start stamp every peer computes from, valid only while t
 constant ([architecture.md](architecture.md), where the authority is going). The reel corrector
 and the food's tick gate are built; concrete is designed and not built.
 
+The white mushroom (`prop_food_mushroom7_C`) turns itself: its BeginPlay sets a looping 180 s timer whose `Transform`
+makes a `prop_puffballMature_C` one time in twenty and ends the mushroom. It crosses as any prop, whoever made it (a
+harvest, a spawner, the save, a hand). The roll is the host's: a client clears each copy's timer (`K2_ClearTimer` on
+`Transform`, the inverse of the Blueprint's own set) from the food lane's poll (`coop/props/prop_food_sync`), and the
+host's puffball and the mushroom's end reach it as a birth and a destroy. It used to be held off the wire altogether,
+taken for a hidden growing stage, so a client never saw a white mushroom at all. `[V]` on the rig
+(`harness/autotest/autotest_farm_harvest.cpp`): a white mushroom from each peer's harvest stands on both, every host
+copy's timer is set and no client copy's, and the host's two turned into two puffballs that stand on the client while
+its two copies went.
+
 A world food takes the first shape (`coop/props/prop_food_sync`). Its tick rolls temperature and spoilage and, at the
 ends of the range, spawns a burnt or frozen copy and destroys itself, so a client's copy is refused its tick at the
 script gate (`coop/props/food_tick_gate`: `prop_food_C.ReceiveTick` and the four subclasses that declare their own, a

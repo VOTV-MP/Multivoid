@@ -1230,7 +1230,8 @@ enum class ReliableKind : uint16_t {
     // HOST->ALL: a plant's identity, place and values, at once on an edge a viewer sees and every few seconds while it changes,
     // or its end. Not relayed, not pre-world. Late join: every plant again at the ready edge. PlantStatePayload.
     PlantState = 224,
-    // CLIENT->HOST: what this client's player did to a plant, its new values, its removal or a plant it planted. Never relayed.
+    // CLIENT->HOST: what this client's player did to a plant, its new values, its removal, a plant it planted, or its harvest of a
+    // ripe crop (plant_edit::kHarvest), which the host runs so the yield is the host's. Never relayed.
     // The host judges it (coop/world/plant_edit_gate) and answers a refused edit of a plant it holds with that plant's
     // PlantState. PlantStatePayload.
     PlantEdit = 225,
@@ -2108,6 +2109,8 @@ struct FoodHandPayload {
 static_assert(sizeof(FoodHandPayload) == 12, "FoodHandPayload must be 12 bytes");
 namespace plant_edit {
 inline constexpr uint8_t kGrow = 1, kFertilizer = 2, kWater = 4, kFruitGrow = 8, kDryness = 16, kAmount = 32, kRow = 64;
+// Not a value: this player harvested a ripe crop, whose yield the game drops into the world, and the host runs the harvest.
+inline constexpr uint8_t kHarvest = 128;
 }  // namespace plant_edit
 
 // A plant (PlantState, PlantEdit).
