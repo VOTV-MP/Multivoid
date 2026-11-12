@@ -64,7 +64,7 @@ struct Slot {
     uint32_t waits[kWaitCauses] = {};
     uint32_t commits[kCommitSteps] = {};
     uint32_t maxDepth = 0;
-    uint8_t grantedFamily = 0;   // the verb of the request the slot's reservation was granted for
+    uint8_t grantedFamily = 0;   // the verb the slot's reservation was granted for; 0 while it holds none
 };
 
 coop::net::Session* g_session = nullptr;
@@ -267,6 +267,19 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
     in.familyFits = FamilyFits(actor, q.req.family);
 }
 
+// The slot's reservation and the verb it was granted for move together: prop_hold keeps at most one reservation per
+// slot, so one grantedFamily per slot mirrors it, set at the grant and cleared at every release.
+bool ReserveFor(uint8_t slot, const coop::net::PropActRequestPayload& req, void* actor) {
+    if (!coop::prop_hold::Reserve(slot, req.id, req.eid, actor)) return false;
+    g_slots[slot].grantedFamily = req.family;
+    return true;
+}
+
+void ReleaseFor(int slot) {
+    coop::prop_hold::Release(slot);
+    g_slots[slot].grantedFamily = 0;
+}
+
 // One queued request, judged.
 coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
     internal::ActInputs in;
@@ -283,14 +296,11 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
         ++g_slots[slot].waits[static_cast<int>(cause)];
         return coop::net::Served::Wait;
     }
-    if (v == internal::ActVerdict::Grant) {
-        coop::prop_hold::Reserve(slot, q.req.id, q.req.eid, actor);
-        g_slots[slot].grantedFamily = q.req.family;
-    }
+    if (v == internal::ActVerdict::Grant) ReserveFor(slot, q.req, actor);
     const bool sent = Answer(slot, *internal::ReplyFor(v, q.req.id));
     if (v == internal::ActVerdict::Grant) {
         if (!sent) {
-            coop::prop_hold::Release(slot);
+            ReleaseFor(slot);
             ++g_tally[static_cast<int>(Tally::GrantUnsent)];
             UE_LOGW("prop_act: the grant for slot %u id %u was not sent -- released", static_cast<unsigned>(slot),
                     static_cast<unsigned>(q.req.id));
@@ -483,12 +493,12 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     case internal::CommitStep::BadCommit:
         return;
     case internal::CommitStep::Abort:
-        coop::prop_hold::Release(senderSlot);
+        ReleaseFor(senderSlot);
         LogCommit(senderSlot, p, internal::CommitName(step));
         return;
     case internal::CommitStep::TargetGone:
         ++g_tally[static_cast<int>(Tally::TargetGone)];
-        coop::prop_hold::Release(senderSlot);
+        ReleaseFor(senderSlot);
         LogCommit(senderSlot, p, internal::CommitName(step));
         return;
     case internal::CommitStep::Destroy:
@@ -511,7 +521,7 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         UE_LOGE("prop_act: the host could not destroy eid %u for slot %u -- the client holds the item and the prop "
                 "stands on every peer", static_cast<unsigned>(p.eid), static_cast<unsigned>(senderSlot));
     }
-    coop::prop_hold::Release(senderSlot);
+    ReleaseFor(senderSlot);
     LogCommit(senderSlot, p, destroyed ? "destroy" : "destroy-failed");
 }
 
@@ -524,7 +534,7 @@ void OnPeerGone(uint8_t slot) {
     ++g_tally[static_cast<int>(Tally::HeldAtDisconnect)];
     UE_LOGI("prop_act: slot %u left holding a reservation (eid %u) -- released", static_cast<unsigned>(slot),
             static_cast<unsigned>(eid));
-    coop::prop_hold::Release(slot);
+    ReleaseFor(slot);
 }
 
 const char* TallyName(Tally t) {
@@ -552,7 +562,7 @@ void OnDisconnect() {
     g_mreOpens = 0;
     g_unreadSaid.clear();
     g_refusals.Clear();
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) coop::prop_hold::Release(slot);
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) ReleaseFor(slot);
 }
 
 void NoteBadSender() { ++g_tally[static_cast<int>(Tally::BadSender)]; }
