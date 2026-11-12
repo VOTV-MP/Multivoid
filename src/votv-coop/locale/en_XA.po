@@ -291,6 +291,9 @@ msgstr "[[Administration]]"
 msgid "Allow other builds"
 msgstr "[[Allow other builds]]"
 
+msgid "Allow the backrooms"
+msgstr "[[Allow the backrooms]]"
+
 msgid "Also refuse their address"
 msgstr "[[Also refuse their address]]"
 
@@ -560,6 +563,9 @@ msgstr "[[Last seen: %ds ago]]"
 
 msgid "Left the session."
 msgstr "[[Left the session.]]"
+
+msgid "Let a player's clip through the world take them to the backrooms and the game's two secret maps, each player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until their visit ends."
+msgstr "[[Let a player's clip through the world take them to the backrooms and the game's two secret maps, each player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until their visit ends.]]"
 
 msgid "Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay."
 msgstr "[[Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay.]]"

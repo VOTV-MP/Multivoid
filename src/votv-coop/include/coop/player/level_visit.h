@@ -32,6 +32,9 @@ namespace coop::net { class Session; }
 // map and back out is not a clip, and a trip asked while seated or riding is refused, as the game's clip check
 // refuses one. What a map's script spawns lands in the world's own level, far below it, and counts as the map's.
 // untitled_untitled's hook check ends the map for a grappling hook in the map only, not for one in the world.
+// The host can close the backrooms (world.backrooms, F1's Administration > Server settings): every peer then holds
+// backroomsEnabled off, so the game's clip takes no clip, and refuses a trip to the three maps; a visit already
+// running ends as usual.
 
 namespace coop::level_visit {
 

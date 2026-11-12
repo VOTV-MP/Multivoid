@@ -224,6 +224,12 @@ spawns lands in the world's own level, far below it: it stays out of the prop la
 with the map. `untitled_untitled`'s hook check counts a hook in the map only, not the world's own.
 Its ATV and `untitled_219`'s day-night cycle, copies of the world's own, are removed or held.
 
+The host can close the backrooms for everyone: "Allow the backrooms" (`world.backrooms`, on by
+default) in F1's `Administration > Server settings`, or `/set world.backrooms 0`. Off, every peer
+holds its game mode's `backroomsEnabled` off, so the game's own clip check takes no clip, and a
+trip to one of the three maps is refused; a player already in one stays until the visit ends.
+Turned back on, each peer gives `backroomsEnabled` the value it had.
+
 `[V]` on the rig: each map visited by a client and by the host, the game's own clip on both roles,
 each end (the map's end, its quit, a real death) and the backrooms' real ten-minute end; the
 visitor's controller held its player and its view was in the map and then back with it, the
@@ -329,7 +335,8 @@ permission file.
 
 The host's server settings -- today the voice range, `voice.distance_cm`, in centimetres, and
 "Allow other builds", `net.allow_other_builds`, which admits players on another Multivoid build
-([join.md](join.md)) -- change with
+([join.md](join.md)), and "Allow the backrooms", `world.backrooms` (see "Another map: the
+backrooms" above) -- change with
 `/set <setting> <value>` and go back to their default with `/reset <setting>`; every peer follows
 at once. When a server setting such as the voice range changes, every player's chat says so. F1's
 `Administration > Server settings` draws each of them and runs those same lines. A
