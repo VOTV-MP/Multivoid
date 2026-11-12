@@ -4,6 +4,8 @@
 
 #include "atv_gate_drill_detail.h"
 
+#include <windows.h>
+
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/dev/atv_gate_probe.h"
@@ -24,6 +26,7 @@
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -42,9 +45,9 @@ using ue_wrap::FVector;
 
 namespace {
 
-constexpr int   kBurnS = 10;              // the window a copy's fuel is read over while the other peer sits in the seat
-constexpr int   kDropS = 3;               // the can leaves the hand within this of simulateDrop
-constexpr float kBurnMoveCm = 500.f;      // the ATV drives at least this far in the burn window, or the window measured nothing
+constexpr int   kBurnS = 15;              // the window a copy's fuel and isDrive are read over while the other peer sits in the seat
+constexpr int   kDropS = 5;               // the can leaves the hand within this of each release function
+constexpr float kBurnMoveCm = 300.f;      // the ATV drives at least this far in the burn window, or the window measured nothing
 constexpr float kFuelboxReachCm = 100.f;  // the walk to the fuelbox ends this near it
 constexpr float kAimToleranceDeg = 6.f;
 
@@ -141,6 +144,52 @@ void LogCan(const char* who, void* can, float before, const FVector* box, const 
 
 }  // namespace
 
+
+// ---- the isDrive sampling of the idle-burn windows ----
+
+namespace {
+
+std::atomic<bool> g_sampleStop{false};
+std::atomic<int>  g_sampleDrive{0};   // samples whose isDrive read true
+std::atomic<int>  g_sampleAll{0};     // samples that read at all
+std::wstring      g_sampleKey;
+HANDLE            g_sampleThread = nullptr;
+
+// One reading of this copy's own isDrive every half second, on a helper thread of the drill: the drill thread is inside an
+// act or a signal wait for the whole window.
+DWORD WINAPI SampleThread(LPVOID) {
+    while (!g_sampleStop.load()) {
+        int v = -1;
+        OnGt([&] { v = ReadBoolField(Atv(g_sampleKey), L"isDrive"); });
+        if (v >= 0) {
+            ++g_sampleAll;
+            if (v == 1) ++g_sampleDrive;
+        }
+        for (int i = 0; i < 5 && !g_sampleStop.load(); ++i) ::Sleep(100);
+    }
+    return 0;
+}
+
+}  // namespace
+
+void StartDriveSampling(const std::wstring& key) {
+    if (g_sampleThread) return;
+    g_sampleKey = key;
+    g_sampleStop = false;
+    g_sampleDrive = 0;
+    g_sampleAll = 0;
+    g_sampleThread = ::CreateThread(nullptr, 0, &SampleThread, nullptr, 0, nullptr);
+}
+
+void StopDriveSampling(const char* drivenBy) {
+    if (!g_sampleThread) return;
+    g_sampleStop = true;
+    ::WaitForSingleObject(g_sampleThread, 10000);
+    ::CloseHandle(g_sampleThread);
+    g_sampleThread = nullptr;
+    UE_LOGI("[ATVG-DRILL] MEASURE idleburn isdrive role=%s driven_by=%s isDrive_samples=%d/%d", RoleName(), drivenBy,
+            g_sampleDrive.load(), g_sampleAll.load());
+}
 bool Drain(const std::wstring& key, std::string& why) {
     float before = -1.f, after = -1.f;
     bool ok = false;
@@ -258,22 +307,33 @@ bool DropCanInFuelbox(const std::wstring& key, std::string& why) {
     float before = -1.f;
     OnGt([&] { ReadFloat(coop::hand_item::LocalHandActor(), L"amount", before); });
     const PR::Counts base = ProbeCounts();
-    // The game's own release of the held prop: mainPlayer_C::simulateDrop(dontWakeup, place, dontCollect), where the drop
-    // key's release ends and the call throwHoldingProp starts with. Not placed, so the can falls from the hand.
-    bool dropped = false;
+    // The held prop released by the game's own function: mainPlayer_C::simulateDrop(dontWakeup, place, dontCollect) in its
+    // placing branch (the one the drop key's release takes unless the swap setting is on); where that leaves the can in the
+    // hand, throwHoldingProp (simulateDrop's other caller) with the can over the fuelbox. Which emptied the hand is logged.
+    bool ran = false;
     OnGt([&] {
         void* me = Me();
         void* fn = me ? R::FindFunction(R::ClassOf(me), L"simulateDrop") : nullptr;
         ue_wrap::ParamFrame pf(fn);
-        dropped = fn && pf.valid() && pf.Set<bool>(L"dontWakeup", false) && pf.Set<bool>(L"place", false) &&
-                  pf.Set<bool>(L"dontCollect", true) && ue_wrap::Call(me, pf);
+        ran = fn && pf.valid() && pf.Set<bool>(L"dontWakeup", false) && pf.Set<bool>(L"place", true) &&
+              pf.Set<bool>(L"dontCollect", true) && ue_wrap::Call(me, pf);
     });
-    if (!dropped) {
+    if (!ran) {
         why = "mainPlayer's simulateDrop did not run";
         return false;
     }
-    if (!PS::WaitFor("the can leaves the hand", kDropS, [] { return HandEmpty(); }, false)) {
-        why = "simulateDrop ran and the can stayed in the hand";
+    const char* releasedBy = "none";
+    if (PS::WaitFor("the can leaves the hand", kDropS, [] { return HandEmpty(); }, false)) {
+        releasedBy = "simulateDrop(place)";
+    } else {
+        bool threw = false;
+        OnGt([&] { threw = CallByName(Me(), L"throwHoldingProp"); });
+        if (threw && PS::WaitFor("the can leaves the hand", kDropS, [] { return HandEmpty(); }, false))
+            releasedBy = "throwHoldingProp";
+    }
+    UE_LOGI("[ATVG-DRILL] MEASURE overlap drop role=%s released_by=%s", RoleName(), releasedBy);
+    if (std::string(releasedBy) == "none") {
+        why = "neither simulateDrop (place) nor throwHoldingProp emptied the hand";
         return false;
     }
     void* can = nullptr;

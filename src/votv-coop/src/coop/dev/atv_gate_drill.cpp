@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace coop::dev::atv_gate_drill {
@@ -44,6 +45,7 @@ struct Step {
     bool        drainBefore;   // both peers set the ATV's fuel low on their own copy first, so a gain starts from it
     Settle      settle;
     const char* extra;         // appended to the MEASURE line
+    bool        sampleDrive = false;   // both peers sample their own copy's isDrive over the window
 };
 
 const Step kClientSteps[] = {
@@ -57,7 +59,7 @@ const Step kClientSteps[] = {
     {"brake", &Brake, false, Settle::None, ""},
     {"turbo", &Turbo, false, Settle::None, ""},
     {"honk", &Honk, false, Settle::None, ""},
-    {"idleburn_client", &IdleBurn, false, Settle::None, "driven_by=client"},
+    {"idleburn_client", &IdleBurn, false, Settle::None, "driven_by=client", true},
     {"leave", &Leave, false, Settle::None, ""},
 };
 const Step kHostSteps[] = {
@@ -70,7 +72,7 @@ const Step kHostSteps[] = {
     {"host_brake", &Brake, false, Settle::None, ""},
     {"host_turbo", &Turbo, false, Settle::None, ""},
     {"host_honk", &Honk, false, Settle::None, ""},
-    {"idleburn_host", &IdleBurn, false, Settle::None, "driven_by=host"},
+    {"idleburn_host", &IdleBurn, false, Settle::None, "driven_by=host", true},
     {"host_leave", &Leave, false, Settle::None, ""},
     {"host_fitfly", &FitFly, false, Settle::None, ""},
     {"honkreplay_fly_press", &HonkReplayPress, false, Settle::HonkPress, ""},
@@ -135,6 +137,28 @@ void WaitSettle(const Step& s, const std::wstring& key, const PR::Counts& c0, co
     }, false);
 }
 
+// The step's isDrive sampling (both peers, the window being the step), stopped on every way out of RunStep.
+class DriveSampling {
+public:
+    DriveSampling(bool on, const std::wstring& key, const char* extra) : on_(on) {
+        const char* eq = std::strchr(extra, '=');
+        by_ = eq ? eq + 1 : "?";
+        if (on_) StartDriveSampling(key);
+    }
+    void Stop() {
+        if (!on_) return;
+        on_ = false;
+        StopDriveSampling(by_);
+    }
+    ~DriveSampling() { Stop(); }
+    DriveSampling(const DriveSampling&) = delete;
+    DriveSampling& operator=(const DriveSampling&) = delete;
+
+private:
+    bool        on_;
+    const char* by_;
+};
+
 // One step. A step that starts from a drained tank has both peers drain their own copy and say so before the act. The
 // actor does the act, then signals "ok" or "fail: <why>" (an "ok" may carry a note for the observer); the other peer waits
 // for its settle state and reads its own counts. Both print the MEASURE line for the window. An act that could not be
@@ -158,9 +182,11 @@ bool RunStep(const Step& s, bool iAct, const std::wstring& key, std::string& uni
     }
     const PR::Counts c0 = ProbeCounts();
     const Vitals v0 = ReadVitals(key);
+    DriveSampling sampling(s.sampleDrive, key, s.extra);
     bool issued = false;
     if (iAct) {
         issued = s.run(key, why);
+        sampling.Stop();
         Measure(s, true, issued, why, c0, ProbeCounts(), v0, ReadVitals(key));
         const std::string note = TakeNote();
         PS::Mark(done.c_str(), issued ? "ok" + (note.empty() ? std::string() : " " + note) : kFailPrefix + why);
@@ -168,6 +194,7 @@ bool RunStep(const Step& s, bool iAct, const std::wstring& key, std::string& uni
     } else {
         std::string result;
         if (!PS::AwaitText(done.c_str(), result, kSignalSec)) return false;
+        sampling.Stop();
         issued = result == "ok" || result.compare(0, 3, "ok ") == 0;
         if (!issued) why = result.compare(0, sizeof(kFailPrefix) - 1, kFailPrefix) == 0 ? result.substr(sizeof(kFailPrefix) - 1) : result;
         WaitSettle(s, key, c0, v0);

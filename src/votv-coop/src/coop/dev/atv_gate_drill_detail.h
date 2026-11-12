@@ -104,4 +104,12 @@ bool WalkTo(const ue_wrap::FVector& at, float reachCm, bool carry, const char* w
 bool PressAtv(const std::wstring& key, const wchar_t* fn, std::string& why);  // one of the ATV's key events, seated; drill thread
 const char* RoleName();
 
+// A bool property of `o` (-1 when the class has none); game thread.
+int ReadBoolField(void* o, const wchar_t* name);
+
+// This copy's own isDrive read every half second, on a helper thread, from Start to Stop; Stop says the count of true
+// readings. For the two idle-burn windows, on both peers: a copy nobody drives with isDrive false burns nothing of its own.
+void StartDriveSampling(const std::wstring& key);
+void StopDriveSampling(const char* drivenBy);
+
 }  // namespace coop::dev::atv_gate_drill::detail
