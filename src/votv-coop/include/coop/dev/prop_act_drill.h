@@ -164,6 +164,7 @@ std::string SnackReadyTail(void* hostActor);
 Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, coop::element::ElementId eid,
                        const std::string& tail, std::string* why);
 const char* SnackHeldVerdict(void* held, const std::string& tail);
+bool SnackMirrorHoldsReady(void* mirror, const std::string& tail);   // CLIENT: the mirror's uses and open are the line's
 
 // The race phase runs all three peers by itself (prop_act_drill_race.cpp is the host's half,
 // prop_act_drill_race_client.cpp the clients'): the host's steps, then a client's by its slot, 1 or 2. The core routes

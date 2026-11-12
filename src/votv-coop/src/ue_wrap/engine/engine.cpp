@@ -284,14 +284,16 @@ FTransform MakeTransform(const FVector& location, const FRotator& rotation) {
 }
 }  // namespace
 
-void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotator& rotation, uint8_t collision) {
+void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotator& rotation, uint8_t collision,
+                         const FVector* scale) {
     if (!actorClass) return nullptr;
     if (!ResolveSpawn()) {
         UE_LOGE("engine: BeginDeferredSpawn unresolved (cdo=%p begin=%p)",
                 g_gsCdo, g_beginSpawnFn);
         return nullptr;
     }
-    const FTransform xform = MakeTransform(location, rotation);
+    FTransform xform = MakeTransform(location, rotation);
+    if (scale) { xform.SX = scale->X; xform.SY = scale->Y; xform.SZ = scale->Z; }
     ParamFrame begin(g_beginSpawnFn);
     begin.Set<void*>(L"WorldContextObject", GetWorldContext());
     begin.Set<void*>(L"ActorClass", actorClass);
@@ -305,9 +307,10 @@ void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotat
     return begin.Get<void*>(L"ReturnValue");
 }
 
-bool FinishDeferredSpawn(void* actor, const FVector& location, const FRotator& rotation) {
+bool FinishDeferredSpawn(void* actor, const FVector& location, const FRotator& rotation, const FVector* scale) {
     if (!actor || !ResolveSpawn()) return false;
-    const FTransform xform = MakeTransform(location, rotation);
+    FTransform xform = MakeTransform(location, rotation);
+    if (scale) { xform.SX = scale->X; xform.SY = scale->Y; xform.SZ = scale->Z; }
     ParamFrame finish(g_finishSpawnFn);
     finish.Set<void*>(L"Actor", actor);
     finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));

@@ -7,7 +7,11 @@
 
 #pragma once
 
+#include "ue_wrap/core/reflection.h"   // FName
+#include "ue_wrap/core/types.h"        // FVector, FRotator
+
 #include <cstdint>
+#include <vector>
 
 namespace ue_wrap::snack {
 
@@ -27,12 +31,28 @@ bool ReadSnackState(void* actor, int32_t& uses, bool& open);
 // failed.
 bool PatchSnackRecord(void* actor, int32_t uses, bool open);
 
-// The wrapper a snack's last use leaves, born as the snack's own script births it (its eat's empty branch), at the
-// snack's place: the INSTANCE's `spawnAsObject` decides. True: lib_C's Prop To Object names the trash's class, and a
-// class spawns (adjusting where it can) and, for a prop, has its `name` stamped and its init() run after the finish;
-// no class and a food row spawns a prop_food_C with that row's data and the name set before the finish; any other
-// spawns a plain prop_C the same way. False: a plain prop_C with the name set before the finish (the class default
-// collision). The snack is left standing. Returns the finished wrapper, null when it could not be born. Game thread.
-void* BirthLastUseWrapper(void* snack);
+// What a snack's last use reads off the snack to birth its wrapper: the `trash` name, the INSTANCE's `spawnAsObject`
+// (not the class default) and the snack's whole transform, scale included.
+struct WrapperFacts {
+    reflection::FName trash{0, 0};
+    bool spawnAsObject = false;
+    FVector at{};
+    FRotator rot{};
+    FVector scale{1.f, 1.f, 1.f};
+};
+bool ReadWrapperFacts(void* snack, WrapperFacts& out);
+
+// Begins a deferred spawn of `cls` at the snack's transform with the game's collision-handling byte (0 the class's own,
+// 2 adjust where possible) and, before the finish, writes the actor's `foodData` (its bytes, when given) and `name`
+// (when not NAME_None) as the script's SetStructure/SetNamePropertyByName do. Null when it could not begin.
+void* BeginWrapperActor(void* cls, const WrapperFacts& at, uint8_t collision, reflection::FName nameBeforeFinish,
+                        const std::vector<uint8_t>* foodData);
+
+// Finishes the begun actor at the snack's transform; destroys it and returns false when the finish fails.
+bool FinishWrapperActor(void* actor, const WrapperFacts& at);
+
+// After the finish: writes the actor's `name` and runs its init(). False when either did not run.
+bool StampNameAndInit(void* actor, reflection::FName name);
+
 
 }  // namespace ue_wrap::snack

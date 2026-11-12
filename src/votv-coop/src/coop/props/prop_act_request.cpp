@@ -230,20 +230,22 @@ void Replay() {
     ue_wrap::FVector mreAt{};   // an MRE's place, read while it stands: its opening is heard there after the destroy
     const bool hearsMre = g_rec.row == kMre && E::TryGetActorLocation(target, mreAt);
     const bool snack = g_rec.row == kSnack;
-    const coop::snack_act::CopyState before = snack ? coop::snack_act::ReadCopy(target) : coop::snack_act::CopyState{};
+    coop::snack_act::CopyState before, after;   // a snack's copy around the replay, read inside the latch
     {
         Latched scope(target);
         const coop::snack_act::WrapperRefusal refusal(snack ? target : nullptr);
+        if (snack) before = coop::snack_act::ReadCopy(target);
         ran = RunVerb(target, local);
         // A drill's second destroy, inside the latch: it is not the target, so the seam treats it as any destroy.
         if (void* const extra = g_destroyInReplay.Get()) E::DestroyActor(extra);
         g_destroyInReplay.Reset();
         destroyed = g_latch.destroyed;
+        if (snack && !destroyed) after = coop::snack_act::ReadCopy(target);
     }
-    // A snack's commit says what the replay did to its copy: it ended, or the eater ran and what changed.
+    // A snack's commit says what the replay did to its copy: it ended, or the eater ran and what changed. A copy the
+    // replay left unread is aborted, and the host then publishes its own state to put this copy back.
     if (snack) {
-        const coop::snack_act::CommitWords w = coop::snack_act::CommitFor(
-            ran, destroyed, before, destroyed ? coop::snack_act::CopyState{} : coop::snack_act::ReadCopy(target));
+        const coop::snack_act::CommitWords w = coop::snack_act::CommitFor(ran, destroyed, before, after);
         if (destroyed) coop::remote_prop::UnregisterPropMirror(g_rec.eid);
         else if (!ran) UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
         SendCommit(w.committed, w.flags);
@@ -524,6 +526,9 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitP
 sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
 sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, g_mreHit, &MreDestroys); }
 sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
+// What a dead snack watch costs: the use runs on the client's copy alone, asked of nobody, and the copies diverge.
+constexpr const char* kSnackDead = "a client's use of a world snack runs on its own copy only, unasked, and the copies diverge";
+
 // Dev red arm (never set): the snack family runs native, so a client's use is not asked of the host.
 bool SnacksOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::d2a_snacks_off);
@@ -577,6 +582,7 @@ struct Watch {
     const char* verb;   // the word for the line a dead watch prints
     WatchState state;
     sg::PostFn post = nullptr;   // after the body ran, when the watch has one
+    const char* dead = nullptr;  // what a dead watch costs, when it is not the raw destroy the take and use rows name
 };
 Watch g_watches[] = {
     {kRowPocket, kTagPocket, &PrePocket, "take", WatchState::Pending},
@@ -585,8 +591,8 @@ Watch g_watches[] = {
     {kRowMre,    kTagMre,    &PreMre,    "use",  WatchState::Pending},
     {kRowPills,  kTagPills,  &PrePills,  "use",  WatchState::Pending},
     {kRowSoap,   kTagSoap,   &PreSoap,   "use",  WatchState::Pending},
-    {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending, &PostSnack},
-    {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending, &PostBeer},
+    {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending, &PostSnack, kSnackDead},
+    {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending, &PostBeer,  kSnackDead},
 };
 bool g_watchesSettled = false;
 
@@ -606,8 +612,11 @@ void SettleWatches() {
             UE_LOGI("prop_act: watch %ls.%ls live", w.row.Class(), w.row.Name());
         } else if (w.state == WatchState::Refused || sg::NameWatchSettled(w.row, w.tag)) {
             w.state = WatchState::Settled;
-            UE_LOGE("prop_act: watch %ls.%ls DEAD -- a client's %s of a shared prop reaches the host as a raw destroy",
-                    w.row.Class(), w.row.Name(), w.verb);
+            if (w.dead)
+                UE_LOGE("prop_act: watch %ls.%ls DEAD -- %s", w.row.Class(), w.row.Name(), w.dead);
+            else
+                UE_LOGE("prop_act: watch %ls.%ls DEAD -- a client's %s of a shared prop reaches the host as a raw destroy",
+                        w.row.Class(), w.row.Name(), w.verb);
         } else {
             open = true;
         }

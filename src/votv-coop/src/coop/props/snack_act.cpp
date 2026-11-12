@@ -21,6 +21,7 @@
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/votv_lib.h"
 
 #include <string>
 #include <vector>
@@ -37,8 +38,11 @@ bool WellFormedSnackCommit(uint8_t committed, uint8_t flags) {
 
 Bounded Bound(int32_t uses, bool open, bool beer, uint8_t flags) {
     Bounded b{uses, open};
+    // A use is spent only from the copy's state BEFORE the open: openBottle spends nothing, so a report of both from a
+    // closed bottle is never honest and cuts to the open alone.
+    const bool couldSpend = open || !beer;
     if ((flags & kFlagOpened) && beer && !b.open) b.open = true;
-    if ((flags & kFlagSpent) && (b.open || !beer) && b.uses >= 1) --b.uses;
+    if ((flags & kFlagSpent) && couldSpend && b.uses >= 1) --b.uses;
     return b;
 }
 
@@ -98,8 +102,8 @@ bool IsWorldSnack(void* actor) {
 // It does no work inside the engine's call.
 void OnFinishPost(void*, void* source, void* result) {
     if (!g_hostSeen || !source || !result) return;
-    if (!g_grimeClass.Alive()) g_grimeClass.Set(ue_wrap::object_index::ClassByName(L"grimeProjectile_C"));
-    void* const grime = g_grimeClass.Raw();
+    // The class is resolved by the tick (a world change makes it dead there and it is found again), never per spawn.
+    void* const grime = g_grimeClass.Get();
     if (!grime || R::ClassOf(result) != grime || !ue_wrap::snack::IsBeerFamily(source)) return;
     Mark(source);
 }
@@ -146,10 +150,51 @@ void InstallSpillHook() {
     }
 }
 
+// The wrapper a snack's last use leaves, by the snack script's own decision (its eat's empty branch): the INSTANCE's
+// spawnAsObject decides. True: lib_C's Prop To Object names the trash's class, and a class spawns (adjusting where it
+// can) and, for a prop, has its name stamped and its init() run after the finish; no class and a food row spawns a
+// prop_food_C with that row's data and the name set before the finish; any other a plain prop_C the same way. False: a
+// plain prop_C with the name set before the finish and the class's own collision. Null when it could not be born.
+void* BirthWrapper(void* snack) {
+    namespace S = ue_wrap::snack;
+    constexpr uint8_t kClassDefault = 0, kAdjust = 2;
+    S::WrapperFacts f;
+    if (!S::ReadWrapperFacts(snack, f)) return nullptr;
+    void* const propClass = ue_wrap::object_index::ClassByName(L"prop_C");
+    void* actor = nullptr;
+    bool stamp = false;
+    if (!f.spawnAsObject) {
+        actor = propClass ? S::BeginWrapperActor(propClass, f, kClassDefault, f.trash, nullptr) : nullptr;
+    } else {
+        ue_wrap::votv_lib::PropObject obj;
+        if (!ue_wrap::votv_lib::PropToObject(f.trash, snack, obj)) return nullptr;
+        if (obj.objectClass) {
+            actor = S::BeginWrapperActor(obj.objectClass, f, kAdjust, R::FName{0, 0}, nullptr);
+            stamp = obj.parseNameToObject;
+        } else if (obj.isFood) {
+            void* const foodClass = ue_wrap::object_index::ClassByName(L"prop_food_C");
+            actor = foodClass ? S::BeginWrapperActor(foodClass, f, kAdjust, f.trash, &obj.foodData) : nullptr;
+        } else {
+            actor = propClass ? S::BeginWrapperActor(propClass, f, kAdjust, f.trash, nullptr) : nullptr;
+        }
+    }
+    if (!actor || !S::FinishWrapperActor(actor, f)) return nullptr;
+    // The object path stamps the finished prop's name and runs its init(), as the script does through asProp (a prop's
+    // own, which returns itself).
+    if (stamp && !S::StampNameAndInit(actor, f.trash)) UE_LOGW("snack_act: the wrapper's name stamp or init() did not run");
+    return actor;
+}
+
+// Dev red arm (never set): the host does not re-send a birth to a requester whose copy ended, so its copy stays gone.
+bool ResendOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::snack_resend_off);
+    return off;
+}
+
 // A snack with no use left is gone on every peer, and the host births the one wrapper it leaves (its seams carry the
 // birth to every peer, the name stamped before the row is built) before its copy ends. No publish follows the destroy.
 void EndOnEveryPeer(coop::net::Session* s, void* actor, const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
-    if (!ue_wrap::snack::BirthLastUseWrapper(actor))
+    if (!BirthWrapper(actor))
         UE_LOGE("snack_act: eid %u -- the last use's wrapper could not be born on the host", static_cast<unsigned>(p.eid));
     ue_wrap::CachedObjRef before;
     before.Set(actor);
@@ -171,8 +216,12 @@ void OnCommit(coop::net::Session* s, void* actor, const coop::net::PropActCommit
     int32_t uses = 0;
     bool open = false;
     if (!s || !ue_wrap::snack::ReadSnackState(actor, uses, open)) {
-        UE_LOGW("snack_act: slot %u eid %u -- the host copy's state is unreadable, nothing applied",
+        // Nothing is applied, but the requester is not left with a copy the replay changed or gone: the host's state is
+        // published, and a requester whose copy ended gets the birth again.
+        UE_LOGW("snack_act: slot %u eid %u -- the host copy's state is unreadable, nothing applied, its state published",
                 static_cast<unsigned>(senderSlot), static_cast<unsigned>(p.eid));
+        Mark(actor);
+        if (s && p.committed == 1 && !ResendOff()) coop::prop_snapshot::SendPropBirthToSlot(actor, senderSlot);
         return;
     }
     const internal::Bounded b = internal::Bound(uses, open, ue_wrap::snack::IsBeerFamily(actor), p.flags);
@@ -189,9 +238,13 @@ void OnCommit(coop::net::Session* s, void* actor, const coop::net::PropActCommit
     Mark(actor);
     // The requester's copy ended while the host's lives: its element is gone there, so the host sends that one peer the
     // snack's birth again, with the host's own count.
-    if (p.committed == 1 && !coop::prop_snapshot::SendPropBirthToSlot(actor, senderSlot))
+    if (p.committed == 1 && !ResendOff() && !coop::prop_snapshot::SendPropBirthToSlot(actor, senderSlot))
         UE_LOGW("snack_act: eid %u -- the snack's birth could not be re-sent to slot %u", static_cast<unsigned>(p.eid),
                 static_cast<unsigned>(senderSlot));
+}
+
+void NoteAborted(void* actor) {
+    if (IsWorldSnack(actor)) Mark(actor);
 }
 
 void NoteHostUse(void* actor) {
@@ -221,6 +274,7 @@ void Tick(coop::net::Session* s) {
     if (s && !g_hostSeen) InstallRefusalHook();
     if (!g_hostSeen) return;
     InstallSpillHook();
+    if (!g_grimeClass.Alive()) g_grimeClass.Set(ue_wrap::object_index::ClassByName(L"grimeProjectile_C"));
     if (g_marks.empty()) return;
     for (const ue_wrap::CachedObjRef& m : g_marks) {
         void* const actor = m.Get();

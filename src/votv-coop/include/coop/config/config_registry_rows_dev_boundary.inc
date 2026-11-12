@@ -122,6 +122,9 @@ CFG_ENUM(prop_act_drill, "prop_act_drill", "dev", "off", "off|honest|race|depart
 CFG_FLAG(d2a_snacks_off, "d2a_snacks_off", "dev", false, "VOTVCOOP_D2A_SNACKS_OFF",
     "Developer red arm of the act drill's snack phase: never set. The snack family is routed native: a client's action "
     "4 on a world snack is not asked of the host, so the copies' uses diverge and the phase must FAIL.")
+CFG_FLAG(snack_resend_off, "snack_resend_off", "dev", false, "VOTVCOOP_SNACK_RESEND_OFF",
+    "Developer red arm of the act drill's snack phase: never set. The host does not send a requester whose snack copy "
+    "ended (while the host's lives) the snack's birth again, so the copy stays gone there and the respawn arm must FAIL.")
 CFG_FLAG(snack_wrapper_refusal_off, "snack_wrapper_refusal_off", "dev", false, "VOTVCOOP_SNACK_WRAPPER_REFUSAL_OFF",
     "Developer red arm of the act drill's snack phase: never set. A client's replay of a snack's last use keeps the "
     "wrapper its own script births, beside the host's, so two wrappers stand on the client and the phase must FAIL.")

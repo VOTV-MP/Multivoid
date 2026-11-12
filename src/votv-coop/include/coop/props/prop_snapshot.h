@@ -39,7 +39,8 @@ void DrainChunk();
 
 // HOST: one prop's birth to ONE slot -- its PropSpawn row, a clump's carry generation behind it and
 // its save record, the same three sends the connect drain makes per prop, with the element id read
-// from the actor's element. True when the row was sent; false for a non-host call, a slot out of
+// from the actor's element. True when the transport took the PropSpawn row (the clump generation and the record follow it
+// either way, as the drain sends them); false when it refused it, and for a non-host call, a slot out of
 // range, a dead actor or an actor with no expressible row (the drain's skips). The caller names the
 // reason it re-sends (a requester whose copy ended while the host's lives). Game thread.
 bool SendPropBirthToSlot(void* actor, int slot);

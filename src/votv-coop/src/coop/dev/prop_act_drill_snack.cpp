@@ -378,6 +378,13 @@ Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, EL::Ele
     return Judged::Pass;
 }
 
+bool SnackMirrorHoldsReady(void* mirror, const std::string& tail) {
+    int32_t readyUses = 0, uses = 0;
+    bool readyOpen = false, open = false;
+    return ParseTail(tail, &readyUses, &readyOpen) && mirror && SN::ReadSnackState(mirror, uses, open) &&
+           uses == readyUses && open == readyOpen;
+}
+
 const char* SnackHeldVerdict(void* held, const std::string& tail) {
     int32_t readyUses = 0, uses = 0;
     bool readyOpen = false, open = false;

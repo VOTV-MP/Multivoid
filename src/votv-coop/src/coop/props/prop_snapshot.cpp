@@ -422,11 +422,11 @@ bool SendPropBirthToSlot(void* actor, int slot) {
     if (slot < 1 || slot >= coop::players::kMaxPeers) return false;
     if (!actor || !R::IsLive(actor)) return false;
     const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
-    // A pile gets its save-time match key when the slot is the join drain's target; any other slot is a
+    // A pile gets its save-time match key only when the slot is the join drain's target; any other slot is a
     // re-send to a peer already in the world, whose twin the row has no use to match.
     coop::net::PropSpawnPayload p{};
     Skip why = Skip::kNone;
-    if (!BuildPropSpawnPayload_(actor, eid, -1, p, slot, &why)) {
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p, slot == g_currentTargetSlot ? slot : -1, &why)) {
         // Counted in the completion line of the drain that is running for this slot, and only there.
         if (slot == g_currentTargetSlot) ++g_snapshotSkipped[static_cast<size_t>(why)];
         // A failed read is a dispatch that faulted, which a retry repeats: the row is left out, named here.
@@ -439,7 +439,7 @@ bool SendPropBirthToSlot(void* actor, int slot) {
     // pass the slot's join gate; the sends the gate holds join the lane after the last of these.
     coop::net::SnapshotSendScope scope(slot);
     // To the one slot: the other peers got these props from their own drain.
-    s->SendReliableToSlot(slot, coop::net::ReliableKind::PropSpawn, &p, sizeof(p));
+    const bool taken = s->SendReliableToSlot(slot, coop::net::ReliableKind::PropSpawn, &p, sizeof(p));
     // A clump's row says what the actor is; its carry generation rides behind it, on the same
     // lane, or the joiner holds every pose of it for good.
     if (ue_wrap::prop::IsGarbageClump(actor))
@@ -447,7 +447,7 @@ bool SendPropBirthToSlot(void* actor, int slot) {
     // The prop's own save record to the same slot, behind its spawn row: a prop whose state
     // changed after the transferred save was written is not in that save.
     coop::prop_save_data::PublishWithSpawn(s, actor, p.key, slot);
-    return true;
+    return taken;
 }
 
 void SetSession(coop::net::Session* session) {

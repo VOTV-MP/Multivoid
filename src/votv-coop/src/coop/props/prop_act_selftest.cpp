@@ -333,8 +333,9 @@ void RunSelftest() {
     check(!bound(8, false, true, S::kFlagSpent).open, "snack: a spent report does not open a bottle");
     check(bound(8, false, true, S::kFlagOpened).open && bound(8, false, true, S::kFlagOpened).uses == 8,
           "snack: an opened report opens a closed beer and spends nothing");
-    check(bound(8, false, true, S::kFlagOpened | S::kFlagSpent).uses == 7,
-          "snack: an opened report then a spent one drinks from the closed beer it opened");
+    check(bound(8, false, true, S::kFlagOpened | S::kFlagSpent).uses == 8 &&
+              bound(8, false, true, S::kFlagOpened | S::kFlagSpent).open,
+          "snack: an open and a spend reported together from a closed beer open it and spend nothing");
     check(bound(8, true, true, S::kFlagSpent).uses == 7, "snack: an open beer spends a use");
     check(bound(8, true, true, S::kFlagOpened).open, "snack: an open beer stays open");
     check(!bound(4, false, false, S::kFlagOpened).open, "snack: only a beer is opened");

@@ -560,6 +560,12 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
                 ClientFail(row, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
+        // A snack arm acts on a mirror that already holds the host's uses and open (its record is published after the
+        // host's write): the instrument waits for it, bounded, and the arm FAILs when it never does.
+        if (row.snack && !SnackMirrorHoldsReady(g_mirror.Get(), g_readyRest)) {
+            if (CExpired(kCopyBoundMs)) ClientFail(row, "the mirror never held the host's uses and open from the ready line");
+            return;
+        }
         if (row.grab) {
             BeginClear();
             return;

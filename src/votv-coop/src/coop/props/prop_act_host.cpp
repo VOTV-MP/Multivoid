@@ -531,6 +531,9 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     case internal::CommitStep::BadCommit:
         return;
     case internal::CommitStep::Abort:
+        // A snack's use that aborted may have run the eater on the client's copy (an unreadable copy aborts): the host's
+        // state is published so that copy is put back.
+        if (snackUse) coop::snack_act::NoteAborted(actor);
         ReleaseFor(senderSlot);
         LogCommit(senderSlot, p, internal::CommitName(step));
         return;

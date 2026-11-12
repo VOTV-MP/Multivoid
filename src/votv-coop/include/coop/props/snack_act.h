@@ -73,6 +73,10 @@ private:
     bool armed_;
 };
 
+// HOST: a snack's use the client aborted (its replay did not run, or left its copy unread, and may have fed the eater):
+// the host's state is marked for publication so the client's copy is put back.
+void NoteAborted(void* actor);
+
 // HOST: the host's own action 4 on `actor` ran (the POST of the two rows). A world snack (an element of the host's own,
 // not a hand view) is marked for publication; anything else is ignored.
 void NoteHostUse(void* actor);
