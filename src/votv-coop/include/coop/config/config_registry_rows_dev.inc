@@ -731,11 +731,17 @@ CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_C
     "native class judged against the identity it had when last seen (the same object, the same address "
     "holding a new one, a new address, or gone), with the functions its watched rows name judged the "
     "same way. Read-only but for the slot serials it assigns.")
-CFG_FLAG(classload_probe, "classload_probe", "dev", false, "VOTVCOOP_CLASSLOAD_PROBE",
-    "Probe (a CLIENT): once its world is settled, for five classes asserted not loaded, asks the engine's "
-    "asset registry for each asset's object path, loads it through the game's runtime loader and logs the "
-    "milliseconds (cold, then warm) and whether the object index finds the class at once. Ends on "
-    "rig: VERDICT classload INVALID -- measured.")
+CFG_FLAG(class_resolve_drill, "class_resolve_drill", "dev", false, "VOTVCOOP_CLASS_RESOLVE_DRILL",
+    "Drill, the class resolver; set on BOTH peers. The client names prop Blueprint classes its object index "
+    "does not hold (from the engine's asset registry); the host loads and spawns three of them, and the client "
+    "must load each class on the host's word and hold a bound mirror of every one. The host prints 'rig: VERDICT "
+    "class-resolve PASS|FAIL|INVALID' (INVALID when the client holds every prop class, or the host cannot spawn "
+    "three) and 'class-resolve: DONE on host'. It MUTATES the world (three props on the host). Run it on a fresh "
+    "client: residency varies by run.")
+CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "VOTVCOOP_CLASS_RESOLVE_LOOKUP_ONLY",
+    "Developer red arm of the class-resolve drill: never set. On the CLIENT, the resolver's registry step is off, so "
+    "a class the client has not loaded is not loaded and the host's spawn of it is dropped, as before the resolver; "
+    "the host's verdict is FAIL.")
 // The prop key index's probes: their own file, one concept, included as _dev_probes.inc is above.
 #include "coop/config/config_registry_rows_dev_key_index.inc"
 // The permissions and action-log selftests' red arms: their own file, one concept, included as
