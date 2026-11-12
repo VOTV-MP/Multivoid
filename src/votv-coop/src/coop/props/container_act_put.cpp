@@ -341,15 +341,17 @@ sg::Verdict PreDingus(const sg::Call& c) {
 
 // How many overlap puts on a shared mirror this client refused this session, and how many of those had no caller frame.
 uint32_t g_overlapCancelled = 0;
+uint32_t g_overlapNoFrame = 0;
 
-// Whether `obj` is a drone sack, the forwarder of a prop its trigger takes into the drone's container.
+// Whether `obj` is a drone sack (the class or a descendant), the forwarder of a prop its trigger takes into the drone's
+// container. The class is asked of the object index at each use, one lookup, so one a world change dropped or one not
+// loaded yet is found again (the shape of container_inventory.cpp's ContainerClass); only a caller that is not the
+// container itself reaches it.
 bool IsDroneSack(void* obj) {
-    static void* sackCls = nullptr;
     if (!obj) return false;
-    if (!sackCls) sackCls = ue_wrap::object_index::ClassByName(L"prop_dronesack_C");
+    void* const sackCls = ue_wrap::object_index::ClassByName(L"prop_dronesack_C");
     return sackCls && ue_wrap::prop::WalksToBase(R::ClassOf(obj), sackCls);
 }
-uint32_t g_overlapNoFrame = 0;
 
 // A prop entering a shared mirror's box must never be filed by this client: the mirror is display only, and a local body
 // would add the record to the display and destroy the prop before the host's truth overrules it. The host judges a put
