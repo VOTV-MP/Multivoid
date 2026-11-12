@@ -15,6 +15,7 @@
 #include "coop/props/trash_collect_sync.h"  // EnsureHeldItemBroadcast (hand-edge world release)
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
@@ -135,19 +136,27 @@ int32_t PropNameOffset() {
 // coop layer never puts on the wire (prop_lifecycle): a per-player state actor, of which each peer owns
 // exactly one, and a wire-suppressed variant, which a client's own Init destroys. The receipt and the
 // spawn both ask it, so the two cannot drift. The index finds a class whatever the letter case of the
-// name, and the family predicates compare without case too. Without the prop base this peer cannot
-// judge, and says so rather than refusing. `outOwn`, when asked, gets a hand item's class as the engine
-// spells it.
-enum class HandClass { Hand, NotHand, Unresolved };
-HandClass ResolveHandClass(const std::wstring& name, void** outCls, std::wstring* outOwn) {
+// name, and the family predicates compare without case too. The class resolves through class_resolve under
+// `load`: the host judging a client's hand passes LookupOnly (a client's name never makes it load), a client
+// mirroring the host's loads a class it has not loaded inside the per-tick budget (Pending: not yet, ask next
+// tick). Without the class or the prop base this peer cannot judge, and says so (Unresolved) rather than
+// refusing. `outOwn`, when asked, gets a hand item's class as the engine spells it.
+enum class HandClass { Hand, NotHand, Unresolved, Pending };
+const ue_wrap::class_resolve::Family kHandFamily{L"hand item", nullptr, &ue_wrap::prop::IsClassDescendantOfProp};
+HandClass ResolveHandClass(const std::wstring& name, void** outCls, std::wstring* outOwn,
+                           ue_wrap::class_resolve::Load load) {
+    namespace CR = ue_wrap::class_resolve;
     if (outCls) *outCls = nullptr;
     // The two families are named classes: refused by name, loaded or not.
     if (coop::prop_lifecycle::IsPerPlayerPropClass(name) || coop::prop_lifecycle::IsWireSuppressedPropClass(name))
         return HandClass::NotHand;
-    void* cls = ue_wrap::object_index::ClassByName(name.c_str());
+    const CR::Resolved found = CR::ResolveClass(name.c_str(), kHandFamily, load);
+    if (found.state == CR::ClassState::Pending) return HandClass::Pending;
+    if (found.state == CR::ClassState::Refused) return HandClass::NotHand;
+    void* cls = found.cls;
     if (outCls) *outCls = cls;
     if (!cls) return HandClass::Unresolved;
-    void* base = ue_wrap::object_index::ClassByName(ue_wrap::profile::name::PropClass);
+    void* base = CR::ResolveClass(ue_wrap::profile::name::PropClass, CR::AnyFamily(), CR::Load::LookupOnly).cls;
     if (!base) return HandClass::Unresolved;
     if (!ue_wrap::prop::WalksToBase(cls, base)) return HandClass::NotHand;
     if (outOwn) *outOwn = R::ToString(R::NameOf(cls));
@@ -162,10 +171,6 @@ uint32_t DropToLog(int sender) {
     const uint32_t n = ++g_droppedBySender[sender];
     return (n & (n - 1)) == 0 ? n : 0;
 }
-// The class each slot's mirror last waited on unresolved, and how many such classes it has waited on,
-// warned at the first and each power of two, so a slot whose class keeps changing cannot flood the log.
-std::wstring g_unresolvedWarned[coop::players::kMaxPeers];
-uint32_t     g_unresolvedBySlot[coop::players::kMaxPeers] = {};
 
 std::wstring ReadItemName(void* actor) {
     const int32_t off = PropNameOffset();
@@ -272,19 +277,21 @@ void NoteSpawnFailed(uint8_t slot, const SlotHand& want, void* puppetActor) {
 
 void SpawnMirror(uint8_t slot, void* puppetActor) {
     const SlotHand& want = g_hands[slot];
-    // Two index lookups a tick, the class and the prop base: Blueprint classes load on demand, and one
-    // this peer has not loaded, or is still loading, answers null and is asked for again next tick; the
-    // classes a slot waits on are warned at the first and each power of two.
+    // The class and the prop base resolve through the class resolver. A client loads a class it has not
+    // loaded, inside the per-tick budget: Pending asks again next tick, which this per-tick structure already
+    // does. The host mirroring a client's hand loads nothing (a client's name never makes it load). A class that
+    // exists nowhere here is a real absence, said once by the resolver: no mirror, and not asked again until
+    // the item or the puppet changes.
+    const bool isHost = g_session && g_session->role() == coop::net::Role::Host;
     void* cls = nullptr;
-    const HandClass kind = ResolveHandClass(want.cls, &cls, nullptr);
+    const HandClass kind = ResolveHandClass(want.cls, &cls, nullptr,
+                                            isHost ? ue_wrap::class_resolve::Load::LookupOnly
+                                                   : ue_wrap::class_resolve::Load::Budgeted);
+    if (kind == HandClass::Pending) return;
     if (kind == HandClass::Unresolved) {
-        if (::_wcsicmp(g_unresolvedWarned[slot].c_str(), want.cls.c_str()) != 0) {
-            g_unresolvedWarned[slot] = want.cls;
-            const uint32_t n = ++g_unresolvedBySlot[slot];
-            if ((n & (n - 1)) == 0)
-                UE_LOGW("hand_item: slot %u class '%ls' or the prop base not loaded yet -- will retry (%u class(es) "
-                        "waited on for this slot)", static_cast<unsigned>(slot), want.cls.c_str(), n);
-        }
+        UE_LOGW("hand_item: slot %u class '%ls' or the prop base exists nowhere on this peer -- no mirror, not tried "
+                "again until the item or the puppet changes", static_cast<unsigned>(slot), want.cls.c_str());
+        NoteSpawnFailed(slot, want, puppetActor);
         return;
     }
     // A mirror is built only from a hand item's class, whoever authored the state: the name stamp below
@@ -300,7 +307,7 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
         return;
     }
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(puppetActor, loc)) return;   // retried next tick, as a missing class is
+    if (!E::TryGetActorLocation(puppetActor, loc)) return;   // retried next tick: the puppet is not placed yet
     const ue_wrap::FRotator rot{};
     // The begin dispatches through ProcessEvent, so the spawn observers (the ambient broadcaster's among
     // them, which a held pinecone, stick or crystal passes) run inside it, before the actor exists to be
@@ -657,7 +664,7 @@ bool HandleHandItem(coop::net::Session& session,
             return true;
         }
         std::wstring own;
-        const HandClass kind = in.has ? ResolveHandClass(in.cls, nullptr, &own) : HandClass::Unresolved;
+        const HandClass kind = in.has ? ResolveHandClass(in.cls, nullptr, &own, ue_wrap::class_resolve::Load::LookupOnly) : HandClass::Unresolved;
         if (kind == HandClass::NotHand) {
             if (const uint32_t n = DropToLog(msg.senderPeerSlot))
                 UE_LOGW("hand_item: slot %u names class '%ls', which is not a hand item -- not kept or relayed "
@@ -710,8 +717,6 @@ void Reset() {
         DestroyMirror(s, "session reset");
         g_hands[s] = SlotHand{};
         g_droppedBySender[s] = 0;
-        g_unresolvedWarned[s].clear();
-        g_unresolvedBySlot[s] = 0;
         coop::hand_history::Clear(s);
     }
     g_ownHas = false;
@@ -773,8 +778,6 @@ void OnSlotDisconnected(uint8_t slot) {
     DestroyMirror(slot, "peer disconnected");
     g_hands[slot] = SlotHand{};
     g_droppedBySender[slot] = 0;
-    g_unresolvedWarned[slot].clear();
-    g_unresolvedBySlot[slot] = 0;
     coop::hand_history::Clear(slot);
 }
 
