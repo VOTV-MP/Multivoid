@@ -204,17 +204,30 @@ stays in the world, and on every other machine the player's copy is hidden while
 The same trip authored by another player's copy on this machine is refused outright.
 
 None of the three maps has a way out. Each ends the game itself: the backrooms after ten minutes,
-the secret maps on their own timers and triggers (`untitled_219` after ten minutes as well, either
-of them at once if it finds a grappling hook in the world or a spectator). That end is refused and
-answered as a death: the player is revived in the world as after any death, carrying what it
-carried, and anything picked up down there with it. A real death inside ends the visit the same
-way. At the end the map is unloaded and what its script changed for the whole game is put back:
-the save slot's name, the game mode, the event it raised, the reverb. Each map's own props stay out
-of the prop lanes, and `untitled_untitled`'s ATV and `untitled_219`'s day-night cycle, copies of the
-world's own, are removed or held. `[V]` on the rig: each map visited by a client, the backrooms by
-the host as well, the game's own clip on both roles, each end (the map's end, its quit, a real
-death) and the backrooms' real ten-minute end; the other player saw the copy hidden and shown
-again every time.
+the secret maps on their own timers and triggers (`untitled_219` after ten minutes as well and at
+once if it finds a spectator, `untitled_untitled` after forty minutes and at once if it finds a
+grappling hook). That end is refused and answered as a death: the player is revived in the world as
+after any death, carrying what it carried, and what it holds from down there with it. A real death
+inside ends the visit the same way, and the item that death drops in the map is put back in the
+player's hand once it is revived. At the end the map is unloaded and what its script changed for
+the whole game is put back: the save slot's name, the game mode, the event it raised, the reverb.
+
+A map loaded into the running world brings what a world of its own has, and the visit answers each
+of it. The map's placed player takes the machine's controller as its level begins play: the
+controller goes back to the visitor, and the placed player and the black screen it puts up are
+removed. The world's height fog, dense without bound that far down, is hidden on the visitor's
+machine while it is there. The visitor's own clip check sees the view jump into the map and back
+out: the game mode's `backroomsEnabled` is off for the visit and five seconds after it, and a trip
+asked while seated or driving is refused, as the game's own check refuses it. What a map's script
+spawns lands in the world's own level, far below it: it stays out of the prop lanes and is removed
+with the map. `untitled_untitled`'s hook check counts a hook in the map only, not the world's own.
+Its ATV and `untitled_219`'s day-night cycle, copies of the world's own, are removed or held.
+
+`[V]` on the rig: each map visited by a client and by the host, the game's own clip on both roles,
+each end (the map's end, its quit, a real death) and the backrooms' real ten-minute end; the
+visitor's controller held its player and its view was in the map and then back with it, the
+other player saw the copy hidden and shown again, and the visitor came back with its hand item
+every time.
 
 ### Inventory
 
