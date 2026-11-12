@@ -296,22 +296,27 @@ def parse_authorship(text: str):
 
 
 def parse_enum(text):
-    """Return (name -> value-or-None, [unreadable rows]).
+    """Return (name -> value, [unreadable rows]).
 
     Every non-blank line of the enum body must be recognised. A row this parser cannot
     read is reported, because silently dropping one is indistinguishable from the kind
     not existing -- and a kind that does not exist is never asked for a receiver.
+    An enumerator written without `= n` takes the previous value plus one, as C++ does
+    (the first takes 0), so the value checks below see every row's real number.
     """
     m = ENUM_BLOCK.search(strip_comments(text or ""))
     if not m:
         return {}, []
     enums, bad = {}, []
+    nxt = 0
     for line in m.group(1).splitlines():
         if not line.strip():
             continue
         r = ENUM_ROW.match(line)
         if r:
-            enums[r.group(1)] = int(r.group(2), 0) if r.group(2) else None
+            value = int(r.group(2), 0) if r.group(2) else nxt
+            enums[r.group(1)] = value
+            nxt = value + 1
         else:
             bad.append(line.strip()[:80])
     return enums, bad
@@ -626,6 +631,12 @@ def drill() -> int:
     t = dict(base)
     t[PROTO] = t[PROTO].replace("    LightGroupState = 129,", "    LightGroupState = 1024,", 1)
     controls.append(("a kind past the tables' space", t, "LightGroupState = 1024 is not below kReliableKindSpace"))
+
+    # 4d. an enumerator written without a value that lands past the space: it takes the previous value plus one.
+    t = dict(base)
+    t[PROTO] = t[PROTO].replace("    LightGroupState = 129,", "    LightGroupState = 1023,\n    ImplicitPastSpace,", 1)
+    controls.append(("an implicit kind past the tables' space", t,
+                     "ImplicitPastSpace = 1024 is not below kReliableKindSpace"))
 
     # 5. an enum row this parser cannot read must not pass silently.
     t = dict(base)
