@@ -227,7 +227,7 @@ one run, two reds) has run on the rig.
 A player's tick traces from last frame's camera to this one, and a hit on static geometry -- a clip
 through a wall or the floor -- saves the game and travels to the backrooms (`sl_backroomsObsolete`),
 or by a roll to one of two secret maps (`untitled_untitled`, `untitled_219`). The game sends no
-player holding something, sitting, ragdolled or asleep. A session holds one world, and that travel
+player who is sitting, ragdolled, noclipping, asleep or dreaming. A session holds one world, and that travel
 took the player out of it, or every player with the host. In a session the travel is refused and the
 map is loaded into the running world instead, far below it, on the clipping player's machine alone
 (`coop/player/level_visit`, `ue_wrap/world/level_instance`): the player goes in, everyone else
