@@ -18,6 +18,7 @@
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_physics.h"  // StopActorSimulating
 #include "ue_wrap/core/log.h"
@@ -123,9 +124,19 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
                 payload.elementId);
         return;
     }
-    void* actorClass = R::FindClass(classW.c_str());
+    // The name allowlist above is the family: a class this client has not loaded loads from its asset inside the
+    // per-tick budget (past it the spawn is parked and runs again next tick); one that exists nowhere here drops.
+    const ue_wrap::class_resolve::Resolved resolved = ue_wrap::class_resolve::ResolveClass(
+        classW.c_str(), ue_wrap::class_resolve::AnyFamily(), ue_wrap::class_resolve::Load::Budgeted);
+    if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
+        if (!ue_wrap::class_resolve::Park("WorldActorSpawn", [payload] { OnWorldActorSpawn(payload); }))
+            UE_LOGW("world-actor[client OnSpawn]: class '%ls' waits on a load and the park queue is full -- "
+                    "dropping (eid=%u)", classW.c_str(), payload.elementId);
+        return;
+    }
+    void* actorClass = resolved.cls;
     if (!actorClass) {
-        UE_LOGW("world-actor[client OnSpawn]: class '%ls' not loaded -- dropping (eid=%u)",
+        UE_LOGW("world-actor[client OnSpawn]: class '%ls' is not resolvable on this peer -- dropping (eid=%u)",
                 classW.c_str(), payload.elementId);
         return;
     }

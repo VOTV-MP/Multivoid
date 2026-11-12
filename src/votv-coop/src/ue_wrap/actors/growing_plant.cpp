@@ -184,6 +184,11 @@ bool IsPlantClass(void* cls) {
     return base && R::IsDescendantOfAny(cls, &base, 1, kMaxHops);
 }
 
+const class_resolve::Family& PlantFamily() {
+    static const class_resolve::Family family{L"plant", nullptr, &IsPlantClass};
+    return family;
+}
+
 bool IsPotClass(void* cls) {
     static void* s_pot = nullptr;
     static uint64_t s_listing = 0;

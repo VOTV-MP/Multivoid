@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "ue_wrap/core/class_resolve.h"  // Family
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
@@ -27,6 +28,10 @@ void List(std::vector<void*>& out);
 // Whether `cls` is growingPlant_C or a class under it: a walk of its super chain by pointer against growingPlant_C's class, so
 // a class with no live instance answers true as well. False while growingPlant_C is not loaded. Game thread.
 bool IsPlantClass(void* cls);
+
+// The family a resolver caller names for a plant: a class class_resolve loads on a wire name is accepted only when
+// IsPlantClass holds for it.
+const class_resolve::Family& PlantFamily();
 
 // Whether `cls` is prop_farmPot_C or a class under it (the flat and the small pot): the same walk of the super chain by pointer.
 // False while prop_farmPot_C is not loaded. Game thread.
