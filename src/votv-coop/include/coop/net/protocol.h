@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 285;
+inline constexpr uint16_t kProtocolVersion = 286;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2733,10 +2733,14 @@ struct PropActReplyPayload {
 };
 static_assert(sizeof(PropActReplyPayload) == 4, "PropActReplyPayload must be 4 bytes");
 
+// `committed` 1 means the verb ran and the prop is gone on the client, 0 that it aborted, and 2 (a snack only) that the
+// eater ran and the client's copy lives. `flags` is a snack's report of what the replay changed on its copy: bit 0 a use
+// was spent, bit 1 a bottle was opened; a snack's commit of 1 carries exactly bit 0, of 2 any of the two, and every
+// other prop's commit carries none (a snack's commit outside this, or a 2 on another prop, is malformed and kept as one).
 struct PropActCommitPayload {
     uint16_t id;         // 2 -- the granted request's id
-    uint8_t  committed;  // 1 -- 1 the verb ran and the prop is gone on the client, 0 aborted
-    uint8_t  pad;        // 1 -- zeroed
+    uint8_t  committed;  // 1 -- 0 aborted, 1 the prop is gone on the client, 2 a snack's copy lives
+    uint8_t  flags;      // 1 -- a snack's changes (bit 0 spent, bit 1 opened); zeroed for any other prop
     uint32_t eid;        // 4 -- the prop's Element id
 };
 static_assert(sizeof(PropActCommitPayload) == 8, "PropActCommitPayload must be 8 bytes");

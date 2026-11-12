@@ -12,6 +12,7 @@
 #include "coop/props/prop_hold.h"
 #include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop.h"
+#include "coop/props/snack_act.h"
 #include "coop/session/net_pump.h"
 
 #include "l10n/l10n.h"
@@ -169,10 +170,11 @@ void QueueCommit(const coop::net::PropActCommitPayload& c) {
     DrainCommits();
 }
 
-void SendCommit(uint8_t committed) {
-    QueueCommit(coop::net::PropActCommitPayload{g_rec.id, committed, 0, g_rec.eid});
-    UE_LOGI("prop_act: commit id %u eid %u -> %s", static_cast<unsigned>(g_rec.id), static_cast<unsigned>(g_rec.eid),
-            committed ? "committed" : "aborted");
+void SendCommit(uint8_t committed, uint8_t flags = 0) {
+    QueueCommit(coop::net::PropActCommitPayload{g_rec.id, committed, flags, g_rec.eid});
+    UE_LOGI("prop_act: commit id %u eid %u -> %s flags %u", static_cast<unsigned>(g_rec.id),
+            static_cast<unsigned>(g_rec.eid), committed == 0 ? "aborted" : committed == 1 ? "committed" : "applied",
+            static_cast<unsigned>(flags));
 }
 
 // A granted MRE open: the host rolls the contents on its own copy and they reach this peer as its spawns, so this copy
@@ -196,6 +198,7 @@ bool RunVerb(void* target, void* local) {
         return OpenMreOnHost(target);
     case kFood:
     case kPills:
+    case kSnack:
         return PU::CallActionOptionIndex(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.action,
                                          g_rec.lookAt.Get());
     case kSoap: {
@@ -224,6 +227,8 @@ void Replay() {
     bool ran = false;
     ue_wrap::FVector mreAt{};   // an MRE's place, read while it stands: its opening is heard there after the destroy
     const bool hearsMre = g_rec.row == kMre && E::TryGetActorLocation(target, mreAt);
+    const bool snack = g_rec.row == kSnack;
+    const coop::snack_act::CopyState before = snack ? coop::snack_act::ReadCopy(target) : coop::snack_act::CopyState{};
     {
         Latched scope(target);
         ran = RunVerb(target, local);
@@ -231,6 +236,16 @@ void Replay() {
         if (void* const extra = g_destroyInReplay.Get()) E::DestroyActor(extra);
         g_destroyInReplay.Reset();
         destroyed = g_latch.destroyed;
+    }
+    // A snack's commit says what the replay did to its copy: it ended, or the eater ran and what changed.
+    if (snack) {
+        const coop::snack_act::CommitWords w = coop::snack_act::CommitFor(
+            ran, destroyed, before, destroyed ? coop::snack_act::CopyState{} : coop::snack_act::ReadCopy(target));
+        if (destroyed) coop::remote_prop::UnregisterPropMirror(g_rec.eid);
+        else if (!ran) UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
+        SendCommit(w.committed, w.flags);
+        Close();
+        return;
     }
     // The destroy decides, not the verb's return: a verb that destroyed its target and then failed still commits, since
     // this copy is gone and its key parked.
@@ -268,8 +283,13 @@ UE_FACT_FN(kRowFood,   "prop_act", L"prop_food_C",       L"actionOptionIndex",  
 UE_FACT_FN(kRowMre,    "prop_act", L"prop_food_mre_C",   L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowPills,  "prop_act", L"prop_sleeppills_C", L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowSoap,   "prop_act", L"prop_food_soap_C",  L"playerUsedOn",        Declared);
+// The snack family: prop_snack_C's body is the candy, chips, milk, sushi and soda's; the beer's own body (the wine
+// inherits it) calls the parent's first.
+UE_FACT_FN(kRowSnack,  "prop_act", L"prop_snack_C",      L"actionOptionIndex",   Declared);
+UE_FACT_FN(kRowBeer,   "prop_act", L"prop_snack_beer_C", L"actionOptionIndex",   Declared);
 constexpr int kTagPocket = 0x50414331, kTagHold = 0x50414332, kTagFood = 0x50414333,
-              kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336;   // "PAC1".."PAC6"
+              kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336,
+              kTagSnack = 0x50414337, kTagBeer = 0x50414338;   // "PAC1".."PAC8"
 
 // The action index of eating, opening a food and taking pills.
 constexpr uint8_t kEatAction = 4;
@@ -298,7 +318,7 @@ struct ActionParams {
     R::ParamOffset action{L"action"};
     R::ParamOffset lookAt{L"lookAtComponent"};
 };
-ActionParams g_foodParams, g_mreParams, g_pillsParams;
+ActionParams g_foodParams, g_mreParams, g_pillsParams, g_snackParams, g_beerParams;
 
 struct SoapParams {
     R::ParamOffset holdObject{L"holdObject"};
@@ -331,6 +351,10 @@ bool FoodDestroys(const sg::Call& c) {
 }
 bool MreDestroys(const sg::Call& c) { return IsEat(g_mreParams, c); }
 bool PillsDestroys(const sg::Call& c) { return IsEat(g_pillsParams, c); }
+// A snack is asked on every eat: a sip, an open and the last use all change the shared copy, whatever the client's copy
+// predicts.
+bool SnackAsks(const sg::Call& c) { return IsEat(g_snackParams, c); }
+bool BeerAsks(const sg::Call& c) { return IsEat(g_beerParams, c); }
 
 // The soap's last use on a dry sponge in the hand: the body returns unless the hand holds a sponge with no soap.
 bool SoapDestroys(const sg::Call& c) {
@@ -385,7 +409,7 @@ struct HitParam {
     ue_wrap::CachedObjRef sizeFn;
     int32_t size = -1;
 };
-HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit;
+HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit, g_snackHit, g_beerHit;
 
 // The hit of a use, as the replay writes it back: only its component and place matter.
 void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
@@ -497,6 +521,8 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitP
 sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
 sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kMre, g_mreParams, g_mreHit, &MreDestroys); }
 sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
+sg::Verdict PreSnack(const sg::Call& c) { return PreAction(c, kSnack, g_snackParams, g_snackHit, &SnackAsks); }
+sg::Verdict PreBeer(const sg::Call& c) { return PreAction(c, kSnack, g_beerParams, g_beerHit, &BeerAsks); }
 
 // The replay passes the hand it finds then, not the one captured here: only the hit and the hand item's name travel.
 sg::Verdict PreSoap(const sg::Call& c) {
@@ -534,6 +560,8 @@ Watch g_watches[] = {
     {kRowMre,    kTagMre,    &PreMre,    "use",  WatchState::Pending},
     {kRowPills,  kTagPills,  &PrePills,  "use",  WatchState::Pending},
     {kRowSoap,   kTagSoap,   &PreSoap,   "use",  WatchState::Pending},
+    {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending},
+    {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending},
 };
 bool g_watchesSettled = false;
 

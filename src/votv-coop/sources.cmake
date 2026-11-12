@@ -38,6 +38,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_act_host.cpp
     src/coop/props/prop_act_request.cpp
     src/coop/props/prop_act_selftest.cpp
+    src/coop/props/snack_act.cpp
     src/coop/props/prop_hold.cpp
     src/coop/props/prop_hold_claim.cpp
     src/coop/props/prop_tool_flags.cpp

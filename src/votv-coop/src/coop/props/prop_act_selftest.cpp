@@ -5,6 +5,7 @@
 
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
+#include "coop/props/snack_act.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -301,15 +302,59 @@ void RunSelftest() {
     check(SameReply(H::ReplyFor(H::ActVerdict::Held, 10), 10, 0, 3), "reply: held is reason 3");
     check(SameReply(H::ReplyFor(H::ActVerdict::Reach, 11), 11, 0, 4), "reply: reach is reason 4");
 
-    // DecideCommit: (matched, committed byte, liveAndSame).
-    check(H::DecideCommit(false, 1, true) == H::CommitStep::BadCommit, "commit: no matching grant is a bad commit");
-    check(H::DecideCommit(false, 0, true) == H::CommitStep::BadCommit, "commit: no matching grant beats an abort");
-    check(H::DecideCommit(true, 0, true) == H::CommitStep::Abort, "commit: a matched 0 aborts");
-    check(H::DecideCommit(true, 0, false) == H::CommitStep::Abort, "commit: an abort does not read the prop");
-    check(H::DecideCommit(true, 2, true) == H::CommitStep::BadCommit, "commit: a byte past 1 is a bad commit");
-    check(H::DecideCommit(true, 255, false) == H::CommitStep::BadCommit, "commit: a bad byte beats a dead prop");
-    check(H::DecideCommit(true, 1, false) == H::CommitStep::TargetGone, "commit: a dead or replaced prop is gone");
-    check(H::DecideCommit(true, 1, true) == H::CommitStep::Destroy, "commit: a matched live prop is destroyed");
+    // DecideCommit: (matched, committed byte, liveAndSame, a snack, flags).
+    check(H::DecideCommit(false, 1, true, false, 0) == H::CommitStep::BadCommit, "commit: no matching grant is a bad commit");
+    check(H::DecideCommit(false, 0, true, false, 0) == H::CommitStep::BadCommit, "commit: no matching grant beats an abort");
+    check(H::DecideCommit(true, 0, true, false, 0) == H::CommitStep::Abort, "commit: a matched 0 aborts");
+    check(H::DecideCommit(true, 0, false, false, 0) == H::CommitStep::Abort, "commit: an abort does not read the prop");
+    check(H::DecideCommit(true, 3, true, true, 0) == H::CommitStep::BadCommit, "commit: a byte past 2 is a bad commit");
+    check(H::DecideCommit(true, 255, false, false, 0) == H::CommitStep::BadCommit, "commit: a bad byte beats a dead prop");
+    check(H::DecideCommit(true, 1, false, false, 0) == H::CommitStep::TargetGone, "commit: a dead or replaced prop is gone");
+    check(H::DecideCommit(true, 1, true, false, 0) == H::CommitStep::Destroy, "commit: a matched live prop is destroyed");
+    check(H::DecideCommit(true, 2, true, false, 0) == H::CommitStep::BadCommit, "commit: a 2 on a prop that is no snack is bad");
+    check(H::DecideCommit(true, 1, true, false, 1) == H::CommitStep::BadCommit, "commit: a flag on a prop that is no snack is bad");
+    check(H::DecideCommit(true, 1, true, true, 1) == H::CommitStep::SnackEnded, "commit: a snack's end carries the spent bit");
+    check(H::DecideCommit(true, 1, true, true, 0) == H::CommitStep::BadCommit, "commit: a snack's end with no bit is bad");
+    check(H::DecideCommit(true, 1, true, true, 3) == H::CommitStep::BadCommit, "commit: a snack's end carries the spent bit alone");
+    check(H::DecideCommit(true, 2, true, true, 0) == H::CommitStep::SnackApplied, "commit: a full eater's 2 carries no bit");
+    check(H::DecideCommit(true, 2, true, true, 3) == H::CommitStep::SnackApplied, "commit: a 2 may carry both bits");
+    check(H::DecideCommit(true, 2, true, true, 4) == H::CommitStep::BadCommit, "commit: a bit past the two is bad");
+    check(H::DecideCommit(true, 2, false, true, 0) == H::CommitStep::TargetGone, "commit: a gone snack is gone");
+
+    // The snack's bounded apply: (host uses, host open, beer, flags) -> what the host's copy holds.
+    namespace S = coop::snack_act;
+    const auto bound = [](int32_t uses, bool open, bool beer, uint8_t flags) {
+        return S::internal::Bound(uses, open, beer, flags);
+    };
+    check(bound(4, false, false, S::kFlagSpent).uses == 3, "snack: a spent use takes one from a snack");
+    check(bound(4, false, false, 0).uses == 4, "snack: no bit changes nothing");
+    check(bound(0, false, false, S::kFlagSpent).uses == 0, "snack: a copy with no use cannot spend one");
+    check(bound(8, false, true, S::kFlagSpent).uses == 8, "snack: a closed beer cannot spend a use");
+    check(!bound(8, false, true, S::kFlagSpent).open, "snack: a spent report does not open a bottle");
+    check(bound(8, false, true, S::kFlagOpened).open && bound(8, false, true, S::kFlagOpened).uses == 8,
+          "snack: an opened report opens a closed beer and spends nothing");
+    check(bound(8, false, true, S::kFlagOpened | S::kFlagSpent).uses == 7,
+          "snack: an opened report then a spent one drinks from the closed beer it opened");
+    check(bound(8, true, true, S::kFlagSpent).uses == 7, "snack: an open beer spends a use");
+    check(bound(8, true, true, S::kFlagOpened).open, "snack: an open beer stays open");
+    check(!bound(4, false, false, S::kFlagOpened).open, "snack: only a beer is opened");
+    check(bound(1, true, true, S::kFlagSpent).uses == 0, "snack: the last use reaches 0");
+    check(S::internal::WellFormedSnackCommit(1, S::kFlagSpent) && !S::internal::WellFormedSnackCommit(1, 0) &&
+              S::internal::WellFormedSnackCommit(2, 0) && !S::internal::WellFormedSnackCommit(0, 0),
+          "snack: the commit words are well formed only as the wire states them");
+    const S::CopyState three{true, 3, false}, two{true, 2, false}, openBeer{true, 3, true};
+    check(S::CommitFor(true, true, three, S::CopyState{}).committed == 1 &&
+              S::CommitFor(true, true, three, S::CopyState{}).flags == S::kFlagSpent,
+          "snack: an ended copy commits 1 with the spent bit");
+    check(S::CommitFor(true, false, three, two).committed == S::kCommitApplied &&
+              S::CommitFor(true, false, three, two).flags == S::kFlagSpent,
+          "snack: a spent use commits 2 with the spent bit");
+    check(S::CommitFor(true, false, three, three).committed == S::kCommitApplied &&
+              S::CommitFor(true, false, three, three).flags == 0,
+          "snack: a full eater commits 2 with no bit");
+    check(S::CommitFor(true, false, three, openBeer).flags == S::kFlagOpened, "snack: an opened bottle commits the opened bit");
+    check(S::CommitFor(false, false, three, three).committed == 0 && S::CommitFor(true, false, S::CopyState{}, two).committed == 0,
+          "snack: a replay that did not run, or whose copy is unread, aborts");
 
     // AfterDestroy.
     check(H::AfterDestroy(true) == H::AfterStep::FanOut, "after: a destroyed prop fans out");

@@ -1,6 +1,7 @@
 // coop/props/prop_act_request.h -- the client's half of a take or use of a shared prop: a watch on each verb cancels
-// a client's call on a shared prop and asks the host (a use row asks only for a call the client's copy predicts will
-// destroy the prop), the host's reply is taken (a refusal shows a line, a grant replays the verb under a latch and
+// a client's call on a shared prop and asks the host (a food, soap, MRE or pills row asks only for a call the client's
+// copy predicts will destroy the prop; a snack row asks for every eat, sip or open: coop/props/snack_act), the host's
+// reply is taken (a refusal shows a line, a grant replays the verb under a latch and
 // sends the commit) and the destroy seam is told which destroy is the replay's. The same watches cancel the host's own
 // take or use of a prop a client has reserved. Gameplay layer (principle 7). Game thread.
 //
@@ -24,7 +25,7 @@ namespace coop::net { class Session; }
 
 namespace coop::prop_act_request {
 
-void Install(coop::net::Session* session);      // registers the six watches on a take or use, on either role
+void Install(coop::net::Session* session);      // registers the eight watches on a take or use, on either role
 void Tick();                                     // settles the watches; sends the commits the transport refused again;
                                                  // the 10 s expiry of an open record; a parked replay (dev)
 void OnDisconnect();                             // the pending record, the next id, the unsent commits, the latch, the
@@ -42,7 +43,7 @@ const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" 
 }  // namespace internal
 
 // The row of the verb a record replays.
-enum Row : uint8_t { kPocket = 1, kHold, kFood, kMre, kPills, kSoap };
+enum Row : uint8_t { kPocket = 1, kHold, kFood, kMre, kPills, kSoap, kSnack };
 
 // The pending record: the target's element id and the call's arguments, as the replay needs them.
 struct Pending {
@@ -56,7 +57,7 @@ struct Pending {
     ue_wrap::CachedObjRef hitComponent;            // the use rows and kSoap
     ue_wrap::FVector hitLocation{};
     uint8_t action = 0;
-    ue_wrap::CachedObjRef lookAt;                  // the three action rows and kSoap
+    ue_wrap::CachedObjRef lookAt;                  // the four action rows and kSoap
     ue_wrap::reflection::FName holdPropName{};     // kSoap
     bool replayHeld = false;                       // dev: HoldReplayUntilGone parked the replay of a grant
 };
