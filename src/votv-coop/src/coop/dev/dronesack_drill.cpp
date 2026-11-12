@@ -20,6 +20,7 @@
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/prop.h"
@@ -111,6 +112,7 @@ void CancelWalk() {
 
 void Abandon(const char* why) {
     UE_LOGW("[SACK-DRILL] ABANDONED on the client: %s", why);
+    if (Mode() == 2) coop::rig_verdict::Say("dronesack-arm2", coop::rig_verdict::Outcome::Invalid, "%s", why);
     CancelWalk();
     g_c.grab.reset();
     g_c.ph = ClientPh::Done;
@@ -148,13 +150,9 @@ bool Rest(const std::string& prefix, std::string* rest) {
 
 bool Heard(const std::string& line) { return g_heard.count(line) != 0; }
 
-// VOTVCOOP_SACK_PROP=drive (both peers): arms 2 and 3 use zip disks (prop_drive_C) instead of cups.
+// dronesack_prop=drive (both peers): arms 2 and 3 use zip disks (prop_drive_C) instead of cups.
 bool LooseIsDrive() {
-    static const bool d = [] {
-        char b[16] = {};
-        const DWORD n = ::GetEnvironmentVariableA("VOTVCOOP_SACK_PROP", b, sizeof b);
-        return n > 0 && n < sizeof b && std::string(b) == "drive";
-    }();
+    static const bool d = coop::config::ResolveEnum(::coop::config_registry::rows::dronesack_prop) == "drive";
     return d;
 }
 const wchar_t* LooseClass() { return LooseIsDrive() ? L"prop_drive_C" : L"prop_C"; }

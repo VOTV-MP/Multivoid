@@ -181,10 +181,13 @@ CFG_FLAG(container_arming_measure, "container_arming_measure", "dev", false, "VO
     "through the opened screen (the slot's pressButton) and a basket that already holds a drive is armed. Measures only: nothing is "
     "cancelled. The host's last line is the answer line, prefixed arming.")
 CFG_FLAG(container_overlap_no_cancel, "container_overlap_no_cancel", "dev", false, "VOTVCOOP_CONTAINER_OVERLAP_NO_CANCEL",
-    "Red arm for the throwinto arm and the drone sack drill's arm 2 (CLIENT): the client's cancel of the container's own and the "
-    "drone sack's putObjectIn_overlap on a shared mirror is skipped, so the BP body runs on the client as it did before the host "
+    "Red arm for the throwinto arm and the drone sack drill's arm 2 (CLIENT): the client's cancel of putObjectIn_overlap on a "
+    "shared mirror, from any caller, is skipped, so the BP body runs on the client as it did before the host "
     "judged the put: the client files the prop into its mirror and destroys it, and the host's copy is not put (arm 2: it is "
     "lost with no record, rig: VERDICT dronesack-arm2 FAIL).")
+CFG_ENUM(dronesack_prop, "dronesack_prop", "dev", "cup", "cup|drive", "VOTVCOOP_SACK_PROP",
+    "The loose prop of the drone sack drill's arms 2 and 3 (BOTH peers, with dronesack_drill; the two must match): cup is a "
+    "prop_C named cup, drive a zip disk (prop_drive_C), the item the drone sack put's fix was proven with.")
 CFG_FLAG(container_throwinto_unarmed, "container_throwinto_unarmed", "dev", false, "VOTVCOOP_CONTAINER_THROWINTO_UNARMED",
     "Red arm for the throwinto arm (BOTH peers): the host does not arm the fixtures' baskets and the client does not wait for the mirror's box, "
     "so a thrown drive meets an unarmed box, the engine fires no overlap and n=1 is not recorded.")

@@ -77,6 +77,7 @@ Host g_h;
 
 void Abandon(const char* why) {
     UE_LOGW("[SACK-DRILL] ABANDONED on the host: %s", why);
+    if (Mode() == 2) coop::rig_verdict::Say("dronesack-arm2", coop::rig_verdict::Outcome::Invalid, "%s", why);
     g_h.ph = Ph::Done;
 }
 
@@ -205,7 +206,7 @@ void SaleDone() {
     // Said in the family's own line (arm 4's form) and as the rig's one contract line, which a run ends on.
     namespace RV = coop::rig_verdict;
     if (gone == 0) {
-        UE_LOGW("[SACK-DRILL] host arm 2 INCONCLUSIVE: no prop reached the sack");
+        UE_LOGW("[SACK-DRILL] host arm 2 INVALID: no prop reached the sack");
         RV::Say("dronesack-arm2", RV::Outcome::Invalid, "no prop reached the sack");
     } else if (filed == gone) {
         UE_LOGI("[SACK-DRILL] host arm 2 PASS: %d prop(s) left the floor, %d record(s) filed", gone, filed);
