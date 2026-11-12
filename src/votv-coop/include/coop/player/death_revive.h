@@ -47,6 +47,10 @@ void NoteRunEndSeamReady(bool ready);
 // in the revive's line. Game thread (the gate's callback contract).
 void NoteRunEndCancelled(void* author, const wchar_t* authorClass, bool authorIsLocalPawn);
 
+// Detach every black screen on the viewport now (the widget a travel's site puts up, which only the travel would
+// dispose of). True once none is on it. Game thread.
+bool ClearBlackScreenNow();
+
 // A run-ending travel a peer's puppet authored here was refused: this machine's player did not die
 // and is not revived, but the copy's death chain may have put a black screen on this viewport, which
 // is cleared over the cleanup window. Any thread.

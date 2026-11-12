@@ -1,5 +1,6 @@
 // coop/props/prop_drop_intent.cpp -- see coop/props/prop_drop_intent.h for the design.
 
+#include "coop/player/level_visit.h"
 #include "coop/props/prop_drop_intent.h"
 
 #include "coop/config/config.h"             // the throw arms' dev knobs
@@ -185,6 +186,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     if (!actor || !R::IsLive(actor)) return;
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;  // a host-authored mirror we adopt, not a place
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;          // keyed Aprop_C lineage only
+    if (coop::level_visit::InVisitedMap(actor)) return;             // a visited map's own prop, never a place
     if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked = not a fresh place
     // The hand-axis exclusion, the enqueue half (a fast path only, not load-bearing here: at
     // finish-spawn return the hold update has not yet written the holding actor, so the freshly

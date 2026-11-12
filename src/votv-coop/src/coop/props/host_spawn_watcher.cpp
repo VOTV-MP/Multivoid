@@ -1,5 +1,6 @@
 // coop/props/host_spawn_watcher.cpp -- see coop/props/host_spawn_watcher.h.
 
+#include "coop/player/level_visit.h"
 #include "coop/props/host_spawn_watcher.h"
 
 #include "coop/config/config.h"
@@ -250,6 +251,7 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     // expressing a mirror as a fresh world prop is the dupe.
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
+    if (coop::level_visit::InVisitedMap(actor)) return;    // a visited map's own prop
     // An actor the init seam already tracked has its row out; only a fall and a container's contents
     // are left to give it, so it is queued when it can fall (a spawn-menu barrel takes that route) or
     // is a container (a thrown one is rebound to its slot by its own loadData, and no verb marks it),

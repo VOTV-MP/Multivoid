@@ -191,6 +191,31 @@ one chat line naming the host when it rises. A joiner is sent the host's flag an
 state that is not awake, and a leaver is told to every client as awake. A client holds its
 nightmare chance at zero, so a nightmare is a roll of the host's machine alone. `[?]`
 
+### Another map: the backrooms
+
+A player's tick traces from last frame's camera to this one, and a hit on static geometry -- a clip
+through a wall or the floor -- saves the game and travels to the backrooms (`sl_backroomsObsolete`),
+or by a roll to one of two secret maps (`untitled_untitled`, `untitled_219`). The game sends no
+player holding something, sitting, ragdolled or asleep. A session holds one world, and that travel
+took the player out of it, or every player with the host. In a session the travel is refused and the
+map is loaded into the running world instead, far below it, on the clipping player's machine alone
+(`coop/player/level_visit`, `ue_wrap/world/level_instance`): the player goes in, everyone else
+stays in the world, and on every other machine the player's copy is hidden while it is down there.
+The same trip authored by another player's copy on this machine is refused outright.
+
+None of the three maps has a way out. Each ends the game itself: the backrooms after ten minutes,
+the secret maps on their own timers and triggers (`untitled_219` after ten minutes as well, either
+of them at once if it finds a grappling hook in the world or a spectator). That end is refused and
+answered as a death: the player is revived in the world as after any death, carrying what it
+carried, and anything picked up down there with it. A real death inside ends the visit the same
+way. At the end the map is unloaded and what its script changed for the whole game is put back:
+the save slot's name, the game mode, the event it raised, the reverb. Each map's own props stay out
+of the prop lanes, and `untitled_untitled`'s ATV and `untitled_219`'s day-night cycle, copies of the
+world's own, are removed or held. `[V]` on the rig: each map visited by a client, the backrooms by
+the host as well, the game's own clip on both roles, each end (the map's end, its quit, a real
+death) and the backrooms' real ten-minute end; the other player saw the copy hidden and shown
+again every time.
+
 ### Inventory
 
 Per player and private: the contents never cross the wire as gameplay. The host stores each
@@ -361,6 +386,7 @@ dead peer through the ragdoll bit of its next pose.
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
 | sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest` |
+| another map (the backrooms) | `coop/player/level_visit`, `ue_wrap/world/level_instance`, `harness/autotest/autotest_level_visit.cpp` (the drill) |
 | inventory | `coop/items/player_inventory_sync` |
 | moderation | `coop/moderation/moderation`, `coop/moderation/ban_list`, `coop/moderation/seen_players` |
 | tests | `harness/autotest/autotest_death.cpp` (the drill) + `death_state_probe.cpp` (the reads it and `autotest_runend.cpp` share), `autotest_damage.cpp`, `autotest_playerdmg.cpp`, `autotest_ragdoll.cpp`, `autotest_puppetframe.cpp` |
