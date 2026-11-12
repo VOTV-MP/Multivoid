@@ -85,29 +85,34 @@ void ReadEquipRecord(const void* base, EquipRecord& rec) {
     rec.tag      = SR::ReadFNameAt(base, kEquip_tag);
 }
 
-// An empty equipment slot: no item named and no class in its record. The game's own empty slot is a default
-// Fstruct_equipment, and AddEquipment finds a free slot by comparing whole structs against one (Array_Find), so a blank
-// has to be byte-for-byte that default: its record's transform the identity, not the zeroed one a blank C++ record holds.
-// A blank written with zeros is never free, and a player whose slots were padded that way could wear nothing new.
+// An empty equipment slot: no item named and no class in its record. The game finds a free slot by comparing whole
+// structs against the struct's default (AddEquipment: Array_Find), so a blank has to be that default, not the zeroed
+// transform a blank C++ record holds: a blank written with zeros is never free, and a player whose slots were padded
+// that way could wear nothing new. Writing the game's own blank also heals a profile that stored a zeroed one.
 bool IsBlankEquip(const EquipRecord& r) {
     return (r.propName.empty() || r.propName == L"None") && r.data.className.empty();
 }
 
-void WriteEquipRecord(uint8_t* base, const EquipRecord& r) {
-    if (IsBlankEquip(r)) {
-        // The default the game compares against; this also heals a profile that stored a zeroed blank before.
-        EquipRecord blank;
-        blank.data.xform = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f};   // quat (0,0,0,1), origin, scale 1
-        SR::WriteFNameField(base + kEquip_propName, blank.propName);
-        SR::WriteFNameField(base + kEquip_propKey, blank.propKey);
-        SR::WriteSaveRecord(base + kEquip_data, blank.data);
-        SR::WriteFNameField(base + kEquip_tag, blank.tag);
-        return;
-    }
-    SR::WriteFNameField(base + kEquip_propName, r.propName);
-    SR::WriteFNameField(base + kEquip_propKey, r.propKey);
-    SR::WriteSaveRecord(base + kEquip_data, r.data);  // embedded Fstruct_save (0x100 slot)
-    SR::WriteFNameField(base + kEquip_tag, r.tag);
+// The game's own empty slot, read from the save object being written: element 0 of its `equipment_def` / `hold_def`
+// arrays, the defaults saveSlot's reset_player_equipment copies back (`equipment = equipment_def`). Never typed here.
+int32_t g_offEquipmentDef = -2;
+int32_t g_offHoldDef      = -2;
+
+bool ReadGameBlank(void* save, int32_t& offSlot, const wchar_t* name, EquipRecord& out) {
+    const int32_t off = CachedOffset(offSlot, R::ClassOf(save), name);
+    if (off < 0) return false;
+    const SR::Arr def = SR::ReadArr(save, off);
+    if (!def.data || def.num < 1) return false;
+    ReadEquipRecord(def.data, out);
+    return true;
+}
+
+void WriteEquipRecord(uint8_t* base, const EquipRecord& r, const EquipRecord& gameBlank) {
+    const EquipRecord& w = IsBlankEquip(r) ? gameBlank : r;
+    SR::WriteFNameField(base + kEquip_propName, w.propName);
+    SR::WriteFNameField(base + kEquip_propKey, w.propKey);
+    SR::WriteSaveRecord(base + kEquip_data, w.data);  // embedded Fstruct_save (0x100 slot)
+    SR::WriteFNameField(base + kEquip_tag, w.tag);
 }
 
 // Build one engine TArray<RecordT> from `recs` and overwrite the header at base+off. The
@@ -279,7 +284,7 @@ bool ReadLivePersonalStore(LivePersonalStore& out) {
     return true;
 }
 
-bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
+bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv, bool zeroedBlanks) {
     if (!saveSlot || !R::IsLive(saveSlot)) return false;
     if (void* probe = R::EngineAlloc(16)) {  // GMalloc probe: a failure -> we'd silently write
         R::EngineFree(probe);                // empty arrays over a real inventory; refuse instead
@@ -292,6 +297,14 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
     if (!carried) {
         UE_LOGE("inventory: ApplyToSaveObject -- save object %p has no GObjStack[%d]; refusing to "
                 "write a partial inventory", saveSlot, kPersonalSlot);
+        return false;
+    }
+    // A default record is the zeroed blank: the red keeps it where the game's own empty slot belongs.
+    EquipRecord equipBlank, holdBlank;
+    if (!zeroedBlanks && (!ReadGameBlank(saveSlot, g_offEquipmentDef, L"equipment_def", equipBlank) ||
+                          !ReadGameBlank(saveSlot, g_offHoldDef, L"hold_def", holdBlank))) {
+        UE_LOGE("inventory: ApplyToSaveObject -- save object %p has no equipment_def / hold_def to take the empty slot "
+                "from; refusing, since a zeroed blank is a slot the game never sees as free", saveSlot);
         return false;
     }
     BuildAndSwapArray(carried, 0, SR::kSaveStride, inv.inventory,
@@ -307,9 +320,9 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
         return out;
     };
     BuildAndSwapArray(saveSlot, kOff_equipment, kEquipStride, slotsOf(kOff_equipment, inv.equipment),
-                      [](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r); });
+                      [&equipBlank](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r, equipBlank); });
     BuildAndSwapArray(saveSlot, kOff_hold, kEquipStride, slotsOf(kOff_hold, inv.hold),
-                      [](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r); });
+                      [&holdBlank](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r, holdBlank); });
     UE_LOGI("inventory: ApplyToSaveObject(%p) wrote carried=%zu equipment=%zu hold=%zu",
             saveSlot, inv.inventory.size(), inv.equipment.size(), inv.hold.size());
     return true;

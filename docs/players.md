@@ -202,7 +202,8 @@ and holds, so whatever is not replaced there is the host's. A first join gets th
 starter items as copies under fresh keys, because the game's key index holds one object per
 key and a copy under its source's key aliases the original the moment either is dropped. What a player wears is a fixed row of slots the hand-back
 fills to the save object's count, and the game equips only into a slot that is byte-for-byte its own empty one (a
-default record, with an identity transform), so every blank the hand-back writes is that empty: a blank written with a
+default record, with an identity transform), so every blank the hand-back writes is that empty, read from the save
+object's own `equipment_def` and `hold_def` (the defaults the game's reset copies back), never typed: a blank written with a
 zeroed transform was never free, and a joiner could wear only as many new items as slots it had emptied itself. A
 profile that stored such blanks is healed at its next join (`ue_wrap/actors/inventory`). `[V]` on the rig
 (`coop/dev/equip_drill`): every empty slot of a fresh joiner and of a returning one takes an item, as the host's do; without

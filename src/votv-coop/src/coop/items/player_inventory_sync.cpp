@@ -83,6 +83,11 @@ bool JoinStaysAtHost() {
     static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::join_at_host);
     return s;
 }
+// The equipment drill's red: the apply writes a joiner's blank slots zeroed, as it did before it took the game's own.
+bool BlanksZeroed() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::equip_blank_zeroed);
+    return s;
+}
 std::atomic<bool> g_hasPendingApply{false};
 // Client: this session's world was built from a host profile. The stream to the host is gated on
 // it, because a world that came up without one carries nothing of the player's, and streaming that
@@ -234,7 +239,7 @@ void OnSaveObjectReady(void* saveSlotObject) {
     g_joinPlacement = JoinStaysAtHost() ? JoinPlacement::AtHost : JoinPlacement::StartPoint;
     if (!g_hasPendingApply.load(std::memory_order_acquire)) {
         const bool emptied = ue_wrap::inventory::ApplyToSaveObject(
-            saveSlotObject, ue_wrap::inventory::PlayerInventory{});
+            saveSlotObject, ue_wrap::inventory::PlayerInventory{}, BlanksZeroed());
         ue_wrap::vitals::Snapshot fresh;
         const bool vitals = ue_wrap::vitals::ReadDefaults(fresh) &&
                             ue_wrap::vitals::ApplySnapshot(saveSlotObject, fresh);
@@ -250,7 +255,7 @@ void OnSaveObjectReady(void* saveSlotObject) {
                 vitals ? "fresh" : "NOT written (the host's)");
         return;
     }
-    if (!ue_wrap::inventory::ApplyToSaveObject(saveSlotObject, g_pendingApply.items)) {
+    if (!ue_wrap::inventory::ApplyToSaveObject(saveSlotObject, g_pendingApply.items, BlanksZeroed())) {
         UE_LOGE("player_inventory[client]: ApplyToSaveObject FAILED on %p -- the world comes up "
                 "with the host's items and the stream stays shut", saveSlotObject);
         return;

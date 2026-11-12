@@ -6,22 +6,21 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/join_membership_sweep.h"
+#include "coop/session/host_world_settle.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/begin_equipment.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/log.h"
-
-#include <windows.h>
 
 #include <cstdint>
 #include <string>
 
 namespace coop::dev::equip_drill {
 namespace {
-
-constexpr uint64_t kSettleMs = 15000;
 
 // More wearables than a player has slots, so every free slot is offered one. The second fanny pack fits beside the first;
 // a second flashlight of another kind is the game's "type already equipped".
@@ -37,9 +36,17 @@ bool Enabled() {
     return on;
 }
 
-uint64_t g_readyMs = 0;
 bool g_done = false;
 int g_session = 1;
+
+// The peer is a player in a settled world: the host's own world has finished starting, a client's streams run. The hand-back
+// is written into the save object before the world loads, so nothing after this changes the slots the drill reads.
+bool WorldReady(coop::net::Session* s) {
+    if (s->role() == coop::net::Role::Host) return coop::host_world_settle::Settled();
+    return coop::net_pump::HasAnnouncedWorldReady() &&
+           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle &&
+           coop::net_pump::IsWorldSettled() && coop::join_membership_sweep::HasLoadTailQuiesced();
+}
 
 // The slots, the empty ones, and the list of what each holds.
 struct Slots {
@@ -63,18 +70,19 @@ Slots Read() {
 
 void Tick(coop::net::Session* s) {
     if (!Enabled() || g_done || !s || !s->connected() || !coop::players::Registry::Get().Local()) return;
-    const bool host = s->role() == coop::net::Role::Host;
-    if (!host && (!coop::net_pump::HasAnnouncedWorldReady() ||
-                  coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle))
-        return;
-    const uint64_t now = ::GetTickCount64();
-    if (!g_readyMs) { g_readyMs = now; return; }
-    if (now - g_readyMs < kSettleMs) return;
-    g_done = true;
-    const char* role = host ? "host" : "client";
+    if (!WorldReady(s)) return;
+    // Nothing announces that the player's equipment can be read (a field the game writes in place); the world-ready terms
+    // above stand for it, and a read that still fails waits for the next tick.
     const Slots before = Read();
-    if (before.count < 0) {
-        UE_LOGW("[EQUIP-DRILL] %s ABANDONED in session %d: the equipment does not read", role, g_session);
+    if (before.count < 0) return;
+    g_done = true;
+    const bool host = s->role() == coop::net::Role::Host;
+    const char* role = host ? "host" : "client";
+    const char* tag = host ? "equip-host" : "equip-client";
+    if (before.empty == 0) {
+        coop::rig_verdict::Say(tag, coop::rig_verdict::Outcome::Invalid,
+                               "session %d: none of the %d equipment slots is empty, nothing to measure", g_session,
+                               before.count);
         return;
     }
     UE_LOGI("[EQUIP-DRILL] %s: %d slots, %d empty:%ls", role, before.count, before.empty, before.line.c_str());
@@ -87,16 +95,17 @@ void Tick(coop::net::Session* s) {
     const Slots after = Read();
     UE_LOGI("[EQUIP-DRILL] %s: after the list, %d empty:%ls", role, after.empty, after.line.c_str());
     if (after.empty == 0 && fit == before.empty)
-        UE_LOGI("[EQUIP-DRILL] %s DONE PASS in session %d: each of the %d empty slots took an item", role, g_session, fit);
+        coop::rig_verdict::Say(tag, coop::rig_verdict::Outcome::Pass,
+                               "session %d: each of the %d empty slots took an item", g_session, fit);
     else
-        UE_LOGW("[EQUIP-DRILL] %s DONE FAIL in session %d: %d of %d empty slots took an item, %d still empty", role, g_session,
-                fit, before.empty, after.empty);
+        coop::rig_verdict::Say(tag, coop::rig_verdict::Outcome::Fail,
+                               "session %d: %d of %d empty slots took an item, %d still empty", g_session, fit,
+                               before.empty, after.empty);
 }
 
 void OnDisconnect() {
     if (!Enabled()) return;
     ++g_session;
-    g_readyMs = 0;
     g_done = false;
 }
 
