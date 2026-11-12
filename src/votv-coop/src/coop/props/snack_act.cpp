@@ -5,7 +5,9 @@
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_save_data.h"
+#include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -15,6 +17,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <string>
@@ -99,6 +102,35 @@ void OnFinishPost(void*, void* source, void* result) {
     Mark(source);
 }
 
+// CLIENT: the replay of a snack's last use runs the game's own script, which births a wrapper on this peer too. While a
+// replay is latched for `g_refuseSource`, a spawn that script makes (its FinishSpawningActor, source the snack) is
+// destroyed at the post-hook and never published, so the host's wrapper is the only one. The pointer is compared only.
+void* g_refuseSource = nullptr;
+bool g_refuseHookLive = false;
+bool g_refuseHookBroken = false;
+int g_refuseTries = 0;
+void* g_refuseFn = nullptr;
+
+void OnRefusePost(void*, void* source, void* result) {
+    if (!g_refuseSource || source != g_refuseSource || !result) return;
+    coop::prop_echo_suppress::MarkIncomingDestroy(result);
+    ue_wrap::engine::DestroyActor(result);
+}
+
+void InstallRefusalHook() {
+    if (g_refuseHookLive || g_refuseHookBroken) return;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowFinish);
+    if (fn && UH::InstallPostHook(fn, &OnRefusePost, /*armed=*/false)) {
+        g_refuseFn = fn.Fn();
+        g_refuseHookLive = true;
+        return;
+    }
+    if (++g_refuseTries >= kHookTries) {
+        g_refuseHookBroken = true;
+        UE_LOGE("snack_act: the wrapper-refusal post-hook did not install -- a replayed last use leaves a second wrapper");
+    }
+}
+
 void InstallSpillHook() {
     if (g_hookLive || g_hookBroken) return;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowFinish);
@@ -112,8 +144,11 @@ void InstallSpillHook() {
     }
 }
 
-// A snack with no use left is gone on every peer.
+// A snack with no use left is gone on every peer, and the host births the one wrapper it leaves (its seams carry the
+// birth to every peer, the name stamped before the row is built) before its copy ends. No publish follows the destroy.
 void EndOnEveryPeer(coop::net::Session* s, void* actor, const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
+    if (!ue_wrap::snack::BirthLastUseWrapper(actor))
+        UE_LOGE("snack_act: eid %u -- the last use's wrapper could not be born on the host", static_cast<unsigned>(p.eid));
     ue_wrap::CachedObjRef before;
     before.Set(actor);
     coop::net::PropDestroyPayload dp{};
@@ -150,14 +185,32 @@ void OnCommit(coop::net::Session* s, void* actor, const coop::net::PropActCommit
         UE_LOGW("snack_act: eid %u -- the host copy's record could not be patched", static_cast<unsigned>(p.eid));
     // The requester's replayed copy, and every other peer's, is put back to the host's state, a refused delta included.
     Mark(actor);
+    // The requester's copy ended while the host's lives: its element is gone there, so the host sends that one peer the
+    // snack's birth again, with the host's own count.
+    if (p.committed == 1 && !coop::prop_snapshot::SendPropBirthToSlot(actor, senderSlot))
+        UE_LOGW("snack_act: eid %u -- the snack's birth could not be re-sent to slot %u", static_cast<unsigned>(p.eid),
+                static_cast<unsigned>(senderSlot));
 }
 
 void NoteHostUse(void* actor) {
     if (IsWorldSnack(actor)) Mark(actor);
 }
 
+WrapperRefusal::WrapperRefusal(void* snack) : armed_(snack && g_refuseHookLive) {
+    if (!armed_) return;
+    g_refuseSource = snack;
+    UH::SetArmed(g_refuseFn, &OnRefusePost, true);
+}
+
+WrapperRefusal::~WrapperRefusal() {
+    if (!armed_) return;
+    UH::SetArmed(g_refuseFn, &OnRefusePost, false);
+    g_refuseSource = nullptr;
+}
+
 void Tick(coop::net::Session* s) {
     g_hostSeen = s && s->role() == coop::net::Role::Host;
+    if (s && !g_hostSeen) InstallRefusalHook();
     if (!g_hostSeen) return;
     InstallSpillHook();
     if (g_marks.empty()) return;

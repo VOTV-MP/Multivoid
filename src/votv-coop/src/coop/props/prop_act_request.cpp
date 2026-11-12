@@ -231,6 +231,7 @@ void Replay() {
     const coop::snack_act::CopyState before = snack ? coop::snack_act::ReadCopy(target) : coop::snack_act::CopyState{};
     {
         Latched scope(target);
+        const coop::snack_act::WrapperRefusal refusal(snack ? target : nullptr);
         ran = RunVerb(target, local);
         // A drill's second destroy, inside the latch: it is not the target, so the seam treats it as any destroy.
         if (void* const extra = g_destroyInReplay.Get()) E::DestroyActor(extra);

@@ -59,6 +59,20 @@ Bounded Bound(int32_t uses, bool open, bool beer, uint8_t flags);
 // use left is destroyed on every peer. `committed` is 1 or 2, `flags` well formed (the judge checked both).
 void OnCommit(coop::net::Session* s, void* actor, const coop::net::PropActCommitPayload& p, uint8_t senderSlot);
 
+// CLIENT: while alive, the wrapper that the replayed snack's script births (a FinishSpawningActor whose source is that
+// snack) is destroyed at once and never published: the host births the one wrapper. Armed for one replay's latch; inert
+// for a null snack or before the hook has installed.
+class WrapperRefusal {
+public:
+    explicit WrapperRefusal(void* snack);
+    ~WrapperRefusal();
+    WrapperRefusal(const WrapperRefusal&) = delete;
+    WrapperRefusal& operator=(const WrapperRefusal&) = delete;
+
+private:
+    bool armed_;
+};
+
 // HOST: the host's own action 4 on `actor` ran (the POST of the two rows). A world snack (an element of the host's own,
 // not a hand view) is marked for publication; anything else is ignored.
 void NoteHostUse(void* actor);

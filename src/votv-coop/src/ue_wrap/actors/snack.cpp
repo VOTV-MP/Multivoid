@@ -5,12 +5,17 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/world/votv_lib.h"
 
 #include <cstring>
+#include <vector>
 
 namespace ue_wrap::snack {
 namespace {
@@ -91,6 +96,86 @@ bool PatchSnackRecord(void* actor, int32_t uses, bool open) {
     // The record is the actor's own, read above and patched in two fields, so every class it names is one this actor
     // already holds: nothing to load (LookupOnly).
     return ue_wrap::save_record::ApplyRecord(actor, rec, ue_wrap::save_record::ClassLoad::LookupOnly);
+}
+
+namespace {
+
+// A parameterless Blueprint function of `obj`.
+bool CallNoArgs(void* obj, const wchar_t* name) {
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(obj), name);
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(obj, f);
+}
+
+bool ReadFName(void* obj, R::InstanceOffset& field, R::FName* out) {
+    const int32_t o = field.Of(obj);
+    if (o < 0) return false;
+    std::memcpy(out, reinterpret_cast<const uint8_t*>(obj) + o, sizeof(*out));
+    return true;
+}
+
+// `name` is written before the finish on the plain and food paths, as SetNamePropertyByName does in the script.
+void* BeginWrapper(void* cls, const FVector& at, const FRotator& rot, uint8_t collision, R::FName name,
+                   const std::vector<uint8_t>* foodData) {
+    void* const actor = ue_wrap::engine::BeginDeferredSpawn(cls, at, rot, collision);
+    if (!actor) return nullptr;
+    static R::InstanceOffset sFood{L"foodData"};
+    if (foodData) {
+        const int32_t o = sFood.Of(actor);
+        if (o >= 0) std::memcpy(reinterpret_cast<uint8_t*>(actor) + o, foodData->data(), foodData->size());
+        else UE_LOGW("snack: the wrapper's foodData could not be written");
+    }
+    if (name.ComparisonIndex != 0 && !ue_wrap::prop::WritePropName(actor, name))
+        UE_LOGW("snack: the wrapper's name could not be written before its finish");
+    return actor;
+}
+
+}  // namespace
+
+void* BirthLastUseWrapper(void* snack) {
+    static R::InstanceOffset sTrash{L"trash"};
+    namespace E = ue_wrap::engine;
+    R::FName trash{};
+    FVector at{};
+    FRotator rot{};
+    int32_t boolOff = -1;
+    uint8_t mask = 0;
+    if (!IsSnack(snack) || !ReadFName(snack, sTrash, &trash) || !E::TryGetActorLocation(snack, at) ||
+        !E::TryGetActorRotation(snack, rot) || !R::FindBoolProperty(R::ClassOf(snack), L"spawnAsObject", boolOff, mask))
+        return nullptr;
+    const bool asObject = (*(reinterpret_cast<const uint8_t*>(snack) + boolOff) & mask) != 0;
+    constexpr uint8_t kDefault = 0, kAdjust = 2;
+    void* const propClass = ue_wrap::object_index::ClassByName(L"prop_C");
+    void* actor = nullptr;
+    bool stamp = false;
+    if (!asObject) {
+        actor = propClass ? BeginWrapper(propClass, at, rot, kDefault, trash, nullptr) : nullptr;
+    } else {
+        ue_wrap::votv_lib::PropObject obj;
+        if (!ue_wrap::votv_lib::PropToObject(trash, snack, obj)) return nullptr;
+        if (obj.objectClass) {
+            actor = BeginWrapper(obj.objectClass, at, rot, kAdjust, R::FName{0, 0}, nullptr);
+            stamp = obj.parseNameToObject;
+        } else if (obj.isFood) {
+            void* const foodClass = ue_wrap::object_index::ClassByName(L"prop_food_C");
+            actor = foodClass ? BeginWrapper(foodClass, at, rot, kAdjust, trash, &obj.foodData) : nullptr;
+        } else {
+            actor = propClass ? BeginWrapper(propClass, at, rot, kAdjust, trash, nullptr) : nullptr;
+        }
+    }
+    if (!actor) return nullptr;
+    if (!E::FinishDeferredSpawn(actor, at, rot)) {
+        E::DestroyActor(actor);
+        return nullptr;
+    }
+    // The object path stamps the finished prop's name and runs its init(), as the script does through asProp (a prop's
+    // own, which returns itself).
+    if (stamp && ue_wrap::prop::IsDescendantOfProp(actor)) {
+        if (!ue_wrap::prop::WritePropName(actor, trash) || !CallNoArgs(actor, L"init"))
+            UE_LOGW("snack: the wrapper's name stamp or init() did not run");
+    }
+    return actor;
 }
 
 }  // namespace ue_wrap::snack

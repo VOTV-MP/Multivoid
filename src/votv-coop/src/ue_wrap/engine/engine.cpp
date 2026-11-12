@@ -284,7 +284,7 @@ FTransform MakeTransform(const FVector& location, const FRotator& rotation) {
 }
 }  // namespace
 
-void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotator& rotation) {
+void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotator& rotation, uint8_t collision) {
     if (!actorClass) return nullptr;
     if (!ResolveSpawn()) {
         UE_LOGE("engine: BeginDeferredSpawn unresolved (cdo=%p begin=%p)",
@@ -296,7 +296,7 @@ void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotat
     begin.Set<void*>(L"WorldContextObject", GetWorldContext());
     begin.Set<void*>(L"ActorClass", actorClass);
     begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
-    begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
+    begin.Set<uint8_t>(L"CollisionHandlingOverride", collision);
     begin.Set<void*>(L"Owner", nullptr);
     if (!Call(g_gsCdo, begin)) {
         UE_LOGE("engine: BeginDeferredSpawn call failed");

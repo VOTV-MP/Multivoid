@@ -27,4 +27,12 @@ bool ReadSnackState(void* actor, int32_t& uses, bool& open);
 // failed.
 bool PatchSnackRecord(void* actor, int32_t uses, bool open);
 
+// The wrapper a snack's last use leaves, born as the snack's own script births it (its eat's empty branch), at the
+// snack's place: the INSTANCE's `spawnAsObject` decides. True: lib_C's Prop To Object names the trash's class, and a
+// class spawns (adjusting where it can) and, for a prop, has its `name` stamped and its init() run after the finish;
+// no class and a food row spawns a prop_food_C with that row's data and the name set before the finish; any other
+// spawns a plain prop_C the same way. False: a plain prop_C with the name set before the finish (the class default
+// collision). The snack is left standing. Returns the finished wrapper, null when it could not be born. Game thread.
+void* BirthLastUseWrapper(void* snack);
+
 }  // namespace ue_wrap::snack
