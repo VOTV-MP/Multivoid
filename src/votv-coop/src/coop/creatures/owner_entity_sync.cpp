@@ -338,7 +338,7 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
                                                               ue_wrap::class_resolve::AnyFamily(),
                                                               ue_wrap::class_resolve::Load::Budgeted);
     if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
-        if (!ue_wrap::class_resolve::Park("OwnerEntitySpawn", [p, senderPeerSlot] { OnSpawnMsg(p, senderPeerSlot); }))
+        if (!ue_wrap::class_resolve::Park("OwnerEntitySpawn", key, [p, senderPeerSlot] { OnSpawnMsg(p, senderPeerSlot); }))
             UE_LOGW("owner_entity: class waits on a load and the park queue is full -- spawn seq=%u dropped", p.seq);
         return;
     }
@@ -422,6 +422,13 @@ void OnDestroyMsg(const coop::net::OwnerEntityDestroyPayload& p, int senderPeerS
         OnPeerLeftSlot(slot);
         return;
     }
+    // A spawn still waiting on its class's load under this (slot, seq) ends here: it is never spawned. This lane
+    // has no element id, so no BIND-WAIT mark: a pose for the entity finds no mirror and drops, as before.
+    if (ue_wrap::class_resolve::Cancel("OwnerEntitySpawn", Key(slot, p.seq))) {
+        UE_LOGI("owner_entity: slot=%d seq=%u -- its spawn was waiting on a class load and is cancelled; it will "
+                "never spawn", slot, p.seq);
+        return;
+    }
     auto it = g_mirrors.find(Key(slot, p.seq));
     if (it == g_mirrors.end()) return;
     DestroyMirrorActor(it->second.actor, it->second.idx);
@@ -445,6 +452,12 @@ void OnPeerLeftSlot(int slot) {
     }
     if (destroyed > 0)
         UE_LOGI("owner_entity: destroyed %d mirror(s) of departed slot %d", destroyed, slot);
+    // The departed slot's spawns still waiting on a class load are never spawned.
+    const size_t cancelled = ue_wrap::class_resolve::CancelIf(
+        "OwnerEntitySpawn", [slot](uint32_t k) { return SlotOfKey(k) == slot; });
+    if (cancelled > 0)
+        UE_LOGI("owner_entity: %zu spawn(s) of departed slot %d were waiting on a class load and are cancelled",
+                cancelled, slot);
     // HOST: the other clients have no transport edge for this slot -- fan the
     // teardown out on the leaver's behalf (wildcard seq=0 + originSlot).
     auto* s = g_session.load(std::memory_order_acquire);

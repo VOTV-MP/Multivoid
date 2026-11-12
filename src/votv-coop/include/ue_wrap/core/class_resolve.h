@@ -13,6 +13,8 @@
 // Game thread only.
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -67,8 +69,18 @@ Resolved ResolveClass(const wchar_t* className, const Family& family, Load load)
 
 // Parks `retry` to run on the game thread from a later tick's Tick(), for a resolve that answered Pending. `site`
 // names the caller (a string literal): each site holds at most 64 parked retries, and one that overflows says so
-// once and returns false, so the caller drops the work. Parked work is dropped when the world changes.
-bool Park(const char* site, std::function<void()> retry);
+// once and returns false, so the caller drops the work. Parked work is dropped when the world changes. `key` is
+// what a later message for the same thing carries (an element id): Cancel removes the entry, so a destroy that
+// arrives while the spawn waits means it never spawns.
+bool Park(const char* site, uint32_t key, std::function<void()> retry);
+
+// Removes the parked retry of `site` under `key` (CancelIf: every one `match` accepts, the leaver's teardown)
+// without running it. True when one was parked; the count for CancelIf.
+bool Cancel(const char* site, uint32_t key);
+size_t CancelIf(const char* site, const std::function<bool(uint32_t)>& match);
+
+// Whether a retry of `site` is parked under `key`: a caller that ran its spawn again asks whether it parked anew.
+bool IsParked(const char* site, uint32_t key);
 
 // Once per frame: the load budget starts anew and the retries parked by earlier ticks run. Game thread.
 void Tick();

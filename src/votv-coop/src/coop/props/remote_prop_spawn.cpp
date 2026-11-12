@@ -248,23 +248,37 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // The class, once, before anything is built. The HOST mirrors a CLIENT's spawn from the classes it holds:
     // a client's name never makes it load (class_resolve::Load::LookupOnly). A CLIENT mirrors the host's spawn
     // and loads a class it has not loaded, inside the per-tick load budget: past it the spawn is parked and
-    // runs again next tick. A caller that takes the actor back through outSpawned cannot wait, and loads at once.
-    // The calls below ask again under `load` and are answered from the resolver's cache.
+    // runs again next tick. A caller that takes the actor back through outSpawned cannot wait, and loads at once,
+    // as does a spawn with no element id (a parked one is found again by its eid). The calls below ask again under
+    // `load` and are answered from the resolver's cache.
+    //
+    // A parked spawn's eid is the one hold BIND-WAIT already is for a deferred bind (coop/element/bind_wait.h): the
+    // park MARKS it, so a message that lands in the gap waits with the receivers that hold, a bind that takes
+    // (RegisterPropMirror) releases the holds, a PropDestroy cancels the parked spawn (remote_prop_destroy), and a
+    // class that cannot be resolved gives the eid up.
     namespace CR = ue_wrap::class_resolve;
     const bool host = coop::prop_element_tracker::SessionIsHost();
+    const bool hasEid = payload.elementId != 0 && payload.elementId != coop::element::kInvalidId;
     const CR::Load load = host ? CR::Load::LookupOnly : CR::Load::Immediate;
-    if (CR::ResolveClass(classW.c_str(), ue_wrap::prop::PropFamily(),
-                         host ? CR::Load::LookupOnly : (outSpawned ? CR::Load::Immediate : CR::Load::Budgeted))
-            .state == CR::ClassState::Pending) {
+    const CR::ClassState classState =
+        CR::ResolveClass(classW.c_str(), ue_wrap::prop::PropFamily(),
+                         host ? CR::Load::LookupOnly
+                              : (outSpawned || !hasEid ? CR::Load::Immediate : CR::Load::Budgeted)).state;
+    if (classState == CR::ClassState::Pending) {
         const coop::net::PropSpawnPayload held = payload;
-        if (!CR::Park("PropSpawn", [held, senderSlot, fromConvert, deferKerfur, skipBind] {
+        coop::element::bind_wait::MarkDeferred(payload.elementId, "its class is loading");
+        if (!CR::Park("PropSpawn", payload.elementId, [held, senderSlot, fromConvert, deferKerfur, skipBind] {
                 OnSpawn(held, senderSlot, coop::players::Registry::Get().Local(), fromConvert, deferKerfur, nullptr,
                         skipBind);
-            }))
+            })) {
             UE_LOGW("remote_prop::OnSpawn: class '%ls' waits on a load and the park queue is full -- dropping",
                     classW.c_str());
+            coop::element::bind_wait::GiveUp(payload.elementId, "the park queue for a class load is full");
+        }
         return;
     }
+    if (classState != CR::ClassState::Found && hasEid)
+        coop::element::bind_wait::GiveUp(payload.elementId, "its class is not resolvable on this peer");
     // The trash path: a chip pile, a garbage clump or a variant, mirrored as the GAME's own actor
     // with its brain parked -- coop/props/trash_morph_gate refuses the three verbs a trash actor
     // uses to author its own morph on a client. It branches before the Aprop_C dedupe, converge

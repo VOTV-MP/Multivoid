@@ -5,6 +5,7 @@
 #include "coop/creatures/npc_mirror.h"
 
 #include "coop/element/mirror_manager.h"
+#include "coop/element/bind_wait.h"       // MarkDeferred: a spawn parked on its class load
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
@@ -220,9 +221,20 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     const ue_wrap::class_resolve::Resolved resolved = ue_wrap::class_resolve::ResolveClass(
         classW.c_str(), coop::npc_sync::NpcFamily(), ue_wrap::class_resolve::Load::Budgeted);
     if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
-        if (!ue_wrap::class_resolve::Park("EntitySpawn", [payload] { OnEntitySpawn(payload); }))
+        // The parked eid is held as BIND-WAIT holds a deferred bind (coop/element/bind_wait.h): marked now, released
+        // when the retry binds the mirror, given up when it does not, and cancelled by this eid's EntityDestroy.
+        coop::element::bind_wait::MarkDeferred(payload.elementId, "its class is loading");
+        const bool parked = ue_wrap::class_resolve::Park("EntitySpawn", payload.elementId, [payload] {
+            OnEntitySpawn(payload);
+            if (ue_wrap::class_resolve::IsParked("EntitySpawn", payload.elementId)) return;  // parked anew
+            if (NpcMirrors().Get(payload.elementId) != nullptr) coop::element::bind_wait::OnBound(payload.elementId);
+            else coop::element::bind_wait::GiveUp(payload.elementId, "its spawn did not bind once its class loaded");
+        });
+        if (!parked) {
             UE_LOGW("npc-sync[client OnSpawn]: class '%ls' waits on a load and the park queue is full -- dropping "
                     "(eid=%u)", classW.c_str(), payload.elementId);
+            coop::element::bind_wait::GiveUp(payload.elementId, "the park queue for a class load is full");
+        }
         return;
     }
     void* actorClass = resolved.cls;
@@ -476,6 +488,13 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
     }
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(payload.elementId);
+    // A spawn still waiting on its class's load for this eid ends here: it is never spawned.
+    if (ue_wrap::class_resolve::Cancel("EntitySpawn", payload.elementId)) {
+        UE_LOGI("npc-sync[client OnDestroy]: eid=%u -- its spawn was waiting on a class load and is cancelled; it "
+                "will never spawn", payload.elementId);
+        coop::element::bind_wait::GiveUp(payload.elementId, "destroyed while its class was loading");
+        return;
+    }
     // The mirror is drained from the table under the manager's mutex (released before Take
     // returns), then K2_DestroyActor runs, then the unique_ptr destructor unregisters from the
     // Registry under its own mutex: never both mutexes at once.

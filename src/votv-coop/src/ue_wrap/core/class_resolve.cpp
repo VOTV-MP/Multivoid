@@ -63,6 +63,7 @@ struct Asset {
 
 struct Parked {
     const char* site;
+    uint32_t key;  // what the caller cancels it by: an element id, or the id a message for it will carry
     std::function<void()> retry;
 };
 
@@ -325,10 +326,10 @@ Resolved ResolveClass(const wchar_t* className, const Family& family, Load load)
     return {ClassState::Found, cls};
 }
 
-bool Park(const char* site, std::function<void()> retry) {
+bool Park(const char* site, uint32_t key, std::function<void()> retry) {
     size_t here = 0;
     for (const Parked& p : g_s.parked)
-        if (p.site == site) ++here;
+        if (std::strcmp(p.site, site) == 0) ++here;
     if (here >= kParkCap) {
         if (std::find(g_s.overflowSaid.begin(), g_s.overflowSaid.end(), site) == g_s.overflowSaid.end()) {
             g_s.overflowSaid.push_back(site);
@@ -337,8 +338,31 @@ bool Park(const char* site, std::function<void()> retry) {
         }
         return false;
     }
-    g_s.parked.push_back({site, std::move(retry)});
+    g_s.parked.push_back({site, key, std::move(retry)});
     return true;
+}
+
+size_t CancelIf(const char* site, const std::function<bool(uint32_t)>& match) {
+    size_t n = 0;
+    for (auto it = g_s.parked.begin(); it != g_s.parked.end();) {
+        if (std::strcmp(it->site, site) == 0 && match(it->key)) {
+            it = g_s.parked.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    return n;
+}
+
+bool Cancel(const char* site, uint32_t key) {
+    return CancelIf(site, [key](uint32_t k) { return k == key; }) > 0;
+}
+
+bool IsParked(const char* site, uint32_t key) {
+    for (const Parked& p : g_s.parked)
+        if (p.key == key && std::strcmp(p.site, site) == 0) return true;
+    return false;
 }
 
 void Tick() {
