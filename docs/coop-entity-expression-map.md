@@ -146,6 +146,18 @@ are peer-gated. `[V]`
   the client through the game's destroy, if it is still the disc the press pledged; the hand mirror follows the
   emptied hand. The pledge guards the honest race only (a player who swaps the disc inside the round trip keeps it); a
   forged record can already keep a disc and have its data taken. `[?]`
+- **A snack's use** (`prop_snack_C` and below: candy, chips, milk, sushi, soda, and the beer with the wine under
+  it). A client's action 4 on a world snack is a request to the host for every call (a sip, an open, the last
+  use); a held snack is the holder's own item and asks nothing. The eater is the client's save, so the host cannot
+  run the use: the client replays the game's own call on its copy and reports what changed (a use spent, a bottle
+  opened), and the host applies that on its own copy within a bound (an open only closed to open and only a
+  beer; a use only from a copy with one that is open or not a beer), through the snack's record, and publishes the
+  record to every peer from one marked drain per tick. The host's own use and a beer's spill mark the snack the
+  same way. A client's mirror is current at each replay and each hold. `[?]`
+  **A snack's last use**: the host births the one wrapper, by the snack script's own decision, and ends its copy
+  on every peer; the wrapper the client's replay births is destroyed at once and never published. **A requester
+  whose copy ended while the host's lives** gets that one snack's birth sent again by the host, to it alone, with
+  the host's own count. A snack's pocket or hold is not a use and keeps the take's destroy path. `[?]`
 - **The connect reconcile.** Explicit deletes, the claim-tracked snapshot bracket, position
   corrections, and the quiescence-gated divergence sweep bounded by a per-class completeness floor
   and a half-of-the-world valve, then the pile bind ([join.md](join.md)). The join barrier means
