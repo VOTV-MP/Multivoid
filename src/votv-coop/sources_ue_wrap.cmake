@@ -79,6 +79,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/devices/video_camera.cpp
     src/ue_wrap/devices/grime.cpp
     src/ue_wrap/world/daynightcycle.cpp
+    src/ue_wrap/world/level_instance.cpp
     src/ue_wrap/world/active_events.cpp
     src/ue_wrap/world/jellyfish_path.cpp
     src/ue_wrap/world/bad_sun.cpp

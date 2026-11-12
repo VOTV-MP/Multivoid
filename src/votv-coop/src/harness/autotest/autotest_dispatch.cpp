@@ -284,6 +284,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_PROP_PROPS", "prop-properties drill", &PropPropsThread, role);
     // The nightmare lane: both peers, or a staging value (sleeper, dreamer) for one.
     SpawnIfEnum(coop::config_registry::rows::nightmare_drill, "nightmare drill", &NightmareThread, role);
+    SpawnIf("VOTVCOOP_RUN_LEVEL_VISIT", "level visit drill", &LevelVisitThread, role);
     // The walking mannequin's two-peer drill: armed by a value of the mannequin_drill row on both peers (`walker` or a red).
     if (coop::dev::mannequin_walker_drill::Armed()) {
         UE_LOGI("harness: mannequin_drill is a walker drill value (%s) -- spawning the mannequin drill thread", RoleStr(role));

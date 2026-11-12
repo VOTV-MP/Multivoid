@@ -561,6 +561,8 @@ void NoteRunEndCancelled(void* author, const wchar_t* authorClass, bool authorIs
     g_cancelAtMsAtomic.store(::GetTickCount64(), std::memory_order_release);
 }
 
+bool ClearBlackScreenNow() { return ClearBlackScreen(); }
+
 void NotePeerPuppetRunEndCancelled() { g_puppetResidue.store(true, std::memory_order_release); }
 
 void OnSessionStart() {

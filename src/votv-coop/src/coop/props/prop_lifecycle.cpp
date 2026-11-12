@@ -2,6 +2,7 @@
 // prop's birth on the wire, the install of the destroy seam, and the class predicates. The destroy
 // seam body lives in prop_destroy_seam.cpp.
 
+#include "coop/player/level_visit.h"
 #include "coop/props/prop_lifecycle.h"
 
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
@@ -72,6 +73,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // on a host came through ProcessEvent, 0 of 11,989 on a joining client, its boot world's included.
     if (!R::IsLive(self)) return;
     if (!ue_wrap::prop::IsKeyedInteractable(self)) return;
+    if (coop::level_visit::InVisitedMap(self)) return;  // a visited map's own prop: this machine's, gone with it
     // IsLive does not filter CDOs (persistent objects): a CDO whose Init fires would enter the
     // known set permanently, since a CDO is never destroyed; the seed scan carries the same
     // Default__ guard.
