@@ -34,6 +34,7 @@ inline constexpr float    kPropRingCm = 150.f;     // ... on a ring this far fro
 inline constexpr int      kPropSpots = 12;         // ... tried at this many angles for a floor
 inline constexpr float    kGrabReachCm = 150.f;    // the client's walk ends this near a prop it grabs
 inline constexpr float    kStandReachCm = 25.f;    // ... and the carry's stand point (derived from the hold) within this: the aim absorbs the rest
+inline constexpr float    kStandTolCm = 10.f;      // a carry that stopped further than this from the planned stand walks to it again, once
 inline constexpr float    kFeetCm = 150.f;         // a carry has arrived only with the player this near the sack's height
 // The release window, measured on the held prop: within kOverFlatCm of the sack's origin, flat, and between
 // kOverMinCm and kOverMaxCm above it. The aim steers the held prop toward kOverAimCm above the origin.
@@ -160,6 +161,7 @@ struct Client {
     float                 bestMiss = 1e9f, bestFlat = 0.f, bestAbove = 0.f;   // ... and the nearest it came to the window
     float                 bestSpeed = 1e9f;   // ... and the slowest it moved while inside it (cm/s)
     float                 standCm = 0.f, planPitch = 0.f;   // ... and the carry's derived stand (flat, from the sack) and pitch
+    bool                  aimed = false, restood = false;   // ... the Over leg checked the stand on arrival; it walked to the planned stand again
     bool                  letGo = false;                // the Settle leg: the drop was called, not yet checked
     int                   census = 0;   // 0 none yet, 1 before taken, 2 after taken, 3 after+5s taken and compared
     uint64_t              soldSeenMs = 0;     // arm 4: when this peer first saw the host's sold line

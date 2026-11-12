@@ -236,6 +236,19 @@ float WrapDeg(float a) {
     return a;
 }
 
+// Walks the carrier, still holding the prop, to the planned stand: g_c.standCm from the sack's origin on the side it is on,
+// ending within `reachCm` of it. False when the player's place does not read.
+bool StartStandWalk(void* player, const ue_wrap::FVector& at, float reachCm) {
+    ue_wrap::FVector me{};
+    if (!E::TryGetActorLocation(player, me)) return false;
+    float ux = me.X - at.X, uy = me.Y - at.Y;
+    const float len = std::hypot(ux, uy);
+    if (len < 1.f) { ux = 1.f; uy = 0.f; } else { ux /= len; uy /= len; }
+    const ue_wrap::FVector stand{at.X + ux * g_c.standCm, at.Y + uy * g_c.standCm, me.Z};
+    g_c.walk = D::StartBackgroundWalk(stand, reachCm, kWalkDeadlineS, true);
+    return true;
+}
+
 // The put's line, from what the hooks saw of the prop's mirror.
 void PutLine(uint32_t eid) {
     for (Destroyed& d : g_destroys) {
@@ -343,16 +356,10 @@ void RouteTick(void* player) {
         }
         g_c.standCm = std::sqrt(hold * hold - drop * drop);
         g_c.planPitch = -std::asin(drop / hold) * (180.f / 3.14159265f);
-        ue_wrap::FVector me{};
-        if (!E::TryGetActorLocation(player, me)) return Skip("the player's place is unread");
-        // The stand is on the side the carrier is already on, at that distance from the sack's origin.
-        float ux = me.X - at.X, uy = me.Y - at.Y;
-        const float len = std::hypot(ux, uy);
-        if (len < 1.f) { ux = 1.f; uy = 0.f; } else { ux /= len; uy /= len; }
-        const ue_wrap::FVector stand{at.X + ux * g_c.standCm, at.Y + uy * g_c.standCm, me.Z};
         UE_LOGI("[SACK-DRILL] client put eid=%u: grabbed; carrying it to %.0f cm from the sack (hold %.0f cm, camera %.0f cm "
                 "above the window's middle, planned pitch %.1f)", eid, g_c.standCm, hold, drop, g_c.planPitch);
-        g_c.walk = D::StartBackgroundWalk(stand, kStandReachCm, kWalkDeadlineS, true);
+        g_c.restood = false;
+        if (!StartStandWalk(player, at, kStandReachCm)) return Skip("the player's place is unread");
         GoPut(Put::Carry);
         return;
     }
@@ -364,6 +371,7 @@ void RouteTick(void* player) {
         g_c.walk.reset();
         if (w == 2) return Skip("the carry to the sack failed or ran out its deadline");
         g_c.aimTicks = 0;
+        g_c.aimed = false;
         g_c.bestMiss = 1e9f;
         g_c.bestSpeed = 1e9f;
         GoPut(Put::Over);
@@ -386,6 +394,20 @@ void RouteTick(void* player) {
         }
         // The carry's reach is flat: the walker has arrived only when it stands at the sack's height too.
         if (std::fabs(me.Z - sa.Z) > kFeetCm) return;
+        // On arrival: the walk ends anywhere within kStandReachCm of the planned stand, and the planned pitch is for that
+        // stand. One that stopped further off than kStandTolCm is walked to again, tighter, once; if it is still off the put
+        // goes on from where it stands, and the line says where that is.
+        if (!g_c.aimed) {
+            const float stood = std::hypot(me.X - sa.X, me.Y - sa.Y);
+            g_c.aimed = true;
+            UE_LOGI("[SACK-DRILL] client put eid=%u: stands %.0f cm out (planned %.0f)%s", eid, stood, g_c.standCm,
+                    g_c.restood ? ", after walking to it again" : "");
+            if (std::fabs(stood - g_c.standCm) > kStandTolCm && !g_c.restood && StartStandWalk(player, sa, kStandTolCm)) {
+                g_c.restood = true;
+                GoPut(Put::Carry);
+                return;
+            }
+        }
         // Where the held prop is, measured: the release waits for it to be over the sack, not for the aim.
         const float flat = std::hypot(pp.X - sa.X, pp.Y - sa.Y), above = pp.Z - sa.Z;
         const float miss = (std::max)(0.f, flat - kOverFlatCm) + (std::max)(0.f, (std::max)(kOverMinCm - above, above - kOverMaxCm));
