@@ -524,6 +524,18 @@ sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsPar
 sg::Verdict PreSnack(const sg::Call& c) { return PreAction(c, kSnack, g_snackParams, g_snackHit, &SnackAsks); }
 sg::Verdict PreBeer(const sg::Call& c) { return PreAction(c, kSnack, g_beerParams, g_beerHit, &BeerAsks); }
 
+// The host's own eat, sip or open of a world snack changes what every peer shows: the body ran, so the snack is marked
+// for publication (a call the pre cancelled for a reservation never reaches here). The parent's body and the beer's both
+// report a beer's call, and the one drain publishes once.
+void PostSnackUse(const sg::Call& c, ActionParams& params) {
+    coop::net::Session* const s = LinkedSession();
+    uint8_t action = 0;
+    if (!s || s->role() != coop::net::Role::Host || !ReadParam(params.action, c, action) || action != kEatAction) return;
+    coop::snack_act::NoteHostUse(c.object);
+}
+void PostSnack(const sg::Call& c) { PostSnackUse(c, g_snackParams); }
+void PostBeer(const sg::Call& c) { PostSnackUse(c, g_beerParams); }
+
 // The replay passes the hand it finds then, not the one captured here: only the hit and the hand item's name travel.
 sg::Verdict PreSoap(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
@@ -552,6 +564,7 @@ struct Watch {
     sg::PreFn pre;
     const char* verb;   // the word for the line a dead watch prints
     WatchState state;
+    sg::PostFn post = nullptr;   // after the body ran, when the watch has one
 };
 Watch g_watches[] = {
     {kRowPocket, kTagPocket, &PrePocket, "take", WatchState::Pending},
@@ -560,8 +573,8 @@ Watch g_watches[] = {
     {kRowMre,    kTagMre,    &PreMre,    "use",  WatchState::Pending},
     {kRowPills,  kTagPills,  &PrePills,  "use",  WatchState::Pending},
     {kRowSoap,   kTagSoap,   &PreSoap,   "use",  WatchState::Pending},
-    {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending},
-    {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending},
+    {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending, &PostSnack},
+    {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending, &PostBeer},
 };
 bool g_watchesSettled = false;
 
@@ -636,7 +649,7 @@ void Install(coop::net::Session* session) {
     // The gate refuses a watch it cannot keep for the process; a refused one is said dead at the settle.
     for (Watch& w : g_watches) {
         if (w.state != WatchState::Pending) continue;
-        w.state = sg::WatchName(w.row, w.tag, w.pre, nullptr) ? WatchState::Registered : WatchState::Refused;
+        w.state = sg::WatchName(w.row, w.tag, w.pre, w.post) ? WatchState::Registered : WatchState::Refused;
     }
 }
 

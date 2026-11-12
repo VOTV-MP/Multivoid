@@ -2,6 +2,8 @@
 
 #include "coop/props/snack_act.h"
 
+#include "coop/element/element.h"
+#include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_save_data.h"
 #include "coop/props/remote_prop.h"
@@ -10,8 +12,13 @@
 #include "ue_wrap/actors/snack.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <string>
+#include <vector>
 
 namespace coop::snack_act {
 
@@ -48,6 +55,62 @@ CommitWords CommitFor(bool ran, bool destroyed, const CopyState& before, const C
 }
 
 namespace {
+
+namespace R  = ue_wrap::reflection;
+namespace UH = ue_wrap::ufunction_hook;
+
+// The beer's spill is a second reader of the shared copy: its own tick spends a use and births a grimeProjectile_C whose
+// source object is the beer, a call the host's own actions never announce. The birth is the mark.
+UE_FACT_FN(kRowFinish, "snack_act", L"GameplayStatics", L"FinishSpawningActor", Declared);
+constexpr int kHookTries = 10;   // pump ticks the hook's function may take to resolve
+
+// The snacks the host owes a publication: an announced event marks one, the one drain per tick publishes it. Coalescing
+// announced events is the shape of spill_sync's pours and the tick-deferred PublishHostBirth; a mark is an actor
+// by slot and serial, so the set is bounded by the live world snacks and a dead one is dropped at the drain.
+std::vector<ue_wrap::CachedObjRef> g_marks;
+bool g_hostSeen = false;   // the session's role at the last tick: the hook marks only on the host
+bool g_hookLive = false;
+bool g_hookBroken = false;
+int g_hookTries = 0;
+ue_wrap::CachedObjRef g_grimeClass;
+
+void Mark(void* actor) {
+    for (const ue_wrap::CachedObjRef& m : g_marks)
+        if (m.Is(actor)) return;
+    g_marks.emplace_back();
+    g_marks.back().Set(actor);
+}
+
+// A world snack: a prop of the host's own with an element and no mirror, which a hand view never is.
+bool IsWorldSnack(void* actor) {
+    if (!ue_wrap::snack::IsSnack(actor)) return false;
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
+    const coop::element::Element* const el = eid != coop::element::kInvalidId ? coop::element::Registry::Get().Get(eid) : nullptr;
+    return el && el->GetType() == coop::element::ElementType::Prop && !el->IsMirror();
+}
+
+// The post-hook of FinishSpawningActor, for every spawn in the world: a grime born by a beer's script marks that beer.
+// It does no work inside the engine's call.
+void OnFinishPost(void*, void* source, void* result) {
+    if (!g_hostSeen || !source || !result) return;
+    if (!g_grimeClass.Alive()) g_grimeClass.Set(ue_wrap::object_index::ClassByName(L"grimeProjectile_C"));
+    void* const grime = g_grimeClass.Raw();
+    if (!grime || R::ClassOf(result) != grime || !ue_wrap::snack::IsBeerFamily(source)) return;
+    Mark(source);
+}
+
+void InstallSpillHook() {
+    if (g_hookLive || g_hookBroken) return;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowFinish);
+    if (fn && UH::InstallPostHook(fn, &OnFinishPost)) {
+        g_hookLive = true;
+        return;
+    }
+    if (++g_hookTries >= kHookTries) {
+        g_hookBroken = true;
+        UE_LOGE("snack_act: the FinishSpawningActor post-hook did not install -- a beer's spill is not published");
+    }
+}
 
 // A snack with no use left is gone on every peer.
 void EndOnEveryPeer(coop::net::Session* s, void* actor, const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
@@ -86,7 +149,29 @@ void OnCommit(coop::net::Session* s, void* actor, const coop::net::PropActCommit
     if ((b.uses != uses || b.open != open) && !ue_wrap::snack::PatchSnackRecord(actor, b.uses, b.open))
         UE_LOGW("snack_act: eid %u -- the host copy's record could not be patched", static_cast<unsigned>(p.eid));
     // The requester's replayed copy, and every other peer's, is put back to the host's state, a refused delta included.
-    coop::prop_save_data::Publish(s, actor, ue_wrap::prop::GetInteractableKeyString(actor));
+    Mark(actor);
+}
+
+void NoteHostUse(void* actor) {
+    if (IsWorldSnack(actor)) Mark(actor);
+}
+
+void Tick(coop::net::Session* s) {
+    g_hostSeen = s && s->role() == coop::net::Role::Host;
+    if (!g_hostSeen) return;
+    InstallSpillHook();
+    if (g_marks.empty()) return;
+    for (const ue_wrap::CachedObjRef& m : g_marks) {
+        void* const actor = m.Get();
+        if (!actor || !IsWorldSnack(actor)) continue;
+        coop::prop_save_data::Publish(s, actor, ue_wrap::prop::GetInteractableKeyString(actor));
+    }
+    g_marks.clear();
+}
+
+void OnDisconnect() {
+    g_marks.clear();
+    g_hostSeen = false;
 }
 
 }  // namespace coop::snack_act

@@ -59,4 +59,16 @@ Bounded Bound(int32_t uses, bool open, bool beer, uint8_t flags);
 // use left is destroyed on every peer. `committed` is 1 or 2, `flags` well formed (the judge checked both).
 void OnCommit(coop::net::Session* s, void* actor, const coop::net::PropActCommitPayload& p, uint8_t senderSlot);
 
+// HOST: the host's own action 4 on `actor` ran (the POST of the two rows). A world snack (an element of the host's own,
+// not a hand view) is marked for publication; anything else is ignored.
+void NoteHostUse(void* actor);
+
+// Per pump tick: on the host, the one drain that publishes each marked snack's record to every peer (a mark of an actor
+// that died or is no longer a world snack is dropped), and the settle of the spill hook (the beer's grime birth marks
+// its beer). A client has nothing to drain.
+void Tick(coop::net::Session* s);
+
+// The session ended: the marks are dropped.
+void OnDisconnect();
+
 }  // namespace coop::snack_act
