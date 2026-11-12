@@ -7,6 +7,7 @@
 #include "ue_wrap/devices/atv.h"
 
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/fname_utils.h"  // StringToFName -- SpawnMirror's key
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
@@ -50,6 +51,13 @@ int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
 // a same-process rejoin, ATV_C not among them), and one still loading answers null here. The field
 // offsets above are its layout, the same in every world, so they are resolved once.
 void* AtvClass() { return object_index::ClassByName(L"ATV_C"); }
+
+// A class is an ATV when it descends from ATV_C (a skin subclass included).
+bool IsAtvClass(void* cls) {
+    void* atv = AtvClass();
+    return cls && atv && R::IsDescendantOfAny(cls, &atv, 1);
+}
+const class_resolve::Family kAtvFamily{L"ATV", nullptr, &IsAtvClass};
 
 }  // namespace
 
@@ -194,7 +202,7 @@ const char* SpawnFailText(SpawnFail why) {
         case SpawnFail::None:          return "no failure";
         case SpawnFail::Unresolved:    return "the ATV wrapper, the spawn functions or the world are unresolved";
         case SpawnFail::NoKey:         return "the class name or the key is empty";
-        case SpawnFail::ClassNotFound: return "the class is not loaded";
+        case SpawnFail::ClassNotFound: return "the class is not resolvable on this peer";
         case SpawnFail::NotAnAtv:      return "the class is not an ATV subclass";
         case SpawnFail::NoOffset:      return "the class has no key property";
         case SpawnFail::NameNone:      return "the key did not convert to a name";
@@ -218,11 +226,15 @@ void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRota
     fail = SpawnFail::None;
     if (!EnsureResolved()) { fail = SpawnFail::Unresolved; return nullptr; }
     if (className.empty() || key.empty()) { fail = SpawnFail::NoKey; return nullptr; }
-    void* actorClass = R::FindClass(className.c_str());
+    // A skin class this peer has not loaded loads from its asset, as the host named it; the caller answers at
+    // once, so the load is not parked. Trust boundary: the className arrives over the wire -- only ATV-lineage
+    // classes are loaded or spawned.
+    const class_resolve::Resolved resolved =
+        class_resolve::ResolveClass(className.c_str(), kAtvFamily, class_resolve::Load::Immediate);
+    if (resolved.state == class_resolve::ClassState::Refused) { fail = SpawnFail::NotAnAtv; return nullptr; }
+    void* actorClass = resolved.cls;
     if (!actorClass) { fail = SpawnFail::ClassNotFound; return nullptr; }
-    // Trust boundary: the className arrives over the wire -- only spawn ATV-lineage classes.
-    void* atvCls = AtvClass();
-    if (!atvCls || !R::IsDescendantOfAny(actorClass, &atvCls, 1)) { fail = SpawnFail::NotAnAtv; return nullptr; }
+    if (!IsAtvClass(actorClass)) { fail = SpawnFail::NotAnAtv; return nullptr; }
     const int32_t keyOff = R::FindPropertyOffset(actorClass, L"key");
     if (keyOff < 0) { fail = SpawnFail::NoOffset; return nullptr; }
     const R::FName keyName = fname_utils::StringToFName(key);

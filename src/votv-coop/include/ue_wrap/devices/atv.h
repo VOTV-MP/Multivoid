@@ -85,7 +85,7 @@ enum class SpawnFail : uint8_t {
     None,
     Unresolved,      // the ATV wrapper, the spawn functions or the world context are not available
     NoKey,           // the class name or the key is empty
-    ClassNotFound,   // no class of that name is loaded
+    ClassNotFound,   // no class of that name is loaded or loadable
     NotAnAtv,        // the class does not descend from ATV_C
     NoOffset,        // the class has no key property
     NameNone,        // the key did not convert to a name
