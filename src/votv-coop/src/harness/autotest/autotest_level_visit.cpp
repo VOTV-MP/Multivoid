@@ -3,8 +3,8 @@
 
 // The visitor (VOTVCOOP_LEVEL_VISIT_DOER, client by default) takes a camera the host spawns into its hand, then calls
 // the game's own lib_C::loadLevel for VOTVCOOP_LEVEL_VISIT_MAP (sl_backroomsObsolete by default) as the clip does.
-// With VOTVCOOP_LEVEL_VISIT_START=clip the trip is the game's own clip instead: no hand item (the game sends no player
-// holding something) and lastLoc under the floor, and the map is the clip's pick.
+// With VOTVCOOP_LEVEL_VISIT_START=clip the trip is the game's own clip instead (lastLoc under the floor, no camera
+// taken), and the map is the clip's pick.
 
 // It waits to be in the map, stays 20 s, and ends the visit by VOTVCOOP_LEVEL_VISIT_END: `end` calls lib_C::End from
 // the map's own level script, `quit` calls QuitGame with it, `wait` leaves it to the map's own clock (the backrooms'
@@ -160,7 +160,7 @@ void DumpLevelClasses(const std::string& dir) {
 
 void Visitor() {
     const bool clip = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_START") == "clip";
-    // The camera the host spawned, in hand (not for a clip: the game sends no player holding something).
+    // The camera the host spawned, in hand (a clip run takes none, carrying what its profile holds).
     if (!clip) OnGameThread([] {
         void* cls = OI::ClassByName(L"prop_vidcam_low_C");
         void* cam = nullptr;
