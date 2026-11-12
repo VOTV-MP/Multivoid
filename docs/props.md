@@ -315,8 +315,9 @@ dropped and counted. A put that cannot be judged yet waits for the edge it needs
 binding, or the container changing (the last two for at most 2 s, then it is refused as unread); the host's own put on a
 held container waits too. A prop still in the box by then with no driver is pre-checked the same way and the game's body
 runs on it, since it fires no second overlap, and the game's own body may still refuse it. A refusal stands while the
-same drive does, until the container changes. A client's own copy of the call on a shared mirror is cancelled when it
-comes from the container's own overlap graph. A joiner needs no replay: the put is one host step, so a joiner seeded
+same drive does, until the container changes. A client's own copy of the call on a shared mirror is cancelled whoever
+calls it (the container's own overlap graph, a drone sack's trigger), since the mirror is display only; only a roomba's own
+graph runs, because its put files a prop that graph just spawned. A joiner needs no replay: the put is one host step, so a joiner seeded
 before it receives the prop's destroy and the container's publication, and one seeded after receives the container with
 the record `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered

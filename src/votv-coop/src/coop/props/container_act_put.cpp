@@ -24,7 +24,6 @@
 
 #include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/container_view.h"
-#include "ue_wrap/actors/prop.h"  // WalksToBase
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
@@ -80,7 +79,7 @@ const char* RouteName(uint8_t route) { return route == kRouteR2 ? "R2" : "R3"; }
 bool g_noHoverGuard = false;   // R2's replay does not require that no slot is hovered
 bool g_noHandTable = false;    // the hand hash leaves out no class's ticking fields
 bool g_doubleDone = false;     // a put's done commit is queued twice
-bool g_noOverlapCancel = false;  // the client does not cancel the container's own overlap put on a shared mirror (the red)
+bool g_noOverlapCancel = false;  // the client does not cancel an overlap put on a shared mirror, from any caller (the red)
 
 // A read that tells a put from any other press and fails leaves the verb to run natively, unjudged: said once per
 // session, with the field, so a layout change cannot turn the feature off silently. kSayUnloaded is the hand-hash
@@ -343,26 +342,28 @@ sg::Verdict PreDingus(const sg::Call& c) {
 uint32_t g_overlapCancelled = 0;
 uint32_t g_overlapNoFrame = 0;
 
-// Whether `obj` is a drone sack (the class or a descendant), the forwarder of a prop its trigger takes into the drone's
-// container. The class is asked of the object index at each use, one lookup, so one a world change dropped or one not
-// loaded yet is found again (the shape of container_inventory.cpp's ContainerClass); only a caller that is not the
-// container itself reaches it.
-bool IsDroneSack(void* obj) {
-    if (!obj) return false;
-    void* const sackCls = ue_wrap::object_index::ClassByName(L"prop_dronesack_C");
-    return sackCls && ue_wrap::prop::WalksToBase(R::ClassOf(obj), sackCls);
+// Whether `fn` is the roomba's own ubergraph, asked of its name once per function. The roomba is the one caller of
+// putObjectIn_overlap that files a prop it has just spawned itself (a trash pile's item, from its graph, on itself): the
+// call consumes that spawn, so cancelling it on a client would leave the spawn loose in the world, and the host's judge
+// has no driver or holder to judge for it (container_act_host_overlap runs the body of a prop nobody drives).
+bool IsRoombaGraph(void* fn) {
+    static ue_wrap::ObjKeyedCache<bool, 8> sIsRoombaGraph;
+    bool* is = sIsRoombaGraph.Find(fn);
+    if (!is) {
+        static const std::wstring kGraph = L"ExecuteUbergraph_prop_roomba";
+        is = &sIsRoombaGraph.Insert(fn, R::ToString(R::NameOf(fn)).compare(0, kGraph.size(), kGraph) == 0);
+    }
+    return *is;
 }
 
 // A prop entering a shared mirror's box must never be filed by this client: the mirror is display only, and a local body
 // would add the record to the display and destroy the prop before the host's truth overrules it. The host judges a put
-// at its own overlap (container_act_host_overlap), so nothing is asked and nothing is sent: the call is cancelled. Only the
-// container's own overlap graph is cancelled, and the drone sack's (prop_dronesack_C), whose trigger forwards a prop it
-// takes to the drone's container: run on a client, the local body filed the prop into this display mirror alone and
-// destroyed it, and that destroy took the host's copy with no record, so the item was lost unsold whenever the client's
-// copy reached the trigger first. The host's own sack forwards the same prop to its judge. A roomba's calls, made from
-// its own graph, run.
-// A call with no caller frame cannot be told from the overlap, so it is cancelled too (fails closed). On the host this
-// seat is the host's judge.
+// at its own overlap (container_act_host_overlap), so nothing is asked and nothing is sent: the call is cancelled, for
+// every caller (the container's own overlap graph, a drone sack's trigger forwarding what it takes to the drone's
+// container: run on a client, that local body filed the prop into this display mirror alone and destroyed it, and the
+// destroy took the host's copy with no record). Like PreDingus, the rule is the mirror's authority, not the caller's class.
+// The one exemption is the roomba's own graph (IsRoombaGraph). A call with no caller frame is cancelled too (fails
+// closed). On the host this seat is the host's judge.
 sg::Verdict PreOverlap(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
     if (!s) return sg::Verdict::Run;
@@ -371,15 +372,7 @@ sg::Verdict PreOverlap(const sg::Call& c) {
     if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
     if (g_noOverlapCancel) return sg::Verdict::Run;   // the red: container_overlap_no_cancel, the BP body runs on the mirror
     if (c.callerFunction) {
-        if (c.callerObject != c.object && !IsDroneSack(c.callerObject)) return sg::Verdict::Run;
-        // Whether a caller function is the container's own overlap graph is asked of its name once per function.
-        static ue_wrap::ObjKeyedCache<bool, 8> sIsOwnGraph;
-        bool* own = sIsOwnGraph.Find(c.callerFunction);
-        if (!own) {
-            static const std::wstring kGraph = L"ExecuteUbergraph_prop_container";
-            own = &sIsOwnGraph.Insert(c.callerFunction, R::ToString(R::NameOf(c.callerFunction)).compare(0, kGraph.size(), kGraph) == 0);
-        }
-        if (c.callerObject == c.object && !*own) return sg::Verdict::Run;
+        if (c.callerObject == c.object && IsRoombaGraph(c.callerFunction)) return sg::Verdict::Run;
     } else {
         ++g_overlapNoFrame;
     }
