@@ -358,6 +358,10 @@ msgstr ""
 msgid "Allow other builds"
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "Allow the backrooms"
+msgstr ""
+
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
 msgid "Also refuse their address"
 msgstr ""
@@ -698,6 +702,10 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "Left the session."
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Let a player's clip through the world take them to the backrooms and the game's two secret maps, each player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until their visit ends."
 msgstr ""
 
 #: include/coop/config/config_registry_rows.inc

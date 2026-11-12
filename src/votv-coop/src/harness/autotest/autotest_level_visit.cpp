@@ -19,6 +19,7 @@
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/player/level_visit.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
@@ -216,6 +217,121 @@ void LampStep(int step) {
                                     : (took ? "put down" : "put down failed"));
 }
 
+// The game's own clip: its tick traces from lastLoc to the camera, and a hit on static geometry is the trip. lastLoc
+// 4 m under the floor puts the floor between them.
+void TryClip() {
+    OnGameThread([] {
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(Me()), L"lastLoc");
+        const ue_wrap::FVector cam = E::GetCameraLocation();
+        if (off >= 0)
+            *reinterpret_cast<ue_wrap::FVector*>(static_cast<char*>(Me()) + off) = {cam.X, cam.Y, cam.Z - 400.f};
+        UE_LOGI("level-visit: %hs lastLoc set under the floor for the game's own clip (%d)", Who(), off >= 0 ? 1 : 0);
+    });
+}
+
+// The clip's own travel call, lib_C::loadLevel with the map.
+void TryCall(const std::string& map) {
+    OnGameThread([&map] {
+        void* lib = R::FindClassDefaultObject(L"lib_C");
+        void* fn = lib ? R::FindFunction(R::ClassOf(lib), L"loadLevel") : nullptr;
+        ue_wrap::ParamFrame pf(fn);
+        const std::wstring w(map.begin(), map.end());
+        const bool ran = fn && pf.valid() && pf.Set<R::FName>(L"level", ue_wrap::fname_utils::StringToFName(w)) &&
+                         pf.Set<bool>(L"clearSubArea", true) && pf.Set<void*>(L"__WorldContext", Me()) &&
+                         ue_wrap::Call(lib, pf);
+        UE_LOGI("level-visit: %hs called lib_C::loadLevel('%hs') ran=%d", Who(), map.c_str(), ran ? 1 : 0);
+    });
+}
+
+// The game mode's backroomsEnabled, which the game's clip check reads; -1 unreadable.
+int GameBackrooms() {
+    int v = -1;
+    OnGameThread([&v] {
+        void* gm = ue_wrap::world_singleton::Gamemode();
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (gm && R::FindBoolProperty(R::ClassOf(gm), L"backroomsEnabled", off, mask))
+            v = (*(static_cast<uint8_t*>(gm) + off) & mask) ? 1 : 0;
+    });
+    return v;
+}
+
+bool BackroomsAllowed() {
+    bool on = true;
+    OnGameThread([&on] { on = coop::config::ResolveFlag(coop::config_registry::rows::world_backrooms); });
+    return on;
+}
+
+// VOTVCOOP_LEVEL_VISIT_CLOSED=1: the host closes the backrooms (world.backrooms 0) before the visit. The visitor sees
+// the session's value arrive and its game mode's backroomsEnabled held off; the game's own clip and the clip's travel
+// call each leave it in the world. The host opens them again with a reset; the visitor sees backroomsEnabled given
+// back, then visits as usual. A closed phase that fails fails the visitor's verdict.
+std::string g_closedFail;
+
+void ClosedPhaseHost() {
+    if (!Await("client_closed_ready")) return;
+    OnGameThread([] {
+        const auto r = coop::config::SetValue(coop::config_registry::rows::world_backrooms, "0");
+        UE_LOGI("level-visit: host closed the backrooms (set result %d)", static_cast<int>(r));
+    });
+    Write("closed");
+    if (!Await("closed_done")) return;
+    OnGameThread([] {
+        const auto r = coop::config::ResetValue(coop::config_registry::rows::world_backrooms);
+        UE_LOGI("level-visit: host opened the backrooms again (reset result %d)", static_cast<int>(r));
+    });
+    Write("reopened");
+}
+
+void ClosedPhaseVisitor(const std::string& map) {
+    const int before = GameBackrooms();
+    Write("client_closed_ready");
+    if (!Await("closed")) {
+        g_closedFail = "the host never closed the backrooms";
+        return;
+    }
+    bool seen = false;
+    int held = -1;
+    for (int t = 0; t < 20 && !seen; ++t) {
+        ::Sleep(1000);
+        held = GameBackrooms();
+        seen = !BackroomsAllowed() && held == 0;
+    }
+    UE_LOGI("level-visit: %hs CLOSED seen=%d backroomsEnabled %d->%d", Who(), seen ? 1 : 0, before, held);
+    if (!seen) g_closedFail = "the closed setting never reached the visitor, or the clip switch was not held off";
+    TryClip();
+    bool went = false;
+    for (int t = 0; t < 8; ++t) {
+        ::Sleep(1000);
+        went = went || Read().visiting;
+    }
+    UE_LOGI("level-visit: %hs CLOSED the game's own clip -> visiting=%d", Who(), went ? 1 : 0);
+    if (went && g_closedFail.empty()) g_closedFail = "the clip sent the visitor while the backrooms were closed";
+    TryCall(map);
+    bool sent = false;
+    for (int t = 0; t < 8; ++t) {
+        ::Sleep(1000);
+        sent = sent || Read().visiting;
+    }
+    UE_LOGI("level-visit: %hs CLOSED the travel call -> visiting=%d", Who(), sent ? 1 : 0);
+    if (sent && g_closedFail.empty()) g_closedFail = "the travel call sent the visitor while the backrooms were closed";
+    Write("closed_done");
+    if (!Await("reopened")) {
+        g_closedFail = "the host never opened the backrooms again";
+        return;
+    }
+    bool open = false;
+    int after = -1;
+    for (int t = 0; t < 20 && !open; ++t) {
+        ::Sleep(1000);
+        after = GameBackrooms();
+        open = BackroomsAllowed() && after == before;
+    }
+    UE_LOGI("level-visit: %hs OPENED seen=%d backroomsEnabled back to %d (was %d)", Who(), open ? 1 : 0, after, before);
+    if (!open && g_closedFail.empty()) g_closedFail = "reopened, the clip switch did not get its own value back";
+    ::Sleep(6000);  // past the visit's quiet window, as a player's clip would be
+}
+
 void Visitor() {
     const bool clip = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_START") == "clip";
     // The camera the host spawned, in hand (a clip run takes none, carrying what its profile holds, and neither does a
@@ -270,25 +386,9 @@ void Visitor() {
                 before.heldName.c_str(), n.heldName.c_str(), before.hold, n.hold);
         return Verdict(died && n.health > 0.f, "a death in the world, revived (the control)");
     }
-    if (clip) OnGameThread([] {
-        // The game's own clip: its tick traces from lastLoc to the camera, and a hit on static geometry is the trip.
-        // lastLoc 4 m under the floor puts the floor between them.
-        const int32_t off = R::FindPropertyOffset(R::ClassOf(Me()), L"lastLoc");
-        const ue_wrap::FVector cam = E::GetCameraLocation();
-        if (off >= 0)
-            *reinterpret_cast<ue_wrap::FVector*>(static_cast<char*>(Me()) + off) = {cam.X, cam.Y, cam.Z - 400.f};
-        UE_LOGI("level-visit: %hs lastLoc set under the floor for the game's own clip (%d)", Who(), off >= 0 ? 1 : 0);
-    });
-    else OnGameThread([&map] {
-        void* lib = R::FindClassDefaultObject(L"lib_C");
-        void* fn = lib ? R::FindFunction(R::ClassOf(lib), L"loadLevel") : nullptr;
-        ue_wrap::ParamFrame pf(fn);
-        const std::wstring w(map.begin(), map.end());
-        const bool ran = fn && pf.valid() && pf.Set<R::FName>(L"level", ue_wrap::fname_utils::StringToFName(w)) &&
-                         pf.Set<bool>(L"clearSubArea", true) && pf.Set<void*>(L"__WorldContext", Me()) &&
-                         ue_wrap::Call(lib, pf);
-        UE_LOGI("level-visit: %hs called lib_C::loadLevel('%hs') ran=%d", Who(), map.c_str(), ran ? 1 : 0);
-    });
+    if (coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_CLOSED") == "1") ClosedPhaseVisitor(map);
+    if (clip) TryClip();
+    else TryCall(map);
     Now n;
     int t = 0;
     for (; t < 60; ++t) {
@@ -357,8 +457,9 @@ void Visitor() {
     UE_LOGI("level-visit: %hs back=%d (last end '%ls') held before=%ls after=%ls hold %d->%d inventory %d->%d", Who(),
             back ? 1 : 0, LV::LastEnd().c_str(), before.heldName.c_str(),
             n.heldName.c_str(), before.hold, n.hold, before.inventory, n.inventory);
-    Verdict(back && kept && pockets && inOk && view,
-            !back      ? "not back in the world"
+    Verdict(back && kept && pockets && inOk && view && g_closedFail.empty(),
+            !g_closedFail.empty() ? g_closedFail.c_str()
+            : !back    ? "not back in the world"
             : !kept    ? "the hand item did not come back"
             : !pockets ? "the pockets changed"
             : !inOk    ? "in the map the player was not its own to move, or its view was covered"
@@ -417,6 +518,7 @@ void Run() {
     }
     if (IsClientRole() && !Await("spawned")) return;
     ::Sleep(3000);
+    if (!IsClientRole() && coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_CLOSED") == "1") ClosedPhaseHost();
     if (IVisit()) Visitor();
     else Watcher(g_hostVisits ? 0 : 1);
     UE_LOGI("level-visit: DONE %hs", Who());

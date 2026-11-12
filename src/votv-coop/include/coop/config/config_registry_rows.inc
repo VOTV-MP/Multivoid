@@ -273,6 +273,12 @@ CFG_FLAG(net_allow_other_builds, "net.allow_other_builds", "net", false, "VOTVCO
     "already in stay."))
 CFG_ROWFLAGS(net_allow_other_builds, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(net_allow_other_builds, L10N_MARK("Allow other builds"))
+CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
+    L10N_MARK("Let a player's clip through the world take them to the backrooms and the game's two secret maps, each "
+    "player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until "
+    "their visit ends."))
+CFG_ROWFLAGS(world_backrooms, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(world_backrooms, L10N_MARK("Allow the backrooms"))
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,

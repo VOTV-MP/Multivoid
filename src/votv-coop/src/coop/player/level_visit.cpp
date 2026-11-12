@@ -2,6 +2,8 @@
 
 #include "coop/player/level_visit.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/death_revive.h"
@@ -89,7 +91,8 @@ std::wstring g_pass;       // and its NewVar_6, which the clip writes for untitl
 uint8_t g_gameMode = 0;    // and its game mode byte
 bool g_haveGameMode = false;
 // The game mode's backroomsEnabled, which the clip check reads: off while a visit runs and kQuietMs after, so the
-// view's jump into the map and back out of it is not a clip. -1 when nothing is held.
+// view's jump into the map and back out of it is not a clip, and off while the host's world.backrooms is. The value it
+// had before; -1 when nothing is held.
 int g_backroomsWas = -1;
 // Raised by a script callback, run by the next tick: the visit's end, and whether a revive is owed.
 std::atomic<bool> g_endAsked{false};
@@ -165,6 +168,29 @@ int BackroomsEnabled(int set = -1) {
     return (*b & mask) ? 1 : 0;
 }
 
+// The host's world.backrooms, the session's value on every peer: off, no clip is taken and no trip is sent.
+bool Closed() { return !coop::config::ResolveFlag(coop::config_registry::rows::world_backrooms); }
+
+// backroomsEnabled held off while a visit runs, kQuietMs after it, and while the host closes the backrooms; given its
+// own value back once none of them holds. Each tick: the game's own writes to it are undone while it is held.
+void HoldClipSwitch() {
+    static int s_closed = -1;
+    const bool closed = Closed();
+    if (s_closed != (closed ? 1 : 0)) {
+        if (s_closed >= 0 || closed)
+            UE_LOGI("level_visit: the host %hs the backrooms", closed ? "closed" : "opened");
+        s_closed = closed ? 1 : 0;
+    }
+    const bool hold = closed || g_phase != Phase::None || ::GetTickCount64() < g_quietUntilMs.load();
+    if (hold) {
+        if (g_backroomsWas < 0) g_backroomsWas = BackroomsEnabled();
+        if (g_backroomsWas >= 0 && BackroomsEnabled() != 0) BackroomsEnabled(0);
+    } else if (g_backroomsWas >= 0) {
+        BackroomsEnabled(g_backroomsWas);
+        g_backroomsWas = -1;
+    }
+}
+
 bool InVisitedLevel(void* obj) { return obj && g_level && R::IsLive(obj) && R::OuterOf(obj) == g_level; }
 
 // ---- the watches (game thread, inside the VM's body loop: decisions only, the work is the tick's) ----------------
@@ -186,6 +212,10 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
         return sg::Verdict::Cancel;
     }
     if (author != Local()) return sg::Verdict::Run;
+    if (Closed()) {
+        UE_LOGI("level_visit: a trip to %ls is refused -- the host has closed the backrooms", R::ToString(level).c_str());
+        return sg::Verdict::Cancel;
+    }
     // The player's own clip check sees the view jump into the map and back out of it: a trip asked while a visit runs,
     // or within kQuietMs of its end, is that jump, not a clip.
     if (g_phase != Phase::None || ::GetTickCount64() < g_quietUntilMs.load()) {
@@ -618,12 +648,9 @@ void Tick() {
     if (!InSession()) return;
     if (!g_watching || !g_quitHooked) Install(g_session.load(std::memory_order_acquire));
     HideAway();
+    HoldClipSwitch();
     if (g_phase == Phase::None) {
         GiveBack();
-        if (g_backroomsWas >= 0 && ::GetTickCount64() >= g_quietUntilMs.load()) {
-            BackroomsEnabled(g_backroomsWas);
-            g_backroomsWas = -1;
-        }
         return;
     }
     void* me = Local();
