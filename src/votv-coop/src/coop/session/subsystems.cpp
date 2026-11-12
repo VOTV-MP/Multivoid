@@ -55,6 +55,7 @@
 #include "coop/player/nick_color.h"  // nick-color session wiring (Install)
 #include "coop/player/puppet_identity.h"  // a puppet's touch never runs this machine's player's effects
 #include "coop/player/sleep_rest.h"
+#include "coop/player/nightmare_roll.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/creatures/wisp_attack_sync.h"  // Killer Wisp coop: host detect + neutralize + relay
 #include "coop/creatures/wisp_grab_hold.h"  // Killer Wisp: grab-window body placement (per-slot/full teardown)
@@ -367,6 +368,7 @@ void Install(coop::net::Session& session) {
     coop::prop_hold_claim::Install(&session);  // one hold per keyed prop: the host keeps the first and refuses a second
     coop::prop_tool_flags::Install(&session);  // the toolgun's prop-properties tool: tool_propProps_C's init watched
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
+    coop::nightmare_roll::Install(&session);  // a client's nightmare roll at the host's pace
     coop::sleep_sync::Install(&session);  // who rests: each peer's rest state (client -> host -> clients) and the host's sleeping flag
     coop::sleep_rest::Install(&session);  // a client's rest at the native rate: its own sleep watch and the factor on its body and effects
     coop::wisp_attack_sync::Install(&session);  // Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
@@ -589,6 +591,7 @@ DisconnectStats DisconnectAll() {
     coop::drive_payload_sync::OnDisconnect();  // held and sent rows, notes
     coop::drive_rack_sync::OnDisconnect();  // rack baselines/shadow + deny/taken rings
     coop::sleep_sync::OnDisconnect();
+    coop::nightmare_roll::OnDisconnect();
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
     coop::prop_throw::OnDisconnect();  // the thrower's records of its own throws
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
@@ -758,7 +761,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pause_guard"}; coop::pause_guard::Tick(isConnected); }  // coop no-pause invariant -- un-pause the world while connected (ESC menu stays usable; a paused peer froze its pose stream)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:run_end"}; coop::player::run_end_travel::Tick(); }  // the run-ending seam's session-scoped work: publish the seam's readiness (the verdict itself runs in the VM's body loop)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameToSlot disk hook stays as the belt
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); }  // the local rest-state poll + its send + the client's dream hold
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); coop::nightmare_roll::Tick(); }  // the local rest-state poll + its send + the client's dream hold and its own roll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep_rest"}; coop::sleep_rest::Tick(); }  // a client's rest: the sleep watch until live, then the effects' factor and food and coffee while it lasts
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // discharge the victim's scheduled ragdoll death (any peer, no-op until armed)

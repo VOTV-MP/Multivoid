@@ -251,7 +251,7 @@ void Tick() {
 
     if (!s->connected()) return;
 
-    // A client holds its nightmare rolls off for the session: a nightmare is the host's machine's roll alone.
+    // A client holds the game's own nightmare roll off for the session; coop/player/nightmare_roll rolls in its place.
     if (!g_dreamProbSuppressed && SLP::SetDreamProbability(0.f)) g_dreamProbSuppressed = true;
 
     if (g_localState != g_sentState || !SameBed(g_localBed, g_sentBed)) SendClientRest(s);

@@ -44,6 +44,18 @@ void* OrigPawn();
 // 0 = nightmares suppressed. Returns false if unresolved.
 bool SetDreamProbability(float v);
 
+// The chance the game's own nightmare roll draws from, without the dreamProbability override: the bed's dreamProb,
+// 0.15 with no bed, and 0 when the gamemode's nightmaresEnabled is off. False while unresolved. Game thread.
+bool ReadNightmareChance(float& out);
+
+// mainGamemode.dreaming: the player is in a nightmare (createDream set it, leaveDream clears it).
+bool IsDreaming();
+
+// The game's own winning roll: gamemode.wakeup(), then gamemode.createDream(customDream), which keeps the player's
+// place and teleports the player into the dream; with no class (the roll's own call) the game picks the dream. False
+// when either does not resolve or a call fails. Game thread.
+bool BeginNightmare(void* customDream = nullptr);
+
 // UGameplayStatics::SetGlobalTimeDilation / GetGlobalTimeDilation via the
 // CDO + a persistent WorldContextObject. Get returns <= 0 on failure.
 bool SetGlobalTimeDilation(float v);
