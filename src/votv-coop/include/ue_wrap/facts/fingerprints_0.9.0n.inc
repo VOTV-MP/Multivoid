@@ -393,6 +393,8 @@ inline constexpr RefFn kRefFns[] = {
     {L"prop_saltrocket_c", L"attemptignite", L"prop_saltrocket_c.attemptignite", 0x6a2d5d90ab51fa2dull, 0x9d646d730d7335d6ull},
     {L"prop_saltrocket_c", L"fire", L"prop_saltrocket_c.fire", 0x6a2d5d90ab51fa2dull, 0x8638e640edad1849ull},
     {L"prop_sleeppills_c", L"actionoptionindex", L"prop_sleeppills_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x249805d79a338e24ull},
+    {L"prop_snack_beer_c", L"actionoptionindex", L"prop_snack_beer_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x39c245d6a8bbb6bdull},
+    {L"prop_snack_c", L"actionoptionindex", L"prop_snack_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0xdf08a31feec2afc6ull},
     {L"prop_sprinkler_c", L"dowater", L"prop_sprinkler_c.dowater", 0x6a2d5d90ab51fa2dull, 0xf1439084f7ebaf0bull},
     {L"prop_swinger_c", L"close", L"prop_swinger_c.close", 0x6a2d5d90ab51fa2dull, 0xc06dd1f2ecd5747full},
     {L"prop_swinger_c", L"open", L"prop_swinger_c.open", 0xd596962f150e33d7ull, 0xd833179adf05be04ull},
