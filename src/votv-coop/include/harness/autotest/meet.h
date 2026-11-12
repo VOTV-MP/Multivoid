@@ -12,10 +12,17 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 namespace harness::autotest::meet {
 
 // Client only; true at once on the host. Walks the local player to within `reachCm` of the host's puppet. An
 // unusable state logs `<tag>: VERDICT ABORT -- ...` and returns false: the drill ends there.
 bool WalkToHost(const char* logTag, float reachCm = 300.f);
+
+// Client only; true at once on the host. The same walk to a place in the world, `what` naming it in the log lines
+// (the cargo lift drill's lift). The place is the caller's read of the target's own position; the stage and the
+// route's budget are WalkToHost's.
+bool WalkToPoint(const char* logTag, const ue_wrap::FVector& at, float reachCm, const char* what);
 
 }  // namespace harness::autotest::meet

@@ -35,7 +35,67 @@ float Between(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+// The walk of `goal` to `theirs`: the stage, the route's length for the budget, then the director's walk. `what` names
+// the target in the log lines.
+bool WalkGoal(DIR::DirectorGoal& goal, const ue_wrap::FVector& theirs, float reachCm, const char* logTag,
+              const char* what) {
+    goal.reachCm = reachCm;
+    // The director stages the walk (stage.h): the joiner may start at the known-good anchor nearest the goal.
+    // The budget is taken from what remains after that, so a placed walk carries no 770 m budget.
+    if (!DIR::StageWalk(goal, logTag)) {
+        UE_LOGW("%hs: VERDICT ABORT -- could not start the walk to %hs (%hs)", logTag, what, goal.failReason);
+        return false;
+    }
+    float line = 0.f, route = 0.f;
+    bool pawnRead = false;   // false: the walker's place does not read
+    GT::RunAndWait([&](std::atomic<int>& done) {
+        void* const me = coop::players::Registry::Get().Local();
+        ue_wrap::FVector mine{};
+        if (me && ue_wrap::reflection::IsLive(me) && E::TryGetActorLocation(me, mine)) {
+            line = Between(mine, theirs);
+            // The walk is bounded by the NavMesh route, not the line: inside the base the line crosses walls
+            // and the route goes round through the doors. Asked in legs, since one path query is a partial
+            // route on a long walk and under-counts it.
+            if (line > reachCm && !DIR::RouteInLegs(me, mine, theirs, reachCm, &route)) route = 0.f;
+            pawnRead = true;
+        }
+        done.store(1);
+    });
+    if (!pawnRead) {
+        UE_LOGW("%hs: VERDICT ABORT -- the pawn's position is not there to walk from", logTag);
+        return false;
+    }
+    if (line <= reachCm) {
+        UE_LOGI("%hs: already beside %hs", logTag, what);
+        return true;
+    }
+    // Twice a walk's pace over the route (the line when no route was found), plus the margin.
+    const float way = route > line ? route : line;
+    const int budget = static_cast<int>(way / kPaceCmPerSec * 2.f) + kRouteMarginSec;
+    UE_LOGI("%hs: walking to %hs, %.0fcm away, route %.0fcm, %d s budget", logTag, what, line, route, budget);
+    DIR::ControlManager mgr;
+    DIR::AddWalkToProcesses(mgr, goal);
+    mgr.Run(goal, budget);
+    if (!goal.reached) {
+        UE_LOGW("%hs: VERDICT ABORT -- could not walk to %hs (%hs)", logTag, what, goal.failReason);
+        return false;
+    }
+    UE_LOGI("%hs: met %hs after a %.0fcm walk", logTag, what, line);
+    return true;
+}
+
 }  // namespace
+
+bool WalkToPoint(const char* logTag, const ue_wrap::FVector& at, float reachCm, const char* what) {
+    if (!IsClientRole()) return true;
+    DIR::DirectorGoal goal;
+    goal.targetPos = at;
+    GT::RunAndWait([&](std::atomic<int>& done) {
+        goal.epoch = DIR::WalkEpoch();
+        done.store(1);
+    });
+    return WalkGoal(goal, at, reachCm, logTag, what);
+}
 
 bool WalkToHost(const char* logTag, float reachCm) {
     if (!IsClientRole()) return true;
@@ -60,49 +120,7 @@ bool WalkToHost(const char* logTag, float reachCm) {
         UE_LOGW("%hs: VERDICT ABORT -- the host's puppet or a position is not there to walk to", logTag);
         return false;
     }
-    goal.reachCm = reachCm;
-    // The director stages the walk (stage.h): the joiner may start at the known-good anchor nearest the host.
-    // The budget is taken from what remains after that, so a placed walk carries no 770 m budget.
-    if (!DIR::StageWalk(goal, logTag)) {
-        UE_LOGW("%hs: VERDICT ABORT -- could not start the walk to the host (%hs)", logTag, goal.failReason);
-        return false;
-    }
-    float line = 0.f, route = 0.f;
-    bool pawnRead = false;   // false: the walker's place does not read
-    GT::RunAndWait([&](std::atomic<int>& done) {
-        void* const me = coop::players::Registry::Get().Local();
-        ue_wrap::FVector mine{};
-        if (me && ue_wrap::reflection::IsLive(me) && E::TryGetActorLocation(me, mine)) {
-            line = Between(mine, theirs);
-            // The walk is bounded by the NavMesh route, not the line: inside the base the line crosses walls
-            // and the route goes round through the doors. Asked in legs, since one path query is a partial
-            // route on a long walk and under-counts it.
-            if (line > reachCm && !DIR::RouteInLegs(me, mine, theirs, reachCm, &route)) route = 0.f;
-            pawnRead = true;
-        }
-        done.store(1);
-    });
-    if (!pawnRead) {
-        UE_LOGW("%hs: VERDICT ABORT -- the pawn's position is not there to walk from", logTag);
-        return false;
-    }
-    if (line <= reachCm) {
-        UE_LOGI("%hs: already beside the host", logTag);
-        return true;
-    }
-    // Twice a walk's pace over the route (the line when no route was found), plus the margin.
-    const float way = route > line ? route : line;
-    const int budget = static_cast<int>(way / kPaceCmPerSec * 2.f) + kRouteMarginSec;
-    UE_LOGI("%hs: walking to the host, %.0fcm away, route %.0fcm, %d s budget", logTag, line, route, budget);
-    DIR::ControlManager mgr;
-    DIR::AddWalkToProcesses(mgr, goal);
-    mgr.Run(goal, budget);
-    if (!goal.reached) {
-        UE_LOGW("%hs: VERDICT ABORT -- could not walk to the host (%hs)", logTag, goal.failReason);
-        return false;
-    }
-    UE_LOGI("%hs: met the host after a %.0fcm walk", logTag, line);
-    return true;
+    return WalkGoal(goal, theirs, reachCm, logTag, "the host");
 }
 
 }  // namespace harness::autotest::meet

@@ -2,6 +2,8 @@
 
 #include "coop/interactables/cargo_lift.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/interactables/interactable_sync.h"  // the cargo lift channel's key, resolve and edge
 #include "coop/net/intent_bucket.h"
@@ -117,10 +119,17 @@ bool Execute(coop::net::Session& s, const coop::net::KeyedTogglePayload& p, uint
     return true;
 }
 
+// The cargo lift drill's red: a client's press runs the lift's own body on its copy alone.
+bool ClientRuns() {
+    static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::cargo_lift_client_runs);
+    return on;
+}
+
 // Before the press's body. A client's own press is refused and sent to the host; the channel's apply runs.
 sg::Verdict OnPressPre(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
+    if (ClientRuns()) return sg::Verdict::Run;
     if (!call.object || !L::IsCargoLift(call.object) || call.object == g_applying) return sg::Verdict::Run;
     const int32_t off = g_action.Of(call.function);
     if (off < 0) {
@@ -224,6 +233,10 @@ bool ApplyState(void* lift, bool up) {
     return PressForApply(lift);
 }
 
+// A poll, and nothing the game announces can replace it: a lift's move ends where its Blueprint clears `moving`, in the
+// per-frame Delay(0) loop of its event graph when `alpha` leaves 0..1, with no function call at that point. The
+// timeline's `move__FinishedFunc` ends the speed curve (`spd`), its body is empty, and no other event marks the stop.
+// `g_held` is empty unless a direction arrived while this copy moved, so the steady cost is one empty-map test.
 void TickApply() {
     for (auto it = g_held.begin(); it != g_held.end();) {
         void* const lift = it->second.lift.Get();

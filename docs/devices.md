@@ -106,7 +106,7 @@ ever reaches `doorOpen`. The host's door then closes by its own
 autoclose, at the first of its five-second checks that finds its sensor list empty, and a client's
 puppet counts in that list exactly when the client's own player counts in the client's own copy of
 it. A device with no auto-revert (the garage, an appliance, an oven's repair, a locker, a lid) is
-symmetric: any peer's edge is the state. The cargo lift is host-authoritative all the same, its direction (`dir`) the host's: a client's own press is refused and sent as the direction it wants, the host presses its own lift when that lift is not moving and the sender is within reach, and each client presses its copy to the host's direction, once that copy has stopped (`[V]` `harness/autotest/autotest_cargo_lift.cpp`: a host's press and a client's both move the lift on both peers, the platform at the same height each second).
+symmetric: any peer's edge is the state. The cargo lift is host-authoritative all the same, its direction (`dir`) the host's: a client's own press is refused and sent as the direction it wants, the host presses its own lift when that lift is not moving and the sender is within reach, and each client presses its copy to the host's direction, once that copy has stopped (`[V]` `harness/autotest/autotest_cargo_lift.cpp`: a host's press and a client's both move the lift on both peers, each peer's copy ending at the same direction and platform height; the red, cargo_lift_client_runs, leaves the host's lift behind).
 
 ### The cremator's lever run
 
