@@ -56,6 +56,7 @@ inline constexpr uint64_t kGatherBoundMs = 10000;   // CLIENT: the walk's arriva
 inline constexpr uint64_t kHandClearBoundMs = 10000; // CLIENT: the hand's clear before a grab to both slots reading empty
 inline constexpr uint64_t kGrabBoundMs = 45000;    // CLIENT: a grab row's grab step, a wall-clock backstop; the grab ends itself
 inline constexpr uint64_t kDrivenBoundMs = 20000;   // CLIENT: its grabbed line to the host's driven line
+inline constexpr uint64_t kContentsBoundMs = 15000; // CLIENT: an opened row's removal to the host's contents being here
 inline constexpr uint64_t kDragBoundMs = 15000;     // HOST: the client's grabbed line to the prop driven by the client
 inline constexpr uint64_t kAnnounceBoundMs = 60000; // HOST: the spawn to the target having a row
 inline constexpr uint64_t kDoneBoundMs = 180000;    // HOST: the ready line to the client's done line
@@ -74,7 +75,8 @@ enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2,
 // client's RefusedCount for it rose by one), no request is open, and the mirror, the inventory and the hand are as
 // they were. Taken: the mirror is gone after the commit and the hand is not asserted (a heavy item's hand view is
 // unmeasured).
-enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken };
+// Opened: Gone, and the host's rolled contents have reached this client as mirrors (an MRE's open).
+enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken, Opened };
 
 // Who makes a step's target: the host, on the floor in front of the client's puppet (HostTwo: a second one beside it;
 // HostKerfur: a kerfur NPC the host turns off into its prop), or the client itself (the host spawns nothing).

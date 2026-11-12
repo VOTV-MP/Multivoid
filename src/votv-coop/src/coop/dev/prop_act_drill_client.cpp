@@ -31,6 +31,8 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace coop::dev::prop_act_drill {
 using namespace detail;
@@ -50,7 +52,7 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
 enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
-                             AwaitReply, Say, Done };
+                             AwaitReply, AwaitContents, Say, Done };
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
 size_t g_crow = 0;
@@ -69,6 +71,23 @@ bool g_handHeldBefore = false;
 ue_wrap::CachedObjRef g_handBefore;
 std::string g_sayLine;
 bool g_sayFailed = false;
+// An opened row: the host-born food mirrors this client held before the act. An MRE's contents are the host's prop_food_C
+// births, so they reach this client as mirrors of its eids; the step passes when one the set lacks has arrived.
+std::unordered_set<EL::ElementId> g_foodsBefore;
+
+size_t FoodMirrorsNotIn(const std::unordered_set<EL::ElementId>& had, std::unordered_set<EL::ElementId>* all) {
+    static std::vector<EL::Registry::ActorIdPair> pairs;
+    EL::Registry::Get().SnapshotActorsByType(EL::ElementType::Prop, pairs);
+    size_t fresh = 0;
+    for (const auto& p : pairs) {
+        if (!p.mirror || !p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) ||
+            R::ClassNameOf(p.actor) != L"prop_food_C")
+            continue;
+        if (all) all->insert(p.id);
+        if (!had.count(p.id)) ++fresh;
+    }
+    return fresh;
+}
 
 void CEnter(CStep s) {
     g_cstep = s;
@@ -134,6 +153,10 @@ void ClientAct(const Row& row, void* player) {
             return;
         }
         PAR::dev::DestroyInsideNextReplay(g_mirror2.Get());
+    }
+    if (row.ends == Ends::Opened) {
+        g_foodsBefore.clear();
+        FoodMirrorsNotIn({}, &g_foodsBefore);
     }
     if (const char* why = RunVerb(row, player, mirror)) {
         ClientFail(row, why);
@@ -261,6 +284,10 @@ void ClientRead(const Row& row, void* player) {
             ClientFail(row, "the hand does not hold the item");
             return;
         }
+    }
+    if (row.ends == Ends::Opened) {
+        CEnter(CStep::AwaitContents);
+        return;
     }
     ClientPass(row, row.asks ? "asked, granted, replayed; the mirror is gone and the item is where the verb puts it"
                              : "ran natively with no request; the prop is gone and the item is where the verb puts it");
@@ -560,6 +587,20 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         }
         ClientRead(row, player);
         return;
+    case CStep::AwaitContents: {
+        // The host rolled the contents on its copy: they reach this client as mirrors, none rolled here.
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        const size_t fresh = FoodMirrorsNotIn(g_foodsBefore, nullptr);
+        if (fresh == 0) {
+            if (CExpired(kContentsBoundMs)) ClientFail(row, "no content the host rolled reached this client");
+            return;
+        }
+        const std::string what = "asked, granted, replayed; the mirror is gone and " + std::to_string(fresh) +
+                                 " host-born food mirror(s) arrived";
+        ClientPass(row, what.c_str());
+        return;
+    }
     case CStep::Say: {
         // A client's chat passes the host's rate limit only at the drills' spacing; a refused line is lost for good.
         if (now < g_nextSayMs) return;
@@ -609,6 +650,7 @@ void ClientReset() {
     g_handBefore.Reset();
     g_sayLine.clear();
     g_sayFailed = false;
+    g_foodsBefore.clear();
 }
 
 }  // namespace detail
