@@ -5,7 +5,7 @@
 // 2663-2711; the server's own events register false, :1668); a packet id only the server sends is refused by
 // its packet translator's table (CPacketTranslator.cpp:62-228). Ours is the same flag per kind, kept beside the
 // lane and relay tables because our kinds are the protocol's fixed enum rather than runtime registrations: the
-// host's receive edge (session_receive.cpp) drops a Host kind, or a byte that names no kind, from a seated
+// host's receive edge (session_receive.cpp) drops a Host kind, or a value that names no kind, from a seated
 // client before it is inboxed or relayed.
 // Only the host asks the table. A Host kind reaches a client from the host alone (the host relays only Client kinds,
 // session_receive.cpp asserts it), so a client needs no sender check to trust one; a handler shared with a relayed
@@ -262,7 +262,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::WalkerState:
         return ClientAuthorship::Host;
     }
-    return ClientAuthorship::NotAKind;  // a byte value that names no kind: refused like Host
+    return ClientAuthorship::NotAKind;  // a value that names no kind: refused like Host
 }
 
 }  // namespace coop::net

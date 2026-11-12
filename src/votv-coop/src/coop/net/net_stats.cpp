@@ -3,6 +3,7 @@
 #include "coop/net/net_stats.h"
 
 #include "coop/net/protocol.h"  // kReliableKindSpace
+#include "ue_wrap/core/log.h"
 
 #include <atomic>
 
@@ -38,8 +39,18 @@ void AddSent(uint32_t bytes) {
     g_packetsSent.fetch_add(1, std::memory_order_relaxed);
 }
 
+void NoteKindPastSpace(KindTable table, unsigned kind) {
+    static std::atomic<bool> said[2] = {};
+    const int t = static_cast<int>(table);
+    if (said[t].exchange(true, std::memory_order_relaxed)) return;
+    UE_LOGW("net: kind %u is past the per-kind tables' space %u (%s); the call changes nothing, later ones are "
+            "not logged", kind, static_cast<unsigned>(coop::net::kReliableKindSpace),
+            table == KindTable::ApplyPause ? "receive pause set" : "sent counts");
+}
+
 void AddReliableSent(uint16_t kind) {
     if (kind < coop::net::kReliableKindSpace) g_reliableSent[kind].fetch_add(1, std::memory_order_relaxed);
+    else NoteKindPastSpace(KindTable::ReliableSent, kind);
 }
 uint32_t ReliableSent(uint16_t kind) {
     return kind < coop::net::kReliableKindSpace ? g_reliableSent[kind].load(std::memory_order_relaxed) : 0;

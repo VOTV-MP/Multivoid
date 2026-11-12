@@ -9,6 +9,7 @@
 // on the net thread.
 #pragma once
 
+#include "coop/net/net_stats.h"  // NoteKindPastSpace
 #include "coop/net/protocol.h"  // ReliableKind
 
 #include <atomic>
@@ -21,9 +22,15 @@ static_assert(kReliableKindSpace % 64 == 0, "ApplyPauseSet holds the kinds' spac
 class ApplyPauseSet {
 public:
     // Raises or lowers `kind`'s pause; true when this call changed it. A raise is counted by Raises().
+    // Whether a kind's value has a slot in the set; Set refuses one that has not.
+    static constexpr bool InSpace(unsigned k) { return k < kReliableKindSpace; }
+
     bool Set(ReliableKind kind, bool on) {
         const unsigned k = static_cast<std::uint16_t>(kind);
-        if (k >= kReliableKindSpace) return false;   // no kind is: reliablekind_gate holds them below the space
+        if (!InSpace(k)) {   // no kind is (reliablekind_gate holds them below the space): said once
+            net_stats::NoteKindPastSpace(net_stats::KindTable::ApplyPause, k);
+            return false;
+        }
         const std::uint64_t bit = 1ull << (k & 63u);
         std::atomic<std::uint64_t>& word = words_[k >> 6];
         if (on) {

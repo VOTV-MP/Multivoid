@@ -131,7 +131,8 @@ inline constexpr size_t kReliableKindSpace = 1024;
 
 // Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 17, 21,
 // 22, 24, 26, 29, 71 and 138 stay unassigned; 32 and 128 are reserved. Two bytes on the wire
-// (ReliableHeader::kind), so a kind may take any value below kReliableKindSpace.
+// (ReliableHeader::kind), so a kind may take any value below kReliableKindSpace. The first kind at or past 256
+// ships with a kProtocolVersion bump: an older build reads only the low byte.
 enum class ReliableKind : uint16_t {
     // Each peer to the other, once after admission: the sender's Player element id, then the nick,
     // the skin, the display flags, the nick colour, the game target, the build claim (the build's

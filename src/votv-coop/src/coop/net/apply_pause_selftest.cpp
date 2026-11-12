@@ -44,16 +44,23 @@ bool RunSelftest() {
     // 3. Kinds at each word's edge stay apart.
     {
         ApplyPauseSet s;
-        const unsigned edges[] = {0, 63, 64, 127, 128, 191, 192, 255};
+        const unsigned edges[] = {0, 63, 64, 127, 128, 191, 192, 255, 256, 511, 512, 1023};
         for (unsigned k : edges) s.Set(kind(k), true);
         bool held = true;
         for (unsigned k : edges) held = held && s.Has(kind(k));
-        check(held && s.Raises() == 8, "every edge kind is held, each counted once");
-        check(!s.Has(kind(1)) && !s.Has(kind(62)) && !s.Has(kind(65)) && !s.Has(kind(254)),
+        check(held && s.Raises() == 12, "every edge kind is held, each counted once");
+        check(!s.Has(kind(1)) && !s.Has(kind(62)) && !s.Has(kind(65)) && !s.Has(kind(254)) &&
+              !s.Has(kind(257)) && !s.Has(kind(510)) && !s.Has(kind(513)) && !s.Has(kind(1022)),
               "their neighbours are not");
         for (unsigned k : edges) s.Set(kind(k), false);
         check(!s.Any(), "lowering them all empties the set");
     }
+
+    // 3b. The space's edge: the last kind has a slot and the next has none. Set's refusal of one past it is this test,
+    // checked here by the predicate rather than by calling Set, whose refusal also logs the defect once per process.
+    const unsigned kSpace = static_cast<unsigned>(kReliableKindSpace);
+    check(ApplyPauseSet::InSpace(kSpace - 1) && !ApplyPauseSet::InSpace(kSpace),
+          "the last kind of the space has a slot and the next has none");
 
     // 4. Reset lowers every pause and keeps the count a witness reads.
     {

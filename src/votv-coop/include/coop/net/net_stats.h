@@ -32,6 +32,11 @@ void AddSent(uint32_t bytes);
 void AddReliableSent(uint16_t kind);
 uint32_t ReliableSent(uint16_t kind);
 
+// A per-kind table was asked about a kind at or past kReliableKindSpace: the call changes nothing, and the first
+// one of each table in a process says so once, so a kind that outgrew the space shows instead of vanishing.
+enum class KindTable { ApplyPause, ReliableSent };
+void NoteKindPastSpace(KindTable table, unsigned kind);
+
 // One wire packet entering Session::HandleMessage (full datagram length).
 void AddRecv(uint32_t bytes);
 

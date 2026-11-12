@@ -26,10 +26,10 @@ namespace coop::net {
 
 namespace {
 // A kind the host relays from one client to the others must be one a client may author: the edge below would
-// otherwise refuse what the relay table forwards. Every byte value is checked, so a kind added to the relay
-// table without its authorship row fails the build here.
+// otherwise refuse what the relay table forwards. Every value below the tables' space is checked, so a kind
+// added to the relay table without its authorship row fails the build here.
 constexpr bool RelayedKindsAreClientAuthored() {
-    for (int v = 0; v < 256; ++v) {
+    for (size_t v = 0; v < kReliableKindSpace; ++v) {
         const auto k = static_cast<ReliableKind>(v);
         if (IsClientRelayableReliableKind(k) && AuthorshipOf(k) != ClientAuthorship::Client) return false;
     }
@@ -291,7 +291,7 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             rateControl_.NoteReliableReceived(peerSlot, len);
         if (dev::wire_census::Enabled())
             dev::wire_census::NoteReliable(routeSlot, static_cast<unsigned>(rh.kind));
-        // Default deny at the edge (client_authorship.h): a kind no client may author, or a byte that names no
+        // Default deny at the edge (client_authorship.h): a kind no client may author, or a value that names no
         // kind, is dropped here, counted by the budget ahead of the epoch latch and acted on by nothing below --
         // not diverted, echoed, inboxed or relayed. The first of each value in a session is said with its number,
         // the rest summed per window: MTA logs each refused event, and rate-limits only an unknown one, one line
