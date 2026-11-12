@@ -15,6 +15,8 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
+#include "ue_wrap/actors/effects.h"
+#include "ue_wrap/actors/food.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/vitals.h"
@@ -31,6 +33,8 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace coop::dev::prop_act_drill {
 using namespace detail;
@@ -50,7 +54,7 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
 enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
-                             AwaitReply, Say, Done };
+                             AwaitReply, AwaitContents, AwaitPoison, Say, Done };
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
 size_t g_crow = 0;
@@ -69,6 +73,48 @@ bool g_handHeldBefore = false;
 ue_wrap::CachedObjRef g_handBefore;
 std::string g_sayLine;
 bool g_sayFailed = false;
+// An opened row: the host-born food mirrors this client held before the act. An MRE's contents are the host's prop_food_C
+// births, so they reach this client as mirrors of its eids; the step passes when one the set lacks has arrived.
+std::unordered_set<EL::ElementId> g_foodsBefore;
+
+size_t g_freshContents = 0;   // the opened row's contents that arrived
+int g_poisonBefore = 0;       // foodPoison entries live before the poisoned content's bite
+
+// The prop_food_C mirrors this client holds. `*all` collects their ids; the count is those `had` lacks, and `*poisoned`
+// names the first of them whose poison fields read above 0 (what the host's FoodState carried onto it).
+size_t FoodMirrorsNotIn(const std::unordered_set<EL::ElementId>& had, std::unordered_set<EL::ElementId>* all,
+                        void** poisoned = nullptr) {
+    static std::vector<EL::Registry::ActorIdPair> pairs;
+    EL::Registry::Get().SnapshotActorsByType(EL::ElementType::Prop, pairs);
+    size_t fresh = 0;
+    for (const auto& p : pairs) {
+        if (!p.mirror || !p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !ue_wrap::food::IsFood(p.actor))
+            continue;
+        if (all) all->insert(p.id);
+        if (had.count(p.id)) continue;
+        ++fresh;
+        ue_wrap::food::Poison poison;
+        if (poisoned && !*poisoned && ue_wrap::food::ReadPoison(p.actor, poison) && poison.delay > 0.f &&
+            poison.strength > 0.f)
+            *poisoned = p.actor;
+    }
+    return fresh;
+}
+
+int FoodPoisonLive(const std::vector<ue_wrap::effects::Entry>& list) {
+    int n = 0;
+    for (const auto& e : list)
+        if (e.live && _wcsicmp(e.name.c_str(), L"foodPoison") == 0) ++n;
+    return n;
+}
+
+// The food's `bitten(player)`: the bite's own poison branch (prop_food.cpp), which a press on the food reaches.
+bool CallBitten(void* food, void* player) {
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(food), L"bitten");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && ue_wrap::Call(food, f);
+}
 
 void CEnter(CStep s) {
     g_cstep = s;
@@ -134,6 +180,10 @@ void ClientAct(const Row& row, void* player) {
             return;
         }
         PAR::dev::DestroyInsideNextReplay(g_mirror2.Get());
+    }
+    if (row.ends == Ends::Opened) {
+        g_foodsBefore.clear();
+        FoodMirrorsNotIn({}, &g_foodsBefore);
     }
     if (const char* why = RunVerb(row, player, mirror)) {
         ClientFail(row, why);
@@ -261,6 +311,10 @@ void ClientRead(const Row& row, void* player) {
             ClientFail(row, "the hand does not hold the item");
             return;
         }
+    }
+    if (row.ends == Ends::Opened) {
+        CEnter(CStep::AwaitContents);
+        return;
     }
     ClientPass(row, row.asks ? "asked, granted, replayed; the mirror is gone and the item is where the verb puts it"
                              : "ran natively with no request; the prop is gone and the item is where the verb puts it");
@@ -560,6 +614,45 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         }
         ClientRead(row, player);
         return;
+    case CStep::AwaitContents: {
+        // The host rolled the contents on its copy: they reach this client as mirrors, none rolled here. The host set the
+        // MRE's poisonChance to 1, so one content is poisoned, and its poison rides the FoodState that follows its spawn.
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        void* poisoned = nullptr;
+        g_freshContents = FoodMirrorsNotIn(g_foodsBefore, nullptr, &poisoned);
+        if (g_freshContents == 0) {
+            if (CExpired(kContentsBoundMs)) ClientFail(row, "no content the host rolled reached this client");
+            return;
+        }
+        if (!poisoned) {
+            if (CExpired(kContentsBoundMs)) ClientFail(row, "no poisoned content reached this client");
+            return;
+        }
+        // Its bite: the game's own `bitten` adds the foodPoison effect when both fields read above 0, as a press on it does.
+        std::vector<ue_wrap::effects::Entry> list;
+        g_poisonBefore = ue_wrap::effects::List(&list) ? FoodPoisonLive(list) : 0;
+        if (!CallBitten(poisoned, player)) {
+            ClientFail(row, "the poisoned content's bite could not run here");
+            return;
+        }
+        CEnter(CStep::AwaitPoison);
+        return;
+    }
+    case CStep::AwaitPoison: {
+        if (now < g_cNextMs) return;
+        g_cNextMs = now + kPollEveryMs;
+        std::vector<ue_wrap::effects::Entry> list;
+        if (!ue_wrap::effects::List(&list) || FoodPoisonLive(list) <= g_poisonBefore) {
+            if (CExpired(kContentsBoundMs)) ClientFail(row, "the bite of a poisoned content added no foodPoison here");
+            return;
+        }
+        ue_wrap::effects::Remove(L"foodPoison");   // the drill's next rows eat: leave the player as it was
+        const std::string what = "asked, granted, replayed; the mirror is gone, " + std::to_string(g_freshContents) +
+                                 " host-born food mirror(s) arrived and a bite of the poisoned one added foodPoison";
+        ClientPass(row, what.c_str());
+        return;
+    }
     case CStep::Say: {
         // A client's chat passes the host's rate limit only at the drills' spacing; a refused line is lost for good.
         if (now < g_nextSayMs) return;
@@ -609,6 +702,9 @@ void ClientReset() {
     g_handBefore.Reset();
     g_sayLine.clear();
     g_sayFailed = false;
+    g_foodsBefore.clear();
+    g_freshContents = 0;
+    g_poisonBefore = 0;
 }
 
 }  // namespace detail

@@ -101,8 +101,8 @@ Check 'M4 non-stream member renamed' $true (Invoke-Gate)
 
 # A new ReliableKind lands and the README says nothing.
 Reset-Sandbox
-Edit-File 'src/votv-coop/include/coop/net/protocol.h' 'enum class ReliableKind : uint8_t {' `
-    "enum class ReliableKind : uint8_t {`n    // drill-only kind.`n    DrillKind = 254,"
+Edit-File 'src/votv-coop/include/coop/net/protocol.h' 'enum class ReliableKind : uint16_t {' `
+    "enum class ReliableKind : uint16_t {`n    // drill-only kind.`n    DrillKind = 254,"
 Check 'M5 new ReliableKind, README silent' $true (Invoke-Gate)
 
 # The sentence is reworded away -- the fault that opened this debt.

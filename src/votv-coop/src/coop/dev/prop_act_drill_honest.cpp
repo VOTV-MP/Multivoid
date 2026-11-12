@@ -260,13 +260,25 @@ const char* FreezeCopy(void*, void* mirror) {
     return ue_wrap::prop::CallSetPropProps(mirror, false, true, false, false) ? nullptr : "setPropProps could not freeze this client's copy";
 }
 
+// An MRE poisons one content with the chance in its own `poisonChance`, a value its purchase sets and a spawned one has
+// at 0. The host's copy is given 1, so the open poisons a content and the client's judge has a carrier to find.
+const char* PoisonMre(void* actor, uint64_t, bool* done) {
+    const int32_t off = ue_wrap::reflection::FindPropertyOffset(ue_wrap::reflection::ClassOf(actor), L"poisonChance");
+    if (off < 0) return "the MRE declares no poisonChance";
+    const float always = 1.f;
+    std::memcpy(static_cast<uint8_t*>(actor) + off, &always, sizeof(always));
+    *done = true;
+    return nullptr;
+}
+
 constexpr Row kRows[] = {
     {"pocket",       kCrowbar, L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr},
     {"hold crowbar", kCrowbar, L"prop_crowbar_C",     Verb::Hold,   Ends::Hand,      nullptr},
     {"hold food",    kFood,    L"prop_food_C",        Verb::Hold,   Ends::Hand,      nullptr},
     {"hold pills",   kPills,   L"prop_sleeppills_C",  Verb::Hold,   Ends::Hand,      nullptr},
     {"eat last use", kFood,    L"prop_food_C",        Verb::Use,    Ends::Gone,      &SetLastUse},
-    {"mre",          kMre,     L"prop_food_mre_C",    Verb::Use,    Ends::Gone,      nullptr},
+    {"mre",          kMre,     L"prop_food_mre_C",    Verb::Use,    Ends::Opened,    nullptr, Target::Host, true, false,
+     nullptr, nullptr, false, PAH::Tally::kCount, &PoisonMre},
     {"first aid kit", kKit,    L"prop_medkit_pack_C", Verb::Use,    Ends::Gone,      nullptr},
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},

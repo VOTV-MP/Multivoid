@@ -160,7 +160,7 @@ bool HandlePropDriveEvent(net::Session& session,
         net::FoodStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !std::isfinite(p.temperature) ||
-            !std::isfinite(p.ripeness)) {
+            !std::isfinite(p.ripeness) || !std::isfinite(p.poisonDelay) || !std::isfinite(p.poisonStrength)) {
             UE_LOGW("event_feed: FoodState malformed -- dropping");
             break;
         }

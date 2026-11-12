@@ -61,8 +61,10 @@ void PlaySpillSplashAt(void* worldCtx, const ue_wrap::FVector& loc);
 // each time it pours), at a bottle another peer poured (coop/world/spill_sync).
 void PlayBottlePourAt(void* worldCtx, const ue_wrap::FVector& loc);
 
-// An MRE's opening (mreOpen_Cue, vol 1.0 / pitch 1.0, att_small -- prop_food_mre_C's own at its mesh), played by the
-// opener when the host opens the MRE for it (coop/props/prop_act_request). `worldCtx` = any live actor in the world.
+// An MRE's opening, and a first aid kit's unpack (mreOpen_Cue, vol 1.0 / pitch 1.0, att_small -- what prop_food_mre_C
+// plays at its place), heard once on the opener when its copy is removed (coop/props/prop_act_request) and once on the
+// host when it rolled the contents (coop/props/prop_act_host); no other peer hears it. `worldCtx` = any live actor in
+// the world.
 void PlayMreOpenAt(void* worldCtx, const ue_wrap::FVector& loc);
 
 // The game's own save-denied/failed click (button_keypad_deny -- the desk play-screen deny

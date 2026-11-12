@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -30,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 283;
+inline constexpr uint16_t kProtocolVersion = 285;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -124,9 +125,15 @@ enum class MsgType : uint8_t {
     VoiceFrame = 64,
 };
 
+// The value space of ReliableKind that a per-kind table sizes for: every kind is below it (reliablekind_gate holds
+// it), and a received kind at or past it is counted nowhere.
+inline constexpr size_t kReliableKindSpace = 1024;
+
 // Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 17, 21,
-// 22, 24, 26, 29, 71 and 138 stay unassigned; 32 and 128 are reserved.
-enum class ReliableKind : uint8_t {
+// 22, 24, 26, 29, 71 and 138 stay unassigned; 32 and 128 are reserved. Two bytes on the wire
+// (ReliableHeader::kind), so a kind may take any value below kReliableKindSpace. The first kind at or past 256
+// ships with a kProtocolVersion bump: an older build reads only the low byte.
+enum class ReliableKind : uint16_t {
     // Each peer to the other, once after admission: the sender's Player element id, then the nick,
     // the skin, the display flags, the nick colour, the game target, the build claim (the build's
     // SHA-256, 32 bytes, then a flags byte whose bit 0 is "this build verified its own release
@@ -1205,9 +1212,10 @@ enum class ReliableKind : uint8_t {
     // edge; never relayed; not pre-world. Late join: none, a refusal is an act; a joiner gets the kept hold's
     // stream. PropHoldRefusedPayload.
     PropHoldRefused = 210,
-    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move. A client's food is refused its tick
-    // at the gate, so these are its values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's
-    // budget. FoodStatePayload.
+    // HOST->ALL: a world food's temperature, ripeness and use count, sent when they move, and its poison (the two floats a
+    // bite adds as an effect), which every send carries. A client's food is refused its tick at the gate, so these are its
+    // values. Not pre-world. Late join: every food again at the joiner's ready edge, on the poll's budget, poison included.
+    // FoodStatePayload.
     FoodState = 217,
     // CLIENT->HOST: this client's player bit a world food. Its copy ran the bite; the host takes one use off its own
     // count and the next FoodState answers. Not relayed, not pre-world. Late join: none. FoodBitePayload.
@@ -1487,14 +1495,18 @@ struct PosePacket {
 };
 static_assert(sizeof(PosePacket) == 52, "PosePacket must be 52 bytes");
 
-// A reliable message: the standard header (type Reliable) + ReliableHeader + the payload.
+// A reliable message: the standard header (type Reliable) + ReliableHeader + the payload. `kind` took the first of
+// the three pad bytes that followed it when it was one byte; the builder zeroes the header, so a kind below 256 is
+// the same bytes in either layout.
 struct ReliableHeader {
-    uint8_t  kind;     // ReliableKind
-    uint8_t  _pad[3];
+    uint16_t kind;     // ReliableKind
+    uint8_t  _pad[2];
     uint16_t payloadLen;
     uint16_t _pad2;
 };
 static_assert(sizeof(ReliableHeader) == 8, "ReliableHeader must be 8 bytes");
+static_assert(offsetof(ReliableHeader, kind) == 0 && offsetof(ReliableHeader, payloadLen) == 4,
+              "ReliableHeader's kind and length stay where the one-byte kind had them");
 
 // A short string carrier: a prop key, a portable identity, a quantized position. len 0 means not
 // set; bytes beyond len are zero on the wire so equality compares work.
@@ -2071,12 +2083,14 @@ static_assert(sizeof(PropHoldRefusedPayload) <= 256 - 20 - 8,
               "PropHoldRefusedPayload must fit in one reliable datagram");
 // A world food's condition (FoodState): the food by key, and the three fields its tick and its bites move.
 struct FoodStatePayload {
-    WireKey key;          // 32 -- the food's Key
-    float   temperature;  // 4  -- kelvin
-    float   ripeness;     // 4
-    int32_t uses;         // 4
+    WireKey key;             // 32 -- the food's Key
+    float   temperature;     // 4  -- kelvin
+    float   ripeness;        // 4
+    int32_t uses;            // 4
+    float   poisonDelay;     // 4  -- prop_food_C's poison_delay, 0 when the food carries none: the host's value, and
+    float   poisonStrength;  // 4  -- its poison_strength; a client's FoodRelease sends both as 0 and the host ignores them
 };
-static_assert(sizeof(FoodStatePayload) == 44, "FoodStatePayload must be 44 bytes");
+static_assert(sizeof(FoodStatePayload) == 52, "FoodStatePayload must be 52 bytes");
 static_assert(sizeof(FoodStatePayload) <= 256 - 20 - 8, "FoodStatePayload must fit in one reliable datagram");
 
 // A client's bite of a world food (FoodBite).

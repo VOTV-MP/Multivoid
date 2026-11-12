@@ -123,9 +123,9 @@ SendOutcome SendBacklog::SendLocked_(SlotQ& s, int slot, int lane, uint32_t hCon
             s.fatalReason = "send backlog over byte cap (link too slow for the session)";
         }
         s.hConn = hConn;
-        const uint8_t kind = len >= static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))
-                                 ? reinterpret_cast<const ReliableHeader*>(wire + sizeof(PacketHeader))->kind
-                                 : uint8_t{0};
+        const uint16_t kind = len >= static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))
+                                  ? reinterpret_cast<const ReliableHeader*>(wire + sizeof(PacketHeader))->kind
+                                  : uint16_t{0};
         s.joinQ.emplace_back(wire, wire + len);
         s.joinStamps.push_back({std::chrono::steady_clock::now(), kind});
         s.joinBytes += static_cast<size_t>(len);
@@ -337,15 +337,15 @@ void SendBacklog::CloseJoinGate(int slot) {
     const auto now = std::chrono::steady_clock::now();
 
     // The close line: the window, what the gate held, and how long each held message waited.
-    uint32_t perKind[256] = {};
+    uint32_t perKind[kReliableKindSpace] = {};
     std::vector<long long> delays;
     delays.reserve(s.joinStamps.size());
     for (const auto& st : s.joinStamps) {
-        ++perKind[st.kind];
+        if (st.kind < kReliableKindSpace) ++perKind[st.kind];
         delays.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(now - st.at).count());
     }
     std::vector<std::pair<uint32_t, int>> byCount;  // (count, kind id), the top eight by count
-    for (int k = 0; k < 256; ++k)
+    for (int k = 0; k < static_cast<int>(kReliableKindSpace); ++k)
         if (perKind[k] > 0) byCount.emplace_back(perKind[k], k);
     std::sort(byCount.begin(), byCount.end(), [](const auto& a, const auto& b) {
         return a.first != b.first ? a.first > b.first : a.second < b.second;

@@ -20,6 +20,10 @@ bool CallActionOptionIndex(void* prop, void* player, void* hitComponent, const F
 bool CallPlayerUsedOn(void* prop, void* player, void* hitComponent, const FVector& hitLocation, void* lookAtComponent,
                       void* holdObject, ue_wrap::reflection::FName holdPropName);
 
+// prop_food_mre_C's own `spawn()` (no parameters; it rolls the MRE's contents and reads nothing of a player), resolved
+// on the MRE's own class (FindDispatchFunctionCached). False when it does not resolve or the MRE is not live. Game thread.
+bool CallMreSpawn(void* mre);
+
 // prop_food_C's `uses` (int32) and `notEdible` (a bitfield bool); false when either is unreadable. Game thread.
 bool ReadFoodUse(void* prop, int32_t& uses, bool& notEdible);
 // prop_food_soap_C's `soapAmount` (int32). Game thread.

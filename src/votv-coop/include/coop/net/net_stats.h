@@ -29,8 +29,13 @@ void AddSent(uint32_t bytes);
 // One reliable message of `kind` (a ReliableKind value) accepted for at least one peer by Session::SendReliable or
 // SendReliableToSlot: the two single-message choke points, so a batch (a blob's chunks) is not counted here. A dev drill
 // reads it as a before/after pair around a span; nothing in the shipping path reads it.
-void AddReliableSent(uint8_t kind);
-uint32_t ReliableSent(uint8_t kind);
+void AddReliableSent(uint16_t kind);
+uint32_t ReliableSent(uint16_t kind);
+
+// A per-kind table was asked about a kind at or past kReliableKindSpace: the call changes nothing, and the first
+// one of each table in a process says so once, so a kind that outgrew the space shows instead of vanishing.
+enum class KindTable { ApplyPause, ReliableSent };
+void NoteKindPastSpace(KindTable table, unsigned kind);
 
 // One wire packet entering Session::HandleMessage (full datagram length).
 void AddRecv(uint32_t bytes);
