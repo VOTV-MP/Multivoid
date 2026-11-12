@@ -538,6 +538,9 @@ CFG_FLAG(window_proc_red, "window_proc_red", "dev", false, "VOTVCOOP_WINDOW_PROC
     "Developer red arm: never set. 1 makes game_window_proc never subclass the game window, so no key reaches a "
     "native text field and the server browser selftest's INPUT TYPE phase must FAIL with \"the characters did not "
     "arrive\".")
+CFG_FLAG(prop_act_mre_open_off, "prop_act_mre_open_off", "dev", false, "VOTVCOOP_PROP_ACT_MRE_OPEN_OFF",
+    "Developer red arm: never set (HOST). 1 makes the host skip rolling the contents of an MRE a client opens, so the "
+    "act drill's honest phase must FAIL at the mre step with \"0 MRE opens on the host, 1 expected\".")
 // A drill seam, never on by default: the late-join drill sets it on the JOINER so that every seed landing before
 // its spawn is held and replays at the bind, and every drill line that uses it names it. Not with
 // bind_wait_selftest: its first check expects an unmarked eid to be refused.

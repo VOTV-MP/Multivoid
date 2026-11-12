@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_act_host.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
@@ -504,7 +506,9 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     case internal::CommitStep::Destroy:
         break;
     }
-    if (g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsMre(actor))
+    // The act drill's red arm: the open is skipped, so the drill's MRE step must fail.
+    static const bool mreOpenOff = coop::config::ResolveFlag(coop::config_registry::rows::prop_act_mre_open_off);
+    if (!mreOpenOff && g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsMre(actor))
         OpenMre(actor, senderSlot, p.eid);
     // The eid alone names the prop (no key), so the key fallback can never pick a sibling.
     ue_wrap::CachedObjRef before;
