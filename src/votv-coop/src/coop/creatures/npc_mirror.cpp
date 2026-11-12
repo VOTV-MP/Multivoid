@@ -21,6 +21,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/kerfur.h"  // NeutralizeAiTimers
@@ -213,17 +214,25 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                 payload.elementId);
         return;
     }
-    // The actor class. NPC classes load with the level; unloaded, the packet is dropped and this
-    // spawn is gone.
-    void* actorClass = R::FindClass(classW.c_str());
+    // The actor class: loaded from its asset when this client has not loaded it, inside the per-tick load
+    // budget (past it the spawn is parked and runs again next tick). The allowlist is the family: a class the
+    // resolver loads must be an NPC; one that exists nowhere here drops the packet.
+    const ue_wrap::class_resolve::Resolved resolved = ue_wrap::class_resolve::ResolveClass(
+        classW.c_str(), coop::npc_sync::NpcFamily(), ue_wrap::class_resolve::Load::Budgeted);
+    if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
+        if (!ue_wrap::class_resolve::Park("EntitySpawn", [payload] { OnEntitySpawn(payload); }))
+            UE_LOGW("npc-sync[client OnSpawn]: class '%ls' waits on a load and the park queue is full -- dropping "
+                    "(eid=%u)", classW.c_str(), payload.elementId);
+        return;
+    }
+    void* actorClass = resolved.cls;
     if (!actorClass) {
-        UE_LOGW("npc-sync[client OnSpawn]: class '%ls' not found in GUObjectArray -- dropping "
-                "(BP class not loaded? eid=%u)",
+        UE_LOGW("npc-sync[client OnSpawn]: class '%ls' is not resolvable on this peer -- dropping (eid=%u)",
                 classW.c_str(), payload.elementId);
         return;
     }
     // The allowlist gate: a peer could send any className, so only subclasses of the NPC bases
-    // materialise.
+    // materialise. A class already loaded here is judged by it as well.
     if (!coop::npc_sync::IsAllowlistedClass(actorClass)) {
         UE_LOGW("npc-sync[client OnSpawn]: class '%ls' is NOT on NPC allowlist -- "
                 "rejecting (eid=%u; peer is broadcasting non-NPC EntitySpawn?)",

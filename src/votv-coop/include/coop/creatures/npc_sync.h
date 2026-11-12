@@ -12,6 +12,7 @@
 #pragma once
 
 #include "coop/element/element.h"  // ElementId (GetNpcIdForActor)
+#include "ue_wrap/core/class_resolve.h"  // Family (NpcFamily)
 
 #include <string>  // RegisterHostNpcSilent className
 
@@ -98,6 +99,10 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid);
 // The trust-boundary check both sides use: true iff `cls` derives from one of the allowlisted
 // NPC bases, by a SuperStruct walk. False while the allowlist is not fully resolved.
 bool IsAllowlistedClass(void* cls);
+
+// The family a resolver caller names for an NPC: a class class_resolve loads on a wire name is accepted only
+// when IsAllowlistedClass holds for it.
+const ue_wrap::class_resolve::Family& NpcFamily();
 
 // Clear the per-session state: the tracked-NPC map, the counter, the bypass slot. The
 // interceptor stays installed; the cached classes and the function pointer remain valid across

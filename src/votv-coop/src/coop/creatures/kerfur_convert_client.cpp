@@ -9,9 +9,11 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
+#include "coop/creatures/npc_sync.h"  // NpcFamily
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -36,7 +38,10 @@ void MaterializeKerfurMirror(bool toNpc, coop::element::ElementId eid, const std
                              float lx, float ly, float lz, float rp, float ry, float rr,
                              void* localPlayer) {
     if (toNpc) {
-        void* actorClass = R::FindClass(classW.c_str());
+        // The host named the class: a client that has not loaded it loads it, at once (a conversion answers in
+        // place), and only as an NPC.
+        void* actorClass = ue_wrap::class_resolve::ResolveClass(classW.c_str(), coop::npc_sync::NpcFamily(),
+                                                                ue_wrap::class_resolve::Load::Immediate).cls;
         if (!actorClass) {
             UE_LOGW("kerfur_convert[client]: cannot resolve class '%ls' for NPC materialize eid=%u",
                     classW.c_str(), eid);

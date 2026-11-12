@@ -12,6 +12,7 @@
 #include "coop/props/prop_echo_suppress.h"   // ScopedMirrorSpawn / InMirrorSpawnScope
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
@@ -331,8 +332,18 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
             return;
         }
     }
-    void* cls = ue_wrap::object_index::ClassByName(kOwnerEntityClasses[p.classId]);
-    if (!cls) return;  // not loaded on this peer yet: the keepalive re-delivers
+    // The class comes from this peer's own id table, not from a wire name: the table is the bound. A class this
+    // peer has not loaded loads inside the per-tick budget; past it the spawn is parked and runs next tick.
+    const auto resolved = ue_wrap::class_resolve::ResolveClass(kOwnerEntityClasses[p.classId],
+                                                              ue_wrap::class_resolve::AnyFamily(),
+                                                              ue_wrap::class_resolve::Load::Budgeted);
+    if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
+        if (!ue_wrap::class_resolve::Park("OwnerEntitySpawn", [p, senderPeerSlot] { OnSpawnMsg(p, senderPeerSlot); }))
+            UE_LOGW("owner_entity: class waits on a load and the park queue is full -- spawn seq=%u dropped", p.seq);
+        return;
+    }
+    void* cls = resolved.cls;
+    if (!cls) return;  // absent here: said once by the resolver, and the sender's keepalive re-delivery is refused alike
     // Resolve-once statics (GT-only path): the GameplayStatics CDO + Finish fn.
     static void* s_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     static void* s_finishFn = [] {

@@ -17,6 +17,7 @@
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced -- the claim and sweep half of the join window
 #include "ue_wrap/engine/engine.h"            // TryGetActorLocation + SetActorSimulatePhysics
 #include "ue_wrap/actors/prop.h"              // GetKeyString (anti-collision gate: candidate's own Aprop_Key)
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -221,7 +222,11 @@ void Arm(const coop::net::PropSpawnPayload& payload) {
     std::wstring cls;
     for (uint8_t i = 0; i < payload.className.len && i < sizeof(payload.className.data); ++i)
         cls.push_back(static_cast<wchar_t>(static_cast<unsigned char>(payload.className.data[i])));
-    void* actorClass = R::FindClass(cls.c_str());  // one resolve at arm time; cached in the entry
+    // One resolve at arm time, cached in the entry: the class of a local twin to match, so a class this peer
+    // has not loaded has no twin; a class the index has not listed yet (a world load) is answered by the load of a
+    // resident class. The arm cannot wait, so the load is not parked.
+    void* actorClass = ue_wrap::class_resolve::ResolveClass(cls.c_str(), ue_wrap::prop::PropFamily(),
+                                                            ue_wrap::class_resolve::Load::Immediate).cls;
     const auto now = std::chrono::steady_clock::now();
     // Idempotent on eid: a re-announce refreshes the pose + re-arms the timeout.
     for (Pending& e : g_pending) {
