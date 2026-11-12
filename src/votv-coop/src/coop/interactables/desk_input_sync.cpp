@@ -2,11 +2,15 @@
 
 #include "coop/interactables/desk_input_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <chrono>
@@ -16,6 +20,7 @@ namespace coop::desk_input_sync {
 namespace {
 
 namespace CD = ue_wrap::console_desk;
+namespace sg = ue_wrap::script_gate;
 using coop::net::DeskInputField;
 
 using Clock = std::chrono::steady_clock;
@@ -53,7 +58,20 @@ bool g_visPending = false;
 bool g_visPendingValue = false;
 bool g_visDeferWarned = false;
 bool g_remapPending = false;  // the join adopt's updRemap repaint, owed until the widget is live
-bool g_capLabelPending = false;  // the cap label's repaint, owed until the widget is live
+// The cap label's repaint, owed until the desk's screen widget is live. The widget is assigned in the desk's own
+// ReceiveBeginPlay (the Blueprint dump enters its ubergraph at 13120, the one write of `widget`), which the post
+// watch below announces, so the owed repaint is run there and nothing polls for it. The widget's own Construct is no
+// substitute: the precondition is the desk's field, not the widget's slate.
+bool g_capLabelPending = false;
+constexpr int kTagDeskBeginPlay = 0x44534B01;  // 'DSK' 1
+UE_FACT_FN(kRowDeskBeginPlay, "desk_input_sync", L"analogDScreenTest_C", L"ReceiveBeginPlay", Declared);
+
+void OnDeskBeginPlayPost(const sg::Call&) {
+    if (g_capLabelPending && CD::RepaintCapLevel()) {
+        g_capLabelPending = false;
+        UE_LOGI("desk_input: deferred cap label repaint done (the desk's screen widget assigned)");
+    }
+}
 
 void SendDelta(coop::net::Session* s, DeskInputField field,
                float fv, int32_t iv, bool bv) {
@@ -220,6 +238,9 @@ void PollOnce(coop::net::Session* s) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (!sg::WatchName(kRowDeskBeginPlay, kTagDeskBeginPlay, nullptr, &OnDeskBeginPlayPost))
+        UE_LOGE("desk_input: the desk's BeginPlay watch did not register -- a cap label owed before its screen "
+                "widget exists stays stale");
 }
 
 void Tick() {
@@ -241,10 +262,6 @@ void Tick() {
     if (g_remapPending && CD::RepaintRemap()) {
         g_remapPending = false;
         UE_LOGI("desk_input: deferred remap repaint done (screen widget live)");
-    }
-    if (g_capLabelPending && CD::RepaintCapLevel()) {
-        g_capLabelPending = false;
-        UE_LOGI("desk_input: deferred cap label repaint done (screen widget live)");
     }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never
@@ -322,6 +339,9 @@ bool RepaintRemapOrDefer() {
 }
 
 bool RepaintCapLevelOrDefer() {
+    // The cap-label drill's red: no repaint runs, as before the lane.
+    static const bool s_repaintOff = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_repaint_off);
+    if (s_repaintOff) return false;
     if (CD::RepaintCapLevel()) {
         g_capLabelPending = false;
         return true;

@@ -135,3 +135,6 @@ CFG_ENUM(desk_short_drill, "desk_short_drill", "dev", "off", "off|client|host|jo
     "VERDICT desk-short-join PASS|FAIL|INVALID' and 'desk-short: JOIN DONE on host'. Red arms: desk_short_off on the "
     "acting peer (client, host), desk_short_replay_off on the host (join). It MUTATES the world (the base goes on "
     "solar power). Run it on a fresh host world.")
+CFG_FLAG(cap_label_repaint_off, "cap_label_repaint_off", "dev", false, "VOTVCOOP_CAP_LABEL_REPAINT_OFF",
+    "Developer (BOTH peers; the cap-label drill's red): no refiner cap label repaint runs, whether from the wire, a "
+    "join adopt or a module plug or unplug, as before the lane, so the drill must FAIL.")

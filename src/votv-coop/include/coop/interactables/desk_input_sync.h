@@ -50,7 +50,8 @@ bool RepaintRemapOrDefer();
 
 // The same for the refiner's cap label (console_desk::RepaintCapLevel), owed whenever the cap level or the Auto
 // Processing module changed by anything but this peer's own cap press: a wire apply, a join adopt, or any
-// module plug or unplug, this peer's own included, since the game repaints the label from neither.
+// module plug or unplug, this peer's own included, since the game repaints the label from neither. A desk whose
+// screen widget is not assigned yet keeps the repaint owed, and the desk's own BeginPlay (watched) runs it.
 bool RepaintCapLevelOrDefer();
 
 // HOST: a peer left -- if it was the live ping setter, clear the attribution (the

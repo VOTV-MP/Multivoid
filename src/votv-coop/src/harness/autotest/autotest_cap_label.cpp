@@ -6,19 +6,20 @@
 // the client joins, the host plugs the module and presses the cap to its third level, so the join carries both.
 // Then each peer in turn plugs or pulls the module or presses the cap, through the desk's own plugInModule and
 // press, and after each step both peers must show the same label, the one the actor's level and module say. Each
-// step logs `cap-label: STATE <step> level= module= tag= text=` on both peers and the drill ends with
-// `cap-label: DONE fails=N`. Gated by VOTVCOOP_RUN_CAP_LABEL; the folder is VOTVCOOP_CAN_DIR. The host prepares only
+// step logs `cap-label: STATE <step> level= module= tag= text=` on both peers and `cap-label: DONE fails=N` when its steps end;
+// the host then says `rig: VERDICT cap-label PASS|FAIL` over both peers' fails (a client with fails says FAIL itself). The red:
+// dev.cap_label_repaint_off on both peers drops every repaint, so the drill must FAIL. Gated by VOTVCOOP_RUN_CAP_LABEL;
+// the folder is VOTVCOOP_CAN_DIR. The host prepares only
 // once the driver writes `host_loaded` there, after the host's log shows the desk's save restored: the save's setData
 // writes the cap and the modules back after the session starts, and it repaints no label. The driver launches the
-// client once the host logs `STATE 0-before-join`, and the host sends its label when the client's drill has begun
-// (a signal counts only when written after the reader's drill began).
+// client once the host logs `STATE 0-before-join`, and the host sends its label when the client's drill has begun.
 
 #include "harness/autotest.h"
+#include "disc_drills.h"   // co-located private header (src tree, not include/)
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
-#include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -33,6 +34,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace harness::autotest {
@@ -222,7 +224,7 @@ constexpr Step kSteps[] = {
 
 // The actor acts and waits for its own desk to show the change; the other peer waits for its label to equal the
 // actor's. Both log the step's STATE line.
-void RunSteps(bool host) {
+bool RunSteps(bool host) {
     for (const Step& st : kSteps) {
         const std::string seen = std::string(st.name) + "_seen";
         if (st.hostActs == host) {
@@ -243,10 +245,10 @@ void RunSteps(bool host) {
             Check(now.ok && now.text == ExpectedText(now),
                   (std::string(st.name) + ": the actor's label is its level's and module's").c_str());
             Mark(st.name, Format(now));
-            if (!Await(seen.c_str())) return;
+            if (!Await(seen.c_str())) return false;
         } else {
             std::string theirs;
-            if (!AwaitText(st.name, theirs)) return;
+            if (!AwaitText(st.name, theirs)) return false;
             const bool same = WaitFor("this peer's label to equal the actor's", 15, [&] {
                 const Label l = Read();
                 return l.ok && Format(l) == theirs;
@@ -256,6 +258,7 @@ void RunSteps(bool host) {
             Mark(seen.c_str());
         }
     }
+    return true;
 }
 
 void RunHost() {
@@ -275,26 +278,21 @@ void RunHost() {
     if (!Await("client_begun")) return;
     Mark("host_prepared", Format(prepared));
     if (!Await("client_joined")) return;
-    RunSteps(true);
+    if (!RunSteps(true)) return;
     UE_LOGI("cap-label: DONE fails=%d", g_fails);
+    // The host judges: its own fails and the client's, which the client leaves when its steps end.
+    std::string clientFails;
+    if (!AwaitText("client_fails", clientFails)) return;
+    const int total = g_fails + std::atoi(clientFails.c_str());
+    coop::rig_verdict::Say("cap-label", total == 0 ? coop::rig_verdict::Outcome::Pass : coop::rig_verdict::Outcome::Fail,
+                           "the cap label read the level and module's own on both peers after every step: host fails=%d, "
+                           "client fails=%s",
+                           g_fails, clientFails.c_str());
 }
 
 void RunClient() {
     Mark("client_begun");
-    bool ready = false;
-    for (int i = 0; i < 480 && !ready; ++i) {
-        OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-        if (!ready) ::Sleep(500);
-    }
-    if (!WaitFor("the host's puppet", 60, [&] {
-            bool have = false;
-            OnGameThread([&] {
-                coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(0);
-                have = p && p->valid();
-            });
-            return have;
-        }))
-        return;
+    if (!disc_drill::HostPuppetUp()) return;
     std::string hostLabel;
     if (!AwaitText("host_prepared", hostLabel)) return;
     const bool same = WaitFor("the joined label to equal the host's", 30, [&] {
@@ -304,8 +302,12 @@ void RunClient() {
     LogState("1-after-join");
     Check(same, ("1: the joined label is the host's ('" + hostLabel + "')").c_str());
     Mark("client_joined");
-    RunSteps(false);
+    if (!RunSteps(false)) return;
     UE_LOGI("cap-label: DONE fails=%d", g_fails);
+    Mark("client_fails", std::to_string(g_fails));
+    if (g_fails > 0)
+        coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Fail, "this peer's label differed: fails=%d",
+                               g_fails);
 }
 
 }  // namespace
