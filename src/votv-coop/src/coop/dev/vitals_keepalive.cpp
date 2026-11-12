@@ -3,13 +3,16 @@
 #include "coop/dev/vitals_keepalive.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/dev_gate.h"
 #include "coop/dev/restore_vitals.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/vitals.h"
 
 #include <windows.h>
 
+#include <cstdint>
 #include <cstdlib>
 
 namespace coop::dev::vitals_keepalive {
@@ -34,11 +37,31 @@ long long PeriodMs() {
 
 long long g_lastFireMs = 0;
 
-}  // namespace
+bool FillNeedsOn() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::fill_needs);
+    return s;
+}
 
-void Tick() {
-    const long long period = PeriodMs();
-    if (period == 0) return;
+constexpr uint64_t kFillMs = 20000;       // the refill period
+constexpr uint64_t kFillRetryMs = 2000;   // until the local player's world is up
+constexpr float kFull = 100.f;
+
+// Each peer's OWN food and sleep to 100, local and off the wire. A clock and not an event: the game's ticker drains the
+// two floats in place and nothing announces the drain, so the refill is periodic.
+void FillOwnNeeds() {
+    static uint64_t nextMs = 0;
+    const uint64_t now = ::GetTickCount64();
+    if (now < nextMs) return;
+    float food = -1.f, sleep = -1.f;
+    const bool ok = coop::players::Registry::Get().Local() != nullptr && V::Read(V::Field::Food, &food) &&
+                    V::Read(V::Field::Sleep, &sleep) && V::Write(V::Field::Food, kFull) &&
+                    V::Write(V::Field::Sleep, kFull);
+    nextMs = now + (ok ? kFillMs : kFillRetryMs);
+    if (ok) UE_LOGI("[VITALS-KEEPALIVE] fill_needs: food %.1f and sleep %.1f refilled to 100", food, sleep);
+}
+
+// The host's broadcast refill, every `period`.
+void RestoreAll(long long period) {
     const long long now = static_cast<long long>(::GetTickCount64());
     if (g_lastFireMs != 0 && now - g_lastFireMs < period) return;
     g_lastFireMs = now;
@@ -61,6 +84,14 @@ void Tick() {
     // The proven dev path: local apply (GT-posted) + RestoreVitals reliable
     // broadcast so every connected peer refills too.
     restore_vitals::Restore();
+}
+
+}  // namespace
+
+void Tick() {
+    if (FillNeedsOn()) FillOwnNeeds();
+    const long long period = PeriodMs();
+    if (period != 0) RestoreAll(period);
 }
 
 }  // namespace coop::dev::vitals_keepalive

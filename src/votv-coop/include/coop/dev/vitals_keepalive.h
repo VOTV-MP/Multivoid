@@ -18,8 +18,9 @@
 
 namespace coop::dev::vitals_keepalive {
 
-// Called from subsystems.cpp TickGameplay (game thread). Single static-latched
-// bool read when the ini flag is off.
+// Called from dev_lanes TickDrills (game thread). A static-latched read each
+// when both knobs are off. `fill_needs=1` (env VOTVCOOP_FILL_NEEDS) also has EACH
+// peer write its own food and sleep to 100 every 20 s, local and off the wire.
 void Tick();
 
 }  // namespace coop::dev::vitals_keepalive
