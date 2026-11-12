@@ -731,6 +731,11 @@ CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_C
     "native class judged against the identity it had when last seen (the same object, the same address "
     "holding a new one, a new address, or gone), with the functions its watched rows name judged the "
     "same way. Read-only but for the slot serials it assigns.")
+CFG_FLAG(classload_probe, "classload_probe", "dev", false, "VOTVCOOP_CLASSLOAD_PROBE",
+    "Probe (a CLIENT): once its world is settled, for five classes asserted not loaded, asks the engine's "
+    "asset registry for each asset's object path, loads it through the game's runtime loader and logs the "
+    "milliseconds (cold, then warm) and whether the object index finds the class at once. Ends on "
+    "rig: VERDICT classload INVALID -- measured.")
 // The prop key index's probes: their own file, one concept, included as _dev_probes.inc is above.
 #include "coop/config/config_registry_rows_dev_key_index.inc"
 // The permissions and action-log selftests' red arms: their own file, one concept, included as
