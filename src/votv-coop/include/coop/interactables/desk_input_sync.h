@@ -41,8 +41,8 @@ void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot);
 void PrimeBaselines();
 
 // Draw the signal view in `spectrogram` mode on the local desk. A desk whose screen widget is not live
-// yet (a join adopt can land first) cannot draw it: the mode is kept and applied by Tick when the widget
-// comes up. True when drawn now. Game thread.
+// yet (a join adopt can land first) cannot draw it: the mode is kept and applied by the desk's BeginPlay watch
+// when the widget comes up. True when drawn now. Game thread.
 bool ApplyVisualizerModeOrDefer(bool spectrogram);
 
 // The same for the remap bounds' repaint (updRemap), which the join adopt owes after it wrote them.

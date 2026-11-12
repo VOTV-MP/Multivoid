@@ -51,22 +51,36 @@ uint8_t g_primedRunSlot = 0xFF;
 
 bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
 
-// A signal-view mode a wire apply could not draw because the desk's screen widget was not live; Tick
-// applies it once the widget is, and only then moves the baseline (the desk's flag still holds the old
-// mode until then, so the poll sees no local edge).
+// What a wire apply could not do because the desk's screen widget was not assigned: a signal-view mode to draw, the
+// join adopt's updRemap repaint, the cap label's repaint. The widget is assigned in the desk's own ReceiveBeginPlay
+// (the Blueprint dump enters its ubergraph at 13120, the one write of `widget`), which the post watch below
+// announces, so each owed apply runs there and nothing polls for it. The widget's own Construct is no substitute:
+// the precondition is the desk's field, not the widget's slate. A mode applies there and only then moves the
+// baseline (the desk's flag still holds the old mode until then, so the poll sees no local edge).
 bool g_visPending = false;
 bool g_visPendingValue = false;
 bool g_visDeferWarned = false;
-bool g_remapPending = false;  // the join adopt's updRemap repaint, owed until the widget is live
-// The cap label's repaint, owed until the desk's screen widget is live. The widget is assigned in the desk's own
-// ReceiveBeginPlay (the Blueprint dump enters its ubergraph at 13120, the one write of `widget`), which the post
-// watch below announces, so the owed repaint is run there and nothing polls for it. The widget's own Construct is no
-// substitute: the precondition is the desk's field, not the widget's slate.
+bool g_remapPending = false;
 bool g_capLabelPending = false;
 constexpr int kTagDeskBeginPlay = 0x44534B01;  // 'DSK' 1
 UE_FACT_FN(kRowDeskBeginPlay, "desk_input_sync", L"analogDScreenTest_C", L"ReceiveBeginPlay", Declared);
 
 void OnDeskBeginPlayPost(const sg::Call&) {
+    if (!g_visPending && !g_remapPending && !g_capLabelPending) return;
+    if (!CD::EnsureResolved()) return;
+    if (g_visPending) {
+        coop::desk_snd_fx::ScopedWireApply guard;  // the mode draw is wire-caused
+        if (CD::ApplyVisualizerMode(g_visPendingValue)) {
+            g_visPending = false;
+            if (g_primed) g_baseline.visualizerMode = g_visPendingValue;
+            UE_LOGI("desk_input: deferred signal-view mode %d applied (the desk's screen widget assigned)",
+                    g_visPendingValue ? 1 : 0);
+        }
+    }
+    if (g_remapPending && CD::RepaintRemap()) {
+        g_remapPending = false;
+        UE_LOGI("desk_input: deferred remap repaint done (the desk's screen widget assigned)");
+    }
     if (g_capLabelPending && CD::RepaintCapLevel()) {
         g_capLabelPending = false;
         UE_LOGI("desk_input: deferred cap label repaint done (the desk's screen widget assigned)");
@@ -250,19 +264,6 @@ void Tick() {
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPoll;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
-    if (g_visPending) {
-        coop::desk_snd_fx::ScopedWireApply guard;  // the mode draw is wire-caused
-        if (CD::ApplyVisualizerMode(g_visPendingValue)) {
-            g_visPending = false;
-            if (g_primed) g_baseline.visualizerMode = g_visPendingValue;
-            UE_LOGI("desk_input: deferred signal-view mode %d applied (screen widget live)",
-                    g_visPendingValue ? 1 : 0);
-        }
-    }
-    if (g_remapPending && CD::RepaintRemap()) {
-        g_remapPending = false;
-        UE_LOGI("desk_input: deferred remap repaint done (screen widget live)");
-    }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never
         // bursts stale diffs.
@@ -324,7 +325,7 @@ bool ApplyVisualizerModeOrDefer(bool spectrogram) {
     if (!g_visDeferWarned) {
         g_visDeferWarned = true;
         UE_LOGW("desk_input: signal-view mode %d deferred -- desk screen widget not live yet "
-                "(applied by the poll tick when it is; log-once)", spectrogram ? 1 : 0);
+                "(applied when the desk's BeginPlay assigns it; log-once)", spectrogram ? 1 : 0);
     }
     return false;
 }
