@@ -142,6 +142,16 @@ key shows the player list: a hold-to-peek on a client, a toggle on the host with
 action menu (`ui/scoreboard`). The mod's own surfaces play the game's own menu sounds through the
 game's audio engine so they honour its volume settings (`ui/menu_sfx`).
 
+The video camera's hint: the game shows a viewfinder overlay while a video camera is in hand or
+recording, and says nothing of how it goes. A dropped camera keeps recording, and a recording
+counts as a running event, so the pause menu's Save stays off until it stops; only the camera's
+use with Alt held stops it (a click or a plain use pauses it), or its 720 s limit, or a flat
+battery. While the overlay shows, a line low on the screen says so: with a camera in hand, drop it
+or put it away; while recording, look at the camera and press Alt+E. The overlay's state is read
+from the game's one camera manager four times a second (`ue_wrap/devices/video_camera`,
+`coop/player/vidcam_hint`). `[V]` by hand on a client: in hand, recording, dropped, and gone once
+stopped.
+
 ### The game's notifications
 
 The game's corner toasts, console lines and alarms are never networked: each machine's own game
@@ -243,5 +253,5 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 | joining and failing | `ui/loading_screen`, `ui/join_curtain`, `ui/end_reason_dialog`, `ui/boot_warning_dialog`, `ui/console` |
 | the overlay host | `ui/imgui_overlay`, `ui/overlay_seams`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_backend_vk`, `ui/overlay_backend_vk_frame`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |
 | the F1 panels | `ui/dev_menu`, `ui/skins_panel`, `ui/voice_panel`, `ui/world_rules_panel`, `ui/net_stats_panel`, `ui/admin_panel`, `ui/server_settings_pane`, `ui/bug_report_pane`, `ui/config_review_panel` |
-| the HUD | `ui/hud`, `ui/chat_input`, `ui/chat_view`, `ui/scoreboard`, `ui/voice_icons`, `ui/menu_sfx`, `ui/link_format` |
+| the HUD | `ui/hud`, `ui/chat_input`, `ui/chat_view`, `ui/scoreboard`, `ui/voice_icons`, `ui/menu_sfx`, `ui/link_format`, `coop/player/vidcam_hint`, `ue_wrap/devices/video_camera` |
 | tests | the browser screenshot run and the four-peer scoreboard capture, both scripted on the rig |

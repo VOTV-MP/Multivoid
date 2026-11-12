@@ -194,6 +194,8 @@ set(VOTVCOOP_SOURCES
     src/coop/player/shelter_spot.cpp
     src/coop/player/revive_protection.cpp
     src/coop/player/run_end_travel.cpp
+    src/coop/player/leave_in_event.cpp
+    src/coop/player/vidcam_hint.cpp
     src/coop/player/skin_preview.cpp
     src/coop/player/flashlight_click_sound.cpp
     src/coop/props/prop_sound.cpp
