@@ -1,15 +1,16 @@
 // coop/player/nightmare_roll.h -- a client's nightmare roll, at the host's pace, and the hiding of a dreamer's copy.
 // Game thread throughout.
 
-// The game rolls for a nightmare from its sleep: a latent Delay of 500 s, then RandomBoolWithWeight(bedSleepProb()),
-// looping while it sleeps; a win runs wakeup() and createDream(). The Delay counts world time, which the host's sleep
-// runs at sleep_rest::kNativeSleepDilation, so a host rolls every 500 / 20 real seconds. A client's rest keeps its world
-// at 1 (coop/player/sleep_rest), so the game's own roll would come once in 500 real seconds, past the end of any rest.
+// The game rolls once per sleep: a latent Delay of 500 s after fellAsleep, then RandomBoolWithWeight(bedSleepProb()); a
+// win runs wakeup() and createDream(nullptr). The Delay counts world time, which a host's sleep runs at
+// sleep_rest::kNativeSleepDilation, so a host rolls 500 / 20 real seconds into the rest. A client's rest keeps its world
+// at 1 (coop/player/sleep_rest), so the same Delay would fire after 500 real seconds.
 
-// A client's own roll is therefore held off (sleep_sync writes its dreamProbability 0, which bedSleepProb answers
-// before the bed) and this module makes it in the game's place: every 25 real seconds of a rest, with the chance the
-// game's own bedSleepProb answers (ue_wrap/actors/sleep ReadNightmareChance, none with nightmares off in the settings),
-// and a win runs the game's own wakeup() and createDream(). The nightmare is this player's alone: the dream is spawned
+// WHEN is the one piece of the roll that is ours: this module rolls once, 500 / kNativeSleepDilation real seconds into
+// a client's rest. The chance is the game's (ue_wrap/actors/sleep ReadNightmareChance: the bed's dreamProb, 0.15 with no
+// bed, none with nightmares off in the settings) and a win runs the game's own wakeup() and createDream(). The game's
+// native roll stays held off on a client (sleep_sync writes its dreamProbability 0), since it would roll a second time
+// 500 real seconds into a long rest. The nightmare is this player's alone: the dream is spawned
 // on this machine, only this player is woken and teleported into it, and every other player keeps sleeping. The dream's
 // own spawns (a mannequin, a boulder) are neither props nor lane actors, so no lane carries them to another peer. The
 // rest state it leaves (dreaming) reaches the others through sleep_sync. A host's roll is the game's own and is not
@@ -35,7 +36,7 @@ void Install(coop::net::Session* session);
 void OnPuppetSpawned(int slot);
 
 // Per pump tick, on a connected client only: count the real seconds of the client's rest (sleep_rest's announced rest:
-// a bool, no engine read) and roll at each 25. The tick stays because nothing announces the passing of those seconds;
+// a bool, no engine read) and roll once at 25. The tick stays because nothing announces the passing of those seconds;
 // the rest and its end do not need a poll here.
 void Tick();
 

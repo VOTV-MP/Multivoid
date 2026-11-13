@@ -11,8 +11,8 @@
 //     through the host's clock and streams).
 // Late join: a joiner gets the host's flag and every non-awake state; a client repeats a non-awake state on each flag it gets.
 //
-// A client holds dreamProbability at 0 for the session; coop/player/nightmare_roll rolls in its place at the host's
-// pace. The host's own roll is never written (the game's native -1).
+// A client holds dreamProbability at 0 for the session, so the game's own roll (a Delay(500) of world time held at 1)
+// never makes a second one; coop/player/nightmare_roll makes the rest's one roll at the host's pace. The host's own roll is never written (the game's native -1).
 
 #pragma once
 

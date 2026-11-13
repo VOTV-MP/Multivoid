@@ -1,7 +1,7 @@
 // harness/autotest/autotest_nightmare.cpp -- TEST-ONLY: a nightmare is one player's (the nightmare_drill row).
 // Phase A: both peers go to bed through the game's own sleep and are held asleep (sleep need 30). The host's world is
 // put back to dilation 1 and its own roll held off [dev writes]; the client's bed is given dreamProb 1, so
-// coop/player/nightmare_roll's first roll, 25 real seconds into the rest, wins. While the client dreams the host judges
+// coop/player/nightmare_roll's one roll, 25 real seconds into the rest, wins. While the client dreams the host judges
 // the client's state dreaming, its copy hidden, itself still asleep; the client then leaves the dream and its copy is
 // shown again. Phase B: the host runs the game's own wakeup and createDream and the client, awake, judges the same.
 // Every step ends on the other peer's signal (peer_signal, VOTVCOOP_CAN_DIR) or on the state it waits for, never a

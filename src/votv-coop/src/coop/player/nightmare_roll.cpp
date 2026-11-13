@@ -25,10 +25,13 @@ namespace {
 namespace SLP = ue_wrap::sleep;
 using Clock = std::chrono::steady_clock;
 
-// mainGamemode.sleep's roll interval (the latent Delay, in world seconds), over the factor the game's sleep runs the
-// world at: the real seconds between a host's rolls.
+// The one piece of the game's roll that is ours: WHEN. The game rolls once per sleep, a latent Delay(500) after
+// fellAsleep (mainGamemode.cpp:506, :486), and its Delay counts world time, which a host's sleep runs at
+// kNativeSleepDilation. A client's world is held at 1 (coop/player/sleep_rest), so the same Delay would fire after 500
+// real seconds. The roll is made once, 500 / kNativeSleepDilation real seconds into the rest, which is when the
+// host's fires; its chance, its wakeup() and createDream(nullptr) are the game's own.
 constexpr float kGameRollDelayS = 500.f;
-constexpr float kRollEveryS = kGameRollDelayS / coop::sleep_rest::kNativeSleepDilation;
+constexpr float kRollAtS = kGameRollDelayS / coop::sleep_rest::kNativeSleepDilation;
 
 // [dev] The red arms of the nightmare drill, latched once.
 bool RollOff() {
@@ -44,10 +47,9 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 // ---- the roll (a connected client) ----------------------------------------------------------------
 bool g_counting = false;     // a rest is being counted
-bool g_spent = false;        // this rest already had its nightmare: the next rest rolls again
+bool g_spent = false;        // this rest has had its roll: the next rest rolls again
 Clock::time_point g_last{};
-float g_restS = 0.f;         // real seconds of this rest since its last roll
-int g_rolls = 0;             // this rest's rolls, for the log
+float g_restS = 0.f;         // real seconds of this rest so far
 
 std::mt19937& Rng() {
     static std::mt19937 rng{std::random_device{}()};
@@ -58,7 +60,6 @@ void ResetRoll() {
     g_counting = false;
     g_spent = false;
     g_restS = 0.f;
-    g_rolls = 0;
 }
 
 // ---- the copies -------------------------------------------------------------------------------------
@@ -113,23 +114,20 @@ void Tick() {
     }
     g_restS += std::chrono::duration<float>(now - g_last).count();
     g_last = now;
-    if (g_restS < kRollEveryS) return;
-    g_restS -= kRollEveryS;
+    if (g_restS < kRollAtS) return;
+    g_spent = true;  // one roll to a rest, as the game's
     float chance = 0.f;
     if (!SLP::ReadNightmareChance(chance)) {
         UE_LOGW("nightmare_roll: the nightmare chance does not read -- no roll this time");
         return;
     }
-    ++g_rolls;
     const bool win = chance > 0.f && std::uniform_real_distribution<float>(0.f, 1.f)(Rng()) < chance;
-    UE_LOGI("nightmare_roll: roll %d of the rest at chance %.2f -- %s", g_rolls, static_cast<double>(chance),
+    UE_LOGI("nightmare_roll: the rest's roll at chance %.2f -- %s", static_cast<double>(chance),
             win ? "a nightmare" : "none");
     if (!win) return;
-    // One nightmare to a rest: the wake it begins ends the rest, and this stays spent until sleep_rest says so.
-    g_spent = true;
     const bool began = SLP::BeginNightmare();
-    UE_LOGI("nightmare_roll: this player's nightmare, roll %d of the rest at chance %.2f -- %s", g_rolls,
-            static_cast<double>(chance), began ? "wakeup and createDream ran" : "the game's calls did not run");
+    UE_LOGI("nightmare_roll: this player's nightmare at chance %.2f -- %s", static_cast<double>(chance),
+            began ? "wakeup and createDream ran" : "the game's calls did not run");
 }
 
 void OnDisconnect() {

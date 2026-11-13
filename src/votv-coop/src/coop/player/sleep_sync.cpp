@@ -260,7 +260,8 @@ void Tick() {
 
     if (!s->connected()) return;
 
-    // A client holds the game's own nightmare roll off for the session; coop/player/nightmare_roll rolls in its place.
+    // A client holds the game's own roll off for the session: its Delay(500) counts world time held at 1, so it would
+    // fire a second roll 500 real seconds into a long rest, after coop/player/nightmare_roll's one roll at 25.
     if (!g_dreamProbSuppressed && SLP::SetDreamProbability(0.f)) g_dreamProbSuppressed = true;
 
     if (g_localState != g_sentState || !SameBed(g_localBed, g_sentBed)) SendClientRest(s);

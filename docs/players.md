@@ -203,12 +203,14 @@ host, which relays it to every other client; the host's own sleeping flag goes t
 one chat line naming the host when it rises. A joiner is sent the host's flag and every peer's
 state that is not awake, and a leaver is told to every client as awake.
 
-A nightmare is one player's. The game rolls for one every 500 s of sleep counted in world time,
-which the host's sleep runs at 20 and a client's rest keeps at 1, so on a client the game's own
-roll would come once in 500 real seconds, past the end of any rest. A client's roll is held at
-zero and the mod rolls in its place every 25 real seconds of a rest (500 over the same factor 20,
-the host's pace), counted from the rest the client's sleep watch announces, with the chance the
-game's own `bedSleepProb` answers (the bed's, none when the save turns nightmares off). A win
+A nightmare is one player's. The game rolls once per sleep, 500 s of world time after the sleeper
+falls asleep, and the host's sleep runs the world at 20, so a host rolls 25 real seconds into a
+rest. A client's rest keeps its world at 1, so the same wait would end after 500 real seconds. The
+timing is the one piece the mod owns: it rolls once, 25 real seconds (500 over the same factor 20)
+into a rest the client's sleep watch announces, and the rest ends on the game's own wake, which a
+second watch announces. The chance is the game's: the bed's own, 0.15 with no bed, none when the
+save turns nightmares off. The game's own roll stays held at zero on a client, so it never rolls a
+second time 500 real seconds into a long rest. A win
 runs the game's own wake and dream, on that player's machine alone: only that player is woken and
 teleported into the dream, and every other player sleeps on. A dream is spawned far outside the
 map, so on every other machine the dreamer's copy is hidden while its rest state says it dreams:
