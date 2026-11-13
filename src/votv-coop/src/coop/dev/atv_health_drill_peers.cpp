@@ -50,7 +50,6 @@ constexpr uint8_t  kObserverSlot = 2;
 // block. 70 blocks (about 3.5 s) cover that whole span, so the carry_back red fails in every phase of the pass and a
 // hand-back broken to fire late still shows inside the window.
 constexpr uint64_t kCarryBlocks = 70;
-constexpr uint64_t kHandBackBlocks = 70;   // idle-stream blocks that decide a hand-back at rest did not happen
 constexpr int      kBurst = 100;        // blocks the stream_pace client sends in one tick
 constexpr uint32_t kBucket = 16;        // the stream bucket's burst: what one tick's blocks may carry through
 // The host's tolerance on the burst's paced count: the bucket refills one token per 25 ms (kStreamBudget, 40/s) while
@@ -89,6 +88,7 @@ struct PHost {
     AU::Counters       base{};            // the lane's counters at the phase's baseline
     Clock::time_point  heldAt{};
     uint64_t           idleAtRelease = 0; // the lane's idle-stream blocks when the release began
+    RestRun            rest;              // the idle-stream blocks at rest since then
 };
 PHost g_ph;
 
@@ -175,14 +175,15 @@ void HostRelease(Arm a, const TableView* t) {
         std::snprintf(nums, sizeof(nums), "release_to_back_ms=%lld", Ms(h.heldAt, Clock::now()));
         return Pass("host", a, h.run, nums);
     }
-    // The hand-back at rest lands within about two seconds of the release, 70 idle-stream blocks being more than the stream
-    // sends in that span (the same count as the idle arm's, HostBack): 70 admitted with the ATV still the client's is a
-    // hand-back that did not happen, the event. Having no stream to count says INVALID at the bound.
+    // The hand-back at rest lands within about two seconds of the release: 70 STILL idle-stream blocks (speed under the lane's
+    // rest bound, the idle arm's count, HostBack) admitted with the ATV still the client's are a hand-back that did not
+    // happen, the event. Blocks that were moving count for nothing. Having no stream to count says INVALID at the bound.
     const uint64_t idle = now.idleStreamBlocks - h.idleAtRelease;
-    const bool decided = idle >= kHandBackBlocks;
+    if (t) CountRest(h.rest, idle, t->lastBlockSpeed);
+    const bool decided = t && h.rest.blocks >= kRestBlocks;
     if (!decided && !Past(h.run, kFailBound)) return;
     const std::string got = "handedBack " + Plus(back) + " syncer " + (t ? std::to_string(t->syncerSlot) : "?") +
-                            " idle_blocks " + Plus(idle);
+                            " idle_blocks " + Plus(idle) + " rest_blocks " + std::to_string(h.rest.blocks);
     if (decided)
         return HostFail(a, "the released ATV was not handed back at rest", got, "handedBack +1 syncer 0");
     HostInvalid(a, "the idle stream never held long enough to decide the hand-back", got, "handedBack +1 syncer 0");

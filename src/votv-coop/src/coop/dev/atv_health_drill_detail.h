@@ -93,6 +93,20 @@ struct SpawnStep {
 // where the host acts (`occupied`, `synced`: atv_health_drill_host.cpp).
 enum class HP : int { Wait, First, Left, Back, Silenced, Yielded, Walk, Act, Judge, Spawn, Park };
 
+// The run of idle-stream blocks at rest since a baseline. Counted not clocked: the stream sends a block every 50 ms
+// (kDriveSendMs), the rest rule needs kRestMs = 1 s of rest and its pass runs once a second, so an at-rest hand-back lands
+// 1.05-2.05 s after the first still block; 70 still ones in a row (3.5 s) cover that whole span, so a hand-back that did not
+// happen is known there. A block is still under kRestCmS, the lane's own speed test (atv_authority.cpp kRestCmS). The idle
+// arm's `back` and the peers arms' release both decide on it, never on blocks that were moving.
+constexpr uint64_t kRestBlocks = 70;
+constexpr float    kRestCmS = 5.f;
+struct RestRun {
+    uint64_t seen = 0, blocks = 0;   // the lane's idle-stream blocks read so far, and the run of them at rest
+    bool     last = false;           // the last block read was at rest
+};
+// `idleSinceBase` is the lane's idle-stream count since the baseline; `lastBlockSpeed` the table's last admitted block's speed.
+void CountRest(RestRun& r, uint64_t idleSinceBase, float lastBlockSpeed);
+
 struct Host {
     Run                                             run;
     SpawnStep                                       sp;       // the ATV every edge of the arm is read on
@@ -103,8 +117,7 @@ struct Host {
     atv_seat::SitTry                                sit;
     std::unique_ptr<coop::director::AimedGrab>      grab;
     bool                                            sawSent = false, sawMuted = false, sawYielded = false;
-    uint64_t                                        idleSeen = 0, restBlocks = 0;   // `back`: the blocks seen, the rest run
-    bool                                            restLast = false;               // the last block read was at rest
+    RestRun                                         rest;   // `back`: the idle-stream blocks at rest
 };
 extern Host g_h;
 
