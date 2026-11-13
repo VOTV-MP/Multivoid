@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 // Each map ends the game itself: the backrooms after 600 s (lib_C::End, which quits), the others by lib_C::End and
@@ -20,7 +21,11 @@
 // unloaded and what its script changed for the whole process is put back: the game instance's slot name and game
 // mode, the event it raised, the reverb, and the two strings the clip writes (a map checks them). A map's own props
 // stay out of the prop lanes, its copy of the world's ATV is removed and its day-night cycle stops ticking. On every
-// peer a player's copy is hidden while it stands far below the world.
+// peer a player's copy is hidden by its pose: every pose a peer sends carries its position, so a pose below
+// kVisitFloorZ is a player in a visited map. Divergence from MTA, which keeps a player's interior and dimension as
+// a reliable state with a snapshot for a joiner (CStaticFunctionDefinitions.cpp:1526,1592; CPlayerListPacket.cpp:201,208):
+// here the visited map is a place in the same world, so the position the pose stream already carries is the state, and
+// it is read on every pose (level-triggered), so a joiner, a respawned copy and a lost packet need nothing of their own.
 
 namespace coop::net { class Session; }
 
@@ -38,12 +43,19 @@ namespace coop::net { class Session; }
 
 namespace coop::level_visit {
 
-// Cache the session and register the watches (lib_C::loadLevel and lib_C::End) and the QuitGame hook. Idempotent;
-// safe every tick. Game thread.
+// A pose below this height is a player in a visited map: its copy is hidden while its pose stays below it.
+inline constexpr float kVisitFloorZ = -30000.f;
+
+// Cache the session, register the watches (lib_C::loadLevel and lib_C::End), the QuitGame hook and the pose listener.
+// Idempotent; safe every tick. Game thread.
 void Install(coop::net::Session* session);
 
-// Per pump tick: the visit's load, arrival and return, and the copies hidden below the world (once a second).
+// Per pump tick: the visit's load, arrival and return, and the visit reason of each copy's hidden flag, from what its
+// last pose recorded.
 void Tick();
+
+// A slot's occupant left: what its poses recorded is forgotten.
+void OnPeerLeft(uint8_t slot);
 
 // The session ended: a visit in progress is undone and the player put back where it clipped.
 void OnDisconnect();

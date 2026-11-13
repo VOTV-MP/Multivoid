@@ -8,7 +8,8 @@
 #include "coop/net/session.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
+#include "coop/player/puppet_events.h"
+#include "coop/player/puppet_hide.h"
 
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
@@ -57,8 +58,6 @@ constexpr int kTagEnd = 0x4C56454E;        // 'LVEN'
 constexpr const wchar_t* kMaps[] = {L"sl_backroomsObsolete", L"untitled_untitled", L"untitled_219"};
 // Where a visited map is put: far below the world, where nothing of the world reaches.
 constexpr ue_wrap::FVector kOrigin{0.f, 0.f, -60000.f};
-// A copy below this height is a player in a visited map: hidden on every other machine.
-constexpr float kAwayZ = -30000.f;
 // A visitor this far from the map's origin, above it, came back by another way (the usual revive).
 constexpr float kBackCm = 40000.f;
 constexpr ULONGLONG kLoadBoundMs = 180000;
@@ -283,7 +282,7 @@ bool HookInMap() {
         OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
             ue_wrap::FVector at{};
             if (R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__") && E::TryGetActorLocation(o, at) &&
-                at.Z < kAwayZ)
+                at.Z < kVisitFloorZ)
                 *static_cast<bool*>(ctx) = true;
         }, &found);
     return found;
@@ -472,7 +471,7 @@ void Finish(bool revive, const wchar_t* why) {
     for (void* a : WorldLevelActors()) {
         ue_wrap::FVector at{};
         void* parent = nullptr;
-        if (a == me || a == held || g_worldActors.count(a) || !E::TryGetActorLocation(a, at) || at.Z >= kAwayZ ||
+        if (a == me || a == held || g_worldActors.count(a) || !E::TryGetActorLocation(a, at) || at.Z >= kVisitFloorZ ||
             coop::players::Registry::Get().IsPuppetBody(a) ||
             (E::GetAttachParentActor(a, parent) && parent && (parent == me || parent == held)))
             continue;
@@ -484,7 +483,7 @@ void Finish(bool revive, const wchar_t* why) {
     }
     ue_wrap::FVector carriedAt{};
     if (!carriedGone && g_carried && g_carried != held && E::TryGetActorLocation(g_carried, carriedAt) &&
-        carriedAt.Z < kAwayZ)
+        carriedAt.Z < kVisitFloorZ)
         dropped = g_carried;
     if (dropped) {
         E::TeleportTo(dropped, {g_home.X, g_home.Y, g_home.Z + 50.f}, ue_wrap::FRotator{});
@@ -578,28 +577,26 @@ ue_wrap::FVector TakePlacedPlayer(void* me) {
     return at;
 }
 
-// Every copy below the world is a player in a visited map: hidden there, shown again once it is back.
-void HideAway() {
-    static ULONGLONG s_next = 0;
-    static void* s_copy[coop::net::kMaxPeers] = {};
-    static bool s_hidden[coop::net::kMaxPeers] = {};
-    const ULONGLONG now = ::GetTickCount64();
-    if (now < s_next) return;
-    s_next = now + 1000;
-    auto& reg = coop::players::Registry::Get();
-    for (int slot = 0; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-        coop::RemotePlayer* p = reg.Puppet(static_cast<uint8_t>(slot));
-        void* actor = p ? p->actor() : nullptr;
-        ue_wrap::FVector at{};
-        const bool away = actor && E::TryGetActorLocation(actor, at) && at.Z < kAwayZ;
-        if (actor == s_copy[slot] && away == s_hidden[slot]) continue;
-        if (actor) E::SetActorHiddenInGame(actor, away);
-        if (away != s_hidden[slot])
-            UE_LOGI("level_visit: slot %d's copy %hs", slot, away ? "hidden -- that player is in another map"
-                                                               : "shown -- that player is back");
-        s_copy[slot] = actor;
-        s_hidden[slot] = away;
-    }
+// What each slot's last applied pose says: its player stands below the visit floor, in a visited map. The pose
+// listener only records (coop/player/puppet_events.h); Tick hands the record to puppet_hide, which owns the flag.
+// Recorded on every pose, so a copy born below, a respawned copy and a lost packet all follow the next pose.
+bool g_below[coop::players::kMaxPeers] = {};
+
+void OnPose(uint8_t slot, const coop::net::PoseSnapshot& pose) {
+    if (slot < coop::players::kMaxPeers) g_below[slot] = pose.z < kVisitFloorZ;
+}
+
+// [dev red] level_visit_hide_off: the record never hides a copy.
+bool HideOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::level_visit_hide_off);
+    return off;
+}
+
+// The visit reason of every copy's hidden flag, from the record. The same answer again changes nothing there.
+void ApplyVisitHide() {
+    const bool off = HideOff();
+    for (int slot = 0; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
+        coop::puppet_hide::Set(static_cast<uint8_t>(slot), coop::puppet_hide::Reason::Visit, g_below[slot] && !off);
 }
 
 
@@ -642,12 +639,19 @@ void Install(coop::net::Session* session) {
             UE_LOGI("level_visit: QuitGame from a visited map is refused");
         }
     }
+    static bool s_listening = false;
+    if (!s_listening && !(s_listening = coop::puppet_events::AddPoseListener(&OnPose)))
+        UE_LOGW("level_visit: the pose listener list is full -- a visitor's copy is not hidden");
+}
+
+void OnPeerLeft(uint8_t slot) {
+    if (slot < coop::players::kMaxPeers) g_below[slot] = false;
 }
 
 void Tick() {
     if (!InSession()) return;
     if (!g_watching || !g_quitHooked) Install(g_session.load(std::memory_order_acquire));
-    HideAway();
+    ApplyVisitHide();
     HoldClipSwitch();
     if (g_phase == Phase::None) {
         GiveBack();
@@ -688,7 +692,7 @@ void Tick() {
     }
     HoldWorldSky();
     ue_wrap::FVector at{};
-    if (me && E::TryGetActorLocation(me, at) && at.Z > kAwayZ) {
+    if (me && E::TryGetActorLocation(me, at) && at.Z > kVisitFloorZ) {
         const float dx = at.X - kOrigin.X, dy = at.Y - kOrigin.Y, dz = at.Z - kOrigin.Z;
         if (std::sqrt(dx * dx + dy * dy + dz * dz) > kBackCm) Finish(false, L"the player came back another way");
     }
@@ -702,6 +706,7 @@ void OnDisconnect() {
     }
     if (g_backroomsWas >= 0) BackroomsEnabled(g_backroomsWas);
     g_backroomsWas = -1;
+    for (bool& b : g_below) b = false;
 }
 
 bool InVisitedMap(void* actor) {
@@ -711,7 +716,7 @@ bool InVisitedMap(void* actor) {
     if (me && level && level != R::OuterOf(me)) return true;
     // What the map's own script spawns is in the persistent level, at the map's place far below the world.
     ue_wrap::FVector at{};
-    return E::TryGetActorLocation(actor, at) && at.Z < kAwayZ;
+    return E::TryGetActorLocation(actor, at) && at.Z < kVisitFloorZ;
 }
 
 bool Visiting() { return g_phase != Phase::None; }
