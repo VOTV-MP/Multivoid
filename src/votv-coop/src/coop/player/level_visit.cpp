@@ -29,6 +29,7 @@
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/active_events.h"
 #include "ue_wrap/world/level_instance.h"
+#include "ue_wrap/world/world_instances.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
@@ -148,11 +149,12 @@ void Teleport(void* player, const ue_wrap::FVector& at) {
 }
 
 // Every actor of the world's own level (the level the local player is in): what the object index lists with that
-// outer.
+// outer, over the actor classes only (the walk skips every other class's instances, most of the object array).
 std::vector<void*> WorldLevelActors() {
     struct Ctx { void* level; std::vector<void*> out; } c{R::OuterOf(Local()), {}};
     if (!c.level) return {};
     OI::ForEachClass([](void* ctx, void* cls, void*) {
+        if (!ue_wrap::world_instances::IsActorClass(cls)) return;
         OI::ForEachInstance(cls, [](void* ctx2, void* o, int32_t) {
             auto* k = static_cast<Ctx*>(ctx2);
             if (R::OuterOf(o) == k->level && R::IsLive(o)) k->out.push_back(o);
@@ -703,6 +705,25 @@ void GiveBack() {
     UE_LOGI("level_visit: the item the visitor dropped in the map is back %hs", inHand ? "in its hand" : "at its feet");
     g_return = nullptr;
 }
+// QuitGame's pre hook, tried again by the tick until it is in: one attempt a second at most while it fails, said once.
+void HookQuitGame() {
+    static ULONGLONG s_nextTryMs = 0;
+    if (::GetTickCount64() < s_nextTryMs) return;
+    s_nextTryMs = ::GetTickCount64() + 1000;
+    const ue_wrap::facts::Resolved quit = ue_wrap::facts::Resolve(kRowQuitGame);
+    if (quit.Fn()) g_quitCtxOff = R::FindParamOffset(quit.Fn(), L"WorldContextObject");
+    if (quit.Fn() && ue_wrap::ufunction_hook::InstallPreHook(quit, &OnQuitGamePre, /*armed=*/true)) {
+        g_quitHooked = true;
+        UE_LOGI("level_visit: QuitGame from a visited map is refused");
+        return;
+    }
+    static bool s_warned = false;
+    if (!s_warned) {
+        s_warned = true;
+        UE_LOGW("level_visit: QuitGame cannot be hooked yet -- a visited map's QuitGame is not refused until it is "
+                "(retried each second, said once)");
+    }
+}
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -720,14 +741,7 @@ void Install(coop::net::Session* session) {
         UE_LOGI("level_visit: watching lib_C::loadLevel, lib_C::End and the clip check -- a clip's trip is the clipping "
                 "player's alone");
     }
-    if (!g_quitHooked) {
-        const ue_wrap::facts::Resolved quit = ue_wrap::facts::Resolve(kRowQuitGame);
-        if (quit.Fn()) g_quitCtxOff = R::FindParamOffset(quit.Fn(), L"WorldContextObject");
-        if (quit.Fn() && ue_wrap::ufunction_hook::InstallPreHook(quit, &OnQuitGamePre, /*armed=*/true)) {
-            g_quitHooked = true;
-            UE_LOGI("level_visit: QuitGame from a visited map is refused");
-        }
-    }
+    if (!g_quitHooked) HookQuitGame();
     static bool s_listening = false;
     if (!s_listening && !(s_listening = coop::puppet_events::AddPoseListener(&OnPose)))
         UE_LOGW("level_visit: the pose listener list is full -- a visitor's copy is not hidden");
@@ -797,6 +811,7 @@ void OnDisconnect() {
         Finish(false, L"the session ended");
         if (me) Teleport(me, g_home);
     }
+    g_return = nullptr;  // an item the visit gave back to the home spot stays there: it is not handed over in a next session
     for (bool& b : g_below) b = false;
 }
 
