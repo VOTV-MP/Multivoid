@@ -19,7 +19,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -56,12 +55,6 @@ bool Publish(coop::net::Session* s, void* actor, const std::wstring& key,
 // the clients at its class default: a disc the host ejected arrived blank (#39's report). The path keeps
 // its own traffic ledger (records, bytes, the top classes), printed every 60 s and at teardown.
 bool PublishHostBirth(coop::net::Session* s, void* actor);
-
-// A body of another shape on this lane's kinds -- PropSaveData from the host, PropSaveDataIntent from a client --
-// under the lane's own blob sequence, so its chunks never assemble into a record's. The first byte names the shape;
-// OnChunk hands a body whose first byte is not the record's to its owner (coop/props/prop_nametag). False when the
-// body is empty, over the ceiling, or not every chunk was taken.
-bool SendRawBody(coop::net::Session* s, int peerSlot, const std::vector<uint8_t>& body);
 
 // The same record to ONE peer (the join seed). Host side.
 bool PublishToSlot(coop::net::Session* s, int peerSlot, void* actor, const std::wstring& key);

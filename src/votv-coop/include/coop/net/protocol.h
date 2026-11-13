@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 290;
+inline constexpr uint16_t kProtocolVersion = 291;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -677,17 +677,25 @@ enum class ReliableKind : uint16_t {
     // behind PropSpawn, so a record can never overtake the birth it belongs to. A record for a prop this peer
     // has not got yet is parked BY KEY and applied when that prop appears -- an identity, unlike an
     // element id, is still the same identity after the actor it named has been destroyed and
-    // remade. A body whose first byte is 2 is a prop's nametag instead (coop/props/prop_nametag):
-    // the key, the slot whose tag it was and the tag, which every client applies.
+    // remade.
     PropSaveData = 130,
 
     // Client to host: the same record for a prop the client just authored -- an eject, a drop, a
     // hand release. The host validates it (size and rate; the content is the holder's claim, which
     // is what a blob the arbiter cannot parse costs) and re-publishes it as PropSaveData. Never
-    // relayed: a client's record reaches other peers only after the host has taken it. A body whose
-    // first byte is 2 is a client's nametag on a prop instead, which the host judges (the prop within
-    // reach, a nametag in the sender's hand) and applies before it tells every peer.
+    // relayed: a client's record reaches other peers only after the host has taken it.
     PropSaveDataIntent = 131,
+
+    // A prop's nametag, named by the prop's key (coop/props/prop_nametag). op 1 (CLIENT->HOST): this client's
+    // player used a nametag item on the prop, which the client refused there; the request carries the tag
+    // the item reads. The host judges it (a prop of that key here within the sender's reach, a nametag in the
+    // sender's hand, the tag well formed, the sender within its budget), applies the tag and publishes it.
+    // op 2 (HOST->ALL): the prop of that key carries this tag now, and `author` names the slot whose item it
+    // was: every client applies it, and the author's held item is spent. op 3 (HOST->the requester): its
+    // request was refused, the item stays, and the client may use it again; a client asks once until op 2
+    // for it or op 3 arrives. Never relayed. Late join: a joiner's save carries the tags that stood at its cut
+    // (coop/props/prop_nametag). PropNametagPayload.
+    PropNametag = 261,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game
@@ -2394,6 +2402,23 @@ struct PropDestroyPayload {
     uint32_t _pad;            // 4 -- alignment
 };
 static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");
+
+// PropNametag. The prop is named by its key, the one name every copy of a prop shares. The tag is UTF-16 code
+// units (a nametag's text is whatever a player typed), at most kPropNametagMaxChars of them.
+inline constexpr uint8_t kPropNametagRequest  = 1;   // CLIENT->HOST: my player's nametag on this prop
+inline constexpr uint8_t kPropNametagPublish  = 2;   // HOST->ALL: this prop carries this tag
+inline constexpr uint8_t kPropNametagRefused  = 3;   // HOST->the requester: its request was refused
+inline constexpr int     kPropNametagMaxChars = 64;
+struct PropNametagPayload {
+    WireKey  key;                        // 32  -- the prop's key
+    uint8_t  op;                         // 1   -- kPropNametag*
+    uint8_t  author;                     // 1   -- op 2: the slot whose item it was (0 the host); zero for ops 1 and 3
+    uint8_t  tagChars;                   // 1   -- code units used in `tag`; 0 for op 3
+    uint8_t  pad;                        // 1   -- zero
+    uint16_t tag[kPropNametagMaxChars];  // 128 -- UTF-16, the units past tagChars zero
+};
+static_assert(sizeof(PropNametagPayload) == 164, "PropNametagPayload must be 164 bytes");
+static_assert(sizeof(PropNametagPayload) <= 256 - 20 - 8, "PropNametagPayload must fit in one reliable datagram");
 
 // A placement intent (PropDropIntent), client to host: the identity the host needs to spawn the
 // authoritative prop by key (class, key, row name), the placement transform and scale, and the

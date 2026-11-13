@@ -10,7 +10,6 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"
-#include "coop/props/prop_nametag.h"           // the lane's second body shape
 #include "coop/props/remote_prop.h"       // IsOwnedHere: a held prop takes no record
 #include "ue_wrap/actors/prop.h"          // GetInteractableKeyString (the host birth path)
 #include "ue_wrap/actors/save_record.h"
@@ -575,11 +574,6 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
         return;
     }
     if (intent && !AllowIntent(senderSlot)) return;
-    // The lane's second body shape: a prop's nametag, which any prop can carry and no record of this lane does.
-    if (!body.empty() && body[0] == coop::prop_nametag::kBodyVersion) {
-        coop::prop_nametag::OnBody(s, body, senderSlot, intent);
-        return;
-    }
 
     std::wstring key;
     SR::SaveRecord rec;
@@ -625,14 +619,6 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
                 birth ? "published when it lands" : "published if it lands");
     }
     if (landed && !birth) SendBody(&s, -1, key, rec);
-}
-
-bool SendRawBody(coop::net::Session* s, int peerSlot, const std::vector<uint8_t>& body) {
-    if (!s || body.empty() || body.size() > coop::disc_record::MaxBodyBytes()) return false;
-    const coop::net::ReliableKind kind = PT::SessionIsHost() ? coop::net::ReliableKind::PropSaveData
-                                                             : coop::net::ReliableKind::PropSaveDataIntent;
-    return (peerSlot < 0) ? coop::blob_chunks::SendBlob(s, kind, g_blobSeq++, body)
-                          : coop::blob_chunks::SendBlobToSlot(s, peerSlot, kind, g_blobSeq++, body);
 }
 
 bool ApplyParked(void* actor, const std::wstring& key) {

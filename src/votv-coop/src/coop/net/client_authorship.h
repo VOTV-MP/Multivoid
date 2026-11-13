@@ -106,6 +106,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::AuthHello:
     case ReliableKind::AuthProof:
     case ReliableKind::PropSaveDataIntent:
+    case ReliableKind::PropNametag:       // op 1 a client's tag; ops 2 and 3 are the host's, its handler checks the slot
     case ReliableKind::FloppySlotState:
     case ReliableKind::HookState:
     case ReliableKind::HookDestroy:

@@ -24,6 +24,7 @@
 #include "coop/world/world_actor_sync.h"  // the world-actor mirror receivers
 #include "coop/creatures/piramid_sync.h"      // the PyramidGather receiver
 #include "coop/creatures/geom_octa_relay.h"   // the Geom Octa's decisions replayed on a client
+#include "coop/props/prop_nametag.h"      // a prop's nametag, the host's
 #include "coop/props/prop_save_data.h"    // the per-prop save record lane
 #include "coop/props/prop_stick_sync.h"
 #include "coop/props/prop_throw.h"        // JudgeRelease: the bounds and the relay of a client's release
@@ -746,6 +747,19 @@ bool HandleEntityEvent(net::Session& session,
                 : static_cast<uint8_t>(0xFF);
         coop::prop_save_data::OnChunk(
             session, sd, sdslot, msg.kind == net::ReliableKind::PropSaveDataIntent);
+        break;
+    }
+    case net::ReliableKind::PropNametag: {
+        // op 1 a client's nametag on a prop, to the host; op 2 the host's tag for every client; op 3 the host's refusal.
+        if (msg.payloadLen < sizeof(net::PropNametagPayload)) {
+            UE_LOGW("event_feed: PropNametag payload too short (%zu < %zu)", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::PropNametagPayload));
+            break;
+        }
+        net::PropNametagPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] { ::coop::prop_nametag::OnMsg(p, slot); });
         break;
     }
     default:

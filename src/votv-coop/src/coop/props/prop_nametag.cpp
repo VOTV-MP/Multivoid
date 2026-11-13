@@ -6,11 +6,12 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"   // IntentTarget: the prop within the sender's reach
 #include "coop/net/net_clock.h"              // NowMs: the hand history's clock
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/wire_key_util.h"
 #include "coop/player/hand_history.h"        // a nametag in the sender's hand
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_key_index.h"
-#include "coop/props/prop_save_data.h"       // SendRawBody: the lane's kinds and its blob sequence
 
 #include "ue_wrap/actors/nametag.h"
 #include "ue_wrap/actors/prop.h"
@@ -37,6 +38,7 @@ namespace NT = ue_wrap::nametag;
 namespace PR = ue_wrap::prop;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
+using coop::net::PropNametagPayload;
 
 // The item's left click, prop_nametag_C::playerHandUse_LMB. The any-class row the coin gun and the trash packer
 // already watch: the callbacks keep the nametag item alone.
@@ -50,8 +52,8 @@ constexpr uint64_t kHandLagMs   = 3000;
 constexpr uint64_t kPerSlotMs   = 1000;
 // CLIENT: a request the host did not answer in this long was refused; the item stays.
 constexpr uint64_t kPendingMs   = 5000;
-constexpr size_t   kMaxKeyChars = 31;
-constexpr size_t   kMaxTagChars = 64;
+constexpr size_t   kMaxKeyChars = sizeof(coop::net::WireKey::data);
+constexpr size_t   kMaxTagChars = coop::net::kPropNametagMaxChars;
 constexpr uint8_t  kAuthorHost  = 0;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -81,35 +83,20 @@ bool TagSane(const std::wstring& t) {
     return true;
 }
 
-std::vector<uint8_t> BuildBody(const std::wstring& key, uint8_t author, const std::wstring& tag) {
-    std::vector<uint8_t> b;
-    b.push_back(kBodyVersion);
-    b.push_back(static_cast<uint8_t>(key.size()));
-    for (wchar_t c : key) b.push_back(static_cast<uint8_t>(c & 0x7F));
-    b.push_back(author);
-    b.push_back(static_cast<uint8_t>(tag.size()));
-    for (wchar_t c : tag) {
-        b.push_back(static_cast<uint8_t>(c & 0xFF));
-        b.push_back(static_cast<uint8_t>((c >> 8) & 0xFF));
-    }
-    return b;
+PropNametagPayload MakePayload(uint8_t op, const std::wstring& key, uint8_t author, const std::wstring& tag) {
+    PropNametagPayload p{};
+    coop::net::WireKeyFromString(key, p.key);
+    p.op       = op;
+    p.author   = author;
+    p.tagChars = static_cast<uint8_t>(tag.size());
+    for (size_t i = 0; i < tag.size(); ++i) p.tag[i] = static_cast<uint16_t>(tag[i]);
+    return p;
 }
 
-// Strict on format: an ill-formed body is dropped whole.
-bool ParseBody(const std::vector<uint8_t>& b, std::wstring& key, uint8_t& author, std::wstring& tag) {
-    size_t o = 0;
-    if (b.size() < 4 || b[o++] != kBodyVersion) return false;
-    const size_t keyLen = b[o++];
-    if (keyLen == 0 || keyLen > kMaxKeyChars || o + keyLen + 2 > b.size()) return false;
-    key.assign(b.begin() + static_cast<long>(o), b.begin() + static_cast<long>(o + keyLen));
-    o += keyLen;
-    author = b[o++];
-    const size_t tagLen = b[o++];
-    if (tagLen > kMaxTagChars || o + tagLen * 2 != b.size()) return false;
-    tag.clear();
-    for (size_t i = 0; i < tagLen; ++i, o += 2)
-        tag.push_back(static_cast<wchar_t>(b[o] | (b[o + 1] << 8)));
-    return true;
+std::wstring TagOf(const PropNametagPayload& p) {
+    std::wstring t;
+    for (size_t i = 0; i < p.tagChars; ++i) t.push_back(static_cast<wchar_t>(p.tag[i]));
+    return t;
 }
 
 std::wstring KeyOf(void* prop) {
@@ -125,8 +112,15 @@ void* PlayerOf(const sg::Call& c) {
     return p ? p : coop::players::Registry::Get().Local();
 }
 
+// HOST: the prop of `key` carries `tag` now; every client is told.
 void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, const std::wstring& tag) {
-    if (!coop::prop_save_data::SendRawBody(&s, -1, BuildBody(key, author, tag)))
+    if (tag.size() > kMaxTagChars) {
+        UE_LOGW("prop_nametag: the tag of prop '%ls' is %zu characters, more than the wire carries (%zu) -- the clients "
+                "keep the one they show", key.c_str(), tag.size(), kMaxTagChars);
+        return;
+    }
+    const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, author, tag);
+    if (!s.SendReliable(coop::net::ReliableKind::PropNametag, &p, sizeof(p)))
         UE_LOGW("prop_nametag: the tag of prop '%ls' did not send -- the clients keep the one they show",
                 key.c_str());
 }
@@ -158,7 +152,8 @@ sg::Verdict OnUsePre(const sg::Call& c) {
     }
     const uint64_t now = coop::net::NowMs();
     if (g_pending.key == key && now - g_pending.sentMs < kPendingMs) return sg::Verdict::Cancel;   // asked already
-    if (!coop::prop_save_data::SendRawBody(s, 0, BuildBody(key, kAuthorHost, tag))) {
+    const PropNametagPayload p = MakePayload(coop::net::kPropNametagRequest, key, 0, tag);
+    if (!s->SendReliableToSlot(0, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) {
         UE_LOGW("prop_nametag: the tag for prop '%ls' was not sent -- the item stays; use it again", key.c_str());
         return sg::Verdict::Cancel;
     }
@@ -186,29 +181,33 @@ void OnUsePost(const sg::Call& c) {
     UE_LOGI("prop_nametag: the host player tagged prop '%ls' '%ls' -- the clients are told", key.c_str(), tag.c_str());
 }
 
-void Refuse(uint8_t slot, const std::wstring& key, const char* why) {
+// HOST: a request the host will not grant is answered to its sender alone, which releases that client's latch.
+void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, const char* why) {
     ++g_refused;
     if (g_refused <= 20 || g_refused % 50 == 0)
         UE_LOGI("prop_nametag: slot %u's tag on prop '%ls' refused (%s)", static_cast<unsigned>(slot), key.c_str(),
                 why);
+    const PropNametagPayload r = MakePayload(coop::net::kPropNametagRefused, key, 0, std::wstring());
+    if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::PropNametag, &r, sizeof(r)))
+        UE_LOGW("prop_nametag: the refusal of slot %u's tag on prop '%ls' did not send", static_cast<unsigned>(slot),
+                key.c_str());
 }
 
 // HOST: a client's request.
 void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
-    if (slot == 0) return;
-    if (!TagSane(tag)) { Refuse(slot, key, "the tag is empty, too long or carries a control character"); return; }
+    if (!TagSane(tag)) { Refuse(s, slot, key, "the tag is empty, too long or carries a control character"); return; }
     void* prop = coop::prop_key_index::Find(key);
-    if (!prop || !PR::IsDescendantOfProp(prop)) { Refuse(slot, key, "no prop of that key here"); return; }
+    if (!prop || !PR::IsDescendantOfProp(prop)) { Refuse(s, slot, key, "no prop of that key here"); return; }
     const uint64_t now = coop::net::NowMs();
     if (!coop::hand_history::HeldWithin(slot, L"prop_nametag_C", kHandLagMs, now)) {
-        Refuse(slot, key, "no nametag in the sender's hand");
+        Refuse(s, slot, key, "no nametag in the sender's hand");
         return;
     }
     auto last = g_lastBySlot.find(slot);
-    if (last != g_lastBySlot.end() && now - last->second < kPerSlotMs) { Refuse(slot, key, "a second tag within 1 s"); return; }
+    if (last != g_lastBySlot.end() && now - last->second < kPerSlotMs) { Refuse(s, slot, key, "a second tag within 1 s"); return; }
     const auto sub = coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU).Authorize(prop);
-    if (!sub) { Refuse(slot, key, coop::element::OutcomeName(sub.outcome)); return; }
-    if (!NT::ApplyPropNametag(prop, tag)) { Refuse(slot, key, "the host's prop did not take the tag"); return; }
+    if (!sub) { Refuse(s, slot, key, coop::element::OutcomeName(sub.outcome)); return; }
+    if (!NT::ApplyPropNametag(prop, tag)) { Refuse(s, slot, key, "the host's prop did not take the tag"); return; }
     g_lastBySlot[slot] = now;
     ++g_applied;
     Publish(s, key, slot, tag);
@@ -217,7 +216,7 @@ void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstrin
 }
 
 // CLIENT: the host's tag. The author's held item goes, as the game's own use takes it.
-void OnTag(const std::wstring& key, const std::wstring& tag, uint8_t author) {
+void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author) {
     void* prop = coop::prop_key_index::Find(key);
     if (!prop || !NT::ApplyPropNametag(prop, tag)) {
         UE_LOGW("prop_nametag: the host's tag '%ls' for prop '%ls' did not apply here (%s)", tag.c_str(), key.c_str(),
@@ -226,6 +225,13 @@ void OnTag(const std::wstring& key, const std::wstring& tag, uint8_t author) {
     if (author != coop::players::Registry::Get().LocalPeerId() || g_pending.key != key) return;
     if (void* item = g_pending.item.Get()) E::DestroyActor(item);
     UE_LOGI("prop_nametag: this client's tag on prop '%ls' applied by the host -- its nametag is spent", key.c_str());
+    g_pending = Pending{};
+}
+
+// CLIENT: the host refused this client's request: the item stays and the client may use it again.
+void OnRefused(const std::wstring& key) {
+    if (g_pending.key != key) return;
+    UE_LOGI("prop_nametag: the host refused this client's tag on prop '%ls' -- the item stays", key.c_str());
     g_pending = Pending{};
 }
 
@@ -260,20 +266,25 @@ void Tick() {
                 kRowHandUse.Name());
 }
 
-void OnBody(coop::net::Session& s, const std::vector<uint8_t>& body, uint8_t senderSlot, bool intent) {
+void OnMsg(const PropNametagPayload& p, int senderPeerSlot) {
     if (!GT::IsGameThread()) return;
-    std::wstring key, tag;
-    uint8_t author = 0;
-    if (!ParseBody(body, key, author, tag)) {
-        UE_LOGW("prop_nametag: ill-formed tag body from slot %u (%zu B) -- dropped whole",
-                static_cast<unsigned>(senderSlot), body.size());
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    if (senderPeerSlot < 0 || senderPeerSlot >= coop::players::kMaxPeers) return;
+    const std::wstring key = coop::net::StringFromWireKey(p.key);
+    if (key.empty()) return;
+    if (p.op == coop::net::kPropNametagRequest) {
+        if (s->role() != coop::net::Role::Host || senderPeerSlot == 0) return;
+        const uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
+        // Every request that names a prop is answered: a grant by the publish, anything else by the refusal.
+        if (p.tagChars > kMaxTagChars) { Refuse(*s, slot, key, "the tag is longer than the wire carries"); return; }
+        OnRequest(*s, key, TagOf(p), slot);
         return;
     }
-    if (intent) {
-        if (s.role() == coop::net::Role::Host) OnRequest(s, key, tag, senderSlot);
-        return;
-    }
-    if (s.role() == coop::net::Role::Client && senderSlot == 0) OnTag(key, tag, author);
+    if (s->role() != coop::net::Role::Client || senderPeerSlot != 0) return;   // the host's word alone
+    if (p.op == coop::net::kPropNametagRefused) { OnRefused(key); return; }
+    if (p.op != coop::net::kPropNametagPublish || p.tagChars > kMaxTagChars) return;
+    OnPublish(key, TagOf(p), p.author);
 }
 
 uint64_t AppliedForClients() { return g_applied; }
