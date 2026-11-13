@@ -41,7 +41,12 @@ its sun, sounds, decals and weekday, follow the host's minute for minute `[RD]`;
 sleep (on [players.md](players.md)) one comes about every 80 ms `[RD]`, and a frame longer than
 that on either peer can merge two and skip a minute's pulse `[RD]` -- one night gave 44 of 45
 `[V]`. The star dome's random orientation, the save-derived moon phase and the sky eye stream from
-the host once a second (`coop/world/sky_sync`) `[V]`.
+the host once a second (`coop/world/sky_sync`) `[V]`. So does the earth teleport's black hole: the event's `tp` hides the
+day sky and shows the black hole 20 s in and turns them back 86 s later, unless a game rule keeps the black hole. A
+client refuses its own `tp`, takes the host's flip through the sky's own `skyVisibility` and the black hole's light,
+and reads the emails from the host's feed; its two 2D sounds are not carried. A joiner gets the flip with the sky
+(`coop/dev/sky_tp_probe`) `[V]`: the client's sky flipped and turned back in the same second as the host's, and a
+client that joined mid-flip got the black hole at its join.
 
 ### Weather
 
@@ -232,7 +237,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome, the moon and the eye |
+| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome, the moon, the eye and the black hole |
 | `WeatherState`, `LightningStrike`, `RedSky`, `BadSun` | the host to all | the state fields; a strike location; the red sky's edge; whether a Bad Sun exists |
 | `FireflySpawn` | each peer, relayed | one spawn |
 | `EventFire`, `EventSnapshot`, `EventCue` | the host to all; the host to one joiner; the host to all | a fired row; an in-flight event; an emitter cue |

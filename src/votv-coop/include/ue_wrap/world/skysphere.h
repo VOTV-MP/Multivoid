@@ -55,4 +55,13 @@ bool ReadSunIntensityMult(float& mult);
 // resolve. Game thread.
 bool CallSetEye(bool eye);
 
+// The earth teleport's black hole: Anewsky_C::skyHidden, which the sky's own skyVisibility sets (the day-night sky, its
+// sun, moon and clouds hidden and the dome painted with the black hole's material). False if not resolved or not
+// streamed in. Game thread.
+bool ReadBlackHole(bool& on);
+
+// The sky's own skyVisibility(on) and its black hole light's visibility, the two the earth teleport (`tp`) sets
+// together. False if not streamed in or the verb did not resolve. Game thread.
+bool ApplyBlackHole(bool on);
+
 }  // namespace ue_wrap::skysphere
