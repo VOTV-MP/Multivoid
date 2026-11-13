@@ -43,11 +43,14 @@ bool ReadName(void* obj, Field& f, std::wstring& out) {
 
 }  // namespace
 
-bool IsNametagItem(void* actor) {
-    if (!actor || !R::IsLive(actor)) return false;
-    for (void* c = R::ClassOf(actor); c; c = R::SuperStructOf(c))
+bool IsNametagClass(void* cls) {
+    for (void* c = cls; c; c = R::SuperStructOf(c))
         if (R::ToString(R::NameOf(c)) == kItemClass) return true;
     return false;
+}
+
+bool IsNametagItem(void* actor) {
+    return actor && R::IsLive(actor) && IsNametagClass(R::ClassOf(actor));
 }
 
 bool ReadItemTag(void* item, std::wstring& out) {

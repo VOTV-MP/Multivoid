@@ -23,12 +23,14 @@
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/world_identity.h"   // Generation: the class table's stamp
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <cstring>
 #include <map>
 #include <string>
+#include <unordered_map>
 
 namespace coop::prop_nametag {
 namespace {
@@ -128,9 +130,25 @@ void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, con
                 key.c_str());
 }
 
+// The watch is on every class's playerHandUse_LMB, so the coin gun or the trash packer calls it too. Whether a class sits
+// under prop_nametag_C is a walk of its chain by names, so it runs once per distinct class (hook_retrieve's per-class
+// verdict). A Blueprint class dies with its world: the table goes with the world's generation.
+std::unordered_map<void*, bool> g_itemClass;
+uint32_t                        g_itemClassGen = 0;
+
+bool IsNametagObject(void* obj) {
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
+    if (!cls) return false;
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_itemClassGen) { g_itemClass.clear(); g_itemClassGen = gen; }
+    auto it = g_itemClass.find(cls);
+    if (it == g_itemClass.end()) it = g_itemClass.emplace(cls, NT::IsNametagClass(cls)).first;
+    return it->second;
+}
+
 sg::Verdict OnUsePre(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->running() || !NT::IsNametagItem(c.object)) return sg::Verdict::Run;
+    if (!s || !s->running() || !IsNametagObject(c.object)) return sg::Verdict::Run;
     void* player = PlayerOf(c);
     if (!player || !coop::players::Registry::Get().IsLocal(player)) return sg::Verdict::Run;
     // The body's own target: the prop the player's interaction trace hits. Anything else, the body leaves alone.
@@ -323,6 +341,7 @@ void OnDisconnect() {
     g_pending = Pending{};
     g_hostItem = g_hostProp = nullptr;
     g_hostTag.clear();
+    g_itemClass.clear();
     g_lastBySlot.clear();
     for (int i = 0; i < g_parked.size(); ++i) g_parked[i] = Parked{};
     g_session.store(nullptr, std::memory_order_release);

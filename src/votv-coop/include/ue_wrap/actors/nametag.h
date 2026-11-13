@@ -16,6 +16,10 @@ namespace ue_wrap::nametag {
 // Whether `actor` is a nametag item (prop_nametag_C or below). By the class chain's names.
 bool IsNametagItem(void* actor);
 
+// Whether `cls` is prop_nametag_C or a class below it. A walk of the class chain by names, so a caller that asks per
+// call keeps the answer per class.
+bool IsNametagClass(void* cls);
+
 // The item's `tag`. False when `item` is not a nametag item or the field does not resolve.
 bool ReadItemTag(void* item, std::wstring& out);
 
