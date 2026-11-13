@@ -50,6 +50,7 @@ namespace RV = coop::rig_verdict;
 
 constexpr const char* kTag = "cargo-lift";
 constexpr int kStepBound = 120;      // the bound on one step of the other peer's
+constexpr int kWalkBound = 600;      // the client's walk to the lift, from a fresh game's start; the bound says INVALID only
 constexpr int kMoveBound = 40;       // a lift's travel is about twelve seconds; a copy that has not stopped by then is INVALID
 constexpr float kReachCm = 250.f;    // the client's walk ends this near the lift's root; the host judges a press within 400
 
@@ -206,8 +207,11 @@ void RunHost() {
         RV::Say(kTag, RV::Outcome::Invalid, "the host has no cargo lift");
         return;
     }
+    // A signal counts only when written after the reader's own Begin, and the client's drill begins when it boots, after
+    // the host's: the lift is named only once the client has said it is here.
+    if (!PS::Await("client_begin")) return;
     PS::Mark("lift", std::string(name.begin(), name.end()));
-    if (!PS::Await("client_ready", kStepBound)) return;
+    if (!PS::Await("client_ready", kWalkBound)) return;
     if (!Steps()) return;
     std::string clientWord;
     if (!PS::AwaitText("client_done", clientWord, kStepBound)) return;
@@ -220,6 +224,7 @@ void RunHost() {
 }
 
 void RunClient() {
+    PS::Mark("client_begin");
     if (!PS::WaitFor("the client's world", 240, [&] {
             bool ready = false;
             OnGameThread([&] {
