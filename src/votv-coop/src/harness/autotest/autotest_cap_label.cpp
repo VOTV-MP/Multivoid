@@ -58,16 +58,20 @@ void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
 }
 
-// A failed check is the verdict: it says FAIL with what failed, and the caller returns without a later step.
-bool Check(bool ok, const char* what) {
+// A failed check is the verdict, and the caller returns without a later step. A pass says what matched; a fail says
+// what was expected and what was read.
+bool Check(bool ok, const std::string& matched, const std::string& expectedVsGot) {
     if (ok) {
-        UE_LOGI("cap-label: PASS %hs", what);
+        UE_LOGI("cap-label: PASS %hs", matched.c_str());
         return true;
     }
-    UE_LOGW("cap-label: FAIL %hs", what);
-    coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Fail, "%s", what);
+    UE_LOGW("cap-label: FAIL %hs", expectedVsGot.c_str());
+    coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Fail, "%s", expectedVsGot.c_str());
     return false;
 }
+
+// A check whose one sentence is the same either way (a verb that ran, a state reached).
+bool Check(bool ok, const std::string& what) { return Check(ok, what, what); }
 
 std::string Narrow(const std::wstring& w) {
     std::string out;
@@ -124,6 +128,21 @@ bool LabelIsOwn(const Label& l) {
     if (!l.ok || l.text != ExpectedText(l)) return false;
     return l.module ? l.tag.find("[" + std::to_string(l.level + 1) + "]") != std::string::npos
                     : l.tag.find("Auto Processing") != std::string::npos;
+}
+
+std::string Describe(const Label& l) {
+    if (!l.ok) return "nothing (the desk or its label did not read)";
+    return "level " + std::to_string(l.level) + ", module " + (l.module ? "1" : "0") + ", tag '" + l.tag + "', text '" +
+           l.text + "'";
+}
+
+// LabelIsOwn as a check: the pass names the text and level that matched, the fail what the label should have been.
+bool CheckOwn(const Label& l, const std::string& step) {
+    const std::string want = l.module ? "text '" + ExpectedText(l) + "' and a tag naming level " +
+                                            std::to_string(l.level + 1)
+                                      : "text 'NaN' and a tag asking for Auto Processing";
+    return Check(LabelIsOwn(l), step + ": the label is its level's and module's (" + Describe(l) + ")",
+                 step + ": expected " + want + ", got " + Describe(l));
 }
 
 void LogState(const char* step) {
@@ -251,7 +270,7 @@ bool RunSteps(bool host) {
             case Act::Unplug: did = UnplugModule(); break;
             case Act::Press:  did = PressCap(); break;
             }
-            if (!Check(did, (std::string(st.name) + ": the desk's own verb ran").c_str())) return false;
+            if (!Check(did, std::string(st.name) + ": the desk's own verb ran")) return false;
             if (!WaitFor("this desk's level or module to change", 15, [&] {
                     const Label l = Read();
                     return l.ok && (l.level != was.level || l.module != was.module);
@@ -259,8 +278,7 @@ bool RunSteps(bool host) {
                 return false;
             const Label now = Read();
             LogState(st.name);
-            if (!Check(LabelIsOwn(now), (std::string(st.name) + ": the actor's label is its level's and module's").c_str()))
-                return false;
+            if (!CheckOwn(now, std::string(st.name) + " (the actor)")) return false;
             Mark(st.name, Format(now));
             if (!Await(seen.c_str())) return false;
         } else {
@@ -274,8 +292,8 @@ bool RunSteps(bool host) {
             const Label l = Read();
             LogState(st.name);
             if (!Check(l.ok && Format(l) == theirs,
-                       (std::string(st.name) + ": this peer's label is the actor's ('" + theirs + "'), not '" +
-                        Format(l) + "'").c_str()))
+                       std::string(st.name) + ": this peer's label is the actor's, '" + theirs + "'",
+                       std::string(st.name) + ": expected the actor's label '" + theirs + "', got '" + Format(l) + "'"))
                 return false;
             Mark(seen.c_str());
         }
@@ -315,7 +333,7 @@ void RunHost() {
                                    "repaints nothing could not be told from one that does");
             return;
         }
-        if (!Check(LabelIsOwn(loaded), "0: the restored desk's label is its saved level's and module's")) return;
+        if (!CheckOwn(loaded, "0 (the restored desk)")) return;
     }
     // Before the join: the module plugged and the cap at its third level.
     if (!Read().module && !Check(PlugModule(), "0: the host's module plugged before the join")) return;
@@ -326,7 +344,9 @@ void RunHost() {
     }
     const Label prepared = Read();
     LogState("0-before-join");
-    if (!Check(prepared.module && prepared.level == 2 && prepared.text == "[3]", "0: the host shows the third level"))
+    if (!Check(prepared.module && prepared.level == 2 && prepared.text == "[3]",
+               "0: the host shows the third level (" + Describe(prepared) + ")",
+               "0: expected the third level with the module and text '[3]', got " + Describe(prepared)))
         return;
     if (!Await("client_begun")) return;
     Mark("host_prepared", Format(prepared));
@@ -350,8 +370,8 @@ void RunClient() {
         return;
     const Label joined = Read();
     LogState("1-after-join");
-    if (!Check(joined.ok && Format(joined) == hostLabel,
-               ("1: the joined label is the host's ('" + hostLabel + "'), not '" + Format(joined) + "'").c_str()))
+    if (!Check(joined.ok && Format(joined) == hostLabel, "1: the joined label is the host's, '" + hostLabel + "'",
+               "1: expected the host's label '" + hostLabel + "', got '" + Format(joined) + "'"))
         return;
     Mark("client_joined");
     if (!RunSteps(false)) return;
