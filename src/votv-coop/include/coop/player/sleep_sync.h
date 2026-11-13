@@ -53,6 +53,13 @@ void OnDisconnectForSlot(int slot);
 // polls; on a client, from the host's relays (slot 0 the host). Awake for a slot out of range.
 coop::net::SleepPeerState PeerState(int slot);
 
+// A slot's rest state changed as this peer knows it: the host's own polled state (slot 0), a client's report the host
+// applied, the host's relay a client took, and a leaver set back to awake. The state itself changed, not only its bed.
+// The subscriber runs inside the receive (or the poll), so it only records or does one engine call. One subscriber: a
+// second would turn this into a list. Game thread.
+using PeerRestFn = void (*)(int slot, coop::net::SleepPeerState state);
+void SubscribePeerRest(PeerRestFn fn);
+
 // Is the host asleep: on the host its own isSleep, on a client the last flag the host sent. For
 // instruments. Game thread.
 bool HostAsleepNow();

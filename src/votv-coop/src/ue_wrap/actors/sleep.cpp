@@ -30,6 +30,7 @@ int32_t g_offDreaming = -1;    // mainGamemode.dreaming
 int32_t g_offNightmaresOn = -1;  // mainGamemode.nightmaresEnabled (the player's setting)
 void* g_wakeupFn = nullptr;    // gamemode.wakeup()
 void* g_createDreamFn = nullptr;  // gamemode.createDream(customDream)
+void* g_bedSleepProbFn = nullptr;  // gamemode.bedSleepProb() -> float, the odds the game's own roll draws from
 void* g_sleepFn = nullptr;     // gamemode.sleep(bed, dropItem, ignoreRagdoll)
 
 void* g_gsCdo = nullptr;            // GameplayStatics CDO
@@ -77,6 +78,7 @@ void ResolvePass() {
     if (g_offNightmaresOn < 0) g_offNightmaresOn = R::FindPropertyOffset(g_gmCls, L"nightmaresEnabled");
     if (!g_wakeupFn) g_wakeupFn = R::FindFunction(g_gmCls, L"wakeup");
     if (!g_createDreamFn) g_createDreamFn = R::FindFunction(g_gmCls, L"createDream");
+    if (!g_bedSleepProbFn) g_bedSleepProbFn = R::FindFunction(g_gmCls, L"bedSleepProb");
 
     if (!g_gsCdo) g_gsCdo = FindStaticsCdo();
     if (g_gsCdo) {
@@ -97,7 +99,7 @@ void ResolvePass() {
                 g_getDilationFn ? "yes" : "NO");
     }
     g_allResolved = core && g_offOrigPawn >= 0 && g_sleepFn && g_getDilationFn && g_offDreaming >= 0 &&
-                    g_offNightmaresOn >= 0 && g_wakeupFn && g_createDreamFn;
+                    g_offNightmaresOn >= 0 && g_wakeupFn && g_createDreamFn && g_bedSleepProbFn;
 }
 
 }  // namespace
@@ -130,17 +132,18 @@ void* OrigPawn() {
 
 bool ReadNightmareChance(float& out) {
     void* gm = world_singleton::Gamemode();
-    if (!gm || g_offNightmaresOn < 0 || g_offBed < 0) return false;
+    if (!gm || g_offNightmaresOn < 0 || g_offDreamProb < 0 || !g_bedSleepProbFn) return false;
     if (*(reinterpret_cast<uint8_t*>(gm) + g_offNightmaresOn) == 0) { out = 0.f; return true; }
-    out = 0.15f;  // bedSleepProb's own figure with no bed
-    void* bed = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offBed);
-    if (!bed || !R::IsLive(bed)) return true;
-    // The bed's own field: a bed subclass is a new class, so the offset is asked of each one met.
-    static void* s_bedCls = nullptr;
-    static int32_t s_offBedProb = -1;
-    void* cls = R::ClassOf(bed);
-    if (cls != s_bedCls) { s_bedCls = cls; s_offBedProb = R::FindPropertyOffset(cls, L"dreamProb"); }
-    if (s_offBedProb >= 0) out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(bed) + s_offBedProb);
+    // The game's own answer, from its own function, with the override lifted for the length of the call (a client
+    // holds it at 0, which bedSleepProb answers before the bed) and put back before anything else runs.
+    float* const probField = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(gm) + g_offDreamProb);
+    const float held = *probField;
+    *probField = -1.f;
+    ue_wrap::ParamFrame f(g_bedSleepProbFn);
+    const bool ok = f.valid() && ue_wrap::Call(gm, f);
+    *probField = held;
+    if (!ok) return false;
+    out = f.Get<float>(L"ReturnValue");
     return true;
 }
 

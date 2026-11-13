@@ -50,6 +50,17 @@ WireKey        g_sentBed{};
 
 bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; }
 
+PeerRestFn g_onPeerRest = nullptr;
+
+// Every write of a slot's state goes through here: the table, and the subscriber when the state itself changed (a
+// bed that changed under the same state is not an edge).
+void SetPeerState(int slot, SleepPeerState state, const WireKey& bed) {
+    const bool edge = g_state[slot] != state;
+    g_state[slot] = state;
+    g_bed[slot] = bed;
+    if (edge && g_onPeerRest) g_onPeerRest(slot, state);
+}
+
 // Two beds are the same name: the length and the bytes inside it, whatever sits past them.
 bool SameBed(const WireKey& a, const WireKey& b) {
     return a.len == b.len && a.len <= sizeof(a.data) && std::memcmp(a.data, b.data, a.len) == 0;
@@ -162,8 +173,7 @@ bool HoldsRest(int slot, SleepPeerState state, const WireKey& bed) {
 // relay skips its source (CGame.cpp:2761, the skip at :2768). MTA relays to joined players only; ours is the same
 // through SendReliableToSlot's pre-world gate (coop/net/session.cpp:99).
 void ApplyRest(coop::net::Session* s, int slot, SleepPeerState state, const WireKey& bed) {
-    g_state[slot] = state;
-    g_bed[slot] = bed;
+    SetPeerState(slot, state, bed);
     ++g_reportsApplied[slot];
     SendPeerRest(s, -1, slot, slot);
     UE_LOGI("sleep_sync: slot %d is now %d (bed '%.*s')", slot, static_cast<int>(state),
@@ -242,8 +252,7 @@ void Tick() {
             if (s->connected()) SendHostAsleep(s, -1);
         }
         if (!HoldsRest(0, g_localState, g_localBed)) {
-            g_state[0] = g_localState;
-            g_bed[0] = g_localBed;
+            SetPeerState(0, g_localState, g_localBed);
             if (s->connected()) SendPeerRest(s, -1, 0);
         }
         return;
@@ -312,8 +321,7 @@ void OnReliable(const uint8_t* payload, size_t len, uint8_t senderSlot) {
         if (p.slot >= coop::net::kMaxPeers) return Refuse("slot", senderSlot);
         const SleepPeerState state = static_cast<SleepPeerState>(p.state);
         if (!HoldsRest(p.slot, state, p.bed)) {
-            g_state[p.slot] = state;
-            g_bed[p.slot] = p.bed;
+            SetPeerState(p.slot, state, p.bed);
             UE_LOGI("sleep_sync: peer %u is now %d (bed '%.*s')", static_cast<unsigned>(p.slot),
                     static_cast<int>(state), static_cast<int>(p.bed.len), p.bed.data);
         }
@@ -340,10 +348,11 @@ void OnDisconnectForSlot(int slot) {
     if (slot <= 0 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
     g_pending[slot].pace.Withdraw();
     if (g_state[slot] == SleepPeerState::Awake) return;  // every client already holds it awake
-    g_state[slot] = SleepPeerState::Awake;
-    std::memset(&g_bed[slot], 0, sizeof(WireKey));
+    SetPeerState(slot, SleepPeerState::Awake, WireKey{});
     SendPeerRest(s, -1, slot);
 }
+
+void SubscribePeerRest(PeerRestFn fn) { g_onPeerRest = fn; }
 
 SleepPeerState PeerState(int slot) {
     return (slot >= 0 && slot < static_cast<int>(coop::net::kMaxPeers)) ? g_state[slot]

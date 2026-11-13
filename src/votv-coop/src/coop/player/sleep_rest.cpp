@@ -29,11 +29,10 @@ namespace FX = ue_wrap::effects;
 namespace EN = ue_wrap::engine;
 namespace sg = ue_wrap::script_gate;
 
-// The factor the game's own sleep sets (mainGamemode.cpp:5428, SetGlobalTimeDilation(20)). The row below is
-// the census's entry for the `sleep` body that holds that literal (include/ue_wrap/facts/
-// fingerprints_0.9.0n.inc), so a game update that changes the body is named at boot; the watch compares
-// the factor it finds in the same call.
-constexpr float kNativeSleepDilation = 20.0f;
+// The factor the game's own sleep sets is kNativeSleepDilation (the header; mainGamemode.cpp:5428,
+// SetGlobalTimeDilation(20)). The row below is the census's entry for the `sleep` body that holds that literal
+// (include/ue_wrap/facts/fingerprints_0.9.0n.inc), so a game update that changes the body is named at boot; the
+// watch compares the factor it finds in the same call.
 constexpr int kTagSleepRest = 0x534C5253;  // 'SLRS'
 UE_FACT_FN(kRowSleep, "sleep_rest", L"mainGamemode_C", L"sleep", Declared);
 
@@ -235,6 +234,8 @@ void Tick() {
     FX::ForEachWorldEffect(&DilateEffect, &factor);
     SettleNeeds();
 }
+
+bool Resting() { return g_resting; }
 
 void OnDisconnect() {
     if (g_resting) EndRest("the session ended");

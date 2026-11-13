@@ -1,5 +1,5 @@
-// harness/autotest/disc_drills.h -- what the two disc drills and the prop-properties drill wait on before they act.
-// Private to the drills (autotest_sv_request.cpp, autotest_module_buy.cpp, autotest_prop_props.cpp).
+// harness/autotest/disc_drills.h -- what the two disc drills, the prop-properties drill and the nightmare drill wait on before they act.
+// Private to the drills (autotest_sv_request.cpp, autotest_module_buy.cpp, autotest_prop_props.cpp, autotest_nightmare.cpp).
 
 #pragma once
 

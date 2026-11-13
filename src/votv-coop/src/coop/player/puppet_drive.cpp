@@ -9,6 +9,7 @@
 #include "coop/dev/perf_probe.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/nightmare_roll.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_events.h"
 #include "coop/player/remote_player.h"
@@ -146,6 +147,8 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                 // on arrival.
                 g_puppets[slot].SetNickname(
                     coop::player_handshake::NicknameForSlot(slot));
+                // A player in a nightmare whose copy is born now is hidden at once.
+                coop::nightmare_roll::OnPuppetSpawned(slot);
                 // Join announcement at the APPEARANCE seam: the puppet just spawned, which
                 // is the moment a player actually sees the peer -- announcing on world-ready
                 // instead runs seconds ahead of the puppet in the measured live flow.

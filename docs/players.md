@@ -206,17 +206,19 @@ state that is not awake, and a leaver is told to every client as awake.
 A nightmare is one player's. The game rolls for one every 500 s of sleep counted in world time,
 which the host's sleep runs at 20 and a client's rest keeps at 1, so on a client the game's own
 roll would come once in 500 real seconds, past the end of any rest. A client's roll is held at
-zero and the mod rolls in its place every 25 real seconds of a rest, the host's pace, with the
-chance the game would use: the bed's own, 0.15 with no bed, none when the save turns nightmares
-off. A win runs the game's own wake and dream, on that player's machine alone: only that player
-is woken and teleported into the dream, and every other player sleeps on. A dream is spawned far
-outside the map, so on every other machine the dreamer's copy is hidden while its rest state
-says it dreams (`coop/player/nightmare_roll`). `[V]` for a client's nightmare beside a sleeping
-host, and a host's beside an awake client (the nightmare drill, two runs), and by hand with three
-peers: a client's nightmares played out beside two sleepers, and two clients in different
-nightmares at once, each machine hiding the right dreamer. Any running event ends a dream, the
-game's own rule, and a client counts the host world's events too. A host's dream spawns props
-that are mirrored to every client where it was spawned, far outside the map.
+zero and the mod rolls in its place every 25 real seconds of a rest (500 over the same factor 20,
+the host's pace), counted from the rest the client's sleep watch announces, with the chance the
+game's own `bedSleepProb` answers (the bed's, none when the save turns nightmares off). A win
+runs the game's own wake and dream, on that player's machine alone: only that player is woken and
+teleported into the dream, and every other player sleeps on. A dream is spawned far outside the
+map, so on every other machine the dreamer's copy is hidden while its rest state says it dreams:
+the hide is taken from the sleep lane's announcement of a state change and from the puppet's
+spawn, so a copy born after the dream began is hidden at once (`coop/player/nightmare_roll`). The
+dream's own spawns are a mannequin (`dream_mann`) and boulders (`dream_boulders`), neither a prop
+nor a lane actor, so no lane carries them to another peer: they stay on the dreamer's machine
+(read from the dream scripts, `[?]`). Any running event ends a dream, the game's own rule, and a
+client counts the host world's events too. `[?]` until the nightmare drill (`nightmare_drill`,
+one run, two reds) has run on the rig.
 
 ### Inventory
 
