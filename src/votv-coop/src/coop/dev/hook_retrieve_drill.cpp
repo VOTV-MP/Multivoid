@@ -379,14 +379,15 @@ bool TakeTick(void* player, bool host) {
         if (!E::CallMainPlayerUseSelectedAction(player)) { Abandon("useSelectedAction did not dispatch"); return true; }
         UE_LOGI("[HOOK-RETRIEVE-DRILL] %s pressed the hook (%d hook item(s) carried)", Role(host), g_items0);
         Next(Step::Seen);
-        JudgePress(host);   // the press's own effect is already here: the game's pickup body is synchronous
+        // The press's own effect is already here: the game's pickup body is synchronous, so a host press that leaves its
+        // hook standing is decided now. The client's grant is the host's answer, which is asynchronous: it waits.
+        if (!JudgePress(host) && host)
+            Fail("the host's press left its hook standing: the game's own pickup did not remove it");
         return true;
     }
-    case Step::Seen:
-        if (JudgePress(host)) return true;
-        if (Expired(kSeenBoundMs))
-            Abandon(host ? "15 s after the press the host's hook still stands"
-                         : "15 s after the press neither the host's grant nor its refusal had come");
+    case Step::Seen:   // CLIENT: the host's grant or refusal, or the bound says INVALID
+        if (JudgePress(false)) return true;
+        if (Expired(kSeenBoundMs)) Abandon("15 s after the press neither the host's grant nor its refusal had come");
         return true;
     default:
         return false;
