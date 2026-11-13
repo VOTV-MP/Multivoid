@@ -692,7 +692,7 @@ enum class ReliableKind : uint16_t {
     // sender's hand, the tag well formed, the sender within its budget), applies the tag and publishes it.
     // op 2 (HOST->ALL): the prop of that key carries this tag now, and `author` names the slot whose item it
     // was: every client applies it, and the author's held item is spent. op 3 (HOST->the requester): its
-    // request was refused, the item stays, and the client may use it again; a client asks once until op 2
+    // request was refused, with a reason, the item stays, and the client may use it again; a client asks once until op 2
     // for it or op 3 arrives. Never relayed. Late join: a joiner's save carries the tags that stood at its cut, and its
     // connect replay sends it, alone, an op 2 for each prop whose tag this session published, inside the snapshot
     // scope ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by
@@ -2406,20 +2406,30 @@ struct PropDestroyPayload {
 static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 bytes");
 
 // PropNametag. The prop is named by its key, the one name every copy of a prop shares. The tag is UTF-16 code
-// units (a nametag's text is whatever a player typed), at most kPropNametagMaxChars of them.
+// units. The game takes a tag from the first line of a notebook page into an FName and bounds no length there (its
+// page limit is 32 lines); the engine's FName holds up to 1023 units (not measured here). One datagram carries 96, the
+// bound of this message: a longer tag is refused with a reason, never cut.
 inline constexpr uint8_t kPropNametagRequest  = 1;   // CLIENT->HOST: my player's nametag on this prop
 inline constexpr uint8_t kPropNametagPublish  = 2;   // HOST->ALL: this prop carries this tag
 inline constexpr uint8_t kPropNametagRefused  = 3;   // HOST->the requester: its request was refused
-inline constexpr int     kPropNametagMaxChars = 64;
+inline constexpr int     kPropNametagMaxChars = 96;
+// Why a request was refused (op 3's `reason`).
+inline constexpr uint8_t kPropNametagBadTag     = 1;   // the tag is empty, over kPropNametagMaxChars, or holds a control unit
+inline constexpr uint8_t kPropNametagNoProp     = 2;   // the host holds no prop of that key
+inline constexpr uint8_t kPropNametagNoItem     = 3;   // no nametag in the sender's hand, as the hand lane has it
+inline constexpr uint8_t kPropNametagTooFast    = 4;   // the sender is past its budget
+inline constexpr uint8_t kPropNametagOutOfReach = 5;   // the prop is not within the sender's reach
+inline constexpr uint8_t kPropNametagNotTaken   = 6;   // the host's prop did not take the tag
+inline constexpr uint8_t kPropNametagBusy       = 7;   // an earlier request of the sender still waits for its hand state
 struct PropNametagPayload {
     WireKey  key;                        // 32  -- the prop's key
     uint8_t  op;                         // 1   -- kPropNametag*
     uint8_t  author;                     // 1   -- op 2: the slot whose item it was (0 the host); zero for ops 1 and 3
     uint8_t  tagChars;                   // 1   -- code units used in `tag`; 0 for op 3
-    uint8_t  pad;                        // 1   -- zero
-    uint16_t tag[kPropNametagMaxChars];  // 128 -- UTF-16, the units past tagChars zero
+    uint8_t  reason;                     // 1   -- op 3: kPropNametag* reason; zero otherwise
+    uint16_t tag[kPropNametagMaxChars];  // 192 -- UTF-16, the units past tagChars zero
 };
-static_assert(sizeof(PropNametagPayload) == 164, "PropNametagPayload must be 164 bytes");
+static_assert(sizeof(PropNametagPayload) == 228, "PropNametagPayload must be 228 bytes");
 static_assert(sizeof(PropNametagPayload) <= 256 - 20 - 8, "PropNametagPayload must fit in one reliable datagram");
 
 // A placement intent (PropDropIntent), client to host: the identity the host needs to spawn the
