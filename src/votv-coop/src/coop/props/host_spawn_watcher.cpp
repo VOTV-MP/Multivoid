@@ -501,6 +501,12 @@ void ArmSpawnRecord(bool on) {
     coop::net::prop_spawn_hook::PropSpawnSentHook() = on ? &OnPropSpawnSent : nullptr;
 }
 
+bool StillPending(void* actor) {
+    for (const PendingFinishedSpawn& e : g_pendingFinished)
+        if (e.actor == actor) return true;
+    return false;
+}
+
 bool SpawnSent(uint32_t eid) { return g_spawnSent.count(eid) != 0; }
 bool SpawnRefused(uint32_t eid) { return g_spawnRefused.count(eid) != 0; }
 }  // namespace dev

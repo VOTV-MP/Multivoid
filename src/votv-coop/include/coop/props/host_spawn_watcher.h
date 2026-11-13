@@ -86,6 +86,10 @@ const std::vector<ue_wrap::CachedObjRef>& CapturedBirths();
 void ArmSpawnRecord(bool on);
 bool SpawnSent(uint32_t eid);
 bool SpawnRefused(uint32_t eid);
+// Is this birth still in the watcher's pending-finished queue, waiting for its drain (the express that sends its
+// spawn)? A birth is queued where it finishes, inside the roll that made it, so once the roll has returned a birth that
+// is not here has been drained or was never queued: nothing will send it later. Game thread.
+bool StillPending(void* actor);
 }  // namespace dev
 
 }  // namespace coop::host_spawn_watcher

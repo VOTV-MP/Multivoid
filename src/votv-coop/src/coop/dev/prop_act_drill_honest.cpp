@@ -555,10 +555,17 @@ const char* UnpackHostWatch(const Row& row, EL::ElementId eid, const Baseline& b
         if (!actor) continue;
         const bool food = ue_wrap::food::IsFood(actor);
         if (row.foodContents ? !food : !ue_wrap::prop::IsDescendantOfProp(actor)) continue;
+        // A kerfur's prop has the KerfurConvert as its wire signal and no PropSpawn (prop_lifecycle.cpp, the conversion
+        // successor): it is no content a client should expect a mirror of.
+        if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(actor))) continue;
         ++fresh;
+        // The watcher's drain is what sends a birth's spawn (or the init seam did, inside the roll): a birth that has left
+        // its pending queue holding an eid and no send will never be sent (the drain skips a tracked birth, and the census
+        // expresses only a prop with no eid), so the verdict is known and said now.
+        const bool pending = coop::host_spawn_watcher::dev::StillPending(actor);
         const EL::ElementId id = EL::Registry::Get().EidForActor(actor);
         if (id == EL::kInvalidId) {
-            ready = false;
+            ready = false;   // a straggler with no eid yet may still be minted and sent by the periodic census
             continue;
         }
         // The eid is minted before its PropSpawn goes out (the census walk mints with no send): the line waits for the send,
@@ -570,6 +577,12 @@ const char* UnpackHostWatch(const Row& row, EL::ElementId eid, const Baseline& b
             return text.c_str();
         }
         if (!coop::host_spawn_watcher::dev::SpawnSent(id)) {
+            if (!pending) {
+                static std::string unsent;
+                unsent = "content eid " + std::to_string(static_cast<unsigned>(id)) +
+                         " was never sent: it left the watcher's queue with no PropSpawn (tracked before its drain with no send of its own)";
+                return unsent.c_str();
+            }
             ready = false;
             continue;
         }
