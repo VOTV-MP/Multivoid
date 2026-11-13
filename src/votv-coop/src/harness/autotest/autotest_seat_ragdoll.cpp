@@ -233,8 +233,8 @@ void RunClient() {
 void RunHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
-    // A client acting: its puppet stands here and has sent an alive pose, since the death edge is read from a pose
-    // after one (the first pose of a puppet raises no edge).
+    // A client acting: its puppet stands here and has sent an alive pose, so its death is an edge from a living player
+    // (a death already in a first pose is raised too, but the arm is meant to measure the hit it lands).
     if (!HostActs() && !PS::WaitFor("the client's puppet, alive", 120, [] {
             bool alive = false;
             OnGameThread([&] { alive = coop::players::Registry::Get().LifeOf(1) == coop::players::PuppetLife::Alive; });
