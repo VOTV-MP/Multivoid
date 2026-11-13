@@ -588,6 +588,10 @@ bool TurboOn(const std::wstring& key, std::string& why) {
     return PressAtv(key, L"InpActEvt_atv_turbo_K2Node_InputActionEvent_12", why);
 }
 
+bool TurboOff(const std::wstring& key, std::string& why) {
+    return PressAtv(key, L"InpActEvt_atv_turbo_K2Node_InputActionEvent_13", why);
+}
+
 bool HornPress(const std::wstring& key, std::string& why) {
     return PressAtv(key, L"InpActEvt_atv_honk_K2Node_InputActionEvent_14", why);
 }
@@ -601,17 +605,27 @@ bool HornTap(const std::wstring& key, std::string& why) { return HornPress(key, 
 // The seated player drives: the brake off (a parked ATV sits on its handbrake), then the throttle key down, held until the
 // driver's own fuel has fallen or the bound runs out. The throttle stays down for the step; DriveOff lets it go.
 bool DriveOn(const std::wstring& key, std::string& why) {
-    bool braked = false;
+    bool braked = false, turbo = false;
     float fuel0 = -1.f;
     OnGt([&] {
         void* atv = Atv(key);
         braked = atv && ue_wrap::atv::GetBrake(atv);
+        turbo = atv && ue_wrap::atv::GetTurbo(atv);
         if (atv) ReadFloat(atv, L"fuel", fuel0);
     });
     if (braked && !Brake(key, why)) return false;
+    // Step 5 leaves the turbo key down; at turbo speed the ATV struck something within 2 s and threw its driver out (f3-green).
+    if (turbo && !TurboOff(key, why)) return false;
     if (!PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_4", why)) return false;
-    const bool burned = PS::WaitFor("the driver's own fuel falls", kBurnS, [&] { return ReadVitals(key).fuel < fuel0 - 0.5f; }, false);
-    if (!burned) why = "the throttle was held and this copy's own fuel did not fall";
+    // Decided on whichever comes first: the driver's own fuel falls, or the driver is out of the seat (nothing burns then).
+    bool thrown = false;
+    const bool burned = PS::WaitFor("the driver's own fuel falls", kBurnS, [&] {
+        const Vitals v = ReadVitals(key);
+        thrown = !v.seated;
+        return thrown || v.fuel < fuel0 - 0.5f;
+    }, false) && !thrown;
+    if (!burned) why = thrown ? "the ATV threw its driver out of the seat before any fuel burned"
+                              : "the throttle was held and this copy's own fuel did not fall";
     return burned;
 }
 

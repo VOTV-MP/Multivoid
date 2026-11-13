@@ -55,6 +55,7 @@ bool Leave(const std::wstring& key, std::string& why);            // the dismoun
 bool Lights(const std::wstring& key, std::string& why);           // the lights key
 bool Brake(const std::wstring& key, std::string& why);            // the brake key
 bool TurboOn(const std::wstring& key, std::string& why);          // the turbo key down, left down
+bool TurboOff(const std::wstring& key, std::string& why);         // the turbo key up
 bool HornPress(const std::wstring& key, std::string& why);        // the horn key down
 bool HornRelease(const std::wstring& key, std::string& why);      // the horn key up
 bool HornTap(const std::wstring& key, std::string& why);          // down and up
