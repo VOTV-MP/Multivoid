@@ -119,10 +119,11 @@ bool IsMre(void* actor) {
     return (mre && ue_wrap::prop::WalksToBase(cls, mre)) || (kit && ue_wrap::prop::WalksToBase(cls, kit));
 }
 
-// `spawn` ends in lib_C::progressAchievement ("jackpot", "rippedOff", "robbed"), which progresses the profile of the
-// machine that runs it: here the host's, for an open it did not do. The watch cancels it for the span of the roll, as
-// player_damage's watch cancels the cremator's for a peer's burn (player_damage.cpp, OnAchievementPre). Named residual:
-// the opener earns none of the three, since its copy no longer runs `spawn` and nothing carries an award to it.
+// An unpack's `spawn` (an MRE's, a first aid kit's) can end in lib_C::progressAchievement (the MRE's: "jackpot",
+// "rippedOff", "robbed"), which progresses the profile of the machine that runs it: here the host's, for an unpack it did
+// not do. The watch cancels it for the span of the roll, as player_damage's watch cancels the cremator's for a peer's burn
+// (player_damage.cpp, OnAchievementPre). Named residual: the opener earns none, since its copy no longer runs `spawn` and
+// nothing carries an award to it.
 UE_FACT_FN(kRowAchievement, "prop_act_host", L"lib_C", L"progressAchievement", Declared);
 constexpr int kMreAchievementTag = 0x4D524541;  // 'MREA'
 bool g_rollingMre = false;
@@ -131,7 +132,7 @@ uint32_t g_mreAchievementsRefused = 0;
 ue_wrap::script_gate::Verdict OnMreAchievementPre(const ue_wrap::script_gate::Call&) {
     if (!g_rollingMre) return ue_wrap::script_gate::Verdict::Run;
     if (++g_mreAchievementsRefused <= 3)
-        UE_LOGI("prop_act: refused an achievement of an MRE's roll for a client's open (#%u) -- it is the opener's",
+        UE_LOGI("prop_act: refused an achievement of an unpack's roll for a client's open (#%u) -- it is the opener's",
                 g_mreAchievementsRefused);
     return ue_wrap::script_gate::Verdict::Cancel;
 }
@@ -140,7 +141,7 @@ ue_wrap::script_gate::Verdict OnMreAchievementPre(const ue_wrap::script_gate::Ca
 // class (an MRE, a first aid kit) has its own `spawn`, which the thunk asks of the actor's class.
 bool OpenMre(void* actor, uint8_t slot, uint32_t eid) {
     g_rollingMre = true;
-    // The births of this call are named exactly: the act drill's MRE step says its contents from them.
+    // The births of this call are named exactly: the act drill's unpack steps say their contents from them.
     coop::host_spawn_watcher::dev::CaptureBirths(true);
     const bool rolled = ue_wrap::prop_use::CallUnpackSpawn(actor);
     coop::host_spawn_watcher::dev::CaptureBirths(false);
@@ -477,8 +478,8 @@ const char* CommitName(CommitStep s) {
 void Install(coop::net::Session* session) {
     g_session = session;
     if (!ue_wrap::script_gate::WatchName(kRowAchievement, kMreAchievementTag, &OnMreAchievementPre, nullptr))
-        UE_LOGE("prop_act: the achievement watch did not register -- the host earns an MRE's achievements for a "
-                "client's open");
+        UE_LOGE("prop_act: the achievement watch did not register -- the host earns an unpack's achievements for a "
+                "client's unpack");
 }
 
 void Tick() {

@@ -235,7 +235,7 @@ void SayReady(const Row& row) {
     std::string line = ReadyHead(row) + std::to_string(Wire(g_eid));
     if (g_eid2 != EL::kInvalidId) line += " eid2=" + std::to_string(Wire(g_eid2));
     if (row.snack) line += SnackReadyTail(g_target.Get());
-    if (row.ends == Ends::Opened) MreHostReady();
+    if (row.ends == Ends::Unpacked) UnpackHostReady();
     Say(line);
     UE_LOGI("%s host %s said ready: eid %u", kTag, row.name, Wire(g_eid));
     HEnter(row.grab ? HStep::AwaitGrab : HStep::AwaitDone);
@@ -407,8 +407,8 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         // The host's own events first: a snack's `settled` and an MRE's contents line, which the client decides on, and the
         // MRE's commit processed with no open, which ends the phase here.
         if (row.snack) SnackHostMarker(row, g_eid, g_base);
-        if (row.ends == Ends::Opened) {
-            if (const char* why = MreHostWatch(row, g_eid, g_base)) {
+        if (row.ends == Ends::Unpacked) {
+            if (const char* why = UnpackHostWatch(row, g_eid, g_base)) {
                 HostFail(&row, why);
                 return;
             }

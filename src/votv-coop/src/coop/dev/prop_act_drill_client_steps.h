@@ -28,8 +28,8 @@ extern size_t g_crow;                                   // the row the machine i
 extern coop::element::ElementId g_ceid;                 // the step's target's eid
 extern ue_wrap::CachedObjRef g_mirror;                  // the step's target
 extern std::string g_readyRest;                         // the text after the host's ready line's eid
-extern std::unordered_set<coop::element::ElementId> g_foodsBefore;   // an opened row: the food mirrors held before the act
-extern size_t g_freshContents;                          // the opened row's contents that arrived
+extern std::unordered_set<coop::element::ElementId> g_mirrorsBefore;   // an unpacked row: the prop mirrors held before the act
+extern size_t g_freshContents;                          // the unpacked row's contents that arrived
 extern int g_poisonBefore;                              // foodPoison entries live before the poisoned content's bite
 
 void CEnter(CStep s);

@@ -74,9 +74,9 @@ size_t PendingCapDrops();
 // ambient spawns. Net disconnect.
 void OnDisconnect();
 
-namespace dev {   // the act drill's MRE step reads this
+namespace dev {   // the act drill's unpack steps read this
 // While on, every spawn finished on the game thread is recorded, whatever the filters after it decide; turning it on
-// clears the record. prop_act_host brackets the MRE's roll with it, so the record is exactly the actors that call made.
+// clears the record. prop_act_host brackets an unpack's roll with it, so the record is exactly the actors that call made.
 void CaptureBirths(bool on);
 const std::vector<ue_wrap::CachedObjRef>& CapturedBirths();
 }  // namespace dev

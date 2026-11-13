@@ -1,5 +1,5 @@
-// coop/dev/prop_act_drill_mre.cpp -- the act drill's MRE step, client side: the reads its contents and poison waits are made
-// of. See coop/dev/prop_act_drill.h.
+// coop/dev/prop_act_drill_mre.cpp -- the act drill's unpack steps (an MRE, a first aid kit), client side: the reads their
+// contents and poison waits are made of. See coop/dev/prop_act_drill.h.
 
 #include "coop/dev/prop_act_drill.h"
 
@@ -21,6 +21,19 @@ namespace coop::dev::prop_act_drill::detail {
 
 namespace EL = coop::element;
 namespace R  = ue_wrap::reflection;
+
+// The prop mirrors of any class this client holds. `*all` collects their ids; the count is those `had` lacks.
+size_t PropMirrorsNotIn(const std::unordered_set<EL::ElementId>& had, std::unordered_set<EL::ElementId>* all) {
+    static std::vector<EL::Registry::ActorIdPair> pairs;
+    EL::Registry::Get().SnapshotActorsByType(EL::ElementType::Prop, pairs);
+    size_t fresh = 0;
+    for (const auto& p : pairs) {
+        if (!p.mirror || !p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx)) continue;
+        if (all) all->insert(p.id);
+        if (!had.count(p.id)) ++fresh;
+    }
+    return fresh;
+}
 
 // The prop_food_C mirrors this client holds. `*all` collects their ids; the count is those `had` lacks, and `*poisoned`
 // names the first of them whose poison fields read above 0 (what the host's FoodState carried onto it). `*waiting` is set

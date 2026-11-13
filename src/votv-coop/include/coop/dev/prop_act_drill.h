@@ -81,11 +81,12 @@ enum class Verb : uint8_t { Pocket, Hold, Use, Soap };   // putObjectInventory2,
 // client's RefusedCount for it rose by one), no request is open, and the mirror, the inventory and the hand are as
 // they were. Taken: the mirror is gone after the commit and the hand is not asserted (a heavy item's hand view is
 // unmeasured).
-// Opened: Gone, and the host's rolled contents have reached this client as mirrors (an MRE's open).
+// Unpacked: Gone, and the contents the host's unpack rolled (its births, named by prop_act_host's capture) have reached
+// this client as mirrors (an MRE's open, a first aid kit's unpack).
 // Snack arms (prop_act_drill_snack.cpp): Applied is the use that leaves the snack on both copies with the host's count;
 // Ended the last use (the snack is gone here and one wrapper, the host's, stands); Respawn the client's copy ending
 // while the host's lives, whose birth the host sends again.
-enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken, Opened, Applied, Ended,
+enum class Ends : uint8_t { Inventory, Hand, Gone, Stays, Unchecked, NativeGone, Refused, Taken, Unpacked, Applied, Ended,
                             Respawn };
 
 // One snack arm's facts, read by the row's host prep, its client setup and the judges.
@@ -128,6 +129,9 @@ struct Row {
     // the first call, then the time since it. A non-null return FAILs the step with it, or, with the prefix "INVALID: ", says the bound ran out.
     const char* (*hostPrep)(void* actor, uint64_t sinceMs, bool* done) = nullptr;
     const SnackArm* snack = nullptr;   // a snack arm: the ready line carries the host copy's uses and open
+    // An Unpacked row whose contents are foods (an MRE's): the host's contents line counts the foods and the poisoned, and
+    // the client checks the poison's bite. Else the contents are the unpack's prop births, whatever their class.
+    bool foodContents = false;
 };
 
 // The host's commit counters for the client's slot when it said the step was ready, and the second prop's eid; the
@@ -161,12 +165,13 @@ struct Phase {
 const Phase& Honest();   // prop_act_drill_honest.cpp
 const Phase& Snack();    // prop_act_drill_snack.cpp
 
-// The MRE step's host events (prop_act_drill_honest.cpp). MreHostReady is called when the step is said ready; MreHostWatch
-// each poll while the host waits for the client: a FAIL text when the host processed the commit with no open, else null,
-// and once the contents' FoodStates are on the wire it says ContentsHead + "n=<contents> poisoned=<poisoned>".
+// An Unpacked step's host events (prop_act_drill_honest.cpp). UnpackHostReady is called when the step is said ready;
+// UnpackHostWatch each poll while the host waits for the client: a FAIL text when the host processed the commit with no
+// unpack, else null, and once the contents are on the wire it says ContentsHead + "n=<contents> poisoned=<poisoned>
+// eids=<a,b,..>" (n=0 when the roll made none).
 std::string ContentsHead(const Row& r);
-void MreHostReady();
-const char* MreHostWatch(const Row& row, coop::element::ElementId eid, const Baseline& base);
+void UnpackHostReady();
+const char* UnpackHostWatch(const Row& row, coop::element::ElementId eid, const Baseline& base);
 
 // The snack arms' shared reads (prop_act_drill_snack.cpp). HOST: SnackReadyTail is " uses=<n> open=<0|1>" of the copy, kept
 // as what the step was said ready on. CLIENT: SnackClientCopy judges this client's copies against that line (`was` is
@@ -223,9 +228,12 @@ void HostEnds(End e, const std::string& why);
 std::string EndedHead();
 bool HostEnded();
 
-// The MRE step's client reads (prop_act_drill_mre.cpp): the host-born food mirrors this client holds that `had` lacks
+// An Unpacked step's client reads (prop_act_drill_mre.cpp): the prop mirrors of any class this client holds that `had`
+// lacks (`*all` collects every one's id), and the host-born food mirrors
 // (`*all` collects every food mirror's id; `*poisoned` names the first carrying poison; `*waiting` says a FoodState for
 // one of the new ones still waits for its copy), the live foodPoison effects and the poisoned food's own bite.
+size_t PropMirrorsNotIn(const std::unordered_set<coop::element::ElementId>& had,
+                        std::unordered_set<coop::element::ElementId>* all);
 size_t FoodMirrorsNotIn(const std::unordered_set<coop::element::ElementId>& had,
                         std::unordered_set<coop::element::ElementId>* all, void** poisoned = nullptr,
                         bool* waiting = nullptr);

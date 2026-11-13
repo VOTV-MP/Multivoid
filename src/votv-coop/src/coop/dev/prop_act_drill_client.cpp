@@ -75,11 +75,11 @@ bool g_handHeldBefore = false;
 ue_wrap::CachedObjRef g_handBefore;
 std::string g_sayLine;
 bool g_sayFailed = false;
-// An opened row: the host-born food mirrors this client held before the act. An MRE's contents are the host's prop_food_C
-// births, so they reach this client as mirrors of its eids; the step passes when one the set lacks has arrived.
-std::unordered_set<EL::ElementId> g_foodsBefore;
+// An unpacked row: the prop mirrors this client held before the act. The contents are the host's births (an MRE's are its
+// prop_food_C ones), so they reach this client as mirrors of their eids; the step passes when the listed ones have arrived.
+std::unordered_set<EL::ElementId> g_mirrorsBefore;
 
-size_t g_freshContents = 0;   // the opened row's contents that arrived
+size_t g_freshContents = 0;   // the unpacked row's contents that arrived
 int g_poisonBefore = 0;       // foodPoison entries live before the poisoned content's bite
 
 void CEnter(CStep s) {
@@ -168,9 +168,9 @@ void ClientAct(const Row& row, void* player) {
         }
         PAR::dev::DestroyInsideNextReplay(g_mirror2.Get());
     }
-    if (row.ends == Ends::Opened) {
-        g_foodsBefore.clear();
-        FoodMirrorsNotIn({}, &g_foodsBefore);
+    if (row.ends == Ends::Unpacked) {
+        g_mirrorsBefore.clear();
+        PropMirrorsNotIn({}, &g_mirrorsBefore);
     }
     if (const char* why = RunVerb(row, player, mirror)) {
         ClientFail(row, why);
@@ -314,7 +314,7 @@ void ClientRead(const Row& row, void* player) {
             }
         }
     }
-    if (row.ends == Ends::Opened) {
+    if (row.ends == Ends::Unpacked) {
         CEnter(CStep::AwaitContents);
         return;
     }
@@ -696,7 +696,7 @@ void ClientReset() {
     g_handBefore.Reset();
     g_sayLine.clear();
     g_sayFailed = false;
-    g_foodsBefore.clear();
+    g_mirrorsBefore.clear();
     g_freshContents = 0;
     g_poisonBefore = 0;
     g_readyRest.clear();
