@@ -217,11 +217,14 @@ namespace {
 CachedObjRef g_frozenDrone;
 }  // namespace
 
-void SuppressTick(void* drone) {
-    if (!drone) return;
+bool SuppressTick(void* drone) {
+    if (!drone) return false;
     E::SetActorTickEnabled(drone, false);  // stop the flight integrator -- the client drone is a mirror
-    if (!g_frozenDrone.Is(drone) && E::IsActorRootSimulatingPhysics(drone) && E::SetActorSimulatePhysics(drone, false))
-        g_frozenDrone.Set(drone);  // and its body: the stream alone places it
+    if (g_frozenDrone.Is(drone)) return true;
+    if (!E::IsActorRootSimulatingPhysics(drone)) return true;   // no body in the simulation: nothing to take out
+    if (!E::SetActorSimulatePhysics(drone, false)) return false;
+    g_frozenDrone.Set(drone);  // and its body: the stream alone places it
+    return true;
 }
 
 void RestoreTick(void* drone) {

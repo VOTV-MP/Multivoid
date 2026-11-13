@@ -44,9 +44,10 @@ bool DriveMirror(void* drone, const FVector& loc, const FRotator& rot);
 // own + fight the host stream -- the client drone is ALWAYS a mirror -- and take its root sphere out
 // of the simulation. The flight is forces on that sphere, so with the tick off and the body still
 // simulated, gravity and the motion it had pulled the copy off every streamed pose between two
-// writes, which showed as a drone shaking and turning in place. Idempotent at the engine level.
-// Game thread.
-void SuppressTick(void* drone);
+// writes, which showed as a drone shaking and turning in place. Idempotent at the engine level. True when
+// the root is out of the simulation afterwards (taken out now, or not simulating to begin with); false when
+// the engine refused to take it out, so the caller asks again. Game thread.
+bool SuppressTick(void* drone);
 
 // Restore the drone's ReceiveTick and its simulated root (on disconnect, so single-player flight
 // works again). Game thread.
