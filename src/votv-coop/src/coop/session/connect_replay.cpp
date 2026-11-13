@@ -74,6 +74,7 @@
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/items/hook_anchor.h"
+#include "coop/items/hook_retrieve.h"
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
 #include "coop/world/spill_sync.h"
@@ -101,6 +102,7 @@ void ConnectReplayForSlot(int slot) {
     {
         coop::net::SnapshotSendScope scope(slot);  // the removes are the snapshot's, so the join gate passes them
         coop::join_window_baseline::SendDivergenceDeletes(slot);
+        coop::hook_retrieve::SendJoinGone(slot);  // and the anchored hooks it holds that were taken since: its copy goes too
     }
     // Every dish code, sent here and held by the join gate until the snapshot completes, so a set that goes whole lands
     // before its Complete and a joined client holds the host's codes, a midnight since the capture

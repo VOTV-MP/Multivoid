@@ -27,6 +27,7 @@
 #include "coop/session/join_beacon.h"  // the joiner hears which phase this stream is in
 #include "coop/session/host_world_settle.h"  // whether the host's world has finished starting
 #include "coop/save/join_window_baseline.h"  // the capture instant's baselines and their flush
+#include "coop/items/hook_retrieve.h"  // the anchored hooks standing at the cut
 #include "coop/save/save_guard.h"
 #include "coop/save/save_indicator_suppress.h"  // detect the SAVED HUD across the join scratch save
 #include "coop/save/slot_file_read.h"  // the torn-read guard and the stream's CRC
@@ -428,6 +429,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
             // fallback leaves each one empty and the divergence sweep keeps full responsibility
             // for that join.
             coop::join_window_baseline::CaptureForSlot(peerSlot);  // keyed keys + save-time xforms
+            coop::hook_retrieve::CaptureJoinHooks(peerSlot);  // the anchored hooks this blob holds, for the join's removes
             // The meadow-DB content-hash multiset; the ready-edge seed diffs it against the
             // then-live store. The stale fallback leaves it invalid, so no seed.
             coop::meadow_db_sync::CaptureJoinSnapshot(peerSlot);

@@ -13,6 +13,7 @@
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_retrieve.h"
 #include "coop/net/session.h"
+#include "coop/save/join_window_baseline.h"  // HasCapture: the instant the joiner's save was cut
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
@@ -64,6 +65,7 @@ constexpr uint16_t kSeq           = 0xFF01;  // the drill's hook in the host's o
 constexpr uint64_t kTakeBoundMs   = 120000;  // the tie (or the client's ready edge) to the hook gone
 constexpr uint64_t kDoneBoundMs   = 120000;  // HOST: its half held to the client's report
 constexpr uint64_t kRestBoundMs   = 30000;   // HOST: the cups' spawn to both at rest
+constexpr uint64_t kWindowBoundMs = 600000;  // HOST, window mode: the aim taken to the joiner's save being cut
 constexpr uint64_t kFindBoundMs   = 60000;   // CLIENT: world-ready to the anchored copy
 constexpr uint64_t kReadyBoundMs  = 3000;    // the aim to the player's look settling on the hook
 constexpr uint64_t kSeenBoundMs   = 15000;   // the press to the hook gone and the item in the inventory
@@ -74,8 +76,10 @@ constexpr int      kWalkDeadlineS = 60;
 constexpr int      kReaimMax      = 5;
 
 // run: the client takes the hook, its copy an anchored mirror. join: the hook is tied before the client joins, so its
-// copy is the one its save loaded. host / joinhost: the same two copies, and the host player takes the hook.
-enum class Mode : uint8_t { Off, Run, Join, Host, JoinHost };
+// copy is the one its save loaded. host / joinhost: the same two copies, and the host player takes the hook. window: the
+// hook is tied before the client joins and the host player takes it between the client's save being cut and its world
+// being ready; the client's copy, which its save loaded, must be gone when its join is over.
+enum class Mode : uint8_t { Off, Run, Join, Host, JoinHost, Window };
 Mode TheMode() {
     static const Mode m = [] {
         const std::string v = coop::config::ResolveString(::coop::config_registry::rows::hook_retrieve_drill);
@@ -83,14 +87,16 @@ Mode TheMode() {
         if (v == "join") return Mode::Join;
         if (v == "host") return Mode::Host;
         if (v == "joinhost") return Mode::JoinHost;
+        if (v == "window") return Mode::Window;
         return Mode::Off;
     }();
     return m;
 }
-bool JoinMode() { return TheMode() == Mode::Join || TheMode() == Mode::JoinHost; }
-bool HostTakes() { return TheMode() == Mode::Host || TheMode() == Mode::JoinHost; }
+bool WindowMode() { return TheMode() == Mode::Window; }
+bool JoinMode() { return TheMode() == Mode::Join || TheMode() == Mode::JoinHost || WindowMode(); }
+bool HostTakes() { return TheMode() == Mode::Host || TheMode() == Mode::JoinHost || WindowMode(); }
 
-enum class Step : uint8_t { Arm, Settle, Tie, Wait, Find, Walk, Aim, Ready, Press, Seen, Watch, Await, Done };
+enum class Step : uint8_t { Arm, Settle, Tie, Wait, Find, Walk, Aim, Ready, Hold, Press, Seen, Watch, Await, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -105,6 +111,7 @@ int      g_reaims = 0;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 ue_wrap::FVector g_restA{}, g_restB{};   // HOST: the cups' places at the last rest check
 bool     g_restKnown = false;
+coop::net::Session* g_s = nullptr;       // this peer's session, set by Tick
 
 const char* Role(bool host) { return host ? "host" : "client"; }
 void Next(Step s) { g_step = s; g_stepMs = ::GetTickCount64(); }
@@ -311,10 +318,24 @@ bool TakeTick(void* player, bool host) {
         if (E::ReadMainPlayerHitActor(player) != hook) { Reaim(); return true; }
         if (E::MainPlayerHasSelectedAction(player)) {
             UE_LOGI("[HOOK-RETRIEVE-DRILL] %s: the look took the hook -- the pop-up offers its pickup", Role(host));
-            Next(Step::Press);
+            Next(WindowMode() ? Step::Hold : Step::Press);
             return true;
         }
         if (Expired(kReadyBoundMs)) Abandon("the trace took the hook but the player's look had not offered it in 3 s");
+        return true;
+    }
+    case Step::Hold: {   // window mode: the press waits for the joiner's save to be cut, and goes before its world is ready
+        void* hook = g_hook.Get();
+        if (!hook) { Abandon("the hook died"); return true; }
+        if (E::ReadMainPlayerHitActor(player) != hook) { Reaim(); return true; }
+        if (g_s && g_s->IsSlotWorldReady(1)) {
+            Abandon("the client's world was ready before the host pressed: the window closed");
+        } else if (coop::join_window_baseline::HasCapture(1)) {
+            UE_LOGI("[HOOK-RETRIEVE-DRILL] host: the client's save is cut and its world is not ready -- pressing");
+            Next(Step::Press);
+        } else if (Expired(kWindowBoundMs)) {
+            Abandon("no save of the client's was cut in 10 min after the host's aim took the hook");
+        }
         return true;
     }
     case Step::Press: {
@@ -406,7 +427,7 @@ void HostTick(coop::net::Session* s) {
         return;
     }
     case Step::Wait:   // HOST takes: once the client says it holds its copy, the host walks to the hook
-        if (!ClientSaid(ClientHead("found"), nullptr)) {
+        if (!WindowMode() && !ClientSaid(ClientHead("found"), nullptr)) {   // window: the client has no copy yet
             if (Expired(kTakeBoundMs)) Abandon("the client never said it held its copy of the hook");
             return;
         }
@@ -464,6 +485,26 @@ void* NearestAnchoredCopy(void* player, float withinCm) {
     return ctx.best;
 }
 
+// CLIENT, window mode, at the join's end: the host took its hook after this client's save was cut and before its world
+// was ready, so the Gone of that moment never reached it. The connect replay's word has been applied by now (it lands
+// ahead of the snapshot whose completion ends the join), so the copy the save loaded is gone, and a Gone took it.
+void JudgeWindow(void* player) {
+    void* copy = NearestAnchoredCopy(player, 1.0e9f);
+    const uint64_t gone = coop::hook_retrieve::GoneCopyCount();
+    char what[160];
+    if (!copy && gone > 0) {
+        std::snprintf(what, sizeof(what), "the host's word at the join took this client's copy of the hook the host had "
+                      "taken since the save was cut (%llu copy gone)", static_cast<unsigned long long>(gone));
+        Pass(what);
+    } else if (copy) {
+        std::snprintf(what, sizeof(what), "a hook the host took after this client's save was cut still stands here after "
+                      "the join (%llu copies taken by the host's word)", static_cast<unsigned long long>(gone));
+        Fail(what);
+    } else {
+        Abandon("this client's save held no copy of the hook and none came: the take was before its cut");
+    }
+}
+
 void ClientTick() {
     if (g_step == Step::Done) return;
     void* player = coop::players::Registry::Get().Local();
@@ -477,6 +518,7 @@ void ClientTick() {
         Next(Step::Find);
         return;
     case Step::Find: {
+        if (WindowMode()) { JudgeWindow(player); return; }
         void* hook = NearestAnchoredCopy(player, JoinMode() ? 1.0e9f : kNearCm);
         g_items0 = HookItems();
         if (!hook || g_items0 < 0) {
@@ -520,6 +562,7 @@ void ClientTick() {
 
 void Tick(coop::net::Session* s) {
     if (TheMode() == Mode::Off || !s) return;
+    g_s = s;
     g_isHost = s->role() == coop::net::Role::Host;
     if (g_isHost) HostTick(s);
     else if (s->connected()) ClientTick();

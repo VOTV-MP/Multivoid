@@ -68,6 +68,10 @@ std::wstring g_hostPressKey;
 // g_sent, g_refusedAnswers and g_taken are the client's: requests asked, refusals answered, pickups the host's grant
 // ran here. g_granted and g_refused are the host's.
 uint64_t g_sent = 0, g_granted = 0, g_refused = 0, g_taken = 0, g_refusedAnswers = 0;
+// CLIENT: the copies the host's Gone took away from this client without its own pickup (the join's drill reads it).
+uint64_t g_goneCopies = 0;
+// HOST: per joiner slot, the keys of the anchored hooks the world held when its save was cut (CaptureJoinHooks).
+std::vector<std::wstring> g_cut[coop::players::kMaxPeers];
 
 bool InFlight(const std::wstring& key) {
     return std::find(g_inFlight.begin(), g_inFlight.end(), key) != g_inFlight.end();
@@ -112,12 +116,15 @@ std::wstring KeyOf(void* hook) {
     return (k.empty() || k == L"None") ? std::wstring() : k;
 }
 
-void SendGone(coop::net::Session& s, const std::wstring& key, uint8_t taker) {
+// `slot` < 0: every client; else that one.
+void SendGone(coop::net::Session& s, const std::wstring& key, uint8_t taker, int slot = -1) {
     HookRetrievePayload g{};
     coop::net::WireKeyFromString(key, g.key);
     g.op    = coop::net::kHookRetrieveGone;
     g.taker = taker;
-    if (!s.SendReliable(coop::net::ReliableKind::HookRetrieve, &g, sizeof(g)))
+    const bool sent = slot < 0 ? s.SendReliable(coop::net::ReliableKind::HookRetrieve, &g, sizeof(g))
+                               : s.SendReliableToSlot(slot, coop::net::ReliableKind::HookRetrieve, &g, sizeof(g));
+    if (!sent)
         UE_LOGW("hook_retrieve: the word that hook '%ls' is gone did not send -- the clients keep their copies",
                 key.c_str());
 }
@@ -216,7 +223,7 @@ void OnGone(const std::wstring& key, uint8_t taker) {
     void* copy = D::FindHookByKey(key);
     const bool mine = taker == coop::players::Registry::Get().LocalPeerId();
     if (!mine) {
-        if (copy) E::DestroyActor(copy);
+        if (copy) { E::DestroyActor(copy); ++g_goneCopies; }
         return;
     }
     void* player = coop::players::Registry::Get().Local();
@@ -323,7 +330,43 @@ void PrepareAnchoredCopy(void* mirror) {
     E::SetActorEnableCollision(mirror, Red() != "nocollision");
 }
 
+// The join's answer, the shape of join_window_baseline's removes: the joiner's save is a photograph cut at one instant,
+// the host plays on while it loads, and a Gone is not sent to a slot before its world-ready (session.cpp: not queued,
+// the connect replay rebuilds). So the keys of the anchored hooks the world held at the cut are kept per slot, and at
+// the slot's connect replay each one the host no longer holds is named gone to that slot alone.
+void CaptureJoinHooks(int slot) {
+    if (!GT::IsGameThread() || slot < 1 || slot >= coop::players::kMaxPeers) return;
+    auto& cut = g_cut[slot];
+    cut.clear();
+    D::CollectAnchoredKeys(cut);
+    std::sort(cut.begin(), cut.end());
+    cut.erase(std::unique(cut.begin(), cut.end()), cut.end());
+    UE_LOGI("hook_retrieve: slot %d's save cut with %zu anchored hook(s) standing", slot, cut.size());
+}
+
+void SendJoinGone(int slot) {
+    if (!GT::IsGameThread() || slot < 1 || slot >= coop::players::kMaxPeers) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    std::vector<std::wstring> cut;
+    cut.swap(g_cut[slot]);
+    if (!s || s->role() != coop::net::Role::Host || cut.empty()) return;
+    size_t sent = 0;
+    for (const std::wstring& key : cut) {
+        if (D::FindHookByKey(key)) continue;   // still stands: the joiner's copy is right
+        if (Red() == "nojoingone") continue;   // the drill's red: the join as it was before this answer
+        SendGone(*s, key, coop::net::kHookRetrieveNoTaker, slot);
+        ++sent;
+    }
+    UE_LOGI("hook_retrieve: slot %d world-ready -- %zu of its %zu anchored hook(s) were taken since its save was cut",
+            slot, sent, cut.size());
+}
+
+void OnPeerLeftSlot(int slot) {
+    if (slot >= 0 && slot < coop::players::kMaxPeers) g_cut[slot].clear();
+}
+
 uint64_t GrantedCount() { return g_granted; }
+uint64_t GoneCopyCount() { return g_goneCopies; }
 uint64_t AskedCount() { return g_sent; }
 uint64_t TakenCount() { return g_taken; }
 uint64_t RefusedAnswerCount() { return g_refusedAnswers; }
@@ -333,7 +376,8 @@ void OnDisconnect() {
         UE_LOGI("hook_retrieve: session end -- asked=%llu granted=%llu refused=%llu taken=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_granted),
                 static_cast<unsigned long long>(g_refused), static_cast<unsigned long long>(g_taken));
-    g_sent = g_refused = g_taken = g_refusedAnswers = 0;
+    g_sent = g_refused = g_taken = g_refusedAnswers = g_goneCopies = 0;
+    for (auto& cut : g_cut) cut.clear();
     g_inFlight.clear();
     g_replay = nullptr;
     g_hostPress = nullptr;

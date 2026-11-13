@@ -514,11 +514,11 @@ CFG_STRING(hook_retrieve_drill, "hook_retrieve_drill", "dev", "", "VOTVCOOP_HOOK
     "the host says the one `rig: VERDICT hook-retrieve` line. join -- the hook is tied before the host player before the client joins, so the "
     "client's copy is the one its save loaded; the client is put beside it and takes it. host / joinhost -- the same "
     "two copies, and the host player walks to its hook and takes it: the host's DONE line, its item in its "
-    "inventory with no grant, and the client's copy gone with no item.")
-CFG_ENUM(hook_retrieve_red, "hook_retrieve_red", "dev", "off", "off|nocollision|clientruns", "VOTVCOOP_HOOK_RETRIEVE_RED",
-    "Developer (client): the hook retrieve drill's reds. nocollision -- an anchored mirror's collision stays off, as "
+    "inventory with no grant, and the client's copy gone with no item. window -- the host ties the hook before the client joins and takes it between the client's save being cut and its world being ready; the client's join ends with its copy gone.")
+CFG_ENUM(hook_retrieve_red, "hook_retrieve_red", "dev", "off", "off|nocollision|clientruns|nojoingone", "VOTVCOOP_HOOK_RETRIEVE_RED",
+    "Developer (nojoingone: the host; the others: the client): the hook retrieve drill's reds. nocollision -- an anchored mirror's collision stays off, as "
     "before the lane, so the player's look never takes it (FAIL when the aim fan held every pose); clientruns -- the game's own pickup runs on the client's "
-    "copy instead of asking the host (FAIL in the press's tick: nothing was asked, the copy and an item are here).")
+    "copy instead of asking the host (FAIL in the press's tick: nothing was asked, the copy and an item are here); nojoingone -- the host does not name gone, at a joiner's connect, the hooks taken since its save was cut (window mode: the copy stands).")
 CFG_ENUM(prop_syncer_drill, "prop_syncer_drill", "dev", "off", "off|kick|forge", "VOTVCOOP_PROP_SYNCER_DRILL",
     "Drill (host and BOTH clients, the same value; three peers): a client syncs a prop its own interaction moves. "
     "kick: the client in slot 1 walks to a keyed prop with the director, claims it, kicks it with the game's own "

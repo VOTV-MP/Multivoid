@@ -102,8 +102,12 @@ void ResetPropClaims();
 void RegisterWorldHooksScan();
 // The live hook on THIS machine whose save key is `key`, or null: an adopted hook (the host), an anchored mirror (a
 // client), or a hook the world holds -- one a joiner's save loaded. An owner-phase mirror carries no key and is never
-// found. The anchored tables first, then the shared scan's last pass. hook_prop_claim.cpp. Game thread.
+// found. The anchored tables first, then the shared scan's last pass, then the game's own key map, which a save's load
+// fills before any scan pass has run. hook_prop_claim.cpp. Game thread.
 void* FindHookByKey(const std::wstring& key);
+// The save keys of every anchored hook this machine holds right now (the same three tables, not the key map), appended
+// to `out`; a key may appear twice. hook_prop_claim.cpp. Game thread.
+void CollectAnchoredKeys(std::vector<std::wstring>& out);
 
 // The interceptor's index: the mirror actors, flat. Read once per `hook_C::ReceiveTick` dispatch,
 // so it is a short linear scan over pointers rather than a hash -- a session holds a handful of

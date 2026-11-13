@@ -727,9 +727,9 @@ enum class ReliableKind : uint16_t {
     // client takes its copy away; `taker`, when it names a client, replays the pickup on that client's
     // copy, so the item lands in that player's inventory and nowhere else. A refused op 0 is answered
     // with op 2 (HOST->that client): the copy stays and the player may use it again; a client asks once
-    // per hook until op 1 or op 2 for it arrives. Never relayed; not pre-world. Late join: the save
-    // carries the hooks that stand; an op 1 is not sent to a slot before its world-ready, so a hook
-    // taken between a joiner's save and its world-ready leaves its copy standing there, unmeasured.
+    // per hook until op 1 or op 2 for it arrives. Never relayed; not pre-world. Late join: the save carries
+    // the hooks that stand; an op 1 is not sent to a slot before its world-ready, so the connect replay
+    // sends that slot, alone, an op 1 for each hook its save held that the host has taken since.
     // HookRetrievePayload.
     HookRetrieve = 260,
 

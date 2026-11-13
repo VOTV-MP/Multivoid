@@ -21,6 +21,7 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/world_identity.h"  // Generation: the scan's stamp
+#include "ue_wrap/world/keyed_objects.h"
 
 #include <cstdint>
 #include <vector>
@@ -172,7 +173,26 @@ void* FindHookByKey(const std::wstring& key) {
     if (g_worldGen == ue_wrap::world_identity::Generation())
         for (const WorldHook& w : g_world)
             if (R::IsLiveByIndex(w.actor, w.idx) && keyed(w.actor)) return w.actor;
+    // A hook a save loaded is in the game's own key map from the load, before the scan's first pass has seen it.
+    if (ue_wrap::keyed_objects::Available()) {
+        void* h = ue_wrap::keyed_objects::Resolve(key.c_str());
+        if (h && R::IsLive(h) && H::IsHookFamily(h)) return h;
+    }
     return nullptr;
+}
+
+void CollectAnchoredKeys(std::vector<std::wstring>& out) {
+    auto add = [&out](void* h) {
+        if (!h) return;
+        std::wstring k = PR::GetActorSaveKeyString(h);
+        if (!k.empty() && k != L"None") out.push_back(std::move(k));
+    };
+    for (const Adopted& a : AdoptedHooks()) add(a.ref.Get());
+    for (const auto& kv : Mirrors())
+        if (kv.second.anchored) add(kv.second.ref.Get());
+    if (g_worldGen == ue_wrap::world_identity::Generation())
+        for (const WorldHook& w : g_world)
+            if (R::IsLiveByIndex(w.actor, w.idx)) add(w.actor);
 }
 
 void RegisterWorldHooksScan() {

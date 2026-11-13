@@ -602,6 +602,7 @@ void OnPeerLeftSlot(int slot) {
     }
     g_saidSlotFull = static_cast<uint8_t>(g_saidSlotFull & ~(1u << (slot & 7u)));
     coop::hook_anchor::OnPeerLeftSlot(slot);
+    coop::hook_retrieve::OnPeerLeftSlot(slot);
     if (dropped) UE_LOGI("hook_sync: slot %d left -- %zu owner-phase mirrors dropped", slot, dropped);
 }
 
