@@ -56,6 +56,8 @@ constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before t
 enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
                              AwaitReply, AwaitContents, AwaitPoison, AwaitCopy, Say, Done };
 constexpr uint64_t kCopyBoundMs = 30000;   // a snack arm: the act's end to this client's copies showing the host's state
+constexpr uint64_t kStandBoundMs = 60000;  // a step's end to the player standing again (a bound only says INVALID)
+bool g_ragdollSaid = false;                // the ragdoll after this step was logged once
 std::string g_readyRest;                   // the text after the host's ready line's eid: a snack arm's uses and open
 CStep g_cstep = CStep::Arm;
 uint64_t g_cStepMs = 0, g_cNextMs = 0, g_nextSayMs = 0;
@@ -708,6 +710,25 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
     case CStep::Say: {
         // A client's chat passes the host's rate limit only at the drills' spacing; a refused line is lost for good.
         if (now < g_nextSayMs) return;
+        // The done line is this client's ready for the next row, whose target the host places by this player's puppet: a
+        // player lying in a ragdoll (mainPlayer.isRagdoll) has not finished the step, and the line waits for it to stand.
+        // The wait ends on the flag clearing; only a bound that runs out first says INVALID.
+        bool ragdoll = false, dead = false;
+        if (!g_sayFailed && E::ReadMainPlayerRagdollState(player, ragdoll, dead) && ragdoll && !dead) {
+            if (!g_ragdollSaid) {
+                g_ragdollSaid = true;
+                std::vector<ue_wrap::effects::Entry> fx;
+                std::string live;
+                if (ue_wrap::effects::List(&fx))
+                    for (const auto& e : fx)
+                        if (e.live) live += " " + std::string(e.name.begin(), e.name.end());
+                UE_LOGI("%s c%d %s: the player is ragdolled after %s; live effects:%s", kTag, kClientSlot,
+                        PhaseName().c_str(), row.name, live.empty() ? " none" : live.c_str());
+            }
+            if (CExpired(kStandBoundMs)) ClientInvalid(row, "the player stayed ragdolled");
+            return;
+        }
+        g_ragdollSaid = false;
         Say(g_sayLine);
         g_nextSayMs = now + coop::dev::kTalkEveryMs;
         g_mirror.Reset();

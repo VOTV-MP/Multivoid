@@ -100,6 +100,9 @@ int g_fanDir = -1;                       // the fan index a step's first target 
 constexpr float kDropCm = 40.f;          // above the floor, so the prop settles
 constexpr float kFloorDownCm = 400.f;    // how far under the puppet's middle the floor is looked for
 constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than this to its start began inside geometry
+// The floor is looked for from this far above the puppet's root: a ragdolled puppet's root lies on the floor, and a trace
+// that starts there reads the floor as geometry it began inside.
+constexpr float kTraceLiftCm = 120.f;
 constexpr float kNpcLiftCm = 60.f;       // a kerfur NPC is placed above the floor so its capsule clears it
 
 const Phase* ActivePhase() {
@@ -507,13 +510,13 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
             const float x = at.X + dx * ahead, y = at.Y + dy * ahead;
             float floorZ = 0.f;
             void* p = nullptr;
-            if (!DP::FloorAt(player, x, y, at.Z, kFloorDownCm, kMinColumnCm, &floorZ)) continue;
+            if (!DP::FloorAt(player, x, y, at.Z + kTraceLiftCm, kFloorDownCm + kTraceLiftCm, kMinColumnCm, &floorZ)) continue;
             if (!coop::director::RouteInLegs(player, at, FVector{x, y, floorZ}, kReachCm)) {
                 UE_LOGI("%s host %s: no route from slot 1's puppet reaches the column %.0f uu away at %.0f deg",
                         kTag, row.name, ahead, kFanDeg[i]);
                 continue;
             }
-            const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z, kFloorDownCm, kMinColumnCm,
+            const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z + kTraceLiftCm, kFloorDownCm + kTraceLiftCm, kMinColumnCm,
                                                npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
             if (d == DP::Drop::NoFloor) continue;
             if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
@@ -529,9 +532,10 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     static const char* const kMiss[] = {"floor", "trace did not run", "no hit", "starts inside geometry"};
     DP::FloorMiss facing = DP::FloorMiss::None, own = DP::FloorMiss::None;
     float z = 0.f;
-    DP::FloorAt(player, at.X + fwd.X / len * kAheadCm[0], at.Y + fwd.Y / len * kAheadCm[0], at.Z, kFloorDownCm,
+    DP::FloorAt(player, at.X + fwd.X / len * kAheadCm[0], at.Y + fwd.Y / len * kAheadCm[0], at.Z + kTraceLiftCm,
+                kFloorDownCm + kTraceLiftCm,
                 kMinColumnCm, &z, &facing);
-    DP::FloorAt(player, at.X, at.Y, at.Z, kFloorDownCm, kMinColumnCm, &z, &own);
+    DP::FloorAt(player, at.X, at.Y, at.Z + kTraceLiftCm, kFloorDownCm + kTraceLiftCm, kMinColumnCm, &z, &own);
     static char why[220];
     std::snprintf(why, sizeof why, "INVALID: no floor a route reaches was found round slot 1's puppet (puppet at %.0f %.0f "
                   "%.0f; facing column: %s; own column: %s)", at.X, at.Y, at.Z, kMiss[static_cast<int>(facing)],
