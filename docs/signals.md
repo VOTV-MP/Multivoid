@@ -114,11 +114,15 @@ bucket's pour that overlaps it call the desk's own `shortCircuit`, which sparks 
 the base on solar power. Both ran on the peer whose liquid it was alone, so the host's power and every other desk
 went on as before. A script-gate watch on the desk's own `shortCircuit` sees every call of it, the liquid
 Blueprints' and ours, and reads the flag `shortCircuiting` before and after the body: a short that began on the
-host goes to every client, and one that began on a client goes to the host, which checks the sender's world and that
-it stands within 15 m, and runs its own desk's `shortCircuit`; a client that hears it runs its copy's, and a desk
-already shorting is left alone, as the event's own guard leaves it (`coop/interactables/desk_short_sync`) `[V]`
-(`harness/autotest/autotest_desk_short.cpp`: a short from each peer sparks both desks and leaves both power panels
-dark; on the code before it a client's short sparked its own desk alone and no panel changed). A joiner whose world is
+host goes to every client; a client's call is cancelled at the gate and asked of the host, which checks the sender's
+world, that it is alive, that it stands within the desk lanes' reach (400 uu, which the authority pads with the pose's
+lag and the desk's bounds) and its budget (a burst of two, one per five seconds), and runs its own desk's
+`shortCircuit`. A client that hears the host's short runs its copy's, so a client's desk sparks only by the host's
+word, and a desk already shorting is left alone, as the event's own guard leaves it. A refused ask is answered to its
+sender alone with the host's state (`on` 0, or 1 when the host's desk already shorts), and an ask nothing answers is
+dropped after ten seconds; a state that finds no desk on a client is held until the desk resolves
+(`coop/interactables/desk_short_sync`) `[?]` (`harness/autotest/autotest_desk_short.cpp` walks the client beside the
+desk with the director and shorts from there; the rewritten drill has not run yet). A joiner whose world is
 up while the host's desk shorts is told at its ready edge and its desk shorts from the start, so its power-down comes
 up to ten seconds after the host's `[?]` (the `join` arm of the same drill: the rejoined client must have had its
 desk shorted by the host; its red is `desk_short_replay_off`).
@@ -247,7 +251,7 @@ measured). Nine of the ten have a row on the laptop's panel, since no widget car
 | desk input scalars | the last presser | polled deltas, relayed except to the originator |
 | the download simulation, the needle, the rate | the host | a streamed output vector; the client overwrites its own |
 | the ping | the presser's machine; its verdict the host | 10 Hz visual progress snapshots relayed by the host; observers keep the run flag clear |
-| the desk's short circuit | the host | its edge to every client; a client's short is a request |
+| the desk's short circuit | the host | its edge to every client; a client's short is cancelled and asked of the host |
 | the cursor | whoever moves it | a sixty-hertz stream |
 | the desk's sounds | the presser | effect events at the audio seam |
 | the sky-signal set, the catch, the dishes | the host | roller, the host's event, parked client sim |
@@ -288,7 +292,7 @@ measured). Nine of the ten have a row on the laptop's panel, since no widget car
 | `LaptopState`, `LaptopQuad` | the presser and the host | the power edge and the portable PC's lid; the file buffer, with the slot's generation |
 | `ServerState` | the host to all | the servers' broken set |
 | `SatConsole` | a client to the host; the host to that client | a typed line with its terminal's context; the lines the host's run printed, and its busy state |
-| `DeskShortState`, `DeskShortRequest` | the host to all; a client to the host | the desk shorted |
+| `DeskShortState`, `DeskShortRequest` | the host to all; a client to the host | the desk shorted (`on` 1); the host's answer to a refused ask, to its sender alone (`on` 0) |
 
 ## Late join
 
@@ -325,7 +329,6 @@ arrive with the save and never again.
 | Each player's SAT console screen and log are its own; another player's typing is not shown | `[V]` by design until decided |
 | A client's cheat menu (`uncalib`, `summonvirus`) and a virus its own save starts change only its copy of the dishes' precision, and the copy is put back at its next poll; the virus itself waits on a lane for the desk's `virusEvent` | `[V]` `coop/interactables/dish_calib_sync`; no lane carries `virusEvent` |
 | The fakeGrays event's level trigger (`trigger_fakeLmaos`) breaks its dish's server and zeroes the dish on the machine where an allowed actor enters its volume; on a client the zero is put back and the break stays that client's | `[V]` the chain: the eventer's fakeGrays event arms the volume, whose first object is the trigger; `[?]` whether a client's body on the host's copy fires it |
-| A client's short that the host refuses (its sender out of reach) still sparks that client's own desk; the base's power stays the host's | `[RD]` `coop/interactables/desk_short_sync`: the client's own event runs before its request reaches the host |
 
 ## Code map
 
