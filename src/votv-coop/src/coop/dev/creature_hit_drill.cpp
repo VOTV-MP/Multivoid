@@ -151,7 +151,7 @@ bool HasRow(std::string_view needle) {
 void Say(std::string_view line) { coop::chat_sync::QueueSend(std::string(line)); }
 
 void ClearTimer(void* actor, const wchar_t* fn) {
-    if (!ue_wrap::kismet_timer::Clear(actor, fn)) UE_LOGW("[CHD] K2_ClearTimer unresolved -- the creature's timer is NOT cleared");
+    if (!ue_wrap::kismet_timer::Clear(actor, fn)) UE_LOGW("[CHD] K2_ClearTimer did not run -- the creature's timer is NOT cleared");
 }
 
 // ---- the host -----------------------------------------------------------------------------------

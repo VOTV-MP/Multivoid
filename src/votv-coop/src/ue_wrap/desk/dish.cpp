@@ -45,8 +45,6 @@ void* g_activateFn = nullptr;   // UActorComponent::Activate(bool bReset)
 void* g_deactivateFn = nullptr; // UActorComponent::Deactivate()
 void* g_isActiveFn = nullptr;   // UActorComponent::IsActive() -> bool
 
-// Tickers: singletons the gamemode's BeginPlay creates.
-
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
 bool g_l4Resolved = false;

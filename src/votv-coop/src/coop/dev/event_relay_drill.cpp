@@ -101,8 +101,10 @@ int CopiesOf(void* actor) {
 
 // The krampus's four BeginPlay timers (npc_krampus.cpp:389-404), cleared as kerfur::NeutralizeAiTimers clears kerfur's.
 void ClearKrampusTimers(void* actor) {
+    bool allRan = true;
     for (const wchar_t* fn : {L"timerButter", L"playerOverlap", L"tryToDespawn", L"safeTp"})
-        if (!ue_wrap::kismet_timer::Clear(actor, fn)) UE_LOGW("[EVR] K2_ClearTimer unresolved -- the krampus's timers are NOT cleared");
+        allRan = ue_wrap::kismet_timer::Clear(actor, fn) && allRan;
+    if (!allRan) UE_LOGW("[EVR] K2_ClearTimer did not run for every timer -- the krampus's timers are NOT all cleared");
 }
 
 // ---- the host -----------------------------------------------------------------------------------

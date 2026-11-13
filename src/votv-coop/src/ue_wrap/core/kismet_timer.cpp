@@ -3,6 +3,7 @@
 #include "ue_wrap/core/kismet_timer.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <windows.h>
@@ -17,7 +18,7 @@ namespace R = ue_wrap::reflection;
 
 void* g_library = nullptr;
 void* g_clear = nullptr;
-uint64_t g_nextTryMs = 0;
+uint64_t g_nextLogMs = 0;
 
 // Sets up the call on `f`; false when the frame or the name would not take.
 bool Prepare(ParamFrame& f, void* object, const wchar_t* function) {
@@ -30,16 +31,20 @@ bool Prepare(ParamFrame& f, void* object, const wchar_t* function) {
 
 }  // namespace
 
+// Every call attempts the lookup until it succeeds, so no caller reads false for another caller's failed attempt; only the
+// failure line is limited to one a second.
 bool Resolved() {
     if (g_library && g_clear) return true;
-    const uint64_t now = ::GetTickCount64();
-    if (now < g_nextTryMs) return false;
-    g_nextTryMs = now + 1000;
     if (!g_library) g_library = R::FindClassDefaultObject(L"KismetSystemLibrary");
     void* cls = g_library ? R::FindClass(L"KismetSystemLibrary") : nullptr;
-    if (!cls) return false;
-    if (!g_clear) g_clear = R::FindFunction(cls, L"K2_ClearTimer");
-    return g_clear != nullptr;
+    if (cls && !g_clear) g_clear = R::FindFunction(cls, L"K2_ClearTimer");
+    if (g_library && g_clear) return true;
+    const uint64_t now = ::GetTickCount64();
+    if (now >= g_nextLogMs) {
+        g_nextLogMs = now + 1000;
+        UE_LOGW("kismet_timer: KismetSystemLibrary or K2_ClearTimer not found (library=%p, function=%p)", g_library, g_clear);
+    }
+    return false;
 }
 
 bool Clear(void* object, const wchar_t* function) {
