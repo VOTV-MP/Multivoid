@@ -81,6 +81,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"analogdscreentest_c", L"playpingsound", L"analogdscreentest_c.playpingsound", 0xee73080598929c1cull, 0x9370eb5370078517ull},
     {L"analogdscreentest_c", L"pluginmodule", L"analogdscreentest_c.pluginmodule", 0x7afe51f4614141e5ull, 0xb01cdd83079fa0a2ull},
     {L"analogdscreentest_c", L"process_coords", L"analogdscreentest_c.process_coords", 0x6a2d5d90ab51fa2dull, 0xb306f658f6186b72ull},
+    {L"analogdscreentest_c", L"receivebeginplay", L"analogdscreentest_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0x33508809ae03b8cbull},
     {L"analogdscreentest_c", L"setdata", L"analogdscreentest_c.setdata", 0x078a3fd697c63880ull, 0x99d7870bdb2a7328ull},
     {L"analogdscreentest_c", L"setfullyprocessedsignalobject", L"analogdscreentest_c.setfullyprocessedsignalobject", 0x6a2d5d90ab51fa2dull, 0x0dd4af106fb20b54ull},
     {L"analogdscreentest_c", L"shortcircuit", L"analogdscreentest_c.shortcircuit", 0x6a2d5d90ab51fa2dull, 0x2899fa8107a93fcbull},
