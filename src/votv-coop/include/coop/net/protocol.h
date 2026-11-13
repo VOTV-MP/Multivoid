@@ -1279,7 +1279,8 @@ enum class ReliableKind : uint16_t {
     AtvHostState = 240,
     // CLIENT->HOST: this client's player refuelled or repaired an ATV (op 1, 2, the gain), fitted or took off a module
     // (op 3, 4, the module's value), each with a request id, or, as the ATV's syncer, pressed or released its horn
-    // (op 5). Never relayed, never relayable; the host judges it on the game thread, writes its own copy and answers
+    // (op 5), or adopted a copy holding no state of the host's and asks for it (op 6, with a request id). Never
+    // relayed, never relayable; the host judges it on the game thread, writes its own copy and answers
     // every request. AtvHostPayload.
     AtvRequest = 239,
 
@@ -3231,8 +3232,9 @@ struct AtvStatePayload {
     uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=kAtvBrake, bit2=grabbed (the sender's grav hand holds it),
                            //      bit3=kAtvFromSyncer, bit4=kAtvTrap, bit5=kAtvLights, bit6=kAtvTurbo
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (warp as is), 0 = live stream
-    // The condition block: the syncer's accumulators travel; a mirror's own accrual is held at zero,
-    // so overwriting never races an irreversible act. Presence (tiresMask, hasSpare) is consumed
+    // The condition block: the tires' and dirt's accumulators travel from the syncer (fuel and health are the host
+    // copy's absolute, a client syncer's burn taken only under its ack, see ackSeq); a mirror's own accrual is held at
+    // zero, so overwriting never races an irreversible act. Presence (tiresMask, hasSpare) is consumed
     // from the host's own copy only: a client's eject ships a mask bit whose wheel-prop birth
     // cannot travel, and applying it would turn a divergence into persisted item loss.
     float    tiresDurability[4];  // 16 -- 0..100 per wheel (order: the game's tires[] index order)
@@ -3241,7 +3243,7 @@ struct AtvStatePayload {
     float    spareDurability;     // 4  -- spareTire_durability (no visual consumer; value truth)
     float    spareDirt;           // 4  -- spareTire_dirt
     float    fuel;                // 4  -- 0..100
-    float    health;              // 4  -- -1..100 as a client syncer may send it; the syncer's own, a mirror's stale
+    float    health;              // 4  -- -1..100 as a client syncer may send it; the host copy's own is the truth
     uint8_t  tiresMask;           // 1  -- bit i = tires[i] (PRESENCE -- the host's own copy only)
     uint8_t  tiresValid;          // 1  -- 0 = the producer could not read the arrays; the receiver touches nothing (mask 0
                                   //      is a legal state, all four ejected, so absence needs its own bit)
@@ -3880,20 +3882,23 @@ struct WoodchipperPayload {
 static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 bytes");
 
 // An ATV's host state (AtvHostState), or a client's request (AtvRequest). One payload, told apart by `op`: a request's
-// is 1..5, a state's 16..18.
+// is 1..6, a state's 16..18.
 namespace atv_host_op {
-// AtvRequest (client -> host): the four acts of a player's item on an ATV, and the seated syncer's horn.
-inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kHorn = 5;
+// AtvRequest (client -> host): the four acts of a player's item on an ATV, the seated syncer's horn, and a copy's ask for
+// the host's state (kSync: sent when a copy is adopted holding none; the host answers with its state and applies nothing).
+inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kHorn = 5, kSync = 6;
 // AtvHostState (host -> clients): the host copy's vitals, the answer to a request, and a horn edge.
 inline constexpr uint8_t kState = 16, kAnswer = 17, kHornEdge = 18;
 }  // namespace atv_host_op
-// An answer's verdict, carried in `module`: 0 is a request the host applied, the rest refused it. `kGone` carries no state.
+// An answer's verdict, carried in `module`: 0 is a request the host applied, the rest refused it. kDuplicate is a module
+// the ATV already holds; kFull a tank or health that is already full. `kGone` carries no state.
 namespace atv_host_reason {
 inline constexpr uint8_t kOk = 0, kNotReady = 1, kGone = 2, kReach = 3, kNoItem = 4, kRate = 5, kDuplicate = 6,
-                         kNotHeld = 7, kNotSyncer = 8, kMalformed = 9;
+                         kNotHeld = 7, kNotSyncer = 8, kMalformed = 9, kFull = 10;
 }  // namespace atv_host_reason
-// `flags`: the host copy's empty and broken marks (a state, an answer); the horn is down (a horn request or edge).
-inline constexpr uint8_t kAtvHostHornDown = 0x01, kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10;
+// `flags`: the host copy's empty and broken marks (a state, an answer); the horn is down (a horn request or edge);
+// kAtvHostNoState, on an answer that carries no state (the fuel, health, marks and modules are zero and mean nothing).
+inline constexpr uint8_t kAtvHostHornDown = 0x01, kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10, kAtvHostNoState = 0x20;
 struct AtvHostPayload {
     WireKey  key;          // 32 -- the ATV's Key
     float    fuel;         // 4 -- the host copy's fuel (a state, an answer)

@@ -4,7 +4,8 @@
 //     taken off) are observed before and after, never refused: on a CLIENT the verb runs on its copy, where the item is
 //     spent, and what it did to the ATV is asked of the host (op refuel with the gain, repair once per hold, fit and
 //     take-off with the module's value); on the HOST the same POSTs call the publish point, which sends nothing when the
-//     call changed nothing;
+//     call changed nothing, and a verb nested in another (playerUsedOn calls fuelUp and toolboxFix) publishes once, at the
+//     outermost one's POST;
 //   - the one exception is fuelUp from anything but gascanFuel, the fuelbox's overlap with a can lying in the world: a
 //     client refuses it, the host's copy being that can's author (a client's copy never shows a fuel the host did not give);
 //   - the honk key's press and release on the copy a player drives: a client's, as the ATV's syncer, goes to the host; the

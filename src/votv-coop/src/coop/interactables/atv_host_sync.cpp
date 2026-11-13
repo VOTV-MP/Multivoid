@@ -41,9 +41,6 @@ int g_applying = 0;   // our own writes run inside an ApplyScope
 // The state sequences (atv_host_sync.h): the host's per ATV, and the newest this client applied. Both are the session's,
 // never reset by a world change.
 std::unordered_map<std::wstring, uint32_t> g_stateSeq, g_appliedSeq;
-// HOST: the vitals each ATV's newest state carried. A verb nested in another (playerUsedOn calls toolboxFix) reaches the
-// publish point twice with one change; the second finds the clients already told.
-std::unordered_map<std::wstring, Vitals> g_lastSent;
 
 struct Counts {
     uint32_t published = 0, replayed = 0, applied = 0, gated = 0, dropped = 0, kept = 0, asked = 0, answered = 0,
@@ -114,23 +111,31 @@ void ReleaseHeld() {
 
 // ---- CLIENT: the open-request gate ----
 
-constexpr size_t kMaxOpen = 4;   // requests open on one ATV
+constexpr size_t kMaxOpen = 4;        // requests open on one ATV
+constexpr size_t kMaxOpenTotal = 8;   // and over all of them: the host's per-sender queue (atv_host_judge)
 struct Gate {
     std::vector<uint32_t> open;
     bool fullSaid = false;
 };
 std::unordered_map<std::wstring, Gate> g_gate;
 uint32_t g_nextReq = 0;
+bool g_totalFullSaid = false;
+
+size_t OpenTotal() {
+    size_t n = 0;
+    for (const auto& kv : g_gate) n += kv.second.open.size();
+    return n;
+}
 
 // Every set cleared by an exit that is no answer; each request still unanswered is counted and said once.
 void ClearGate(const char* why) {
-    uint32_t n = 0;
-    for (const auto& kv : g_gate) n += static_cast<uint32_t>(kv.second.open.size());
+    const size_t n = OpenTotal();
     if (n) {
-        g_n.unanswered += n;
-        UE_LOGI("atv_host: %u request(s) unanswered at %s -- the open-request gate is cleared", n, why);
+        g_n.unanswered += static_cast<uint32_t>(n);
+        UE_LOGI("atv_host: %zu request(s) unanswered at %s -- the open-request gate is cleared", n, why);
     }
     g_gate.clear();
+    g_totalFullSaid = false;
 }
 
 // ---- CLIENT: the unadopted rows ----
@@ -151,6 +156,21 @@ void KeepUnadopted(const std::wstring& key, const Payload& p) {
     ++g_n.kept;
 }
 
+// The ATVs whose horn is down on the host and whose copy this client does not hold yet (the joiner's replay can beat the
+// adoption): the press is sounded at the adoption, a release forgets it. The same 8, the oldest replaced.
+std::vector<std::wstring> g_unadoptedHorns;
+
+void KeepUnadoptedHorn(const std::wstring& key, bool down) {
+    const auto it = std::find(g_unadoptedHorns.begin(), g_unadoptedHorns.end(), key);
+    if (!down) {
+        if (it != g_unadoptedHorns.end()) g_unadoptedHorns.erase(it);
+        return;
+    }
+    if (it != g_unadoptedHorns.end()) return;
+    if (g_unadoptedHorns.size() >= kMaxUnadopted) g_unadoptedHorns.erase(g_unadoptedHorns.begin());
+    g_unadoptedHorns.push_back(key);
+}
+
 }  // namespace
 
 bool Vitals::operator==(const Vitals& o) const {
@@ -162,7 +182,10 @@ ApplyScope::ApplyScope() { ++g_applying; }
 ApplyScope::~ApplyScope() { --g_applying; }
 bool Applying() { return g_applying > 0; }
 
-void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
+void Install(coop::net::Session* session) {
+    g_session.store(session, std::memory_order_release);
+    coop::atv_host_judge::Install();
+}
 
 coop::net::Session* LiveSession() { return Live(); }
 
@@ -207,14 +230,12 @@ bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before) 
     coop::net::Session* s = Live();
     Vitals now;
     if (!s || s->role() != coop::net::Role::Host || !ReadVitals(atv, now) || now == before) return false;
-    const auto sent = g_lastSent.find(key);
-    if (sent != g_lastSent.end() && sent->second == now) return false;
-    g_lastSent[key] = now;
     ++g_stateSeq[key];
     Payload p{};
     FillState(key, now, op::kState, p);
     s->SendReliable(coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
     ++g_n.published;
+    coop::atv_host_judge::OnStatePublished(key);
     DE::Note(DE::kPublished, static_cast<int32_t>(p.stateSeq), now.count, 0, now.fuel, now.health);
     UE_LOGI("atv_host: '%ls' state #%u published -- fuel %.1f health %.1f modules %hs%s%s", key.c_str(), p.stateSeq,
             now.fuel, now.health, ModulesText(now).c_str(), (now.flags & coop::net::kAtvHostEmpty) ? " empty" : "",
@@ -232,6 +253,16 @@ void SendHorn(const std::wstring& key, bool pressed, int skipSlot) {
     s->SendReliable(coop::net::ReliableKind::AtvHostState, &p, sizeof(p), skipSlot);
 }
 
+void SendHornDownToSlot(const std::wstring& key, int slot) {
+    coop::net::Session* s = Live();
+    if (!s || s->role() != coop::net::Role::Host) return;
+    Payload p{};
+    coop::net::WireKeyFromString(key, p.key);
+    p.op = op::kHornEdge;
+    p.flags = coop::net::kAtvHostHornDown;
+    s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
+}
+
 void OnState(const Payload& p) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     if (key.empty() || !A::EnsureResolved()) return;
@@ -242,9 +273,12 @@ void OnState(const Payload& p) {
     void* atv = Find(key);
     if (p.op == op::kHornEdge) {
         // The host's replay of a driver's horn: the copy sounds it and keeps its own controls.
-        if (!atv) return;
-        ApplyScope applying;
         const bool down = (p.flags & coop::net::kAtvHostHornDown) != 0;
+        if (!atv) {
+            KeepUnadoptedHorn(key, down);
+            return;
+        }
+        ApplyScope applying;
         A::ReplayHorn(atv, down);
         DE::Note(DE::kHornPlayed, down ? 1 : 0);
         return;
@@ -263,7 +297,9 @@ void OnState(const Payload& p) {
         const bool closed = ids.empty();
         if (closed) {
             g_gate.erase(it);
-            if (atv && p.module != coop::net::atv_host_reason::kGone) ApplyState(key, atv, p, 1);
+            // An answer that carries no state (the ATV is gone on the host, or it could not read it) writes nothing.
+            if (atv && p.module != coop::net::atv_host_reason::kGone && !(p.flags & coop::net::kAtvHostNoState))
+                ApplyState(key, atv, p, 1);
         }   // else the state this answer carries is not applied: a request of this client's is still out
         DE::Note(DE::kAnswer, static_cast<int32_t>(p.reqId), p.module, closed ? 1 : 0, p.fuel, p.health, p.moduleCount);
         return;
@@ -307,6 +343,15 @@ void NoteBlockBuilt(const std::wstring& key) {
 uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
     coop::net::Session* s = Live();
     if (!s || s->role() != coop::net::Role::Client) return 0;
+    if (OpenTotal() >= kMaxOpenTotal) {
+        ++g_n.refusedAsks;
+        if (!g_totalFullSaid) {
+            g_totalFullSaid = true;
+            UE_LOGI("atv_host: %zu requests are open over all ATVs -- this player's next act is not sent (said once)",
+                    kMaxOpenTotal);
+        }
+        return 0;
+    }
     Gate& g = g_gate[key];
     if (g.open.size() >= kMaxOpen) {
         ++g_n.refusedAsks;
@@ -367,24 +412,42 @@ void NoteAtvIndexed(const std::wstring& key, void* atv) {
         }
         break;
     }
-    Vitals now;
-    if (ReadVitals(atv, now))
-        DE::Note(DE::kAdopted, applied ? 1 : 0, DE::KeyTag(key), static_cast<int32_t>(seq), now.fuel, now.health, now.count);
+    if (DE::On()) {
+        Vitals now;
+        if (ReadVitals(atv, now))
+            DE::Note(DE::kAdopted, applied ? 1 : 0, DE::KeyTag(key), static_cast<int32_t>(seq), now.fuel, now.health, now.count);
+    }
+    const auto horn = std::find(g_unadoptedHorns.begin(), g_unadoptedHorns.end(), key);
+    if (horn != g_unadoptedHorns.end()) {
+        g_unadoptedHorns.erase(horn);
+        ApplyScope applying;
+        A::ReplayHorn(atv, true);
+        DE::Note(DE::kHornPlayed, 1);
+    }
+    // A copy that took no state of the host's asks for it (MTA binds the state to the entity's add packet, CEntityAddPacket.cpp:
+    // 208, :454, :531-552): the host's replay may have been lost to the unadopted rows' cap, and the copy's ack would stay
+    // behind the host's sequence for good, so a syncer's vitals would never be taken. A request of this client's already open on
+    // the ATV holds the gate, and its answer carries the state.
+    if (!applied && !VitalsGated(key)) Ask(key, op::kSync, 0.f, 0);
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
     coop::net::Session* s = Live();
-    if (!s || s->role() != coop::net::Role::Host || !A::EnsureResolved()) return;
-    std::vector<Indexed> atvs;
-    coop::atv_sync::ForEachIndexed(&Collect, &atvs);
-    for (const Indexed& x : atvs) {
-        Vitals v;
-        if (!ReadVitals(x.actor, v)) continue;
-        Payload p{};
-        FillState(x.key, v, op::kState, p);
-        s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
-        ++g_n.replayed;
+    if (!s || s->role() != coop::net::Role::Host) return;
+    if (A::EnsureResolved()) {
+        std::vector<Indexed> atvs;
+        coop::atv_sync::ForEachIndexed(&Collect, &atvs);
+        for (const Indexed& x : atvs) {
+            Vitals v;
+            if (!ReadVitals(x.actor, v)) continue;
+            Payload p{};
+            FillState(x.key, v, op::kState, p);
+            s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
+            ++g_n.replayed;
+        }
     }
+    // The slot is world-ready: its parked requests are served, and every horn held down reaches it (after the states).
+    coop::atv_host_judge::OnSlotReady(slot);
 }
 
 void OnDisconnect() {
@@ -395,10 +458,10 @@ void OnDisconnect() {
                 g_n.kept, g_n.dropped, g_n.asked, g_n.answered, g_n.refusedAsks, g_n.stray, g_n.unanswered);
     g_n = Counts{};
     g_unadopted.clear();
+    g_unadoptedHorns.clear();
     g_nextReq = 0;
     coop::atv_gate::OnDisconnect();
     g_stateSeq.clear();
-    g_lastSent.clear();
     g_appliedSeq.clear();
     coop::atv_host_judge::OnDisconnect();
     g_session.store(nullptr);

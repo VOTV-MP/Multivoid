@@ -73,11 +73,17 @@ void FillState(const std::wstring& key, const Vitals& v, uint8_t opcode, coop::n
 
 // HOST, the one publish point: when `atv`'s vitals now differ from `before`, which the caller read ahead of its write,
 // bump the ATV's state sequence and send its state to every client (the sender of the request that caused it too: its
-// open-request gate holds it until the answer). True when it sent. A call that changed nothing sends nothing. Game thread.
+// open-request gate holds it until the answer). True when it sent. A call that changed nothing sends nothing; one that
+// changed something sends, whatever an earlier state carried, since the sequence it bumps is what the clients' acks are
+// compared with. A verb that runs inside another (playerUsedOn calls toolboxFix) is published once, by atv_gate at the
+// outermost one's end. Game thread.
 bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before);
 
 // HOST: a horn edge of `key`'s ATV to every client but `skipSlot` (-1: none).
 void SendHorn(const std::wstring& key, bool pressed, int skipSlot);
+
+// HOST: a horn held down on `key`'s ATV, to `slot` alone (the joiner's world-ready edge).
+void SendHornDownToSlot(const std::wstring& key, int slot);
 
 // Our own writes to an ATV (a state applied, a request applied, a horn replayed) run inside one of these.
 class ApplyScope {
@@ -90,9 +96,9 @@ public:
 
 bool Applying();
 
-// CLIENT, the open-request gate (per ATV, at most 4 requests open): register a request id for `key`, then send the
-// request (atv_host_judge.h). Returns the id, or 0 when nothing was sent: the 5th act on one ATV is refused here and
-// said once, as is a session that is not a connected client's. The gate stays shut while any id is open; an answer
+// CLIENT, the open-request gate (per ATV, at most 4 requests open, 8 over all ATVs: the host's queue per sender): register
+// a request id for `key`, then send the request (atv_host_judge.h). Returns the id, or 0 when nothing was sent: the 5th
+// act on one ATV and the 9th overall are refused here and said once, as is a session that is not a connected client's. The gate stays shut while any id is open; an answer
 // removes its id and the state it carries is applied, with its sequence recorded, when it closes the last. The other
 // exits are the ATV's destroy (NoteAtvGone), the session's end and a world change, each clearing the set and saying an
 // unanswered id once. An answer for an id not open is dropped and counted.
@@ -101,13 +107,14 @@ uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t modu
 // CLIENT: the syncer's horn edge to the host. No id, no gate: a horn is no act on the ATV's state.
 void AskHorn(const std::wstring& key, bool down);
 
-// CLIENT: this ATV left the index (its destroy), or entered it (adoption: a state held for it is applied now).
+// CLIENT: this ATV left the index (its destroy), or entered it (adoption: a state held for it is applied now, a horn held
+// down on the host is sounded, and a copy that took no state asks the host for it: request op kSync).
 void NoteAtvGone(const std::wstring& key);
 void NoteAtvIndexed(const std::wstring& key, void* atv);
 
-// [dev] CLIENT, the ATV drill's fixture: the next state for `key` is held, not applied, until this copy builds its next
-// condition block (NoteBlockBuilt, from the block's fill), so that block carries the ack of the state before it. An empty
-// key disarms and applies a state still held.
+// [dev] CLIENT, the ATV drill's fixture: the states for `key` (the newest of them) are held, not applied, until this copy
+// builds its next condition block (NoteBlockBuilt, from the block's fill), so that block carries the ack of the state
+// before it. An empty key disarms and applies a state still held.
 void HoldNextStateForDrill(const std::wstring& key);
 void NoteBlockBuilt(const std::wstring& key);
 

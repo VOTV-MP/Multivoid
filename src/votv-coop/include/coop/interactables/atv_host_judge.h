@@ -1,15 +1,17 @@
 // coop/interactables/atv_host_judge.h -- the host's judge of a client's ATV requests: a refuel, a repair, a module fitted
 // or taken off, and the syncer's horn. A client's item act runs on its own copy, where the item is spent; what the act
 // does to the ATV is the host's, asked here. Per sender, requests wait in a FIFO of 8 and are served at {4, 4} a second:
-// a request whose sender's world is not ready on the host, or whose hand state the host still owes (hand_item's pacing),
-// is parked at the head until the host's tick finds it judgeable, never refused for the lag. Judged on the game thread:
-// the sender is live and within 800 cm of the ATV or seated in it; a refuel needs a gas can in its hand and room in the
-// tank, a repair a toolbox (held or last held, since it spends itself) and health under 100, a fit an ATV module and one
-// the host copy does not hold, a take-off one it does. Applied by writing the host copy, as the verbs' own bodies do
-// (fuelUp, toolboxFix, the module arrays), published through atv_host_sync, and EVERY request is answered to its sender
-// alone: the verdict, the host copy's resulting state and its sequence. A fit refused as a duplicate, after the hand
-// judge passed, is refunded as the module's prop at the ATV. The horn is judged on arrival, not queued: only the ATV's
-// syncer may press it, at {8, 8} a second, a release never refused; the host sounds it and sends the edge to the others.
+// one whose sender's world is not ready on the host, or whose hand state the host still owes (hand_item's pacing), is
+// parked at the head, never refused for the lag, and released by the slot's world-ready edge (OnSlotReady) or its hand
+// state applied (hand_item's subscriber); Tick serves no parked slot. Judged on the game thread: the sender is live and
+// within 800 cm of the ATV or seated in it; a refuel needs a gas can in its hand and room in the tank (else `full`), a
+// repair a toolbox last held (10 uses of one hold) and health under 100 (else `full`), a fit a module of the class its
+// hand last held, once per item, and one the host copy does not hold (else `duplicate`), a take-off one it does. Applied
+// by writing the host copy as the verbs' own bodies do, published through atv_host_sync, and EVERY request is answered
+// to its sender alone: the verdict, the host copy's state (flagged absent when there is none) and its sequence. A fit
+// refused as a duplicate is refunded as the module's prop at the ATV. A sync (op kSync) is answered and applies nothing.
+// The horn is judged on arrival, not queued: only the ATV's syncer may press it, at {8, 8} a second, a release never
+// refused; the host sounds it and sends the edge to the others, and to a slot that becomes ready every horn held down.
 // Game thread. Overview: docs/vehicles.md.
 
 #pragma once
@@ -28,8 +30,22 @@ namespace coop::atv_host_judge {
 // queue for Tick. A request with no readable key is the sender's own bug: counted, not answered.
 void OnRequest(int senderSlot, const coop::net::AtvHostPayload& p);
 
-// HOST, per tick: each sender's queue head, at its budget; the refusal tally's window.
+// Subscribe to the hand lane's applied states (hand_item::SubscribeHandApplied). Idempotent; called by atv_host_sync::Install.
+void Install();
+
+// HOST, per tick: each unparked sender's queue head, at its budget; the refusal tally's window.
 void Tick(coop::net::Session& s);
+
+// HOST: `slot` became world-ready (the connect replay's edge): its parked requests are served, and every horn held down is
+// sent to it alone.
+void OnSlotReady(int slot);
+
+// HOST: a state of `key`'s ATV was published (atv_host_sync::PublishIfChanged). Ends the drill fixture's park.
+void OnStatePublished(const std::wstring& key);
+
+// HOST: the host's own horn press (`down`) or release on `key`'s ATV: held in the table of presses beside the clients', and
+// sent to every client.
+void HostHorn(const std::wstring& key, void* atv, bool down);
 
 // HOST: the ATV's horn is down by a client's press and its syncer's seat ended, the syncer went silent or the table
 // cleared: the host copy's horn is released and the release goes to every client. A no-op when no press is open.

@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/interactables/atv_drill_events.h"
+#include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/net/protocol.h"
@@ -71,6 +72,30 @@ struct Pend {
 Pend g_pend[kRowCount];
 uint32_t g_overlapRefused = 0;
 
+// Each row's UFunction as its PRE last saw it, for sg::IsBodyActive: the gate's own scope says whether another of these verbs
+// is running around the one that ended (playerUsedOn calls fuelUp and toolboxFix), which a counter of PREs and POSTs cannot say
+// once a fault or a cancel skips a POST.
+void* g_rowFn[kRowCount] = {};
+
+// The acts a PRE could not read what its POST needs of, so nothing was asked or published for them: counted, each reason said once.
+uint32_t g_unread = 0;
+bool g_unreadSaid[3] = {};
+
+sg::Verdict Unread(int why, const char* what) {
+    ++g_unread;
+    if (!g_unreadSaid[why]) {
+        g_unreadSaid[why] = true;
+        UE_LOGW("atv_gate: %s -- this act on an ATV is not carried (counted; said once)", what);
+    }
+    return sg::Verdict::Run;
+}
+
+bool OtherVerbActive(int row) {
+    for (int i = 0; i < kRowCount; ++i)
+        if (i != row && g_rowFn[i] && sg::IsBodyActive(g_rowFn[i])) return true;
+    return false;
+}
+
 struct Takeoff {
     uint32_t reqId;
     ue_wrap::CachedObjRef prop;
@@ -102,6 +127,7 @@ sg::Verdict OnPre(const sg::Call& call) {
     g_seen[row].fetch_add(1, std::memory_order_relaxed);
     Pend& pd = g_pend[row];
     pd.valid = false;
+    g_rowFn[row] = call.function;
     if (H::Applying()) return sg::Verdict::Run;
     const Who role = RoleNow();
     if (role == Who::None) return sg::Verdict::Run;
@@ -126,14 +152,14 @@ sg::Verdict OnPre(const sg::Call& call) {
     if (row == kTake) {
         static R::ParamOffset sItem{L"item"};
         const int32_t off = sItem.Of(call.function);
-        if (off < 0 || !call.locals) return sg::Verdict::Run;
+        if (off < 0 || !call.locals) return Unread(0, "a take-off whose item name is not readable");
         R::FName name{};
         std::memcpy(&name, call.locals + off, sizeof(name));
         // The module's value is read from the name here: at the POST the part is gone from the arrays.
-        if (!A::ModuleByName(call.object, name, pd.value)) return sg::Verdict::Run;
+        if (!A::ModuleByName(call.object, name, pd.value)) return Unread(1, "a take-off whose module the ATV does not name");
         pd.heldBefore = HeldActor();
     }
-    if (!H::ReadVitals(call.object, pd.before)) return sg::Verdict::Run;
+    if (!H::ReadVitals(call.object, pd.before)) return Unread(2, "a verb whose ATV's vitals are not readable");
     pd.obj = call.object;
     pd.valid = true;
     return sg::Verdict::Run;
@@ -161,17 +187,21 @@ void OnPost(const sg::Call& call) {
     if (!pd.valid || pd.obj != call.object) return;
     pd.valid = false;
     if (H::Applying()) return;
+    const Who role = RoleNow();
+    // A call that changed nothing (the toolbox's repeat once the health is 100) asks and publishes nothing, and builds no key.
+    H::Vitals now;
+    if (role == Who::None || !H::ReadVitals(call.object, now) || now == pd.before) return;
     const std::wstring key = A::GetKeyString(call.object);
     if (!coop::atv_sync::AnnounceableAtvKey(key)) return;
-    const Who role = RoleNow();
     if (role == Who::Host) {
+        // A verb run inside another (playerUsedOn calls fuelUp and toolboxFix) is published once, by the outermost one's
+        // POST, from the vitals that outermost verb began with.
+        if (OtherVerbActive(row)) return;
         // Red atv_publish_off: the host's own acts are not published.
         static const bool s_publishOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_publish_off";
         if (!s_publishOff) H::PublishIfChanged(key, call.object, pd.before);
         return;
     }
-    H::Vitals now;
-    if (role != Who::Client || !H::ReadVitals(call.object, now)) return;
     switch (row) {
     case kFuelUp: {
         // The pour's gain is the fuel the copy's own body took from the can; a zero gain asks nothing.
@@ -225,12 +255,13 @@ void OnHonkPost(const sg::Call& call) {
     const int row = call.tag - kTagBase;
     if (row == kHonkPress || row == kHonkRelease) g_seen[row].fetch_add(1, std::memory_order_relaxed);
     if (H::Applying()) return;
+    const Who role = RoleNow();
+    if (role == Who::None) return;
     const bool down = row == kHonkPress;
     const std::wstring key = A::GetKeyString(call.object);
     if (!coop::atv_sync::AnnounceableAtvKey(key)) return;
-    const Who role = RoleNow();
     if (role == Who::Host) {
-        H::SendHorn(key, down, -1);
+        coop::atv_host_judge::HostHorn(key, call.object, down);
         return;
     }
     coop::atv_sync::TableView t;
@@ -294,6 +325,8 @@ void OnAnswer(uint32_t reqId, uint8_t reason) {
 }
 
 void OnDisconnect() {
+    if (g_unread) UE_LOGI("atv_gate: session end -- %u act(s) on an ATV were not carried: their PRE could not read them", g_unread);
+    g_unread = 0;
     g_overlapRefused = 0;
     g_takeoffs.clear();
     for (Pend& p : g_pend) p = Pend{};
