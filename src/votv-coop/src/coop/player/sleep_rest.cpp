@@ -34,14 +34,30 @@ namespace sg = ue_wrap::script_gate;
 // (include/ue_wrap/facts/fingerprints_0.9.0n.inc), so a game update that changes the body is named at boot; the
 // watch compares the factor it finds in the same call.
 constexpr int kTagSleepRest = 0x534C5253;  // 'SLRS'
+constexpr int kTagWakeRest = 0x574B5253;   // 'WKRS'
 UE_FACT_FN(kRowSleep, "sleep_rest", L"mainGamemode_C", L"sleep", Declared);
+// The rest's end: the game sets isSleep false in one place, the body `wakeup` runs (mainGamemode.cpp:5282, reached from
+// :5395-5409 and :5447), and every wake (the sleep need at 100, an event, a nightmare's own call) goes through it.
+UE_FACT_FN(kRowWakeup, "sleep_rest", L"mainGamemode_C", L"wakeup", Declared);
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-bool g_watchRegistered = false;
-bool g_watchSettled = false;
-bool g_saidWatchFail = false;
-uint64_t g_nextWatchMs = 0;  // the watch is asked about at most once a second
+// One script-gate watch, registered and asked about until it is live or settled dead.
+struct Watch {
+    const ue_wrap::facts::Function* row;
+    int tag;
+    sg::PostFn post;
+    const char* what;
+    bool registered = false;
+    bool settled = false;
+    bool live = false;
+    bool saidFail = false;
+};
+void OnSleepPost(const sg::Call&);
+void OnWakePost(const sg::Call&);
+Watch g_sleepWatch{&kRowSleep, kTagSleepRest, &OnSleepPost, "sleep"};
+Watch g_wakeWatch{&kRowWakeup, kTagWakeRest, &OnWakePost, "wakeup"};
+uint64_t g_nextWatchMs = 0;  // the watches are asked about at most once a second
 bool g_saidFactor = false;  // a factor other than the pinned one is said once, whatever the cause
 
 // The rest in progress. The gamemode and the body are held by identity: a world change or a new body ends it.
@@ -141,7 +157,7 @@ void EndRest(const char* why) {
 // factor again: it is put back to 1 here as well, and begins no new rest. A second call the game refused
 // leaves the world at the 1 the rest holds, which is legal and returns before the factor check.
 void OnSleepPost(const sg::Call&) {
-    if (!ConnectedClient()) return;
+    if (!ConnectedClient() || !g_wakeWatch.live) return;
     float asleep = 0.f;
     if (!V::Read(V::Field::Sleeping, &asleep) || asleep == 0.f) return;
     if (!SLP::EnsureResolved()) {
@@ -165,29 +181,48 @@ void OnSleepPost(const sg::Call&) {
     if (!g_resting) BeginRest();
 }
 
-// Register the watch, then ask the gate to resolve its name until it is live or settled dead. At most once a
-// second: a registration the gate refuses is said once, and asked again at that pace.
-void EnsureWatch() {
-    if (g_watchSettled) return;
-    const uint64_t now = coop::net::NowMs();
-    if (now < g_nextWatchMs) return;
-    g_nextWatchMs = now + 1000;
-    if (!g_watchRegistered) g_watchRegistered = sg::WatchName(kRowSleep, kTagSleepRest, nullptr, &OnSleepPost);
-    if (!g_watchRegistered) {
-        if (!g_saidWatchFail) {
-            g_saidWatchFail = true;
-            UE_LOGW("sleep_rest: the gate did not take the sleep watch -- asked again each second");
+// The call has run: the game's own wake, whoever called it (the sleep need at 100, an event, the nightmare's own
+// call), has put the world's dilation and the sleeping flag back. A call that left the flag up (a refusal) ends
+// nothing.
+void OnWakePost(const sg::Call&) {
+    if (!g_resting || !ConnectedClient()) return;
+    float asleep = 0.f;
+    if (!V::Read(V::Field::Sleeping, &asleep) || asleep != 0.f) return;
+    EndRest("the game's wakeup ran");
+}
+
+// Register the watch, then ask the gate to resolve its name until it is live or settled dead. A registration the
+// gate refuses is said once, and asked again at the caller's pace.
+void SettleWatch(Watch& w) {
+    if (w.settled) return;
+    if (!w.registered) w.registered = sg::WatchName(*w.row, w.tag, nullptr, w.post);
+    if (!w.registered) {
+        if (!w.saidFail) {
+            w.saidFail = true;
+            UE_LOGW("sleep_rest: the gate did not take the %s watch -- asked again each second", w.what);
         }
         return;
     }
     sg::ResolvePendingNames();
-    if (sg::NameWatchLive(kRowSleep, kTagSleepRest)) {
-        g_watchSettled = true;
-        UE_LOGI("sleep_rest: a client's sleep is seen at the call (a script-gate watch on mainGamemode_C::sleep)");
-    } else if (sg::NameWatchSettled(kRowSleep, kTagSleepRest)) {
-        g_watchSettled = true;
-        UE_LOGE("sleep_rest: the sleep watch is dead -- a client's sleep runs the world at the game's factor");
+    if (sg::NameWatchLive(*w.row, w.tag)) {
+        w.settled = w.live = true;
+        UE_LOGI("sleep_rest: a client's %s is seen at the call (a script-gate watch on mainGamemode_C::%s)", w.what,
+                w.what);
+    } else if (sg::NameWatchSettled(*w.row, w.tag)) {
+        w.settled = true;
+        UE_LOGE("sleep_rest: the %s watch is dead -- a client's rest is not carried out", w.what);
     }
+}
+
+// At most once a second. A rest begins only with both watches live: one that began and could not end would hold the
+// body at the native factor for good.
+void EnsureWatch() {
+    if (g_sleepWatch.settled && g_wakeWatch.settled) return;
+    const uint64_t now = coop::net::NowMs();
+    if (now < g_nextWatchMs) return;
+    g_nextWatchMs = now + 1000;
+    SettleWatch(g_sleepWatch);
+    SettleWatch(g_wakeWatch);
 }
 
 // A fall since the last read: food gets (1 - 1/F) of it back, coffee loses (F - 1) times it more. A rise
@@ -226,10 +261,7 @@ void Tick() {
     if (!gm || gm != g_gm.Raw() || !g_gm.Alive()) return EndRest("the gamemode changed");
     void* const body = CurrentBody();
     if (!body || body != g_body.Raw() || !g_body.Alive()) return EndRest("the body changed");
-    // The wake itself happens in the game; the body and the effects run at the native factor until this tick
-    // sees the flag fall, one frame at most.
-    float asleep = 0.f;
-    if (!V::Read(V::Field::Sleeping, &asleep) || asleep == 0.f) return EndRest("the sleeping flag fell");
+    // The wake is announced (OnWakePost); what this tick still ends on is a rest whose owner changed with no wake.
     float factor = kNativeSleepDilation;
     FX::ForEachWorldEffect(&DilateEffect, &factor);
     SettleNeeds();
