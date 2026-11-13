@@ -9,11 +9,10 @@
 // step logs `cap-label: STATE <step> level= module= tag= text=` on both peers and `cap-label: DONE fails=N` when its steps end;
 // the host then says `rig: VERDICT cap-label PASS|FAIL` over both peers' fails (a client with fails says FAIL itself). The red:
 // dev.cap_label_repaint_off on both peers drops every repaint, so the drill must FAIL. Gated by VOTVCOOP_RUN_CAP_LABEL;
-// the folder is VOTVCOOP_CAN_DIR. The host prepares only
-// once the desk's own setData has returned (coop::desk_input_sync::DeskDataApplied, a post watch on that function):
-// the save's setData writes the cap and the modules back after the session starts, and it repaints no label; a host
-// that never sees it says INVALID after 240 s. The driver launches the client once the host logs
-// `STATE 0-before-join`, and the host sends its label when the client's drill has begun.
+// the folder is VOTVCOOP_CAN_DIR. The host prepares only once the desk's setData has returned
+// (desk_input_sync::DeskDataApplied; INVALID after 240 s): it writes the cap and the modules back after the session
+// starts and repaints no label. The driver launches the client once the host logs `STATE 0-before-join`, and the host
+// sends its label when the client's drill has begun.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
