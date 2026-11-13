@@ -73,8 +73,12 @@ Resolved ResolveClass(const wchar_t* className, const Family& family, Load load)
 // refusal event a drill decides a red on. Kept for the newest 256 names, dropped when the world changes.
 bool WasDeclined(const wchar_t* className);
 
-// Once per frame: the load budget starts anew (and a world change drops the per-world caches). Game thread.
+// Once per frame: the load budget starts anew. Game thread.
 void Tick();
+
+// Whether this tick's load budget is spent: a Budgeted resolve of a class that needs a load now answers Pending, so a
+// waiter does not ask again before the next tick.
+bool LoadBudgetSpent();
 
 // How many on-demand loads ran, and how many of them while the probe below said the game's save replay was running.
 uint64_t LoadsRun();

@@ -54,7 +54,11 @@ bool Hold(uint32_t eid, uint16_t kind, int senderSlot, Replay fn, const void* by
 // Same returns as Hold.
 bool HoldReplayOnGiveUp(uint32_t eid, uint16_t kind, int senderSlot, Replay fn, const void* bytes, size_t n);
 
-// A bind took: the eid is no longer deferred and its holds become due.
+// Drops the mark and keeps the holds, for an owner that is about to try the bind again and will release them with OnBound
+// or end them with GiveUp (class_load_wait around a retried spawn); a bind that did not take marks the eid again.
+void Unmark(uint32_t eid);
+
+// A bind took: the eid is no longer deferred and its holds become due (also when the mark was dropped by Unmark).
 void OnBound(uint32_t eid);
 
 // Run every due hold, in arrival order. O(1) when none is due. Called from the reliable drain. A GiveUp of

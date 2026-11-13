@@ -42,8 +42,9 @@ size_t CancelIf(const char* site, const std::function<bool(uint32_t)>& match);
 // Whether a retry of `site` waits under `key`: a caller that ran its spawn again asks whether it parked anew.
 bool IsParked(const char* site, uint32_t key);
 
-// Once per frame, after ue_wrap::class_resolve::Tick has renewed the load budget: every class's first waiter runs, and
-// the rest of its class once it no longer waits. A world change drops every wait. Game thread.
+// Once per frame, after ue_wrap::class_resolve::Tick has renewed the load budget: while the budget has room each class's
+// first waiter runs once (a class past the budget waits for the next tick untouched), and
+// the rest of its class once it no longer waits. A world change drops every wait. Idle: nothing. Game thread.
 void Tick();
 
 }  // namespace coop::element::class_load_wait

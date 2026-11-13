@@ -222,9 +222,14 @@ bool HoldReplayOnGiveUp(uint32_t eid, uint16_t kind, int senderSlot, Replay fn, 
     return HoldImpl(eid, kind, senderSlot, fn, bytes, n, /*coalesce=*/true, /*replayOnGiveUp=*/true);
 }
 
+void Unmark(uint32_t eid) {
+    UE_ASSERT_GAME_THREAD("bind_wait::Unmark");
+    g_deferred.erase(eid);
+}
+
 void OnBound(uint32_t eid) {
     UE_ASSERT_GAME_THREAD("bind_wait::OnBound");
-    if (g_deferred.erase(eid) == 0) return;
+    g_deferred.erase(eid);   // holds exist only for an eid that was marked, and Unmark keeps them: they are released here
     g_overWarned.erase(eid);
     auto it = g_holds.find(eid);
     if (it == g_holds.end()) return;

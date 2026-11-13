@@ -386,6 +386,8 @@ static Resolved ResolveCore(const wchar_t* className, const Family& family, Load
     const auto asset = blueprint ? g_s.assetOf.find(assetKey) : g_s.assetOf.end();
     if (asset == g_s.assetOf.end()) {
         if (void* c = R::FindClass(className)) {
+            // A class the whole-array lookup finds while the index trails is judged like an indexed one.
+            if (family.acceptsClass && !family.acceptsClass(c)) return {ClassState::Refused, nullptr};
             g_s.found[fkey] = c;
             return {ClassState::Found, c};
         }
@@ -436,11 +438,13 @@ bool WasDeclined(const wchar_t* className) {
     return className && g_s.declined.Has(Lower(className));
 }
 
+// The world is synced by the resolve that needs it, so an idle frame costs two stores.
 void Tick() {
-    SyncWorld();
     g_s.spentMs = 0;
     g_s.loadsThisTick = 0;
 }
+
+bool LoadBudgetSpent() { return g_s.loadsThisTick > 0 && g_s.spentMs >= kBudgetMs; }
 
 uint64_t LoadsRun() { return g_s.loadsRun; }
 uint64_t LoadsDuringReplay() { return g_s.loadsDuringReplay; }

@@ -231,11 +231,6 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // The Aprop_C identity row (empty for a non-Aprop_C sender), for the fuzzy identity gate and
     // the pre-Finish write.
     const std::wstring propNameW = coop::remote_prop::KeyToWString(payload.propName);
-    UE_LOGI("remote_prop::OnSpawn: cls='%ls' key='%ls' name='%ls' loc=(%.1f, %.1f, %.1f) rot=(%.1f, %.1f, %.1f) physFlags=0x%02x",
-            classW.c_str(), keyW.c_str(), propNameW.c_str(),
-            payload.locX, payload.locY, payload.locZ,
-            payload.rotPitch, payload.rotYaw, payload.rotRoll,
-            static_cast<int>(payload.physFlags));
     // A trash clump rides this pipeline identified by eid, not key (setKey does not stick on it):
     // key None, elementId set. Aprop_C keeps the keyed path.
     const bool eidOnly = (keyW.empty() || keyW == L"None");
@@ -267,9 +262,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                               : (outSpawned || !hasEid ? CR::Load::Immediate : CR::Load::Budgeted)).state;
     if (classState == CR::ClassState::Pending) {
         // The spawn waits for its class (coop/element/class_load_wait, which marks the eid in bind_wait). It ends bound
-        // (a mirror row stands, or a kerfur prop's own adoption holds the eid), given up, or cancelled by the destroy.
+        // (a mirror row stands), given up, left to another owner's mark (a kerfur prop's adoption, a pile's pending
+        // bind), or cancelled by the destroy. Nothing is logged for a spawn that waits: its line comes when it runs.
         const coop::net::PropSpawnPayload held = payload;
-        const bool kerfur = classW.find(L"prop_kerfurOmega") != std::wstring::npos;
         const uint32_t eid = payload.elementId;
         coop::element::class_load_wait::ParkSpawn(
             "PropSpawn", classW, eid,
@@ -277,11 +272,16 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 OnSpawn(held, senderSlot, coop::players::Registry::Get().Local(), fromConvert, deferKerfur, nullptr,
                         skipBind);
             },
-            [eid, kerfur] { return kerfur || coop::element::Registry::Get().Get(eid) != nullptr; });
+            [eid] { return coop::element::Registry::Get().Get(eid) != nullptr; });
         return;
     }
     if (classState != CR::ClassState::Found && hasEid)
         coop::element::bind_wait::GiveUp(payload.elementId, "its class is not resolvable on this peer");
+    UE_LOGI("remote_prop::OnSpawn: cls='%ls' key='%ls' name='%ls' loc=(%.1f, %.1f, %.1f) rot=(%.1f, %.1f, %.1f) physFlags=0x%02x",
+            classW.c_str(), keyW.c_str(), propNameW.c_str(),
+            payload.locX, payload.locY, payload.locZ,
+            payload.rotPitch, payload.rotYaw, payload.rotRoll,
+            static_cast<int>(payload.physFlags));
     // The trash path: a chip pile, a garbage clump or a variant, mirrored as the GAME's own actor
     // with its brain parked -- coop/props/trash_morph_gate refuses the three verbs a trash actor
     // uses to author its own morph on a client. It branches before the Aprop_C dedupe, converge
