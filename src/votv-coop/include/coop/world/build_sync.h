@@ -1,4 +1,4 @@
-// coop/world/build_sync.h -- nails and custom walls, in each stage, are the host's, and every peer has them.
+// coop/world/build_sync.h -- nails, custom walls and posters on a wall are the host's, and every peer has them.
 //
 // Each is a save actor its own record rebuilds (ue_wrap/actors/build_piece), so the lane carries records by save key:
 //   - HOST: a poll sends each piece's record when it is new or changed (BuildState), and its key once when it goes. A
@@ -10,8 +10,8 @@
 //     this player holds an end, whose pull snaps go to the host to judge; an unfinished wall counts no bricks, wet
 //     concrete does not dry, and a wall's health is scaled so no hit here breaks it; this player's hit or repair goes
 //     to the host as it lands and shows here until the host answers. A piece this player made goes to the host, whose
-//     state answers; one unanswered in 10 s was refused and goes. A nail or unfinished wall this player took away goes
-//     to the host as a removal; one lost here otherwise is made again from its record.
+//     state answers; one unanswered in 10 s was refused and goes. A nail, unfinished wall or poster this player took
+//     away goes to the host as a removal; one lost here otherwise is made again from its record.
 // Game thread.
 
 #pragma once

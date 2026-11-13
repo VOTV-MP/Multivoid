@@ -77,6 +77,18 @@ with its one dropped nail item on both, an unfinished wall, its finish, a wet wa
 on its copy within 110 ms and on the host's wall, a log thrown by each peer counted once, the host's break, a client's
 wall builder).
 
+A poster on a wall rides the same lane. A poster item's put spawns a `poster_c` (the treehouse's and the custom poster's
+classes too), a save actor whose record carries its picture (`type`, and `filename` for a custom one); the poster's own
+action 7 takes it down into the taker's hand and destroys it, and the item is a prop the prop lanes carry. Each ran on the
+one machine, so a poster put up or taken down on one peer stayed as it was on the others. The host now sends each
+poster as a piece, a client's put-up goes to it as a new piece and a client's take-down as a removal within 8 m, and a
+record applied to a poster already up repaints it through the poster's own `setPoster` (`coop/world/build_sync`) `[V]`
+(`coop/dev/poster_probe`: before, the host's new poster never reached the client and a poster the client took down stayed
+on the host's wall; after, the host's new poster was made on the client with its picture, the client's take-down took the
+host's down, and the client's new poster was made on the host with its picture, both peers ending with the same six
+posters). A custom poster's image is a file in each player's own posters folder, so another peer shows its own image by
+that name, or none.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -84,7 +96,7 @@ wall builder).
 | a deployed hook, while its thrower still holds it | that peer | keyed by (slot, sequence); the others render a parked mirror |
 | a deployed hook once both ends are anchored | the host | the thrower hands over the hook's own save record; it is a save actor from then on |
 | a hook's tie, the physics constraint | the host | a client breaks every tie a hook builds on it; the host builds a client's tie on its mirror of that hook |
-| a nail, and a custom wall in each stage | the host | the piece's own save record; a client's new piece or removal is an intent the host checks |
+| a nail, a custom wall in each stage, and a poster on a wall | the host | the piece's own save record; a client's new piece or removal is an intent the host checks |
 
 ## Wire messages
 
@@ -94,7 +106,7 @@ wall builder).
 | `HookDestroy` | the owner to all, or the host for a leaver | that hook is gone |
 | `HookAnchorCommit` | a client to the host | the anchored hook's own save record, chunked |
 | `HookAnchored` | the host to all | an anchored hook exists, as the same record |
-| `BuildState` | the host to all | a nail's or a custom wall's own record, or its key when it went; chunked |
+| `BuildState` | the host to all | a nail's, a custom wall's or a poster's own record, or its key when it went; chunked |
 | `BuildIntent` | a client to the host | a piece its player made, as its record, or took away, a wall it hit or repaired, or a nail its pull snapped; chunked |
 
 ## Late join
@@ -124,4 +136,4 @@ within 20 s goes. The deployables that are not built reach a joiner only through
 | the anchor handoff | `coop/items/hook_anchor` |
 | the tie, host-only | `coop/items/hook_constraint` |
 | the props a tie claims for the driven-prop channel | `coop/items/hook_prop_claim` |
-| nails and custom walls | `coop/world/build_sync`; the pieces `ue_wrap/actors/build_piece` |
+| nails, custom walls and posters | `coop/world/build_sync`; the pieces `ue_wrap/actors/build_piece`; `coop/dev/poster_probe` |

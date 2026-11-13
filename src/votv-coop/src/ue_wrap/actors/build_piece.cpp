@@ -36,6 +36,10 @@ constexpr ClassRow kClasses[] = {
     {L"customWall_C", Kind::Wall},
     {L"customWall_rad_C", Kind::Wall},
     {L"customWall_wetConcrete_C", Kind::WetWall},
+    // A poster on a wall: a poster item's put spawns it, its own action 7 takes it down into the hand.
+    {L"poster_c", Kind::Poster},
+    {L"poster_c_C", Kind::Poster},
+    {L"poster_treehouse_C", Kind::Poster},
 };
 
 template <class T>
@@ -184,6 +188,9 @@ void* Spawn(const SR::SaveRecord& r) {
 bool Apply(void* piece, const SR::SaveRecord& r, void* endA, void* endB, SR::ClassResolver resolve) {
     void* load = piece ? R::FindDispatchFunctionCached(R::ClassOf(piece), L"loadData") : nullptr;
     if (!load || !SR::ApplyRecordVia(piece, load, r, resolve)) return false;
+    // A poster's loadData restores its picture (`type`, `filename`) but paints nothing: its begin play's setPoster does,
+    // a frame after a spawn, so a record applied to a poster already up repaints it here.
+    if (KindOf(piece) == Kind::Poster) return CallNoArgs(piece, L"setPoster") || true;
     if (KindOf(piece) != Kind::Nail) return true;
     // A broken record's aea only attaches the nail, so a tie this copy still has is broken here.
     if (NailBroken(piece))

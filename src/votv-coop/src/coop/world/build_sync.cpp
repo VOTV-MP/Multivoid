@@ -248,6 +248,7 @@ const char* KindName(B::Kind k) {
     case B::Kind::Unfinished: return "unfinished wall";
     case B::Kind::Wall: return "wall";
     case B::Kind::WetWall: return "wet wall";
+    case B::Kind::Poster: return "poster";
     default: return "piece";
     }
 }
@@ -451,8 +452,10 @@ bool Lost(coop::net::Session& s, const std::wstring& key, Known& k, Clock::time_
     const bool near = Within(body, k.rec.xform[4], k.rec.xform[5], k.rec.xform[6], kTakeReachCm);
     void* a = nullptr;
     void* b = nullptr;
-    // A nail whose ends are gone went with them; an end the host still has comes back, and the nail with it.
-    const bool takeable = kind == B::Kind::Unfinished || (kind == B::Kind::Nail && NailEnds(k.rec, a, b));
+    // A nail whose ends are gone went with them; an end the host still has comes back, and the nail with it. A poster
+    // goes into the hand of the player who takes it down (its action 7).
+    const bool takeable = kind == B::Kind::Unfinished || kind == B::Kind::Poster ||
+                          (kind == B::Kind::Nail && NailEnds(k.rec, a, b));
     if (k.confirmed && takeable && near) {
         if (!SendIntent(s, kOpGone, key, nullptr)) return false;
         UE_LOGI("build_sync: this player took %s '%ls' away -- the host takes it", KindName(kind), key.c_str());

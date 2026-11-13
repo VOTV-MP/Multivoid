@@ -22,7 +22,7 @@
 
 namespace ue_wrap::build_piece {
 
-enum class Kind { None, Nail, Unfinished, Wall, WetWall };
+enum class Kind { None, Nail, Unfinished, Wall, WetWall, Poster };
 
 // The kind of a class this file names, by its leaf name ("nail_long_C"). None for any other.
 Kind KindOfClass(const std::wstring& className);
