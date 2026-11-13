@@ -8,10 +8,11 @@
 //         see them make a noise. Last, the host runs the sky's tp: the client must receive both cues and play both.
 //         The host says `rig: VERDICT world-sound PASS|FAIL|INVALID`. Reds: world_sound_earth_off on the host,
 //         world_sound_faucet_off on the receiving peer.
-//   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; the
-//         rejoined client (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must have three noisers of its own. The host says `rig:
-//         VERDICT world-sound-join PASS|FAIL|INVALID`; INVALID when the host's noisers are gone at the ready edge. Red:
-//         alien_join_off on the host.
+//   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; at the
+//         rejoined client's ready edge the host counts the noisers it has out, and the rejoined client
+//         (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must have exactly that many of its own, as the replay delivers what is out.
+//         The host says `rig: VERDICT world-sound-join PASS|FAIL|INVALID`; INVALID when the host has none out at the edge
+//         (nothing to replay). Red: alien_join_off on the host.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -64,7 +65,7 @@ using disc_drill::OnGameThread;
 constexpr const char* kTag = "world-sound";
 constexpr const char* kTagJoin = "world-sound-join";
 constexpr uint8_t kActionFaucet = 5;   // the faucet's use action, which its click follows
-constexpr size_t kNoisers = 3;         // the alien sounds' count
+constexpr size_t kNoisers = 3;         // the alien sounds the host fires
 constexpr int kStepSec = 120;
 constexpr int kCrossSec = 15;          // INVALID bound: a faucet's state reaching the other peer
 constexpr int kFirstSoundSec = 30;     // INVALID bound: the sky playing its first sound after tp
@@ -272,8 +273,10 @@ void RunHost() {
     Parse2(Crossed(!start, clicks0), f1Flip, f1Click);
     UE_LOGI("world-sound: HOST the client's press: flipped=%d clicked=%d", f1Flip, f1Click);
 
-    // The host presses; the client's copy must flip and click.
+    // The host presses; the client's copy must flip and click. The client takes its click baseline first and says it is
+    // armed: a press landing before the baseline would read as no click.
     PS::Mark("f2_go", start ? "1" : "0");
+    if (!PS::Await("f2_armed", kStepSec)) return;
     PressFaucet("HOST");
     PS::Mark("f2_pressed");
     std::string f2;
@@ -389,6 +392,7 @@ void RunClient() {
     if (!PS::AwaitText("f2_go", start, kStepSec)) return;
     const uint32_t clicks0 = Clicks();
     const unsigned replays0 = Replays();
+    PS::Mark("f2_armed");
     if (!PS::Await("f2_pressed", kStepSec)) return;
     PS::Mark("f2_result", Crossed(on, clicks0));
 
@@ -466,8 +470,8 @@ void RunJoinHost() {
     UE_LOGI("world-sound: HOST the rejoined client's world is up; the host has %zu noisers out and sent %u snapshot(s)", atEdge,
             snapshots);
     PS::Mark("replay_decision", std::to_string(snapshots));
-    if (atEdge < kNoisers) {
-        RV::Say(kTagJoin, RV::Outcome::Invalid, "the host had %zu noisers out at the client's ready edge", atEdge);
+    if (atEdge == 0) {
+        RV::Say(kTagJoin, RV::Outcome::Invalid, "the host had no noisers out at the client's ready edge: nothing to replay");
         return;
     }
     // The host's decision is made at the edge: noisers out and no event told to the joiner cannot change later.
@@ -485,7 +489,7 @@ void RunJoinHost() {
                 theirs.c_str());
         return;
     }
-    RV::Say(kTagJoin, most >= atEdge ? RV::Outcome::Pass : RV::Outcome::Fail,
+    RV::Say(kTagJoin, most == atEdge ? RV::Outcome::Pass : RV::Outcome::Fail,
             "the host had %zu noisers out at the client's ready edge and sent %u snapshot(s); the rejoined client had %zu around it",
             atEdge, snapshots, most);
     UE_LOGI("world-sound: JOIN DONE on host");
