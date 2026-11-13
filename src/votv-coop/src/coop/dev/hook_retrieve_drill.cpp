@@ -4,6 +4,8 @@
 
 #include "coffee_drill_detail.h"  // co-located private header: SpawnProp (a prop_C named by a row)
 
+#include "coop/comms/chat_log.h"
+#include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/aim_fan.h"
@@ -45,11 +47,14 @@ namespace R  = ue_wrap::reflection;
 namespace CD = coop::dev::coffee_drill::detail;
 namespace RV = coop::rig_verdict;
 
-// The one verdict tag, said by whichever peer decides. A bound below only ever says INVALID: a verdict is an event (a
-// request answered, a copy gone, an item come) or the point after which nothing changes (the game's pickup body is
-// synchronous, so the press's own effect is read in the tick that pressed). The client says PASS when the taker is
-// a client (its item is the last event) or the copy goes with the host's pickup; either peer says FAIL.
+// The one verdict tag, said by the HOST alone, so a host-side FAIL cannot be lost behind a client's PASS (the act
+// drill's shape). The client says nothing to the rig: it tells the host in the lobby chat `c1 done ok|fail|invalid
+// <why>`, and the host says PASS when its own half held and the client's is ok, FAIL on its own contradiction or the
+// client's fail, INVALID on the client's invalid. A bound below only ever says INVALID: a verdict is an event (a request
+// answered, a copy gone, an item come) or the point after which nothing changes (the game's pickup body is
+// synchronous, so the press's own effect is read in the tick that pressed).
 constexpr const char* kVerdict = "hook-retrieve";
+constexpr const char* kHead    = "[HOOK-RETRIEVE-DRILL] ";
 
 constexpr float    kAheadCm       = 120.f;   // before the player: inside the interaction reach
 constexpr float    kApartCm       = 45.f;    // each cup this far to one side of the line ahead
@@ -59,6 +64,7 @@ constexpr uint64_t kSettleMs      = 3000;    // HOST: the cups' spawn to the tie
 constexpr uint64_t kJoinArmMs     = 10000;   // HOST, join modes: its own world up to the cups
 constexpr uint64_t kHostTakeMs    = 15000;   // HOST, host modes: the client's world ready to the host's walk
 constexpr uint64_t kTakeBoundMs   = 120000;  // the tie (or the client's ready edge) to the hook gone
+constexpr uint64_t kDoneBoundMs   = 120000;  // HOST: its half held to the client's report
 constexpr uint64_t kFindBoundMs   = 60000;   // CLIENT: world-ready to the anchored copy
 constexpr uint64_t kReadyBoundMs  = 3000;    // the aim to the player's look settling on the hook
 constexpr uint64_t kSeenBoundMs   = 15000;   // the press to the hook gone and the item in the inventory
@@ -87,7 +93,7 @@ Mode TheMode() {
 bool JoinMode() { return TheMode() == Mode::Join || TheMode() == Mode::JoinHost; }
 bool HostTakes() { return TheMode() == Mode::Host || TheMode() == Mode::JoinHost; }
 
-enum class Step : uint8_t { Arm, Settle, Tie, Wait, Find, Land, Walk, Aim, Ready, Press, Seen, Watch, Done };
+enum class Step : uint8_t { Arm, Settle, Tie, Wait, Find, Land, Walk, Aim, Ready, Press, Seen, Watch, Await, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -110,23 +116,77 @@ void Cleanup() {
     for (auto* r : {&g_cupA, &g_cupB, &g_hook})
         if (void* a = r->Get()) E::DestroyActor(a);
 }
-void Fail(const char* what) {
-    UE_LOGW("[HOOK-RETRIEVE-DRILL] FAIL in session %d: %s", g_session, what);
-    RV::Say(kVerdict, RV::Outcome::Fail, "%s", what);
+bool g_isHost = false;            // this peer's role, set by Tick
+bool g_hostOk = false;            // HOST: its own half held
+bool g_clientOk = false;          // HOST: the client said `done ok`
+bool g_clientDone = false;        // HOST: the client's report was read
+std::string g_clientWhy;          // HOST: what the client said held
+
+// The chat line the client's reports start with, and the text a peer says after it.
+std::string ClientHead(const char* what) { return std::string(kHead) + "c1 " + what; }
+
+// HOST: the text after `head` in the first line slot 1 said in the lobby record.
+bool ClientSaid(const std::string& head, std::string* rest) {
+    bool found = false;
+    coop::chat_log::ForEach([&](const coop::chat_log::Row& r) {
+        if (found || r.slot != 1 || r.text.compare(0, head.size(), head) != 0) return;
+        found = true;
+        if (rest) *rest = r.text.substr(head.size());
+    });
+    return found;
+}
+
+// HOST: the one verdict.
+void HostEnds(RV::Outcome o, const char* why) {
+    if (o == RV::Outcome::Fail) UE_LOGW("%sFAIL in session %d: %s", kHead, g_session, why);
+    else if (o == RV::Outcome::Invalid) UE_LOGW("%sABANDONED in session %d: %s", kHead, g_session, why);
+    RV::Say(kVerdict, o, "%s", why);
     Cleanup();
     g_step = Step::Done;
+}
+
+// CLIENT: what this peer found, told to the host; it says nothing to the rig.
+void Report(const char* word, const char* why) {
+    const std::string line = ClientHead("done ") + word + " " + std::string(why).substr(0, 110);
+    UE_LOGI("%sclient %s in session %d: %s", kHead, word, g_session, why);
+    coop::chat_sync::QueueSend(line);
+    Cleanup();
+    g_step = Step::Done;
+}
+
+void Fail(const char* what) {
+    if (g_isHost) HostEnds(RV::Outcome::Fail, what);
+    else Report("fail", what);
 }
 void Abandon(const char* why) {   // the drill could not measure: a walk, a setup or a bound that did not come to pass
-    UE_LOGW("[HOOK-RETRIEVE-DRILL] ABANDONED in session %d: %s", g_session, why);
-    RV::Say(kVerdict, RV::Outcome::Invalid, "%s", why);
-    Cleanup();
-    g_step = Step::Done;
+    if (g_isHost) HostEnds(RV::Outcome::Invalid, why);
+    else Report("invalid", why);
 }
-void Pass(const char* what) {
-    UE_LOGI("[HOOK-RETRIEVE-DRILL] client DONE in session %d: %s", g_session, what);
-    RV::Say(kVerdict, RV::Outcome::Pass, "%s", what);
-    Cleanup();
-    g_step = Step::Done;
+void Pass(const char* what) { Report("ok", what); }   // CLIENT only: the host's PASS is its own
+
+// HOST: its own half held; the verdict is PASS once the client's is ok too.
+void HostHalfOk(const char* what) {
+    UE_LOGI("%shost DONE in session %d: %s", kHead, g_session, what);
+    g_hostOk = true;
+    Next(Step::Await);
+}
+
+// HOST: read the client's report once; PASS when both halves are ok.
+void PollClient() {
+    if (g_step == Step::Done) return;
+    if (!g_clientDone) {
+        std::string rest;
+        if (!ClientSaid(ClientHead("done "), &rest)) return;
+        g_clientDone = true;
+        const size_t sp = rest.find(' ');
+        const std::string word = rest.substr(0, sp);
+        g_clientWhy = sp == std::string::npos ? std::string() : rest.substr(sp + 1);
+        if (word == "ok") g_clientOk = true;
+        else HostEnds(word == "invalid" ? RV::Outcome::Invalid : RV::Outcome::Fail,
+                      ("the client: " + g_clientWhy).c_str());
+    }
+    if (g_step != Step::Done && g_hostOk && g_clientOk)
+        HostEnds(RV::Outcome::Pass, ("the host's half held; the client: " + g_clientWhy).c_str());
 }
 
 // The hook items in this player's inventory, by their record's class.
@@ -152,11 +212,11 @@ void Reaim() {
     Next(Step::Aim);
 }
 
-// What the press did, read from the lane's counters and the world. True when the drill's end was said.
-// HOST (its own pickup, the game's): the hook is gone with one item in the inventory and no grant counted; the client
-// says PASS when its copy goes. CLIENT: a press that asked the host nothing is the lane failing at its seat (the game's
-// pickup ran on the copy, or the press was dropped) -- the clientruns red ends here; then the host's refusal is a FAIL
-// and its grant, which runs the pickup here, is the last event: the copy gone and one more item, PASS.
+// What the press did, read from the lane's counters and the world. True when this peer's part is over.
+// HOST (its own pickup, the game's): the hook is gone with one item in the inventory and no grant counted, its half;
+// the client reports its copy gone. CLIENT: a press that asked the host nothing is the lane failing at its seat (the
+// game's pickup ran on the copy, or the press was dropped) -- the clientruns red ends here; then the host's refusal
+// is a fail, and its grant, which runs the pickup here, is the last event: the copy gone and one more item, ok.
 bool JudgePress(bool host) {
     if (host) {
         if (g_hook.Alive()) return false;
@@ -169,10 +229,10 @@ bool JudgePress(bool host) {
                           "was %d", items, g_items0);
             Fail(why);
         } else {
-            UE_LOGI("[HOOK-RETRIEVE-DRILL] host DONE in session %d: the hook went with the host player's pickup and its "
-                    "item reached the inventory (%d -> %d), no grant", g_session, g_items0, items);
-            Cleanup();
-            g_step = Step::Done;
+            char what[140];
+            std::snprintf(what, sizeof(what), "the hook went with the host player's pickup and its item reached the "
+                          "inventory (%d -> %d), no grant", g_items0, items);
+            HostHalfOk(what);
         }
         return true;
     }
@@ -272,6 +332,8 @@ void HostTick(coop::net::Session* s) {
     const uint64_t now = ::GetTickCount64();
     if (now < g_nextCheckMs) return;
     g_nextCheckMs = now + kCheckEveryMs;
+    PollClient();   // the client's report, whatever step the host is in
+    if (g_step == Step::Done) return;
     void* player = coop::players::Registry::Get().Local();
     if (!player) return;
     if (HostTakes() && TakeTick(player, true)) return;
@@ -351,13 +413,12 @@ void HostTick(coop::net::Session* s) {
             Fail(why);
             return;
         }
-        // The client says PASS, when its item arrives; the host's own word is this line, and a FAIL above.
-        UE_LOGI("[HOOK-RETRIEVE-DRILL] host DONE in session %d: hook '%ls' taken by the client's pickup, granted once",
-                g_session, g_key.c_str());
-        Cleanup();
-        g_step = Step::Done;
+        HostHalfOk("the hook went with one granted pickup of the client's");
         return;
     }
+    case Step::Await:   // its half held: the client's report decides, or the bound says INVALID
+        if (Expired(kDoneBoundMs)) Abandon("the client's report never came 120 s after the host's half held");
+        return;
     default:
         return;
     }
@@ -451,7 +512,8 @@ void ClientTick() {
 
 void Tick(coop::net::Session* s) {
     if (TheMode() == Mode::Off || !s) return;
-    if (s->role() == coop::net::Role::Host) HostTick(s);
+    g_isHost = s->role() == coop::net::Role::Host;
+    if (g_isHost) HostTick(s);
     else if (s->connected()) ClientTick();
 }
 
@@ -467,6 +529,8 @@ void OnDisconnect() {
     g_granted0 = g_asked0 = g_taken0 = g_refusedAns0 = 0;
     g_items0 = 0;
     g_reaims = 0;
+    g_hostOk = g_clientOk = g_clientDone = false;
+    g_clientWhy.clear();
     if (g_walk) coop::director::CancelBackgroundWalk(*g_walk);
     g_walk.reset();
 }

@@ -1,17 +1,14 @@
 // coop/dev/hook_retrieve_drill.h -- [dev] an anchored hook taken back through the host, once.
-// hook_retrieve_drill=run: the host ties a hook between two cups before the client's puppet (attach_a, both ends
-// anchored) and hands it to the lane's own commit; the client walks to the copy, aims until its look takes the hook
-// (the pop-up), presses E. Host DONE: its hook gone by one granted pickup; the client's `rig: VERDICT hook-retrieve
-// PASS` when the grant ran there: copy gone, one more hook item carried. join: the hook is tied before the host
-// player before the client joins, so the client's copy is the one its save loaded, and the client is put beside it.
-// host / joinhost: the same two copies, and the host player takes the hook: the host DONE with its item and no grant,
-// the client's PASS with its copy gone and no item.
-// Reds, on the client: hook_retrieve_red=nocollision keeps the copy's collision off, as before the lane, and the
-// client FAILs when the aim fan has held every pose without its look taking the hook; clientruns runs the game's
-// pickup on the copy alone, and the client FAILs in the press's own tick: the lane asked the host nothing, and the
-// copy and an item are already here. Every verdict is `rig: VERDICT hook-retrieve PASS|FAIL|INVALID`, decided by an
-// event; a bound says INVALID only, and so does a walk or a setup that cannot happen. "[HOOK-RETRIEVE-DRILL] FAIL" is
-// the lane failing, "ABANDONED" the drill unable to measure.
+// hook_retrieve_drill=run: the host ties a hook between two cups before the client's puppet and hands it to the
+// lane's own commit; the client walks to its copy, aims until its look takes the hook (the pop-up) and presses E.
+// join: the hook is tied before the host player before the client joins, so the client's copy is the one its save
+// loaded. host / joinhost: the same two copies, and the host player takes the hook.
+// Reds, on the client: hook_retrieve_red=nocollision keeps the copy's collision off, as before the lane (the aim
+// fan holds every pose without the look taking the hook); clientruns runs the game's pickup on the copy alone (in the
+// press's own tick nothing was asked of the host, and the copy and an item are already here).
+// THE HOST says the one verdict, `rig: VERDICT hook-retrieve`: PASS when its own half held (its hook gone by one grant,
+// or its own pickup with its item and no grant) and the client reported `done ok` in the lobby chat, FAIL on its own
+// contradiction or the client's `done fail`, INVALID on `done invalid` or any bound. Each is decided by an event.
 
 #pragma once
 
