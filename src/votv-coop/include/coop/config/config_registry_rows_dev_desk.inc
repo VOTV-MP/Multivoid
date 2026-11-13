@@ -118,3 +118,19 @@ CFG_FLAG(occupancy_pinger_down_off, "occupancy_pinger_down_off", "dev", false, "
 CFG_FLAG(seat_ragdoll_kill, "seat_ragdoll_kill", "dev", false, "VOTVCOOP_SEAT_RAGDOLL_KILL",
     "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL): the acting peer dies of a lethal hit (twice its max health through "
     "the game's own Add Player Damage) instead of ragdolling, so a client that dies mid-ping must free the desk too.")
+CFG_FLAG(desk_short_off, "desk_short_off", "dev", false, "VOTVCOOP_DESK_SHORT_OFF",
+    "Developer red arm of the desk short drill: never set. A short on this peer's desk is not announced: the host "
+    "tells no client, and a client asks no host, so the other desk stays sound.")
+CFG_FLAG(desk_short_replay_off, "desk_short_replay_off", "dev", false, "VOTVCOOP_DESK_SHORT_REPLAY_OFF",
+    "Developer red arm of the desk short drill: never set. The host does not tell a joiner at its ready edge that "
+    "its desk is shorting, so a rejoined client's desk stays sound.")
+CFG_ENUM(desk_short_drill, "desk_short_drill", "dev", "off", "off|client|host|join", "VOTVCOOP_DESK_SHORT_DRILL",
+    "Drill, the base computer's short circuit; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. client -- the client's "
+    "player steps beside the desk and shorts it as a liquid's hit does; host -- the host's does; each peer must see "
+    "its desk short and both power panels read the same changed mask: the host prints 'rig: VERDICT desk-short "
+    "PASS|FAIL|INVALID' and 'desk-short: DONE on host'. join -- with the rig's --rejoin: the client leaves, the host "
+    "keeps its desk shorting until the client's world is up again, and the rejoined client (second life: "
+    "VOTVCOOP_DESK_SHORT_DRILL_REJOIN=1) must have had its desk shorted by the host at the ready edge: 'rig: "
+    "VERDICT desk-short-join PASS|FAIL|INVALID' and 'desk-short: JOIN DONE on host'. Red arms: desk_short_off on the "
+    "acting peer (client, host), desk_short_replay_off on the host (join). It MUTATES the world (the base goes on "
+    "solar power). Run it on a fresh host world.")

@@ -1385,12 +1385,12 @@ enum class ReliableKind : uint16_t {
     // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
     WalkerState = 231,
     // HOST->ALL: the host's base computer shorted (a liquid on it, the host's own or a client's it judged): every client
-    // runs its own copy's shortCircuit, which sparks and then puts the base on solar power. Never relayed, not pre-world,
-    // nothing at late join (the short is over in ten seconds). DeskShortPayload.
-    DeskShortState = 253,
+    // runs its own copy's shortCircuit, which sparks and then puts the base on solar power. Never relayed, not pre-world.
+    // Sent again to a joiner alone at its ready edge when the host's desk is still shorting. DeskShortPayload.
+    DeskShortState = 243,
     // CLIENT->HOST: this client's liquid shorted its copy of the base computer. The host checks the sender's world and
     // reach and runs its own desk's shortCircuit, whose DeskShortState answers. Never relayed. DeskShortPayload.
-    DeskShortRequest = 254,
+    DeskShortRequest = 244,
 };
 
 #pragma pack(push, 1)

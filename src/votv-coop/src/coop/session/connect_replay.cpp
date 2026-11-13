@@ -37,6 +37,7 @@
 #include "coop/save/join_window_baseline.h"  // the connect edge's removes and position corrections
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/desk_short_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/world/event_cue_sync.h"
@@ -203,6 +204,7 @@ void ConnectReplayForSlot(int slot) {
     coop::chat_sync::QueueConnectBroadcastForSlot(slot);
     coop::spill_sync::QueueConnectBroadcastForSlot(slot);  // every live spill again
     coop::vent_crawler_sync::QueueConnectBroadcastForSlot(slot);  // the vent crawl's state, when one began in this world
+    coop::desk_short_sync::SendCurrentToSlot(slot);  // the base computer, when the host's is shorting at this ready edge
 }
 
 }  // namespace coop::subsystems

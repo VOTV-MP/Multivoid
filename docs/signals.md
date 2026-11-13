@@ -112,12 +112,16 @@ state and are re-sent to a joiner from the components' ground truth.
 A liquid on the desk shorts it: a thrown liquid's projectile (`grimeProjectile_C`) that strikes it and a sponge
 bucket's pour that overlaps it call the desk's own `shortCircuit`, which sparks for about ten seconds and then puts
 the base on solar power. Both ran on the peer whose liquid it was alone, so the host's power and every other desk
-went on as before. Each peer now polls the desk's `shortCircuiting`: the host's rising edge goes to every client, and
-a client's goes to the host, which checks the sender's world and that it stands within 15 m, and runs its own desk's
-`shortCircuit`; a client that hears it runs its copy's, and a desk already shorting is left alone, as the event's own
-guard leaves it (`coop/interactables/desk_short_sync`) `[V]` (`harness/autotest/autotest_desk_short.cpp`: a short
-from each peer sparks both desks and leaves both power panels dark; on the code before it a client's short sparked
-its own desk alone and no panel changed).
+went on as before. A script-gate watch on the desk's own `shortCircuit` sees every call of it, the liquid
+Blueprints' and ours, and reads the flag `shortCircuiting` before and after the body: a short that began on the
+host goes to every client, and one that began on a client goes to the host, which checks the sender's world and that
+it stands within 15 m, and runs its own desk's `shortCircuit`; a client that hears it runs its copy's, and a desk
+already shorting is left alone, as the event's own guard leaves it (`coop/interactables/desk_short_sync`) `[V]`
+(`harness/autotest/autotest_desk_short.cpp`: a short from each peer sparks both desks and leaves both power panels
+dark; on the code before it a client's short sparked its own desk alone and no panel changed). A joiner whose world is
+up while the host's desk shorts is told at its ready edge and its desk shorts from the start, so its power-down comes
+up to ten seconds after the host's `[?]` (the `join` arm of the same drill: the rejoined client must have had its
+desk shorted by the host; its red is `desk_short_replay_off`).
 
 ### Signals, the catch, the dishes
 
@@ -297,7 +301,7 @@ row that differs from its class default (a row that arrives before its drive wai
 the join), the rack, the module set, the reel slots, the laptop's power, its slot (before its file buffer) and the crate
 arrive as canonical rows from the host, and so do the refiner's state and loaded signal, while the
 joiner's own restore of a saved decode is refused; the desk's two loops are re-sent from component
-truth.
+truth; a short circuit under way on the host's desk is sent again, and the joiner's desk shorts from the start.
 A joiner never sees a running ping's stage visuals, only its outcome. A SAT console typist that leaves
 mid-command while another client keeps the session leaves the command running on the host and, back,
 is bound to its terminal and its busy state as its world is ready; the last client's leave ends the

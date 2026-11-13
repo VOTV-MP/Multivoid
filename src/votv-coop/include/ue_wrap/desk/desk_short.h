@@ -4,7 +4,8 @@
 // call the desk's own shortCircuit, on the peer whose liquid it was. The event sets `shortCircuiting`, sparks 50 times
 // at random points of the desk over about ten seconds, then switches the base to solar power
 // (gamemode.powerControl.solar) with the power-down sound, and clears the flag; a call while the flag is set does
-// nothing. The flag is the poll's edge, and the call is the only way in. Engine access only; game thread.
+// nothing. The flag tells a call that took from one the guard refused, and the call is the only way in. Engine
+// access only; game thread.
 
 #pragma once
 
