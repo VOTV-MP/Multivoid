@@ -57,15 +57,17 @@ desk's physical buttons never set it, which is why the input lane below is claim
 While a peer's ping runs, the host keeps the desk claimed for that peer after it leaves, so no
 other aim moves the dots its machine is consuming. A pinger knocked down (a faint, a KO, a death)
 holds it no longer: its ragdoll left the desk as any exit does, and the next player can sit while the
-machine runs on `[?]` (`harness/autotest/autotest_seat_ragdoll.cpp`: the host faints mid-ping and the desk's hold reads
-free once the host's reconcile has run after the faint; on the code before it the client was force-exited until the
-ping ended, 13 s, by the PR's own measure of the enter; a plain exit mid-ping still keeps the desk, and a faint without
-a ping frees any device;
-its red, `dev.occupancy_pinger_down_off` on the host, keeps the desk and fails the drill). The knock-down
-is read at the host's 250 ms reconcile, which stays a poll because the ping attribution it runs on is
-itself polled off the desk machine's flag; the host's stand-up has no watchable announcement. A client's death rides the
-pose stream's death edge (`coop/player/puppet_events`), recorded by `device_occupancy` and read there `[?]`: the drill's
-`dev.seat_ragdoll_kill` arm covers it and has not been run.
+machine runs on `[?]` (`harness/autotest/autotest_seat_ragdoll.cpp`: the host faints mid-ping, or a client faints or
+is killed, and the desk's hold reads free once the host's reconcile has run twice after it saw the knock-down; before
+the change the next player was force-exited until the ping ended, 13 s; an exit mid-ping keeps the desk to the ping
+run's end, and a faint without a ping frees any device). Its red, `dev.occupancy_pinger_down_off` on the host, disables
+the whole latch, so it proves the combined route and not the client-death record alone. The knock-down is read at the
+host's 250 ms reconcile, which stays a poll because the ping attribution it runs on is itself polled off the desk
+machine's flag; the host's stand-up has no watchable announcement. A client's death rides the pose stream's life edge
+(`coop/player/puppet_events`), recorded by `device_occupancy` and read there `[?]`. A peer dead when its puppet appears
+raises that edge from its first pose once its world is ready; a pose before that is held as unknown. What such a pose
+carries is logged once per slot and not yet read: the sender sends full health until its save resolves, and `[?]` that it
+never sends zero. The edge's truth table is a selftest on pinned poses.
 
 ### The desk: inputs, the simulation, the cursor, the sounds
 

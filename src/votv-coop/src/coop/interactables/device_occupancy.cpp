@@ -133,7 +133,7 @@ void ClaimEnded(const std::wstring& key) {
 // that run: its ragdoll left the desk as any exit does, and the machine runs on for the next player.
 const wchar_t* const kDeskClaim = L"desk";
 bool g_deskFsmHold = false;
-bool g_pingerDown = false;  // latched for the current ping run, cleared when no ping runs
+uint8_t g_pingerDownSlot = 0xFF;  // the pinger latched down for the current ping run; cleared when no ping runs or another slot pings
 std::chrono::steady_clock::time_point g_nextFsmHoldPoll{};
 uint32_t g_reconcilePasses = 0;  // passes the host's reconcile has run (a drill's no-change point)
 
@@ -142,8 +142,8 @@ uint8_t LocalSlot();                                                            
 
 // The clients that lie dead, recorded by the pose stream's death edge (puppet_events: a listener only records). The
 // ragdoll bit leaves a death out (`isRagdoll && !dead`), so a client dying mid-ping is read from here. Cleared when
-// its slot leaves, so the next occupant of the slot starts alive; the stream's first pose after a puppet comes up
-// raises no edge, which is why a revive is the only other writer.
+// its slot leaves, so the next occupant of the slot starts alive. Written by the life edge: a first pose raises one only
+// when dead (a join mid-death), so a revive is the only other writer.
 bool g_deadSlot[coop::players::kMaxPeers] = {};
 void OnPuppetLife(uint8_t slot, bool alive) {
     if (slot >= coop::players::kMaxPeers) return;
@@ -180,14 +180,13 @@ void ReconcileDeskFsmHold(coop::net::Session* s) {
     static const bool s_pingerDownOff =
         coop::config::ResolveFlag(coop::config_registry::rows::occupancy_pinger_down_off);
     uint8_t pinger = coop::desk_input_sync::PingActiveSlot();
-    if (pinger == 0xFF) {
-        g_pingerDown = false;
-    } else if (!s_pingerDownOff && !g_pingerDown && PlayerDown(pinger)) {
-        g_pingerDown = true;
+    if (pinger == 0xFF || pinger != g_pingerDownSlot) g_pingerDownSlot = 0xFF;
+    if (pinger != 0xFF && g_pingerDownSlot == 0xFF && !s_pingerDownOff && PlayerDown(pinger)) {
+        g_pingerDownSlot = pinger;
         UE_LOGI("device_occupancy: pinging slot %u is knocked down -- its ping holds the desk no longer",
                 static_cast<unsigned>(pinger));
     }
-    if (g_pingerDown) pinger = 0xFF;  // the branch below frees a machine-held entry
+    if (g_pingerDownSlot != 0xFF) pinger = 0xFF;  // the branch below frees a machine-held entry
     if (pinger != 0xFF) {
         bool inserted = false;
         {
