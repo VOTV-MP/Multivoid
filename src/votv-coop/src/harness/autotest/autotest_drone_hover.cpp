@@ -8,10 +8,9 @@
 // The host says `rig: VERDICT drone-hover PASS|FAIL|INVALID`: PASS when, hovering, the client's copy sits off its
 // path at most twice as far as the host's, plus 2 cm and 0.05 deg, its hoverDrift is at most the host's plus 2 cm
 // and 0.5 deg, and, flying, its playback held past the newest pose in at most 1 frame in 100. drone_hover_kick
-// bumps the client's hovering copy twice; on a copy that does not simulate that does nothing, so the green's
-// evidence is physSamples=0 plus the client's drift within the host's (a hover is not still: measured in one green,
-// host 34 cm and client 33 cm). drone_hover_body_red puts the copy's root back into the
-// simulation first: the bumped copy coasts away and the verdict FAILs on the drift, at the hover window's end.
+// bumps the client's hovering copy twice (nothing on a copy that does not simulate): the green's evidence is
+// physSamples=0 plus the client's drift within the host's (measured: host 34 cm, client 33 cm). drone_hover_body_red
+// puts the copy's root back into the simulation first: the verdict FAILs on the drift, at the hover window's end.
 // drone_playback_delay_red_ms pins the playback delay: with net.fakelag_ms and net.fakejitter_ms the verdict must FAIL.
 // Gated by VOTVCOOP_RUN_DRONE_HOVER; the folder is VOTVCOOP_CAN_DIR.
 

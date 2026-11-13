@@ -1,20 +1,17 @@
 // harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds, a faucet's click and the alien
 // noises across two peers. A verdict is decided by an event; a bound passing with none is INVALID. A client acts and
 // leaves only once its own join is over, and the host's first step waits for that client's slot to be world-ready.
-// Armed by the row world_sound_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR). What a peer hears cannot be
-// read back, so each term is the OTHER peer's receipt and its play call, from the lane's own counts:
+// Armed by the row world_sound_drill on both peers (VOTVCOOP_CAN_DIR). What a peer hears cannot be read back, so each
+// term is the OTHER peer's receipt and its play call, from the lane's own counts:
 //   1     A faucet each peer spawns under one key is pressed by the client, then by the host: the other peer's copy must
-//         flip and its click count rise. The host fires the alien sounds: each peer must have three noisers around it and
-//         see them make a noise. Last, the host runs the sky's tp: the client must receive both cues and play both.
-//         The host says `rig: VERDICT world-sound PASS|FAIL|INVALID`. Reds: world_sound_earth_off on the host,
-//         world_sound_faucet_off on the receiving peer.
-//   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; at the
-//         rejoined client's ready edge the host counts the noisers it has out, and the rejoined client
-//         (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must hear every one of them: at least that many of its own, at most the
-//         event's three. The replay re-runs the event, so a noiser the host's copy has already ended starts afresh on
-//         the joiner (measured 2026-11-13: host 2 at the edge, joiner 3).
-//         The host says `rig: VERDICT world-sound-join PASS|FAIL|INVALID`; INVALID when the host has none out at the edge
-//         (nothing to replay). Red: alien_join_off on the host.
+//         flip and its click count rise. The host fires the alien sounds: each peer must have three noisers around it
+//         and see them make a noise. Last, the host runs the sky's tp: the client must receive both cues and play both.
+//         `rig: VERDICT world-sound PASS|FAIL|INVALID`. Reds: world_sound_earth_off (host), world_sound_faucet_off.
+//   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; at
+//         the rejoined client's ready edge the host counts its noisers out, and the rejoined client
+//         (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must have at least that many and at most the event's three (the replay
+//         re-runs the event: a noiser the host already ended starts afresh on the joiner; measured host 2, joiner 3).
+//         `rig: VERDICT world-sound-join ...`; INVALID when the host has none out at the edge. Red: alien_join_off.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
