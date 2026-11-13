@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net { class Session; }
 
 namespace coop::nightmare_roll {
@@ -39,6 +41,10 @@ void OnPuppetSpawned(int slot);
 // a bool, no engine read) and roll once at 25. The tick stays because nothing announces the passing of those seconds;
 // the rest and its end do not need a poll here.
 void Tick();
+
+// How many times this process's rest reached its roll point (the rest's one roll, made or held back by the red arm). An
+// instrument: the nightmare drill decides "no dream came" at that point, since no dream can come in the rest after it.
+uint32_t RollPoints();
 
 // The session ended: the count starts again and every copy this hid is shown.
 void OnDisconnect();

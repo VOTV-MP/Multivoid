@@ -50,6 +50,7 @@ bool g_counting = false;     // a rest is being counted
 bool g_spent = false;        // this rest has had its roll: the next rest rolls again
 Clock::time_point g_last{};
 float g_restS = 0.f;         // real seconds of this rest so far
+uint32_t g_points = 0;       // roll points reached by this process, for the drill
 
 std::mt19937& Rng() {
     static std::mt19937 rng{std::random_device{}()};
@@ -92,6 +93,8 @@ void Install(coop::net::Session* session) {
     coop::sleep_sync::SubscribePeerRest(&OnPeerRest);
 }
 
+uint32_t RollPoints() { return g_points; }
+
 void OnPuppetSpawned(int slot) {
     if (slot < 0 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
     g_hidden[slot] = false;  // a new body starts shown
@@ -105,7 +108,7 @@ void Tick() {
         ResetRoll();
         return;
     }
-    if (g_spent || RollOff()) return;
+    if (g_spent) return;
     const Clock::time_point now = Clock::now();
     if (!g_counting) {
         g_counting = true;
@@ -116,6 +119,11 @@ void Tick() {
     g_last = now;
     if (g_restS < kRollAtS) return;
     g_spent = true;  // one roll to a rest, as the game's
+    ++g_points;
+    if (RollOff()) {
+        UE_LOGI("nightmare_roll: the rest's roll point -- no roll made [dev red nightmare_roll_off]");
+        return;
+    }
     float chance = 0.f;
     if (!SLP::ReadNightmareChance(chance)) {
         UE_LOGW("nightmare_roll: the nightmare chance does not read -- no roll this time");

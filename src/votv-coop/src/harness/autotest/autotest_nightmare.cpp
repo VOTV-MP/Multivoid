@@ -17,8 +17,10 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
+#include "coop/player/nightmare_roll.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/sleep_rest.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/session/rig_verdict.h"
 #include "ue_wrap/actors/sleep.h"
@@ -53,7 +55,7 @@ using PS::Mark;
 
 constexpr const char* kTag = "nightmare";
 constexpr int kStepSec = 120;    // the bound on one step of the other peer's
-constexpr int kDreamSec = 90;    // the bound on a roll that is certain to win: the first roll is 25 s into the rest
+constexpr int kDreamSec = 120;   // the bound on the roll point (25 s into the rest) or a dream: past it the verdict is Invalid
 constexpr int kStateSec = 30;    // the bound on a state or a copy following a dream's edge across the wire
 constexpr float kBackCm = 1500.f;
 
@@ -117,13 +119,31 @@ bool Check(const char* phase, bool ok, const std::string& why) {
     return ok;
 }
 
-// A check's result as a signal's text, and its reading back.
-std::string Result(bool ok, const std::string& why) { return (ok ? "1 " : "0 ") + why; }
-bool ResultOk(const std::string& t) { return !t.empty() && t[0] == '1'; }
+// A check's result as a signal's text, and its reading back. A verdict is decided by an event: a result is Fail only
+// when the state it judges can no longer change, and Invalid when a bound ran out before the event came.
+enum class Res { Fail = 0, Pass = 1, Invalid = 2 };
+std::string Result(Res r, const std::string& why) { return std::to_string(static_cast<int>(r)) + " " + why; }
+std::string Result(bool ok, const std::string& why) { return Result(ok ? Res::Pass : Res::Fail, why); }
+Res ResultOf(const std::string& t) {
+    return t.empty() ? Res::Invalid : t[0] == '1' ? Res::Pass : t[0] == '0' ? Res::Fail : Res::Invalid;
+}
+bool ResultOk(const std::string& t) { return ResultOf(t) == Res::Pass; }
 std::string ResultWhy(const std::string& t) { return t.size() > 2 ? t.substr(2) : std::string("no reason given"); }
 
 void HostFail(const std::string& why) {
     coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Fail, "%s", why.c_str());
+}
+void HostInvalid(const std::string& why) {
+    coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "%s", why.c_str());
+}
+
+// The host's word on the client's result: true when it passed, else the verdict is said and the drill ends.
+bool Judge(const std::string& t, const std::string& what) {
+    const Res r = ResultOf(t);
+    if (r == Res::Pass) return true;
+    if (r == Res::Fail) HostFail(what + ": " + ResultWhy(t));
+    else HostInvalid(what + ": " + ResultWhy(t));
+    return false;
 }
 
 void HoldNeed() { OnGameThread([] { V::Write(V::Field::Sleep, 30.f); }); }
@@ -183,17 +203,32 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// The dreamer leaves its dream through the game's own leaveDream and is judged on the way back: out of the dream and
-// beside the place it dreamt from.
+// The dreamer leaves its dream through the game's own leaveDream and is judged at once: leaveDream clears the flag and
+// moves the player inside the call, so what is read after it is final. Out of the dream and beside the place it dreamt
+// from.
 bool LeaveAndReturn(const char* phase, const Now& before, std::string& why) {
     LeaveDream();
-    Now n = before;
-    const bool out = PS::WaitFor("the return from the dream", 30, [&n] { n = Read(); return !n.dreaming; }, false);
+    const Now n = Read();
     Log(phase, n);
-    const bool back = out && Dist(n.at, before.at) < kBackCm;
+    const bool back = !n.dreaming && Dist(n.at, before.at) < kBackCm;
     why = back ? "dreamt and came back beside its bed" : "not back from the dream";
     return back;
 }
+
+// The roll point of this client's rest, or a dream, or the end of the rest: the events after which no dream can come
+// (or one has). RollPoints counts the point whether the roll was made or held back by the red arm.
+struct RollWatch {
+    uint32_t pointsBefore = 0;
+    bool Decided() const {
+        HoldNeed();
+        bool point = false, restOver = false;
+        OnGameThread([&] {
+            point = coop::nightmare_roll::RollPoints() > pointsBefore;
+            restOver = !coop::sleep_rest::Resting();
+        });
+        return Read().dreaming || point || restOver;
+    }
+};
 
 // ---- the two-peer drill ---------------------------------------------------------------------------------------
 
@@ -207,22 +242,25 @@ void RunHost() {
     // Phase A: both asleep; the client dreams.
     const bool slept = GoToBed();
     UE_LOGI("nightmare: A host in bed=%d", slept ? 1 : 0);
-    if (!slept) return coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "the game's sleep did not take the host to bed");
+    if (!slept) return HostInvalid("the game's sleep did not take the host to bed");
     Mark("A_bed_host");
     if (!Await("A_bed_client")) return;
     std::string dream;
     if (!AwaitText("A_dream", dream, kStepSec)) return;
-    if (!ResultOk(dream)) {
+    if (!Judge(dream, "the client's dream")) {
         Check("A", false, "the client reports: " + ResultWhy(dream));
-        Mark("A_seen", "0");
-        return HostFail("the client never dreamt: " + ResultWhy(dream));
+        return;
     }
-    const bool state = PS::WaitFor("the client's state dreaming here", kStateSec, [] { HoldNeed(); return Dreams(1); }, false);
-    const bool hidden = PS::WaitFor("the client's copy hidden here", kStateSec, [] { return CopyHidden(1) == 1; }, false);
+    // The state is an event (the client's report reaching this host); a bound that runs out first is Invalid. The hide
+    // is applied inside the call that takes the state, so it is read once, at once.
+    if (!PS::WaitFor("the client's state dreaming here", kStateSec, [] { HoldNeed(); return Dreams(1); }, false)) {
+        Mark("A_seen", "0");
+        return HostInvalid("the client's rest state dreaming did not reach the host");
+    }
+    const bool hidden = CopyHidden(1) == 1;
     const Now n = Read();
     Log("A", n);
-    const std::string why = !state    ? "the host never saw the client's rest state dreaming"
-                            : !hidden ? "the client's copy is not hidden here while the client dreams"
+    const std::string why = !hidden     ? "the client's copy is not hidden here while the client dreams"
                             : !n.asleep ? "the host woke while the client dreamt"
                                         : "";
     const bool seen = Check("A", why.empty(), why.empty() ? "slept through it, saw the client dream, its copy hidden" : why);
@@ -230,8 +268,10 @@ void RunHost() {
     if (!seen) return HostFail(why);
     std::string woke;
     if (!AwaitText("A_woke", woke, kStepSec)) return;
-    if (!ResultOk(woke)) return HostFail("the client: " + ResultWhy(woke));
-    const bool shown = PS::WaitFor("the client's copy shown again here", kStateSec, [] { return !Dreams(1) && CopyHidden(1) == 0; }, false);
+    if (!Judge(woke, "the client's return")) return;
+    if (!PS::WaitFor("the client's state back here", kStateSec, [] { return !Dreams(1); }, false))
+        return HostInvalid("the client's rest state after its dream did not reach the host");
+    const bool shown = CopyHidden(1) == 0;
     if (!Check("A", shown, shown ? "the client's copy is shown again" : "the client's copy stays hidden after its dream"))
         return HostFail("the client's copy stays hidden here after its dream");
     OnGameThread([] { V::Write(V::Field::Sleep, 100.f); });   // the game's own wake
@@ -241,14 +281,16 @@ void RunHost() {
     // as phase A ends); the dream does not need it, so the host then dreams from where it stands.
     if (!GoToBed()) UE_LOGI("nightmare: B host not in bed (an event refused it) -- dreaming from where it stands");
     const Now inBed = Read();
-    OnGameThread([] { UE_LOGI("nightmare: B host BeginNightmare ran=%d", SLP::BeginNightmare() ? 1 : 0); });
-    const bool dreamed = PS::WaitFor("the host's dream", kStateSec, [] { return Read().dreaming; }, false);
-    Log("B", Read());
+    bool ran = false;
+    OnGameThread([&ran] { ran = SLP::BeginNightmare(); UE_LOGI("nightmare: B host BeginNightmare ran=%d", ran ? 1 : 0); });
+    const Now dreaming = Read();   // createDream sets the flag inside the call
+    Log("B", dreaming);
+    const bool dreamed = ran && dreaming.dreaming;
     Mark("B_dreaming", Result(dreamed, dreamed ? "the host dreams" : "the host's dream did not begin"));
     if (!dreamed) return HostFail("the game's wakeup and createDream did not put the host in a dream");
     std::string seenB;
     if (!AwaitText("B_seen", seenB, kStepSec)) return;
-    if (!ResultOk(seenB)) return HostFail("the client: " + ResultWhy(seenB));
+    if (!Judge(seenB, "the client beside the host's dream")) return;
     std::string backWhy;
     const bool back = LeaveAndReturn("B", inBed, backWhy);
     Check("B", back, backWhy);
@@ -256,7 +298,7 @@ void RunHost() {
     if (!back) return HostFail("the host: " + backWhy);
     std::string end;
     if (!AwaitText("B_end", end, kStepSec)) return;
-    if (!ResultOk(end)) return HostFail("the client: " + ResultWhy(end));
+    if (!Judge(end, "the client after the host's dream")) return;
     OnGameThread([] { SLP::SetDreamProbability(-1.f); });
     UE_LOGI("nightmare: DONE host");
     coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Pass,
@@ -268,18 +310,30 @@ void RunClient() {
     Mark("client_ready");
     RuleOn();
 
-    // Phase A: both asleep; this client dreams.
+    // Phase A: both asleep; this client dreams. Its bed is given the certain dream the moment it is in bed, before the
+    // rest's roll point (25 s in) can pass.
+    RollWatch watch;
+    OnGameThread([&watch] { watch.pointsBefore = coop::nightmare_roll::RollPoints(); });
     const bool slept = GoToBed();
     UE_LOGI("nightmare: A client in bed=%d", slept ? 1 : 0);
     if (!slept) return coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "the game's sleep did not take the client to bed");
-    Mark("A_bed_client");
-    if (!Await("A_bed_host")) return;
     BedChance(1.f);
     const Now before = Read();
-    const bool dreamed = PS::WaitFor("this client's nightmare roll to win", kDreamSec, [] { HoldNeed(); return Read().dreaming; }, false);
-    Log("A", Read());
-    Check("A", dreamed, dreamed ? "the client's own roll won and it dreams" : "no dream came within the bound of a certain roll");
-    Mark("A_dream", Result(dreamed, dreamed ? "the client dreams" : "no dream came within the bound of a certain roll"));
+    Mark("A_bed_client");
+    if (!Await("A_bed_host")) return;
+    // No dream can come in this rest once its roll point has passed (the roll made, or held back by the red arm) or the
+    // rest has ended: that is the event this verdict is decided at. A bound that runs out first is Invalid.
+    if (!PS::WaitFor("this client's roll point, a dream or the rest's end", kDreamSec, [&watch] { return watch.Decided(); }, false)) {
+        Mark("A_dream", Result(Res::Invalid, "neither the roll point nor a dream came"));
+        return;
+    }
+    const Now after = Read();
+    Log("A", after);
+    const bool dreamed = after.dreaming;
+    const std::string dWhy = dreamed ? "the client's own roll won and it dreams"
+                                     : "the rest's roll point passed with no dream: the client never dreamt";
+    Check("A", dreamed, dWhy);
+    Mark("A_dream", Result(dreamed, dWhy));
     if (!dreamed) return;
     std::string seen;
     if (!AwaitText("A_seen", seen, kStepSec)) return;
@@ -293,12 +347,14 @@ void RunClient() {
     std::string hostDream;
     if (!AwaitText("B_dreaming", hostDream, 480)) return;
     if (!ResultOk(hostDream)) return;
-    const bool state = PS::WaitFor("the host's state dreaming here", kStateSec, [] { return Dreams(0); }, false);
-    const bool hidden = PS::WaitFor("the host's copy hidden here", kStateSec, [] { return CopyHidden(0) == 1; }, false);
+    if (!PS::WaitFor("the host's state dreaming here", kStateSec, [] { return Dreams(0); }, false)) {
+        Mark("B_seen", Result(Res::Invalid, "the host's rest state dreaming did not reach this client"));
+        return;
+    }
+    const bool hidden = CopyHidden(0) == 1;   // applied inside the call that took the state
     const Now n = Read();
     Log("B", n);
-    const std::string why = !state    ? "this client never saw the host's rest state dreaming"
-                            : !hidden ? "the host's copy is not hidden here while the host dreams"
+    const std::string why = !hidden ? "the host's copy is not hidden here while the host dreams"
                             : (n.asleep || n.dreaming) ? "this client was not awake beside the host's dream"
                                                        : "";
     const bool ok = Check("B", why.empty(), why.empty() ? "awake, saw the host dream, its copy hidden" : why);
@@ -306,7 +362,11 @@ void RunClient() {
     if (!ok) return;
     std::string woke;
     if (!AwaitText("B_woke", woke, kStepSec)) return;
-    const bool shown = PS::WaitFor("the host's copy shown again here", kStateSec, [] { return !Dreams(0) && CopyHidden(0) == 0; }, false);
+    if (!PS::WaitFor("the host's state back here", kStateSec, [] { return !Dreams(0); }, false)) {
+        Mark("B_end", Result(Res::Invalid, "the host's rest state after its dream did not reach this client"));
+        return;
+    }
+    const bool shown = CopyHidden(0) == 0;
     Check("B", shown, shown ? "the host's copy is shown again" : "the host's copy stays hidden after its dream");
     Mark("B_end", Result(shown, shown ? "shown again" : "the host's copy stays hidden here after its dream"));
     UE_LOGI("nightmare: DONE client");
