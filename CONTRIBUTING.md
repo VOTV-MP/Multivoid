@@ -211,11 +211,52 @@ a member name this tree still uses. The gate counts all five in the mod's own C+
 rename that leaves its citations there is refused at the push; everywhere else in the tree the
 rule holds and only a reader enforces it.
 
+## What a review most often changes
+
+Most pull requests reach `main` with a few of our commits on top. These are the changes we make
+most often; a pull request that already follows them is merged faster, with fewer of ours.
+
+1. **The host decides what a client does.** A client never runs a shared action first and never
+   tells the other peers about it. Its own call is cancelled at the script gate (`Verdict::Cancel`,
+   `ue_wrap/core/script_gate.h`) and sent to the host as a request. The host checks that the sender
+   is alive, within reach (`IntentTarget::ForClientIntent`) and within its rate budget
+   (`coop/net/intent_bucket.h`), runs the action, and sends the result to every peer. A refused
+   request is answered to its sender with the host's state. Example: the cargo lift,
+   `coop/interactables/cargo_lift.cpp`.
+2. **Take the game's event; do not poll.** When the game announces a change -- a Blueprint event,
+   a function call the script gate can watch, a widget delegate, an object created or destroyed
+   (`ue_wrap/core/uobject_listeners.h`) -- hook that event. Reading a value every tick is only for
+   a state nothing announces, and its comment says so. Example: the base computer's short circuit
+   replaced a 100 ms poll with a watch on `analogDScreenTest_C::shortCircuit`.
+3. **A late joiner sees the same world.** Every synced feature says what a peer joining in the middle of it
+   sees: the state sent once at the join, a running event replayed, a held action released. A
+   window where joining is "not supported" is a bug. See [docs/join.md](docs/join.md).
+4. **A packet is checked before it is read.** A receive handler checks the exact payload size,
+   the sender's slot, and every field with a limited range, before it uses any of them.
+5. **A test waits for events, never for a clock.** A drill (`src/harness/autotest/`) waits on the
+   lines a peer prints when it is ready (`rig: READY ...`, `coop/session/rig_ready.h`), never on a
+   `Sleep` or a tick count. PASS and FAIL are decided by an event, or at the point after which the
+   result cannot change; a timeout may only say INVALID. When a FAIL is known, the drill says it
+   at once and runs nothing more.
+6. **Every drill has a red.** A switch that disables the change under test (a `[dev]` config
+   line), and the drill must FAIL with it on. A green that cannot go red proves nothing.
+7. **A drill walks its players.** It moves a peer with the bot director (`coop/dev/director/`),
+   along the navmesh, never with `TeleportTo` onto a computed spot, which can land inside
+   geometry.
+
+Two things you may leave to us: the build number and message-kind numbers of a wire change are
+renumbered when it is merged, so they do not collide with other open requests; and a new function
+the script gate watches needs a row in the bytecode fingerprint table
+([docs/bytecode-fingerprint.md](docs/bytecode-fingerprint.md)), which is captured from the game.
+
 ## Pull requests
 
-Fork, branch, open a pull request against `main`. A review checks the three rules, the
-principles, the build, the smoke, and the commit and doc shape above. Adopted commits keep your
-authorship in the history, and you keep the copyright on them.
+Fork, branch, open a pull request against `main`. Members of the **Contributors** team push
+their branch to this repository instead of a fork. A review checks the three rules, the
+principles, the build, the smoke, and the commit and doc shape above. What it changes is added as
+our own commits on your branch, so the request shows what changed and why; the maintainer merges
+it with a merge commit once it is tested. Only the maintainer merges into `main`. Your commits
+keep your authorship in the history, and you keep the copyright on them.
 
 The repository is licensed under the [MIT License](LICENSE). Contributions are accepted under
 the same terms (GitHub's inbound = outbound convention). Commits adopted before the license
