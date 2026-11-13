@@ -50,7 +50,7 @@ namespace RV = coop::rig_verdict;
 
 constexpr const char* kTag = "cargo-lift";
 constexpr int kStepBound = 120;      // the bound on one step of the other peer's
-constexpr int kWalkBound = 600;      // the client's walk to the lift, from a fresh game's start; the bound says INVALID only
+constexpr int kWalkBound = 240;      // the client's STAGED walk (meet.cpp: StageWalk puts it at the bed anchor, the rig's walks to the base take 40 s on a ~105 s budget); INVALID only
 constexpr int kMoveBound = 40;       // a lift's travel is about twelve seconds; a copy that has not stopped by then is INVALID
 constexpr float kReachCm = 250.f;    // the client's walk ends this near the lift's root; the host judges a press within 400
 
