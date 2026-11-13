@@ -265,6 +265,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"lightswitch_c", L"use", L"lightswitch_c.use", 0x6a2d5d90ab51fa2dull, 0xac7f154ac2513635ull},
     {L"maingamemode_c", L"add hint from gamemode", L"maingamemode_c.add hint from gamemode", 0x6f121ab9c8f91b11ull, 0x009c92bc3ccdb6e0ull},
     {L"maingamemode_c", L"calcservereff", L"maingamemode_c.calcservereff", 0x6a2d5d90ab51fa2dull, 0x7d19aec2d386c9c2ull},
+    {L"maingamemode_c", L"canbackrooms", L"maingamemode_c.canbackrooms", 0xc21e751d1577ea29ull, 0x80e1931039cbd5bfull},
     {L"maingamemode_c", L"customevent_5", L"maingamemode_c.customevent_5", 0x6a2d5d90ab51fa2dull, 0x30be990e077c14bcull},
     {L"maingamemode_c", L"deleteactivesignal", L"maingamemode_c.deleteactivesignal", 0x6a2d5d90ab51fa2dull, 0xa51e52a96e2190f9ull},
     {L"maingamemode_c", L"deletesignal", L"maingamemode_c.deletesignal", 0xda44a5b9522df358ull, 0xc1b797e2975a61b7ull},
