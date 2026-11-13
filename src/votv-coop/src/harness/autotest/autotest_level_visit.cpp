@@ -1,34 +1,39 @@
 // harness/autotest/autotest_level_visit.cpp -- TEST-ONLY: a clip's trip to another map is the clipping player's alone,
-// and comes back as a death does (coop/player/level_visit).
+// and comes back as a death does (coop/player/level_visit). The level_visit_drill row names the arm; its siblings
+// (level_visit_start, _look, _map, _end, _dump_dir) shape the visit, and level_visit_hide_off, level_visit_copy_cancel_off
+// and backrooms_close_off are the red arms.
 
-// The visitor (VOTVCOOP_LEVEL_VISIT_DOER, client by default) takes a camera the host spawns into its hand, then calls
-// the game's own lib_C::loadLevel for VOTVCOOP_LEVEL_VISIT_MAP (sl_backroomsObsolete by default) as the clip does.
-// With VOTVCOOP_LEVEL_VISIT_START=clip the trip is the game's own clip instead (lastLoc under the floor, no camera
-// taken), and the map is the clip's pick.
-
-// It waits to be in the map, stays 20 s, and ends the visit by VOTVCOOP_LEVEL_VISIT_END: `end` calls lib_C::End from
-// the map's own level script, `quit` calls QuitGame with it, `wait` leaves it to the map's own clock (the backrooms'
-// 600 s), `death` deals a lethal hit through the game's own Add Player Damage. It then waits to be back in the world.
-// The other peer reads the visitor's copy each second.
-
-// Each peer logs `level-visit: STATE` once a second; verdicts are `level-visit: VERDICT <role> PASS|FAIL <why>`: the
-// visitor back in the world, out of the map, with the same hand item and pocket count; the other peer saw the copy
-// hidden while it was away and shown again after. With VOTVCOOP_LEVEL_VISIT_DUMP_DIR the visitor writes the map's own
-// Blueprint classes there as script text. Gated by VOTVCOOP_RUN_LEVEL_VISIT; the folder is VOTVCOOP_CAN_DIR.
+// client / host: the visitor (the client, or the host) takes the trip (level_visit_start: clip = the game's own clip,
+// call = the clip's own lib_C::loadLevel with a camera in hand, none = a death in the world, the control), stays until
+// the other peer, the watcher, has seen the visitor's copy hidden, ends the visit (level_visit_end: end = lib_C::End from
+// the map's level script, quit = QuitGame, wait = the map's own clock, death = a lethal hit), and comes back. The watcher
+// judges its copy of the visitor by the poses it applies: hidden at the first pose below the visit floor, shown at the
+// first pose back above it, each within a few more poses. After a clip it also counts the trip the visitor's copy
+// authored on the watcher's own machine, which the gate cancels. close: the host closes the backrooms; the client's
+// clip is answered no, and after the host opens them again the clip takes a trip. join: the host takes the trip and
+// stays; a client that joins later must find the host's copy hidden at the first pose it applies.
+//
+// Every step ends on the other peer's signal (peer_signal, VOTVCOOP_CAN_DIR) or on the state it waits for, never a
+// clock. A check's outcome is said where it is decided (`level-visit: ARM <name> <role> PASS|FAIL|INVALID`, and a
+// failure also `rig: VERDICT level-visit`), no later leg runs, and a bound that runs out says INVALID only. The host
+// says the one PASS.
 
 #include "harness/autotest.h"
+#include "disc_drills.h"   // co-located private header (src tree, not include/)
+#include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/protocol.h"
 #include "coop/player/level_visit.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_events.h"
 #include "coop/player/remote_player.h"
-#include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 #include "harness/screenshot.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -44,6 +49,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <map>
 #include <string>
@@ -51,45 +57,156 @@
 namespace harness::autotest {
 namespace {
 
-namespace R  = ue_wrap::reflection;
-namespace E  = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
-namespace LV = coop::level_visit;
+namespace PS   = harness::autotest::peer_signal;
+namespace R    = ue_wrap::reflection;
+namespace E    = ue_wrap::engine;
+namespace OI   = ue_wrap::object_index;
+namespace LV   = coop::level_visit;
+namespace RV   = coop::rig_verdict;
+namespace ROW  = coop::config_registry::rows;
+using disc_drill::OnGameThread;
 
-std::string g_dir;
-bool g_hostVisits = false;
-
-template <class Fn>
-void OnGameThread(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
+constexpr const char* kTag = "level-visit";
+constexpr float kFloorZ = LV::kVisitFloorZ;
+constexpr uint32_t kSettlePoses = 3;  // poses applied after the first of a state, by which its copy must follow
+constexpr int kStepSec = 240;         // the bound on a step of the other peer's
+constexpr int kLoadSec = 120;         // the bound on a trip reaching its map
+constexpr int kSettleSec = 30;        // the bound on a state following an event
+constexpr int kBackSec = 60;          // the bound on the return after a map's end the drill asks for
 
 const char* Who() { return IsClientRole() ? "client" : "host"; }
-bool IVisit() { return IsClientRole() != g_hostVisits; }
 void* Me() { return coop::players::Registry::Get().Local(); }
 
-void Write(const std::string& name) { std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << "x"; }
-bool Seen(const std::string& name) { return static_cast<bool>(std::ifstream(g_dir + "\\" + name)); }
-bool Await(const std::string& name, int seconds = 300) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        if (Seen(name)) return true;
-        ::Sleep(100);
+// ---- outcomes, said where they are decided ---------------------------------------------------------------------------
+enum class Res { Fail = 0, Pass = 1, Invalid = 2 };
+std::string Result(Res r, const std::string& why) { return std::to_string(static_cast<int>(r)) + " " + why; }
+Res ResultOf(const std::string& t) {
+    return t.empty() ? Res::Invalid : t[0] == '1' ? Res::Pass : t[0] == '0' ? Res::Fail : Res::Invalid;
+}
+std::string ResultWhy(const std::string& t) { return t.size() > 2 ? t.substr(2) : std::string("no reason given"); }
+
+// This peer's check, left for the other peer under `name`. A failure or an unmeasurable check is said here at once and
+// ends the drill (false); a pass goes on.
+bool Emit(const char* name, Res r, const std::string& why) {
+    PS::Mark(name, Result(r, why));
+    if (r == Res::Pass) {
+        UE_LOGI("level-visit: ARM %hs %hs PASS %hs", name, Who(), why.c_str());
+        return true;
     }
-    UE_LOGW("level-visit: ABORT -- no '%hs' from the other peer", name.c_str());
+    UE_LOGW("level-visit: ARM %hs %hs %hs %hs", name, Who(), r == Res::Fail ? "FAIL" : "INVALID", why.c_str());
+    RV::Say(kTag, r == Res::Fail ? RV::Outcome::Fail : RV::Outcome::Invalid, "%s: %s", name, why.c_str());
     return false;
 }
 
-void Verdict(bool ok, const char* why) {
-    UE_LOGI("level-visit: VERDICT %hs %hs %hs", Who(), ok ? "PASS" : "FAIL", why);
+// The other peer's check `name`, waited for. Its failure was said by that peer; it is said here too (once per process).
+bool Heard(const char* name, int seconds = kStepSec) {
+    std::string t;
+    if (!PS::AwaitText(name, t, seconds)) return false;
+    const Res r = ResultOf(t);
+    if (r == Res::Pass) return true;
+    RV::Say(kTag, r == Res::Fail ? RV::Outcome::Fail : RV::Outcome::Invalid, "%s (the other peer): %s", name,
+            ResultWhy(t).c_str());
+    return false;
 }
 
-void PlaceMe(const ue_wrap::FVector& at) {
-    void* f = R::FindFunction(R::ClassOf(Me()), L"teleportWObackrooms");
-    ue_wrap::ParamFrame pf(f);
-    ue_wrap::FTransform t{};
-    t.TX = at.X; t.TY = at.Y; t.TZ = at.Z;
-    if (f && pf.valid() && pf.Set<ue_wrap::FTransform>(L"newTransform", t)) ue_wrap::Call(Me(), pf);
+// Whether the other peer has left a check that did not pass: a wait on a pose or a state ends at it.
+bool OtherStopped() {
+    static const char* const kNames[] = {"arrived", "back", "hid", "shown", "copytrip", "held", "reopened_clip",
+                                         "joined_hid"};
+    std::string t;
+    for (const char* n : kNames)
+        if (PS::Peek(n, t) && ResultOf(t) != Res::Pass) return true;
+    return false;
 }
+
+// ---- the poses this peer applies (the drill's own listener; the pump's records are not readable from here) ----------
+struct PoseRec {
+    std::atomic<uint32_t> seq{0};       // poses applied for the slot
+    std::atomic<uint32_t> stateSeq{0};  // the pose that began the current state (below the floor, or not)
+    std::atomic<uint32_t> firstSeq{0};  // the slot's first pose heard
+    std::atomic<bool> have{false}, below{false}, sawBelow{false}, firstBelow{false};
+};
+PoseRec g_rec[coop::players::kMaxPeers];
+
+void OnPose(uint8_t slot, const coop::net::PoseSnapshot& pose) {
+    if (slot >= coop::players::kMaxPeers) return;
+    PoseRec& r = g_rec[slot];
+    const bool below = pose.z < kFloorZ;
+    const uint32_t seq = r.seq.load() + 1;
+    if (!r.have.load()) {
+        r.firstBelow = below;
+        r.firstSeq = seq;
+        r.stateSeq = seq;
+        r.have = true;
+    } else if (below != r.below.load()) {
+        r.stateSeq = seq;
+    }
+    r.below = below;
+    if (below) r.sawBelow = true;
+    r.seq = seq;
+}
+
+// AActor::bHidden of the slot's copy here: 1, 0, or -1 with no copy or an unread flag.
+int CopyHidden(int slot) {
+    int out = -1;
+    OnGameThread([&out, slot] {
+        coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
+        void* actor = p && p->valid() ? p->actor() : nullptr;
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (actor && R::FindBoolProperty(R::ClassOf(actor), L"bHidden", off, mask))
+            out = (static_cast<const uint8_t*>(actor)[off] & mask) ? 1 : 0;
+    });
+    return out;
+}
+
+// The red arm of the copy's trip: a trip the visitor's copy authored here was let run.
+bool Leaked() { return LV::Stats().copyTripsLetRun > 0; }
+
+// The copy of `slot` follows its pose: hidden == `want` once kSettlePoses more poses have been applied after the pose
+// `from` that began the state, or sooner. Decided at that event; a stream that stops first is Invalid.
+bool Follows(const char* name, int slot, int want, uint32_t from, const char* hiddenWhat, const char* shownWhat) {
+    PoseRec& r = g_rec[slot];
+    const bool settled = PS::WaitFor("the copy following its pose", kSettleSec, [&] {
+        return Leaked() || CopyHidden(slot) == want || r.seq.load() >= from + kSettlePoses;
+    }, false);
+    if (Leaked()) return Emit(name, Res::Fail, "a trip authored by the visitor's copy was let run on this machine");
+    if (!settled) return Emit(name, Res::Invalid, "the pose stream stopped before the copy could be judged");
+    const int hidden = CopyHidden(slot);
+    if (hidden < 0) return Emit(name, Res::Invalid, "no copy of that player stands here");
+    if (hidden != want)
+        return Emit(name, Res::Fail, want ? hiddenWhat : shownWhat);
+    return Emit(name, Res::Pass, want ? "its copy is hidden here" : "its copy is shown again");
+}
+
+// The watcher's check: the visitor's pose `below` the visit floor (or back above it, once it was below) is the event; its
+// copy must follow it.
+bool JudgeCopy(const char* name, int slot, bool below, int boundSec) {
+    PoseRec& r = g_rec[slot];
+    const bool entered = PS::WaitFor(below ? "the visitor's pose below the floor" : "the visitor's pose back above it",
+                                     boundSec, [&] {
+        return Leaked() || OtherStopped() ||
+               (below ? r.below.load() : (r.sawBelow.load() && !r.below.load()));
+    }, false);
+    if (Leaked()) return Emit(name, Res::Fail, "a trip authored by the visitor's copy was let run on this machine");
+    if (OtherStopped()) return false;
+    if (!entered) return Emit(name, Res::Invalid, "no such pose reached this peer");
+    return Follows(name, slot, below ? 1 : 0, r.stateSeq.load(), "the visitor is in the map and its copy is not hidden here",
+                   "the visitor is back and its copy stays hidden here");
+}
+
+// ---- the visitor's state ----------------------------------------------------------------------------------------------
+struct Now {
+    ue_wrap::FVector at{};
+    float health = 0.f;
+    void* held = nullptr;
+    std::wstring heldName = L"none";  // read on the game thread: the pointer may be gone by the time it is logged
+    int inventory = -1, hold = -1;
+    bool visiting = false, inMap = false;
+    bool possessed = false;  // the controller holds this player
+    float camZ = 0.f;
+    int black = 0;           // black screens on the viewport
+};
 
 // A TArray's length on the game mode's save slot.
 int ArrayNum(const wchar_t* field) {
@@ -99,18 +216,6 @@ int ArrayNum(const wchar_t* field) {
     const int32_t off = slot ? R::FindPropertyOffset(R::ClassOf(slot), field) : -1;
     return off >= 0 ? *reinterpret_cast<int32_t*>(static_cast<char*>(slot) + off + 8) : -1;
 }
-
-struct Now {
-    ue_wrap::FVector at{};
-    float health = 0.f;
-    void* held = nullptr;
-    std::wstring heldName = L"none";  // read on the game thread: the pointer may be gone by the time it is logged
-    int inventory = -1, hold = -1;
-    bool visiting = false;
-    bool possessed = false;  // the controller holds this player
-    float camZ = 0.f;
-    int black = 0;           // black screens on the viewport
-};
 
 Now Read() {
     Now n;
@@ -124,6 +229,7 @@ Now Read() {
         n.inventory = ArrayNum(L"inventoryData");
         n.hold = ArrayNum(L"hold");
         n.visiting = LV::Visiting();
+        n.inMap = LV::CurrentLevel() != nullptr;
         n.possessed = Me() && E::GetController(Me()) != nullptr;
         n.camZ = E::GetCameraLocation().Z;
         n.black = ue_wrap::engine::ReadScreenState().blackOnScreen;
@@ -131,11 +237,18 @@ Now Read() {
     return n;
 }
 
-void Log(const Now& n) {
-    UE_LOGI("level-visit: STATE %hs at=(%.0f,%.0f,%.0f) health=%.0f visiting=%d map=%ls held=%ls inventory=%d hold=%d "
-            "possessed=%d camZ=%.0f black=%d", Who(), n.at.X, n.at.Y, n.at.Z, n.health, n.visiting ? 1 : 0,
-            LV::CurrentMap().c_str(), n.heldName.c_str(), n.inventory, n.hold,
-            n.possessed ? 1 : 0, n.camZ, n.black);
+void Log(const char* what, const Now& n) {
+    UE_LOGI("level-visit: STATE %hs %hs at=(%.0f,%.0f,%.0f) health=%.0f visiting=%d map=%ls held=%ls inventory=%d hold=%d "
+            "possessed=%d camZ=%.0f black=%d", what, Who(), n.at.X, n.at.Y, n.at.Z, n.health, n.visiting ? 1 : 0,
+            LV::CurrentMap().c_str(), n.heldName.c_str(), n.inventory, n.hold, n.possessed ? 1 : 0, n.camZ, n.black);
+}
+
+void PlaceMe(const ue_wrap::FVector& at) {
+    void* f = R::FindFunction(R::ClassOf(Me()), L"teleportWObackrooms");
+    ue_wrap::ParamFrame pf(f);
+    ue_wrap::FTransform t{};
+    t.TX = at.X; t.TY = at.Y; t.TZ = at.Z;
+    if (f && pf.valid() && pf.Set<ue_wrap::FTransform>(L"newTransform", t)) ue_wrap::Call(Me(), pf);
 }
 
 // The level script actor of the visited map: what its own End and QuitGame calls name as their context.
@@ -173,48 +286,64 @@ void DumpLevelClasses(const std::string& dir) {
     });
 }
 
-// The map's lantern: where it is and whether it is lit; then a step: 0 face it, 1 take it in hand, 2 light it with its
-// own RMB use, 3 put it down with the player's own forceDrop.
-void LampStep(int step) {
-    void* cls = OI::ClassByName(L"prop_lamp_C");
-    void* lamp = nullptr;
+// ---- what the visit's rows ask for ---------------------------------------------------------------------------------
+struct Plan {
+    std::string start, look, map, end, dump;
+    bool camera = false;  // the visitor takes the camera the host spawns into its hand
+};
+
+Plan PlanFromRows() {
+    Plan p;
+    p.start = coop::config::ResolveEnum(ROW::level_visit_start);
+    p.look = coop::config::ResolveEnum(ROW::level_visit_look);
+    p.map = coop::config::ResolveString(ROW::level_visit_map);
+    if (p.map.empty()) p.map = "sl_backroomsObsolete";
+    p.end = coop::config::ResolveEnum(ROW::level_visit_end);
+    p.dump = coop::config::ResolveString(ROW::level_visit_dump_dir);
+    p.camera = p.start != "clip" && p.look != "lamp";
+    return p;
+}
+
+void* FindCamera() {
+    void* cls = OI::ClassByName(L"prop_vidcam_low_C");
+    void* cam = nullptr;
     if (cls)
         OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
-            ue_wrap::FVector at{};
-            if (!*static_cast<void**>(ctx) && R::IsLive(o) && E::TryGetActorLocation(o, at) && at.Z < -30000.f)
+            if (!*static_cast<void**>(ctx) && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__"))
                 *static_cast<void**>(ctx) = o;
-        }, &lamp);
-    ue_wrap::FVector at{}, me{};
-    if (!lamp || !E::TryGetActorLocation(lamp, at) || !E::TryGetActorLocation(Me(), me)) {
-        UE_LOGI("level-visit: %hs LAMP none in the map", Who());
-        return;
-    }
-    int32_t off = -1;
-    uint8_t mask = 0;
-    const bool lit = R::FindBoolProperty(R::ClassOf(lamp), L"active", off, mask) && off >= 0 &&
-                     (*(static_cast<uint8_t*>(lamp) + off) & mask) != 0;
-    const ue_wrap::FVector cam = E::GetCameraLocation();
-    const float dx = at.X - cam.X, dy = at.Y - cam.Y, dz = at.Z - cam.Z;
-    const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-    bool took = false, collected = false;
-    float fuel = -1.f;
-    if (const int32_t fo = R::FindPropertyOffset(R::ClassOf(lamp), L"fuel"); fo >= 0)
-        fuel = *reinterpret_cast<float*>(static_cast<char*>(lamp) + fo);
-    if (step == 1) took = E::CallMainPlayerHoldObject(Me(), lamp, collected);
-    else if (step == 2 || step == 3) {
-        void* who = step == 2 ? lamp : Me();
-        void* fn = step == 2 ? R::FindFunction(R::ClassOf(lamp), L"playerHandUse_RMB")
-                             : R::FindDispatchFunctionCached(R::ClassOf(Me()), L"forceDrop");
-        ue_wrap::ParamFrame pf(fn);
-        took = fn && pf.valid() && (step == 3 || pf.Set<void*>(L"player", Me())) && ue_wrap::Call(who, pf);
-    } else if (void* pc = E::GetController(Me()))
-        E::SetControlRotation(pc, {static_cast<float>(std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * 57.2958),
-                                   static_cast<float>(std::atan2(dy, dx) * 57.2958), 0.f});
-    UE_LOGI("level-visit: %hs LAMP at (%.0f,%.0f,%.0f) %.0f cm from the camera lit=%d fuel=%.1f %hs", Who(), at.X, at.Y,
-            at.Z, dist, lit ? 1 : 0, fuel,
-            step == 0 ? "faced" : step == 1 ? (took ? "taken in hand" : "take failed")
-                        : step == 2 ? (took ? "lit with its RMB use" : "RMB use failed")
-                                    : (took ? "put down" : "put down failed"));
+        }, &cam);
+    return cam;
+}
+
+// HOST: a camera beside it, for the visitor to take (a run that takes none carries what its profile holds).
+void SpawnCamera() {
+    OnGameThread([] {
+        void* cls = OI::ClassByName(L"prop_vidcam_low_C");
+        if (!cls) cls = R::FindClass(L"prop_vidcam_low_C");
+        ue_wrap::FVector at{};
+        E::TryGetActorLocation(Me(), at);
+        void* cam = cls ? E::SpawnActor(cls, {at.X + 150.f, at.Y, at.Z}) : nullptr;
+        UE_LOGI("level-visit: host spawned a camera for the visitor (%d)", cam ? 1 : 0);
+    });
+}
+
+// VISITOR: the camera, placed beside and taken in hand.
+bool TakeCamera() {
+    if (!PS::WaitFor("the camera the host spawned", 60, [] {
+            void* found = nullptr;
+            OnGameThread([&found] { found = FindCamera(); });
+            return found != nullptr;
+        }))
+        return false;
+    OnGameThread([] {
+        void* cam = FindCamera();
+        ue_wrap::FVector at{};
+        if (cam && E::TryGetActorLocation(cam, at)) PlaceMe({at.X - 120.f, at.Y, at.Z + 60.f});
+        bool collected = false;
+        const bool took = cam && E::CallMainPlayerHoldObject(Me(), cam, collected);
+        UE_LOGI("level-visit: %hs took the camera ran=%d", Who(), took ? 1 : 0);
+    });
+    return PS::WaitFor("the camera in hand", 15, [] { return Read().held != nullptr; });
 }
 
 // The game's own clip: its tick traces from lastLoc to the camera, and a hit on static geometry is the trip. lastLoc
@@ -243,189 +372,104 @@ void TryCall(const std::string& map) {
     });
 }
 
-// The game mode's backroomsEnabled, which the game's clip check reads; -1 unreadable.
-int GameBackrooms() {
-    int v = -1;
-    OnGameThread([&v] {
-        void* gm = ue_wrap::world_singleton::Gamemode();
+void StartTrip(const Plan& p) {
+    if (p.start == "clip") TryClip();
+    else TryCall(p.map);
+}
+
+// ---- the map's lantern (level_visit_look = lamp) --------------------------------------------------------------------
+void* FindLamp() {
+    void* cls = OI::ClassByName(L"prop_lamp_C");
+    void* lamp = nullptr;
+    if (cls)
+        OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
+            ue_wrap::FVector at{};
+            if (!*static_cast<void**>(ctx) && R::IsLive(o) && E::TryGetActorLocation(o, at) && at.Z < kFloorZ)
+                *static_cast<void**>(ctx) = o;
+        }, &lamp);
+    return lamp;
+}
+
+bool LampLit() {
+    bool lit = false;
+    OnGameThread([&lit] {
+        void* lamp = FindLamp();
         int32_t off = -1;
         uint8_t mask = 0;
-        if (gm && R::FindBoolProperty(R::ClassOf(gm), L"backroomsEnabled", off, mask))
-            v = (*(static_cast<uint8_t*>(gm) + off) & mask) ? 1 : 0;
+        lit = lamp && R::FindBoolProperty(R::ClassOf(lamp), L"active", off, mask) && off >= 0 &&
+              (*(static_cast<uint8_t*>(lamp) + off) & mask) != 0;
     });
-    return v;
+    return lit;
 }
 
-bool BackroomsAllowed() {
-    bool on = true;
-    OnGameThread([&on] { on = coop::config::ResolveFlag(coop::config_registry::rows::world_backrooms); });
-    return on;
-}
-
-// VOTVCOOP_LEVEL_VISIT_CLOSED=1: the host closes the backrooms (world.backrooms 0) before the visit. The visitor sees
-// the session's value arrive and its game mode's backroomsEnabled held off; the game's own clip and the clip's travel
-// call each leave it in the world. The host opens them again with a reset; the visitor sees backroomsEnabled given
-// back, then visits as usual. A closed phase that fails fails the visitor's verdict.
-std::string g_closedFail;
-
-void ClosedPhaseHost() {
-    if (!Await("client_closed_ready")) return;
-    OnGameThread([] {
-        const auto r = coop::config::SetValue(coop::config_registry::rows::world_backrooms, "0");
-        UE_LOGI("level-visit: host closed the backrooms (set result %d)", static_cast<int>(r));
-    });
-    Write("closed");
-    if (!Await("closed_done")) return;
-    OnGameThread([] {
-        const auto r = coop::config::ResetValue(coop::config_registry::rows::world_backrooms);
-        UE_LOGI("level-visit: host opened the backrooms again (reset result %d)", static_cast<int>(r));
-    });
-    Write("reopened");
-}
-
-void ClosedPhaseVisitor(const std::string& map) {
-    const int before = GameBackrooms();
-    Write("client_closed_ready");
-    if (!Await("closed")) {
-        g_closedFail = "the host never closed the backrooms";
-        return;
-    }
-    bool seen = false;
-    int held = -1;
-    for (int t = 0; t < 20 && !seen; ++t) {
-        ::Sleep(1000);
-        held = GameBackrooms();
-        seen = !BackroomsAllowed() && held == 0;
-    }
-    UE_LOGI("level-visit: %hs CLOSED seen=%d backroomsEnabled %d->%d", Who(), seen ? 1 : 0, before, held);
-    if (!seen) g_closedFail = "the closed setting never reached the visitor, or the clip switch was not held off";
-    TryClip();
-    bool went = false;
-    for (int t = 0; t < 8; ++t) {
-        ::Sleep(1000);
-        went = went || Read().visiting;
-    }
-    UE_LOGI("level-visit: %hs CLOSED the game's own clip -> visiting=%d", Who(), went ? 1 : 0);
-    if (went && g_closedFail.empty()) g_closedFail = "the clip sent the visitor while the backrooms were closed";
-    TryCall(map);
-    bool sent = false;
-    for (int t = 0; t < 8; ++t) {
-        ::Sleep(1000);
-        sent = sent || Read().visiting;
-    }
-    UE_LOGI("level-visit: %hs CLOSED the travel call -> visiting=%d", Who(), sent ? 1 : 0);
-    if (sent && g_closedFail.empty()) g_closedFail = "the travel call sent the visitor while the backrooms were closed";
-    Write("closed_done");
-    if (!Await("reopened")) {
-        g_closedFail = "the host never opened the backrooms again";
-        return;
-    }
-    bool open = false;
-    int after = -1;
-    for (int t = 0; t < 20 && !open; ++t) {
-        ::Sleep(1000);
-        after = GameBackrooms();
-        open = BackroomsAllowed() && after == before;
-    }
-    UE_LOGI("level-visit: %hs OPENED seen=%d backroomsEnabled back to %d (was %d)", Who(), open ? 1 : 0, after, before);
-    if (!open && g_closedFail.empty()) g_closedFail = "reopened, the clip switch did not get its own value back";
-    ::Sleep(6000);  // past the visit's quiet window, as a player's clip would be
-}
-
-void Visitor() {
-    const bool clip = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_START") == "clip";
-    // The camera the host spawned, in hand (a clip run takes none, carrying what its profile holds, and neither does a
-    // run that takes the map's lantern in hand).
-    const bool bare = clip || coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_LOOK") == "lamp";
-    if (!bare) OnGameThread([] {
-        void* cls = OI::ClassByName(L"prop_vidcam_low_C");
-        void* cam = nullptr;
-        if (cls)
-            OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
-                if (!*static_cast<void**>(ctx) && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__"))
-                    *static_cast<void**>(ctx) = o;
-            }, &cam);
-        ue_wrap::FVector at{};
-        if (cam && E::TryGetActorLocation(cam, at)) PlaceMe({at.X - 120.f, at.Y, at.Z + 60.f});
-    });
-    ::Sleep(1500);
-    if (!bare) OnGameThread([] {
-        void* cls = OI::ClassByName(L"prop_vidcam_low_C");
-        void* cam = nullptr;
-        if (cls)
-            OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
-                if (!*static_cast<void**>(ctx) && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__"))
-                    *static_cast<void**>(ctx) = o;
-            }, &cam);
-        bool collected = false;
-        const bool took = cam && E::CallMainPlayerHoldObject(Me(), cam, collected);
-        UE_LOGI("level-visit: %hs took the camera ran=%d", Who(), took ? 1 : 0);
-    });
-    ::Sleep(3000);
-    const Now before = Read();
-    Log(before);
-    std::string map = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_MAP");
-    if (map.empty()) map = "sl_backroomsObsolete";
-    if (coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_START") == "none") {
-        // The control: no visit, a lethal hit in the world, and what the player holds after the usual revive.
-        OnGameThread([] { E::InvokeAddPlayerDamage(Me(), 1000.f, /*blood=*/true); });
-        Write("visit_in");
-        Now n;
-        bool died = false;
-        for (int t = 0; t < 60; ++t) {
-            ::Sleep(1000);
-            n = Read();
-            Log(n);
-            died = died || n.health <= 0.f;
-            if (died && n.health > 0.f) break;
+// A step: 0 face it, 1 take it in hand, 2 light it with its own RMB use, 3 put it down with the player's own forceDrop.
+void LampStep(int step) {
+    OnGameThread([step] {
+        void* lamp = FindLamp();
+        ue_wrap::FVector at{}, me{};
+        if (!lamp || !E::TryGetActorLocation(lamp, at) || !E::TryGetActorLocation(Me(), me)) {
+            UE_LOGI("level-visit: %hs LAMP none in the map", Who());
+            return;
         }
-        ::Sleep(3000);
-        n = Read();
-        Write("visit_over");
-        UE_LOGI("level-visit: %hs a death in the world: held before=%ls after=%ls hold %d->%d", Who(),
-                before.heldName.c_str(), n.heldName.c_str(), before.hold, n.hold);
-        return Verdict(died && n.health > 0.f, "a death in the world, revived (the control)");
-    }
-    if (coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_CLOSED") == "1") ClosedPhaseVisitor(map);
-    if (clip) TryClip();
-    else TryCall(map);
-    Now n;
-    int t = 0;
-    for (; t < 60; ++t) {
-        ::Sleep(1000);
-        n = Read();
-        Log(n);
-        if (n.visiting && n.at.Z < -30000.f) break;
-    }
-    if (!(n.visiting && n.at.Z < -30000.f)) { Write("visit_over"); return Verdict(false, "never arrived in the map"); }
-    Write("visit_in");
-    ::Sleep(2000);
-    const Now inMap = Read();
-    // In the map the player is this machine's to move: its controller holds it, the view is in the map, uncovered.
-    const bool inOk = inMap.possessed && inMap.camZ < -30000.f && inMap.black == 0;
-    UE_LOGI("level-visit: %hs in the map possessed=%d camZ=%.0f black=%d", Who(), inMap.possessed ? 1 : 0,
-            inMap.camZ, inMap.black);
-    const std::string dump = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_DUMP_DIR");
-    if (!dump.empty()) DumpLevelClasses(dump);
-    // The view in the map, as the visitor sees it: once just in, once the eye has adapted. With
-    // VOTVCOOP_LEVEL_VISIT_LOOK=lamp the visitor turns to the map's lantern (prop_lamp_C), takes it in hand, lights it
-    // with the lantern's own RMB use, and puts it down before the end, so it comes back with what it took in.
-    const bool lamp = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_LOOK") == "lamp";
-    for (int i = 0; i < 20; ++i) {
-        ::Sleep(1000);
-        Log(Read());
-        if (i == 1 || i == 15) harness::screenshot::Capture(i == 1 ? L"visit-in-a" : L"visit-in-b");
-        if (lamp && (i == 3 || i == 8 || i == 10)) OnGameThread([i] { LampStep(i == 3 ? 0 : i == 8 ? 1 : 2); });
-        if (lamp && (i == 6 || i == 13)) harness::screenshot::Capture(i == 6 ? L"visit-lamp-faced" : L"visit-lamp-lit");
-        if (lamp && i == 17) OnGameThread([] { LampStep(3); });
-    }
-    std::string end = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_END");
-    if (end.empty()) end = "end";
+        const ue_wrap::FVector cam = E::GetCameraLocation();
+        const float dx = at.X - cam.X, dy = at.Y - cam.Y, dz = at.Z - cam.Z;
+        bool ok = false, collected = false;
+        if (step == 1) ok = E::CallMainPlayerHoldObject(Me(), lamp, collected);
+        else if (step == 2 || step == 3) {
+            void* who = step == 2 ? lamp : Me();
+            void* fn = step == 2 ? R::FindFunction(R::ClassOf(lamp), L"playerHandUse_RMB")
+                                 : R::FindDispatchFunctionCached(R::ClassOf(Me()), L"forceDrop");
+            ue_wrap::ParamFrame pf(fn);
+            ok = fn && pf.valid() && (step == 3 || pf.Set<void*>(L"player", Me())) && ue_wrap::Call(who, pf);
+        } else if (void* pc = E::GetController(Me())) {
+            E::SetControlRotation(pc, {static_cast<float>(std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * 57.2958),
+                                       static_cast<float>(std::atan2(dy, dx) * 57.2958), 0.f});
+            ok = true;
+        }
+        UE_LOGI("level-visit: %hs LAMP at (%.0f,%.0f,%.0f) step %d %hs", Who(), at.X, at.Y, at.Z, step,
+                ok ? "ran" : "failed");
+    });
+}
+
+// Face the lantern, take it in hand, light it, put it down: each step on the state the one before left.
+void LampSequence() {
+    LampStep(0);
+    harness::screenshot::Capture(L"visit-lamp-faced");
+    LampStep(1);
+    PS::WaitFor("the lantern in hand", 15, [] { return Read().held != nullptr; }, false);
+    LampStep(2);
+    PS::WaitFor("the lantern lit", 15, [] { return LampLit(); }, false);
+    harness::screenshot::Capture(L"visit-lamp-lit");
+    LampStep(3);
+    PS::WaitFor("the lantern put down", 15, [] { return Read().held == nullptr; }, false);
+}
+
+// ---- the visitor ---------------------------------------------------------------------------------------------------
+// The control (level_visit_start = none): no visit, a lethal hit in the world, and what the player holds after the usual
+// revive.
+bool Control(const Now& before) {
+    OnGameThread([] { E::InvokeAddPlayerDamage(Me(), 1000.f, /*blood=*/true); });
+    bool died = false;
+    const bool revived = PS::WaitFor("the death and its revive", 90, [&died] {
+        const Now n = Read();
+        died = died || n.health <= 0.f;
+        return died && n.health > 0.f;
+    }, false);
+    const Now n = Read();
+    Log("control", n);
+    UE_LOGI("level-visit: %hs a death in the world: held before=%ls after=%ls hold %d->%d", Who(), before.heldName.c_str(),
+            n.heldName.c_str(), before.hold, n.hold);
+    return Emit("back", revived ? Res::Pass : Res::Invalid, revived ? "a death in the world, revived (the control)"
+                                                                     : "the death's revive did not come");
+}
+
+// The visit's end the drill asks for (`wait` leaves it to the map's own clock).
+void EndVisit(const std::string& end) {
     OnGameThread([&end] {
         void* script = LevelScriptActor();
         bool ran = false;
         if (end == "wait") {
-            ran = true;  // the map's own end, on its own clock
+            ran = true;
         } else if (end == "death") {
             ran = E::InvokeAddPlayerDamage(Me(), 1000.f, /*blood=*/true);  // the game's own lethal hit
         } else if (end == "quit") {
@@ -442,98 +486,240 @@ void Visitor() {
         UE_LOGI("level-visit: %hs ended the visit by '%hs' (level script %ls) ran=%d", Who(), end.c_str(),
                 script ? R::ClassNameOf(script).c_str() : L"none", ran ? 1 : 0);
     });
-    const int bound = end == "wait" ? 700 : 60;
-    for (t = 0; t < bound; ++t) {
-        ::Sleep(1000);
-        n = Read();
-        if (end != "wait" || t % 30 == 0 || !n.visiting) Log(n);
-        if (!n.visiting && n.at.Z > -30000.f && n.health > 0.f && (end == "wait" || t >= 15)) break;
+}
+
+// The trip, and the player standing in the loaded map: its own to move (its controller holds it), its view in the map,
+// uncovered. The visit ending before the player arrives is the event that fails it; no trip at all is Invalid.
+bool Arrive(const Plan& p) {
+    const uint32_t trips = LV::Stats().tripsStarted;
+    StartTrip(p);
+    const bool reached = PS::WaitFor("the visitor in the map", kLoadSec, [&] {
+        const Now n = Read();
+        return n.inMap || (LV::Stats().tripsStarted > trips && !n.visiting) || OtherStopped();
+    }, false);
+    if (OtherStopped()) return false;
+    const Now n = Read();
+    Log("arrived", n);
+    if (!n.inMap) {
+        if (LV::Stats().tripsStarted > trips) return Emit("arrived", Res::Fail, "the visit ended before the player arrived in the map");
+        return Emit("arrived", Res::Invalid, reached ? "no trip started" : "no trip reached the map");
     }
-    Write("visit_over");
-    const bool back = !n.visiting && n.at.Z > -30000.f;
+    if (!PS::WaitFor("the view in the map", kSettleSec, [] { return Read().camZ < kFloorZ; }, false))
+        return Emit("arrived", Res::Invalid, "the view did not follow the player into the map");
+    const Now in = Read();
+    const bool inOk = in.possessed && in.camZ < kFloorZ && in.black == 0;
+    UE_LOGI("level-visit: %hs in the map possessed=%d camZ=%.0f black=%d", Who(), in.possessed ? 1 : 0, in.camZ, in.black);
+    return Emit("arrived", inOk ? Res::Pass : Res::Fail,
+                inOk ? "in the map the player is its own to move, its view uncovered"
+                     : "in the map the player was not its own to move, or its view was covered");
+}
+
+// Back in the world with what it carried: out of the map, alive, the dropped item given back, its view the player's.
+bool Return(const Plan& p, const Now& before) {
+    const int bound = p.end == "wait" ? 720 : kBackSec;
+    const bool back = PS::WaitFor("the visitor back in the world", bound, [] {
+        const Now n = Read();
+        return !n.visiting && n.at.Z > kFloorZ && n.health > 0.f;
+    }, false);
+    if (!back) return Emit("back", Res::Invalid, "the visitor did not come back in the time asked");
+    PS::WaitFor("the dropped item given back", kSettleSec, [] {
+        bool pending = true;
+        OnGameThread([&pending] { pending = LV::ReturnPending(); });
+        return !pending;
+    }, false);
+    const bool viewed = PS::WaitFor("the view the player's", kSettleSec, [] {
+        const Now n = Read();
+        return n.possessed && std::fabs(n.camZ - n.at.Z) < 300.f;
+    }, false);
+    const Now n = Read();
+    Log("back", n);
+    UE_LOGI("level-visit: %hs back (last end '%ls') held before=%ls after=%ls hold %d->%d inventory %d->%d", Who(),
+            LV::LastEnd().c_str(), before.heldName.c_str(), n.heldName.c_str(), before.hold, n.hold, before.inventory,
+            n.inventory);
     const bool kept = n.held == nullptr ? before.held == nullptr : (before.held && n.hold == before.hold);
     const bool pockets = n.inventory == before.inventory;
-    const bool view = n.possessed && std::fabs(n.camZ - n.at.Z) < 300.f;
-    UE_LOGI("level-visit: %hs back=%d (last end '%ls') held before=%ls after=%ls hold %d->%d inventory %d->%d", Who(),
-            back ? 1 : 0, LV::LastEnd().c_str(), before.heldName.c_str(),
-            n.heldName.c_str(), before.hold, n.hold, before.inventory, n.inventory);
-    Verdict(back && kept && pockets && inOk && view && g_closedFail.empty(),
-            !g_closedFail.empty() ? g_closedFail.c_str()
-            : !back    ? "not back in the world"
-            : !kept    ? "the hand item did not come back"
-            : !pockets ? "the pockets changed"
-            : !inOk    ? "in the map the player was not its own to move, or its view was covered"
-            : !view    ? "back in the world the view is not the player's"
-                       : "back in the world with what it carried, its view its own throughout");
+    if (!kept) return Emit("back", Res::Fail, "the hand item did not come back");
+    if (!pockets) return Emit("back", Res::Fail, "the pockets changed");
+    if (!viewed) return Emit("back", Res::Invalid, "back in the world the view did not settle on the player");
+    return Emit("back", Res::Pass, "back in the world with what it carried, its view its own throughout");
 }
 
-void Watcher(int visitorSlot) {
-    bool sawHidden = false, shownAfter = false;
-    if (!Await("visit_in", 400)) return Verdict(false, "the visitor never arrived");
-    for (int t = 0; t < 900 && !shownAfter; ++t) {
-        ::Sleep(1000);
-        bool hidden = false;
-        ue_wrap::FVector at{};
-        OnGameThread([&] {
-            coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(visitorSlot));
-            void* a = p ? p->actor() : nullptr;
-            if (a) E::TryGetActorLocation(a, at);
-            int32_t off = -1;
-            uint8_t mask = 0;
-            hidden = a && R::FindBoolProperty(R::ClassOf(a), L"bHidden", off, mask) &&
-                     (*(static_cast<uint8_t*>(a) + off) & mask) != 0;
-        });
-        UE_LOGI("level-visit: STATE %hs sees the visitor's copy at=(%.0f,%.0f,%.0f) hidden=%d", Who(), at.X, at.Y,
-                at.Z, hidden ? 1 : 0);
-        if (hidden) sawHidden = true;
-        if (sawHidden && !hidden && Seen("visit_over")) shownAfter = true;
-    }
-    Verdict(sawHidden && shownAfter, !sawHidden    ? "never saw the copy hidden"
-                                     : !shownAfter ? "the copy was not shown again"
-                                                   : "the copy was hidden while away");
+// The visitor's half of a pair: the trip, the stay until the watcher has judged its copy hidden, the end, the return.
+bool Visit(const Plan& p) {
+    if (p.camera && !TakeCamera()) return false;
+    const Now before = Read();
+    Log("before", before);
+    if (p.start == "none") return Control(before);
+    if (!Arrive(p)) return false;
+    if (!p.dump.empty()) DumpLevelClasses(p.dump);
+    harness::screenshot::Capture(L"visit-in");
+    if (p.look == "lamp") LampSequence();
+    if (!Heard("hid")) return false;
+    EndVisit(p.end);
+    return Return(p, before);
 }
 
-void Run() {
+// ---- the watcher ---------------------------------------------------------------------------------------------------
+// The watcher's half: its copy of the visitor hidden at the pose below the floor, shown at the pose back above it. After
+// a clip, the trip the visitor's copy authored on this machine was cancelled by the gate (the count is read at the end
+// of the visit, past which it cannot change); none at all is no measurement of the cancel.
+bool Watch(int slot, const Plan& p) {
+    if (!JudgeCopy("hid", slot, true, kStepSec)) return false;
+    if (!JudgeCopy("shown", slot, false, p.end == "wait" ? 780 : kStepSec)) return false;
+    if (p.start != "clip") return true;
+    const uint32_t refused = LV::Stats().copyTripsRefused;
+    return Emit("copytrip", refused > 0 ? Res::Pass : Res::Invalid,
+                refused > 0 ? "the trip the visitor's copy authored here was cancelled"
+                            : "no trip authored by the visitor's copy reached this machine's gate");
+}
+
+// ---- the pair, the close and the join ---------------------------------------------------------------------------------
+// Both peers are in the world: the client says so, the host waits for it (and spawns the camera for a run that takes one).
+bool Ready(const Plan& p) {
     if (IsClientRole()) {
-        bool ready = false;
-        for (int i = 0; i < 480 && !ready; ++i) {
-            OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-            if (!ready) ::Sleep(500);
-        }
-        ::Sleep(10000);
-        Write("client_ready");
-    } else {
-        ::Sleep(20000);
-        if (!Await("client_ready")) return;
-        OnGameThread([] {
-            void* cls = OI::ClassByName(L"prop_vidcam_low_C");
-            if (!cls) cls = R::FindClass(L"prop_vidcam_low_C");
-            ue_wrap::FVector at{};
-            E::TryGetActorLocation(Me(), at);
-            void* cam = cls ? E::SpawnActor(cls, {at.X + 150.f, at.Y, at.Z}) : nullptr;
-            UE_LOGI("level-visit: host spawned a camera for the visitor (%d)", cam ? 1 : 0);
-        });
-        ::Sleep(4000);
-        Write("spawned");
+        if (!disc_drill::ClientJoined()) return false;
+        PS::Mark("client_ready");
+        return !p.camera || PS::Await("spawned");
     }
-    if (IsClientRole() && !Await("spawned")) return;
-    ::Sleep(3000);
-    if (!IsClientRole() && coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_CLOSED") == "1") ClosedPhaseHost();
-    if (IVisit()) Visitor();
-    else Watcher(g_hostVisits ? 0 : 1);
-    UE_LOGI("level-visit: DONE %hs", Who());
+    if (!disc_drill::HostWorldUp() || !PS::Await("client_ready", 480)) return false;
+    if (p.camera) {
+        SpawnCamera();
+        PS::Mark("spawned");
+    }
+    return true;
+}
+
+void RunPair(const std::string& arm) {
+    const Plan p = PlanFromRows();
+    if (!Ready(p)) return;
+    const bool hostVisits = arm == "host";
+    const bool visitor = IsClientRole() != hostVisits;
+    const int visitorSlot = hostVisits ? 0 : 1;
+    if (visitor) {
+        if (!Visit(p)) return;
+    } else if (p.start != "none") {
+        if (!Watch(visitorSlot, p)) return;
+    }
+    if (IsClientRole()) {
+        UE_LOGI("level-visit: DONE client");
+        return;
+    }
+    // The host judges: what the client alone could see reaches it as its signals.
+    const bool ok = visitor ? (p.start == "none" || (Heard("shown") && (p.start != "clip" || Heard("copytrip"))))
+                            : ((p.start == "none" || Heard("arrived")) && Heard("back"));
+    if (!ok) return;
+    UE_LOGI("level-visit: DONE host");
+    RV::Say(kTag, RV::Outcome::Pass,
+            p.start == "none" ? "a death in the world, revived (the control)"
+                              : "the visitor's copy hidden by its pose while it was away and shown after, the visitor back "
+                                "with what it carried, its view its own throughout");
+}
+
+// A clip while the host has the backrooms closed is answered no, and after the host opens them it takes a trip. The
+// host closes and opens; the client clips.
+bool BackroomsAllowed() {
+    bool on = true;
+    OnGameThread([&on] { on = coop::config::ResolveFlag(ROW::world_backrooms); });
+    return on;
+}
+
+void RunCloseHost() {
+    if (!disc_drill::HostWorldUp() || !PS::Await("client_ready", 480)) return;
+    OnGameThread([] {
+        const auto r = coop::config::SetValue(ROW::world_backrooms, "0");
+        UE_LOGI("level-visit: host closed the backrooms (set result %d)", static_cast<int>(r));
+    });
+    PS::Mark("closed");
+    if (!Heard("held")) return;
+    OnGameThread([] {
+        const auto r = coop::config::ResetValue(ROW::world_backrooms);
+        UE_LOGI("level-visit: host opened the backrooms again (reset result %d)", static_cast<int>(r));
+    });
+    PS::Mark("reopened");
+    if (!Heard("reopened_clip")) return;
+    UE_LOGI("level-visit: DONE host");
+    RV::Say(kTag, RV::Outcome::Pass, "a clip was answered no while the host had the backrooms closed, and took a trip after "
+                                     "the host opened them again");
+}
+
+void RunCloseClient() {
+    if (!disc_drill::ClientJoined()) return;
+    PS::Mark("client_ready");
+    if (!PS::Await("closed")) return;
+    if (!PS::WaitFor("the host's closed setting", kSettleSec, [] { return !BackroomsAllowed(); }, false))
+        { Emit("held", Res::Invalid, "the host's closed setting never reached this client"); return; }
+    // The clip's event: the game asks its check in the tick that traces, and the check is answered no (a count) or the
+    // trip starts. Whichever comes first decides; neither is Invalid.
+    const LV::DrillStats before = LV::Stats();
+    TryClip();
+    const bool decided = PS::WaitFor("the clip check answered or a trip taken", kSettleSec, [&before] {
+        const LV::DrillStats s = LV::Stats();
+        return s.clipsHeldClosed > before.clipsHeldClosed || s.tripsStarted > before.tripsStarted;
+    }, false);
+    if (LV::Stats().tripsStarted > before.tripsStarted)
+        { Emit("held", Res::Fail, "a clip took a trip while the host had the backrooms closed"); return; }
+    if (!decided) { Emit("held", Res::Invalid, "the game asked no clip check after the clip was set"); return; }
+    if (!Emit("held", Res::Pass, "the clip check was answered no while the host had the backrooms closed")) return;
+    if (!PS::Await("reopened")) return;
+    if (!PS::WaitFor("the host's open setting", kSettleSec, [] { return BackroomsAllowed(); }, false))
+        { Emit("reopened_clip", Res::Invalid, "the host's open setting never reached this client"); return; }
+    const uint32_t trips = LV::Stats().tripsStarted;
+    TryClip();
+    const bool went = PS::WaitFor("a clip taking a trip", kLoadSec, [trips] { return LV::Stats().tripsStarted > trips; }, false);
+    if (!Emit("reopened_clip", went ? Res::Pass : Res::Invalid,
+              went ? "after the host opened the backrooms again a clip took a trip"
+                   : "no trip started after the host opened the backrooms again"))
+        return;
+    UE_LOGI("level-visit: DONE client");
+}
+
+// The host takes the trip and stays; a client that joins later must find the host's copy hidden at the first pose it
+// applies.
+void RunJoinHost() {
+    const Plan p = PlanFromRows();
+    if (!disc_drill::HostWorldUp()) return;
+    if (p.camera && !TakeCamera()) return;
+    if (!Arrive(p)) return;
+    if (!Heard("joined_hid", 480)) return;
+    UE_LOGI("level-visit: DONE host");
+    RV::Say(kTag, RV::Outcome::Pass, "a client that joined while the host was in the map found the host's copy hidden at "
+                                     "the first pose it applied");
+}
+
+void RunJoinClient() {
+    if (!disc_drill::ClientJoined()) return;
+    PoseRec& r = g_rec[0];
+    if (!PS::WaitFor("the host's first pose", kSettleSec, [&r] { return r.have.load(); }, false)) {
+        Emit("joined_hid", Res::Invalid, "no pose of the host reached this joiner");
+        return;
+    }
+    if (!r.firstBelow.load()) {
+        Emit("joined_hid", Res::Invalid, "the host was not in the map when its first pose reached this joiner");
+        return;
+    }
+    if (Follows("joined_hid", 0, 1, r.firstSeq.load(), "the host is in the map and its copy is not hidden here at the first "
+                "pose this joiner applied", ""))
+        UE_LOGI("level-visit: DONE client");
 }
 
 }  // namespace
 
 DWORD WINAPI LevelVisitThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("level-visit: ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
+    const std::string arm = coop::config::ResolveEnum(ROW::level_visit_drill);
+    if (!PS::Begin(kTag)) return 0;
+    if (arm != "close")
+        OnGameThread([] {
+            if (!coop::puppet_events::AddPoseListener(&OnPose)) UE_LOGW("level-visit: the pose listener list is full");
+        });
+    if (arm == "close") {
+        if (IsClientRole()) RunCloseClient();
+        else RunCloseHost();
+    } else if (arm == "join") {
+        if (IsClientRole()) RunJoinClient();
+        else RunJoinHost();
+    } else {
+        RunPair(arm);
     }
-    g_hostVisits = coop::config::ReadEnv("VOTVCOOP_LEVEL_VISIT_DOER") == "host";
-    Run();
     return 0;
 }
 

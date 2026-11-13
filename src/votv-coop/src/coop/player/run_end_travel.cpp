@@ -160,11 +160,14 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     if (!R::NameEquals(level, kMenuLevel)) {
         // A sub-level travel (sl_*, the map transitions). It is not this seam's to refuse -- and
         // it will still end the session for the peer that takes it, which is a separate open
-        // question, so the trail is left deliberately.
+        // question, so the trail is left deliberately. A clip's trip to one of the three visit maps
+        // is not one that reaches this far: coop/player/level_visit watches the same function and
+        // cancels it while a session runs, loading the map below the world instead.
         const unsigned long long n = ++g_subLevelLogged;
         if (n <= 8 || (n % 50) == 0) {
             UE_LOGI("run_end_travel: lib_C::loadLevel(\"%ls\") authored by %ls (#%llu) -- not the "
-                    "menu, so not judged here; a sub-level travel still ends this peer's session",
+                    "menu, so not judged here; a sub-level travel that level_visit does not take still ends this "
+                    "peer's session",
                     R::ToString(level).c_str(), R::ClassNameOf(author).c_str(), n);
         }
         return sg::Verdict::Run;

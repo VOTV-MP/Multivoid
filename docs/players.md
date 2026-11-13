@@ -231,8 +231,18 @@ player who is sitting, ragdolled, noclipping, asleep or dreaming. A session hold
 took the player out of it, or every player with the host. In a session the travel is refused and the
 map is loaded into the running world instead, far below it, on the clipping player's machine alone
 (`coop/player/level_visit`, `ue_wrap/world/level_instance`): the player goes in, everyone else
-stays in the world, and on every other machine the player's copy is hidden while it is down there.
-The same trip authored by another player's copy on this machine is refused outright.
+stays in the world, and every other machine hides the player's copy by its pose: each pose a peer
+sends carries its position, so a pose below the visit floor (`level_visit::kVisitFloorZ`) is a
+player in a visited map, read on every pose, and the copy is shown again by the first pose back
+above it. The same trip authored by another player's copy on this machine is refused outright.
+
+A player who joins while another is in one of the maps needs no snapshot of it: the first pose
+the joiner applies for that player is below the floor, so its copy is hidden from that pose, and a
+copy born or respawned below, or a lost pose, is corrected by the next one. MTA keeps a player's
+interior and dimension as a reliable state with a join snapshot; here the map is a place in the
+same world, so the position the pose already carries is the state `[?]`. What the host's save
+capture holds while the host itself is in a map (its player below the world, its game instance
+flags changed for the visit) is not measured `[?]`.
 
 None of the three maps has a way out. Each ends the game itself: the backrooms after ten minutes,
 the secret maps on their own timers and triggers (`untitled_219` after ten minutes as well and at
@@ -249,23 +259,26 @@ controller goes back to the visitor, and the placed player and the black screen 
 removed. The world's sky reaches that far down without bound: its height fog covered the map in its
 colour, and its sun, sky light and post process lit a maze the game leaves dark but for the
 lantern. All of it is hidden on the visitor's machine while it is there. The visitor's own clip check sees the view jump into the map and back
-out: the game mode's `backroomsEnabled` is off for the visit and five seconds after it, and a trip
-asked while seated or driving is refused, as the game's own check refuses it. What a map's script
+out: the game's check (`mainGamemode_C::canBackrooms`, which the player's tick asks before every
+clip) is answered no for the visit and five seconds after it, and a trip asked while seated or
+driving is refused, as the game's own check refuses it. What a map's script
 spawns lands in the world's own level, far below it: it stays out of the prop lanes and is removed
 with the map. `untitled_untitled`'s hook check counts a hook in the map only, not the world's own.
 Its ATV and `untitled_219`'s day-night cycle, copies of the world's own, are removed or held.
 
 The host can close the backrooms for everyone: "Allow the backrooms" (`world.backrooms`, on by
 default) in F1's `Administration > Server settings`, or `/set world.backrooms 0`. Off, every peer
-holds its game mode's `backroomsEnabled` off, so the game's own clip check takes no clip, and a
-trip to one of the three maps is refused; a player already in one stays until the visit ends.
-Turned back on, each peer gives `backroomsEnabled` the value it had.
+answers the game's own clip check no for its own player, so no clip is taken and no trip is
+sent (the game rewrites `backroomsEnabled` itself, so the mod answers the check, which is the one
+place that reads it, and writes nothing into the game's state); a player already in one stays
+until the visit ends. Turned back on, the game's own logic answers the check again.
 
-`[V]` on the rig: each map visited by a client and by the host, the game's own clip on both roles,
-each end (the map's end, its quit, a real death) and the backrooms' real ten-minute end; the
-visitor's controller held its player and its view was in the map and then back with it, the
-other player saw the copy hidden and shown again, and the visitor came back with its hand item
-every time.
+`[?]` on the rig, pending this change's own run folder: each map visited by a client and by the
+host, the game's own clip on both roles, each end (the map's end, its quit, a real death) and the
+backrooms' real ten-minute end; the visitor's controller held its player and its view was in the
+map and then back with it, the other player saw the copy hidden by its pose and shown again, and
+the visitor came back with its hand item every time. The drill is `level_visit_drill`
+(`client`, `host`, `close`, `join`).
 
 ### Inventory
 
