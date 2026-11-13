@@ -8,6 +8,7 @@
 
 #include "ue_wrap/devices/drone.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"  // SetActorSimulatePhysics: the mirror's root sphere
@@ -212,21 +213,21 @@ bool DriveMirror(void* drone, const FVector& loc, const FRotator& rot) {
 
 namespace {
 // The drone whose simulated root SuppressTick took out of the simulation, so RestoreTick gives that one its
-// body back; a reloaded level's drone is a new one, frozen afresh.
-void* g_frozenDrone = nullptr;
+// body back; a reloaded level's drone is a new object (its slot serial differs, even at the same address), frozen afresh.
+CachedObjRef g_frozenDrone;
 }  // namespace
 
 void SuppressTick(void* drone) {
     if (!drone) return;
     E::SetActorTickEnabled(drone, false);  // stop the flight integrator -- the client drone is a mirror
-    if (drone != g_frozenDrone && E::IsActorRootSimulatingPhysics(drone) && E::SetActorSimulatePhysics(drone, false))
-        g_frozenDrone = drone;  // and its body: the stream alone places it
+    if (!g_frozenDrone.Is(drone) && E::IsActorRootSimulatingPhysics(drone) && E::SetActorSimulatePhysics(drone, false))
+        g_frozenDrone.Set(drone);  // and its body: the stream alone places it
 }
 
 void RestoreTick(void* drone) {
     if (!drone) return;
-    if (drone == g_frozenDrone) E::SetActorSimulatePhysics(drone, true);
-    g_frozenDrone = nullptr;
+    if (g_frozenDrone.Is(drone)) E::SetActorSimulatePhysics(drone, true);
+    g_frozenDrone.Reset();
     E::SetActorTickEnabled(drone, true);
 }
 
