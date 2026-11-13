@@ -2,14 +2,13 @@
 
 #include "coop/player/hand_item.h"
 
-#include "coop/net/latest_wins.h"
-#include "coop/net/net_clock.h"
+#include "hand_item_applied.h"  // src-local: the slot's state and the seams shared with hand_item_applied.cpp
+
 #include "coop/net/protocol.h"
 #include "coop/player/hand_history.h"
 #include "coop/player/hand_item_pose.h"  // where the mirror sits: the owner's measure, the per-tick drive
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/player/roster_ledger.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_lifecycle.h"  // the two prop families never on the wire (ResolveHandClass)
 #include "coop/props/trash_collect_sync.h"  // EnsureHeldItemBroadcast (hand-edge world release)
@@ -33,35 +32,15 @@
 #include <vector>
 
 namespace coop::hand_item {
+namespace detail {
+coop::net::Session* g_session = nullptr;
+}  // namespace detail
+using namespace detail;
+
 namespace {
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
-
-// Wire caps: class names and item names are short ASCII, one length byte each.
-constexpr size_t kMaxStr = 63;
-// The largest HandItem: slot, has, three length-prefixed strings at the cap, the hold transform.
-static_assert(2 + 3 * (1 + kMaxStr) + 6 * sizeof(float) <= static_cast<size_t>(coop::net::kMaxReliablePayload),
-              "a HandItem at its string caps must fit one reliable datagram");
-
-// The fallback placement until the owner's first measure lands (coop/player/hand_item_pose measures
-// and drives the view-space hold): camera-front constants.
-constexpr float kFallbackRelPos[3] = {45.f, 10.f, -40.f};  // fwd/right/up cm
-
-// Per-slot wire state: what each peer's hand holds.
-struct SlotHand {
-    bool has = false;
-    std::wstring cls;   // BP class name, e.g. L"prop_physgun_C"
-    std::wstring name;  // Aprop_C 'name' FName (drives the generic prop mesh), may be empty
-    std::wstring item;  // the hold slot's item name, which the game's item tables are keyed by
-    std::wstring lastCls;  // the class held last: `cls` while it holds one, the one before once empty
-    uint32_t holdGen = 0;  // host: the hold announces applied for this occupant (HoldGeneration)
-    // The measured view-relative hold transform, owner-authored and wire-carried.
-    float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
-    float relRot[3] = {0.f, 0.f, 0.f};  // item rotator {pitch,yaw,roll} in the view frame
-    bool  haveRel = false;              // owner measured (vs the fallback defaults)
-};
-SlotHand g_hands[coop::players::kMaxPeers];  // GT-only
 
 // The per-slot display mirror. A spawn that failed keeps the item and the puppet it was tried for and
 // is not tried again until either changes: a begin or a finish that failed for them fails the same way
@@ -76,10 +55,6 @@ struct Mirror {
     bool         failed = false;     // the spawn of cls/name on this puppet failed; actor is null
 };
 Mirror g_mirrors[coop::players::kMaxPeers];  // GT-only
-
-// The session, cached by TickOwner for the connect-replay entry that only receives a slot.
-// Game thread only.
-coop::net::Session* g_session = nullptr;
 
 // Owner-side change detection.
 uint32_t     g_ownLookSeq = 0;  // owner ticks that read the hand; the latch below is its class at the last one
@@ -184,80 +159,6 @@ std::wstring ReadItemName(void* actor) {
     std::wstring s = R::ToString(n);
     if (s == L"None") s.clear();
     return s;
-}
-
-// The payload: slot, has, a length-prefixed class, name and item, and when held the measured
-// view-relative position and rotation.
-std::vector<uint8_t> BuildPayload(uint8_t slot, const SlotHand& h) {
-    std::vector<uint8_t> out;
-    const size_t cl = h.has ? (h.cls.size() > kMaxStr ? kMaxStr : h.cls.size()) : 0;
-    const size_t nl = h.has ? (h.name.size() > kMaxStr ? kMaxStr : h.name.size()) : 0;
-    const size_t il = h.has ? (h.item.size() > kMaxStr ? kMaxStr : h.item.size()) : 0;
-    out.reserve(5 + cl + nl + il + (h.has ? 24 : 0));
-    out.push_back(slot);
-    out.push_back(h.has ? 1 : 0);
-    out.push_back(static_cast<uint8_t>(cl));
-    for (size_t i = 0; i < cl; ++i) out.push_back(static_cast<uint8_t>(h.cls[i]));
-    out.push_back(static_cast<uint8_t>(nl));
-    for (size_t i = 0; i < nl; ++i) out.push_back(static_cast<uint8_t>(h.name[i]));
-    out.push_back(static_cast<uint8_t>(il));
-    for (size_t i = 0; i < il; ++i) out.push_back(static_cast<uint8_t>(h.item[i]));
-    if (h.has) {
-        const float rel[6] = {h.relPos[0], h.relPos[1], h.relPos[2],
-                              h.relRot[0], h.relRot[1], h.relRot[2]};
-        const size_t base = out.size();
-        out.resize(base + sizeof(rel));
-        std::memcpy(out.data() + base, rel, sizeof(rel));
-    }
-    return out;
-}
-
-void SendState(coop::net::Session& session, uint8_t slot, const SlotHand& h) {
-    const std::vector<uint8_t> p = BuildPayload(slot, h);
-    if (session.role() == coop::net::Role::Host) {
-        for (int x = 1; x < coop::net::kMaxPeers; ++x) {
-            if (x == slot) continue;                 // never echo the originator
-            if (!session.IsSlotReady(x)) continue;
-            session.SendReliableToSlot(x, coop::net::ReliableKind::HandItem,
-                                       p.data(), static_cast<int>(p.size()));
-        }
-    } else {
-        session.SendReliableToSlot(0, coop::net::ReliableKind::HandItem,
-                                   p.data(), static_cast<int>(p.size()));
-    }
-}
-
-// Host: the hand states applied for a slot's occupant (StatesApplied).
-coop::roster_ledger::PerSlotState<uint32_t> g_statesApplied;
-
-HandAppliedFn g_appliedSubs[kMaxHandSubscribers];  // GT-only, added once at install
-
-// Host: one client's hand state applied, field by field: `lastCls` moves only while the hand holds
-// something, since the pry gate reads it once the hand is empty (LastHeldClassIs). Then re-sent to
-// every other ready client.
-void ApplyHandState(coop::net::Session& session, uint8_t slot, const SlotHand& in) {
-    SlotHand& h = g_hands[slot];
-    h.has = in.has; h.cls = in.cls; h.name = in.name; h.item = in.item;
-    if (in.has) { h.lastCls = in.cls; ++h.holdGen; }
-    std::memcpy(h.relPos, in.relPos, sizeof(h.relPos));
-    std::memcpy(h.relRot, in.relRot, sizeof(h.relRot));
-    h.haveRel = in.has;
-    coop::hand_history::Note(slot, in.has, in.cls, coop::net::NowMs());
-    SendState(session, slot, h);
-    ++g_statesApplied[slot];
-    for (HandAppliedFn fn : g_appliedSubs) if (fn) fn(slot);
-}
-
-// Host: per slot, the newest changed hand state and its pace (coop/net/latest_wins.h); one struct, so both clear with the
-// occupant.
-struct PendingHand { SlotHand value; coop::net::LatestWins pace; };
-coop::roster_ledger::PerSlotState<PendingHand> g_pendingHand;
-
-// Whether two states hold the same thing: emptiness, the class without case, the name and the item. The hold
-// transform is not compared: the pose stream overwrites the applied one each sample.
-bool SameHeld(const SlotHand& a, const SlotHand& b) {
-    if (a.has != b.has) return false;
-    return !a.has || (::_wcsicmp(a.cls.c_str(), b.cls.c_str()) == 0 && a.name == b.name && a.item == b.item);
 }
 
 void DestroyMirror(uint8_t slot, const char* why) {
@@ -667,12 +568,7 @@ bool HandleHandItem(coop::net::Session& session,
         // The newest state kept, applied at the budget's pace (coop/net/latest_wins.h). An unchanged one costs the
         // parse and a compare, ahead of the class gate: the applied state passed it, and the compare reads the
         // class without case. The host's verbs and its mirror read the applied state, at most a refill behind.
-        PendingHand& pend = g_pendingHand[describedSlot];
-        if (SameHeld(in, g_hands[describedSlot])) {
-            pend.pace.Withdraw();
-            for (HandAppliedFn fn : g_appliedSubs) if (fn) fn(describedSlot);   // an owed state that settles is an edge too
-            return true;
-        }
+        if (Settles(describedSlot, in)) return true;
         std::wstring own;
         const HandClass kind = in.has ? ResolveHandClass(in.cls, nullptr, &own, ue_wrap::class_resolve::Load::LookupOnly) : HandClass::Unresolved;
         if (kind == HandClass::NotHand) {
@@ -682,8 +578,7 @@ bool HandleHandItem(coop::net::Session& session,
             return true;
         }
         if (kind == HandClass::Hand) in.cls = own;
-        pend.value = in;
-        if (pend.pace.Offer(kHandBudget, coop::net::NowMs())) ApplyHandState(session, describedSlot, in);
+        Offer(session, describedSlot, in);
         return true;
     }
 
@@ -738,69 +633,11 @@ void Reset() {
     g_session        = nullptr;
 }
 
-bool HeldClassIs(uint8_t slot, const wchar_t* cls) {
-    if (slot >= coop::players::kMaxPeers || !cls) return false;
-    const SlotHand& h = g_hands[slot];
-    return h.has && ::_wcsicmp(h.cls.c_str(), cls) == 0;
-}
-
 bool OwnAnnounced(const wchar_t* cls) {
     return cls && g_ownHas && ::_wcsicmp(g_ownCls.c_str(), cls) == 0;
 }
 
 uint32_t OwnHandLookSeq() { return g_ownLookSeq; }
-
-bool LastHeldClassIs(uint8_t slot, const wchar_t* cls) {
-    if (slot >= coop::players::kMaxPeers || !cls) return false;
-    const SlotHand& h = g_hands[slot];
-    return !h.lastCls.empty() && ::_wcsicmp(h.lastCls.c_str(), cls) == 0;
-}
-
-void PayOwed(coop::net::Session& session) {
-    if (session.role() != coop::net::Role::Host) return;
-    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
-        PendingHand& pend = g_pendingHand[slot];
-        if (pend.pace.Owed() && pend.pace.Due(kHandBudget, coop::net::NowMs()))
-            ApplyHandState(session, static_cast<uint8_t>(slot), pend.value);
-    }
-}
-
-void ApplyOwedNow(uint8_t slot) {
-    if (!g_session || g_session->role() != coop::net::Role::Host || slot == 0 || slot >= coop::players::kMaxPeers) return;
-    PendingHand& pend = g_pendingHand[slot];
-    if (!pend.pace.Owed()) return;
-    pend.pace.Withdraw();
-    ApplyHandState(*g_session, slot, pend.value);
-}
-
-bool HoldsItem(uint8_t slot) {
-    return slot < coop::players::kMaxPeers && g_hands[slot].has;
-}
-
-uint32_t HoldGeneration(uint8_t slot) { return slot < coop::players::kMaxPeers ? g_hands[slot].holdGen : 0; }
-
-bool SubscribeHandApplied(HandAppliedFn fn) {
-    if (!fn) return false;
-    for (HandAppliedFn& s : g_appliedSubs) {
-        if (s == fn) return true;
-        if (!s) { s = fn; return true; }
-    }
-    return false;
-}
-
-bool HandStateOwed(uint8_t slot) {
-    return slot < coop::players::kMaxPeers && g_pendingHand[slot].pace.Owed();
-}
-
-uint32_t StatesApplied(int slot) {
-    return (slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers)) ? g_statesApplied[slot] : 0;
-}
-
-std::wstring HeldItem(uint8_t slot) {
-    if (slot >= coop::players::kMaxPeers) return {};
-    const SlotHand& h = g_hands[slot];
-    return h.has ? h.item : std::wstring();
-}
 
 void OnSlotDisconnected(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return;
