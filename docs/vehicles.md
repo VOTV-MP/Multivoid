@@ -196,4 +196,4 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | the seat | `coop/interactables/device_occupancy` |
 | fuel, health, modules, the horn | `coop/interactables/atv_host_sync` |
 | lights, brake, turbo (the block's bits taken and applied) | `coop/interactables/atv_stream_gates` (`TakeControls`) |
-| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; the smoke run with the ATV scenario enabled |
+| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `coop/dev/atv_gate_drill` (the row `atv_gate_drill=green\|<red>`: each act a player does at an ATV, every outcome decided by an event of `coop/interactables/atv_drill_events`); the smoke run with the ATV scenario enabled |
