@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct EventSnapshotPayload;
