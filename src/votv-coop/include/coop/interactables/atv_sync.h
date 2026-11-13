@@ -187,4 +187,9 @@ std::vector<std::wstring> ReceivedSpawnKeys();
 // snapshot is read per ATV instead: TableView::snapshotReached.
 uint32_t AppliedFromSyncer();
 
+// For the ATV health drill's `trap` arm, CLIENT, game thread; counts this session and starts over at a disconnect: the
+// blocks the host sent whose payload carries the trap bit (kAtvTrap), counted as received, before any developer red masks it.
+// The arm's event that the host's trap reached this peer, whatever the table then shows.
+uint32_t TrapStampsSeen();
+
 }  // namespace coop::atv_sync

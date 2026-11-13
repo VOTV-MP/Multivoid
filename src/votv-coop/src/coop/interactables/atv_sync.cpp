@@ -115,6 +115,7 @@ bool     g_drillMute    = false;  // dev: the client syncer's stream is held bac
 // on the place path before ApplyCorrection, which may still refuse them).
 uint32_t g_appliedFromSyncer = 0;
 uint32_t g_snapshotReached   = 0;
+uint32_t g_trapStampsSeen    = 0;   // host blocks received whose payload carries kAtvTrap, counted before the drill's red masks it
 // A block refused at the door of OnReliable (an empty key, a non-finite pose): said once per window, not per packet.
 coop::net::RefusalTally g_blockRefusals{"atv_sync"};
 
@@ -352,6 +353,8 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     if (e.syncerSlot != payload.syncerSlot) ForgetHorn(e);   // the horn's last level was the previous syncer's
     e.syncerSlot   = payload.syncerSlot;
     // The trap rides every block the host sends, so it is taken before the authority return like the rest of the stamp.
+    // The blocks that carry it are counted first, as the host sent them (the drill's event that the bit arrived).
+    if ((payload.stateBits & coop::net::kAtvTrap) != 0) ++g_trapStampsSeen;
     // The developer red arm of the ATV health drill: the bit is ignored, so the drill's `armed` phase must fail.
     // Resolved once.
     static const bool s_redTrapbit =
@@ -381,6 +384,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
 coop::net::Session* LaneSession() { return g_session.load(std::memory_order_acquire); }
 
 uint32_t AppliedFromSyncer() { return g_appliedFromSyncer; }
+uint32_t TrapStampsSeen() { return g_trapStampsSeen; }
 
 const AtvEntry* FindEntry(const std::wstring& key) {
     auto it = g_atvs.find(key);
@@ -705,7 +709,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(c.warps),
                 static_cast<unsigned long long>(c.stallWarps),
                 static_cast<unsigned long long>(c.restPlaces), AppliedFromSyncer(), g_snapshotReached);
-    g_appliedFromSyncer = g_snapshotReached = 0;
+    g_appliedFromSyncer = g_snapshotReached = g_trapStampsSeen = 0;
     coop::atv_damage_gate::Reset();
     AU::LogSummary();
     AU::Reset();

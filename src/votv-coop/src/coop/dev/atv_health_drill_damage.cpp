@@ -266,6 +266,7 @@ struct DClient : SeatedClient {
     GATE::Counters                                  gate0{};   // when the ATV is parked, before any blast can run
     ER::Counters                                    req0{};    // at the kill (owner) or the press (trap)
     uint64_t                                        applied0 = 0;   // the lane's applied blasts at the kill or the press
+    uint32_t                                        trapStamps0 = 0;   // trap: the host blocks with the trap bit seen when the ATV is parked
     SpawnedWait                                     spawn;     // the host's ATV (not trap): its key and its `parked`
 };
 DClient g_dc;
@@ -377,6 +378,7 @@ void ClientWait(Arm a, bool due) {
         if (const wchar_t* bad = XD::Guard(false))
             return ClientFail(a, "the client's guard did not resolve", Narrow(bad), "readable");
         g_dc.gate0 = GATE::ReadCounters();
+        g_dc.trapStamps0 = coop::atv_sync::TrapStampsSeen();
         WalkStart(g_dc, a, t, kSitReachCm);
         return ClientPhase(CPh::Walk, "walk");
     }
@@ -431,6 +433,14 @@ void ClientPrime(Arm a, void* atv) {
             return ClientFail(a, "the forward release did not run", "not called", "called");
         return ClientPhase(CPh::Fired, "fired");
     }
+    // The event: a block of the host's carrying the trap bit has been received since the ATV was parked, and the copy or the
+    // table still reads clear, so this peer lost the bit (the `trapbit` red masks it after the count).
+    const uint32_t stamps = coop::atv_sync::TrapStampsSeen() - g_dc.trapStamps0;
+    if (stamps >= 1)
+        return ClientFail(a, "a block carrying the host's trap bit was received and the owner's copy did not take it",
+                          "trap blocks +" + Plus(stamps) + ", copy trap " + (copy ? "set" : "clear") + ", table trap " +
+                              (table ? "set" : "clear"),
+                          "both set");
     if (Past(g_dc.run, kFailBound))
         ClientInvalid(a, "the host's trap did not reach the owner's copy",
                       std::string("copy trap ") + (copy ? "set" : "clear") + ", table trap " + (table ? "set" : "clear"),
