@@ -9,6 +9,7 @@
 #include "coop/element/registry.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
+#include "coop/props/host_spawn_watcher.h"
 #include "coop/props/prop_food_sync.h"
 #include "coop/props/remote_prop.h"
 
@@ -546,11 +547,16 @@ const char* MreHostWatch(const Row& row, EL::ElementId eid, const Baseline& base
     if (Since(PAH::MreOpens(), base.mreOpens) == 0)
         return "the host processed the MRE's commit with no open: 0 MRE opens on the host, 1 expected";
     if (g_contentsSaid) return nullptr;
+    // The open is synchronous (the spawn has returned once its commit is counted), but a birth the Finish seam caught waits
+    // in the host's pending queue for the tick that adopts it: the births are all registered once that queue is empty.
+    if (coop::host_spawn_watcher::PendingFinishedCount() != 0) return nullptr;
     size_t fresh = 0, poisoned = 0;
+    std::string eids;
     bool allSent = true;
     ForEachHostFood([&](EL::ElementId id, void* actor, const std::wstring& key) {
         if (g_hostFoodsBefore.count(id)) return;
         ++fresh;
+        eids += " " + std::to_string(static_cast<unsigned>(id));
         // A content with no Key is counted by its eid and is never sent a FoodState (the lane sends keyed foods only).
         if (!key.empty() && key != L"None" && !coop::props::prop_food_sync::dev::StateSentFor(key)) allSent = false;
         ue_wrap::food::Poison poison;
@@ -558,6 +564,7 @@ const char* MreHostWatch(const Row& row, EL::ElementId eid, const Baseline& base
     });
     if (fresh == 0 || !allSent) return nullptr;
     g_contentsSaid = true;
+    UE_LOGI("%s host %s: contents counted, eids%s", kTag, row.name, eids.c_str());
     Say(ContentsHead(row) + "n=" + std::to_string(fresh) + " poisoned=" + std::to_string(poisoned));
     return nullptr;
 }

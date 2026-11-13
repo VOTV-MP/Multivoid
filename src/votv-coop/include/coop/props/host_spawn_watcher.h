@@ -65,6 +65,10 @@ void TickWatchedProps(coop::net::Session* session);
 // it: with the start-up burst gated off, a drop here is a live burst the cap could not hold.
 size_t PendingCapDrops();
 
+// How many finished spawns still wait in the pending queue for the tick that adopts and expresses them. The act drill's MRE
+// step says its contents only once this is 0, so every birth the open made has been registered. Game thread.
+size_t PendingFinishedCount();
+
 // Clear per-session state: the death-watch list, the pending queue and the session pointer. The
 // POST observer stays registered -- it self-gates on connected() and on not being inside a
 // mirror-spawn scope, which is all it needs, since every connected peer broadcasts its own

@@ -470,6 +470,8 @@ void DrainPendingSpawns(coop::net::Session* s) {
 
 size_t PendingCapDrops() { return g_capDrops; }
 
+size_t PendingFinishedCount() { return g_pendingFinished.size(); }
+
 void OnDisconnect() {
     g_watched.clear();
     g_pendingFinished.clear();
