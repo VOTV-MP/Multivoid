@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/player/hand_spend.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
@@ -73,8 +74,6 @@ struct Slot {
     bool parked = false;
     bool waitSaid = false;   // a park, said once a streak
     bool parkedForWorld = false;   // [dev] the park was for the slot's world, which the drill's event says once
-    // The hand generation (hand_item::HoldGeneration) of the last item a request spent, and the uses of it counted (SpendHold).
-    uint32_t spentGen = 0, spentUses = 0;
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
@@ -150,25 +149,6 @@ void Refund(void* atv, uint8_t module) {
     DE::Note(DE::kRefund, 1);
 }
 
-// A verb that consumes the held item (a toolbox use, a module): the sender's last held class must be `cls`, and the hold,
-// as hand_item numbers it, must have a use left. The number moves on each hold the client's own hand lane announces, so it
-// is a rate bound on that announce (kHandBudget), not the identity of an item: a client that empties its hand and
-// announces a hold again starts a new one. The item is spent on its copy by then, so
-// a use is counted whatever the verdict after it. A hold announced after the last spend starts over; one that never was
-// (a forged request with an old item) finds none left. A gas can is not spent: its fuel comes out of the tank's room.
-bool SpendHold(uint8_t slot, const wchar_t* cls, uint32_t uses) {
-    if (!coop::hand_item::LastHeldClassIs(slot, cls)) return false;
-    Slot& sl = g_slots[slot];
-    const uint32_t gen = coop::hand_item::HoldGeneration(slot);
-    if (gen != sl.spentGen) {
-        sl.spentGen = gen;
-        sl.spentUses = 0;
-    }
-    if (sl.spentUses >= uses) return false;
-    ++sl.spentUses;
-    return true;
-}
-
 bool WellFormed(const Payload& p) {
     switch (p.op) {
     case op::kRefuel: return p.reqId != 0 && std::isfinite(p.amount) && p.amount > 0.f && p.amount <= kMax;
@@ -214,7 +194,7 @@ uint8_t Refuel(N::Session& s, uint8_t slot, const Payload& p, const std::wstring
 // Repairing: toolboxFix's own body is health := 100 and the broken mark cleared, then the game's updHealth.
 uint8_t Repair(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
     // The toolbox spends itself in the verb, so the hand may be empty again by now: the last class held counts, once.
-    if (!JudgeOff() && !SpendHold(slot, kToolboxClass, kToolboxUses)) return why::kNoItem;
+    if (!JudgeOff() && !coop::hand_spend::Spend(slot, kToolboxClass, kToolboxUses)) return why::kNoItem;
     if (!(std::floor(v.health) < kMax)) return why::kFull;
     {
         H::ApplyScope applying;
@@ -233,8 +213,8 @@ uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& k
     void* const cls = ue_wrap::phys_mods::ClassForByte(p.module);
     void* const base = ue_wrap::object_index::ClassByName(kUpgradeClass);
     if (!cls || !base || !ue_wrap::prop::WalksToBase(cls, base)) return why::kMalformed;
-    if (!JudgeOff() && !SpendHold(slot, ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls)).c_str(), kModuleUses))
-        return why::kNoItem;
+    const std::wstring held = ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls));
+    if (!JudgeOff() && !coop::hand_spend::Spend(slot, held.c_str(), kModuleUses)) return why::kNoItem;
     uint8_t mods[kMaxModules + 1] = {};
     std::copy(v.modules, v.modules + v.count, mods);
     if ((!DupOff() && std::find(mods, mods + v.count, p.module) != mods + v.count) || v.count >= kMaxModules) {
