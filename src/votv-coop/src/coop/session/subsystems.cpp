@@ -4,29 +4,21 @@
 #include "ue_wrap/core/gc_pin.h"
 #include "coop/props/trash_mirror.h"
 #include "coop/session/subsystems.h"
+#include "coop/session/desk_subsystems.h"
 
 #include "coop/element/object_scan_hub.h"  // the shared pass over the object index
 #include "coop/world/balance_sync.h"
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
-#include "coop/interactables/desk_cursor_sync.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_ping_sync.h"
-#include "coop/interactables/deck_play_sync.h"  // deck playback lane
-#include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
-#include "coop/interactables/drive_sync.h"  // the drive slots
-#include "coop/interactables/drive_rack_sync.h"  // rack storage
 #include "coop/interactables/meadow_db_sync.h"  // meadow signal-DB mirror (multiset shadow + join seed)
 #include "coop/interactables/desk_snd_fx.h"
-#include "coop/interactables/desk_sim_sync.h"
 #include "coop/interactables/dish_calib_sync.h"
 #include "coop/interactables/dish_hashcode_sync.h"
-#include "coop/interactables/dish_sync.h"
-#include "coop/interactables/download_arm_sync.h"
 #include "coop/interactables/sat_console_sync.h"  // the SAT console's shared commands run on the host
-#include "coop/interactables/tape_caddy_sync.h"
 #include "coop/world/daily_task_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/interactables/notebook_sync.h"
@@ -325,23 +317,7 @@ void Install(coop::net::Session& session) {
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
-    coop::desk_cursor_sync::Install(&session);  // coords-panel live-cursor unreliable motion stream (interpolated mirror)
-    coop::desk_input_sync::Install(&session);  // the claim-free field-granular desk input lane
-    coop::desk_snd_fx::Install(&session);  // desk audio-effect mirror (Func-patch audio seam)
-    coop::deck_play_sync::Install(&session);  // deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
-    coop::physmods_sync::Install(&session);  // physMods slot ops at the desk's verbs + host-canonical array
-    coop::drive_sync::Install(&session);  // the drive chain's slot lane (verb dirty-marks + the slot sweep; the slot and rack verb watches)
-    coop::drive_payload_sync::Install(&session);  // a drive's row: the host authors it at prop_drive_C::upd
-    coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
-    coop::desk_ping_sync::Install(&session);  // the ping's verdict: a client's refused and rolled on the host's desk
-    coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
-    coop::dish_sync::Install(&session);  // host-auth dish pose mirror (client sim parked)
-    coop::download_arm_sync::Install(&session);  // the download machine's arm and reset, the host's, replayed through the game's verbs
-    coop::dish_calib_sync::Install(&session);  // the dishes' precision: the host authors it, a client's own verbs are intents
-    coop::dish_hashcode_sync::Install(&session);  // the dishes' hash codes: the host's rollover sends them, a client refuses its own
-    coop::sat_console_sync::Install(&session);  // the SAT console: a client's shared commands run on a terminal the host keeps for it
-    coop::tape_caddy_sync::Install(&session);  // caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
-    coop::daily_task_sync::Install(&session);  // saveSlot.taskNew host mirror (rollover/sell are host-only live)
+    coop::subsystems::desk::Install(session);
     coop::email_sync::Install(&session);  // meadow-PC email mirror (watermark -> chunked rows -> addEmail)
     coop::signal_sync::Install(&session);  // desk signal-library mirror (savedSignals_0 shadow/diff)
     coop::meadow_db_sync::Install(&session);  // meadow-DB mirror (content-hash multiset + id-preserving replay)
@@ -589,22 +565,7 @@ DisconnectStats DisconnectAll() {
     coop::props::prop_record_refresh::OnDisconnect();  // session release, counters, the drill red's map
     coop::props::prop_can_state::OnDisconnect();  // its counters (what is known of every can goes with the world)
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
-    coop::desk_cursor_sync::OnDisconnect();
-    coop::desk_ping_sync::OnDisconnect();
-    coop::desk_sim_sync::OnDisconnect();
-    coop::dish_sync::OnDisconnect();  // wire-residue sweep + the disher's restore (the suppression loan)
-    coop::download_arm_sync::OnDisconnect();
-    coop::dish_hashcode_sync::OnDisconnect();
-    coop::sat_console_sync::OnDisconnect();  // the terminals it keeps, and a busy flag mirrored here
-    coop::tape_caddy_sync::OnDisconnect();  // poll baselines + IsRecent stamps + the singleton cache (no suppression -- nothing to restore)
-    coop::daily_task_sync::OnDisconnect();  // change-hash baseline
-    coop::desk_input_sync::OnDisconnect();
-    coop::desk_snd_fx::OnDisconnect();
-    coop::deck_play_sync::OnDisconnect();  // gen counters + ring + self-test latch
-    coop::physmods_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
-    coop::drive_sync::OnDisconnect();  // slot baselines + latch/dirty state
-    coop::drive_payload_sync::OnDisconnect();  // held and sent rows, notes
-    coop::drive_rack_sync::OnDisconnect();  // rack baselines/shadow + deny/taken rings
+    coop::subsystems::desk::OnDisconnect();  // the desk, the drives and the dishes: each lane's counters, shadows and sessions
     coop::sleep_sync::OnDisconnect();
     coop::nightmare_roll::OnDisconnect();
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
@@ -723,21 +684,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:floppybox"}; coop::floppybox_sync::Tick(); }  // box sweep (1 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerContents"}; coop::props::container_contents_sync::Tick(); }  // edge-driven dirty drain (4 Hz gate)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerView"}; coop::props::container_view_close::Tick(); }  // a client's view into a container, closed out of reach
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_cursor"}; coop::desk_cursor_sync::Tick(); }  // coords-panel live cursor -- holder streams viewCoordinate / mirror interpolates (50ms) + WriteCursorOnly
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::desk_ping_sync::Tick(); }  // the ping lane's watches until live
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_sim"}; coop::desk_sim_sync::Tick(); }  // download-SIM -- host streams outputs (10Hz) / client interpolates + WriteSimOutputs
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:dish"}; coop::dish_sync::Tick(); }  // host pose sweep (4Hz) / client apply + park latch / calib diff-poll (1Hz)
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::download_arm_sync::Tick(); }  // the desk watches' name resolve
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::dish_hashcode_sync::Tick(); }  // host: the marked codes, a joiner's owed set / client: rows waiting for their dish
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::sat_console_sync::Tick(); }  // owed blobs, and a terminal whose world is gone
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:reel"}; coop::tape_caddy_sync::Tick(); }  // 4Hz slot sentinel poll (both peers) + host 1Hz corrector / client exact-snap apply
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:task"}; coop::daily_task_sync::Tick(); }  // host 1Hz taskNew change-hash poll (fires a few times per game-day)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_input"}; coop::desk_input_sync::Tick(); }  // 250ms input-field poll -> claim-free DeskInput deltas + cooldown charge/scan classification
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_snd"}; coop::desk_snd_fx::Tick(); }  // audio-seam ring flush + lazy hook install + pending loop retry
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:deck_play"}; coop::deck_play_sync::Tick(); }  // deck playback ring flush + lazy Deactivate/fin seam install + gen author
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:physmods"}; coop::physmods_sync::Tick(); }  // parked-canonical apply at desk resolve
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); coop::drive_payload_sync::Tick(); }  // the slot lane's drain and sweep; the rows' enrolments
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive_rack"}; coop::drive_rack_sync::Tick(); }  // rack barrier drain + 1 Hz sweep
+    coop::subsystems::desk::Tick();
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }  // email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }  // saved-signals shadow poll (same shape on gamemode.savedSignals_0)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:meadow"}; coop::meadow_db_sync::Tick(); }  // meadow-DB: the writers' watches until settled, the pen's drain once the database is back, then retries (1 Hz) while a line, a tombstone or an owed order waits
