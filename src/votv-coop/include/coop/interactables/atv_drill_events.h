@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::atv_drill_events {
 
@@ -32,8 +33,15 @@ enum Event : int {
     kAccepted,     // HOST: a request applied. i0 op, i1 slot, i2 stateSeq after, f0 fuel, f1 health, f2 module count
     kPublished,    // HOST: a state sent to every client. i0 stateSeq, i1 module count, f0 fuel, f1 health
     kRefund,       // HOST: a duplicate fit's module. i0 spawned
+    kStateGated,   // CLIENT: a state arrived while the open-request gate was shut. i0 stateSeq, i1 applied anyway, f0 the state's fuel, f1 the copy's fuel after
+    kUnadopted,    // CLIENT: a state arrived for an ATV with no copy. i0 stateSeq, i1 kept, i2 KeyTag
+    kAdopted,      // CLIENT: a copy entered the index. i0 a kept state applied, i1 KeyTag, i2 stateSeq, f0 fuel, f1 health, f2 module count
+    kPark,         // HOST: a request's turn. i0 slot, i1 phase (0 parked for the slot's world, 1 answered after a park, 2 answered with the slot not ready)
     kEventCount
 };
+
+// A number that names an ATV key in a record (kUnadopted, kAdopted), the same on every peer.
+int32_t KeyTag(const std::wstring& key);
 
 // Record one event (a no-op while the row is off).
 void Note(Event e, int32_t i0 = 0, int32_t i1 = 0, int32_t i2 = 0, float f0 = 0.f, float f1 = 0.f, float f2 = 0.f);

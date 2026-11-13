@@ -3,12 +3,13 @@
 // the actor's act and a decision on every peer; see atv_gate_drill_detail.h. The step ids are the drill's own: 1 refuel, 2
 // repair, 3 fit, 4 take-off, 5 the seated controls, 6 the horn (6r its release), 7a the host's refuel with the client not
 // driving, 7 with the client driving, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a forged
-// refuel, 12 a forged duplicate fit, 13 a forged horn.
+// refuel, 12 a forged duplicate fit, 13 a forged horn, 15 a host state crossing a client's open refuel.
 
 #include "atv_gate_drill_detail.h"
 
 #include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_gate.h"
+#include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/net/protocol.h"
 
@@ -313,6 +314,43 @@ Result D13(Ctx& c) {
     return r.i1 ? Pass("refused: not_syncer") : Fail("the host accepted a horn press from a client that is not the syncer");
 }
 
+// 15: the client pours and its request is held on the host until the host has published a change of its own, so that state
+// crosses the client's open request. The copy must not show it while the gate is shut; decided on the state's arrival.
+bool SetupHoldRequests(Ctx& c, std::string& /*why*/) {
+    if (c.me == kHost) OnGt([&] { coop::atv_host_judge::HoldRequestsForDrill(c.key); });
+    return true;
+}
+
+Result D15(Ctx& c) {
+    if (c.me == kObserver) return Pass("nothing to decide here");
+    if (c.me == kHost) {
+        std::string why;
+        if (!SeedHost(c.key, 10.f, 100.f, why)) return Invalid(why);
+        return Pass("the host changed its fuel while the client's refuel waited");
+    }
+    bool ungated = false;
+    uint32_t id = 0;
+    if (WaitAsk(c, op::kRefuel, ungated, id) != 1) return Stopped();
+    if (ungated) return Fail("the pour ran on this client's copy and no request was opened for it");
+    DE::Rec r;
+    int crossed = 0;
+    for (int i = 0; i < kEventS * 10; ++i) {
+        if (Aborted()) return Stopped();
+        while (DE::Next(DE::kStateGated, c.cur[DE::kStateGated], r)) {
+            ++crossed;
+            if (r.i1) return Fail("a host state (fuel " + std::to_string(r.f0) + ") was applied while the gate was shut: the copy showed " + std::to_string(r.f1));
+        }
+        while (DE::Next(DE::kAnswer, c.cur[DE::kAnswer], r)) {
+            if (static_cast<uint32_t>(r.i0) != id) continue;
+            if (!crossed) return Invalid("the host's state did not cross while the gate was shut");
+            return Pass("the gate held the copy's own value until the answer");
+        }
+        SleepStep();
+    }
+    End('I', "no answer to the pour within " + std::to_string(kEventS) + " s");
+    return Stopped();
+}
+
 }  // namespace
 
 const Step kSteps[] = {
@@ -331,6 +369,7 @@ const Step kSteps[] = {
     {"11", kClient, "a forged refuel with an empty hand", nullptr, nullptr, &ActForgeRefuel, &D11, nullptr},
     {"12", kClient, "a forged duplicate fit", &HostFitsModule, &SetupModuleInHand, &ActForgeFit, &D12, nullptr},
     {"13", kObserver, "a forged horn from a client that is not the syncer", nullptr, nullptr, &ActForgeHorn, &D13, nullptr},
+    {"15", kClient, "a host state crossing a client's open refuel", &Seed30, &SetupHoldRequests, &ActPour, &D15, nullptr},
 };
 const int kStepCount = static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]));
 

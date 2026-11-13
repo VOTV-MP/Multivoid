@@ -144,7 +144,9 @@ sg::Verdict OnPre(const sg::Call& call) {
 // The request a client's POST owes the host: the id it was opened under, or 0 and the drill's event that the act ran with
 // none opened (the open-request gate refused it, or the row is off).
 uint32_t Request(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
-    const uint32_t id = H::Ask(key, opcode, amount, module);
+    // Red atv_gate_off: the client's rows ask nothing, so the verb runs on its copy ungated.
+    static const bool s_gateOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_gate_off";
+    const uint32_t id = s_gateOff ? 0u : H::Ask(key, opcode, amount, module);
     if (id) DE::Note(DE::kAsked, opcode, static_cast<int32_t>(id), 0, amount);
     else DE::Note(DE::kUngated, opcode);
     return id;
@@ -163,7 +165,9 @@ void OnPost(const sg::Call& call) {
     if (!coop::atv_sync::AnnounceableAtvKey(key)) return;
     const Who role = RoleNow();
     if (role == Who::Host) {
-        H::PublishIfChanged(key, call.object, pd.before);
+        // Red atv_publish_off: the host's own acts are not published.
+        static const bool s_publishOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_publish_off";
+        if (!s_publishOff) H::PublishIfChanged(key, call.object, pd.before);
         return;
     }
     H::Vitals now;

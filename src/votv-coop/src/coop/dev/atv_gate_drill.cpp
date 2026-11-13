@@ -159,7 +159,7 @@ bool RunStep(const Step& s) {
     }
     // The decision, on this peer's events: a FAIL or an INVALID ends the run here.
     const Result r = s.decide ? s.decide(c) : Pass("nothing to decide here");
-    UE_LOGI("atv-drill: step %s %s %s: %s", s.id, RoleName(c.me), r.out == Out::Pass ? "PASS" : r.out == Out::Fail ? "FAIL" : r.out == Out::Invalid ? "INVALID" : "stopped", r.text.c_str());
+    UE_LOGI("atv-drill: step %s %s: %s (%s)", s.id, r.out == Out::Pass ? "PASS" : r.out == Out::Fail ? "FAIL" : r.out == Out::Invalid ? "INVALID" : "stopped", r.text.c_str(), RoleName(c.me));
     if (s.teardown) s.teardown(c);
     if (r.out == Out::Fail || r.out == Out::Invalid) {
         End(OutCode(r.out), std::string("step ") + s.id + " (" + s.what + ") on the " + RoleName(c.me) + ": " + r.text);
@@ -244,7 +244,8 @@ void Run() {
     if (!Arrive()) return;
     for (int i = 0; i < kStepCount; ++i)
         if (!RunStep(kSteps[i])) return;
-    if (g_me == kHost) RV::Say(kTag, RV::Outcome::Pass, "every step decided on its events");
+    if (g_me == kClient) LeaveForRejoin();
+    if (g_me == kHost && HostRejoin(g_key)) RV::Say(kTag, RV::Outcome::Pass, "every step decided on its events");
 }
 
 }  // namespace
@@ -267,7 +268,8 @@ DWORD WINAPI Thread(LPVOID /*arg*/) {
     }
     if (!PS::Begin(detail::kTag)) return 0;
     detail::SetRole(role);
-    Run();
+    if (role == detail::kClient && detail::IsRejoinedLife()) detail::RunRejoinedClient();
+    else Run();
     return 0;
 }
 

@@ -29,6 +29,10 @@ bool On() {
 
 }  // namespace
 
+int32_t KeyTag(const std::wstring& key) {
+    return static_cast<int32_t>(std::hash<std::wstring>{}(key) & 0x7fffffff);
+}
+
 void Note(Event e, int32_t i0, int32_t i1, int32_t i2, float f0, float f1, float f2) {
     if (!On() || e < 0 || e >= kEventCount) return;
     std::lock_guard<std::mutex> hold(g_lock);

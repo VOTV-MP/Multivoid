@@ -2,6 +2,8 @@
 
 #include "coop/interactables/atv_host_judge.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync.h"
@@ -44,6 +46,14 @@ namespace why = coop::net::atv_host_reason;
 using Payload = N::AtvHostPayload;
 using Clock = std::chrono::steady_clock;
 
+// The ATV drill's red arms: each is read here only, by the rule it turns off (config row atv_gate_drill).
+bool Arm(const char* value) { return coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == value; }
+bool JudgeOff() { static const bool on = Arm("atv_judge_off"); return on; }       // every request is judged ok
+bool DupOff() { static const bool on = Arm("atv_dup_module"); return on; }        // a duplicate fit is allowed
+bool RefundOff() { static const bool on = Arm("atv_refund_off"); return on; }     // a refused fit is not refunded
+bool HornJudgeOff() { static const bool on = Arm("atv_horn_judge_off"); return on; }   // any sender may press the horn
+bool ParkOff() { static const bool on = Arm("atv_park_off"); return on; }         // a request is judged before its world is ready
+
 constexpr float kMax = 100.f;      // a full tank, full health
 constexpr float kReachCm = 800.f;  // a sender's puppet from its ATV, when it is not seated in it
 // A sender's item acts are served at {4, 4} a second (the chipper's pour and the cremator lever's bound), from a queue of
@@ -60,6 +70,7 @@ struct Slot {
     N::IntentQueue<Payload> queue;
     N::IntentBucket horn;
     bool waitSaid = false;   // a park, said once a streak
+    bool parkedForWorld = false;   // [dev] the park was for the slot's world, which the drill's event says once
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
@@ -67,6 +78,8 @@ coop::roster_ledger::PerSlotState<Slot> g_slots;
 struct HornHeld { void* atv; uint8_t slot; };
 std::unordered_map<std::wstring, HornHeld> g_hornDown;
 N::RefusalTally g_refusals{"atv_host"};
+std::wstring g_holdKey;   // [dev] see Execute
+uint32_t g_holdSeq = 0;
 
 struct Counts {
     uint32_t accepted[6] = {};   // by request op
@@ -116,6 +129,10 @@ bool InReach(uint8_t slot, void* atv) {
 
 // A fit the host would not make is given back: the module's prop at the ATV, as the take-off hands one over.
 void Refund(void* atv, uint8_t module) {
+    if (RefundOff()) {
+        DE::Note(DE::kRefund, 0);
+        return;
+    }
     void* cls = ue_wrap::phys_mods::ClassForByte(module);
     ue_wrap::FVector at{};
     if (!cls || !ue_wrap::engine::TryGetActorLocation(atv, at)) {
@@ -153,7 +170,7 @@ void Applied(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& 
 
 // Fuelling: fuelUp's own body is fuel += the gain, and the empty mark cleared when the tank rose.
 uint8_t Refuel(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    if (!coop::hand_item::HeldClassIs(slot, kCanClass)) return why::kNoItem;
+    if (!JudgeOff() && !coop::hand_item::HeldClassIs(slot, kCanClass)) return why::kNoItem;
     // The client's copy ran the pour as the game wrote it, so the amount is the fuel its own can gave; the host's copy
     // of that can is the hand mirror, which carries no amount, so the bound is the tank's room, as the chipper's.
     const float room = kMax - v.fuel;
@@ -170,7 +187,7 @@ uint8_t Refuel(N::Session& s, uint8_t slot, const Payload& p, const std::wstring
 // Repairing: toolboxFix's own body is health := 100 and the broken mark cleared, then the game's updHealth.
 uint8_t Repair(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
     // The toolbox spends itself in the verb, so the hand may be empty again by now: the last class held counts.
-    if (!coop::hand_item::LastHeldClassIs(slot, kToolboxClass)) return why::kNoItem;
+    if (!JudgeOff() && !coop::hand_item::LastHeldClassIs(slot, kToolboxClass)) return why::kNoItem;
     if (!(std::floor(v.health) < kMax)) return why::kDuplicate;
     {
         H::ApplyScope applying;
@@ -183,11 +200,11 @@ uint8_t Repair(N::Session& s, uint8_t slot, const Payload& p, const std::wstring
 }
 
 uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    if (!coop::hand_item::LastHeldClassIs(slot, kUpgradeClass)) return why::kNoItem;
+    if (!JudgeOff() && !coop::hand_item::LastHeldClassIs(slot, kUpgradeClass)) return why::kNoItem;
     if (!ue_wrap::phys_mods::ClassForByte(p.module)) return why::kMalformed;
     uint8_t mods[kMaxModules + 1] = {};
     std::copy(v.modules, v.modules + v.count, mods);
-    if (std::find(mods, mods + v.count, p.module) != mods + v.count || v.count >= kMaxModules) {
+    if ((!DupOff() && std::find(mods, mods + v.count, p.module) != mods + v.count) || v.count >= kMaxModules) {
         // The hand judge passed: the module was this sender's to fit, and it is spent on its copy, so it comes back.
         Refund(atv, p.module);
         return why::kDuplicate;
@@ -227,18 +244,30 @@ uint8_t Takeoff(N::Session& s, uint8_t slot, const Payload& p, const std::wstrin
 N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
     const std::wstring key = N::StringFromWireKey(p.key);
     Slot& sl = g_slots[slot];
+    // [dev] The drill's fixture: a request for this ATV waits until the host has published a state of its own since it was set.
+    if (!g_holdKey.empty() && key == g_holdKey) {
+        if (H::CurrentStateSeq(key) == g_holdSeq) return N::Served::Wait;
+        g_holdKey.clear();
+    }
     const bool handJudged = p.op == op::kRefuel || p.op == op::kRepair || p.op == op::kFit;
-    if (!s.IsSlotWorldReady(slot) || (handJudged && coop::hand_item::HandStateOwed(slot))) {
+    const bool ready = s.IsSlotWorldReady(slot);
+    if ((!ready && !ParkOff()) || (handJudged && coop::hand_item::HandStateOwed(slot))) {
         if (!sl.waitSaid) {
             sl.waitSaid = true;
             ++g_n.parked;
+            if (!ready) {
+                sl.parkedForWorld = true;
+                DE::Note(DE::kPark, slot, 0);
+            }
             UE_LOGI("atv_host: slot %u's op %u on '%ls' waits: %s", static_cast<unsigned>(slot),
                     static_cast<unsigned>(p.op), key.c_str(),
-                    s.IsSlotWorldReady(slot) ? "its hand state is still owed" : "its world is not ready on the host");
+                    ready ? "its hand state is still owed" : "its world is not ready on the host");
         }
         return N::Served::Wait;
     }
     sl.waitSaid = false;
+    if (sl.parkedForWorld || !ready) DE::Note(DE::kPark, slot, ready ? 1 : 2);
+    sl.parkedForWorld = false;
     coop::atv_sync::TableView t;
     void* atv = coop::atv_sync::ReadTable(key, t) ? t.actor : nullptr;
     uint8_t verdict = why::kOk;
@@ -246,7 +275,7 @@ N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
     if (!atv) verdict = why::kGone;
     else if (!WellFormed(p)) verdict = why::kMalformed;
     else if (coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) verdict = why::kNotReady;
-    else if (t.occupantSlot != slot && !InReach(slot, atv)) verdict = why::kReach;
+    else if (t.occupantSlot != slot && !JudgeOff() && !InReach(slot, atv)) verdict = why::kReach;
     else if (!H::ReadVitals(atv, v)) verdict = why::kNotReady;
     if (verdict == why::kOk) {
         switch (p.op) {
@@ -284,7 +313,8 @@ void OnHorn(N::Session& s, uint8_t slot, const std::wstring& key, const Payload&
     const bool down = (p.flags & N::kAtvHostHornDown) != 0;
     const auto held = g_hornDown.find(key);
     if (down) {
-        if (t.syncerSlot != slot) {
+        if (t.syncerSlot != slot && HornJudgeOff()) DE::Note(DE::kHornHandled, slot, 0);
+        else if (t.syncerSlot != slot) {
             DE::Note(DE::kHornHandled, slot, 1);
             ++g_n.hornsRefused;
             g_refusals.Note(slot, "a horn from a slot that does not sync the ATV", now);
@@ -357,6 +387,11 @@ void ReleaseHorn(void* atv) {
 
 void OnWorldChange() { g_hornDown.clear(); }
 
+void HoldRequestsForDrill(const std::wstring& key) {
+    g_holdKey = key;
+    g_holdSeq = H::CurrentStateSeq(key);
+}
+
 void OnDisconnect() {
     uint32_t accepted = 0, refused = 0;
     for (uint32_t n : g_n.accepted) accepted += n;
@@ -369,6 +404,7 @@ void OnDisconnect() {
     g_n = Counts{};
     g_hornDown.clear();
     g_refusals.Clear();
+    g_holdKey.clear();
 }
 
 }  // namespace coop::atv_host_judge

@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 class Session;
@@ -33,6 +34,10 @@ void Tick(coop::net::Session& s);
 // HOST: the ATV's horn is down by a client's press and its syncer's seat ended, the syncer went silent or the table
 // cleared: the host copy's horn is released and the release goes to every client. A no-op when no press is open.
 void ReleaseHorn(void* atv);
+
+// [dev] HOST, the ATV drill's fixture: a request for `key` is held in its queue until the host has published a state of its
+// own for that ATV after this call, so that state reaches the sender while its open-request gate is shut.
+void HoldRequestsForDrill(const std::wstring& key);
 
 // A world change: the horns held down are forgotten, with the copies that sounded them.
 void OnWorldChange();

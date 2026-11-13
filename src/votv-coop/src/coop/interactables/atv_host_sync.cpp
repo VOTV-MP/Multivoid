@@ -2,6 +2,8 @@
 
 #include "coop/interactables/atv_host_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_gate.h"
 #include "coop/interactables/atv_host_judge.h"
@@ -271,11 +273,18 @@ void OnState(const Payload& p) {
         return;
     }
     if (!atv) {
-        KeepUnadopted(key, p);
+        // Red atv_joiner_rows_off: a state for an ATV with no copy is dropped, not kept for the copy's adoption.
+        static const bool s_rowsOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_joiner_rows_off";
+        if (!s_rowsOff) KeepUnadopted(key, p);
+        DE::Note(DE::kUnadopted, static_cast<int32_t>(p.stateSeq), s_rowsOff ? 0 : 1, DE::KeyTag(key));
         return;
     }
     if (VitalsGated(key)) {
         ++g_n.gated;
+        // Red atv_gate_hold_off: the state applies while the open-request gate is shut.
+        static const bool s_holdOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_gate_hold_off";
+        if (s_holdOff) ApplyState(key, atv, p, 0);
+        DE::Note(DE::kStateGated, static_cast<int32_t>(p.stateSeq), s_holdOff ? 1 : 0, 0, p.fuel, A::GetFuel(atv));
         return;
     }
     if (g_holdKey == key) {
@@ -345,13 +354,22 @@ void NoteAtvGone(const std::wstring& key) {
 }
 
 void NoteAtvIndexed(const std::wstring& key, void* atv) {
+    bool applied = false;
+    uint32_t seq = 0;
     for (auto it = g_unadopted.begin(); it != g_unadopted.end(); ++it) {
         if (coop::net::StringFromWireKey(it->key) != key) continue;
         const Payload p = *it;
         g_unadopted.erase(it);
-        if (!VitalsGated(key)) ApplyState(key, atv, p, 2);
-        return;
+        seq = p.stateSeq;
+        if (!VitalsGated(key)) {
+            ApplyState(key, atv, p, 2);
+            applied = true;
+        }
+        break;
     }
+    Vitals now;
+    if (ReadVitals(atv, now))
+        DE::Note(DE::kAdopted, applied ? 1 : 0, DE::KeyTag(key), static_cast<int32_t>(seq), now.fuel, now.health, now.count);
 }
 
 void QueueConnectBroadcastForSlot(int slot) {

@@ -80,7 +80,9 @@ bool ApplyVitalsRule(void* actor, const std::wstring& key, bool fromHost, const 
         DE::Note(DE::kBlock, 1, 0, 0, curFuel, in.fuel, blockFuel);
         return false;
     }
-    const bool acked = p.ackSeq == H::CurrentStateSeq(key);
+    // Red atv_ack_off: a block's vitals are taken whatever state it acknowledges.
+    static const bool s_ackOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_ack_off";
+    const bool acked = s_ackOff || p.ackSeq == H::CurrentStateSeq(key);
     if (acked) {
         in.fuel = std::fmin(curFuel, in.fuel);
         in.health = std::fmin(curHealth, in.health);

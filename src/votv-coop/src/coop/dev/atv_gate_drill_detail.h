@@ -145,6 +145,12 @@ struct Step {
     void (*teardown)(Ctx&);                // every peer, after its decision
 };
 
+// The client leaves and rejoins (atv_gate_drill_forged.cpp): steps 10 and 16 run on the rejoined client.
+bool IsRejoinedLife();
+void LeaveForRejoin();             // CLIENT, first life: leave the session for the rig's restart
+bool HostRejoin(const std::wstring& key);               // HOST: the rejoined client's steps
+void RunRejoinedClient();          // CLIENT, second life
+
 // The steps before the client leaves (atv_gate_drill_steps.cpp).
 extern const Step kSteps[];
 extern const int kStepCount;

@@ -11,9 +11,15 @@
 
 #include <windows.h>
 
+namespace coop::net { class Session; }
+
 namespace coop::dev::atv_gate_drill {
 
 // The drill thread for the harness dispatch (CreateThread): host, client or observer by the role and the slot.
 DWORD WINAPI Thread(LPVOID arg);
+
+// The rejoined client holds its world-ready announce from the session's start (a latched read unless the drill row is on and
+// this is the second life). Every load tick.
+void Install(coop::net::Session* session);
 
 }  // namespace coop::dev::atv_gate_drill

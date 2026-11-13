@@ -6,6 +6,8 @@
 
 #include "coop/interactables/atv_sync_internal.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/atv_drill_events.h"
 
 #include "coop/net/protocol.h"
@@ -68,6 +70,12 @@ void TakeControls(AtvEntry& e, uint8_t stateBits) {
     const bool lights = (bits & coop::net::kAtvLights) != 0;
     const bool brake = (bits & coop::net::kAtvBrake) != 0;
     const bool turbo = (bits & coop::net::kAtvTurbo) != 0;
+    // Red atv_bits_off: the block's control bits are ignored.
+    static const bool s_bitsOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_bits_off";
+    if (s_bitsOff) {
+        if (changed) coop::atv_drill_events::Note(coop::atv_drill_events::kControls, changed, 0);
+        return;
+    }
     if ((changed & coop::net::kAtvLights) && lights != A::GetLights(e.actor)) A::SetLights(e.actor, lights);
     if ((changed & coop::net::kAtvBrake) && brake != A::GetBrake(e.actor)) A::SetBrake(e.actor, brake);
     if ((changed & coop::net::kAtvTurbo) && turbo != A::GetTurbo(e.actor)) A::SetTurbo(e.actor, turbo);
