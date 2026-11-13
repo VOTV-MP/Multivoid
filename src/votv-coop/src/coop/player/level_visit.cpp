@@ -690,6 +690,10 @@ void Tick() {
     }
     if (g_endAsked.load()) return Finish(g_endIsDeath.load(), L"the map's own end");
     if (g_phase == Phase::Loading) {
+        // Polled: the streaming level's own loaded event (ULevelStreaming's OnLevelLoaded / OnLevelShown) would announce
+        // it, but no production code of ours binds an engine delegate (the one binder in the tree, coop/dev/
+        // pause_menu_probe_bind, measures a bound pair and not the engine's own broadcast), so nothing announces the
+        // load through our substrate yet. A delegate-binding substrate is its own package; the poll goes with it.
         g_level = LI::LoadedLevel(g_streaming);
         static ULONGLONG s_said = 0;
         if (!g_level && ::GetTickCount64() - s_said > 5000) {
