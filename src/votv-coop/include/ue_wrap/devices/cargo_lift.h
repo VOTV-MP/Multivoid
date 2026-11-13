@@ -25,6 +25,10 @@ std::wstring GetNameKey(void* lift);
 // `dir`: true once the lift was sent up, false once sent down (the state a press leaves, before the lift arrives).
 bool ReadDir(void* lift, bool& up);
 
+// Writes `dir`. The move loop reads it every frame, so a lift that moves turns at once: the reversal the Blueprint makes
+// itself when its platform is blocked. True when the field was written.
+bool WriteDir(void* lift, bool up);
+
 // `moving`: the lift is between its stops; a press now does nothing.
 bool ReadMoving(void* lift, bool& moving);
 

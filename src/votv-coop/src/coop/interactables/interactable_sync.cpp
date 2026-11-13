@@ -269,9 +269,9 @@ Channel g_cameraActive{g_cameraActiveAdapter, Channel::Mode::HostAuth};
 Channel g_cameraLight{g_cameraLightAdapter, Channel::Mode::HostAuth};
 Channel g_cremator{g_crematorAdapter, Channel::Mode::HostAuth};  // the lever run is the host's machine
 // The cargo lift, the base's elevator (cargoLift_C), host-authoritative: its `dir`, the direction its last press sent
-// it. A client applies a direction
-// by pressing its own copy, held while that copy moves (coop/interactables/cargo_lift); a client's press reaches the
-// host as a CargoLiftIntent. Keyed by the level-export FName, as the garage.
+// it, or the direction its own obstruction reversal left. A client applies a direction by pressing its own copy, or by
+// turning it when it moves (coop/interactables/cargo_lift); a client's press reaches the host as a CargoLiftIntent.
+// Keyed by the level-export FName, as the garage.
 const Adapter g_cargoLiftAdapter = {
     "cargo_lift", coop::net::ReliableKind::CargoLiftState,
     &ue_wrap::cargo_lift::EnsureResolved,
@@ -279,7 +279,7 @@ const Adapter g_cargoLiftAdapter = {
     &ue_wrap::cargo_lift::GetNameKey,
     &coop::cargo_lift::ReadState,
     &coop::cargo_lift::ApplyState,
-    &coop::cargo_lift::TickApply,
+    nullptr,  // no TickApply: a copy that moves is turned at once
 };
 Channel g_cargoLift{g_cargoLiftAdapter, Channel::Mode::HostAuth};
 // Keypads (ApasswordLock_C) are not a toggle (a typed buffer and three state bools, with an
@@ -373,7 +373,7 @@ void* ResolveCargoLift(const std::wstring& key) {
 
 void OnCargoLiftVerb(void* lift) { g_cargoLift.OnLocalEdge(lift); }
 
-void ResendCargoLiftTo(void* /*lift*/, uint8_t slot) { g_cargoLift.QueueConnectBroadcastForSlot(slot); }
+void ResendCargoLiftsTo(uint8_t slot) { g_cargoLift.QueueConnectBroadcastForSlot(slot); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

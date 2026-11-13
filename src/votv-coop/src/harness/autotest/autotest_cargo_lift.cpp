@@ -6,10 +6,13 @@
 // stopped, the client presses it. After each press each peer waits for its OWN copy to reach the direction the press
 // wanted and stop, logging `cargo-lift: STATE <step>` once a second, then tells the other its `dir` and the platform's
 // height over the lift's root. `cargo-lift: CHECK` lines judge that both peers end each press with the same `dir` and the
-// platform at the same height; the host says `rig: VERDICT cargo-lift PASS` when both peers' checks held, and either peer
-// says FAIL or INVALID (coop/session/rig_verdict.h). The red is cargo_lift_client_runs=1 on the client, whose press then
-// runs on its copy alone: the client sees at the press that nothing was sent to the host, tells the host, and both end
-// FAIL at once. Every time bound says INVALID only. Armed by the cargo_lift_drill row (VOTVCOOP_RUN_CARGO_LIFT); the folder is VOTVCOOP_CAN_DIR.
+// platform at the same height; a failed check is said FAIL at once by each peer and no later leg runs, and the host says
+// `rig: VERDICT cargo-lift PASS` when both steps held (coop/session/rig_verdict.h). The red is cargo_lift_client_runs=1 on
+// the client, whose press then runs on its copy alone: the client sees at the press that nothing was sent to the host and
+// nothing was cancelled, tells the host, and both say FAIL there. A press cancelled and not sent is INVALID, a readiness
+// gap. Every time bound says INVALID only. Not covered: the lift's own obstruction reversal (the host publishes it, and a
+// moving copy turns with it), since the drill has no way to hold the platform back. Armed by the cargo_lift_drill row
+// (VOTVCOOP_RUN_CARGO_LIFT); the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
@@ -50,12 +53,12 @@ namespace RV = coop::rig_verdict;
 
 constexpr const char* kTag = "cargo-lift";
 constexpr int kStepBound = 120;      // the bound on one step of the other peer's
-constexpr int kWalkBound = 240;      // the client's STAGED walk (meet.cpp: StageWalk puts it at the bed anchor, the rig's walks to the base take 40 s on a ~105 s budget); INVALID only
+constexpr int kWalkBound = 240;      // the client's staged walk (meet.cpp: StageWalk), which took about 40 s on the rig; INVALID only
 constexpr int kMoveBound = 40;       // a lift's travel is about twelve seconds; a copy that has not stopped by then is INVALID
 constexpr float kReachCm = 250.f;    // the client's walk ends this near the lift's root; the host judges a press within 400
 
 void* g_lift = nullptr;   // game thread only
-int g_checks = 0, g_failed = 0;
+
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -135,21 +138,30 @@ bool Step(bool hostPresses, const std::string& name) {
     if (mine) {
         if (!PS::Await((name + "_before_" + Other()).c_str(), kStepBound)) return false;
         const uint64_t sent0 = OnGameThreadValue([] { return coop::cargo_lift::PressesSent(); });
+        const uint64_t cancelled0 = OnGameThreadValue([] { return coop::cargo_lift::PressesCancelled(); });
         Press();
-        // A client's press is asked of the host: the gate sends the intent inside the call, so a press that sent nothing
-        // ran on this copy alone. That is the verdict, at the press, and the host is told so.
-        const bool alone = IsClientRole() && OnGameThreadValue([] { return coop::cargo_lift::PressesSent(); }) == sent0;
-        PS::Mark((name + "_pressed").c_str(), alone ? "alone" : "sent");
-        how = alone ? "alone" : "sent";
+        // A client's press is asked of the host: the gate sends the intent inside the call. A press that sent nothing
+        // either was cancelled (the lift not indexed yet, a refused send: a readiness gap, INVALID) or ran on this copy
+        // alone (the red: FAIL). Either is known at the press, and the host is told which.
+        how = "sent";
+        if (IsClientRole() && OnGameThreadValue([] { return coop::cargo_lift::PressesSent(); }) == sent0)
+            how = OnGameThreadValue([] { return coop::cargo_lift::PressesCancelled(); }) != cancelled0 ? "cancelled"
+                                                                                                         : "alone";
+        PS::Mark((name + "_pressed").c_str(), how);
     } else if (!PS::AwaitText((name + "_pressed").c_str(), how, kStepBound)) {
         return false;
     }
+    if (how == "cancelled") {
+        RV::Say(kTag, RV::Outcome::Invalid, "the client's press was cancelled and not sent (the lift not indexed there "
+                                            "yet, or the session refused the send)");
+        return false;
+    }
     if (how == "alone") {
-        ++g_checks;
-        ++g_failed;
         UE_LOGI("cargo-lift: CHECK %hs %hs FAIL -- the client's press ran on its own copy and was not sent to the host",
                 name.c_str(), Who());
-        return true;
+        RV::Say(kTag, RV::Outcome::Fail, "%s: the client's press ran on its own copy and was not sent to the host",
+                name.c_str());
+        return false;
     }
     const bool wanted = !before.dir;
     int polls = 0;
@@ -172,12 +184,14 @@ bool Step(bool hostPresses, const std::string& name) {
     char* rest = nullptr;
     const int odir = static_cast<int>(std::strtol(other.c_str(), &rest, 10));
     const float oz = std::strtof(rest, nullptr);
-    ++g_checks;
     const bool ok = v.dir == wanted && !v.moving && odir == (v.dir ? 1 : 0) && std::fabs(oz - v.platformZ) < 20.f;
-    if (!ok) ++g_failed;
     UE_LOGI("cargo-lift: CHECK %hs %hs %hs -- this peer dir=%d (wanted %d) platform %.0f cm, the other dir=%d platform %.0f cm",
             name.c_str(), Who(), ok ? "PASS" : "FAIL", v.dir ? 1 : 0, wanted ? 1 : 0, v.platformZ, odir, oz);
-    return true;
+    // A failed check is the verdict: each peer holds both values and says it, and no later leg runs.
+    if (!ok)
+        RV::Say(kTag, RV::Outcome::Fail, "%s: dir %d (wanted %d) at %.0f cm here, dir %d at %.0f cm there", name.c_str(),
+                v.dir ? 1 : 0, wanted ? 1 : 0, v.platformZ, odir, oz);
+    return ok;
 }
 
 bool Steps() { return Step(true, "1-host-press") && Step(false, "2-client-press"); }
@@ -214,13 +228,8 @@ void RunHost() {
     if (!PS::Await("client_ready", kWalkBound)) return;
     if (!Steps()) return;
     std::string clientWord;
-    if (!PS::AwaitText("client_done", clientWord, kStepBound)) return;
-    const int clientFailed = std::atoi(clientWord.c_str());
-    if (g_failed == 0 && clientFailed == 0 && g_checks == 2)
-        RV::Say(kTag, RV::Outcome::Pass, "a host's press and a client's both moved the lift on both peers to the same height");
-    else
-        RV::Say(kTag, RV::Outcome::Fail, "%d of %d checks failed on the host, %d on the client", g_failed, g_checks,
-                clientFailed);
+    if (!PS::AwaitText("client_done", clientWord, kStepBound) || clientWord != "ok") return;
+    RV::Say(kTag, RV::Outcome::Pass, "a host's press and a client's both moved the lift on both peers to the same height");
 }
 
 void RunClient() {
@@ -253,10 +262,8 @@ void RunClient() {
         return;
     }
     PS::Mark("client_ready");
-    if (!Steps()) return;
-    PS::Mark("client_done", std::to_string(g_failed));
-    if (g_failed != 0 || g_checks != 2)
-        RV::Say(kTag, RV::Outcome::Fail, "%d of %d checks failed on the client", g_failed, g_checks);
+    // The client's end of both steps, told to the host: a step that failed has said its own verdict.
+    PS::Mark("client_done", Steps() ? "ok" : "fail");
 }
 
 }  // namespace

@@ -73,6 +73,12 @@ bool ReadDir(void* lift, bool& up) { return ReadBool(lift, g_dirOff, up); }
 
 bool ReadMoving(void* lift, bool& moving) { return ReadBool(lift, g_movingOff, moving); }
 
+bool WriteDir(void* lift, bool up) {
+    if (!lift || g_dirOff < 0 || !IsCargoLift(lift)) return false;
+    *(static_cast<uint8_t*>(lift) + g_dirOff) = up ? 1 : 0;
+    return true;
+}
+
 bool Press(void* lift) {
     if (!lift || !IsCargoLift(lift)) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(lift), L"actionOptionIndex");

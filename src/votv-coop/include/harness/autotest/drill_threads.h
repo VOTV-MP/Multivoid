@@ -209,6 +209,7 @@ DWORD WINAPI PlantStateThread(LPVOID arg);
 DWORD WINAPI ClassResolveDrillThread(LPVOID arg);
 
 // VOTVCOOP_RUN_CARGO_LIFT, both peers -- harness/autotest/autotest_cargo_lift.cpp
+// cargo_lift_drill (VOTVCOOP_RUN_CARGO_LIFT), both peers -- harness/autotest/autotest_cargo_lift.cpp
 DWORD WINAPI CargoLiftThread(LPVOID arg);
 // woodchipper_drill, both peers -- harness/autotest/autotest_woodchipper.cpp
 DWORD WINAPI WoodchipperThread(LPVOID arg);

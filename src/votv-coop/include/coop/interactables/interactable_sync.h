@@ -1,4 +1,4 @@
-// coop/interactables/interactable_sync.h -- keyed interactable state sync: one engine, eleven features, one Channel:
+// coop/interactables/interactable_sync.h -- keyed interactable state sync: one engine, twelve features, one Channel:
 //   - DoorState (9):         base doors     (Adoor_C, open intent, host-authoritative)
 //   - LightState (10):       light switches (Alightswitch_C::use, replayed on receipt)
 //   - ContainerState (11):   container lids (Aprop_swinger_C::Open / Close)
@@ -11,7 +11,7 @@
 //   - CrematorState, CargoLiftState: the cremator's lever run, the cargo lift's direction (both host-authoritative)
 // Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key index, the
 // deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every channel is sent at the verbs
-// that write its state, on the authority (the host for doors, light groups, cameras and cremators, the peer that ran
+// that write its state, on the authority (the host for doors, light groups, cameras, cremators and the cargo lift, the peer that ran
 // it for the rest); a save's load reaches a joiner in the connect snapshot. The model: docs/devices.md.
 
 #pragma once
@@ -84,8 +84,9 @@ void* ResolveCargoLift(const std::wstring& key);
 // Host: a cargo lift's press just ran; the lane sends the direction it left when that changed. Game thread.
 void OnCargoLiftVerb(void* lift);
 
-// Host: the lift's direction sent again to `slot` alone, for a press that asked for the direction it already has.
-void ResendCargoLiftTo(void* lift, uint8_t slot);
+// Host: every indexed lift's direction sent again to `slot` alone, for a press that asked for the direction a lift
+// already has, and for a press the host refused: the sender's copy hears the host's state.
+void ResendCargoLiftsTo(uint8_t slot);
 
 // Whether the door lane's own apply is running on `door` now: a client's copy of a door refuses
 // every doorOpen and doorClose but that one. Game thread.

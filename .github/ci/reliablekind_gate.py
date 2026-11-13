@@ -96,6 +96,7 @@ FAMILY_FILES = [
     "src/coop/dispatch/event_dispatch_world.cpp",
     "src/coop/dispatch/event_dispatch_container_act.cpp",
     "src/coop/dispatch/event_dispatch_cremator.cpp",
+    "src/coop/dispatch/event_dispatch_cargo_lift.cpp",
     "src/coop/dispatch/event_dispatch_requester_feedback.cpp",
     "src/coop/dispatch/event_dispatch_kerfur_command.cpp",
 ]
