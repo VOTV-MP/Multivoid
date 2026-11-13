@@ -21,8 +21,9 @@ namespace coop::world_sound_sync {
 inline constexpr uint32_t kCueEarthIn = 100;
 inline constexpr uint32_t kCueEarthOut = 101;
 
-// Store the session, put the hook on once, find the sounds in each world and arm the hook while this is a host.
-// Called every load tick. Game thread.
+// Store the session, put the hook on once, find the sounds in each world (on either role: the host compares them in
+// its hook, a client plays them for a cue) and arm the hook while this is a host. Disconnect disarms it. Called every
+// load tick. Game thread.
 void Install(coop::net::Session* session);
 
 // CLIENT: the host's cue. False when the id is not this lane's.

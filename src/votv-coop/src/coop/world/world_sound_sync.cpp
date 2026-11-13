@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_sound.h"
+#include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
 #include "ue_wrap/core/call.h"
@@ -78,9 +79,8 @@ ue_wrap::script_gate::Verdict OnPlaySound2DPre(void* /*context*/, void* source, 
     return ue_wrap::script_gate::Verdict::Run;
 }
 
-bool Play2D(const wchar_t* soundName) {
+bool Play2D(const wchar_t* soundName, void* asset) {
     void* const local = coop::players::Registry::Get().Local();
-    void* const asset = R::FindObject(soundName, L"SoundWave");
     void* const statics = R::FindClassDefaultObject(L"GameplayStatics");
     void* const fn = statics ? R::FindDispatchFunctionCached(R::ClassOf(statics), L"PlaySound2D") : nullptr;
     if (!local || !asset || !fn) {
@@ -95,16 +95,17 @@ bool Play2D(const wchar_t* soundName) {
 }
 
 // The hook goes on once for the process; the host arms it while its session runs, so a client and a single-player game
-// pay one load and a branch on every sound.
+// pay one load and a branch on every sound. A row that is not resolved yet is asked again each tick; a refusal after it
+// is definite (the function has no Sound parameter, or the hook cannot go on) and ends the asking, said once.
+bool g_installFailed = false;
 void InstallHook() {
-    if (g_fn) return;
+    if (g_fn || g_installFailed) return;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowPlaySound2D);
     if (!fn) return;
     const int32_t off = R::FindParamOffset(fn.Fn(), L"Sound");
     if (off < 0 || !H::InstallPreHook(fn, &OnPlaySound2DPre, /*armed=*/false)) {
-        static bool sSaid = false;
-        if (!sSaid) UE_LOGE("world_sound: no pre hook on PlaySound2D (Sound offset %d) -- the sky's sounds stay the host's", off);
-        sSaid = true;
+        g_installFailed = true;
+        UE_LOGE("world_sound: no pre hook on PlaySound2D (Sound offset %d) -- the sky's sounds stay the host's", off);
         return;
     }
     g_cb = &OnPlaySound2DPre;
@@ -137,10 +138,11 @@ void ResolveSounds() {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     InstallHook();
+    const bool connected = session && session->connected();
+    // The two sounds are found on either role: the host compares them in its hook, a client plays them for a cue.
+    if (connected) ResolveSounds();
     if (!g_fn) return;
-    const bool host = session && session->connected() && session->role() == coop::net::Role::Host;
-    if (host) ResolveSounds();
-    const bool want = host && g_soundIn && g_soundOut;
+    const bool want = connected && session->role() == coop::net::Role::Host && g_soundIn && g_soundOut;
     if (want != g_armed && H::SetArmed(g_fn, g_cb, want)) g_armed = want;
 }
 
@@ -149,8 +151,9 @@ bool OnCue(const coop::net::EventCuePayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return true;
     ++g_c.received;
-    const wchar_t* const name = p.cueId == kCueEarthIn ? L"earthTP_in" : L"earthTP_out";
-    const bool played = Play2D(name);
+    const bool in = p.cueId == kCueEarthIn;
+    const wchar_t* const name = in ? L"earthTP_in" : L"earthTP_out";
+    const bool played = Play2D(name, in ? g_soundIn : g_soundOut);
     if (played) ++g_c.played;
     UE_LOGI("world_sound: %ls %hs (#%u)", name, played ? "played" : "NOT played", g_c.played);
     return true;
@@ -159,8 +162,12 @@ bool OnCue(const coop::net::EventCuePayload& p) {
 void OnFaucetChanged(void* faucet) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || FaucetOff()) return;
-    // A joiner's first states are the host's world arriving, not a press.
-    if (s->role() == coop::net::Role::Client && !coop::net_pump::HasAnnouncedWorldReady()) return;
+    // A joiner's first states are the host's world arriving, not a press: the connect replay the host sends at the
+    // announce lands inside the join's own window, from the announce to the host's SnapshotComplete, in which the join
+    // cover is up.
+    if (s->role() == coop::net::Role::Client &&
+        (!coop::net_pump::HasAnnouncedWorldReady() || coop::join_progress::Active()))
+        return;
     coop::prop_sound::PlayFaucetClick(faucet);
     ++g_c.clicks;
     UE_LOGI("world_sound: faucet click played (#%u)", g_c.clicks);
@@ -173,6 +180,9 @@ void OnDisconnect() {
         UE_LOGI("world_sound: session end -- sent=%u received=%u played=%u clicks=%u", g_c.sent, g_c.received, g_c.played,
                 g_c.clicks);
     g_c = Counts{};
+    // The hook stays on the process but is disarmed: a single-player game after a host session pays only the forwarder.
+    if (g_fn && g_armed && H::SetArmed(g_fn, g_cb, false)) g_armed = false;
+    g_session.store(nullptr, std::memory_order_release);
 }
 
 }  // namespace coop::world_sound_sync

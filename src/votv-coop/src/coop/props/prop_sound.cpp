@@ -8,6 +8,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/world_identity.h"
 
 namespace coop::prop_sound {
 namespace {
@@ -143,9 +144,31 @@ void PlayUseClick(void* propActor) {
     UE_LOGI("prop_sound: use click at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
 }
 
+namespace {
+// The faucet's click asset, found once per world: a search of the object array is a hitch a human press must not pay, so
+// a world that has not got it in three asks has none and the press says so each time.
+void* FaucetClickSound() {
+    constexpr int kAsks = 3;
+    static void* sSound = nullptr;
+    static uint32_t sWorld = 0;
+    static int sAsks = 0;
+    const uint32_t world = ue_wrap::world_identity::Generation();
+    if (world != sWorld) {
+        sWorld = world;
+        sSound = nullptr;
+        sAsks = 0;
+    }
+    if (!sSound && sAsks < kAsks) {
+        ++sAsks;
+        sSound = R::FindObject(L"door0_open", P::name::SoundWaveClass);
+    }
+    return sSound;
+}
+}  // namespace
+
 void PlayFaucetClick(void* faucet) {
     if (!faucet || !R::IsLive(faucet)) return;
-    void* const sound = R::FindObject(L"door0_open", P::name::SoundWaveClass);
+    void* const sound = FaucetClickSound();
     if (!sound) {
         UE_LOGW("prop_sound: 'door0_open' sound asset not resolved yet -- no faucet click");
         return;
