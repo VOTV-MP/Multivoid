@@ -28,6 +28,7 @@
 #include "harness/world_boot.h"
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -38,6 +39,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/engine/engine_save.h"
+#include "ue_wrap/engine/save_capture.h"
 #include "ue_wrap/engine/save_to_slot_hook.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/game_mode.h"
@@ -352,20 +354,39 @@ void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
     g_saveWritten.store(true, std::memory_order_release);
 }
 
+// The tests the game's save runs before it writes, in its order (mainGamemode.cpp, the save ubergraph at label 67457
+// with bypassEvent false): dreaming, the Custom mode, a player not walking, an event running. Each refusal shows a hint
+// and returns without a write. Null when none refuses now; else which one, or that a test could not be read.
+const char* SaveRefusal() {
+    const char* why = nullptr;
+    OnGameThread([&] {
+        float dreaming = 0.f;
+        bool walking = false;
+        if (!ue_wrap::vitals::Read(ue_wrap::vitals::Field::Dreaming, &dreaming)) why = "dreaming could not be read";
+        else if (dreaming != 0.f) why = "dreaming";
+        else if (ue_wrap::game_mode::ReadLocal() < 0) why = "the game mode could not be read";
+        else if (ue_wrap::game_mode::ReadLocal() == ue_wrap::game_mode::kCustom) why = "the Custom mode";
+        else if (!ue_wrap::puppet::ReadCharacterIsWalking(coop::players::Registry::Get().Local(), walking))
+            why = "the player's movement mode could not be read";
+        else if (!walking) why = "the player is not walking (mid air)";
+        else if (ue_wrap::save_capture::GameEventState() != ue_wrap::save_capture::EventState::Off)
+            why = "an event is running, or its state could not be read";
+    });
+    return why;
+}
+
 // The game's own save, as its save button runs it, and the wait for the engine to report the slot written.
 bool SaveWorld() {
     if (!ue_wrap::save_to_slot_hook::AddWritten(&OnWorldSaveWritten)) {
         coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the save seam has no free subscriber slot");
         return false;
     }
-    if (!WaitFor("the player on its feet (the game's save refuses one in mid air)", 60, [] {
-            bool walking = false;
-            OnGameThread([&] {
-                ue_wrap::puppet::ReadCharacterIsWalking(coop::players::Registry::Get().Local(), walking);
-            });
-            return walking;
-        }))
+    // A save the game's own tests refuse writes nothing, so the call waits until they pass.
+    if (!WaitFor("the game's save tests to pass", 60, [] { return SaveRefusal() == nullptr; }, false)) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid,
+                               "the game's save tests did not pass within 60s: %s", SaveRefusal());
         return false;
+    }
     bool ran = false;
     OnGameThread([&] {
         void* const gm = ue_wrap::world_singleton::Gamemode();
@@ -382,7 +403,13 @@ bool SaveWorld() {
         coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the game's save did not dispatch");
         return false;
     }
-    return WaitFor("the game's save written to a slot", 30, [] { return g_saveWritten.load(std::memory_order_acquire); });
+    if (WaitFor("the game's save written to a slot", 30, [] { return g_saveWritten.load(std::memory_order_acquire); },
+                false))
+        return true;
+    const char* why = SaveRefusal();
+    coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid,
+                           "the game's save wrote no slot within 30s (its tests now: %s)", why ? why : "all pass");
+    return false;
 }
 
 // The host leaves for the menu as its player's quit does: the session ends first (its stop and teardown), then the
