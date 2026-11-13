@@ -151,7 +151,10 @@ or put it away; while recording, look at the camera and press Alt+E. The overlay
 from the game's one camera manager when the manager rewrites it: a watch on its `updUI`, the one
 function that sets the overlay's visibility, publishes the state (`ue_wrap/devices/video_camera`,
 `coop/player/vidcam_hint`). `[V]` by hand on a client, with the earlier four-times-a-second read: in
-hand, recording, dropped, and gone once stopped; `[?]` with the watch, until it is run again.
+hand, recording, dropped, and gone once stopped; `[?]` with the watch, until it is run again. A rig
+drill (`vidcam_hint_drill`, `rig: VERDICT vidcam-hint`; its red `vidcam_hint_red` leaves the watch
+out and must FAIL) puts a camera in the hand and takes it away, and reads the state the HUD reads
+`[?]`; a recording is not in it.
 
 ### The game's notifications
 

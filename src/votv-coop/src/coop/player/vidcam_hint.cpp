@@ -7,6 +7,9 @@
 
 #include "coop/player/vidcam_hint.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/world_identity.h"
@@ -42,7 +45,9 @@ void OnUpdUIPost(const sg::Call&) { Publish(); }
 }  // namespace
 
 void Install() {
-    if (g_watching || !sg::IsInstalled()) return;
+    // Drill red (vidcam_hint_red, off by default): no watch, so nothing is ever published.
+    static const bool kRed = coop::config::ResolveFlag(coop::config_registry::rows::vidcam_hint_red);
+    if (kRed || g_watching || !sg::IsInstalled()) return;
     if (!sg::WatchName(kRowUpdUI, kTag, nullptr, &OnUpdUIPost)) return;
     g_watching = true;
     UE_LOGI("vidcam_hint: watching RCM_cameraManager_C::updUI -- the video camera's overlay state is read when the "

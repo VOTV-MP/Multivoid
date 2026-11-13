@@ -90,6 +90,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/bug_report_drill.cpp
     src/coop/dev/grants_drill.cpp
     src/coop/dev/pause_quit_drill.cpp
+    src/coop/dev/vidcam_hint_drill.cpp
     src/coop/dev/pause_menu_probe.cpp
     src/coop/dev/pause_menu_probe_rows.cpp
     src/coop/dev/pause_menu_probe_tree.cpp
