@@ -332,14 +332,38 @@ bool TakeCamera() {
 
 // The game's own clip: its tick traces from lastLoc to the camera, and a hit on static geometry is the trip. lastLoc
 // 4 m under the floor puts the floor between them.
-void TryClip() {
-    OnGameThread([] {
+void WriteLastLoc(bool say) {
+    OnGameThread([say] {
         const int32_t off = R::FindPropertyOffset(R::ClassOf(Me()), L"lastLoc");
         const ue_wrap::FVector cam = E::GetCameraLocation();
         if (off >= 0)
             *reinterpret_cast<ue_wrap::FVector*>(static_cast<char*>(Me()) + off) = {cam.X, cam.Y, cam.Z - 400.f};
-        UE_LOGI("level-visit: %hs lastLoc set under the floor for the game's own clip (%d)", Who(), off >= 0 ? 1 : 0);
+        if (say) UE_LOGI("level-visit: %hs lastLoc set under the floor for the game's own clip (%d)", Who(), off >= 0 ? 1 : 0);
     });
+}
+
+// The clip driven until its event: the game's tick overwrites lastLoc with the camera on every frame its condition
+// fails (the check, the trace, the view target), so one write survives only when the very next tick passes it. lastLoc is
+// written again at each poll, on the game thread, until `done` or the bound; false when the bound ran out.
+template <class Pred>
+bool ClipUntil(const char* what, int boundSec, Pred done) {
+    bool first = true;
+    return PS::WaitFor(what, boundSec, [&] {
+        if (done()) return true;
+        WriteLastLoc(first);
+        first = false;
+        return false;
+    }, false);
+}
+
+// What the game's clip check answered on this machine, for an INVALID that names the term the clip never passed.
+std::string ClipDiag() {
+    const LV::DrillStats s = LV::Stats();
+    const char* by = s.lastClipWhy == 1 ? "the mod, the host closed the backrooms"
+                   : s.lastClipWhy == 2 ? "the mod, a visit runs"
+                   : s.lastClipWhy == 3 ? "the mod, the quiet window after a visit"
+                   : s.lastClipWhy == 0 ? "the game's own logic (its answer is not read)" : "nobody";
+    return "the clip check was asked " + std::to_string(s.clipChecksAsked) + " times for this player, last answered by " + by;
 }
 
 // The clip's own travel call, lib_C::loadLevel with the map.
@@ -354,11 +378,6 @@ void TryCall(const std::string& map) {
                          ue_wrap::Call(lib, pf);
         UE_LOGI("level-visit: %hs called lib_C::loadLevel('%hs') ran=%d", Who(), map.c_str(), ran ? 1 : 0);
     });
-}
-
-void StartTrip(const Plan& p) {
-    if (p.start == "clip") TryClip();
-    else TryCall(p.map);
 }
 
 // ---- the map's lantern (level_visit_look = lamp) --------------------------------------------------------------------
@@ -476,7 +495,15 @@ void EndVisit(const std::string& end) {
 // uncovered. The visit ending before the player arrives is the event that fails it; no trip at all is Invalid.
 bool Arrive(const Plan& p) {
     const uint32_t trips = LV::Stats().tripsStarted;
-    StartTrip(p);
+    if (p.start == "clip") {
+        const bool began = ClipUntil("the game's own clip taking a trip", kLoadSec,
+                                     [trips] { return LV::Stats().tripsStarted > trips || OtherStopped(); });
+        if (OtherStopped()) return false;
+        if (!began)
+            return Emit("arrived", Res::Invalid, "no clip took a trip in " + std::to_string(kLoadSec) + " s: " + ClipDiag());
+    } else {
+        TryCall(p.map);
+    }
     const bool reached = PS::WaitFor("the visitor in the map", kLoadSec, [&] {
         const Now n = Read();
         return n.inMap || (LV::Stats().tripsStarted > trips && !n.visiting) || OtherStopped();
@@ -628,24 +655,22 @@ void RunCloseClient() {
     // The clip's event: the game asks its check in the tick that traces, and the check is answered no (a count) or the
     // trip starts. Whichever comes first decides; neither is Invalid.
     const LV::DrillStats before = LV::Stats();
-    TryClip();
-    const bool decided = PS::WaitFor("the clip check answered or a trip taken", kSettleSec, [&before] {
+    const bool decided = ClipUntil("the clip check answered or a trip taken", kSettleSec, [&before] {
         const LV::DrillStats s = LV::Stats();
         return s.clipsHeldClosed > before.clipsHeldClosed || s.tripsStarted > before.tripsStarted;
-    }, false);
+    });
     if (LV::Stats().tripsStarted > before.tripsStarted)
         { Emit("held", Res::Fail, "a clip took a trip while the host had the backrooms closed"); return; }
-    if (!decided) { Emit("held", Res::Invalid, "the game asked no clip check after the clip was set"); return; }
+    if (!decided) { Emit("held", Res::Invalid, "no clip check was answered no in the time asked: " + ClipDiag()); return; }
     if (!Emit("held", Res::Pass, "the clip check was answered no while the host had the backrooms closed")) return;
     if (!PS::Await("reopened")) return;
     if (!PS::WaitFor("the host's open setting", kSettleSec, [] { return BackroomsAllowed(); }, false))
         { Emit("reopened_clip", Res::Invalid, "the host's open setting never reached this client"); return; }
     const uint32_t trips = LV::Stats().tripsStarted;
-    TryClip();
-    const bool went = PS::WaitFor("a clip taking a trip", kLoadSec, [trips] { return LV::Stats().tripsStarted > trips; }, false);
+    const bool went = ClipUntil("a clip taking a trip", kLoadSec, [trips] { return LV::Stats().tripsStarted > trips; });
     if (!Emit("reopened_clip", went ? Res::Pass : Res::Invalid,
               went ? "after the host opened the backrooms again a clip took a trip"
-                   : "no trip started after the host opened the backrooms again"))
+                   : "no trip started after the host opened the backrooms again: " + ClipDiag()))
         return;
     UE_LOGI("level-visit: DONE client");
 }
@@ -656,6 +681,7 @@ void RunJoinHost() {
     const Plan p = PlanFromRows();
     if (!disc_drill::HostWorldUp()) return;
     if (p.camera && !TakeCamera()) return;
+    Log("before", Read());
     if (!Arrive(p)) return;
     if (!Heard("joined_hid", 480)) return;
     UE_LOGI("level-visit: DONE host");

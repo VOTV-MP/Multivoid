@@ -75,6 +75,8 @@ bool ReturnPending();  // the visitor's dropped item is still to be given back
 struct DrillStats {
     uint32_t tripsStarted;       // trips this machine's player took (a clip's loadLevel the gate turned into a visit)
     uint32_t clipsHeldClosed;    // the game's clip check answered no because the host closed the backrooms
+    uint32_t clipChecksAsked;    // the game's clip check asked for this machine's own player
+    int lastClipWhy;             // last ask answered by: 0 the game's logic, 1 closed, 2 visit, 3 quiet window, -1 none
 };
 DrillStats Stats();
 

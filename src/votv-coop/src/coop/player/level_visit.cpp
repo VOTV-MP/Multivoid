@@ -165,7 +165,8 @@ void OnBackroomsRow() {
 }
 
 // [dev] The drill's counts, and its red arms (each latched once).
-std::atomic<uint32_t> g_tripsStarted{0}, g_clipsHeldClosed{0};
+std::atomic<uint32_t> g_tripsStarted{0}, g_clipsHeldClosed{0}, g_clipChecksAsked{0};
+std::atomic<int> g_lastClipWhy{-1};
 bool CloseOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::backrooms_close_off);
     return off;
@@ -186,6 +187,8 @@ sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
     const bool closed = g_closed.load();
     const bool visiting = g_phase != Phase::None;
     const int why = closed ? 1 : visiting ? 2 : ::GetTickCount64() < g_quietUntilMs.load() ? 3 : 0;
+    ++g_clipChecksAsked;
+    g_lastClipWhy = why;
     static int s_said = 0;
     if (why != s_said) {
         s_said = why;
@@ -738,7 +741,7 @@ std::wstring LastEnd() { return g_lastEnd; }
 void* CurrentLevel() { return g_phase == Phase::In ? g_level : nullptr; }
 bool ReturnPending() { return g_return != nullptr; }
 DrillStats Stats() {
-    return {g_tripsStarted.load(), g_clipsHeldClosed.load()};
+    return {g_tripsStarted.load(), g_clipsHeldClosed.load(), g_clipChecksAsked.load(), g_lastClipWhy.load()};
 }
 
 }  // namespace coop::level_visit
