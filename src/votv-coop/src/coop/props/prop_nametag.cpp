@@ -5,7 +5,8 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"   // IntentTarget: the prop within the sender's reach
-#include "coop/net/net_clock.h"              // NowMs: the budget of a sender's tags
+#include "coop/net/intent_bucket.h"          // a sender's budget of tags
+#include "coop/net/net_clock.h"              // NowMs: the budget's clock
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -50,8 +51,7 @@ UE_FACT_FN(kRowHandUse, "prop_nametag", nullptr, L"playerHandUse_LMB", AnyClass)
 constexpr int kTag = 0x4E544147;   // 'NTAG'
 // The item's own reach is the player's interaction trace, armLength long; the authority adds its pads.
 constexpr float    kReachUU     = 200.0f;
-// One tag a second a client: an item is spent by its use, so a faster run is not one player's hand.
-constexpr uint64_t kPerSlotMs   = 1000;
+constexpr coop::net::IntentBudget kTagBudget{2.0f, 1.0f};
 constexpr size_t   kMaxKeyChars = sizeof(coop::net::WireKey::data);
 constexpr size_t   kMaxTagChars = coop::net::kPropNametagMaxChars;
 constexpr uint8_t  kAuthorHost  = 0;
@@ -71,8 +71,9 @@ Pending g_pending;
 void*        g_hostItem = nullptr;
 void*        g_hostProp = nullptr;
 std::wstring g_hostTag;
-// HOST: when each client slot's last tag was applied.
-std::map<uint8_t, uint64_t> g_lastBySlot;
+// HOST: each client slot's budget of tags, spent by every request judged and reset with the slot's occupant
+// (prop_syncer_host's g_claimBuckets is the shape). A nametag is spent by its use, so a faster run is not one player's hand.
+coop::roster_ledger::PerSlotState<coop::net::IntentBucket> g_budget;
 // HOST: a slot's request that waits for its owed hand state to be applied; at most one a slot.
 struct Parked {
     bool         valid = false;
@@ -274,20 +275,17 @@ void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, uint8_
 
 // HOST: a request's judgement, with the sender's hand as the hand lane has applied it.
 void Judge(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
+    if (!g_budget[slot].Take(kTagBudget, coop::net::NowMs())) { Refuse(s, slot, key, coop::net::kPropNametagTooFast); return; }
     if (!TagSane(tag)) { Refuse(s, slot, key, coop::net::kPropNametagBadTag); return; }
     void* prop = coop::prop_key_index::Find(key);
     if (!prop || !PR::IsDescendantOfProp(prop)) { Refuse(s, slot, key, coop::net::kPropNametagNoProp); return; }
-    const uint64_t now = coop::net::NowMs();
     if (!coop::hand_item::HeldClassIs(slot, L"prop_nametag_C")) {
         Refuse(s, slot, key, coop::net::kPropNametagNoItem);
         return;
     }
-    auto last = g_lastBySlot.find(slot);
-    if (last != g_lastBySlot.end() && now - last->second < kPerSlotMs) { Refuse(s, slot, key, coop::net::kPropNametagTooFast); return; }
     const auto sub = coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU).Authorize(prop);
     if (!sub) { Refuse(s, slot, key, coop::net::kPropNametagOutOfReach, coop::element::OutcomeName(sub.outcome)); return; }
     if (!NT::ApplyPropNametag(prop, tag)) { Refuse(s, slot, key, coop::net::kPropNametagNotTaken); return; }
-    g_lastBySlot[slot] = now;
     ++g_applied;
     Publish(s, key, slot, tag);
     UE_LOGI("prop_nametag: HOST tagged prop '%ls' '%ls' for slot %u (%llu for clients)", key.c_str(), tag.c_str(),
@@ -477,7 +475,7 @@ void OnDisconnect() {
     g_taggedFullSaid = false;
     g_unbound.clear();
     g_unboundVersion = 0;
-    g_lastBySlot.clear();
+    for (int i = 0; i < g_budget.size(); ++i) g_budget[i].Reset();
     for (int i = 0; i < g_parked.size(); ++i) g_parked[i] = Parked{};
     g_session.store(nullptr, std::memory_order_release);
 }
