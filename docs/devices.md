@@ -387,7 +387,8 @@ the player's expression and never a world prop, so its destroy reaches no one; f
 hand lane, as it does for a toolbox's use on the ATV (`coop/player/hand_spend`): the hand's last held
 class must be a fuse and the hold the lane numbers must have its one use left. The hold the insert was
 sent from is applied first when the lane's pace still owes it, since the emptied hand behind the insert
-would merge it away. The host cannot see the fuse leave the inventory, so a client that announces a
+would merge it away. A fuse from the hold slot is announced to the host before its claim leaves, even when it was
+picked up and used within one tick. The host cannot see the fuse leave the inventory, so a client that announces a
 hold and keeps its fuse is taken once per announce, at the hand lane's own rate. The judgement is made as the
 request arrives and goes with it through the queue, so a request that waits behind an earlier one is not
 judged against a hand that has moved on; an insert the hand paid for also burns the world spend beside it,

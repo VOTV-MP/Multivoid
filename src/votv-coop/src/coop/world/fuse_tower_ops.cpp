@@ -552,6 +552,10 @@ sg::Verdict OnInsertPre(const sg::Call& call) {
         return sg::Verdict::Cancel;
     }
     if (ClaimsFull()) return sg::Verdict::Cancel;
+    // A fuse from the hold slot is announced to the host before its claim is, though it was picked up and used within
+    // one tick: the host judges the claim against the hold it has by then.
+    if (coop::hand_item::IsLocalHandViewActor(held))
+        coop::hand_item::AnnounceHeldNow(*Connected(), coop::players::Registry::Get().Local(), held);
     g_insertTower = call.object;
     g_insertSlot = slot;
     return sg::Verdict::Run;

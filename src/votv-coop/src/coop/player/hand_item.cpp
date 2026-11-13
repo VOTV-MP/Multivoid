@@ -271,12 +271,14 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
 
 }  // namespace
 
-void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
+// The owner's announce as one tick makes it: a change of the hand, sent on the edge. `look` says the call is the owner tick
+// that read the hand (OwnHandLookSeq counts it); AnnounceHeldNow reads nothing new and counts none.
+static void AnnounceOwn(coop::net::Session& session, void* local, void* holdingProp, bool look) {
     g_session = &session;
     if (!session.connected()) return;
     const uint8_t self = coop::players::Registry::Get().LocalPeerId();
     if (self >= coop::players::kMaxPeers) return;
-    ++g_ownLookSeq;  // every path below leaves the latch naming the class the hand holds now
+    if (look) ++g_ownLookSeq;  // every path below leaves the latch naming the class the hand holds now
 
     if (holdingProp) {
         // The live view-relative hold transform is measured and latched every tick while holding;
@@ -364,6 +366,14 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         // No reconcile request: the released actor was expressed above, and inventory spawns ride
         // the finish-spawn seam.
     }
+}
+
+void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
+    AnnounceOwn(session, local, holdingProp, true);
+}
+
+void AnnounceHeldNow(coop::net::Session& session, void* local, void* holdingProp) {
+    if (holdingProp) AnnounceOwn(session, local, holdingProp, false);
 }
 
 void* LocalHandActor() {

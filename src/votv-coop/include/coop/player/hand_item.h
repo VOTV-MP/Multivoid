@@ -40,6 +40,13 @@ inline constexpr coop::net::IntentBudget kHandBudget{12.0f, 4.0f};
 // destroy side belongs to the K2_DestroyActor Func seam in prop_lifecycle.
 void TickOwner(coop::net::Session& session, void* local, void* holdingProp);
 
+// Owner side: the announce TickOwner would make for the hand item `holdingProp` this tick, made now and counted as no
+// look at the hand (OwnHandLookSeq). A client about to send a request about the item it holds calls it first, so the
+// hold is on the wire ahead of the request on the one ordered lane even when the item was picked up and used within
+// one tick (local_streams.cpp calls TickOwner once a tick, after the use). A hold already announced makes none. Game
+// thread only.
+void AnnounceHeldNow(coop::net::Session& session, void* local, void* holdingProp);
+
 // Receiver side, per tick (same site): lazily spawn/replace/destroy the display mirrors, so a
 // state arriving before the puppet exists (join) or a puppet respawn are absorbed without event
 // ordering. A mirror has physics and collision off and its spawn echo suppressed, and it is
