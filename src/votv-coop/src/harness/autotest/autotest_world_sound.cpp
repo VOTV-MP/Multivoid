@@ -1,22 +1,36 @@
-// harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds and a faucet's click across two peers.
+// harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds, a faucet's click and the alien
+// noises across two peers.
 //
-// The client presses a faucet and the host presses it back, each checked on the other as the faucet's state. The host fires the
-// alien sounds, and each peer counts its own noisers and the noises they start. Then the host runs the sky's own tp, whose two
-// sounds are about 86 s apart. The driver reads each peer's `world_sound:` lines,
-// since what a peer heard cannot be read back. Gated by VOTVCOOP_RUN_WORLD_SOUND; the folder is VOTVCOOP_CAN_DIR.
+// Armed by the row world_sound_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR). What a peer hears cannot be
+// read back, so each term is the OTHER peer's receipt and its play call, from the lane's own counts:
+//   1     A faucet each peer spawns under one key is pressed by the client, then by the host: the other peer's copy must
+//         flip and its click count rise. The host runs the sky's tp: the client must receive both cues and play both.
+//         The host fires the alien sounds: each peer must have three noisers around it and see them make a noise.
+//         The host says `rig: VERDICT world-sound PASS|FAIL|INVALID`. Reds: world_sound_earth_off on the host,
+//         world_sound_faucet_off on the receiving peer.
+//   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; the
+//         rejoined client (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must have three noisers of its own. The host says `rig:
+//         VERDICT world-sound-join PASS|FAIL|INVALID`; INVALID when the host's noisers are gone at the ready edge. Red:
+//         alien_join_off on the host.
 
 #include "harness/autotest.h"
+#include "disc_drills.h"   // co-located private header (src tree, not include/)
+#include "harness/autotest/peer_signal.h"
+#include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 #include "coop/world/event_fire_sync.h"
+#include "coop/world/world_sound_sync.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/fname_utils.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -25,11 +39,10 @@
 
 #include <windows.h>
 
-#include <atomic>
-#include <cmath>
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <cwchar>
-#include <fstream>
 #include <string>
 #include <unordered_set>
 
@@ -39,90 +52,72 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 namespace A = ue_wrap::appliance;
+namespace PS = harness::autotest::peer_signal;
+namespace RV = coop::rig_verdict;
+namespace WS = coop::world_sound_sync;
+using disc_drill::OnGameThread;
 
-constexpr uint8_t kActionFaucet = 5;  // the faucet's use action, which its click follows
-constexpr int     kTeleportSeconds = 100;
-constexpr size_t  kNoisers = 3;           // the alien sounds' count
-constexpr int     kNoiseWatchSeconds = 40;
+constexpr const char* kTag = "world-sound";
+constexpr const char* kTagJoin = "world-sound-join";
+constexpr uint8_t kActionFaucet = 5;   // the faucet's use action, which its click follows
+constexpr size_t kNoisers = 3;         // the alien sounds' count
+constexpr int kStepSec = 120;
+constexpr int kCrossSec = 15;          // a faucet's state, and its click, reaching the other peer
+constexpr int kEarthSec = 150;         // the sky's tp plays its second sound over a minute after its first
+constexpr int kAlienSec = 60;          // three noisers out, and one of them making a noise
 
-std::string g_dir;
-int g_fails = 0;
+std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::world_sound_drill); }
 
-template <class Fn>
-void OnGameThread(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
-
-void Mark(const char* name) { std::ofstream(g_dir + "\\" + name, std::ios::binary | std::ios::trunc) << "x"; }
-
-bool Await(const char* name, int seconds = 240) {
-    for (int i = 0; i < seconds * 10; ++i) {
-        std::ifstream f(g_dir + "\\" + name, std::ios::binary);
-        std::string s;
-        if (f && std::getline(f, s) && !s.empty()) return true;
-        ::Sleep(100);
-    }
-    UE_LOGW("sound-drill: VERDICT ABORT -- no '%hs' from the other peer", name);
-    return false;
-}
-
-void Verdict(const char* step, bool pass, const std::string& detail) {
-    if (!pass) ++g_fails;
-    UE_LOGI("sound-drill: %hs %hs %hs", step, pass ? "PASS" : "FAIL", detail.c_str());
-}
-
-// The live noisers here for `seconds`: the most at once, the nearest to this player, and each alien noise their timers started.
+// The live noisers here, the most seen at once, and each alien noise their timers started.
 struct Noisers {
     size_t most = 0;
-    size_t noises = 0;
-    float nearest = 1e9f;
+    std::unordered_set<void*> noises;
 };
-Noisers WatchNoisers(int seconds) {
-    Noisers out;
-    std::unordered_set<void*> seen;
-    for (int i = 0; i < seconds * 10; ++i) {
-        OnGameThread([&] {
-            void* const local = coop::players::Registry::Get().Local();
-            ue_wrap::FVector me{};
-            const bool placed = local && E::TryGetActorLocation(local, me);
-            size_t live = 0;
-            for (void* n : R::FindObjectsByClass(L"noiser_C")) {
-                ue_wrap::FVector at{};
-                if (!R::IsLive(n) || !E::TryGetActorLocation(n, at)) continue;
-                ++live;
-                if (placed)
-                    out.nearest = (std::min)(out.nearest, std::sqrt((at.X - me.X) * (at.X - me.X) + (at.Y - me.Y) * (at.Y - me.Y)));
-            }
-            out.most = (std::max)(out.most, live);
-            void* const audio = ue_wrap::object_index::ClassByName(L"AudioComponent");
-            const int32_t soundOff = audio ? R::FindPropertyOffset(audio, L"Sound") : -1;
-            if (soundOff < 0) return;
-            struct Ctx {
-                int32_t off;
-                std::unordered_set<void*>* seen;
-            } ctx{soundOff, &seen};
-            ue_wrap::object_index::ForEachInstance(
-                audio,
-                [](void* c, void* comp, int32_t) {
-                    auto* x = static_cast<Ctx*>(c);
-                    if (!R::IsLive(comp) || R::ClassNameOf(R::OuterOf(comp)) != L"noiser_C") return;
-                    void* sound = *reinterpret_cast<void**>(static_cast<uint8_t*>(comp) + x->off);
-                    if (sound && _wcsicmp(R::ToString(R::NameOf(sound)).c_str(), L"outsideAlien_Cue") == 0) x->seen->insert(comp);
-                },
-                &ctx);
-        });
-        ::Sleep(100);
-    }
-    out.noises = seen.size();
-    return out;
+void Sample(Noisers& out) {
+    OnGameThread([&] {
+        size_t live = 0;
+        for (void* n : R::FindObjectsByClass(L"noiser_C"))
+            if (R::IsLive(n)) ++live;
+        out.most = (std::max)(out.most, live);
+        void* const audio = ue_wrap::object_index::ClassByName(L"AudioComponent");
+        const int32_t soundOff = audio ? R::FindPropertyOffset(audio, L"Sound") : -1;
+        if (soundOff < 0) return;
+        struct Ctx {
+            int32_t off;
+            std::unordered_set<void*>* seen;
+        } ctx{soundOff, &out.noises};
+        ue_wrap::object_index::ForEachInstance(
+            audio,
+            [](void* c, void* comp, int32_t) {
+                auto* x = static_cast<Ctx*>(c);
+                if (!R::IsLive(comp) || R::ClassNameOf(R::OuterOf(comp)) != L"noiser_C") return;
+                void* sound = *reinterpret_cast<void**>(static_cast<uint8_t*>(comp) + x->off);
+                if (sound && _wcsicmp(R::ToString(R::NameOf(sound)).c_str(), L"outsideAlien_Cue") == 0) x->seen->insert(comp);
+            },
+            &ctx);
+    });
 }
 
-void CheckNoisers(const Noisers& n) {
-    UE_LOGI("sound-drill: noisers here at most %zu, nearest %.0f cm, %zu alien noises", n.most, n.nearest, n.noises);
-    Verdict("03-own-noisers", n.most == kNoisers, std::to_string(n.most) + " noisers, the event's own count");
-    Verdict("04-around-this-player", n.nearest < 6000.f, "nearest " + std::to_string(static_cast<int>(n.nearest)) + " cm");
-    Verdict("05-alien-noise", n.noises > 0, std::to_string(n.noises) + " noises");
+size_t NoisersNow() {
+    size_t live = 0;
+    OnGameThread([&] {
+        for (void* n : R::FindObjectsByClass(L"noiser_C"))
+            if (R::IsLive(n)) ++live;
+    });
+    return live;
 }
+
+// The noisers around this peer: three out, and (when `noise`) one of them heard making a noise.
+Noisers WatchNoisers(bool noise) {
+    Noisers n;
+    PS::WaitFor("three noisers around this player", kAlienSec, [&] {
+        Sample(n);
+        return n.most >= kNoisers && (!noise || !n.noises.empty());
+    }, false);
+    return n;
+}
+
+std::string Text(const Noisers& n) { return "most=" + std::to_string(n.most) + " noises=" + std::to_string(n.noises.size()); }
 
 // The one keyed faucet both peers' sorted keys agree on.
 void* FirstFaucet() {
@@ -153,13 +148,19 @@ bool FaucetOn(bool& on) {
     return read;
 }
 
+uint32_t Clicks() {
+    uint32_t n = 0;
+    OnGameThread([&] { n = WS::GetCounts().clicks; });
+    return n;
+}
+
 void PressFaucet() {
     OnGameThread([&] {
         void* faucet = FirstFaucet();
         void* local = coop::players::Registry::Get().Local();
         ue_wrap::FVector at{};
         if (!faucet || !local || !E::TryGetActorLocation(faucet, at)) {
-            UE_LOGW("sound-drill: no faucet to press");
+            UE_LOGW("world-sound: no faucet to press");
             return;
         }
         void* mesh = ue_wrap::prop::GetStaticMesh(faucet);
@@ -167,13 +168,15 @@ void PressFaucet() {
     });
 }
 
-void CheckFaucet(const char* step, bool want) {
-    bool on = !want, read = false;
-    for (int i = 0; i < 24 && !(read && on == want); ++i) {
-        read = FaucetOn(on);
-        if (!(read && on == want)) ::Sleep(250);
-    }
-    Verdict(step, read && on == want, read ? "active=" + std::to_string(on) : std::string("no faucet"));
+// This peer's copy takes the other peer's press: the state flips to `want`, and the click is played for it. "1" when both.
+std::string Crossed(bool want, uint32_t clicksBefore) {
+    const bool flipped = PS::WaitFor("the faucet at the other peer's state", kCrossSec, [want] {
+        bool on = !want;
+        return FaucetOn(on) && on == want;
+    }, false);
+    const bool clicked = flipped && PS::WaitFor("the faucet's click played here", kCrossSec,
+                                                [clicksBefore] { return Clicks() > clicksBefore; }, false);
+    return std::to_string(flipped ? 1 : 0) + " " + std::to_string(clicked ? 1 : 0);
 }
 
 // The save holds no faucet and a spawned one does not cross, so each peer spawns one under the same Key, as a saved faucet
@@ -198,105 +201,197 @@ std::string SpawnFaucet(const std::string& wantKey) {
     return out;
 }
 
+bool Parse2(const std::string& text, int& a, int& b) { return sscanf_s(text.c_str(), "%d %d", &a, &b) == 2; }
+
 void RunHost() {
-    if (!Await("client_ready")) return;
+    if (!disc_drill::HostWorldUp()) return;
+    if (!PS::Await("client_ready", 480)) return;
     const std::string key = SpawnFaucet("");
-    UE_LOGI("sound-drill: host faucet key='%hs'", key.c_str());
-    std::ofstream(g_dir + "\\faucet_key", std::ios::binary | std::ios::trunc) << key;
-    if (!Await("client_faucet")) return;
-    ::Sleep(4000);  // each peer's lane lists a new faucet on its scan
+    UE_LOGI("world-sound: host faucet key='%hs'", key.c_str());
+    PS::Mark("faucet_key", key);
+    if (!PS::Await("client_faucet", kStepSec)) return;
     bool start = false;
-    if (!FaucetOn(start)) {
-        size_t found = 0;
-        OnGameThread([&] {
-            void* cls = ue_wrap::object_index::ClassByName(L"faucet_C");
-            found = cls ? ue_wrap::object_index::ForEachInstance(cls, [](void*, void*, int32_t) {}, nullptr) : 0;
-        });
-        Verdict("00-a-faucet-to-press", false, std::to_string(found) + " faucet_C with no readable state and key");
-        Mark("no_faucet");
-    } else {
-        Mark(start ? "start_on" : "start_off");
-        if (!Await("c1")) return;
-        CheckFaucet("01-client-presses", !start);
-        Mark("h1");
-        PressFaucet();
-        CheckFaucet("02-host-presses", start);
-        Mark("h2");
-        if (!Await("c2")) return;
-    }
-    const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
-    UE_LOGI("sound-drill: the alien sounds fired=%d", fired ? 1 : 0);
-    Mark("alien");
-    CheckNoisers(WatchNoisers(kNoiseWatchSeconds));
-    if (!Await("c_alien")) return;
+    if (!PS::WaitFor("the host's faucet readable", 30, [&] { return FaucetOn(start); })) return;
+
+    // The client presses; this peer's copy must flip and click.
+    const uint32_t clicks0 = Clicks();
+    PS::Mark("f1_go", start ? "1" : "0");
+    if (!PS::Await("f1_done", kStepSec)) return;
+    int f1Flip = 0, f1Click = 0;
+    Parse2(Crossed(!start, clicks0), f1Flip, f1Click);
+    UE_LOGI("world-sound: HOST the client's press: flipped=%d clicked=%d", f1Flip, f1Click);
+
+    // The host presses; the client's copy must flip and click.
+    PS::Mark("f2_go", start ? "1" : "0");
+    PressFaucet();
+    PS::Mark("f2_pressed");
+    std::string f2;
+    if (!PS::AwaitText("f2_result", f2, kStepSec)) return;
+    int f2Flip = 0, f2Click = 0;
+    Parse2(f2, f2Flip, f2Click);
+
+    // The sky's tp: two cues to the client.
+    PS::Mark("earth_go");
     OnGameThread([&] {
         void* sky = R::FindObjectByClass(L"newsky_C");
         const bool ran = sky && ue_wrap::component_calls::CallParamlessNamed(sky, L"tp");
-        UE_LOGI("sound-drill: the sky's tp ran=%d", ran ? 1 : 0);
+        UE_LOGI("world-sound: the sky's tp ran=%d", ran ? 1 : 0);
     });
-    ::Sleep(kTeleportSeconds * 1000);
-    Mark("h3");
-    if (!Await("c3")) return;
-    UE_LOGI("sound-drill: DONE on host fails=%d", g_fails);
+    std::string earth;
+    if (!PS::AwaitText("earth_result", earth, kEarthSec + 60)) return;
+    int received = 0, played = 0;
+    Parse2(earth, received, played);
+    uint32_t sent = 0;
+    OnGameThread([&] { sent = WS::GetCounts().sent; });
+
+    // The alien sounds: each peer's own noisers.
+    const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
+    UE_LOGI("world-sound: the alien sounds fired=%d", fired ? 1 : 0);
+    PS::Mark("alien_go");
+    const Noisers mine = WatchNoisers(true);
+    std::string theirs;
+    if (!PS::AwaitText("alien_result", theirs, kAlienSec + 60)) return;
+    size_t cMost = 0, cNoises = 0;
+    sscanf_s(theirs.c_str(), "most=%zu noises=%zu", &cMost, &cNoises);
+    PS::Mark("host_done");
+
+    if (!fired) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the alien sounds did not fire");
+        return;
+    }
+    if (!f1Flip || !f2Flip) {
+        RV::Say(kTag, RV::Outcome::Invalid, "a faucet's state did not cross (client's press=%d, host's press=%d): its lane had not listed it", f1Flip, f2Flip);
+        return;
+    }
+    const bool pass = f1Flip && f1Click && f2Flip && f2Click && sent == 2 && received == 2 && played == 2 &&
+                      mine.most >= kNoisers && !mine.noises.empty() && cMost >= kNoisers && cNoises > 0;
+    RV::Say(kTag, pass ? RV::Outcome::Pass : RV::Outcome::Fail,
+            "faucet: the client's press flipped the host's copy=%d and clicked there=%d, the host's press flipped the client's=%d "
+            "and clicked there=%d; earth: the host sent %u cues, the client received %d and played %d; alien: the host %s, the "
+            "client most=%zu noises=%zu",
+            f1Flip, f1Click, f2Flip, f2Click, sent, received, played, Text(mine).c_str(), cMost, cNoises);
+    UE_LOGI("world-sound: DONE on host");
 }
 
 void RunClient() {
-    bool ready = false;
-    for (int i = 0; i < 480 && !ready; ++i) {
-        OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-        if (!ready) ::Sleep(500);
-    }
-    ::Sleep(8000);
-    Mark("client_ready");
+    if (!disc_drill::HostPuppetUp()) return;
+    PS::Mark("client_ready");
     std::string key;
-    for (int i = 0; i < 1200 && key.empty(); ++i) {
-        std::ifstream f(g_dir + "\\faucet_key", std::ios::binary);
-        if (f) std::getline(f, key);
-        if (key.empty()) ::Sleep(100);
+    if (!PS::AwaitText("faucet_key", key, kStepSec)) return;
+    UE_LOGI("world-sound: client faucet key='%hs'", SpawnFaucet(key).c_str());
+    PS::Mark("client_faucet");
+    std::string start;
+    if (!PS::AwaitText("f1_go", start, kStepSec)) return;
+    const bool on = start == "1";
+    PressFaucet();
+    PS::Mark("f1_done");
+
+    // The host presses; this peer's copy must flip and click.
+    if (!PS::AwaitText("f2_go", start, kStepSec)) return;
+    const uint32_t clicks0 = Clicks();
+    if (!PS::Await("f2_pressed", kStepSec)) return;
+    PS::Mark("f2_result", Crossed(on, clicks0));
+
+    // The sky's tp: both cues received and played here.
+    if (!PS::Await("earth_go", kStepSec)) return;
+    PS::WaitFor("both of the sky's sounds played here", kEarthSec, [] {
+        uint32_t played = 0;
+        OnGameThread([&] { played = WS::GetCounts().played; });
+        return played >= 2;
+    }, false);
+    WS::Counts c;
+    OnGameThread([&] { c = WS::GetCounts(); });
+    UE_LOGI("world-sound: CLIENT the sky's sounds: received=%u played=%u", c.received, c.played);
+    PS::Mark("earth_result", std::to_string(c.received) + " " + std::to_string(c.played));
+
+    if (!PS::Await("alien_go", kStepSec)) return;
+    PS::Mark("alien_result", Text(WatchNoisers(true)));
+    PS::Await("host_done", kStepSec);
+    UE_LOGI("world-sound: DONE on client");
+}
+
+// ---- join: a client that arrives while the host's noisers are out ----
+
+void RunJoinHost() {
+    if (!disc_drill::HostWorldUp()) return;
+    if (!PS::Await("client_ready", 480)) return;
+    const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
+    UE_LOGI("world-sound: the alien sounds fired=%d", fired ? 1 : 0);
+    if (!fired || !WatchNoisers(false).most) {
+        RV::Say(kTagJoin, RV::Outcome::Invalid, "the host's noisers did not come out");
+        return;
     }
-    UE_LOGI("sound-drill: client faucet key='%hs'", SpawnFaucet(key).c_str());
-    Mark("client_faucet");
-    bool start = false, faucet = true;
-    for (int i = 0; i < 2400; ++i) {
-        std::ifstream on(g_dir + "\\start_on"), off(g_dir + "\\start_off"), none(g_dir + "\\no_faucet");
-        if (none) {
-            faucet = false;
-            break;
-        }
-        if (on || off) {
-            start = static_cast<bool>(on);
-            break;
-        }
-        ::Sleep(100);
+    PS::Mark("alien_out");
+    if (!PS::Await("client_done", kStepSec)) return;
+    const uint32_t life1Gen = harness::session_runtime::Session().peerGenerationForSlot(1);
+    PS::Mark("host_ack");
+    if (!PS::WaitFor("the client's life 1 gone from slot 1", 300, [life1Gen] {
+            auto& s = harness::session_runtime::Session();
+            return !s.IsSlotConnected(1) || s.peerGenerationForSlot(1) != life1Gen;
+        }))
+        return;
+    size_t atEdge = 0;
+    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, &atEdge] {
+            bool ready = false;
+            OnGameThread([&] {
+                auto& s = harness::session_runtime::Session();
+                ready = s.IsSlotWorldReady(1) && s.peerGenerationForSlot(1) != life1Gen;
+            });
+            if (ready) atEdge = NoisersNow();
+            return ready;
+        }))
+        return;
+    UE_LOGI("world-sound: HOST the rejoined client's world is up; the host has %zu noisers out", atEdge);
+    std::string theirs;
+    if (!PS::AwaitText("rejoin_done", theirs, kAlienSec + 60)) return;
+    size_t most = 0;
+    sscanf_s(theirs.c_str(), "most=%zu", &most);
+    if (atEdge < kNoisers) {
+        RV::Say(kTagJoin, RV::Outcome::Invalid, "the host had %zu noisers out at the client's ready edge", atEdge);
+        return;
     }
-    if (faucet) {
-        ::Sleep(4000);
-        PressFaucet();
-        CheckFaucet("01-client-presses", !start);
-        Mark("c1");
-        if (!Await("h1")) return;
-        if (!Await("h2")) return;
-        CheckFaucet("02-host-presses", start);
-        Mark("c2");
-    }
-    if (!Await("alien")) return;
-    CheckNoisers(WatchNoisers(kNoiseWatchSeconds));
-    Mark("c_alien");
-    if (!Await("h3", 240)) return;
-    UE_LOGI("sound-drill: DONE on client fails=%d", g_fails);
-    Mark("c3");
+    RV::Say(kTagJoin, most >= kNoisers ? RV::Outcome::Pass : RV::Outcome::Fail,
+            "the host had %zu noisers out at the client's ready edge; the rejoined client had %zu around it", atEdge, most);
+    UE_LOGI("world-sound: JOIN DONE on host");
+}
+
+void RunJoinClient() {
+    if (!disc_drill::HostPuppetUp()) return;
+    PS::Mark("client_ready");
+    if (!PS::Await("alien_out", kStepSec)) return;
+    PS::Mark("client_done");
+    PS::Await("host_ack", 60);
+    OnGameThread([] {
+        auto& s = harness::session_runtime::Session();
+        if (s.running()) coop::net_pump::FleeAfterNativeMenuTravel(s, "world sound drill: life 1 leaves for the rejoin");
+    });
+    PS::WaitFor("this life's session stopped", 15, [] { return !harness::session_runtime::Session().running(); }, false);
+    UE_LOGI("world-sound: DONE on client");
+}
+
+void RunRejoin() {
+    if (!disc_drill::HostPuppetUp()) return;
+    const Noisers n = WatchNoisers(false);
+    UE_LOGI("world-sound: REJOIN the noisers around this player: %zu", n.most);
+    PS::Mark("rejoin_done", "most=" + std::to_string(n.most));
+    UE_LOGI("world-sound: REJOIN DONE");
 }
 
 }  // namespace
 
 DWORD WINAPI WorldSoundThread(LPVOID /*arg*/) {
-    g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (g_dir.empty()) {
-        UE_LOGW("sound-drill: VERDICT ABORT -- VOTVCOOP_CAN_DIR is unset");
-        return 0;
+    if (!PS::Begin(kTag)) return 0;
+    const bool join = Arm() == "join";
+    if (!IsClientRole()) {
+        if (join) RunJoinHost();
+        else RunHost();
+    } else if (!join) {
+        RunClient();
+    } else if (coop::config::ReadEnv("VOTVCOOP_WORLD_SOUND_DRILL_REJOIN") == "1") {
+        RunRejoin();
+    } else {
+        RunJoinClient();
     }
-    if (IsClientRole()) RunClient();
-    else RunHost();
     return 0;
 }
 
