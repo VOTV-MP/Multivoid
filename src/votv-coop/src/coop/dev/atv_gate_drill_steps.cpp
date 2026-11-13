@@ -283,13 +283,24 @@ Result D7(Ctx& c) {
 // 8 and 9: a burn reaches the copy that does not drive: the host through the client's acked blocks, the others through the
 // host's blocks. Decided on the block that lowers the copy's fuel.
 Result DecideBurn(Ctx& c, Role driver) {
-    if (c.me == driver) return Pass("this copy drives");
-    DE::Rec r;
+    uint32_t applied = 0, current = 0;
+    OnGt([&] { applied = H::AppliedStateSeq(c.key); current = H::CurrentStateSeq(c.key); });
+    if (c.me == driver) {
+        UE_LOGI("atv-drill: the driver's copy acks state #%u (its own newest applied)", applied);
+        return Pass("this copy drives");
+    }
+    DE::Rec r, last;
+    int seen = 0;
     const bool onHost = c.me == kHost;
     if (WaitRec(c, DE::kBlock, [&](const DE::Rec& b) {
+            if (b.i0 == (onHost ? 0 : 1)) { last = b; ++seen; }
             return onHost ? (b.i0 == 0 && b.i1 == 1 && b.f1 < b.f0 - kFallFuel) : (b.i0 == 1 && b.f2 < b.f0 - kFallFuel);
-        }, r) != 1)
+        }, r) != 1) {
+        // What the blocks said while no burn came: the instrument for a burn that never reached this copy.
+        UE_LOGI("atv-drill: no burn reached this copy: %d blocks seen, the last acked=%d copy %.2f -> %.2f, its own %.2f; "
+                "this peer's state #%u current, #%u applied", seen, last.i1, last.f0, last.f1, last.f2, current, applied);
         return Stopped();
+    }
     return Pass("a block carried the burn into this copy");
 }
 Result D8(Ctx& c) { return DecideBurn(c, kClient); }
