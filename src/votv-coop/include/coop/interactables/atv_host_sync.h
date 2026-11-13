@@ -105,8 +105,4 @@ void AskHorn(const std::wstring& key, bool down);
 void NoteAtvGone(const std::wstring& key);
 void NoteAtvIndexed(const std::wstring& key, void* atv);
 
-// [dev] The horns this peer played for another peer's press.
-void NoteHornPlayed();
-uint32_t HornsPlayed();
-
 }  // namespace coop::atv_host_sync

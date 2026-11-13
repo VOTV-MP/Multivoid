@@ -262,7 +262,6 @@ void Sound(const std::wstring& key, void* atv, bool down, int skipSlot) {
         H::ApplyScope applying;
         A::ReplayHorn(atv, down);
     }
-    if (down) H::NoteHornPlayed();
     H::SendHorn(key, down, skipSlot);
 }
 

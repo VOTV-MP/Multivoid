@@ -33,7 +33,6 @@ constexpr int kMaxModules = 16;   // what a state carries: Payload::modules
 std::atomic<coop::net::Session*> g_session{nullptr};
 uint32_t g_world = 0;
 int g_applying = 0;   // our own writes run inside an ApplyScope
-uint32_t g_hornsPlayed = 0;
 
 // The state sequences (atv_host_sync.h): the host's per ATV, and the newest this client applied. Both are the session's,
 // never reset by a world change.
@@ -227,7 +226,6 @@ void OnState(const Payload& p) {
         if (!atv) return;
         ApplyScope applying;
         A::ReplayHorn(atv, (p.flags & coop::net::kAtvHostHornDown) != 0);
-        if (p.flags & coop::net::kAtvHostHornDown) NoteHornPlayed();
         return;
     }
     if (p.op == op::kAnswer) {
@@ -371,8 +369,5 @@ bool VitalsGated(const std::wstring& key) {
     const auto it = g_gate.find(key);
     return it != g_gate.end() && !it->second.open.empty();
 }
-
-void NoteHornPlayed() { ++g_hornsPlayed; }
-uint32_t HornsPlayed() { return g_hornsPlayed; }
 
 }  // namespace coop::atv_host_sync

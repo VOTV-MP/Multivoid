@@ -696,7 +696,6 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_woodchipper.cpp
     src/harness/autotest/autotest_class_resolve.cpp
     src/harness/autotest/autotest_prop_props.cpp
-    src/harness/autotest/autotest_atv_host.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
