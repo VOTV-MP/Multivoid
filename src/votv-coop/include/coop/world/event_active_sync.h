@@ -35,8 +35,9 @@ void Install(coop::net::Session* session);
 // with no row.
 void SendJoinSnapshotForSlot(int slot);
 
-// How many EventSnapshots this host has sent in this session, for the drill: the join edge's decision to tell a joiner.
-uint32_t JoinSnapshotsSent();
+// How many EventSnapshots of the event row `row` (e.g. "alienSounds") this host has sent in this session, for the drill:
+// the join edge's decision to tell a joiner of that event, whatever other events run.
+uint32_t JoinSnapshotsSent(const char* row);
 
 // CLIENT, game thread (event_feed drain): one in-flight event entry from the host. Logs it;
 // mapped rows go to event_fire_sync::ReplayInFlightRow (policy + active-override live there).

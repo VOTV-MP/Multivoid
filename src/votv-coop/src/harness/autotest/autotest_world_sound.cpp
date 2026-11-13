@@ -72,7 +72,7 @@ constexpr int kStepSec = 120;
 constexpr int kCrossSec = 15;          // INVALID bound: a faucet's state reaching the other peer
 constexpr int kFirstSoundSec = 30;     // INVALID bound: the sky playing its first sound after tp
 constexpr int kEarthSec = 150;         // INVALID bound: the sky playing its second sound, over a minute after its first
-constexpr int kCueSec = 15;            // INVALID bound: a cue the host sent, played here
+constexpr int kCueSec = 15;            // INVALID bound: a cue the host sent, received here
 constexpr int kAlienSec = 60;          // INVALID bound: three noisers out, and one of them making a noise
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::world_sound_drill); }
@@ -116,13 +116,15 @@ size_t NoisersNow() {
     return live;
 }
 
-// One of the noisers heard making a noise: they sound every 5 to 10 s, so a bound passing without one is INVALID.
-bool WaitNoise() {
+// One of the noisers heard making a noise: they sound every 5 to 10 s, so a bound passing without one is INVALID. A peer that
+// is waiting for another's verdict names the signal that ends its wait (the verdict said), and the wait is left at once.
+bool WaitNoise(const char* stopSignal = nullptr) {
     Noisers n;
     return PS::WaitFor("a noiser's noise", kAlienSec, [&] {
         Sample(n);
-        return !n.noises.empty();
-    }, false);
+        std::string unused;
+        return !n.noises.empty() || (stopSignal && PS::Peek(stopSignal, unused));
+    }, false) && !n.noises.empty();
 }
 
 // The host's alien event dispatched on this peer: the replay count rose. The noisers spawn inside that call, so their
@@ -274,6 +276,13 @@ void RunHost() {
     int f1Flip = 0, f1Click = 0;
     Parse2(Crossed(!start, clicks0), f1Flip, f1Click);
     UE_LOGI("world-sound: HOST the client's press: flipped=%d clicked=%d", f1Flip, f1Click);
+    // A state that crossed with no click played is decided here: the host's press and the later legs are not run.
+    if (f1Flip == 1 && !f1Click) {
+        PS::Mark("f2_go", "skip");
+        EndNow(RV::Outcome::Fail, false, "a faucet's state crossed and no click was played for it here (the client's press: the "
+               "host clicked=0)");
+        return;
+    }
 
     // The host presses; the client's copy must flip and click. The client takes its click baseline first and says it is
     // armed: a press landing before the baseline would read as no click.
@@ -285,14 +294,15 @@ void RunHost() {
     if (!PS::AwaitText("f2_result", f2, kStepSec)) return;
     int f2Flip = 0, f2Click = 0;
     Parse2(f2, f2Flip, f2Click);
+    // A decided FAIL is said before an INVALID of the other press.
+    if (f2Flip == 1 && !f2Click) {
+        EndNow(RV::Outcome::Fail, false, "a faucet's state crossed and no click was played for it here (the host's press: the "
+               "client clicked=0)");
+        return;
+    }
     if (f1Flip != 1 || f2Flip != 1) {
         EndNow(RV::Outcome::Invalid, false, "a faucet's state did not cross (client's press=%d, host's press=%d): its lane had not "
                "listed it", f1Flip, f2Flip);
-        return;
-    }
-    if (!f1Click || !f2Click) {
-        EndNow(RV::Outcome::Fail, false, "a faucet's state crossed and no click was played for it here (the client's press: the "
-               "host clicked=%d; the host's press: the client clicked=%d)", f1Click, f2Click);
         return;
     }
 
@@ -354,8 +364,8 @@ void RunHost() {
     }
     PS::Mark("host_done");
 
-    // A cue not sent for a sound played here is decided; so is a cue received and not played. What did not come in its bound is
-    // INVALID.
+    // A cue not sent for a sound played here is decided; so is a cue received and not played (the client's play call runs in
+    // the task that receives it). What did not come in its bound is INVALID.
     if (cueNotSent) {
         RV::Say(kTag, RV::Outcome::Fail, "earth: the sky played %u sounds here and the host sent %u cues", c.matched, c.sent);
         return;
@@ -364,7 +374,7 @@ void RunHost() {
     if (invalid) {
         RV::Say(kTag, RV::Outcome::Invalid,
                 "an event did not come inside its bound: alien fired=%d, dispatched on the client=%d, a noise on the host=%d and on "
-                "the client=%d; the sky's sounds played here (first=%d, second=%d); the client's cues played in time=%d",
+                "the client=%d; the sky's sounds played here (first=%d, second=%d); the client's cues received in time=%d",
                 fired ? 1 : 0, cApplied, mineNoise ? 1 : 0, cNoise, first ? 1 : 0, secondPlayed ? 1 : 0, earthTimeout ? 0 : 1);
         return;
     }
@@ -392,6 +402,10 @@ void RunClient() {
 
     // The host presses; this peer's copy must flip and click.
     if (!PS::AwaitText("f2_go", start, kStepSec)) return;
+    if (start == "skip") {   // the host decided at the first press
+        UE_LOGI("world-sound: DONE on client (the host's verdict is said)");
+        return;
+    }
     const uint32_t clicks0 = Clicks();
     const unsigned replays0 = Replays();
     PS::Mark("f2_armed");
@@ -406,22 +420,28 @@ void RunClient() {
         const bool applied = PS::WaitFor("the host's alien sounds dispatched here", kAlienSec, [replays0] { return Replays() > replays0; }, false);
         const size_t most = applied ? NoisersNow() : 0;
         PS::Mark("alien_count", "most=" + std::to_string(most) + " applied=" + (applied ? "1" : "0"));   // the count first: it decides
-        const bool noise = applied && WaitNoise();
+        const bool noise = applied && WaitNoise("host_done");
+        std::string verdictSaid;
+        if (!noise && PS::Peek("host_done", verdictSaid)) {   // the host said its verdict at the count: no later leg is run
+            UE_LOGI("world-sound: DONE on client (the host's verdict is said)");
+            return;
+        }
         PS::Mark("alien_result", std::string("noise=") + (noise ? "1" : "0"));
     }
 
     // The sky's tp: the host says how many cues it sent once its sounds are played (none, in the red, and then nothing can
-    // arrive); each cue sent is received and played here, and a bound passing without it is INVALID (timeout=1).
+    // arrive); each cue sent is received here, and a bound passing without it is INVALID (timeout=1). Its play call runs in
+    // the task that receives it, so whether it played is final when it is received, and is judged by the host.
     if (!PS::Await("earth_go", kStepSec)) return;
     std::string fin;
     if (!PS::AwaitText("earth_final", fin, kEarthSec + 60)) return;
     const uint32_t sent = static_cast<uint32_t>(std::atoi(fin.c_str()));
     bool arrived = true;
     if (sent > 0)
-        arrived = PS::WaitFor("the host's cues played here", kCueSec, [sent] {
-            uint32_t played = 0;
-            OnGameThread([&] { played = WS::GetCounts().played; });
-            return played >= sent;
+        arrived = PS::WaitFor("the host's cues received here", kCueSec, [sent] {
+            uint32_t received = 0;
+            OnGameThread([&] { received = WS::GetCounts().received; });
+            return received >= sent;
         }, false);
     WS::Counts c;
     OnGameThread([&] { c = WS::GetCounts(); });
@@ -454,7 +474,7 @@ void RunJoinHost() {
     // The host's counter lives as long as its session, across both of the client's lives: the join's own snapshots are
     // the count at the ready edge less the count when life 1 was gone, before the new life's world was up.
     uint32_t snapshots0 = 0;
-    OnGameThread([&] { snapshots0 = coop::event_active_sync::JoinSnapshotsSent(); });
+    OnGameThread([&] { snapshots0 = coop::event_active_sync::JoinSnapshotsSent("alienSounds"); });
     size_t atEdge = 0;
     uint32_t snapshots = 0;
     if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, snapshots0, &atEdge, &snapshots] {
@@ -463,7 +483,7 @@ void RunJoinHost() {
                 auto& s = harness::session_runtime::Session();
                 ready = s.IsSlotWorldReady(1) && s.peerGenerationForSlot(1) != life1Gen;
                 // The connect replay ran in the edge's own task.
-                if (ready) snapshots = coop::event_active_sync::JoinSnapshotsSent() - snapshots0;
+                if (ready) snapshots = coop::event_active_sync::JoinSnapshotsSent("alienSounds") - snapshots0;
             });
             if (ready) atEdge = NoisersNow();
             return ready;

@@ -66,7 +66,7 @@ struct Began {
 };
 std::unordered_map<void*, Began> g_began;
 uint32_t g_beganGen = 0;           // the world the begin times belong to
-uint32_t g_snapshotsSent = 0;      // the join edge's sends, this session
+std::unordered_map<std::string, uint32_t> g_snapshotsByRow;   // the join edge's sends by event row ("" unmapped), this session
 
 long long NowMs() {
     using namespace std::chrono;
@@ -283,7 +283,7 @@ void SendJoinSnapshotForSlot(int slot) {
         if (row) std::strncpy(p.rowName, row, sizeof(p.rowName) - 1);
         p.elapsedSec = static_cast<uint16_t>(elapsed < 0 ? 0 : (elapsed > 65535 ? 65535 : elapsed));
         if (s->SendReliableToSlot(slot, coop::net::ReliableKind::EventSnapshot, &p, sizeof(p))) {
-            ++g_snapshotsSent;
+            ++g_snapshotsByRow[row ? row : ""];
             UE_LOGI("event_active: join-edge slot=%d SNAPSHOT class=%s row=%s elapsed=%s", slot,
                     className.c_str(), row ? row : "<unmapped>",
                     known ? (std::to_string(elapsed) + "s").c_str() : "unknown (began before this host watched)");
@@ -319,12 +319,15 @@ void OnReliable(const coop::net::EventSnapshotPayload& payload) {
     coop::event_fire_sync::ReplayInFlightRow(row);
 }
 
-uint32_t JoinSnapshotsSent() { return g_snapshotsSent; }
+uint32_t JoinSnapshotsSent(const char* row) {
+    const auto it = g_snapshotsByRow.find(row ? row : "");
+    return it == g_snapshotsByRow.end() ? 0 : it->second;
+}
 
 void OnDisconnect() {
     g_began.clear();
     g_beganGen = 0;
-    g_snapshotsSent = 0;
+    g_snapshotsByRow.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
 
