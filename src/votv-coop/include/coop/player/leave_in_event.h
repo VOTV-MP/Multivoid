@@ -19,8 +19,9 @@ namespace coop::net { class Session; }
 
 namespace coop::player::leave_in_event {
 
-// Cache the session and register the watch on lib_C::getEvent once the menu's class has loaded. Idempotent; safe
-// every tick, it asks again at most once a second until the watch stands. Game thread.
+// Cache the session, register the watch on lib_C::getEvent, and bind the menu's and the library's classes, which are
+// new objects with each level: a class is looked up when the class set moves and through the load window after it,
+// and not at all while it stays bound (two listing-id compares a tick). Idempotent. Game thread.
 void Install(coop::net::Session* session);
 
 }  // namespace coop::player::leave_in_event
