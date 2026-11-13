@@ -20,6 +20,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/interactable_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"
@@ -165,7 +166,23 @@ uint32_t Clicks() {
     return n;
 }
 
-void PressFaucet() {
+// The faucet this peer spawned, listed by the appliance lane: a press before that sends nothing. Waits for the lane's own
+// index to hold it; a bound passing without it is INVALID, named.
+bool WaitListed(const char* role) {
+    const ULONGLONG t0 = GetTickCount64();
+    const bool listed = PS::WaitFor("the appliance lane lists the spawned faucet", 30, [] {
+        std::wstring key;
+        OnGameThread([&] { key = coop::interactable_sync::ApplianceKey(FirstFaucet()); });
+        return !key.empty();
+    });
+    if (listed)
+        UE_LOGI("world-sound: %s faucet listed by the appliance lane after %llu ms", role,
+                static_cast<unsigned long long>(GetTickCount64() - t0));
+    return listed;
+}
+
+void PressFaucet(const char* role) {
+    UE_LOGI("world-sound: %s presses the faucet", role);
     OnGameThread([&] {
         void* faucet = FirstFaucet();
         void* local = coop::players::Registry::Get().Local();
@@ -241,6 +258,7 @@ void RunHost() {
         return;
     const std::string key = SpawnFaucet("");
     UE_LOGI("world-sound: host faucet key='%hs'", key.c_str());
+    if (!WaitListed("HOST")) return;
     PS::Mark("faucet_key", key);
     if (!PS::Await("client_faucet", kStepSec)) return;
     bool start = false;
@@ -256,7 +274,7 @@ void RunHost() {
 
     // The host presses; the client's copy must flip and click.
     PS::Mark("f2_go", start ? "1" : "0");
-    PressFaucet();
+    PressFaucet("HOST");
     PS::Mark("f2_pressed");
     std::string f2;
     if (!PS::AwaitText("f2_result", f2, kStepSec)) return;
@@ -359,11 +377,12 @@ void RunClient() {
     std::string key;
     if (!PS::AwaitText("faucet_key", key, kStepSec)) return;
     UE_LOGI("world-sound: client faucet key='%hs'", SpawnFaucet(key).c_str());
+    if (!WaitListed("CLIENT")) return;
     PS::Mark("client_faucet");
     std::string start;
     if (!PS::AwaitText("f1_go", start, kStepSec)) return;
     const bool on = start == "1";
-    PressFaucet();
+    PressFaucet("CLIENT");
     PS::Mark("f1_done");
 
     // The host presses; this peer's copy must flip and click.
