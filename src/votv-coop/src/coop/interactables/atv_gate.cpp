@@ -5,7 +5,6 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/interactables/atv_drill_events.h"
-#include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/net/protocol.h"
@@ -264,25 +263,17 @@ void OnPost(const sg::Call& call) {
     }
 }
 
-// The honk key's press and release on the copy a player drives. The host's own goes to every client; a client's, as the
-// ATV's syncer, goes to the host.
+// The honk key's press and release on the copy a player sits in. The horn is a level of the syncer's block (stateBits'
+// kAtvHorn): these rows set the level and the latch it carries (atv_sync.h NoteHorn). The level is not read off the copy
+// because the BP writes `input_alt` only in these two events and never clears it when the seat ends. Our own replay of a
+// horn on another peer's copy runs in an ApplyScope and is no press.
 void OnHonkPost(const sg::Call& call) {
     const int row = call.tag - kTagBase;
     if (row == kHonkPress || row == kHonkRelease) g_seen[row].fetch_add(1, std::memory_order_relaxed);
-    if (H::Applying()) return;
-    const Who role = RoleNow();
-    if (role == Who::None) return;
-    const bool down = row == kHonkPress;
+    if (H::Applying() || RoleNow() == Who::None) return;
     const std::wstring key = A::GetKeyString(call.object);
     if (!coop::atv_sync::AnnounceableAtvKey(key)) return;
-    if (role == Who::Host) {
-        coop::atv_host_judge::HostHorn(key, call.object, down);
-        return;
-    }
-    coop::atv_sync::TableView t;
-    if (role == Who::Client && coop::atv_sync::ReadTable(key, t) &&
-        t.syncerSlot == coop::players::Registry::Get().LocalPeerId())
-        H::AskHorn(key, down);
+    coop::atv_sync::NoteHorn(key, row == kHonkPress);
 }
 
 }  // namespace
@@ -290,10 +281,6 @@ void OnHonkPost(const sg::Call& call) {
 uint32_t Seen(Row row) { return row >= 0 && row < kRowCount ? g_seen[row].load(std::memory_order_relaxed) : 0u; }
 
 uint32_t SendForDrill(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
-    if (opcode == op::kHorn) {
-        H::AskHorn(key, true);
-        return 0;
-    }
     return H::Ask(key, opcode, amount, module);
 }
 

@@ -33,7 +33,6 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace coop::atv_host_judge {
@@ -53,15 +52,12 @@ bool Arm(const char* value) { return coop::config::ResolveEnum(::coop::config_re
 bool JudgeOff() { static const bool on = Arm("atv_judge_off"); return on; }       // every request is judged ok
 bool DupOff() { static const bool on = Arm("atv_dup_module"); return on; }        // a duplicate fit is allowed
 bool RefundOff() { static const bool on = Arm("atv_refund_off"); return on; }     // a refused fit is not refunded
-bool HornJudgeOff() { static const bool on = Arm("atv_horn_judge_off"); return on; }   // any sender may press the horn
 bool ParkOff() { static const bool on = Arm("atv_park_off"); return on; }         // a request is judged before its world is ready
 
 constexpr float kMax = 100.f;      // a full tank, full health
 constexpr float kReachCm = 800.f;  // a sender's puppet from its ATV, when it is not seated in it
-// A sender's item acts are served at {4, 4} a second (the chipper's pour and the cremator lever's bound), from a queue of
-// 8; the horn, a stream of short edges, at {8, 8}.
+// A sender's item acts are served at {4, 4} a second (the chipper's pour and the cremator lever's bound), from a queue of 8.
 constexpr N::IntentBudget kBudget{4.0f, 4.0f};
-constexpr N::IntentBudget kHornBudget{8.0f, 8.0f};
 constexpr size_t kMaxPending = 8;
 constexpr int kMaxModules = 16;
 constexpr const wchar_t* kCanClass = L"prop_gascan_C";
@@ -72,7 +68,6 @@ constexpr uint32_t kModuleUses = 1;     // a module is consumed by its fit
 
 struct Slot {
     N::IntentQueue<Payload> queue;
-    N::IntentBucket horn;
     // The head waits for an event: the slot's world-ready edge (OnSlotReady), its hand state applied (OnHandApplied), or a
     // state of the host's own (OnStatePublished, the drill's fixture). Tick serves no parked slot; an event ends the park.
     bool parked = false;
@@ -83,9 +78,6 @@ struct Slot {
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
-// The ATVs whose horn a client's press holds down, with the slot that pressed it.
-struct HornHeld { void* atv; uint8_t slot; };
-std::unordered_map<std::wstring, HornHeld> g_hornDown;
 N::RefusalTally g_refusals{"atv_host"};
 std::wstring g_holdKey;   // [dev] see Execute
 uint32_t g_holdSeq = 0;
@@ -94,7 +86,7 @@ constexpr uint8_t kReasons = 11;   // atv_host_reason::kOk .. kFull
 struct Counts {
     uint32_t accepted[7] = {};   // by request op
     uint32_t refused[kReasons] = {};   // by atv_host_reason
-    uint32_t parked = 0, hornsDown = 0, hornsRefused = 0, noKey = 0, refunded = 0;
+    uint32_t parked = 0, noKey = 0, refunded = 0;
 };
 Counts g_n;
 
@@ -342,57 +334,6 @@ N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
     return N::Served::Done;
 }
 
-// ---- the horn ----
-
-// The host copy sounds the edge and the others are told.
-void Sound(const std::wstring& key, void* atv, bool down, int skipSlot) {
-    {
-        H::ApplyScope applying;
-        A::ReplayHorn(atv, down);
-    }
-    DE::Note(DE::kHornPlayed, down ? 1 : 0);
-    H::SendHorn(key, down, skipSlot);
-}
-
-// The horn is an edge here and not a level in the block: MTA carries it as a pad bit of every vehicle packet (the horn is
-// ShockButtonL, reference/mtasa-blue/Shared/mods/deathmatch/logic/Utils.cpp:763, in the full keysync of CVehiclePuresyncPacket.cpp:57), which a
-// joiner hears at the next packet and a lost edge self-heals. Ours is the sound's one-shot onset, which a level seen at the
-// next block would play late or not at all, so it stays a reliable edge, and what the level gives MTA for free is made here:
-// the table of presses answers a joiner (OnSlotReady) and clears at the seat's end (ReleaseHorn).
-void OnHorn(N::Session& s, uint8_t slot, const std::wstring& key, const Payload& p) {
-    const Clock::time_point now = Clock::now();
-    coop::atv_sync::TableView t;
-    if (!s.IsSlotWorldReady(slot) || !coop::atv_sync::ReadTable(key, t)) {
-        ++g_n.hornsRefused;
-        g_refusals.Note(slot, "a horn of an ATV the host does not hold, or from a world not ready", now);
-        return;
-    }
-    const bool down = (p.flags & N::kAtvHostHornDown) != 0;
-    const auto held = g_hornDown.find(key);
-    if (down) {
-        if (t.syncerSlot != slot && HornJudgeOff()) DE::Note(DE::kHornHandled, slot, 0);
-        else if (t.syncerSlot != slot) {
-            DE::Note(DE::kHornHandled, slot, 1);
-            ++g_n.hornsRefused;
-            g_refusals.Note(slot, "a horn from a slot that does not sync the ATV", now);
-            return;
-        }
-        if (held != g_hornDown.end()) return;   // already down
-        if (!g_slots[slot].horn.Take(kHornBudget, N::NowMs())) {
-            ++g_n.hornsRefused;
-            g_refusals.Note(slot, "a horn past its budget", now);
-            return;
-        }
-        g_hornDown[key] = HornHeld{t.actor, slot};
-        ++g_n.hornsDown;
-    } else {
-        // A release is the press's own end: no token, and not refused because the syncer changed since.
-        if (held == g_hornDown.end() || held->second.slot != slot) return;
-        g_hornDown.erase(held);
-    }
-    Sound(key, t.actor, down, slot);
-}
-
 // The hand lane applied a hold state for `slot`: a request parked for the hand state it was owed is judged again.
 void OnHandApplied(uint8_t slot) {
     if (slot >= 1 && slot < N::kMaxPeers) g_slots[slot].parked = false;
@@ -408,10 +349,6 @@ void OnRequest(int senderSlot, const Payload& p) {
     if (key.empty()) {
         ++g_n.noKey;
         g_refusals.Note(slot, "a request with no readable key", Clock::now());
-        return;
-    }
-    if (p.op == op::kHorn) {
-        OnHorn(*s, slot, key, p);
         return;
     }
     Payload copy = p;
@@ -445,42 +382,12 @@ void Install() {
 void OnSlotReady(int slot) {
     if (slot < 1 || slot >= static_cast<int>(N::kMaxPeers)) return;
     g_slots[slot].parked = false;
-    // Principle 8: a horn held down when this slot became ready is sounded for it (its presser's own copy sounds itself).
-    for (const auto& kv : g_hornDown)
-        if (kv.second.slot != slot) H::SendHornDownToSlot(kv.first, slot);
 }
 
 void OnStatePublished(const std::wstring& key) {
     if (g_holdKey.empty() || key != g_holdKey) return;
     for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot) g_slots[slot].parked = false;
 }
-
-void HostHorn(const std::wstring& key, void* atv, bool down) {
-    if (down) {
-        g_hornDown[key] = HornHeld{atv, 0};
-    } else {
-        const auto it = g_hornDown.find(key);
-        if (it != g_hornDown.end() && it->second.slot == 0) g_hornDown.erase(it);
-    }
-    H::SendHorn(key, down, -1);
-}
-
-void ReleaseHorn(void* atv) {
-    N::Session* s = H::LiveSession();
-    if (!s || s->role() != N::Role::Host || g_hornDown.empty() || !atv) return;
-    // Found by the actor, not read from it: a table clear can come with the actor already gone.
-    for (auto it = g_hornDown.begin(); it != g_hornDown.end(); ++it) {
-        if (it->second.atv != atv) continue;
-        const std::wstring key = it->first;
-        g_hornDown.erase(it);
-        UE_LOGI("atv_host: the horn of '%ls' is released: its press is over", key.c_str());
-        if (ue_wrap::reflection::IsLive(atv)) Sound(key, atv, false, -1);
-        else H::SendHorn(key, false, -1);
-        return;
-    }
-}
-
-void OnWorldChange() { g_hornDown.clear(); }
 
 void HoldRequestsForDrill(const std::wstring& key) {
     g_holdKey = key;
@@ -491,13 +398,12 @@ void OnDisconnect() {
     uint32_t accepted = 0, refused = 0;
     for (uint32_t n : g_n.accepted) accepted += n;
     for (uint32_t n : g_n.refused) refused += n;
-    if (accepted || refused || g_n.parked || g_n.hornsDown || g_n.hornsRefused || g_n.noKey)
+    if (accepted || refused || g_n.parked || g_n.noKey)
         UE_LOGI("atv_host: session end -- host requests accepted=%u (refuel %u repair %u fit %u takeoff %u) refused=%u "
-                "parked=%u refunded=%u; horns down=%u refused=%u; no key=%u", accepted, g_n.accepted[op::kRefuel],
+                "parked=%u refunded=%u; no key=%u", accepted, g_n.accepted[op::kRefuel],
                 g_n.accepted[op::kRepair], g_n.accepted[op::kFit], g_n.accepted[op::kTakeoff], refused, g_n.parked,
-                g_n.refunded, g_n.hornsDown, g_n.hornsRefused, g_n.noKey);
+                g_n.refunded, g_n.noKey);
     g_n = Counts{};
-    g_hornDown.clear();
     g_refusals.Clear();
     g_holdKey.clear();
 }

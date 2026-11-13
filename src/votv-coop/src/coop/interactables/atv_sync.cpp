@@ -155,9 +155,13 @@ bool IsLocalSyncer(const AtvEntry& e, uint8_t localSlot) {
 
 // An AtvStatePayload from a live read; false if the transform read fails. `grabbed` marks the
 // sender's grav hand as holding it (bit 2); `occupantSlot` and `syncerSlot` are the table's values,
-// the stamp a host block carries.
-bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uint8_t syncerSlot,
+// the stamp a host block carries. The control bits are the entry's (BlockControlBits): the host's block of an ATV a client
+// syncs carries that client's last horn level.
+bool ReadPayload(AtvEntry& e, const std::wstring& key, uint8_t occupantSlot, uint8_t syncerSlot,
                  bool adopt, coop::net::AtvStatePayload& p, bool grabbed = false) {
+    void* const actor = e.actor;
+    const auto* session = g_session.load(std::memory_order_acquire);
+    const bool host = session && session->role() == coop::net::Role::Host;
     FVector loc; FRotator rot;
     if (!A::GetRootTransform(actor, loc, rot)) return false;
     FVector lin{}, ang{};
@@ -171,11 +175,8 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     p.angVelX = ang.X; p.angVelY = ang.Y; p.angVelZ = ang.Z;
     p.occupantSlot = occupantSlot;
     p.syncerSlot   = syncerSlot;
-    uint8_t sb = 0;
+    uint8_t sb = BlockControlBits(e, host && syncerSlot != 0);
     if (A::IsDriven(actor)) sb |= 0x1;
-    if (A::GetBrake(actor)) sb |= coop::net::kAtvBrake;
-    if (A::GetLights(actor)) sb |= coop::net::kAtvLights;
-    if (A::GetTurbo(actor)) sb |= coop::net::kAtvTurbo;
     if (grabbed)            sb |= 0x4;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
@@ -185,9 +186,7 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     coop::atv_condition_sync::FillPayload(actor, p);
     // Its vitals ack: the host's own blocks carry its copy's current state sequence, a client's the newest state whose
     // vitals it applied (atv_host_sync.h).
-    const auto* session = g_session.load(std::memory_order_acquire);
-    p.ackSeq = session && session->role() == coop::net::Role::Host ? coop::atv_host_sync::CurrentStateSeq(key)
-                                                                      : coop::atv_host_sync::AppliedStateSeq(key);
+    p.ackSeq = host ? coop::atv_host_sync::CurrentStateSeq(key) : coop::atv_host_sync::AppliedStateSeq(key);
     coop::atv_host_sync::NoteBlockBuilt(key);   // [dev] the drill's held state is applied after this block's ack was read
     return true;
 }
@@ -249,7 +248,7 @@ void SendStamps(coop::net::Session& s, uint64_t nowMs) {
         AtvEntry& e = kv.second;
         if (!e.stampDue || nowMs < e.stampRetryMs || !R::IsLiveByIndex(e.actor, e.idx)) continue;
         coop::net::AtvStatePayload p{};
-        if (!ReadPayload(e.actor, kv.first, e.occupantSlot, e.syncerSlot, /*adopt*/false, p)) {
+        if (!ReadPayload(e, kv.first, e.occupantSlot, e.syncerSlot, /*adopt*/false, p)) {
             e.stampRetryMs = nowMs + kRetryMs;
             static bool sSaid = false;
             if (!sSaid) { sSaid = true;
@@ -350,6 +349,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     // A client takes the host's table FIRST, before any return: the stamp is what the host decided.
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     e.occupantSlot = payload.occupantSlot;
+    if (e.syncerSlot != payload.syncerSlot) ForgetHorn(e);   // the horn's last level was the previous syncer's
     e.syncerSlot   = payload.syncerSlot;
     // The trap rides every block the host sends, so it is taken before the authority return like the rest of the stamp.
     // The developer red arm of the ATV health drill: the bit is ignored, so the drill's `armed` phase must fail.
@@ -462,7 +462,7 @@ SetSent SendSetToSlot(coop::net::Session* s, int peerSlot, bool withPoses) {
             // the syncer from the first block, and places its copy once even when a client syncs the ATV. An ATV in
             // the air at a join arrives moving and lands.
             coop::net::AtvStatePayload p{};
-            if (!ReadPayload(e.actor, h.key, e.occupantSlot, e.syncerSlot, /*adopt*/true, p)) continue;
+            if (!ReadPayload(e, h.key, e.occupantSlot, e.syncerSlot, /*adopt*/true, p)) continue;
             StampHostTrap(e, p);
             s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
             ++r.poses;
@@ -613,20 +613,22 @@ void Tick() {
                             coop::atv_hit_guard::kMaxOwned, kv.first.c_str()); }
             }
         }
-        if (!syncs) continue;   // a mirror does nothing more here; it is corrected at packet arrival
+        if (!syncs) { e.hornLatch = false; continue; }   // a mirror is corrected at packet arrival; only a syncer's block carries a press
 
         const bool driving = e.localSeated || e.localCarrying;
         if (!isHost || driving) {
             // A client syncer streams at the drive rate whether it sits, carries or has only not been handed
             // back yet; the host streams at it while its own player drives or carries. The ATV health drill's
             // silent arm holds a client's block back (SetDrillMute).
-            if (!(g_drillMute && !isHost) && nowMs - e.lastSentMs >= kDriveSendMs) {
+            if (!(g_drillMute && !isHost) && (nowMs - e.lastSentMs >= kDriveSendMs || ControlsDue(e))) {
                 e.lastSentMs = nowMs;
                 coop::net::AtvStatePayload p{};
                 const uint8_t occ = isHost ? e.occupantSlot : uint8_t{0xFF};   // the host stamps; a client's is overwritten
-                if (ReadPayload(e.actor, kv.first, occ, localSlot, /*adopt*/false, p, /*grabbed*/e.localCarrying)) {
+                if (ReadPayload(e, kv.first, occ, localSlot, /*adopt*/false, p, /*grabbed*/e.localCarrying)) {
+                    bool sent = true;
                     if (isHost) { StampHostTrap(e, p); SendToReadyClients(*s, p, -1); }
-                    else s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                    else sent = s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                    if (sent) NoteControlsSent(e, p.stateBits);
                     coop::atv_condition_sync::NoteSent(e, p);  // keep the idle gate's baseline fresh across a drive-to-idle handoff
                 }
             }
@@ -640,14 +642,16 @@ void Tick() {
             // The payload is built before the gate so the condition block can vote: a parked
             // host eject (a mask flip, no motion) would otherwise wait out the keepalive.
             coop::net::AtvStatePayload p{};
-            const bool readable  = ReadPayload(e.actor, kv.first, e.occupantSlot, /*syncerSlot*/0, /*adopt*/false, p);
+            const bool readable  = ReadPayload(e, kv.first, e.occupantSlot, /*syncerSlot*/0, /*adopt*/false, p);
             if (readable) StampHostTrap(e, p);
             const bool changed   = IdleWorthSending(e);
             const bool condMoved = readable && coop::atv_condition_sync::CondChangedSinceLastSend(e, p);
+            const bool ctlMoved  = readable && (p.stateBits & coop::net::kAtvControlBits) != e.sentControlBits;
             const bool keepalive = nowMs - e.lastIdleSendMs >= kIdleKeepaliveMs;
-            if (readable && (changed || condMoved || keepalive)) {
+            if (readable && (changed || condMoved || ctlMoved || keepalive)) {
                 e.lastIdleSendMs = nowMs;
                 SendToReadyClients(*s, p, -1);
+                NoteControlsSent(e, p.stateBits);
                 coop::atv_condition_sync::NoteSent(e, p);
             }
         }

@@ -1,9 +1,9 @@
 // coop/dev/atv_gate_drill_steps.cpp -- the steps of the ATV drill before the client leaves, each decided on events of the ATV
 // host path (coop/interactables/atv_drill_events.h), never on a clock. A step is a prelude on the host, a setup on every peer,
 // the actor's act and a decision on every peer; see atv_gate_drill_detail.h. The step ids are the drill's own: 1 refuel, 2
-// repair, 3 fit, 4 take-off, 5 the seated controls, 6 the horn (6r its release), 7a the host's refuel with the client not
-// driving, 7 with the client driving, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a forged
-// refuel, 12 a forged duplicate fit, 13 a forged horn, 15 a host state crossing a client's open refuel.
+// repair, 3 fit, 4 take-off, 5 the seated controls, 6 the horn tapped (6h held, 6r its release), 7a the host's refuel with
+// the client not driving, 7 with the client driving, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a
+// forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel.
 
 #include "atv_gate_drill_detail.h"
 
@@ -73,7 +73,8 @@ bool ActTake(Ctx& c, std::string& why) { return TakeModuleOff(c.key, why); }
 bool ActControls(Ctx& c, std::string& why) {
     return Sit(c.key, why) && Lights(c.key, why) && Brake(c.key, why) && TurboOn(c.key, why);
 }
-bool ActTapAndHold(Ctx& c, std::string& why) { return HornTap(c.key, why) && HornPress(c.key, why); }
+bool ActTap(Ctx& c, std::string& why) { return HornTap(c.key, why); }
+bool ActHold(Ctx& c, std::string& why) { return HornPress(c.key, why); }
 bool ActRelease(Ctx& c, std::string& why) { return HornRelease(c.key, why); }
 bool ActDrive(Ctx& c, std::string& why) { return DriveOn(c.key, why); }
 bool ActBrakeAndLeave(Ctx& c, std::string& why) { return Brake(c.key, why) && Leave(c.key, why); }
@@ -83,7 +84,7 @@ bool ActHostDrives(Ctx& c, std::string& why) { return Sit(c.key, why) && DriveOn
 bool Forge(Ctx& c, uint8_t opcode, float amount, uint8_t module, std::string& why) {
     uint32_t id = 0;
     OnGt([&] { id = AG::SendForDrill(c.key, opcode, amount, module); });
-    if (!id && opcode != op::kHorn) {
+    if (!id) {
         why = "the forged request was not sent";
         return false;
     }
@@ -99,7 +100,6 @@ bool ActForgeFit(Ctx& c, std::string& why) {
     }
     return Forge(c, op::kFit, 0.f, static_cast<uint8_t>(m), why);
 }
-bool ActForgeHorn(Ctx& c, std::string& why) { return Forge(c, op::kHorn, 0.f, 0, why); }
 
 bool SetupHold(Ctx& c, std::string& why) {
     if (c.me != kClient) return true;
@@ -204,19 +204,27 @@ Result DecideControls(Ctx& c, uint8_t expect) {
 Result D5(Ctx& c) { return DecideControls(c, coop::net::kAtvLights | coop::net::kAtvBrake | coop::net::kAtvTurbo); }
 Result D5b(Ctx& c) { return DecideControls(c, coop::net::kAtvBrake); }
 
-// The horn edges this copy played: `downs` presses and `ups` releases.
+// The horn is a level in the block's control bits (kAtvHorn): the changes of it this copy took from the blocks, each a
+// kControls event with the horn bit in its changed mask and the block's bits in f0. A change counts when the copy sounded it
+// (its replay ran, the horn bit of the event's equal mask); one it did not sound is the failure. `downs` rises and `ups`
+// falls are waited for.
 Result DecideHorn(Ctx& c, int downs, int ups) {
     if (c.me == kClient) return Pass("the horn key was pressed");
     int d = 0, u = 0;
+    bool unsounded = false;
     DE::Rec r;
-    if (WaitRec(c, DE::kHornPlayed, [&](const DE::Rec& e) {
-            (e.i0 ? d : u)++;
+    if (WaitRec(c, DE::kControls, [&](const DE::Rec& e) {
+            if (!(e.i0 & coop::net::kAtvHorn)) return false;
+            if (!(e.i1 & coop::net::kAtvHorn)) { unsounded = true; return true; }
+            ((static_cast<int>(e.f0) & coop::net::kAtvHorn) ? d : u)++;
             return d >= downs && u >= ups;
         }, r) != 1)
         return Stopped();
-    return Pass("this copy sounded the press and the release");
+    if (unsounded) return Fail("a block changed the horn's level and this copy did not sound it");
+    return Pass("this copy sounded the horn's change(s) the blocks carried");
 }
-Result D6(Ctx& c) { return DecideHorn(c, 2, 1); }
+Result D6(Ctx& c) { return DecideHorn(c, 1, 1); }
+Result D6h(Ctx& c) { return DecideHorn(c, 1, 0); }
 Result D6r(Ctx& c) { return DecideHorn(c, 0, 1); }
 
 // 7a: the host refuels with the client not driving. No event comes of a publish that never happened, so the client sends a
@@ -322,14 +330,6 @@ Result D12(Ctx& c) {
     return Pass("the refused fit's module was refunded and the host holds one module");
 }
 
-// 13: a horn press from a client that does not sync the ATV is refused on the host.
-Result D13(Ctx& c) {
-    if (c.me != kHost) return Pass("nothing to decide here");
-    DE::Rec r;
-    if (WaitRec(c, DE::kHornHandled, [](const DE::Rec&) { return true; }, r) != 1) return Stopped();
-    return r.i1 ? Pass("refused: not_syncer") : Fail("the host accepted a horn press from a client that is not the syncer");
-}
-
 // 15: the client pours and its request is held on the host until the host has published a change of its own, so that state
 // crosses the client's open request. The copy must not show it while the gate is shut; decided on the state's arrival.
 bool SetupHoldRequests(Ctx& c, std::string& /*why*/) {
@@ -375,7 +375,8 @@ const Step kSteps[] = {
     {"3", kClient, "a client's module fitted", nullptr, nullptr, &ActFit, &D3, nullptr},
     {"4", kClient, "a client's module taken off", nullptr, nullptr, &ActTake, &D4, nullptr},
     {"5", kClient, "the seated client's lights, brake and turbo", nullptr, nullptr, &ActControls, &D5, nullptr},
-    {"6", kClient, "the syncer's horn, tapped and held", nullptr, nullptr, &ActTapAndHold, &D6, nullptr},
+    {"6", kClient, "the syncer's horn, tapped (press and release in one block)", nullptr, nullptr, &ActTap, &D6, nullptr},
+    {"6h", kClient, "the syncer's horn held", nullptr, nullptr, &ActHold, &D6h, nullptr},
     {"6r", kClient, "the held horn released", nullptr, nullptr, &ActRelease, &D6r, nullptr},
     {"7a", kHost, "the host's refuel, the client not driving", &Seed30, nullptr, &ActPour, &D7a, nullptr},
     {"7", kHost, "the host's refuel while the client drives", &Seed30, &SetupHold, &ActPour, &D7, &TearDownDrive},
@@ -384,7 +385,6 @@ const Step kSteps[] = {
     {"9", kHost, "the host's burn reaches the clients", nullptr, nullptr, &ActHostDrives, &D9, &TearDownHostDrive},
     {"11", kClient, "a forged refuel with an empty hand", nullptr, nullptr, &ActForgeRefuel, &D11, nullptr},
     {"12", kClient, "a forged duplicate fit", &HostFitsModule, &SetupModuleInHand, &ActForgeFit, &D12, nullptr},
-    {"13", kObserver, "a forged horn from a client that is not the syncer", nullptr, nullptr, &ActForgeHorn, &D13, nullptr},
     {"15", kClient, "a host state crossing a client's open refuel", &Seed30, &SetupHoldRequests, &ActPour, &D15, nullptr},
 };
 const int kStepCount = static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]));

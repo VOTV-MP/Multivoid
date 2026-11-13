@@ -156,21 +156,6 @@ void KeepUnadopted(const std::wstring& key, const Payload& p) {
     ++g_n.kept;
 }
 
-// The ATVs whose horn is down on the host and whose copy this client does not hold yet (the joiner's replay can beat the
-// adoption): the press is sounded at the adoption, a release forgets it. The same 8, the oldest replaced.
-std::vector<std::wstring> g_unadoptedHorns;
-
-void KeepUnadoptedHorn(const std::wstring& key, bool down) {
-    const auto it = std::find(g_unadoptedHorns.begin(), g_unadoptedHorns.end(), key);
-    if (!down) {
-        if (it != g_unadoptedHorns.end()) g_unadoptedHorns.erase(it);
-        return;
-    }
-    if (it != g_unadoptedHorns.end()) return;
-    if (g_unadoptedHorns.size() >= kMaxUnadopted) g_unadoptedHorns.erase(g_unadoptedHorns.begin());
-    g_unadoptedHorns.push_back(key);
-}
-
 }  // namespace
 
 bool Vitals::operator==(const Vitals& o) const {
@@ -195,7 +180,6 @@ void Tick() {
     const uint32_t world = ue_wrap::world_identity::Generation();
     if (world != g_world) {
         g_world = world;
-        coop::atv_host_judge::OnWorldChange();
         ClearGate("a world change");
     }
     coop::atv_gate::SettleWatches();
@@ -243,26 +227,6 @@ bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before) 
     return true;
 }
 
-void SendHorn(const std::wstring& key, bool pressed, int skipSlot) {
-    coop::net::Session* s = Live();
-    if (!s || s->role() != coop::net::Role::Host) return;
-    Payload p{};
-    coop::net::WireKeyFromString(key, p.key);
-    p.op = op::kHornEdge;
-    p.flags = pressed ? coop::net::kAtvHostHornDown : 0;
-    s->SendReliable(coop::net::ReliableKind::AtvHostState, &p, sizeof(p), skipSlot);
-}
-
-void SendHornDownToSlot(const std::wstring& key, int slot) {
-    coop::net::Session* s = Live();
-    if (!s || s->role() != coop::net::Role::Host) return;
-    Payload p{};
-    coop::net::WireKeyFromString(key, p.key);
-    p.op = op::kHornEdge;
-    p.flags = coop::net::kAtvHostHornDown;
-    s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
-}
-
 void OnState(const Payload& p) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     if (key.empty() || !A::EnsureResolved()) return;
@@ -271,18 +235,6 @@ void OnState(const Payload& p) {
         return;
     }
     void* atv = Find(key);
-    if (p.op == op::kHornEdge) {
-        // The host's replay of a driver's horn: the copy sounds it and keeps its own controls.
-        const bool down = (p.flags & coop::net::kAtvHostHornDown) != 0;
-        if (!atv) {
-            KeepUnadoptedHorn(key, down);
-            return;
-        }
-        ApplyScope applying;
-        A::ReplayHorn(atv, down);
-        DE::Note(DE::kHornPlayed, down ? 1 : 0);
-        return;
-    }
     if (p.op == op::kAnswer) {
         const auto it = g_gate.find(key);
         if (it == g_gate.end() ||
@@ -388,15 +340,6 @@ uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t modu
     return p.reqId;
 }
 
-void AskHorn(const std::wstring& key, bool down) {
-    coop::net::Session* s = Live();
-    if (!s || s->role() != coop::net::Role::Client) return;
-    Payload p{};
-    coop::net::WireKeyFromString(key, p.key);
-    p.op = op::kHorn;
-    p.flags = down ? coop::net::kAtvHostHornDown : 0;
-    s->SendReliable(coop::net::ReliableKind::AtvRequest, &p, sizeof(p));
-}
 
 void NoteAtvGone(const std::wstring& key) {
     const auto it = g_gate.find(key);
@@ -426,13 +369,6 @@ void NoteAtvIndexed(const std::wstring& key, void* atv) {
         if (ReadVitals(atv, now))
             DE::Note(DE::kAdopted, applied ? 1 : 0, DE::KeyTag(key), static_cast<int32_t>(seq), now.fuel, now.health, now.count);
     }
-    const auto horn = std::find(g_unadoptedHorns.begin(), g_unadoptedHorns.end(), key);
-    if (horn != g_unadoptedHorns.end()) {
-        g_unadoptedHorns.erase(horn);
-        ApplyScope applying;
-        A::ReplayHorn(atv, true);
-        DE::Note(DE::kHornPlayed, 1);
-    }
     // A copy that took no state of the host's asks for it. MTA binds a vehicle's state to the entity's add packet
     // (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CEntityAddPacket.cpp:208, :454, :531-552), so a joiner never
     // lacks it. Here the copy comes from this client's own save, adopted by its key, and no host entity-add exists to carry
@@ -457,7 +393,7 @@ void QueueConnectBroadcastForSlot(int slot) {
             ++g_n.replayed;
         }
     }
-    // The slot is world-ready: its parked requests are served, and every horn held down reaches it (after the states).
+    // The slot is world-ready: its parked requests are served.
     coop::atv_host_judge::OnSlotReady(slot);
 }
 
@@ -469,7 +405,6 @@ void OnDisconnect() {
                 g_n.kept, g_n.dropped, g_n.asked, g_n.answered, g_n.refusedAsks, g_n.stray, g_n.unanswered);
     g_n = Counts{};
     g_unadopted.clear();
-    g_unadoptedHorns.clear();
     g_nextReq = 0;
     coop::atv_gate::OnDisconnect();
     g_stateSeq.clear();

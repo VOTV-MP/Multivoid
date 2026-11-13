@@ -8,7 +8,6 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
-#include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_index_internal.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/intent_bucket.h"
@@ -193,6 +192,7 @@ void Grant(AtvEntry& e, uint8_t who, bool seat, bool carried, uint64_t nowMs) {
     e.lastGrabbed = carried;
     e.streamBucket.Reset();
     e.haveSyncerHealth = false;
+    coop::atv_sync::ForgetHorn(e);   // the last horn level replayed was the previous syncer's
     e.stampDue = true;
 }
 
@@ -203,6 +203,7 @@ void HandToHost(AtvEntry& e, uint8_t prev, uint64_t nowMs) {
     e.syncerSlot = 0;
     e.streamBucket.Reset();
     e.haveSyncerHealth = false;
+    coop::atv_sync::ForgetHorn(e);   // the last horn level replayed was the previous syncer's
     e.stampDue = true;
 }
 
@@ -220,7 +221,6 @@ void OnSeat(const coop::net::AtvSeatPayload& p, uint8_t slot) {
         if (e->occupantSlot != slot) return Answer(*s, slot, p.key, p.seq, AtvRefusal::NotOccupant, e);
         e->occupantSlot = kNoSeat;
         e->stampDue = true;
-        coop::atv_host_judge::ReleaseHorn(e->actor);   // a seat that ends holds no horn down
         return Answer(*s, slot, p.key, p.seq, AtvRefusal::Admitted, e);
     }
     // MTA refuses an entry request from a player that is not spawned
@@ -359,7 +359,6 @@ void RunPass(uint64_t nowMs) {
         if (!s_redSilence && silent) {
             if (e.occupantSlot == syncer) e.occupantSlot = kNoSeat;
             HandToHost(e, syncer, nowMs);
-            coop::atv_host_judge::ReleaseHorn(e.actor);   // the silent syncer's press will never be released
             ++g_counters.silenced;
             UE_LOGI("atv_authority: slot %u sent no block for %llu ms -- '%ls' is the host's",
                     static_cast<unsigned>(syncer), static_cast<unsigned long long>(kSyncerSilenceMs),
@@ -391,7 +390,6 @@ void RunPass(uint64_t nowMs) {
 }
 
 void ClearTable(AtvEntry& e) {
-    coop::atv_host_judge::ReleaseHorn(e.actor);   // a horn a departed syncer held down
     e.occupantSlot = kNoSeat;
     e.syncerSlot = 0;
     e.lastBlockMs = 0;
@@ -407,6 +405,7 @@ void ClearTable(AtvEntry& e) {
     e.blown = false;
     e.blownBy = 0xFF;
     e.haveSyncerHealth = false;
+    coop::atv_sync::ForgetHorn(e);   // the last horn level replayed was the previous syncer's
     e.stampDue = true;
 }
 

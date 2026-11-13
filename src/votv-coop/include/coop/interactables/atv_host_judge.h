@@ -1,5 +1,5 @@
 // coop/interactables/atv_host_judge.h -- the host's judge of a client's ATV requests: a refuel, a repair, a module fitted
-// or taken off, and the syncer's horn. A client's item act runs on its own copy, where the item is spent; what the act
+// or taken off. A client's item act runs on its own copy, where the item is spent; what the act
 // does to the ATV is the host's, asked here. Per sender, requests wait in a FIFO of 8 and are served at {4, 4} a second:
 // one whose sender's world is not ready on the host, or whose hand state the host still owes (hand_item's pacing), is
 // parked at the head, never refused for the lag, and released by the slot's world-ready edge (OnSlotReady) or its hand
@@ -10,8 +10,6 @@
 // by writing the host copy as the verbs' own bodies do, published through atv_host_sync, and EVERY request is answered
 // to its sender alone: the verdict, the host copy's state (flagged absent when there is none) and its sequence. A fit
 // refused as a duplicate is refunded as the module's prop at the ATV. A sync (op kSync) is answered and applies nothing.
-// The horn is judged on arrival, not queued: only the ATV's syncer may press it, at {8, 8} a second, a release never
-// refused; the host sounds it and sends the edge to the others, and to a slot that becomes ready every horn held down.
 // Game thread. Overview: docs/vehicles.md.
 
 #pragma once
@@ -26,8 +24,8 @@ struct AtvHostPayload;
 
 namespace coop::atv_host_judge {
 
-// HOST: a client's AtvRequest, from sender slot `senderSlot`. A horn is judged here; every other op waits in the sender's
-// queue for Tick. A request with no readable key is the sender's own bug: counted, not answered.
+// HOST: a client's AtvRequest, from sender slot `senderSlot`: it waits in the sender's queue for Tick. A request with no
+// readable key is the sender's own bug: counted, not answered.
 void OnRequest(int senderSlot, const coop::net::AtvHostPayload& p);
 
 // Subscribe to the hand lane's applied states (hand_item::SubscribeHandApplied). Idempotent; called by atv_host_sync::Install.
@@ -36,27 +34,15 @@ void Install();
 // HOST, per tick: each unparked sender's queue head, at its budget; the refusal tally's window.
 void Tick(coop::net::Session& s);
 
-// HOST: `slot` became world-ready (the connect replay's edge): its parked requests are served, and every horn held down is
-// sent to it alone.
+// HOST: `slot` became world-ready (the connect replay's edge): its parked requests are served.
 void OnSlotReady(int slot);
 
 // HOST: a state of `key`'s ATV was published (atv_host_sync::PublishIfChanged). Ends the drill fixture's park.
 void OnStatePublished(const std::wstring& key);
 
-// HOST: the host's own horn press (`down`) or release on `key`'s ATV: held in the table of presses beside the clients', and
-// sent to every client.
-void HostHorn(const std::wstring& key, void* atv, bool down);
-
-// HOST: the ATV's horn is down by a client's press and its syncer's seat ended, the syncer went silent or the table
-// cleared: the host copy's horn is released and the release goes to every client. A no-op when no press is open.
-void ReleaseHorn(void* atv);
-
 // [dev] HOST, the ATV drill's fixture: a request for `key` is held in its queue until the host has published a state of its
 // own for that ATV after this call, so that state reaches the sender while its open-request gate is shut.
 void HoldRequestsForDrill(const std::wstring& key);
-
-// A world change: the horns held down are forgotten, with the copies that sounded them.
-void OnWorldChange();
 
 // The session ended.
 void OnDisconnect();

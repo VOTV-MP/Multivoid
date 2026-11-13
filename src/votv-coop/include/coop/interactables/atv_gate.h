@@ -1,15 +1,16 @@
 // coop/interactables/atv_gate.h -- an ATV's acts at their own functions, observed at the script gate. A player's item on
 // an ATV runs in the ATV's own Blueprint bodies, and what they change of the ATV is the host's (atv_host_sync.h):
 //   - fuelUp (the gas can's pour, from gascanFuel), toolboxFix, playerUsedOn (a module fitted) and upgradeTake (a module
-//     taken off) are observed before and after, never refused: on a CLIENT the verb runs on its copy, where the item is
+//     taken off) are observed before and after, refused only as below: on a CLIENT the verb runs on its copy, where the item is
 //     spent, and what it did to the ATV is asked of the host (op refuel with the gain, repair once per hold, fit and
 //     take-off with the module's value); on the HOST the same POSTs call the publish point, which sends nothing when the
 //     call changed nothing, and a verb nested in another (playerUsedOn calls fuelUp and toolboxFix) publishes once, at the
 //     outermost one's POST;
-//   - the one exception is fuelUp from anything but gascanFuel, the fuelbox's overlap with a can lying in the world: a
-//     client refuses it, the host's copy being that can's author (a client's copy never shows a fuel the host did not give);
-//   - the honk key's press and release on the copy a player drives: a client's, as the ATV's syncer, goes to the host; the
-//     host's own goes to every client. Our own replay of a horn is no press (atv_host_sync::Applying).
+//   - the exceptions: fuelUp from anything but gascanFuel (the fuelbox's overlap with a can lying in the world) is refused on a
+//     client, the host's copy being that can's author; and a client at its cap of open requests (4 on one ATV, 8 over all)
+//     has the verb cancelled at its PRE, since nothing irreversible may happen on its copy unanswered;
+//   - the honk key's press and release on the copy a player sits in set the horn's level and latch the syncer's next block
+//     carries (atv_sync.h NoteHorn); our own replay of a horn is no press (atv_host_sync::Applying).
 // A take-off the host refuses leaves the client with a module prop its own upgradeTake made: it is destroyed at the answer.
 // Game thread.
 
@@ -30,7 +31,7 @@ enum Row : int { kFuelUp, kToolbox, kUsedOn, kTake, kHonkPress, kHonkRelease, kR
 uint32_t Seen(Row row);
 
 // [dev] A request the drill makes in a player's place, a forged one: registered in the open-request gate and sent as the
-// real path does (op = atv_host_op, a horn press for kHorn). The id, or 0 when nothing was sent. Game thread.
+// real path does (op = atv_host_op). The id, or 0 when nothing was sent. Game thread.
 uint32_t SendForDrill(const std::wstring& key, uint8_t op, float amount, uint8_t module);
 
 // Register the watches, once for the process, from the load-window installs (subsystems::InstallLoadWatchers). A watch

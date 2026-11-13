@@ -1,5 +1,5 @@
 // coop/interactables/atv_host_sync.h -- what of an ATV is the host's beyond its rig, which stays with its syncer
-// (atv_sync.h): its fuel and health, its modules and its horn. The host's copy holds them. A client's own act runs on its
+// (atv_sync.h): its fuel and health and its modules. The host's copy holds them. A client's own act runs on its
 // copy and is asked of the host (atv_host_judge.h), which judges it, writes its own copy and answers; this module is the
 // state side:
 //   - the host's ONE publish point: when a write to the host copy changed its fuel, health, modules, empty or broken, the
@@ -7,7 +7,7 @@
 //   - a joiner at its world-ready edge gets every ATV's state, that slot alone;
 //   - a client applies a state to its copy of the ATV unless its open-request gate on that ATV is shut; a state for an ATV
 //     it holds no copy of yet is kept (the newest per ATV, 8 ATVs) and applied at the copy's adoption.
-// The seated driver's lights, brake and turbo are not here: they ride its condition block's stateBits (atv_sync.h).
+// The seated driver's lights, brake, turbo and horn are not here: they ride its condition block's stateBits (atv_sync.h).
 // Game thread. Overview: docs/vehicles.md.
 
 #pragma once
@@ -79,12 +79,6 @@ void FillState(const std::wstring& key, const Vitals& v, uint8_t opcode, coop::n
 // outermost one's end. Game thread.
 bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before);
 
-// HOST: a horn edge of `key`'s ATV to every client but `skipSlot` (-1: none).
-void SendHorn(const std::wstring& key, bool pressed, int skipSlot);
-
-// HOST: a horn held down on `key`'s ATV, to `slot` alone (the joiner's world-ready edge).
-void SendHornDownToSlot(const std::wstring& key, int slot);
-
 // Our own writes to an ATV (a state applied, a request applied, a horn replayed) run inside one of these.
 class ApplyScope {
 public:
@@ -110,11 +104,8 @@ bool RequestCapReached(void* atv);
 // unanswered id once. An answer for an id not open is dropped and counted.
 uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t module);
 
-// CLIENT: the syncer's horn edge to the host. No id, no gate: a horn is no act on the ATV's state.
-void AskHorn(const std::wstring& key, bool down);
-
-// CLIENT: this ATV left the index (its destroy), or entered it (adoption: a state held for it is applied now, a horn held
-// down on the host is sounded, and a copy that took no state asks the host for it: request op kSync).
+// CLIENT: this ATV left the index (its destroy), or entered it (adoption: a state held for it is applied now, and a copy
+// that took no state asks the host for it: request op kSync).
 void NoteAtvGone(const std::wstring& key);
 void NoteAtvIndexed(const std::wstring& key, void* atv);
 

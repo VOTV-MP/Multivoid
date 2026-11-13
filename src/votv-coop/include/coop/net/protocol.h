@@ -1274,14 +1274,12 @@ enum class ReliableKind : uint16_t {
     // HOST->ALL: an ATV of the host's beyond its rig -- its fuel and health, its modules, whether it is empty or broken
     // and its state sequence (op 16) -- when one of them changed, and every ATV again at a joiner's ready edge, to that
     // slot alone; the answer to a client's request, to its sender alone (op 17, the request's id, the verdict and the
-    // host copy's state); or a driver's horn pressed or released, to every peer but that driver (op 18). A client's
-    // copy takes it. Not relayed, not pre-world. AtvHostPayload.
+    // host copy's state). A client's copy takes it. Not relayed, not pre-world. AtvHostPayload.
     AtvHostState = 240,
     // CLIENT->HOST: this client's player refuelled or repaired an ATV (op 1, 2, the gain), fitted or took off a module
-    // (op 3, 4, the module's value), each with a request id, or, as the ATV's syncer, pressed or released its horn
-    // (op 5), or adopted a copy holding no state of the host's and asks for it (op 6, with a request id). Never
-    // relayed, never relayable; the host judges it on the game thread, writes its own copy and answers
-    // every request. AtvHostPayload.
+    // (op 3, 4, the module's value), each with a request id, or adopted a copy holding no state of the host's and asks
+    // for it (op 6, with a request id). Never relayed, never relayable; the host judges it on the game thread, writes its
+    // own copy and answers every request. AtvHostPayload. The syncer's horn is no message: it rides AtvState's stateBits.
     AtvRequest = 239,
 
     // CLIENT->HOST: this client pressed a coffee vending machine or a coffee maker (action 4), which its own copy
@@ -3230,7 +3228,7 @@ struct AtvStatePayload {
     uint8_t  syncerSlot;   // 1  -- who writes this ATV's pose and condition, assigned by the host: 0 = the
                            //      host itself, k = client slot k
     uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=kAtvBrake, bit2=grabbed (the sender's grav hand holds it),
-                           //      bit3=kAtvFromSyncer, bit4=kAtvTrap, bit5=kAtvLights, bit6=kAtvTurbo
+                           //      bit3=kAtvFromSyncer, bit4=kAtvTrap, bit5=kAtvLights, bit6=kAtvTurbo, bit7=kAtvHorn
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (warp as is), 0 = live stream
     // The condition block: the tires' and dirt's accumulators travel from the syncer (fuel and health are the host
     // copy's absolute, a client syncer's burn taken only under its ack, see ackSeq); a mirror's own accrual is held at
@@ -3269,13 +3267,18 @@ constexpr uint8_t kAtvFromSyncer = 0x08;
 // block it sends and ignores a client's bit; a client copy takes it from the stamp (atv_sync.cpp).
 constexpr uint8_t kAtvTrap = 0x10;
 
-// stateBits bits 1, 5 and 6: the syncer's own copy's brake, lights and turbo, written at each block build. The host takes
-// them from an admitted block and applies a change to its copy; its re-send carries exactly these three to the others
-// (bits 0 and 2 are the syncer's own, read by the host's judgement only).
+// stateBits bits 1, 5, 6 and 7: the syncer's own copy's brake, lights, turbo and horn, written at each block build. The host
+// takes them from an admitted block and applies a change to its copy; its re-send carries exactly these four to the others
+// (bits 0 and 2 are the syncer's own, read by the host's judgement only). The horn is a LEVEL, as MTA's full keysync
+// carries it (the pad's ShockButtonL, reference/mtasa-blue/Shared/mods/deathmatch/logic/Utils.cpp:798 read, :815 write):
+// the syncer latches a press until one block has carried it and the block clears the latch, so a tap between two blocks
+// is still sent, and a change of any of these bits makes the syncer's next block due at once, once per change. This
+// replaces our earlier edge request. A receiver replays the horn on a change of the level (atv_stream_gates.cpp).
 constexpr uint8_t kAtvBrake = 0x02;
 constexpr uint8_t kAtvLights = 0x20;
 constexpr uint8_t kAtvTurbo = 0x40;
-constexpr uint8_t kAtvControlBits = kAtvBrake | kAtvLights | kAtvTurbo;
+constexpr uint8_t kAtvHorn = 0x80;
+constexpr uint8_t kAtvControlBits = kAtvBrake | kAtvLights | kAtvTurbo | kAtvHorn;
 
 // An ATV (AtvSpawn): the host ATV's own game Key and its class, so the receiver spawns the exact skin
 // under that Key. The Key is at most 31 chars (an ATV's is 22, or "ATV"); a receiver drops a longer one.
@@ -3882,13 +3885,13 @@ struct WoodchipperPayload {
 static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 bytes");
 
 // An ATV's host state (AtvHostState), or a client's request (AtvRequest). One payload, told apart by `op`: a request's
-// is 1..6, a state's 16..18.
+// is 1..4 or 6, a state's 16 or 17. The syncer's horn is neither: it is a bit of AtvState's stateBits (kAtvHorn).
 namespace atv_host_op {
-// AtvRequest (client -> host): the four acts of a player's item on an ATV, the seated syncer's horn, and a copy's ask for
-// the host's state (kSync: sent when a copy is adopted holding none; the host answers with its state and applies nothing).
-inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kHorn = 5, kSync = 6;
-// AtvHostState (host -> clients): the host copy's vitals, the answer to a request, and a horn edge.
-inline constexpr uint8_t kState = 16, kAnswer = 17, kHornEdge = 18;
+// AtvRequest (client -> host): the four acts of a player's item on an ATV, and a copy's ask for the host's state (kSync: sent
+// when a copy is adopted holding none; the host answers with its state and applies nothing).
+inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kSync = 6;
+// AtvHostState (host -> clients): the host copy's vitals, and the answer to a request.
+inline constexpr uint8_t kState = 16, kAnswer = 17;
 }  // namespace atv_host_op
 // An answer's verdict, carried in `module`: 0 is a request the host applied, the rest refused it. kDuplicate is a module
 // the ATV already holds; kFull a tank or health that is already full. `kGone` carries no state.
@@ -3896,15 +3899,15 @@ namespace atv_host_reason {
 inline constexpr uint8_t kOk = 0, kNotReady = 1, kGone = 2, kReach = 3, kNoItem = 4, kRate = 5, kDuplicate = 6,
                          kNotHeld = 7, kNotSyncer = 8, kMalformed = 9, kFull = 10;
 }  // namespace atv_host_reason
-// `flags`: the host copy's empty and broken marks (a state, an answer); the horn is down (a horn request or edge);
+// `flags`: the host copy's empty and broken marks (a state, an answer);
 // kAtvHostNoState, on an answer that carries no state (the fuel, health, marks and modules are zero and mean nothing).
-inline constexpr uint8_t kAtvHostHornDown = 0x01, kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10, kAtvHostNoState = 0x20;
+inline constexpr uint8_t kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10, kAtvHostNoState = 0x20;
 struct AtvHostPayload {
     WireKey  key;          // 32 -- the ATV's Key
     float    fuel;         // 4 -- the host copy's fuel (a state, an answer)
     float    health;       // 4 -- the host copy's health (a state, an answer)
     float    amount;       // 4 -- a refuel's gain (request)
-    uint32_t reqId;        // 4 -- a request's id, per client, from 1; an answer echoes it (0 on a horn)
+    uint32_t reqId;        // 4 -- a request's id, per client, from 1; an answer echoes it
     uint32_t stateSeq;     // 4 -- the state's sequence, per ATV, the host's (a state, an answer)
     uint8_t  op;           // 1 -- atv_host_op
     uint8_t  flags;        // 1 -- kAtvHost*
