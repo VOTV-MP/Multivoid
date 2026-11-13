@@ -145,7 +145,9 @@ uint8_t LocalSlot();                                                            
 // raises no edge, which is why a revive is the only other writer.
 bool g_deadSlot[coop::players::kMaxPeers] = {};
 void OnPuppetLife(uint8_t slot, bool alive) {
-    if (slot < coop::players::kMaxPeers) g_deadSlot[slot] = !alive;
+    if (slot >= coop::players::kMaxPeers) return;
+    g_deadSlot[slot] = !alive;
+    UE_LOGI("device_occupancy: slot %u %s (the pose stream's life edge)", static_cast<unsigned>(slot), alive ? "revived" : "died");
 }
 
 // HOST: the player of `slot` lies in its ragdoll or is dead. Read at the decision, inside the reconcile poll, which

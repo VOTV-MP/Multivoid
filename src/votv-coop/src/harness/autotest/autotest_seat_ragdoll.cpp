@@ -14,6 +14,7 @@
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
+#include "harness/autotest/death_state_probe.h"
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
@@ -139,6 +140,15 @@ void Act(const char* me) {
     }
     PS::Mark("actor_in");
     if (!PS::Await("observer_saw_claim", kStepSec)) return;
+    // A joiner is protected for a while (startInvinc) and a lethal hit lands nowhere then: the same precondition the
+    // death drill waits on, and the death itself is read back below, so a hit that killed nobody is INVALID, never a FAIL.
+    if (Kill() && !PS::WaitFor("a player a lethal hit can kill", 120, [] {
+            DeathSnapshot s;
+            OnGameThread([&] { s = ReadDeathState(); });
+            return s.havePawn && s.haveState && s.haveCanRagdoll && s.health > 0.f && s.canRagdoll && !s.dead &&
+                   !s.startInvinc && !s.immortal && s.inGameplay;
+        }))
+        return;
     bool rag = false;
     OnGameThread([&] {
         void* p = coop::players::Registry::Get().Local();
@@ -154,6 +164,12 @@ void Act(const char* me) {
         }
     });
     UE_LOGI("seat-ragdoll: %hs %hs (call=%d)", me, Outcome(), rag ? 1 : 0);
+    if (Kill() && !PS::WaitFor("the lethal hit's death", 10, [] {
+            DeathSnapshot s;
+            OnGameThread([&] { s = ReadDeathState(); });
+            return s.dead;
+        }))
+        return;
     PS::Mark("actor_ragdolled");
     PS::Await("observer_done", kStepSec);  // the actor stays down (or out) while the watcher measures
     LogState(me, 1);
@@ -217,6 +233,14 @@ void RunClient() {
 void RunHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
+    // A client acting: its puppet stands here and has sent an alive pose, since the death edge is read from a pose
+    // after one (the first pose of a puppet raises no edge).
+    if (!HostActs() && !PS::WaitFor("the client's puppet, alive", 120, [] {
+            bool alive = false;
+            OnGameThread([&] { alive = coop::players::Registry::Get().LifeOf(1) == coop::players::PuppetLife::Alive; });
+            return alive;
+        }))
+        return;
     PS::Mark("host_ready");
     std::string r;
     if (HostActs()) {
