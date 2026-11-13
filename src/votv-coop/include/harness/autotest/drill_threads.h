@@ -128,7 +128,7 @@ DWORD WINAPI FlashBatteryThread(LPVOID arg);
 // VOTVCOOP_RUN_DESK_VIEW, both peers -- harness/autotest/autotest_desk_view.cpp
 DWORD WINAPI DeskViewThread(LPVOID arg);
 
-// VOTVCOOP_RUN_CAP_LABEL, both peers -- harness/autotest/autotest_cap_label.cpp
+// cap_label_drill, both peers -- harness/autotest/autotest_cap_label.cpp
 DWORD WINAPI CapLabelThread(LPVOID arg);
 
 // VOTVCOOP_RUN_DISH_SOUND, both peers -- harness/autotest/autotest_dish_sound.cpp
