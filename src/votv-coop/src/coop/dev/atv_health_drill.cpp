@@ -11,6 +11,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/session.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -81,6 +82,15 @@ long long Ms(Clock::time_point from, Clock::time_point to) {
 void Fail(const char* role, Arm a, Run& r, const std::string& what, const std::string& got, const std::string& want) {
     UE_LOGW("[ATV-HEALTH-DRILL] FAIL %s arm=%s phase=%s: %s, got %s, want %s", role, SpecOf(a).name, r.name,
             what.c_str(), got.c_str(), want.c_str());
+    r.done = true;
+}
+
+// A run that could not decide: no event came and a bound ran out. Neither green nor red; the rig ends on the line.
+void Invalid(const char* role, Arm a, Run& r, const std::string& what, const std::string& got, const std::string& want) {
+    UE_LOGW("[ATV-HEALTH-DRILL] INVALID %s arm=%s phase=%s: %s, got %s, want %s", role, SpecOf(a).name, r.name,
+            what.c_str(), got.c_str(), want.c_str());
+    coop::rig_verdict::Say("atv-health-drill", coop::rig_verdict::Outcome::Invalid, "%s arm=%s phase=%s: %s", role,
+                           SpecOf(a).name, r.name, what.c_str());
     r.done = true;
 }
 

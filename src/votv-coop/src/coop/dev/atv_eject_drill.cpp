@@ -7,7 +7,8 @@
 //   arm client: the client sits, becomes the syncer and fires on its copy; the host must keep the wheel and count the
 //               client's presence as skipped. That is the known divergence of atv_condition_sync (the wheel prop a client
 //               births does not travel), asserted contained.
-// The bounds below are failure bounds, never waits: every phase leaves on its edge.
+// The bounds below are failure bounds, never waits: every phase leaves on its edge. The verdict of arm client's judge
+// is decided on the host's own receipt of the client's eject (kApplyBlocks); a bound there only says INVALID.
 
 #include "coop/dev/atv_eject_drill.h"
 
@@ -24,6 +25,7 @@
 #include "coop/props/join_membership_sweep.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -60,6 +62,11 @@ constexpr auto           kFailBound = std::chrono::seconds(180);   // a failure 
 constexpr auto           kSeatBound = std::chrono::seconds(360);   // the client's walk and its sit, never a wait
 constexpr float          kSitReachCm = 400.f;   // the director's walk ends this close to the ATV's root
 constexpr int            kWalkDeadlineS = 300;
+// Counted not clocked: the seated client syncer streams a condition block with every state block, one per 50 ms
+// (kDriveSendMs), and the client says its fired line once its own mask reads clear, so its eject is in the first block
+// sent within a frame of that line. 20 blocks applied on the host after the line (1 s of stream) have carried it, so
+// the host's skip count is known there: with no skip, the host's apply did not take the eject, a FAIL.
+constexpr uint64_t       kApplyBlocks = 20;
 
 constexpr const char* kFiredLine = "ATVEJ client fired";
 
@@ -103,6 +110,15 @@ long long Ms(Clock::time_point from, Clock::time_point to) {
 void Fail(const char* role, Arm a, Run& r, const std::string& what, const std::string& got, const std::string& want) {
     UE_LOGW("[ATV-EJECT-DRILL] FAIL %s arm=%s phase=%s: %s, got %s, want %s", role, NameOf(a), r.name, what.c_str(),
             got.c_str(), want.c_str());
+    r.done = true;
+}
+
+// A run that could not decide: no event came and a bound ran out. Neither green nor red; the rig ends on the line.
+void Invalid(const char* role, Arm a, Run& r, const std::string& what, const std::string& got, const std::string& want) {
+    UE_LOGW("[ATV-EJECT-DRILL] INVALID %s arm=%s phase=%s: %s, got %s, want %s", role, NameOf(a), r.name, what.c_str(),
+            got.c_str(), want.c_str());
+    coop::rig_verdict::Say("atv-eject-drill", coop::rig_verdict::Outcome::Invalid, "%s arm=%s phase=%s: %s", role,
+                           NameOf(a), r.name, what.c_str());
     r.done = true;
 }
 
@@ -175,6 +191,7 @@ struct HostState {
     CS::Counters        base{};    // the lane's counters at the client's ready line
     uint8_t             before = 0;
     Clock::time_point   firedAt{};
+    uint64_t            appliedAtFired = 0;   // the lane's applied-block count when the client's fired line was seen
 } g_h;
 
 void HostPhase(Arm a, HPh p, const char* name) { Enter(g_h.run, "host", a, static_cast<int>(p), name); }
@@ -258,11 +275,14 @@ void HostJudgeClient(Arm a, const TableView& t) {
                         "updTires +0");
     if (!h.firedSeen && DC::PollDue()) {
         h.firedSeen = DC::ChatHasLive(kFiredLine);
-        if (h.firedSeen) h.firedAt = Clock::now();
+        if (h.firedSeen) {
+            h.firedAt = Clock::now();
+            h.appliedAtFired = c.applied;
+        }
     }
     if (!h.firedSeen) {
         if (Past(h.run.from, kSeatBound))
-            HostFail(a, "the client never said it fired", "no line", kFiredLine);
+            Invalid("host", a, h.run, "the client never said it fired", "no line", kFiredLine);
         return;
     }
     const uint64_t skipped = c.presenceSkippedDiffering - h.base.presenceSkippedDiffering;
@@ -273,8 +293,13 @@ void HostJudgeClient(Arm a, const TableView& t) {
         Pass("host", a, h.run, nums);
         return;
     }
+    const uint64_t blocks = c.applied - h.appliedAtFired;
+    if (blocks >= kApplyBlocks)
+        return HostFail(a, "the client's eject reached the host's apply and was not skipped",
+                        "skipped +0 after " + std::to_string(blocks) + " applied blocks", "skipped >= +1");
     if (Past(h.firedAt, kFailBound))
-        HostFail(a, "the client's eject never reached the host's apply", "skipped +0", "skipped >= +1");
+        Invalid("host", a, h.run, "no block of the client's stream reached the host's apply after its fired line",
+                "applied " + Plus(blocks), "applied >= +" + std::to_string(kApplyBlocks));
 }
 
 void HostTick(coop::net::Session* s, Arm a) {

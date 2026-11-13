@@ -64,8 +64,10 @@ void Enter(Run& r, int phase, const char* name);
 bool Past(const Run& r, std::chrono::seconds bound);
 long long Ms(Clock::time_point from, Clock::time_point to);
 
-// The verdict lines. Both end the role's run.
+// The verdict lines. Each ends the role's run. A PASS and a FAIL are decided by an event; a bound that runs out with no
+// event is INVALID (and says the rig's `rig: VERDICT atv-health-drill INVALID` line).
 void Fail(const char* role, Arm a, Run& r, const std::string& what, const std::string& got, const std::string& want);
+void Invalid(const char* role, Arm a, Run& r, const std::string& what, const std::string& got, const std::string& want);
 void Pass(const char* role, Arm a, Run& r, const std::string& numbers);
 
 // The lobby-chat lines: the client's ready line (the host's start), the host's phase edges (the client's) and the
@@ -101,6 +103,8 @@ struct Host {
     atv_seat::SitTry                                sit;
     std::unique_ptr<coop::director::AimedGrab>      grab;
     bool                                            sawSent = false, sawMuted = false, sawYielded = false;
+    uint64_t                                        idleSeen = 0, restBlocks = 0;   // `back`: the blocks seen, the rest run
+    bool                                            restLast = false;               // the last block read was at rest
 };
 extern Host g_h;
 

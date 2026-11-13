@@ -119,7 +119,9 @@ void HostFirst(Arm a, const TableView* t) {
          t ? got : "no table", sit ? "occupant 1 syncer 1" : "occupant 255 syncer 1");
 }
 
-// The leave: the seat is free again, the sit and the leave being the two admitted requests.
+// The leave: the seat is free again, the sit and the leave being the two admitted requests. The lane frees the seat in
+// the call that admits the leave, so the second admission is the event: the seat read after it is free, or it is a
+// FAIL. A leave that is never admitted has no event, and the bound says INVALID.
 void HostLeft(Arm a, const TableView* t) {
     if (t && t->occupantSlot == kNoSeat) {
         if (Admitted() != 2)
@@ -127,13 +129,35 @@ void HostLeft(Arm a, const TableView* t) {
         g_h.leftAt = Clock::now();
         return HostEnter(HP::Back, "back");
     }
+    if (t && Admitted() >= 2)
+        return Fail("host", a, g_h.run, "the admitted leave did not free the seat",
+                    "occupant " + std::to_string(t->occupantSlot), "occupant 255");
     if (Past(g_h.run, kFailBound))
-        Fail("host", a, g_h.run, "the seat was never freed", t ? "occupant " + std::to_string(t->occupantSlot) : "no table",
-             "occupant 255");
+        Invalid("host", a, g_h.run, "no leave request was admitted", "admitted " + Plus(Admitted()), "admitted +2");
+}
+
+// Counted not clocked: the rest rule (atv_authority.cpp RunPass) needs kRestMs = 1 s of rest and its pass runs once a
+// second, so an at-rest hand-back lands 1.05-2.05 s after the first still block. The admitted blocks of the idle
+// stream come every 50 ms (kDriveSendMs); 70 still ones in a row (3.5 s) cover that whole span, so a hand-back that did
+// not happen is known there. A block is still under kRestCmS, the lane's own speed test (atv_authority.cpp kRestCmS).
+constexpr uint64_t kRestBlocks = 70;
+constexpr float    kRestCmS = 5.f;
+
+// The run of still blocks the lane admitted from the client syncer with the seat free and no carry: the stream's
+// counter says how many came since the last read, the table's last block speed says whether they were at rest.
+void CountRestBlocks(const TableView& t) {
+    const uint64_t idle = AU::ReadCounters().idleStreamBlocks - g_h.base.idleStreamBlocks;
+    if (idle == g_h.idleSeen) return;
+    const uint64_t fresh = idle - g_h.idleSeen;
+    g_h.idleSeen = idle;
+    const bool still = t.lastBlockSpeed < kRestCmS;
+    g_h.restBlocks = !still ? 0 : g_h.restBlocks + (g_h.restLast ? fresh : 1);
+    g_h.restLast = still;
 }
 
 // The ATV back with the host after the act is undone: the syncer is the host and the lane counted one hand-back at rest.
-// A red that skips the hand-back leaves the client the syncer, which ends here at the bound.
+// A red that skips the hand-back leaves the client the syncer: the verdict is the stream's own count of blocks at rest
+// past what the hand-back needed. Having no stream to count says INVALID at the bound.
 void HostBack(Arm a, const TableView* t) {
     const Clock::time_point now = Clock::now();
     if (t && t->syncerSlot == 0) {
@@ -143,11 +167,16 @@ void HostBack(Arm a, const TableView* t) {
         DC::Say(PhaseLine("back"));
         return Pass("host", a, g_h.run, Numbers(a, now, t->lastBlockSpeed));
     }
-    if (!Past(g_h.run, kFailBound)) return;
-    Fail("host", a, g_h.run, "the ATV was not handed back to the host at rest",
-         "handedBack " + Plus(HandedBack()) + " syncer " + (t ? std::to_string(t->syncerSlot) : "?") + ", " +
-             Numbers(a, now, t ? t->lastBlockSpeed : 0.f),
-         "handedBack +1 syncer 0");
+    if (t) CountRestBlocks(*t);
+    const bool decided = t && g_h.restBlocks >= kRestBlocks;
+    if (!decided && !Past(g_h.run, kFailBound)) return;
+    const std::string got = "handedBack " + Plus(HandedBack()) + " syncer " + (t ? std::to_string(t->syncerSlot) : "?") +
+                            " rest_blocks " + std::to_string(g_h.restBlocks) + ", " +
+                            Numbers(a, now, t ? t->lastBlockSpeed : 0.f);
+    if (decided)
+        return Fail("host", a, g_h.run, "the ATV was not handed back to the host at rest", got, "handedBack +1 syncer 0");
+    Invalid("host", a, g_h.run, "the idle stream never held at rest long enough to decide the hand-back", got,
+            "handedBack +1 syncer 0");
 }
 
 // The silent syncer: from the client's `muted` line the lane must take the seat and the ATV back by its silence rule
