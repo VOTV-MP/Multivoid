@@ -83,8 +83,8 @@ Stage WaitBound(SeatedClient& c, Arm a, const SpawnedWait* w) {
         else if (!w->sawParked) got = "the host's `" + PhaseLine("parked") + "` line never came";
         else got = "the table never held the parked ATV";
     }
-    Fail(c.role, a, c.run, "the client's streams or the ATV's table never held", got,
-         "streams running, ATV indexed");
+    Invalid(c.role, a, c.run, "the client's streams or the ATV's table never held", got,
+            "streams running, ATV indexed");
     return Stage::Failed;
 }
 
@@ -106,7 +106,7 @@ Stage WalkStep(SeatedClient& c, Arm a) {
 Stage SitStep(SeatedClient& c, Arm a, void* player, void* atv, uint8_t self) {
     if (!atv_seat::TrySit(player, atv, c.sit)) {
         if (!Past(c.run, kFailBound)) return Stage::Wait;
-        Fail(c.role, a, c.run, "the sit never finished", "no grant", "seated");
+        Invalid(c.role, a, c.run, "the sit never finished", "no grant", "seated");
         return Stage::Failed;
     }
     if (coop::atv_sync::ActorSeatedBy(self) != atv) {

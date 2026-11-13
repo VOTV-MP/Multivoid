@@ -45,7 +45,7 @@ inline constexpr uint8_t           kSlot = 1;               // the one slot the 
 // Every other arm acts on the ATV the host spawns (SpawnStep) under the key it says in the lobby chat.
 inline constexpr const wchar_t*    kWorldAtvKey = L"ATV";
 inline constexpr uint8_t           kNoSeat = 0xFF;
-inline constexpr auto              kFailBound = std::chrono::seconds(180);      // a failure bound, never a wait
+inline constexpr auto              kFailBound = std::chrono::seconds(180);      // a bound: INVALID when it passes, never a wait
 inline constexpr auto              kHostFirstBound = std::chrono::seconds(360); // the client's walk and its act
 inline constexpr int               kWalkDeadlineS = 300;
 inline constexpr float             kSitReachCm = 400.f;     // the director's walk ends this close to the ATV's root
@@ -164,8 +164,8 @@ bool AtvReady(const std::wstring& key, AtvAt* out);
 bool SpawnedAtvReady(SpawnedWait& w, Arm a, bool due, AtvAt* out);
 // The director's walk to within `reachCm` of the ATV's root, the ATV kept, the ready line said.
 void WalkStart(SeatedClient& c, Arm a, const AtvAt& t, float reachCm);
-// The wait for the ATV: Failed once kFailBound has passed.
-// `w` is the spawned ATV's wait (null for trap): its missing edge goes into the FAIL.
+// The wait for the ATV: Failed (with INVALID said) once kFailBound has passed.
+// `w` is the spawned ATV's wait (null for trap): its missing edge goes into the INVALID line.
 Stage WaitBound(SeatedClient& c, Arm a, const SpawnedWait* w);
 // The walk: Next once it arrived (arrivedAt set).
 Stage WalkStep(SeatedClient& c, Arm a);

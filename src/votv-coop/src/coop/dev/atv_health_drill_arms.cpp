@@ -87,7 +87,7 @@ std::string Numbers(Arm a, Clock::time_point end, float lastBlockSpeed) {
 void HostWait(Arm a) {
     if (DC::PollDue() && DC::ChatHasLive(ReadyLine(a))) return HostEnter(HP::Spawn, "spawn");
     if (Past(g_h.run, kFailBound))
-        Fail("host", a, g_h.run, "the client never said it was ready", "no line", ReadyLine(a));
+        Invalid("host", a, g_h.run, "the client never said it was ready", "no line", ReadyLine(a));
 }
 
 void HostPark(Arm a) {
@@ -114,9 +114,9 @@ void HostFirst(Arm a, const TableView* t) {
     char got[64];
     std::snprintf(got, sizeof(got), "occupant %u syncer %u", t ? static_cast<unsigned>(t->occupantSlot) : 0xFFFFu,
                   t ? static_cast<unsigned>(t->syncerSlot) : 0xFFFFu);
-    Fail("host", a, g_h.run, sit ? "the table never named the client occupant and syncer"
-                                 : "the table never named the client syncer with the seat free",
-         t ? got : "no table", sit ? "occupant 1 syncer 1" : "occupant 255 syncer 1");
+    Invalid("host", a, g_h.run, sit ? "the table never named the client occupant and syncer"
+                                     : "the table never named the client syncer with the seat free",
+             t ? got : "no table", sit ? "occupant 1 syncer 1" : "occupant 255 syncer 1");
 }
 
 // The leave: the seat is free again, the sit and the leave being the two admitted requests. The lane frees the seat in
@@ -189,7 +189,7 @@ void HostSilenced(Arm a, const TableView* t) {
             return HostEnter(HP::Silenced, "silenced");
         }
         if (Past(g_h.run, kFailBound))
-            Fail("host", a, g_h.run, "the client never said it muted its stream", "no line", ClientLine("muted"));
+            Invalid("host", a, g_h.run, "the client never said it muted its stream", "no line", ClientLine("muted"));
         return;
     }
     const uint64_t silenced = AU::ReadCounters().silenced - g_h.base.silenced;
@@ -200,13 +200,20 @@ void HostSilenced(Arm a, const TableView* t) {
         g_h.silencedAt = Clock::now();
         return HostEnter(HP::Yielded, "yielded");
     }
-    if (!Past(g_h.run, kFailBound)) return;
-    char got[96];
-    std::snprintf(got, sizeof(got), "occupant %u syncer %u silenced +%llu",
+    // The rule's own pass is the event: it finds the syncer silent past its bound (silentSeen) and takes the ATV back at the
+    // first such pass, so a second that found it silent with none taken is a rule that did not act, the FAIL. A run that
+    // never had a pass find it silent could not decide, and the bound says INVALID.
+    const uint64_t seen = AU::ReadCounters().silentSeen - g_h.base.silentSeen;
+    if (seen < 2 && !Past(g_h.run, kFailBound)) return;
+    char got[112];
+    std::snprintf(got, sizeof(got), "occupant %u syncer %u silenced +%llu silent_seen +%llu",
                   t ? static_cast<unsigned>(t->occupantSlot) : 0xFFFFu, t ? static_cast<unsigned>(t->syncerSlot) : 0xFFFFu,
-                  U(silenced));
-    Fail("host", a, g_h.run, "the silent syncer was not taken back", t ? got : "no table",
-         "occupant 255 syncer 0 silenced +1");
+                  U(silenced), U(seen));
+    if (seen >= 2)
+        return Fail("host", a, g_h.run, "the silent syncer was not taken back", t ? got : "no table",
+                    "occupant 255 syncer 0 silenced +1");
+    Invalid("host", a, g_h.run, "no pass of the authority lane found the syncer silent", t ? got : "no table",
+            "silent_seen +1");
 }
 
 // The client's own copy gives up the seat on the host's stamp: its `yielded` line ends the run.
@@ -218,7 +225,7 @@ void HostYielded(Arm a) {
         return Pass("host", a, g_h.run, nums);
     }
     if (Past(g_h.run, kFailBound))
-        Fail("host", a, g_h.run, "the client's own copy never gave up the seat", "no line", ClientLine("yielded"));
+        Invalid("host", a, g_h.run, "the client's own copy never gave up the seat", "no line", ClientLine("yielded"));
 }
 
 // ---- the client ----
@@ -252,6 +259,12 @@ void ClientFail(Arm a, const std::string& what, const std::string& got, const st
     ClientEnd();
 }
 
+// A bound that ran out with no event to decide on.
+void ClientInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("client", a, g_c.run, what, got, want);
+    ClientEnd();
+}
+
 // Once the host's spawned ATV is parked and the table holds it: the director's walk to its root, and the host told.
 void ClientWait(Arm a, bool due) {
     AtvAt t;
@@ -281,7 +294,7 @@ void ClientSit(Arm a, void* player, void* atv, uint8_t self) {
 void ClientGrab() {
     switch (g_c.grab->Tick()) {
     case coop::director::GrabState::Working:
-        if (Past(g_c.run, kFailBound)) ClientFail(Arm::Grab, "the grab never finished", "working", "grabbed");
+        if (Past(g_c.run, kFailBound)) ClientInvalid(Arm::Grab, "the grab never finished", "working", "grabbed");
         return;
     case coop::director::GrabState::Failed:
         return ClientFail(Arm::Grab, GrabWhy(*g_c.grab), "failed", "grabbed");
@@ -296,15 +309,15 @@ void ClientGrab() {
 void ClientUndo(Arm a, void* player, void* atv, uint8_t self) {
     if (!g_c.sawFirst) {
         if (Past(g_c.run, kFailBound))
-            ClientFail(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
+            ClientInvalid(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
         return;
     }
     const bool sit = a == Arm::Sit;
     if (sit ? coop::atv_sync::ActorSeatedBy(self) != atv : !E::IsMainPlayerGrabbing(player, atv))
         return ClientEnter(CP::Back, "back");
     if (Past(g_c.run, kFailBound))
-        return ClientFail(a, sit ? "the dismount never freed the seat" : "the release never let go",
-                          sit ? "seated" : "grabbing", sit ? "not seated" : "not grabbing");
+        return ClientInvalid(a, sit ? "the dismount never freed the seat" : "the release never let go",
+                              sit ? "seated" : "grabbing", sit ? "not seated" : "not grabbing");
     const Clock::time_point now = Clock::now();
     if (now < g_c.nextTry) return;
     g_c.nextTry = now + std::chrono::seconds(1);
@@ -317,7 +330,7 @@ void ClientUndo(Arm a, void* player, void* atv, uint8_t self) {
 void ClientMute(Arm a) {
     if (!g_c.sawFirst) {
         if (Past(g_c.run, kFailBound))
-            ClientFail(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
+            ClientInvalid(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
         return;
     }
     coop::atv_sync::SetDrillMute(true);
@@ -334,7 +347,7 @@ void ClientYield(Arm a) {
         return ClientEnter(CP::Back, "back");
     }
     if (Past(g_c.run, kFailBound))
-        ClientFail(a, "the client's own copy never gave up the seat", read ? "seated" : "no table", "not seated");
+        ClientInvalid(a, "the client's own copy never gave up the seat", read ? "seated" : "no table", "not seated");
 }
 
 // The arms where the host acts: one raw request once the host says its edge, retried once a second until the send took.
@@ -343,14 +356,14 @@ void ClientYield(Arm a) {
 void ClientRaw(coop::net::Session* s, Arm a) {
     if (!g_c.sawFirst) {
         if (Past(g_c.run, kHostFirstBound))
-            ClientFail(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
+            ClientInvalid(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
         return;
     }
     const Clock::time_point now = Clock::now();
     if (now < g_c.nextTry) return;
     g_c.nextTry = now + std::chrono::seconds(1);
     if (g_c.rawFrom == Clock::time_point{}) g_c.rawFrom = now;
-    if (now - g_c.rawFrom > kFailBound) return ClientFail(a, "the raw request never went out", "no send", "sent");
+    if (now - g_c.rawFrom > kFailBound) return ClientInvalid(a, "the raw request never went out", "no send", "sent");
     bool sent = false;
     if (a == Arm::Occupied) {
         coop::net::AtvSeatPayload p{};
@@ -379,7 +392,7 @@ void ClientBack(Arm a) {
         return ClientEnd();
     }
     if (Past(g_c.run, kFailBound))
-        ClientFail(a, "the host never said it had the ATV back", "no line", PhaseLine("back"));
+        ClientInvalid(a, "the host never said it had the ATV back", "no line", PhaseLine("back"));
 }
 
 }  // namespace

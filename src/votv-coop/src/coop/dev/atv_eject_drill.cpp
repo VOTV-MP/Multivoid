@@ -7,7 +7,7 @@
 //   arm client: the client sits, becomes the syncer and fires on its copy; the host must keep the wheel and count the
 //               client's presence as skipped. That is the known divergence of atv_condition_sync (the wheel prop a client
 //               births does not travel), asserted contained.
-// The bounds below are failure bounds, never waits: every phase leaves on its edge. The verdict of arm client's judge
+// The bounds below only say INVALID and are never waits: every phase leaves on its edge. The verdict of arm client's judge
 // is decided on the host's own receipt of the client's eject (kApplyBlocks); a bound there only says INVALID.
 
 #include "coop/dev/atv_eject_drill.h"
@@ -58,7 +58,7 @@ constexpr uint8_t        kNoSeat = 0xFF;
 constexpr int32_t        kWheel = 2;      // backWheel_R in the ATV's getTire switch
 constexpr uint8_t        kWheelBit = 1u << kWheel;
 constexpr float          kDamage = 200.f; // above any durability: FMax(x,0) = 0 -> ejectWheel
-constexpr auto           kFailBound = std::chrono::seconds(180);   // a failure bound, never a wait
+constexpr auto           kFailBound = std::chrono::seconds(180);   // a bound: INVALID when it passes, never a wait
 constexpr auto           kSeatBound = std::chrono::seconds(360);   // the client's walk and its sit, never a wait
 constexpr float          kSitReachCm = 400.f;   // the director's walk ends this close to the ATV's root
 constexpr int            kWalkDeadlineS = 300;
@@ -200,12 +200,17 @@ void HostFail(Arm a, const std::string& what, const std::string& got, const std:
     Fail("host", a, g_h.run, what, got, want);
 }
 
+// A bound that ran out with no event to decide on.
+void HostInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("host", a, g_h.run, what, got, want);
+}
+
 // The client's ready line, then the arm's start: arm host waits for the idle ATV, arm client takes the counters.
 void HostWait(Arm a) {
     HostState& h = g_h;
     if (!h.readySeen && DC::PollDue()) h.readySeen = DC::ChatHasLive(ReadyLine(a));
     if (!h.readySeen) {
-        if (Past(h.run.at, kFailBound)) HostFail(a, "the client never said it was ready", "no line", ReadyLine(a));
+        if (Past(h.run.at, kFailBound)) HostInvalid(a, "the client never said it was ready", "no line", ReadyLine(a));
         return;
     }
     if (a == Arm::Host) return HostPhase(a, HPh::Own, "own");
@@ -225,7 +230,7 @@ void HostOwn(Arm a, const TableView& t) {
     char got[64];
     std::snprintf(got, sizeof(got), "occupant %u syncer %u", static_cast<unsigned>(t.occupantSlot),
                   static_cast<unsigned>(t.syncerSlot));
-    HostFail(a, "the host never owned the idle ATV", got, "occupant 255 syncer 0");
+    HostInvalid(a, "the host never owned the idle ATV", got, "occupant 255 syncer 0");
 }
 
 void HostFire(Arm a, const TableView& t) {
@@ -248,7 +253,7 @@ void HostJudgeHost(Arm a, const TableView& t) {
         return;
     }
     if (Past(g_h.run.at, kFailBound))
-        HostFail(a, "the host's damageWheel did not eject the wheel", "mask " + Hex(now), "bit 2 clear");
+        HostInvalid(a, "the host's damageWheel did not eject the wheel", "mask " + Hex(now), "bit 2 clear");
 }
 
 // arm client: the client sits and syncs the ATV.
@@ -258,7 +263,7 @@ void HostSeated(Arm a, const TableView& t) {
     char got[64];
     std::snprintf(got, sizeof(got), "occupant %u syncer %u", static_cast<unsigned>(t.occupantSlot),
                   static_cast<unsigned>(t.syncerSlot));
-    HostFail(a, "the table never named the client occupant and syncer", got, "occupant 1 syncer 1");
+    HostInvalid(a, "the table never named the client occupant and syncer", got, "occupant 1 syncer 1");
 }
 
 // arm client: the host keeps its wheel and calls no updTires, and once the client has fired, its presence is counted
@@ -313,7 +318,7 @@ void HostTick(coop::net::Session* s, Arm a) {
     if (p == HPh::Wait) return HostWait(a);
     TableView t;
     if (!coop::atv_sync::ReadTable(kKey, t)) {   // a miss is a wait: the index may be rebuilding
-        if (Past(h.run.at, kFailBound)) HostFail(a, "the ATV left the table", "no ATV", "the world's ATV");
+        if (Past(h.run.at, kFailBound)) HostInvalid(a, "the ATV left the table", "no ATV", "the world's ATV");
         return;
     }
     switch (p) {
@@ -351,6 +356,12 @@ void ClientFail(Arm a, const std::string& what, const std::string& got, const st
     WalkCancel();
 }
 
+// A bound that ran out with no event to decide on.
+void ClientInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("client", a, g_c.run, what, got, want);
+    WalkCancel();
+}
+
 // The client's streams run and the table holds an ATV whose copy still has its rear wheel: the base counters are taken,
 // the ready line said, and the arm starts (arm host judges, arm client walks to the ATV).
 void ClientReady(Arm a) {
@@ -373,7 +384,7 @@ void ClientReady(Arm a) {
         return ClientPhase(a, CPh::Walk, "walk");
     }
     if (Past(c.run.at, kFailBound))
-        ClientFail(a, "the client's streams or the ATV's table never held", "not ready", "streams running, ATV indexed");
+        ClientInvalid(a, "the client's streams or the ATV's table never held", "not ready", "streams running, ATV indexed");
 }
 
 // arm host: the client's live copy loses the wheel once, through the verb the lane runs on a mirror: with the bit clear,
@@ -399,8 +410,8 @@ void ClientJudgeHost(Arm a, const TableView& t) {
         return;
     }
     if (Past(c.readyAt, kFailBound))
-        ClientFail(a, "the host's eject never reached the client's copy",
-                   "updTires " + Plus(tires) + ", mask " + Hex(mask), "updTires +1, bit 2 clear");
+        ClientInvalid(a, "the host's eject never reached the client's copy",
+                      "updTires " + Plus(tires) + ", mask " + Hex(mask), "updTires +1, bit 2 clear");
 }
 
 void ClientWalk(Arm a) {
@@ -413,7 +424,7 @@ void ClientWalk(Arm a) {
 void ClientSit(Arm a, const TableView& t, void* player, uint8_t self) {
     ClientState& c = g_c;
     if (!atv_seat::TrySit(player, t.actor, c.sit)) {
-        if (Past(c.run.from, kSeatBound)) ClientFail(a, "the sit never finished", "no grant", "seated");
+        if (Past(c.run.from, kSeatBound)) ClientInvalid(a, "the sit never finished", "no grant", "seated");
         return;
     }
     if (coop::atv_sync::ActorSeatedBy(self) != t.actor)
@@ -428,7 +439,7 @@ void ClientOwned(Arm a, const TableView& t, uint8_t self) {
         if (!Past(c.run.from, kSeatBound)) return;
         char got[32];
         std::snprintf(got, sizeof(got), "syncer %u", static_cast<unsigned>(t.syncerSlot));
-        return ClientFail(a, "the table never named this client the syncer", got, "syncer = this client");
+        return ClientInvalid(a, "the table never named this client the syncer", got, "syncer = this client");
     }
     if (!ReadMask(t.actor, &c.before) || !(c.before & kWheelBit))
         return ClientFail(a, "the ATV has no rear wheel to knock off", "mask " + Hex(c.before), "bit 2 set");
@@ -450,7 +461,7 @@ void ClientJudgeClient(Arm a, const TableView& t) {
         return;
     }
     if (Past(c.run.at, kFailBound))
-        ClientFail(a, "the client's damageWheel did not eject the wheel", "mask " + Hex(now), "bit 2 clear");
+        ClientInvalid(a, "the client's damageWheel did not eject the wheel", "mask " + Hex(now), "bit 2 clear");
 }
 
 void ClientTick(Arm a) {
@@ -472,7 +483,7 @@ void ClientTick(Arm a) {
     if (p == CPh::Ready) return ClientReady(a);
     TableView t;
     if (!coop::atv_sync::ReadTable(kKey, t)) {   // a miss is a wait: the index may be rebuilding
-        if (Past(c.run.at, kFailBound)) ClientFail(a, "the ATV left the table", "no ATV", "the world's ATV");
+        if (Past(c.run.at, kFailBound)) ClientInvalid(a, "the ATV left the table", "no ATV", "the world's ATV");
         return;
     }
     switch (p) {

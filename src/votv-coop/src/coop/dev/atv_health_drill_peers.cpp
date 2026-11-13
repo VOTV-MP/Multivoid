@@ -5,7 +5,7 @@
 // under a seated client takes the seat and the pose from its connect snapshot) and stream_pace (a syncer's burst of
 // blocks is paced by the host's bucket). The first two grab, the last two sit. synced_peer, join and stream_pace run
 // on three peers: slot 2 is the observer, a client that only watches or grabs. The peers sequence on lobby-chat lines,
-// each latched on sight; every wait ends on the line or the state it waits for, and a bound only fails it.
+// each latched on sight; every wait ends on the line or the state it waits for, and a bound only says INVALID.
 
 #include "atv_health_drill_detail.h"  // co-located private header (src tree, not include/)
 
@@ -50,6 +50,7 @@ constexpr uint8_t  kObserverSlot = 2;
 // block. 70 blocks (about 3.5 s) cover that whole span, so the carry_back red fails in every phase of the pass and a
 // hand-back broken to fire late still shows inside the window.
 constexpr uint64_t kCarryBlocks = 70;
+constexpr uint64_t kHandBackBlocks = 70;   // idle-stream blocks that decide a hand-back at rest did not happen
 constexpr int      kBurst = 100;        // blocks the stream_pace client sends in one tick
 constexpr uint32_t kBucket = 16;        // the stream bucket's burst: what one tick's blocks may carry through
 // The host's tolerance on the burst's paced count: the bucket refills one token per 25 ms (kStreamBudget, 40/s) while
@@ -87,6 +88,7 @@ struct PHost {
     bool               observerBaselined = false;   // stream_pace: the observer's normal-rate baseline is taken
     AU::Counters       base{};            // the lane's counters at the phase's baseline
     Clock::time_point  heldAt{};
+    uint64_t           idleAtRelease = 0; // the lane's idle-stream blocks when the release began
 };
 PHost g_ph;
 
@@ -99,6 +101,11 @@ void HostFail(Arm a, const std::string& what, const std::string& got, const std:
     Fail("host", a, g_ph.run, what, got, want);
 }
 
+// A bound that ran out with no event to decide on.
+void HostInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("host", a, g_ph.run, what, got, want);
+}
+
 // The start: the client's ready line, and for the arms where the observer acts at once its own.
 void HostWait(Arm a, bool due) {
     PHost& h = g_ph;
@@ -108,8 +115,8 @@ void HostWait(Arm a, bool due) {
     }
     if (h.clientReady && (!NeedsObserver(a) || h.observerReady)) return HostPhase(PH::Spawn, "spawn");
     if (Past(h.run, kHostFirstBound))
-        HostFail(a, h.clientReady ? "the observer never said it was ready" : "the client never said it was ready",
-                 "no line", ReadyLine(a, h.clientReady ? "observer" : "client"));
+        HostInvalid(a, h.clientReady ? "the observer never said it was ready" : "the client never said it was ready",
+                    "no line", ReadyLine(a, h.clientReady ? "observer" : "client"));
 }
 
 void AfterPark(Arm a) {
@@ -128,9 +135,9 @@ void HostHeld(Arm a, const TableView* t, bool due) {
         if (due) Latch(h.saw, ClientLine("holding"));
         if (h.saw) {
             h.base = AU::ReadCounters();
-            h.run.at = Clock::now();   // the failure bound runs from the hold
+            h.run.at = Clock::now();   // the bound runs from the hold
         } else if (Past(h.run, kHostFirstBound)) {
-            HostFail(a, "the client never said it held the ATV", "no line", ClientLine("holding"));
+            HostInvalid(a, "the client never said it held the ATV", "no line", ClientLine("holding"));
         }
         return;
     }
@@ -142,6 +149,7 @@ void HostHeld(Arm a, const TableView* t, bool due) {
                         "handedBack " + Plus(back) + " carried_still " + Plus(still), "handedBack +0");
     if (still >= kCarryBlocks && t && t->syncerSlot == kSlot) {
         h.heldAt = Clock::now();
+        h.idleAtRelease = now.idleStreamBlocks;
         DC::Say(PhaseLine("held"));
         return HostPhase(PH::Release, "release");
     }
@@ -149,7 +157,7 @@ void HostHeld(Arm a, const TableView* t, bool due) {
         char got[96];
         std::snprintf(got, sizeof(got), "carried_still +%llu syncer %u", U(still),
                       t ? static_cast<unsigned>(t->syncerSlot) : 0xFFFFu);
-        HostFail(a, "the carry never showed 70 still blocks", got, "carried_still +70 syncer 1");
+        HostInvalid(a, "the carry never showed 70 still blocks to decide on", got, "carried_still +70 syncer 1");
     }
 }
 
@@ -167,10 +175,17 @@ void HostRelease(Arm a, const TableView* t) {
         std::snprintf(nums, sizeof(nums), "release_to_back_ms=%lld", Ms(h.heldAt, Clock::now()));
         return Pass("host", a, h.run, nums);
     }
-    if (Past(h.run, kFailBound))
-        HostFail(a, "the released ATV was not handed back at rest",
-                 "handedBack " + Plus(back) + " syncer " + (t ? std::to_string(t->syncerSlot) : "?"),
-                 "handedBack +1 syncer 0");
+    // The hand-back at rest lands within about two seconds of the release, 70 idle-stream blocks being more than the stream
+    // sends in that span (the same count as the idle arm's, HostBack): 70 admitted with the ATV still the client's is a
+    // hand-back that did not happen, the event. Having no stream to count says INVALID at the bound.
+    const uint64_t idle = now.idleStreamBlocks - h.idleAtRelease;
+    const bool decided = idle >= kHandBackBlocks;
+    if (!decided && !Past(h.run, kFailBound)) return;
+    const std::string got = "handedBack " + Plus(back) + " syncer " + (t ? std::to_string(t->syncerSlot) : "?") +
+                            " idle_blocks " + Plus(idle);
+    if (decided)
+        return HostFail(a, "the released ATV was not handed back at rest", got, "handedBack +1 syncer 0");
+    HostInvalid(a, "the idle stream never held long enough to decide the hand-back", got, "handedBack +1 syncer 0");
 }
 
 // synced_peer: from the client's `carrying` line with the client the syncer, the baseline.
@@ -183,8 +198,8 @@ void HostCarry(Arm a, const TableView* t, bool due) {
         return HostPhase(PH::Judge, "judge");
     }
     if (Past(h.run, kHostFirstBound))
-        HostFail(a, "the client never carried the ATV", t ? "syncer " + std::to_string(t->syncerSlot) : "no table",
-                 "the client the syncer");
+        HostInvalid(a, "the client never carried the ATV", t ? "syncer " + std::to_string(t->syncerSlot) : "no table",
+                    "the client the syncer");
 }
 
 // The observer's grab is judged: refused as synced, the carry kept, nothing admitted since the baseline.
@@ -207,7 +222,7 @@ void HostJudge(Arm a, const TableView* t) {
         return Pass("host", a, h.run, "refused_synced=1");
     }
     if (Past(h.run, kHostFirstBound))
-        HostFail(a, "the second client's takeover was never judged", got, "admitted +0 refused_synced +1 syncer 1");
+        HostInvalid(a, "the second client's takeover was never judged", got, "admitted +0 refused_synced +1 syncer 1");
 }
 
 // join: once the observer is in and the client seated, the host says the key again (a joiner holds no chat history).
@@ -220,8 +235,8 @@ void HostRejoin(Arm a, const TableView* t, bool due) {
         return Pass("host", a, h.run, "");
     }
     if (Past(h.run, kHostFirstBound))
-        HostFail(a, h.observerReady ? "the table never named the client seated" : "the observer never joined",
-                 h.observerReady ? "not seated" : "no line", h.observerReady ? "occupant 1 syncer 1" : ReadyLine(a, "observer"));
+        HostInvalid(a, h.observerReady ? "the table never named the client seated" : "the observer never joined",
+                    h.observerReady ? "not seated" : "no line", h.observerReady ? "occupant 1 syncer 1" : ReadyLine(a, "observer"));
 }
 
 // stream_pace: the client seated and the syncer and the observer's baseline taken, the host's baseline, and the word to
@@ -239,8 +254,8 @@ void HostSeated(Arm a, const TableView* t, bool due) {
         return HostPhase(PH::Paced, "paced");
     }
     if (Past(h.run, kHostFirstBound))
-        HostFail(a, h.saw ? "the observer never took its stream baseline" : "the client never sat in the spawned ATV",
-                 "no line", h.saw ? ObserverLine("baselined") : ClientLine("sat"));
+        HostInvalid(a, h.saw ? "the observer never took its stream baseline" : "the client never sat in the spawned ATV",
+                    "no line", h.saw ? ObserverLine("baselined") : ClientLine("sat"));
 }
 
 // The burst is paced: the bucket refused all but its burst, and no block was refused as not the syncer's. The client's
@@ -259,9 +274,11 @@ void HostPaced(Arm a, bool due) {
         std::snprintf(nums, sizeof(nums), "stream_paced=%llu", U(paced));
         return Pass("host", a, h.run, nums);
     }
+    // The client's `burst` line follows its blocks on the lane, so once it is seen the count is whole and short of the burst
+    // is the FAIL; without the line the bound says INVALID.
     if (due) Latch(h.saw, ClientLine("burst"));
-    if (h.saw || Past(h.run, kFailBound))
-        HostFail(a, "the burst was not paced by the bucket", got, "stream_paced +74");
+    if (h.saw) return HostFail(a, "the burst was not paced by the bucket", got, "stream_paced +74");
+    if (Past(h.run, kFailBound)) HostInvalid(a, "the client never said its burst was sent", got, "stream_paced +74");
 }
 
 // ---- the client (slot 1) and the observer (slot 2) ----
@@ -299,6 +316,12 @@ void PEnd(PPeer& p) {
 
 void PFail(PPeer& p, Arm a, const std::string& what, const std::string& got, const std::string& want) {
     Fail(p.role, a, p.run, what, got, want);
+    PEnd(p);
+}
+
+// A bound that ran out with no event to decide on.
+void PInvalid(PPeer& p, Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid(p.role, a, p.run, what, got, want);
     PEnd(p);
 }
 
@@ -350,7 +373,7 @@ void PeerWait(PPeer& p, Arm a, bool due) {
         }
     }
     if (Past(p.run, kHostFirstBound))
-        PFail(p, a, "the host's ATV never came to this peer's table", "no row", "a row under the host's key");
+        PInvalid(p, a, "the host's ATV never came to this peer's table", "no row", "a row under the host's key");
 }
 
 void PeerWalk(PPeer& p, Arm a, void* player) {
@@ -365,7 +388,7 @@ void PeerWalk(PPeer& p, Arm a, void* player) {
 void PeerGrab(PPeer& p, Arm a) {
     switch (p.grab->Tick()) {
     case coop::director::GrabState::Working:
-        if (Past(p.run, kFailBound)) PFail(p, a, "the grab never finished", "working", "grabbed");
+        if (Past(p.run, kFailBound)) PInvalid(p, a, "the grab never finished", "working", "grabbed");
         return;
     case coop::director::GrabState::Failed:
         return PFail(p, a, GrabWhy(*p.grab), "failed", "grabbed");
@@ -422,7 +445,7 @@ void PeerRelease(PPeer& p, Arm a, void* player) {
         if (a == Arm::SyncedPeer) return PassWalk(p, a);
         return PEnter(p, PC::Back, "back");
     }
-    if (Past(p.run, kFailBound)) return PFail(p, a, "the release never let go", "grabbing", "not grabbing");
+    if (Past(p.run, kFailBound)) return PInvalid(p, a, "the release never let go", "grabbing", "not grabbing");
     const Clock::time_point now = Clock::now();
     if (now < p.nextTry) return;
     p.nextTry = now + std::chrono::seconds(1);
@@ -437,7 +460,7 @@ void PeerHold(coop::net::Session* s, PPeer& p, Arm a, void* player) {
         if (!atv) return PFail(p, a, "the ATV is gone before the grab was judged", "no ATV", "the spawned ATV");
         if (!E::IsMainPlayerGrabbing(player, atv) && p.sawBack) return PassWalk(p, a);
         if (Past(p.run, kFailBound))
-            PFail(p, a, "the refused grab was not dropped", p.sawBack ? "grabbing" : "no host verdict", "dropped");
+            PInvalid(p, a, "the refused grab was not dropped", p.sawBack ? "grabbing" : "no host verdict", "dropped");
         return;
     }
     const bool go = a == Arm::CarryStill ? p.sawHeld : a == Arm::SyncedPeer ? p.sawBack : p.sawSeated;
@@ -445,12 +468,12 @@ void PeerHold(coop::net::Session* s, PPeer& p, Arm a, void* player) {
         if (a == Arm::StreamPace) return PeerBurst(s, p, a);
         return PEnter(p, PC::Release, "release");
     }
-    if (Past(p.run, kHostFirstBound)) PFail(p, a, "the host never judged the hold", "no line", "the host's phase line");
+    if (Past(p.run, kHostFirstBound)) PInvalid(p, a, "the host never judged the hold", "no line", "the host's phase line");
 }
 
 void PeerBack(PPeer& p, Arm a) {
     if (a == Arm::StreamPace ? p.sawPaced : p.sawBack) return PassWalk(p, a);
-    if (Past(p.run, kFailBound)) PFail(p, a, "the host never said it was done", "no line", "the host's phase line");
+    if (Past(p.run, kFailBound)) PInvalid(p, a, "the host never said it was done", "no line", "the host's phase line");
 }
 
 // join, on the observer: the key line (the host's second, said when this peer is in), the table, and the snapshot.
@@ -471,7 +494,7 @@ void ObserverJoin(PPeer& p, Arm a, bool due) {
         }
     }
     if (Past(p.run, kHostFirstBound))
-        PFail(p, a, "the host's ATV never came to the joiner's table", "no row", "a row under the host's key");
+        PInvalid(p, a, "the host's ATV never came to the joiner's table", "no row", "a row under the host's key");
 }
 
 // stream_pace, on the observer: the normal stream's rate over a run of kBaselineBlocks syncer blocks counted from the
@@ -480,7 +503,7 @@ void ObserverJoin(PPeer& p, Arm a, bool due) {
 void ObserverPace(PPeer& p, Arm a, bool due) {
     if (!p.haveKey) {
         if (ReadyAndKey(p, a, due)) PEnter(p, PC::Hold, "pace");
-        if (Past(p.run, kHostFirstBound)) PFail(p, a, "the host's key never came", "no line", "the host's key line");
+        if (Past(p.run, kHostFirstBound)) PInvalid(p, a, "the host's key never came", "no line", "the host's key line");
         return;
     }
     const Clock::time_point now = Clock::now();
@@ -507,13 +530,13 @@ void ObserverPace(PPeer& p, Arm a, bool due) {
     }
     if (!Past(p.run, kHostFirstBound)) return;
     if (!p.haveBase)
-        return PFail(p, a, "the observer counted too few syncer blocks for its baseline",
-                     std::to_string(p.haveA0 ? coop::atv_sync::AppliedFromSyncer() - p.a0 : 0u) + " blocks",
-                     std::to_string(kBaselineBlocks) + " blocks");
+        return PInvalid(p, a, "the observer counted too few syncer blocks for its baseline",
+                        std::to_string(p.haveA0 ? coop::atv_sync::AppliedFromSyncer() - p.a0 : 0u) + " blocks",
+                        std::to_string(kBaselineBlocks) + " blocks");
     if (!p.sawSeated)
-        return PFail(p, a, "the host never said the baseline was taken and the client seated", "no line",
-                     PhaseLine("seated"));
-    PFail(p, a, "the host never said the burst was judged", "no line", PhaseLine("paced"));
+        return PInvalid(p, a, "the host never said the baseline was taken and the client seated", "no line",
+                        PhaseLine("seated"));
+    PInvalid(p, a, "the host never said the burst was judged", "no line", PhaseLine("paced"));
 }
 
 // One peer's tick, after its head: the observer of join and stream_pace has its own wait, every other peer walks.

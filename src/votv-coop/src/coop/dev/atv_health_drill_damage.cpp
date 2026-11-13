@@ -94,6 +94,12 @@ void HostFail(Arm a, const std::string& what, const std::string& got, const std:
     DamageHostEnd();
 }
 
+// A bound that ran out with no event to decide on.
+void HostInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("host", a, g_dh.run, what, got, want);
+    DamageHostEnd();
+}
+
 void HostPhase(HPh p, const char* name) { Enter(g_dh.run, static_cast<int>(p), name); }
 
 uint64_t Accepted() {
@@ -111,7 +117,7 @@ void HostWait(Arm a) {
     DHost& h = g_dh;
     if (!h.readySeen && DC::PollDue()) h.readySeen = DC::ChatHasLive(ReadyLine(a));
     if (!h.readySeen) {
-        if (Past(h.run, kFailBound)) HostFail(a, "the client never said it was ready", "no line", ReadyLine(a));
+        if (Past(h.run, kFailBound)) HostInvalid(a, "the client never said it was ready", "no line", ReadyLine(a));
         return;
     }
     if (const wchar_t* bad = XD::Guard(true))
@@ -140,7 +146,7 @@ void HostSeated(Arm a, const TableView* t) {
         char got[64];
         std::snprintf(got, sizeof(got), "occupant %u syncer %u", static_cast<unsigned>(t->occupantSlot),
                       static_cast<unsigned>(t->syncerSlot));
-        return HostFail(a, "the table never named the client occupant and syncer", got, "occupant 1 syncer 1");
+        return HostInvalid(a, "the table never named the client occupant and syncer", got, "occupant 1 syncer 1");
     }
     h.gate0 = GATE::ReadCounters();
     h.req0 = ER::GetCounters();
@@ -170,7 +176,7 @@ void HostArmed(Arm a, const TableView* t) {
         DC::Say(PhaseLine(SpecOf(a).first));
         return HostPhase(HPh::Judge, "judge");
     }
-    if (Past(g_dh.run, kFailBound)) HostFail(a, "the host's table never read the trap set", "trap clear", "trap set");
+    if (Past(g_dh.run, kFailBound)) HostInvalid(a, "the host's table never read the trap set", "trap clear", "trap set");
 }
 
 // gate: the blast's `exploded` was cancelled once on the host's copy and ran nowhere on it.
@@ -185,7 +191,7 @@ void HostJudgeGate(Arm a) {
         return HostFail(a, "the blast was cancelled more than once", "cancelled " + Plus(cancelled), "cancelled +1");
     if (cancelled == 1) return HostPhase(HPh::Await, "await");
     if (Past(g_dh.run, kFailBound))
-        HostFail(a, "the blast did not reach the ATV's copy", "cancelled +0, ran +0", "cancelled +1, ran +0");
+        HostInvalid(a, "the blast did not reach the ATV's copy", "cancelled +0, ran +0", "cancelled +1, ran +0");
 }
 
 // owner and trap: one request accepted, the ATV marked blown by the client and, for the trap, the host's own trap
@@ -202,12 +208,16 @@ void HostJudge(Arm a, const TableView* t) {
         DC::Say(PhaseLine("blown"));
         return HostPhase(HPh::Await, "await");
     }
-    if (!Past(h.run, kFailBound)) return;
+    // A kill the lane judged and refused is the event (its refused count); a bound with neither says INVALID.
+    const uint64_t refused = RefusedSinceSeated();
+    const bool judgedRefused = acc == 0 && refused > 0;
+    if (!judgedRefused && !Past(h.run, kFailBound)) return;
     char got[128];
-    std::snprintf(got, sizeof(got), "accepted +%llu, refused +%llu, blown seen %d, trap clear seen %d", U(acc),
-                  U(RefusedSinceSeated()), h.sawBlown ? 1 : 0, h.sawTrapClear ? 1 : 0);
-    HostFail(a, "the client's kill was not accepted and marked", got,
-             a == Arm::Trap ? "accepted +1, blown by 1, trap clear" : "accepted +1, blown by 1");
+    std::snprintf(got, sizeof(got), "accepted +%llu, refused +%llu, blown seen %d, trap clear seen %d", U(acc), U(refused),
+                  h.sawBlown ? 1 : 0, h.sawTrapClear ? 1 : 0);
+    const char* const want = a == Arm::Trap ? "accepted +1, blown by 1, trap clear" : "accepted +1, blown by 1";
+    if (judgedRefused) return HostFail(a, "the client's kill was refused by the host", got, want);
+    HostInvalid(a, "the client's kill was not accepted and marked in time to decide", got, want);
 }
 
 // The client's last line: the counters must still hold (trap: the re-armed second kill accepted), and the host says
@@ -216,7 +226,7 @@ void HostAwait(Arm a) {
     DHost& h = g_dh;
     if (!h.sawAwait && DC::PollDue()) h.sawAwait = DC::ChatHasLive(ClientLine(AwaitLine(a)));
     if (!h.sawAwait) {
-        if (Past(h.run, kFailBound)) HostFail(a, "the client never said its edge", "no line", ClientLine(AwaitLine(a)));
+        if (Past(h.run, kFailBound)) HostInvalid(a, "the client never said its edge", "no line", ClientLine(AwaitLine(a)));
         return;
     }
     char nums[64];
@@ -231,10 +241,15 @@ void HostAwait(Arm a) {
     } else {
         const uint64_t want = a == Arm::Owner ? 1 : 2;
         const uint64_t acc = Accepted();
-        if (acc < want && !Past(h.run, kFailBound)) return;   // the second kill's request is still on its way
-        if (acc != want)
-            return HostFail(a, "the requests accepted after the client's last kill", "accepted " + Plus(acc) +
-                            ", refused " + Plus(RefusedSinceSeated()), "accepted " + Plus(want));
+        // The second kill's request may still be on its way: it is judged, accepted or refused, or the bound says INVALID.
+        const uint64_t refused = RefusedSinceSeated();
+        if (acc < want && refused == 0 && !Past(h.run, kFailBound)) return;
+        if (acc != want) {
+            const std::string got = "accepted " + Plus(acc) + ", refused " + Plus(refused);
+            if (acc > want || refused > 0)
+                return HostFail(a, "the requests accepted after the client's last kill", got, "accepted " + Plus(want));
+            return HostInvalid(a, "the client's last kill was never judged", got, "accepted " + Plus(want));
+        }
         std::snprintf(nums, sizeof(nums), "accepted=%llu", U(acc));
     }
     DC::Say(PhaseLine("back"));
@@ -264,6 +279,12 @@ void ClientEnd() {
 
 void ClientFail(Arm a, const std::string& what, const std::string& got, const std::string& want) {
     Fail("client", a, g_dc.run, what, got, want);
+    ClientEnd();
+}
+
+// A bound that ran out with no event to decide on.
+void ClientInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("client", a, g_dc.run, what, got, want);
     ClientEnd();
 }
 
@@ -379,13 +400,19 @@ void ClientSit(Arm a, void* player, void* atv, uint8_t self) {
 
 // gate: after the host's blast, the client's own copy ran `exploded` once.
 void ClientJudgeGate(Arm a) {
-    const uint64_t ran = GATE::ReadCounters().ran[kExploded] - g_dc.gate0.ran[kExploded];
+    const GATE::Counters c = GATE::ReadCounters();
+    const uint64_t ran = c.ran[kExploded] - g_dc.gate0.ran[kExploded];
+    const uint64_t cancelled = c.cancelled[kExploded] - g_dc.gate0.cancelled[kExploded];
     if (ran >= 1) {
         DC::Say(ClientLine("gate-ran"));
         return ClientPhase(CPh::Back, "back");
     }
+    // The gate's own count of a blast it cancelled on the owner's copy is the event; a bound with none says INVALID.
+    if (cancelled >= 1)
+        return ClientFail(a, "the blast was cancelled on the owner's copy", "ran +0, cancelled " + Plus(cancelled),
+                          "ran +1");
     if (Past(g_dc.run, kFailBound))
-        ClientFail(a, "the blast did not run on the owner's copy", "ran +0", "ran +1");
+        ClientInvalid(a, "the blast did not reach the owner's copy", "ran +0, cancelled +0", "ran +1");
 }
 
 // trap: on the host's `armed` edge the copy's trap and the table's read set; then the forward key is pressed and
@@ -405,9 +432,9 @@ void ClientPrime(Arm a, void* atv) {
         return ClientPhase(CPh::Fired, "fired");
     }
     if (Past(g_dc.run, kFailBound))
-        ClientFail(a, "the host's trap did not reach the owner's copy",
-                   std::string("copy trap ") + (copy ? "set" : "clear") + ", table trap " + (table ? "set" : "clear"),
-                   "both set");
+        ClientInvalid(a, "the host's trap did not reach the owner's copy",
+                      std::string("copy trap ") + (copy ? "set" : "clear") + ", table trap " + (table ? "set" : "clear"),
+                      "both set");
 }
 
 // trap: the fire is one request and the copy's trap is cleared by the game.
@@ -421,9 +448,9 @@ void ClientFired(Arm a, void* atv) {
         return ClientPhase(CPh::Blown, "blown");
     }
     if (Past(g_dc.run, kFailBound))
-        ClientFail(a, "the trap did not fire on the owner's copy",
-                   "sent " + Plus(sent) + ", trap " + (trap ? "set" : "clear") + ", " + GateFlags(atv),
-                   "sent +1, trap clear");
+        ClientInvalid(a, "the trap did not fire on the owner's copy",
+                      "sent " + Plus(sent) + ", trap " + (trap ? "set" : "clear") + ", " + GateFlags(atv),
+                      "sent +1, trap clear");
 }
 
 // True once the explosion lane has applied a blast on this client since `applied0` (the kill or the press), the host's
@@ -431,7 +458,7 @@ void ClientFired(Arm a, void* atv) {
 bool BlastLanded(Arm a) {
     if (Applied() > g_dc.applied0) return true;
     if (Past(g_dc.run, kFailBound))
-        ClientFail(a, "the host's blast was never applied on the client", "applied +0", "applied +1");
+        ClientInvalid(a, "the host's blast was never applied on the client", "applied +0", "applied +1");
     return false;
 }
 
@@ -440,7 +467,7 @@ bool BlastLanded(Arm a) {
 void ClientBlown(Arm a, void* atv) {
     if (!g_dc.sawBlown) {
         if (Past(g_dc.run, kFailBound))
-            ClientFail(a, "the host never said it had the kill", "no line", PhaseLine("blown"));
+            ClientInvalid(a, "the host never said it had the kill", "no line", PhaseLine("blown"));
         return;
     }
     if (!BlastLanded(a)) return;
@@ -459,7 +486,7 @@ void ClientKilled(Arm a) {
         return ClientPhase(CPh::Blast, "blast");
     }
     if (Past(g_dc.run, kFailBound))
-        ClientFail(a, "the kill sent no request", "sent " + Plus(sent), "sent " + Plus(want));
+        ClientInvalid(a, "the kill sent no request", "sent " + Plus(sent), "sent " + Plus(want));
 }
 
 // owner: the host's blast for the kill is applied here.
@@ -472,7 +499,7 @@ void ClientBlast(Arm a) {
 void ClientBack(Arm a, void* atv) {
     if (!g_dc.sawBack) {
         if (Past(g_dc.run, kFailBound))
-            ClientFail(a, "the host never said it had finished", "no line", PhaseLine("back"));
+            ClientInvalid(a, "the host never said it had finished", "no line", PhaseLine("back"));
         return;
     }
     // Guards the lane: one kill is one request, and the host's blast on this copy sends no second one. The game itself
@@ -541,7 +568,7 @@ void DamageClientTick(coop::net::Session*, Arm a) {
     case CPh::Edge:
         if (c.sawEdge) return ClientPhase(CPh::Judge, "judge");
         if (Past(c.run, kFailBound))
-            ClientFail(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
+            ClientInvalid(a, "the host never said its edge", "no line", PhaseLine(SpecOf(a).first));
         return;
     case CPh::Judge:  return a == Arm::Gate ? ClientJudgeGate(a) : ClientPrime(a, atv);
     case CPh::Fired:  return ClientFired(a, atv);

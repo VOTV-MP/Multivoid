@@ -55,6 +55,12 @@ void HostFail(Arm a, const std::string& what, const std::string& got, const std:
     HostEnd();
 }
 
+// A bound that ran out with no event to decide on.
+void HostInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("host", a, g_h.run, what, got, want);
+    HostEnd();
+}
+
 // The director's walk to the ATV's root, started once the table holds it; the host then stands within reach.
 void Walk(Arm a, const TableView* t) {
     if (!g_h.walk) {
@@ -67,7 +73,7 @@ void Walk(Arm a, const TableView* t) {
             UE_LOGI("[ATV-HEALTH-DRILL] host arm=%s the ATV is at (%.0f,%.0f,%.0f), walking to it", SpecOf(a).name,
                     at.X, at.Y, at.Z);
         } else if (Past(g_h.run, kHostFirstBound)) {
-            HostFail(a, "the ATV's table never held", "no ATV", "ATV indexed");
+            HostInvalid(a, "the ATV's table never held", "no ATV", "ATV indexed");
         }
         return;
     }
@@ -75,7 +81,7 @@ void Walk(Arm a, const TableView* t) {
     const int state = g_h.walk->state.load();
     if (state == 2) return HostFail(a, "the director's walk to the ATV did not arrive", "walk failed", "arrived");
     if (state != 1) {
-        if (Past(g_h.run, kHostFirstBound)) HostFail(a, "the director's walk never ended", "walking", "arrived");
+        if (Past(g_h.run, kHostFirstBound)) HostInvalid(a, "the director's walk never ended", "walking", "arrived");
         return;
     }
     g_h.arrivedAt = Clock::now();
@@ -92,7 +98,7 @@ void Act(Arm a, const TableView* t) {
     const bool sit = a == Arm::Occupied;
     if (sit) {
         if (!atv_seat::TrySit(player, t->actor, g_h.sit)) {
-            if (Past(g_h.run, kFailBound)) HostFail(a, "the host's sit never finished", "no grant", "seated");
+            if (Past(g_h.run, kFailBound)) HostInvalid(a, "the host's sit never finished", "no grant", "seated");
             return;
         }
         if (t->occupantSlot != 0 || t->syncerSlot != 0) {
@@ -104,7 +110,7 @@ void Act(Arm a, const TableView* t) {
     } else {
         const coop::director::GrabState st = g_h.grab->Tick();
         if (st == coop::director::GrabState::Working) {
-            if (Past(g_h.run, kFailBound)) HostFail(a, "the host's grab never finished", "working", "grabbed");
+            if (Past(g_h.run, kFailBound)) HostInvalid(a, "the host's grab never finished", "working", "grabbed");
             return;
         }
         if (st == coop::director::GrabState::Failed) return HostFail(a, GrabWhy(*g_h.grab), "failed", "grabbed");
@@ -127,7 +133,7 @@ void Judge(Arm a, const TableView* t) {
     if (!g_h.sawSent && DC::PollDue()) g_h.sawSent = DC::ChatHasLive(ClientLine("sent"));
     if (!g_h.sawSent) {
         if (Past(g_h.run, kFailBound))
-            HostFail(a, "the client never sent its raw request", "no line", ClientLine("sent"));
+            HostInvalid(a, "the client never sent its raw request", "no line", ClientLine("sent"));
         return;
     }
     const AtvRefusal want = WantRefusal(a);
@@ -147,11 +153,14 @@ void Judge(Arm a, const TableView* t) {
         else E::ReleaseMainPlayerGrabIfHolding(player, t->actor);
         return HostEnd();
     }
-    if (refused <= 1 && !Past(g_h.run, kFailBound)) return;
-    HostFail(a, refused > 1 ? "the request was refused more than once" : "the request was not refused as expected",
-             "refused " + Plus(refused) + ", others " +
-                 Plus(OtherRefusedSincePark(want)) + ", syncer " + std::to_string(t->syncerSlot),
-             "refused +1, admitted +0, syncer 0");
+    // The lane's refusals are the events: more than one, or the one with the carry no longer the host's, is the FAIL at
+    // once; none by the bound says INVALID, the request having never been judged.
+    const std::string got = "refused " + Plus(refused) + ", others " + Plus(OtherRefusedSincePark(want)) + ", syncer " +
+                            std::to_string(t->syncerSlot);
+    if (refused > 1) return HostFail(a, "the request was refused more than once", got, "refused +1, admitted +0, syncer 0");
+    if (refused == 1) return HostFail(a, "the request was refused but the carry left the host", got, "refused +1, admitted +0, syncer 0");
+    if (Past(g_h.run, kFailBound))
+        HostInvalid(a, "the client's request was never judged", got, "refused +1, admitted +0, syncer 0");
 }
 
 }  // namespace

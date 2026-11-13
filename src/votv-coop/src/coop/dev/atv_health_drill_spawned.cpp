@@ -2,7 +2,7 @@
 // host spawns an ATV of its own beside the players (on the NavMesh, a few metres ahead of its player) and says its key
 // in the lobby chat once its own table holds it; the client takes the key from that line, waits for its table to show
 // the ATV, walks to it with the director and sits. This increment measures the time from the host's spawn to each
-// table (the host reads its own, the client's reading is a lower bound); every wait is a FAIL bound, never a clock.
+// table (the host reads its own, the client's reading is a lower bound); every wait ends on its event, and a bound says INVALID.
 
 #include "atv_health_drill_detail.h"  // co-located private header (src tree, not include/)
 
@@ -114,7 +114,7 @@ Stage SpawnAtvStep(SpawnStep& st, Run& run, Arm a) {
         return Stage::Next;
     }
     if (Past(run, kFailBound)) {
-        Fail("host", a, run, "the spawned ATV never entered the host's table", "no table row", "a row");
+        Invalid("host", a, run, "the spawned ATV never entered the host's table", "no table row", "a row");
         return Stage::Failed;
     }
     return Stage::Wait;
@@ -128,7 +128,7 @@ Stage ParkAtvStep(SpawnStep& st, Run& run, Arm a) {
     const bool first = st.lastStampAt == Clock::time_point{};
     const auto notParked = [&] {
         if (!Past(run, kFailBound)) return Stage::Wait;
-        Fail("host", a, run, "the spawned ATV never came to rest", "still moving", "two stamps under 5 cm/s");
+        Invalid("host", a, run, "the spawned ATV never came to rest", "still moving", "two stamps under 5 cm/s");
         return Stage::Failed;
     };
     if (!first && now - st.lastStampAt < kStampGap) return notParked();   // between stamps: no engine call, only the bound
@@ -169,10 +169,15 @@ void HostFail(Arm a, const std::string& what, const std::string& got, const std:
     Fail("host", a, g_sh.run, what, got, want);
 }
 
+// A bound that ran out with no event to decide on.
+void HostInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("host", a, g_sh.run, what, got, want);
+}
+
 void HostWait(Arm a) {
     if (!g_sh.readySeen && DC::PollDue()) g_sh.readySeen = DC::ChatHasLive(ReadyLine(a));
     if (g_sh.readySeen) return HostPhase(HPh::Spawn, "spawn");
-    if (Past(g_sh.run, kFailBound)) HostFail(a, "the client never said it was ready", "no line", ReadyLine(a));
+    if (Past(g_sh.run, kFailBound)) HostInvalid(a, "the client never said it was ready", "no line", ReadyLine(a));
 }
 
 void HostSat(Arm a) {
@@ -183,7 +188,7 @@ void HostSat(Arm a) {
                       Ms(g_sh.sp.spawnAt, g_sh.sp.tableAt), Ms(g_sh.sp.tableAt, g_sh.sp.parkedAt));
         return Pass("host", a, g_sh.run, nums);
     }
-    if (Past(g_sh.run, kHostFirstBound)) HostFail(a, "the client never sat in the spawned ATV", "no line", ClientLine("sat"));
+    if (Past(g_sh.run, kHostFirstBound)) HostInvalid(a, "the client never sat in the spawned ATV", "no line", ClientLine("sat"));
 }
 
 // ---- the client ----
@@ -206,6 +211,12 @@ void ClientFail(Arm a, const std::string& what, const std::string& got, const st
     ClientEnd();
 }
 
+// A bound that ran out with no event to decide on.
+void ClientInvalid(Arm a, const std::string& what, const std::string& got, const std::string& want) {
+    Invalid("client", a, g_sc.run, what, got, want);
+    ClientEnd();
+}
+
 // The client says it is ready once its streams run, then waits for the host's key line.
 void ClientWait(Arm a) {
     SClient& c = g_sc;
@@ -220,7 +231,7 @@ void ClientWait(Arm a) {
         return ClientPhase(CPh::Adopt, "adopt");
     }
     if (Past(c.run, kHostFirstBound))
-        ClientFail(a, "the host never said the spawned ATV's key", "no line", std::string(kSpawnedPrefix) + "<key>");
+        ClientInvalid(a, "the host never said the spawned ATV's key", "no line", std::string(kSpawnedPrefix) + "<key>");
 }
 
 // The table shows the ATV under the host's key. The ms from the client's sight of the host's key line to here is a LOWER
@@ -242,7 +253,7 @@ void ClientAdopt(Arm a) {
         return ClientPhase(CPh::Walk, "walk");
     }
     if (Past(c.run, kFailBound))
-        ClientFail(a, "the spawned ATV never entered the client's table", "no table row", "a row under the host's key");
+        ClientInvalid(a, "the spawned ATV never entered the client's table", "no table row", "a row under the host's key");
 }
 
 void ClientWalk(Arm a) {
