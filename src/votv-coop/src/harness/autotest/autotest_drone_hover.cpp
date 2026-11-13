@@ -7,14 +7,17 @@
 // physics pulls it between the stream's writes sits off its path while it hovers; a playback that runs out of poses
 // holds still and then jumps. The host says `rig: VERDICT drone-hover PASS|FAIL|INVALID`: PASS when, hovering, the
 // client's copy sits off its path at most twice as far as the host's drone, plus 2 cm and 0.05 degrees, and, flying,
-// its playback held past the newest pose in at most 1 frame in 100. VOTVCOOP_DRONE_HOVER_KICK=1 bumps the client's
-// hovering copy twice, as a touch would. Gated by VOTVCOOP_RUN_DRONE_HOVER; the peers' folder is VOTVCOOP_CAN_DIR.
+// its playback held past the newest pose in at most 1 frame in 100. The row drone_hover_kick bumps the client's
+// hovering copy twice, as a touch would; with the row drone_hover_body_red the client first puts the copy's root
+// back into the physics simulation, and the bumped copy must make the verdict FAIL. Gated by
+// VOTVCOOP_RUN_DRONE_HOVER; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
 #include "harness/autotest/peer_signal.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/log.h"
@@ -138,7 +141,14 @@ std::string Measure(const char* me, bool host) {
     std::vector<Point> pts;
     pts.reserve(kMaxSamples);
     int phys = 0, idle = 0;
-    const bool kick = coop::config::ReadEnv("VOTVCOOP_DRONE_HOVER_KICK") == "1";
+    const bool kick = coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_kick);
+    if (!host && coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_body_red)) {
+        bool ok = false;
+        OnGameThread([&] {
+            if (void* d = DR::Find()) ok = ue_wrap::engine::SetActorSimulatePhysics(d, true);
+        });
+        UE_LOGI("drone-hover: RED the client's copy is back in the physics simulation (call=%d)", ok ? 1 : 0);
+    }
     for (int i = 0; i < kMaxSamples; ++i) {
         ::Sleep(kSampleMs);
         const Sample c = Read();
@@ -154,7 +164,7 @@ std::string Measure(const char* me, bool host) {
         }
         idle = 0;
         if (c.phys) ++phys;
-        // VOTVCOOP_DRONE_HOVER_KICK=1: a bump, as a player or a prop touching the hovering copy gives it -- the
+        // drone_hover_kick: a bump, as a player or a prop touching the hovering copy gives it -- the
         // client spins its copy's body at 720 deg/s and pushes it at 300 cm/s, at 70 s and again at 80 s.
         if (!host && kick && (pts.size() == 4600 || pts.size() == 5300)) {
             bool ok = false;
@@ -169,7 +179,9 @@ std::string Measure(const char* me, bool host) {
     }
     // Every sample also goes to <VOTVCOOP_CAN_DIR>/drone_<role>.csv: ms, x, y, z, yaw.
     const std::string dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
-    if (FILE* csv = dir.empty() ? nullptr : std::fopen((dir + (host ? "/drone_host.csv" : "/drone_client.csv")).c_str(), "w")) {
+    FILE* csv = nullptr;
+    if (!dir.empty()) fopen_s(&csv, (dir + (host ? "/drone_host.csv" : "/drone_client.csv")).c_str(), "w");
+    if (csv) {
         for (const Point& p : pts)
             std::fprintf(csv, "%.2f,%.2f,%.2f,%.2f,%.3f\n", p.ms - pts.front().ms, p.loc.X, p.loc.Y, p.loc.Z, p.yaw);
         std::fclose(csv);
@@ -215,8 +227,8 @@ void RunHost() {
     int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0;
     unsigned hpl = 0, hst = 0, played = 0, starved = 0;
     double h[4] = {}, c[4] = {};
-    if (std::sscanf(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl, &hst) != 9 ||
-        std::sscanf(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp, &played,
+    if (sscanf_s(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl, &hst) != 9 ||
+        sscanf_s(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp, &played,
                     &starved) != 9 ||
         hh < 100 || ch < 100 || played < 500) {
         coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,

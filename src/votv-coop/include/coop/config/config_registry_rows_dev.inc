@@ -785,3 +785,5 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_disc.inc"
 // The equipment drill's rows: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_equip.inc"
+// The drone hover drill's bump arm and red: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_drone.inc"
