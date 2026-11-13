@@ -779,6 +779,8 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 
 // The woodchipper lane's drill and red arms: their own file, one concept, included as _dev_cremator.inc is above.
 #include "coop/config/config_registry_rows_dev_woodchipper.inc"
+// The world-sound lane's drill and red arms: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_world_sound.inc"
 // The prop-properties tool's red arms: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_prop_props.inc"
 // The disc drills' rows: their own file, one concept.

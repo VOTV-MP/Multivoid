@@ -140,6 +140,17 @@ const Adapter g_garageAdapter = {
     &ue_wrap::garage::TryReadOpen,
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
 };
+// A state the wire brought to an appliance. A faucet whose state changed here was pressed on another peer, whose game
+// played its click there: this peer plays it at the faucet (coop/world/world_sound_sync).
+bool ApplyApplianceState(void* a, bool on) {
+    bool was = on;
+    const bool read = ue_wrap::appliance::TryReadState(a, was);
+    const bool applied = ue_wrap::appliance::ApplyState(a, on);
+    if (applied && read && was != on && ue_wrap::reflection::ClassNameOf(a) == L"faucet_C")
+        coop::world_sound_sync::OnFaucetChanged(a);
+    return applied;
+}
+
 // The appliance family (six Aactor_save_C descendants: faucet, sink, shower, kitchen oven,
 // serverBox, wall-unit tapes), symmetric single-bool toggles with no auto-revert. One adapter:
 // ue_wrap::appliance dispatches by class to the right bool offset and refresh verb, so the peer's
@@ -151,14 +162,7 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::IsAppliance,
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
-    [](void* a, bool on) -> bool {
-        bool was = on;
-        const bool read = ue_wrap::appliance::TryReadState(a, was);
-        const bool applied = ue_wrap::appliance::ApplyState(a, on);
-        if (applied && read && was != on && ue_wrap::reflection::ClassNameOf(a) == L"faucet_C")
-            coop::world_sound_sync::OnFaucetChanged(a);
-        return applied;
-    },
+    &ApplyApplianceState,
     nullptr,
     &ue_wrap::appliance::ResolvedClassCount,
 };
