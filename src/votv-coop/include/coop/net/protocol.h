@@ -1385,11 +1385,13 @@ enum class ReliableKind : uint16_t {
     // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
     WalkerState = 231,
     // HOST->ALL: the host's base computer shorted (a liquid on it, the host's own or a client's it judged): every client
-    // runs its own copy's shortCircuit, which sparks and then puts the base on solar power. Never relayed, not pre-world.
-    // Sent again to a joiner alone at its ready edge when the host's desk is still shorting. DeskShortPayload.
+    // runs its own copy's shortCircuit, which sparks and then puts the base on solar power (`on` 1). Never relayed, not
+    // pre-world. Sent again to a joiner alone at its ready edge when the host's desk is still shorting, and to a refused
+    // or redundant asker alone with the host's own flag (`on` 0: it does not short). DeskShortPayload.
     DeskShortState = 243,
-    // CLIENT->HOST: this client's liquid shorted its copy of the base computer. The host checks the sender's world and
-    // reach and runs its own desk's shortCircuit, whose DeskShortState answers. Never relayed. DeskShortPayload.
+    // CLIENT->HOST: this client's liquid reached its copy of the base computer, whose own call the gate cancelled. The host
+    // checks the sender's world, that it is alive, its reach and its budget, and runs its own desk's shortCircuit, whose
+    // DeskShortState answers every client. Never relayed. DeskShortPayload, `on` always 1.
     DeskShortRequest = 244,
     // HOST->ALL: the cargo lift's direction (cargoLift_C's `dir`, the base's elevator) after a press, keyed by the lift's
     // level-export name. Host-authored: a client's copy is refused at the host's receive edge; never relayed; not
@@ -2266,7 +2268,7 @@ static_assert(sizeof(WalkerStatePayload) <= 256 - 20 - 8, "WalkerStatePayload mu
 
 // The base computer's short circuit (DeskShortState), or a client's (DeskShortRequest).
 struct DeskShortPayload {
-    uint8_t on;        // 1 -- 1: the desk shorted
+    uint8_t on;        // 1 -- 0 or 1: the host's desk shorts (a request is always 1)
     uint8_t _pad[3];   // 3 -- zero
 };
 static_assert(sizeof(DeskShortPayload) == 4, "DeskShortPayload must be 4 bytes");

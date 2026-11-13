@@ -479,7 +479,7 @@ void Update(net::Session& session, void* localPlayer) {
             // from every family.
             if (HandleEntityEvent(session, msg, localPlayer)) break;
             if (HandleStateEvent(session, msg, localPlayer)) break;
-            if (HandleSignalEvent(msg)) break;
+            if (HandleSignalEvent(session, msg)) break;
             if (HandleIntentEvent(session, msg)) break;
             if (HandleContainerActEvent(session, msg)) break;
             if (HandleCrematorEvent(session, msg)) break;

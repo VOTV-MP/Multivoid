@@ -4,21 +4,25 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/element/intent_authority.h"
+#include "coop/net/intent_bucket.h"
+#include "coop/net/intent_queue.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
-#include "coop/session/net_pump.h"
+#include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/session/net_pump.h"      // IsInAnnouncedWorld: a client's own world load runs natively
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/desk_short.h"
-#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
-#include <vector>
+#include <chrono>
+#include <cstdint>
+#include <utility>
 
 namespace coop::desk_short_sync {
 namespace {
@@ -26,32 +30,53 @@ namespace {
 namespace CD = ue_wrap::console_desk;
 namespace DSh = ue_wrap::desk_short;
 namespace sg = ue_wrap::script_gate;
-using Payload = coop::net::DeskShortPayload;
+namespace N = coop::net;
+using Payload = N::DeskShortPayload;
 
 // The desk's own event: a stub that runs the ubergraph from the entry that tests `shortCircuiting`, sets it and starts
 // the ten seconds of sparks. A liquid's Blueprint calls it, and so do we.
 UE_FACT_FN(kRowShort, "desk_short_sync", L"analogDScreenTest_C", L"shortCircuit", Declared);
 constexpr int kTagShort = 0x44530001;   // 'DS'
 
-constexpr float kReachCm = 1500.f;  // a client's short from its body to the desk (a liquid is thrown or poured)
-constexpr size_t kQueueCap = 8;
+// The console lanes' reach, an arm's length, measured to the desk's colliding bounds (the same 400 as the desk's own
+// verb lane, coop/interactables/desk_verb_intent.cpp); the authority adds the desk's bounds and its allowance for the
+// sender's pose lagging, so a liquid thrown from across the room is inside it.
+constexpr float kReachUU = 400.0f;
 
-std::atomic<coop::net::Session*> g_session{nullptr};
+// A short lasts ten seconds, so a sender's asks are bounded to a burst of two and one per five seconds; a client past
+// it costs the host no work, no log line and no answer (coop/net/intent_bucket.h).
+constexpr N::IntentBudget kBudget{2.0f, 0.2f};
+constexpr size_t kMaxPending = 4;
+
+// An ask the host never answered is dropped after the ten seconds its short would have run.
+constexpr uint64_t kAskAgeMs = 10000;
+
+std::atomic<N::Session*> g_session{nullptr};
 bool g_watched = false;    // the watch is registered (it lives for the process: it is keyed on names)
 bool g_settled = false;    // its names resolved, and a dead one said
 bool g_applying = false;   // OnState's own call of shortCircuit is running: its edge is the host's, not a liquid's
 bool g_preKnown = false;   // the pre read the flag
 bool g_preShorting = false;
-bool g_pendingAsk = false; // CLIENT: a short of its own to send
-struct In {
-    int slot;
-    Payload p;
-};
-std::vector<In> g_inbox;   // HOST
+uint64_t g_askAtMs = 0;    // CLIENT: when its cancelled short was asked; 0 when nothing waits for an answer
+bool g_askUnsent = false;  // CLIENT: the ask has not left yet
+bool g_held = false;       // CLIENT: the host's short waits for this copy's desk to resolve
+uint64_t g_heldAtMs = 0;
 Counts g_c;
 
-// The drill's red arms: no short is announced (the host tells no client, a client asks no host), and a joiner is not
-// told of a short under way.
+// An ask carries nothing but its sender: the queue holds one byte per ask.
+struct Slot {
+    N::IntentQueue<uint8_t> queue;
+    bool waitSaid = false;   // a wait for the sender's body, said once a streak
+};
+coop::roster_ledger::PerSlotState<Slot> g_slots;
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// The drill's red arms: no short is announced (the host tells no client, and a client's own call runs alone), and a
+// joiner is not told of a short under way.
 bool Off() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::desk_short_off);
     return off;
@@ -61,84 +86,148 @@ bool ReplayOff() {
     return off;
 }
 
-coop::net::Session* Live() {
-    coop::net::Session* s = g_session.load(std::memory_order_acquire);
+N::Session* Live() {
+    N::Session* s = g_session.load(std::memory_order_acquire);
     return s && s->connected() ? s : nullptr;
 }
 
 void* Desk() { return CD::EnsureResolved() ? CD::Instance() : nullptr; }
 
-bool InReach(int slot, void* desk) {
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
-    void* body = rp && rp->valid() ? rp->GetActor() : nullptr;
-    ue_wrap::FVector at{}, by{};
-    if (!body || !ue_wrap::engine::TryGetActorLocation(desk, at) || !ue_wrap::engine::TryGetActorLocation(body, by))
-        return false;
-    const float dx = at.X - by.X, dy = at.Y - by.Y, dz = at.Z - by.Z;
-    return dx * dx + dy * dy + dz * dz <= kReachCm * kReachCm;
-}
+// What running the desk's own short on a copy did.
+enum class Ran : uint8_t {
+    Started,  // the call dispatched on a desk whose flag was clear
+    Already,  // the flag was set: the event's own guard leaves it
+    Failed,   // the desk or its flag does not read, or the call did not dispatch
+};
 
-// Runs the desk's own short on this copy, unless it shorts already. The watch sees the call.
-bool Short(void* desk) {
+Ran Short(void* desk) {
     bool now = false;
-    if (!DSh::ReadShortCircuiting(desk, now) || now) return false;
-    return DSh::CallShortCircuit(desk);
+    if (!DSh::ReadShortCircuiting(desk, now)) return Ran::Failed;
+    if (now) return Ran::Already;
+    return DSh::CallShortCircuit(desk) ? Ran::Started : Ran::Failed;
 }
 
-// The body's entry: whether the flag was already set, which is the event's own guard.
+// The host's own flag, for the state it tells one sender: false (a short that does not run) when it does not read.
+bool HostShorts() {
+    bool on = false;
+    return DSh::ReadShortCircuiting(Desk(), on) && on;
+}
+
+// The body's entry. A client's call that is not the host's word is CANCELLED and asked of the host: its desk sparks only
+// when the host's does. MTA's closest precedent, an explosion the client's engine already ran and reported
+// (CGame.cpp:2831-2950: the joined gate, a server event that may cancel, the relay back to the reporter), lets the
+// effect run because the engine fired it before the server heard; here the gate refuses first, as MTA's client-to-server
+// events do (CGame.cpp:2663-2711: the client asks, the server decides). Divergences: the host judges reach, which MTA
+// does not for explosions, and the state goes to every peer, since the base's power is global where MTA's goes to
+// the cameras near the blast (CGame.cpp:85, 2943).
 sg::Verdict OnShortPre(const sg::Call& call) {
     bool on = false;
     g_preKnown = DSh::ReadShortCircuiting(call.object, on);
     g_preShorting = on;
-    return sg::Verdict::Run;
+    N::Session* s = Live();
+    if (!s || s->role() != N::Role::Client || g_applying || Off()) return sg::Verdict::Run;
+    // A world this client loads itself is the host's save: its own calls run natively.
+    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) return sg::Verdict::Run;
+    if (g_preKnown && on) return sg::Verdict::Run;   // the event's own guard: the call would do nothing
+    if (g_askAtMs == 0) {
+        g_askAtMs = NowMs();
+        g_askUnsent = true;
+        ++g_c.asked;
+        UE_LOGI("desk_short: this player's liquid reached the desk -- cancelled, the host is asked (#%u)", g_c.asked);
+    }
+    return sg::Verdict::Cancel;
 }
 
-// The body's end: a flag that was clear and is set now is a short that began. The host tells every client; a client's
-// own liquid is asked of the host, and the one the host's word started is not.
+// The body's end, on the host: a flag that was clear and is set now is a short that began, and every client is told.
 void OnShortPost(const sg::Call& call) {
     const bool known = g_preKnown, was = g_preShorting;
     g_preKnown = false;
     if (!known || was || Off()) return;
+    N::Session* s = Live();
+    if (!s || s->role() != N::Role::Host) return;
     bool on = false;
     if (!DSh::ReadShortCircuiting(call.object, on) || !on) return;
-    coop::net::Session* s = Live();
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        Payload p{};
-        p.on = 1;
-        if (s->SendReliable(coop::net::ReliableKind::DeskShortState, &p, sizeof(p))) ++g_c.sent;
-        UE_LOGI("desk_short: the host's desk shorts -- sent to every client (#%u)", g_c.sent);
-    } else if (!g_applying && coop::net_pump::HasAnnouncedWorldReady()) {
-        g_pendingAsk = true;
-        ++g_c.asked;
-        UE_LOGI("desk_short: this player's liquid shorted the desk -- the host shorts its own (#%u)", g_c.asked);
-    }
+    Payload p{};
+    p.on = 1;
+    if (s->SendReliable(N::ReliableKind::DeskShortState, &p, sizeof(p))) ++g_c.sent;
+    UE_LOGI("desk_short: the host's desk shorts -- sent to every client (#%u)", g_c.sent);
 }
 
-void HostServe(coop::net::Session& s, void* desk) {
-    std::vector<In> inbox;
-    inbox.swap(g_inbox);
-    for (const In& in : inbox) {
-        if (!s.IsSlotWorldReady(in.slot) || !desk) {
-            ++g_c.refused;
-            UE_LOGW("desk_short: slot %d's short reached no desk here -- refused", in.slot);
-            continue;
-        }
-        if (!InReach(in.slot, desk)) {
-            ++g_c.refused;
-            UE_LOGW("desk_short: slot %d's short came from out of reach -- refused", in.slot);
-            continue;
-        }
-        const bool ran = Short(desk);
-        if (ran) ++g_c.served;
-        UE_LOGI("desk_short: slot %d's liquid shorted the desk -- the host's desk shorts (ran=%d, #%u)", in.slot,
-                ran ? 1 : 0, g_c.served);
+// The host's state, to one sender alone: its desk's flag as it is, so a refused ask's copy hears what is true.
+void Answer(N::Session& s, uint8_t slot) {
+    Payload p{};
+    p.on = HostShorts() ? 1 : 0;
+    if (s.SendReliableToSlot(slot, N::ReliableKind::DeskShortState, &p, sizeof(p))) ++g_c.answered;
+}
+
+void Refuse(N::Session& s, uint8_t slot, const char* why) {
+    ++g_c.refused;
+    UE_LOGW("desk_short: slot %u's ask refused -- %s (#%u)", static_cast<unsigned>(slot), why, g_c.refused);
+    Answer(s, slot);
+}
+
+// A sender's head ask: the host judges it in the order its siblings do (the sender's world, that it lives, its reach),
+// then runs the desk's own short. Wait keeps the ask queued while the host has no body to measure the reach from.
+N::Served Execute(N::Session& s, uint8_t slot) {
+    void* desk = Desk();
+    if (!s.IsSlotWorldReady(slot) || !desk) {
+        Refuse(s, slot, "its world is not up here, or this host has no desk");
+        return N::Served::Done;
     }
+    if (coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) {
+        Refuse(s, slot, "the sender is not alive");
+        return N::Served::Done;
+    }
+    const coop::element::IntentSubject subject =
+        coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU).Authorize(desk);
+    if (subject.outcome == coop::element::IntentOutcome::NoBody) {
+        if (!g_slots[slot].waitSaid) {
+            g_slots[slot].waitSaid = true;
+            UE_LOGI("desk_short: slot %u's ask waits: the host has no body for it yet", static_cast<unsigned>(slot));
+        }
+        return N::Served::Wait;
+    }
+    g_slots[slot].waitSaid = false;
+    if (!subject) {
+        Refuse(s, slot, coop::element::OutcomeName(subject.outcome));
+        return N::Served::Done;
+    }
+    switch (Short(desk)) {
+    case Ran::Started:
+        // The watch's end tells every client, the sender among them.
+        ++g_c.served;
+        UE_LOGI("desk_short: slot %u's liquid shorted the desk -- the host's desk shorts (#%u)",
+                static_cast<unsigned>(slot), g_c.served);
+        break;
+    case Ran::Already:
+        UE_LOGI("desk_short: slot %u's ask finds the host's desk shorting already -- it is told so", static_cast<unsigned>(slot));
+        Answer(s, slot);
+        break;
+    case Ran::Failed:
+        Refuse(s, slot, "the desk's flag does not read, or its short did not run");
+        break;
+    }
+    return N::Served::Done;
+}
+
+// CLIENT: runs the host's short on this copy. False leaves it held until the desk resolves.
+bool ApplyHostShort() {
+    void* desk = Desk();
+    if (!desk) return false;
+    g_applying = true;
+    const Ran ran = Short(desk);
+    g_applying = false;
+    if (ran == Ran::Failed) return false;
+    if (ran == Ran::Started) {
+        ++g_c.applied;
+        UE_LOGI("desk_short: the host's desk shorts -- this desk shorts too (#%u)", g_c.applied);
+    }
+    return true;
 }
 
 }  // namespace
 
-void Install(coop::net::Session* session) {
+void Install(N::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_watched) return;
     g_watched = sg::WatchName(kRowShort, kTagShort, &OnShortPre, &OnShortPost);
@@ -154,46 +243,71 @@ void Tick() {
         if (g_settled && !sg::NameWatchLive(kRowShort, kTagShort))
             UE_LOGE("desk_short: the watch on the desk's shortCircuit is dead -- a short reaches no other peer");
     }
-    coop::net::Session* s = Live();
+    N::Session* s = Live();
     if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        if (!g_inbox.empty()) HostServe(*s, Desk());
+    if (s->role() == N::Role::Host) {
+        for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot)
+            g_slots[slot].queue.Serve(kBudget, NowMs, [&](const uint8_t&) { return Execute(*s, slot); });
         return;
     }
-    if (g_pendingAsk) {
-        Payload p{};
-        p.on = 1;
-        if (s->SendReliable(coop::net::ReliableKind::DeskShortRequest, &p, sizeof(p))) g_pendingAsk = false;
+    if (g_askAtMs != 0) {
+        if (g_askUnsent) {
+            Payload p{};
+            p.on = 1;
+            if (s->SendReliable(N::ReliableKind::DeskShortRequest, &p, sizeof(p))) g_askUnsent = false;
+        }
+        if (NowMs() - g_askAtMs > kAskAgeMs) {
+            ++g_c.aged;
+            UE_LOGW("desk_short: the host did not answer this player's short in %llu s -- dropped (#%u)",
+                    static_cast<unsigned long long>(kAskAgeMs / 1000), g_c.aged);
+            g_askAtMs = 0;
+            g_askUnsent = false;
+        }
+    }
+    // Nothing announces the desk's arrival, so a held state is retried each tick, and only while one is held.
+    if (g_held && ApplyHostShort()) {
+        g_held = false;
+        UE_LOGI("desk_short: the desk resolved -- the held short of the host runs (%llu ms after it arrived)",
+                static_cast<unsigned long long>(NowMs() - g_heldAtMs));
     }
 }
 
-void OnState(const coop::net::DeskShortPayload& p) {
-    if (!p.on) return;
-    void* desk = Desk();
-    if (!desk) return;
-    g_applying = true;
-    const bool ran = Short(desk);
-    g_applying = false;
-    if (ran) {
-        ++g_c.applied;
-        UE_LOGI("desk_short: the host's desk shorts -- this desk shorts too (#%u)", g_c.applied);
+void OnState(const Payload& p) {
+    // Any state is the host's word on the ask: its desk shorts (this copy shorts with it), or it does not.
+    g_askAtMs = 0;
+    g_askUnsent = false;
+    if (!p.on) {
+        g_held = false;   // the host's newest word replaces a short still held
+        ++g_c.heard;
+        UE_LOGI("desk_short: the host answered that its desk does not short -- this player's short is not run (#%u)",
+                g_c.heard);
+        return;
+    }
+    if (ApplyHostShort()) return;
+    if (!g_held) {
+        g_held = true;
+        g_heldAtMs = NowMs();
+        ++g_c.held;
+        UE_LOGI("desk_short: the host's desk shorts but this copy's desk is not found or not readable -- held (#%u)",
+                g_c.held);
     }
 }
 
-void OnRequest(int senderSlot, const coop::net::DeskShortPayload& p) {
-    if (p.on && g_inbox.size() < kQueueCap) g_inbox.push_back({senderSlot, p});
+void OnRequest(uint8_t senderSlot) {
+    if (senderSlot < 1 || senderSlot >= N::kMaxPeers) return;
+    uint8_t ask = 1;
+    if (!g_slots[senderSlot].queue.Push(std::move(ask), kMaxPending)) ++g_c.dropped;  // a flood: not answered, so no amplifier
 }
 
 void SendCurrentToSlot(int slot) {
-    coop::net::Session* s = Live();
-    if (!s || s->role() != coop::net::Role::Host || ReplayOff()) return;
-    bool on = false;
-    void* desk = Desk();
-    // Nothing announces a short to a peer that was not there: the host's flag is read once, here, at the ready edge.
-    if (!desk || !DSh::ReadShortCircuiting(desk, on) || !on) return;
+    N::Session* s = Live();
+    if (!s || s->role() != N::Role::Host || ReplayOff()) return;
+    // Nothing announces a short to a peer that was not there: the host's flag is read once, here, at the ready edge. A
+    // desk that does not read is not shorting, and the joiner's own copy holds what it is told until its desk resolves.
+    if (!HostShorts()) return;
     Payload p{};
     p.on = 1;
-    if (s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskShortState, &p, sizeof(p))) ++g_c.replayed;
+    if (s->SendReliableToSlot(slot, N::ReliableKind::DeskShortState, &p, sizeof(p))) ++g_c.replayed;
     UE_LOGI("desk_short: slot %d's world is up while the host's desk shorts -- its desk shorts from the start (#%u)", slot,
             g_c.replayed);
 }
@@ -201,12 +315,15 @@ void SendCurrentToSlot(int slot) {
 Counts GetCounts() { return g_c; }
 
 void OnDisconnect() {
-    if (g_c.sent || g_c.asked || g_c.served || g_c.refused || g_c.applied || g_c.replayed)
-        UE_LOGI("desk_short: session end -- host sent=%u served=%u refused=%u replayed=%u; client asked=%u applied=%u",
-                g_c.sent, g_c.served, g_c.refused, g_c.replayed, g_c.asked, g_c.applied);
+    if (g_c.sent || g_c.asked || g_c.served || g_c.refused || g_c.answered || g_c.dropped || g_c.applied || g_c.heard ||
+        g_c.aged || g_c.held || g_c.replayed)
+        UE_LOGI("desk_short: session end -- host sent=%u served=%u refused=%u answered=%u dropped=%u replayed=%u; client "
+                "asked=%u applied=%u heard=%u aged=%u held=%u",
+                g_c.sent, g_c.served, g_c.refused, g_c.answered, g_c.dropped, g_c.replayed, g_c.asked, g_c.applied, g_c.heard,
+                g_c.aged, g_c.held);
     g_c = Counts{};
-    g_inbox.clear();
-    g_preKnown = g_preShorting = g_applying = g_pendingAsk = false;
+    g_preKnown = g_preShorting = g_applying = g_askUnsent = g_held = false;
+    g_askAtMs = g_heldAtMs = 0;
     g_session.store(nullptr);
 }
 

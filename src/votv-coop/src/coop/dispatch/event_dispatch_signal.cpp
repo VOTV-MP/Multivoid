@@ -11,6 +11,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/deck_play_sync.h"    // PlayDeckEvent
 #include "coop/interactables/desk_input_sync.h"
+#include "coop/interactables/desk_short_sync.h"
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/dish_calib_sync.h"
 #include "coop/interactables/dish_hashcode_sync.h"
@@ -37,7 +38,7 @@
 
 namespace coop::event_feed {
 
-bool HandleSignalEvent(const net::Session::ReliableMessage& msg) {
+bool HandleSignalEvent(net::Session& session, const net::Session::ReliableMessage& msg) {
     switch (msg.kind) {
     case net::ReliableKind::SkySignalState: {
         // HOST-authoritative sky-signal SET snapshot parts (a client's copy is refused at the host's
@@ -428,6 +429,33 @@ bool HandleSignalEvent(const net::Session::ReliableMessage& msg) {
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::desk_input_sync::OnDeskInput(ip, islot);
+        break;
+    }
+    case net::ReliableKind::DeskShortState:
+    case net::ReliableKind::DeskShortRequest: {
+        // The base computer's short circuit. DeskShortState is the HOST->CLIENT state (`on` 1 the host's desk shorts, `on`
+        // 0 its answer to a refused ask), dropped on the host and from any sender but slot 0; DeskShortRequest is a
+        // client's cancelled short, checked for role()==Host AND a client sender slot, and always `on` 1.
+        const bool request = msg.kind == net::ReliableKind::DeskShortRequest;
+        if (request != (session.role() == net::Role::Host) ||
+            (request ? (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) : msg.senderPeerSlot != 0)) {
+            UE_LOGW("event_feed: a desk short the wrong way (kind %u, sender slot %d) -- dropping",
+                    static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen != sizeof(net::DeskShortPayload)) {
+            UE_LOGW("event_feed: a desk short payload of %zu bytes, not %zu -- dropping", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::DeskShortPayload));
+            break;
+        }
+        net::DeskShortPayload dsp{};
+        std::memcpy(&dsp, msg.payload, sizeof(dsp));
+        if (dsp.on > 1 || (request && dsp.on != 1) || dsp._pad[0] || dsp._pad[1] || dsp._pad[2]) {
+            UE_LOGW("event_feed: a desk short with on=%u or a pad that is not zero -- dropping", static_cast<unsigned>(dsp.on));
+            break;
+        }
+        if (request) coop::desk_short_sync::OnRequest(static_cast<uint8_t>(msg.senderPeerSlot));
+        else coop::desk_short_sync::OnState(dsp);
         break;
     }
     case net::ReliableKind::DeskScanEvent: {
