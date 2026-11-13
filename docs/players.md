@@ -234,8 +234,10 @@ map is loaded into the running world instead, far below it, on the clipping play
 stays in the world, and every other machine hides the player's copy by its pose: each pose a peer
 sends carries its position, so a pose below the visit floor (`level_visit::kVisitFloorZ`) is a
 player in a visited map, read on every pose, and the copy is shown again by the first pose back
-above it. A peer's copy authors no trip on this machine: the game's clip tick trips only for
-the player the local view follows, and a copy's actor tick is off.
+above it. A trip is this machine's own player's alone: a peer's copy cannot author one (the
+game's clip tick trips only for the player the local view follows, and a copy's actor tick is
+off), but the visited map's placed player can, so a clip check or a loadLevel from any other
+player is refused, as is a second loadLevel while a visit is under way.
 
 A player who joins while another is in one of the maps needs no snapshot of it: the first pose
 the joiner applies for that player is below the floor, so its copy is hidden from that pose, and a
@@ -271,8 +273,8 @@ The host can close the backrooms for everyone: "Allow the backrooms" (`world.bac
 default) in F1's `Administration > Server settings`, or `/set world.backrooms 0`. Off, every peer
 answers the game's own clip check no for its own player, so no clip is taken and no trip is
 sent (the game rewrites `backroomsEnabled` itself, so the mod answers the check, which is the one
-place that reads it, and writes nothing into the game's state); a player already in one stays
-until the visit ends. Turned back on, the game's own logic answers the check again.
+place that reads it, and writes nothing into the game's state); a clip already past the check
+when the host closes is refused at its loadLevel; a player already in one stays until the visit ends. Turned back on, the game's own logic answers the check again.
 
 `[?]` on the rig, pending this change's own run folder: each map visited by a client and by the
 host, the game's own clip on both roles, each end (the map's end, its quit, a real death) and the

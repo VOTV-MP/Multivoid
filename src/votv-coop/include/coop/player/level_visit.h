@@ -6,8 +6,10 @@
 // through lib_C::loadLevel). A session holds one world, and the travel took the clipping peer out of it, or every
 // peer with the host. While a session runs that travel is refused at the script-body gate and the map is loaded into
 // the running world instead, far below it (ue_wrap/world/level_instance), on the clipping player's machine alone; the
-// player is moved into it and every other player stays in the world. A peer's copy authors no trip on this machine:
-// the game's clip tick trips only for the player the local view follows, and a copy's actor tick is off.
+// player is moved into it and every other player stays in the world. A trip is this machine's own player's alone: a
+// copy cannot author one (the clip trips only for the player the local view follows, and a copy's actor tick is off),
+// but the visited map's placed player can, so a clip check or a loadLevel from any other mainPlayer_C is refused. A
+// second loadLevel while a visit is under way, or after the host closed the backrooms, is refused, not a trip.
 
 #pragma once
 
@@ -68,14 +70,16 @@ void OnDisconnect();
 // machine's, and goes with the map). Game thread.
 bool InVisitedMap(void* actor);
 
-// [dev] Instruments for the drill: whether a visit runs (loading or arrived), its map, and how it last ended.
+// [dev] Instruments for the drill: whether a visit is under way (its trip let through, loading or arrived), its map, and
+// how it last ended. Game thread.
 bool Visiting();
 std::wstring CurrentMap();
 std::wstring LastEnd();
 void* CurrentLevel();  // the visited ULevel once the player is in it, else null
 bool ReturnPending();  // the visitor's dropped item is still to be given back
 struct DrillStats {
-    uint32_t tripsStarted;       // trips this machine's player took (a clip's loadLevel the gate turned into a visit)
+    uint32_t tripsStarted;       // visits this machine's player began (a clip's loadLevel the gate turned into a visit; a
+                                 // second call while one is under way, or while the host has the backrooms closed, is none)
     uint32_t clipsHeldClosed;    // the game's clip check answered no because the host closed the backrooms
     uint32_t clipChecksAsked;    // the game's clip check asked for this machine's own player
     int lastClipWhy;             // last ask answered by: 0 the game's logic, 1 closed, 2 visit, 3 quiet window, -1 none

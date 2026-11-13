@@ -20,6 +20,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
@@ -73,6 +74,9 @@ int32_t g_quitCtxOff = -1;  // QuitGame's WorldContextObject in its parameters
 
 // Game thread: the visit.
 Phase g_phase = Phase::None;
+// A trip the loadLevel watch let through, until the posted task that starts its visit has run: the gap in which no phase
+// says a visit is under way yet.
+bool g_tripPending = false;
 std::wstring g_map, g_lastEnd;
 void* g_streaming = nullptr;
 void* g_level = nullptr;
@@ -100,6 +104,9 @@ std::wstring g_endBy;  // which calls asked for the end, for its log line
 std::atomic<ULONGLONG> g_quietUntilMs{0};
 constexpr ULONGLONG kQuietMs = 5000;
 
+// A visit is under way from the moment its trip is let through, before and after its phase says so.
+bool VisitUnderway() { return g_phase != Phase::None || g_tripPending; }
+
 bool InSession() {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
     return s && s->running();
@@ -112,6 +119,13 @@ bool IsVisitMap(const R::FName& level) {
 }
 
 void* Local() { return coop::players::Registry::Get().Local(); }
+
+// This machine's own player: the pawn the game's clip may send on a trip. Every other mainPlayer_C is a peer's copy or a
+// map's placed player, and none of them is a trip of this machine's.
+bool OwnPlayer(void* obj) { return obj && obj == Local(); }
+bool IsPlayerPawn(void* obj) {
+    return obj && R::NameEquals(R::NameOf(R::ClassOf(obj)), ue_wrap::profile::name::MainPlayerClass);
+}
 
 // `pc` possesses `pawn` (AController::Possess): the pawn it had is let go, and the view follows the new one.
 bool Possess(void* pc, void* pawn) {
@@ -189,25 +203,10 @@ bool CloseOff() {
 // answer gates the whole clip chain (black screen, teleport, save, then lib_C::loadLevel). It is answered no, in the out
 // parameter, for this machine's own player while the host has closed the backrooms, a visit runs, or the quiet window
 // after one is open (the view's jump into the map and back out would read as a clip); otherwise the game's own logic
-// runs. A copy's tick passes through untouched (a copy's actor tick is off, and the clip trips only for the player the
-// local view follows). When the out parameter cannot be written the body runs and the clip is
-// not held: said once.
-sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
-    if (!call.function || !call.callerObject || call.callerObject != Local() || !InSession() || CloseOff())
-        return sg::Verdict::Run;
-    const bool closed = g_closed.load();
-    const bool visiting = g_phase != Phase::None;
-    const int why = closed ? 1 : visiting ? 2 : ::GetTickCount64() < g_quietUntilMs.load() ? 3 : 0;
-    ++g_clipChecksAsked;
-    g_lastClipWhy = why;
-    static int s_said = 0;
-    if (why != s_said) {
-        s_said = why;
-        if (why)
-            UE_LOGI("level_visit: the game's clip check is answered no -- %hs",
-                    why == 1 ? "the host has closed the backrooms" : why == 2 ? "a visit runs" : "a visit just ended");
-    }
-    if (!why) return sg::Verdict::Run;
+// runs. A player that is not this machine's own (a copy, whose tick is off, or the visited map's placed player, which
+// ticks and is the view target until it is taken) is always answered no: a trip is this machine's own player's alone.
+// When the out parameter cannot be written the body runs and the clip is not held: said once.
+bool AnswerNo(const sg::Call& call) {
     static void* sFn = nullptr;
     static int32_t sOff = -1;
     if (call.function != sFn) {
@@ -221,9 +220,36 @@ sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
             s_warned = true;
             UE_LOGW("level_visit: canBackrooms's result cannot be written -- the clip is NOT held (said once)");
         }
-        return sg::Verdict::Run;
+        return false;
     }
     *out = 0;
+    return true;
+}
+
+sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
+    if (!call.function || !call.callerObject || !InSession() || CloseOff()) return sg::Verdict::Run;
+    if (!OwnPlayer(call.callerObject)) {
+        static bool s_saidOther = false;
+        if (!s_saidOther) {
+            s_saidOther = true;
+            UE_LOGI("level_visit: the game's clip check is answered no for a player that is not this machine's own "
+                    "(said once)");
+        }
+        return AnswerNo(call) ? sg::Verdict::Cancel : sg::Verdict::Run;
+    }
+    const bool closed = g_closed.load();
+    const bool visiting = VisitUnderway();
+    const int why = closed ? 1 : visiting ? 2 : ::GetTickCount64() < g_quietUntilMs.load() ? 3 : 0;
+    ++g_clipChecksAsked;
+    g_lastClipWhy = why;
+    static int s_said = 0;
+    if (why != s_said) {
+        s_said = why;
+        if (why)
+            UE_LOGI("level_visit: the game's clip check is answered no -- %hs",
+                    why == 1 ? "the host has closed the backrooms" : why == 2 ? "a visit runs" : "a visit just ended");
+    }
+    if (!why || !AnswerNo(call)) return sg::Verdict::Run;
     if (closed) ++g_clipsHeldClosed;
     return sg::Verdict::Cancel;
 }
@@ -239,9 +265,19 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     const R::FName level = *reinterpret_cast<const R::FName*>(call.locals + sLevelOff);
     if (!IsVisitMap(level)) return sg::Verdict::Run;
     void* author = *reinterpret_cast<void* const*>(call.locals + sAuthorOff);
-    // A peer's copy authors no trip: the game's clip tick trips only for the player 0's view target, which a copy never
-    // is, and a copy's actor tick is off. Only this machine's own player reaches the lines below.
-    if (author != Local()) return sg::Verdict::Run;
+    // A copy cannot author a trip (a copy is never the view target and its actor tick is off), but the visited map's
+    // placed player can: it ticks the clip chain as the player does and holds the view until it is taken. So the author
+    // is judged by ownership: a player that is not this machine's own is refused, and only its own player's call goes on.
+    if (!OwnPlayer(author)) {
+        if (!IsPlayerPawn(author)) return sg::Verdict::Run;
+        static bool s_saidOther = false;
+        if (!s_saidOther) {
+            s_saidOther = true;
+            UE_LOGW("level_visit: a trip to %ls authored by a player that is not this machine's own is refused (said "
+                    "once)", R::ToString(level).c_str());
+        }
+        return sg::Verdict::Cancel;
+    }
     // The game's own clip is not taken seated or riding (mainGamemode_C::canBackrooms); a trip asked so is not one.
     void* on = nullptr;
     void* parent = nullptr;
@@ -251,11 +287,22 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
         return sg::Verdict::Cancel;
     }
     const std::wstring map = R::ToString(level);
+    // The host's closed switch holds for a chain that passed the clip check before the row reached this machine too.
+    if (g_closed.load() && !CloseOff()) {
+        UE_LOGI("level_visit: a trip to %ls is refused -- the host has closed the backrooms", map.c_str());
+        return sg::Verdict::Cancel;
+    }
+    // One visit at a time: a second call of the clip chain (or of a clip after the first is let through) is not a trip.
+    if (g_phase != Phase::None || g_tripPending) {
+        UE_LOGI("level_visit: a trip to %ls is refused -- a visit is already under way", map.c_str());
+        return sg::Verdict::Cancel;
+    }
+    g_tripPending = true;
     ++g_tripsStarted;
     UE_LOGI("level_visit: the clip's trip to %ls is this player's alone -- the map is loaded below the world",
             map.c_str());
     ue_wrap::game_thread::Post([map] {
-        if (g_phase != Phase::None) return;
+        struct Settled { ~Settled() { g_tripPending = false; } } settled;
         void* me = Local();
         if (!me) return;
         g_map = map;
@@ -285,6 +332,7 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
         g_loadAtMs = ::GetTickCount64();
         g_endAsked.store(false);
         g_phase = g_streaming ? Phase::Loading : Phase::None;
+        if (!g_streaming) g_controller = nullptr;
         UE_LOGI("level_visit: %ls %hs", g_map.c_str(), g_streaming ? "loading" : "did NOT load -- the player stays");
     });
     return sg::Verdict::Cancel;
@@ -762,7 +810,7 @@ bool InVisitedMap(void* actor) {
     return E::TryGetActorLocation(actor, at) && at.Z < kVisitFloorZ;
 }
 
-bool Visiting() { return g_phase != Phase::None; }
+bool Visiting() { return VisitUnderway(); }
 std::wstring CurrentMap() { return g_phase != Phase::None ? g_map : std::wstring(); }
 std::wstring LastEnd() { return g_lastEnd; }
 void* CurrentLevel() { return g_phase == Phase::In ? g_level : nullptr; }
