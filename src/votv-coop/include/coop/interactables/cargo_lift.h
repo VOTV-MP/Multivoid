@@ -35,6 +35,10 @@ bool ReadState(void* lift, bool& up);
 bool ApplyState(void* lift, bool up);
 void TickApply();
 
+// How many of this client's presses went to the host as an intent since the session began. The press's gate sends inside
+// the call itself, so a drill reads it before and after its own press. Game thread.
+uint64_t PressesSent();
+
 // The session ended: the counters, with one summary line, and the held directions.
 void OnDisconnect();
 

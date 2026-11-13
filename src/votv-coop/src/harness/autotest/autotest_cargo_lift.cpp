@@ -8,12 +8,14 @@
 // height over the lift's root. `cargo-lift: CHECK` lines judge that both peers end each press with the same `dir` and the
 // platform at the same height; the host says `rig: VERDICT cargo-lift PASS` when both peers' checks held, and either peer
 // says FAIL or INVALID (coop/session/rig_verdict.h). The red is cargo_lift_client_runs=1 on the client, whose press then
-// runs on its copy alone. Armed by the cargo_lift_drill row (VOTVCOOP_RUN_CARGO_LIFT); the folder is VOTVCOOP_CAN_DIR.
+// runs on its copy alone: the client sees at the press that nothing was sent to the host, tells the host, and both end
+// FAIL at once. Every time bound says INVALID only. Armed by the cargo_lift_drill row (VOTVCOOP_RUN_CARGO_LIFT); the folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
 #include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
 
+#include "coop/interactables/cargo_lift.h"
 #include "coop/props/join_membership_sweep.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/host_world_settle.h"
@@ -48,7 +50,7 @@ namespace RV = coop::rig_verdict;
 
 constexpr const char* kTag = "cargo-lift";
 constexpr int kStepBound = 120;      // the bound on one step of the other peer's
-constexpr int kMoveBound = 40;       // a lift's travel is about twelve seconds; this peer's copy has this long to stop
+constexpr int kMoveBound = 40;       // a lift's travel is about twelve seconds; a copy that has not stopped by then is INVALID
 constexpr float kReachCm = 250.f;    // the client's walk ends this near the lift's root; the host judges a press within 400
 
 void* g_lift = nullptr;   // game thread only
@@ -57,6 +59,13 @@ int g_checks = 0, g_failed = 0;
 template <class Fn>
 void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
+}
+
+template <class Fn>
+auto OnGameThreadValue(Fn&& fn) {
+    decltype(fn()) out{};
+    OnGameThread([&] { out = fn(); });
+    return out;
 }
 
 const char* Who() { return IsClientRole() ? "client" : "host"; }
@@ -121,24 +130,38 @@ bool Step(bool hostPresses, const std::string& name) {
     const bool mine = hostPresses != IsClientRole();
     const Seen before = Read();
     PS::Mark((name + "_before_" + Who()).c_str());
+    std::string how;
     if (mine) {
         if (!PS::Await((name + "_before_" + Other()).c_str(), kStepBound)) return false;
+        const uint64_t sent0 = OnGameThreadValue([] { return coop::cargo_lift::PressesSent(); });
         Press();
-        PS::Mark((name + "_pressed").c_str());
-    } else if (!PS::Await((name + "_pressed").c_str(), kStepBound)) {
+        // A client's press is asked of the host: the gate sends the intent inside the call, so a press that sent nothing
+        // ran on this copy alone. That is the verdict, at the press, and the host is told so.
+        const bool alone = IsClientRole() && OnGameThreadValue([] { return coop::cargo_lift::PressesSent(); }) == sent0;
+        PS::Mark((name + "_pressed").c_str(), alone ? "alone" : "sent");
+        how = alone ? "alone" : "sent";
+    } else if (!PS::AwaitText((name + "_pressed").c_str(), how, kStepBound)) {
         return false;
+    }
+    if (how == "alone") {
+        ++g_checks;
+        ++g_failed;
+        UE_LOGI("cargo-lift: CHECK %hs %hs FAIL -- the client's press ran on its own copy and was not sent to the host",
+                name.c_str(), Who());
+        return true;
     }
     const bool wanted = !before.dir;
     int polls = 0;
     // The lift's own end of the move is nothing a drill can bind to (its Blueprint clears `moving` inside a loop of its
-    // graph), so this peer's copy is read until it has the direction and stands still, with a bound.
-    PS::WaitFor("this peer's lift to stop", kMoveBound, [&] {
-        const Seen v = Read();
-        if (polls++ % 10 == 0)
-            UE_LOGI("cargo-lift: STATE %hs %hs dir=%d moving=%d alpha=%.2f attachZ=%.0f platformZ=%.0f", name.c_str(),
-                    Who(), v.dir ? 1 : 0, v.moving ? 1 : 0, v.alpha, v.attachZ, v.platformZ);
-        return v.dir == wanted && !v.moving;
-    }, false);
+    // graph), so this peer's copy is read until it has the direction and stands still. The bound says INVALID only.
+    if (!PS::WaitFor("this peer's lift to stop", kMoveBound, [&] {
+            const Seen v = Read();
+            if (polls++ % 10 == 0)
+                UE_LOGI("cargo-lift: STATE %hs %hs dir=%d moving=%d alpha=%.2f attachZ=%.0f platformZ=%.0f", name.c_str(),
+                        Who(), v.dir ? 1 : 0, v.moving ? 1 : 0, v.alpha, v.attachZ, v.platformZ);
+            return v.dir == wanted && !v.moving;
+        }))
+        return false;
     const Seen v = Read();
     char mineText[64];
     std::snprintf(mineText, sizeof(mineText), "%d %.0f", v.dir ? 1 : 0, v.platformZ);

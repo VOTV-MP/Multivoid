@@ -254,6 +254,8 @@ void TickApply() {
     }
 }
 
+uint64_t PressesSent() { return g_sent; }
+
 void OnDisconnect() {
     if (g_sent || g_ran || g_already || g_moving || g_refused || g_applied || g_heldCount)
         UE_LOGI("[CARGO-LIFT] session end -- client presses sent=%llu; host presses run=%llu, already so=%llu, lift "
