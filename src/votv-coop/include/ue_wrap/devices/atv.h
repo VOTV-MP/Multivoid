@@ -87,9 +87,9 @@ bool  CallUpdHealth(void* atv);
 
 // The fitted modules: the live `Modules` array, one byte per module VALUE (the game's enum_physicalModules; each is the
 // value `physModToActor` maps to the module's prop class). ReadModules copies at most `cap` into `out` and returns how
-// many the ATV holds (it may exceed `cap`), or -1 when unreadable. WriteModules builds the array afresh in engine memory
-// (the old buffer is left to the engine's own lifetime, as the save-record writers do) and then runs the ATV's own
-// `updUpgrades`, which fits or takes off every part to match. ModuleByName maps a module's prop name, the FName
+// many the ATV holds (it may exceed `cap`), or -1 when unreadable. WriteModules writes the array into its own buffer when
+// the capacity holds it, else into a new engine buffer with the replaced one freed (save_record::ReplaceByteArray), and then
+// runs the ATV's own `updUpgrades`, which fits or takes off every part to match. ModuleByName maps a module's prop name, the FName
 // `upgradeTake` is called with, to its value through the ATV's own `upgradesNames`, which parallels `Modules`; false when
 // the ATV holds no part of that name. Game thread.
 int   ReadModules(void* atv, uint8_t* out, int cap);

@@ -91,6 +91,12 @@ Arr ReadArr(const void* base, int32_t off);
 // freshly-built array the engine will read then, on its next mutation, realloc wholesale.)
 void WriteArrHeader(void* base, int32_t off, void* data, int32_t num);
 
+// Replace the TArray<uint8> at base+off with `data[0..count)`, for an array of a LIVE object that is written again and again:
+// into the array's own buffer when its capacity (Max) holds `count`, only Num moving; else into a new engine buffer, the
+// replaced one released through the engine's allocator (EngineFree), which owns it. False, having written nothing, for a
+// negative or past-cap count, a null `data` with a count, or an EngineAlloc failure. Game thread.
+bool ReplaceByteArray(void* base, int32_t off, const uint8_t* data, int32_t count);
+
 // Allocate `count*elemSize` engine bytes, zeroed. Null (-> caller writes an empty array) on a
 // zero count or an EngineAlloc failure (GMalloc unresolved). Zeroing makes every unset FString/
 // FName/TArray field a valid empty (null,0,0) -- no garbage the engine could deref.

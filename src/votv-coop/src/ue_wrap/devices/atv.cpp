@@ -288,10 +288,7 @@ int ReadModules(void* atv, uint8_t* out, int cap) {
 
 bool WriteModules(void* atv, const uint8_t* mods, int count) {
     if (!atv || g_modulesOff < 0 || count < 0 || count > kModulesCap || (count > 0 && !mods)) return false;
-    void* buf = count == 0 ? nullptr : save_record::AllocZeroed(static_cast<size_t>(count), 1);
-    if (count > 0 && !buf) return false;
-    if (buf) std::memcpy(buf, mods, static_cast<size_t>(count));
-    save_record::WriteArrHeader(atv, g_modulesOff, buf, count);
+    if (!save_record::ReplaceByteArray(atv, g_modulesOff, mods, count)) return false;
     return component_calls::CallParamlessNamed(atv, L"updUpgrades");
 }
 
