@@ -538,7 +538,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         if (st == 0) return;
         g_walk.reset();
         if (st == 2) {
-            ClientFail(row, "the walk to the mirror did not arrive");
+            ClientInvalid(row, "the walk to the mirror did not arrive");
             return;
         }
         CEnter(CStep::AwaitGather);
@@ -595,7 +595,11 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         if (!g_grabbed) {
             const coop::director::GrabState st = g_grab->Tick();
             if (st == coop::director::GrabState::Failed) {
-                ClientFail(row, std::string("the grab did not take: ") + g_grab->Why());
+                // A grab that found no aim never reached the pocket it was set up for: INVALID. The chain that ran and left
+                // the prop out of the hand is the grab failing, a FAIL.
+                const std::string why = std::string("the grab did not take: ") + g_grab->Why();
+                if (g_grab->NoAim()) ClientInvalid(row, why);
+                else ClientFail(row, why);
                 return;
             }
             if (st == coop::director::GrabState::Working) {

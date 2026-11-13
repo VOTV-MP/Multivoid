@@ -5,12 +5,14 @@
 #include "coop/dev/director/director.h"  // LookAt
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -77,6 +79,21 @@ GrabState AimedGrab::Tick() {
         const auto& fan = AimFan();
         if (poses_ >= static_cast<int>(fan.size())) {
             why_ = "no aim the player's trace would take";
+            noAim_ = true;
+            // Said once, so the cause is read and not guessed: where the camera is, where it aimed, and what the trace struck
+            // last (its actor and component) when it was not the prop.
+            ue_wrap::FVector cam = E::GetCameraLocation(), centre{}, extent{};
+            E::GetActorBounds(prop, /*onlyColliding=*/true, centre, extent);
+            void* const hitActor = E::ReadMainPlayerHitActor(player);
+            void* const hitComp = E::ReadMainPlayerHitComponent(player);
+            const float dx = centre.X - cam.X, dy = centre.Y - cam.Y, dz = centre.Z - cam.Z;
+            UE_LOGW("aimed_grab: no aim took the prop after %d poses -- camera (%.0f, %.0f, %.0f), the prop's bounds centre "
+                    "(%.0f, %.0f, %.0f) extent (%.0f, %.0f, %.0f) %.0f uu away, the last trace hit actor %ls (%p) component "
+                    "%ls (%p)",
+                    poses_, cam.X, cam.Y, cam.Z, centre.X, centre.Y, centre.Z, extent.X, extent.Y, extent.Z,
+                    std::sqrt(dx * dx + dy * dy + dz * dz),
+                    hitActor ? R::ClassNameOf(hitActor).c_str() : L"none", hitActor,
+                    hitComp ? R::ClassNameOf(hitComp).c_str() : L"none", hitComp);
             return GrabState::Failed;
         }
         // The bounds' centre: a lying prop's origin can sit at the floor's surface.

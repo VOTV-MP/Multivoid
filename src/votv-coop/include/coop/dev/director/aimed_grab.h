@@ -35,6 +35,9 @@ public:
     // The trace left the prop while held: aim again from the fan's first pose.
     void Reaim() { aimed_ = false; poses_ = 0; ticks_ = 0; }
     const char* Why() const { return why_; }  // the failure, once Failed
+    // The failure was that no aim in the fan took the prop (a precondition of the grab, never reached): a drill says INVALID
+    // for it. The chain that ran and left the prop out of the hand is a failure of the grab itself.
+    bool NoAim() const { return noAim_; }
     int AimPoses() const { return poses_; }   // the fan poses tried before the trace took the prop
     // Whether each call of the grab chain ran: the prop's playerGrabbed_pre, the player's useAction, the prop's
     // playerGrabbed. All false until the aim is taken.
@@ -50,6 +53,7 @@ private:
     int grabTicks_ = 0;
     bool chainPre_ = false, chainUse_ = false, chainPost_ = false;
     bool holdAtAim_ = false;
+    bool noAim_ = false;
     const char* why_ = "";
 };
 
