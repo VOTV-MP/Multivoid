@@ -5,10 +5,11 @@
 // SAT console. Once the other peer reads its claim, it ragdolls as a faint does (ragdollMode(true, passOut, false)).
 // Arms: dev.seat_ragdoll_ping (at the desk) starts a ping first, dev.seat_ragdoll_kill dies of a lethal hit instead (a
 // client dying mid-ping), dev.seat_ragdoll_exit leaves by the game's own exit (with the ping, the host acting). The host
-// measures the hold and says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`, every verdict decided by an event: with a
-// ping, the hold's state once the reconcile has run twice after the host saw the knock-down (the exit arm: after the
-// actor's signal); without, the claim's release. A bound only says INVALID. PASS: the hold is free, or, with the exit
-// and the ping, still the pinger's. The red: dev.occupancy_pinger_down_off on the host with the ping arm must FAIL.
+// measures the hold and says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`, every verdict decided by an event: the hold's
+// state once the reconcile has run twice after the host saw the knock-down (the exit arm: after the actor's signal), a
+// claim still held being a FAIL; the exit with a ping decides at the ping run's own end (the hold dropping before it
+// fails). A bound only says INVALID. PASS: the hold is free. The red: dev.occupancy_pinger_down_off on the host, with the
+// ping arm, must FAIL.
 // Gated by VOTVCOOP_RUN_SEAT_RAGDOLL; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
@@ -115,17 +116,36 @@ const char* Outcome() { return Kill() ? "died of a lethal hit" : ExitOnly() ? "l
 bool HostActs() { return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_who) == "host"; }
 
 // HOST: what the actor leaves held. Every verdict is an event, and a bound only says INVALID.
-//  - A ping arm: the desk's hold is re-asserted by the reconcile, so the hold's state is read at the no-change point,
-//    once the reconcile has run after the departure was seen. A knock-down is seen by the host's own read (the one the
-//    reconcile makes); an exit by the actor's signal. Two passes: the first can run in the tick that is still taking the
-//    actor's own release, the second is a later tick.
-//  - No ping: nothing re-holds the claim, so its release is the event.
+// The no-change point is the second reconcile pass after the departure was seen: the first can run in the tick that is
+// still taking the actor's own release, and after the second nothing can free the claim that has not already (a ping's
+// hold is re-asserted by the reconcile, a plain claim is released by its peer's departure, sent before it). A knock-down is
+// seen by the host's own read (the one the reconcile makes); an exit by the actor's signal. The hold's state then is the
+// verdict, a held claim included. The exit arm with a ping decides after that, at the ping run's own end (below).
 // Says INVALID and returns false when an event never came.
+bool PassesAfter(uint32_t seen, int passes) {
+    return PS::WaitFor("the reconcile passes after the departure", kBackstopSec, [seen, passes] {
+        uint32_t now = 0;
+        OnGameThread([&] { now = coop::device_occupancy::ReconcilePasses(); });
+        return now >= seen + static_cast<uint32_t>(passes);
+    });
+}
+
+// The exit with a ping: the pinger's machine keeps the desk, so the hold must stay held to the ping run's own end. The
+// events are the hold dropping (FAIL) and the run ending (PASS); the run is long, so its bound is a step's.
+bool HoldsToPingEnd(bool& freed) {
+    bool dropped = false;
+    const bool ended = PS::WaitFor("the ping run's end", kStepSec, [&dropped] {
+        uint8_t ping = 0xFF;
+        OnGameThread([&] { ping = coop::desk_input_sync::PingActiveSlot(); });
+        if (ping == 0xFF) return true;
+        if (Holder() == 0xFF) dropped = true;
+        return dropped;
+    });
+    freed = dropped;
+    return ended;
+}
+
 bool MeasureHold(unsigned actorSlot, bool& freed) {
-    if (!Ping()) {
-        freed = PS::WaitFor("the claim freed", kBackstopSec, [] { return Holder() == 0xFF; });
-        return freed;
-    }
     if (!ExitOnly() &&
         !PS::WaitFor("the actor's knock-down seen by the host", kBackstopSec, [actorSlot] {
             bool down = false;
@@ -135,15 +155,11 @@ bool MeasureHold(unsigned actorSlot, bool& freed) {
         return false;
     uint32_t seen = 0;
     OnGameThread([&] { seen = coop::device_occupancy::ReconcilePasses(); });
-    if (!PS::WaitFor("two reconcile passes after the departure", kBackstopSec, [seen] {
-            uint32_t now = 0;
-            OnGameThread([&] { now = coop::device_occupancy::ReconcilePasses(); });
-            return now >= seen + 2;
-        }))
-        return false;
+    if (!PassesAfter(seen, 2)) return false;
+    UE_LOGI("seat-ragdoll: the reconcile ran twice after the departure (from pass %u); the hold reads holder=%u", seen,
+            Holder());
+    if (ExitOnly() && Ping()) return HoldsToPingEnd(freed);
     freed = Holder() == 0xFF;
-    UE_LOGI("seat-ragdoll: the reconcile ran twice after the departure (passes %u -> later); the hold reads holder=%u",
-            seen, Holder());
     return true;
 }
 
@@ -236,8 +252,8 @@ bool WatchClaim(const char* me, unsigned actorSlot) {
 
 // "claimed freed", each 0 or 1: the claim the watcher saw, and the hold the actor left.
 void Judge(const std::string& r) {
-    if (r.size() != 3 || r[1] != ' ')
-        return coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "the measure's word never came");
+    // Empty: a wait that never saw its event said INVALID itself (peer_signal), so no second line.
+    if (r.size() != 3 || r[1] != ' ') return;
     const int claimed = r[0] == '1', freed = r[2] == '1';
     // The exit arm mid-ping: the pinger's machine keeps the desk, so nothing frees it.
     const bool pass = ExitOnly() && Ping() ? claimed && !freed : claimed && freed;
