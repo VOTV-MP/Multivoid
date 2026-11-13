@@ -127,6 +127,7 @@ const LaneOwned kLaneOwnedClasses[] = {
     { "ufo_pillfo_C", "ufo_sync" },
     { "ufo_joel_C", "ufo_sync" },
     { "midasufotest_C", "ufo_sync" },
+    { "newsky_C", "sky_sync" },
 };
 const char* LaneFor(const std::string& className) {
     for (const auto& e : kLaneOwnedClasses)

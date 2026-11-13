@@ -165,6 +165,38 @@ bool ReadEye(bool& eye) {
     return true;
 }
 
+bool ReadBlackHole(bool& on) {
+    void* sky = Sky();
+    if (!sky) return false;
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    if (sOff == -2) {
+        int32_t off = -1;
+        sOff = R::FindBoolProperty(R::ClassOf(sky), L"skyHidden", off, sMask) ? off : -1;
+        if (sOff < 0) UE_LOGW("skysphere: newsky_C.skyHidden did not resolve by name -- the black hole cannot be read");
+    }
+    if (sOff < 0) return false;
+    on = (*(reinterpret_cast<const uint8_t*>(sky) + sOff) & sMask) != 0;
+    return true;
+}
+
+bool ApplyBlackHole(bool on) {
+    void* sky = Sky();
+    void* fn = sky ? R::FindDispatchFunctionCached(R::ClassOf(sky), L"skyVisibility") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<bool>(L"bNewHidden", on) || !ue_wrap::Call(sky, f)) return false;
+    // The light: a component member, whose SetVisibility is SceneComponent's own.
+    const int32_t lightOff = R::FindPropertyOffset(R::ClassOf(sky), L"light_blackhole");
+    void* light = lightOff >= 0 ? *reinterpret_cast<void**>(static_cast<char*>(sky) + lightOff) : nullptr;
+    void* sc = R::FindClass(L"SceneComponent");
+    void* vis = sc ? R::FindFunction(sc, L"SetVisibility") : nullptr;
+    if (!light || !vis) return true;  // the sky itself flipped
+    ue_wrap::ParamFrame v(vis);
+    if (v.valid() && v.Set<bool>(L"bNewVisibility", on)) ue_wrap::Call(light, v);
+    return true;
+}
+
 bool CallSetEye(bool eye) {
     void* sky = Sky();
     void* fn = sky ? R::FindDispatchFunctionCached(R::ClassOf(sky), L"setEye") : nullptr;

@@ -4481,14 +4481,16 @@ static_assert(sizeof(TaskNewStatePayload) <= 256 - 20 - 8,
               "TaskNewStatePayload must fit in one reliable datagram");
 
 // The night sky (SkyState): the star dome's world rotation (its random initial yaw plus spin), the
-// moon phase and the eye; the client writes the first two and runs the sky's setEye for the eye.
+// moon phase, the eye and the earth teleport's black hole; the client writes the first two, runs the sky's setEye
+// for the eye and its skyVisibility for the black hole.
 struct SkyStatePayload {
     float skyPitch;    // sky mesh WORLD rotation (FRotator) -- pitch
     float skyYaw;      //   yaw  (the dominant value: random initial offset + accumulated spin)
     float skyRoll;     //   roll
     float moonPhase;   // Anewsky_C::moonPhase_mirror (= UsaveSlot_C::moonPhase)
     uint8_t eye;       // Anewsky_C::eye, the noon roll's setEye (the moon's texture swapped for an eye's)
-    uint8_t pad[3];
+    uint8_t blackHole; // Anewsky_C::skyHidden, the earth teleport's flip (the sky hidden, the black hole shown)
+    uint8_t pad[2];
 };
 static_assert(sizeof(SkyStatePayload) == 20, "SkyStatePayload must be 20 bytes");
 
