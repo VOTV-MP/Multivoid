@@ -4,6 +4,7 @@
 
 #include "coffee_drill_detail.h"  // co-located private header: SpawnProp (a prop_C named by a row)
 
+#include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_log.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"
@@ -38,6 +39,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace coop::dev::hook_retrieve_drill {
 namespace {
@@ -70,7 +72,6 @@ constexpr uint64_t kFindBoundMs   = 60000;   // CLIENT: world-ready to the ancho
 constexpr uint64_t kReadyBoundMs  = 3000;    // the aim to the player's look settling on the hook
 constexpr uint64_t kSeenBoundMs   = 15000;   // the press to the hook gone and the item in the inventory
 constexpr uint64_t kCheckEveryMs  = 250;
-constexpr float    kNearCm        = 3000.f;  // the cups roll where the floor slopes; the taker walks to them
 constexpr float    kWalkReachCm   = 120.f;
 constexpr int      kWalkDeadlineS = 60;
 constexpr int      kReaimMax      = 5;
@@ -121,6 +122,7 @@ void Cleanup() {
         if (void* a = r->Get()) E::DestroyActor(a);
 }
 bool g_isHost = false;            // this peer's role, set by Tick
+bool g_puppetSaid = false;        // HOST: `host puppet` was said
 bool g_hostOk = false;            // HOST: its own half held
 bool g_clientOk = false;          // HOST: the client said `done ok`
 bool g_clientDone = false;        // HOST: the client's report was read
@@ -138,6 +140,33 @@ bool ClientSaid(const std::string& head, std::string* rest) {
         if (rest) *rest = r.text.substr(head.size());
     });
     return found;
+}
+
+// The lines the host says: `host hook <key>` once its hook is tied (the one hook every step of this drill is about) and
+// `host puppet` once its puppet of slot 1 has a pose, the fact the host's judge reads (RemotePlayer valid and HasPose,
+// coop/element/intent_authority.cpp AuthorizeSegment): a press before it is refused no-body.
+std::string HostHead(const char* what) { return std::string(kHead) + "host " + what; }
+
+// CLIENT: the text after `head` in the first row of this client's chat feed that carries it. A row the host said before
+// this client joined is a retained one, and counts.
+bool HostSaid(const std::string& head, std::string* rest) {
+    bool found = false;
+    coop::chat_feed::ForEachRow([&](const coop::chat_feed::RowView& r) {
+        const size_t at = found ? std::string_view::npos : r.line.find(head);
+        if (at == std::string_view::npos) return;
+        found = true;
+        if (rest) *rest = std::string(r.line.substr(at + head.size()));
+    });
+    return found;
+}
+
+// CLIENT: the key of the hook the host tied, from its line; false until it has come.
+bool HostHookKey(std::wstring* key) {
+    std::string rest;
+    if (!HostSaid(HostHead("hook "), &rest)) return false;
+    key->assign(rest.begin(), rest.end());
+    while (!key->empty() && key->back() == L' ') key->pop_back();
+    return !key->empty();
 }
 
 // HOST: the one verdict.
@@ -371,6 +400,13 @@ void HostTick(coop::net::Session* s) {
     g_nextCheckMs = now + kCheckEveryMs;
     PollClient();   // the client's report, whatever step the host is in
     if (g_step == Step::Done) return;
+    if (!g_puppetSaid) {   // the client presses only after this: its request needs the puppet the host judges it by
+        coop::RemotePlayer& rp = coop::puppet_drive::Puppet(1);
+        if (rp.valid() && rp.HasPose()) {
+            g_puppetSaid = true;
+            coop::chat_sync::QueueSend(HostHead("puppet"));
+        }
+    }
     void* player = coop::players::Registry::Get().Local();
     if (!player) return;
     if (HostTakes() && TakeTick(player, true)) return;
@@ -423,6 +459,7 @@ void HostTick(coop::net::Session* s) {
         g_granted0 = coop::hook_retrieve::GrantedCount();
         UE_LOGI("[HOOK-RETRIEVE-DRILL] host: hook '%ls' tied between the cups and adopted -- the %s's to take",
                 g_key.c_str(), HostTakes() ? "host" : "client");
+        coop::chat_sync::QueueSend(HostHead("hook ") + std::string(g_key.begin(), g_key.end()));   // the clients' one hook
         Next(HostTakes() ? Step::Wait : Step::Watch);
         return;
     }
@@ -466,30 +503,11 @@ bool SkipSave(void* hook) {
     return (static_cast<const uint8_t*>(hook)[off] & mask) != 0;
 }
 
-// CLIENT: the anchored copy nearest this player: a hook carrying a save key, which no owner-phase mirror has.
-struct Near { ue_wrap::FVector from; void* best; float bestCm; };
-void* NearestAnchoredCopy(void* player, float withinCm) {
-    Near ctx{{}, nullptr, withinCm};
-    void* cls = ue_wrap::object_index::ClassByName(H::ClassNameOf(H::Kind::Hook));
-    if (!cls || !E::TryGetActorLocation(player, ctx.from)) return nullptr;
-    ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
-        auto* n = static_cast<Near*>(c);
-        ue_wrap::FVector at{};
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__") || !E::TryGetActorLocation(obj, at)) return;
-        const std::wstring key = PR::GetActorSaveKeyString(obj);
-        if (key.empty() || key == L"None") return;
-        const float cm = std::sqrt((at.X - n->from.X) * (at.X - n->from.X) + (at.Y - n->from.Y) * (at.Y - n->from.Y) +
-                                   (at.Z - n->from.Z) * (at.Z - n->from.Z));
-        if (cm < n->bestCm) { n->best = obj; n->bestCm = cm; }
-    }, &ctx);
-    return ctx.best;
-}
-
 // CLIENT, window mode, at the join's end: the host took its hook after this client's save was cut and before its world
 // was ready, so the Gone of that moment never reached it. The connect replay's word has been applied by now (it lands
 // ahead of the snapshot whose completion ends the join), so the copy the save loaded is gone, and a Gone took it.
-void JudgeWindow(void* player) {
-    void* copy = NearestAnchoredCopy(player, 1.0e9f);
+void JudgeWindow(const std::wstring& key) {
+    void* copy = coop::hook_retrieve::FindHook(key);   // the hook the host named, and no other
     const uint64_t gone = coop::hook_retrieve::GoneCopyCount();
     char what[160];
     if (!copy && gone > 0) {
@@ -518,15 +536,24 @@ void ClientTick() {
         Next(Step::Find);
         return;
     case Step::Find: {
-        if (WindowMode()) { JudgeWindow(player); return; }
-        void* hook = NearestAnchoredCopy(player, JoinMode() ? 1.0e9f : kNearCm);
+        std::wstring key;
+        if (!HostHookKey(&key)) {   // the hook is the one the host names, and no other
+            if (Expired(kFindBoundMs)) Abandon("the host never named its hook in 60 s");
+            return;
+        }
+        if (WindowMode()) { JudgeWindow(key); return; }
+        if (!HostSaid(HostHead("puppet"), nullptr)) {   // the host judges the press by its puppet of this client
+            if (Expired(kFindBoundMs)) Abandon("the host never said its puppet of this client had a pose in 60 s");
+            return;
+        }
+        void* hook = coop::hook_retrieve::FindHook(key);
         g_items0 = HookItems();
         if (!hook || g_items0 < 0) {
-            if (Expired(kFindBoundMs)) Abandon("no anchored hook stood near this client within 60 s");
+            if (Expired(kFindBoundMs)) Abandon("this client held no copy of the host's hook within 60 s");
             return;
         }
         g_hook.Set(hook);
-        g_key = PR::GetActorSaveKeyString(hook);
+        g_key = key;
         UE_LOGI("[HOOK-RETRIEVE-DRILL] client: the anchored copy of hook '%ls' is here (%s); %d hook item(s) carried",
                 g_key.c_str(), SkipSave(hook) ? "a mirror" : "loaded by the save", g_items0);
         if (HostTakes()) {
@@ -581,7 +608,7 @@ void OnDisconnect() {
     g_granted0 = g_asked0 = g_taken0 = g_refusedAns0 = 0;
     g_items0 = 0;
     g_reaims = 0;
-    g_hostOk = g_clientOk = g_clientDone = false;
+    g_hostOk = g_clientOk = g_clientDone = g_puppetSaid = false;
     g_clientWhy.clear();
     if (g_walk) coop::director::CancelBackgroundWalk(*g_walk);
     g_walk.reset();

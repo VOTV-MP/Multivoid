@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 class Session;
@@ -51,6 +52,10 @@ uint64_t GrantedCount();
 
 // CLIENT, this session: the copies the host's Gone took away with no pickup of this client's (the drill reads it).
 uint64_t GoneCopyCount();
+
+// The live hook on this machine whose save key is `key` (an adopted hook, an anchored mirror, or one a save loaded), or
+// null. For the drill, which judges the one hook the host names.
+void* FindHook(const std::wstring& key);
 
 // CLIENT, this session (the drill reads them): the requests asked of the host, the pickups its grant ran here, and the
 // refusals it answered.

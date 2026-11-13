@@ -5,6 +5,8 @@
 // loaded. host / joinhost: the same two copies, and the host player takes the hook. window: the host takes it between
 // the client's save being cut and its world being ready; the client's join ends with its copy gone (red nojoingone, on
 // the host: the join's word is not sent, the copy stands).
+// The host names its hook by key in the lobby chat and says when its puppet of the client has a pose; the client
+// judges only that hook, and presses only after the puppet line.
 // Reds, on the client: hook_retrieve_red=nocollision keeps the copy's collision off, as before the lane (the aim
 // fan holds every pose without the look taking the hook); clientruns runs the game's pickup on the copy alone (in the
 // press's own tick nothing was asked of the host, and the copy and an item are already here).

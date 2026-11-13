@@ -367,6 +367,8 @@ void OnPeerLeftSlot(int slot) {
 
 uint64_t GrantedCount() { return g_granted; }
 uint64_t GoneCopyCount() { return g_goneCopies; }
+
+void* FindHook(const std::wstring& key) { return D::FindHookByKey(key); }
 uint64_t AskedCount() { return g_sent; }
 uint64_t TakenCount() { return g_taken; }
 uint64_t RefusedAnswerCount() { return g_refusedAnswers; }
