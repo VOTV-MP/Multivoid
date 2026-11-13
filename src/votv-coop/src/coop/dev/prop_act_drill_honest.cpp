@@ -526,7 +526,10 @@ bool g_contentsSaid = false;
 
 std::string ContentsHead(const Row& r) { return std::string(kTag) + " host " + r.name + " contents "; }
 
-void UnpackHostReady() { g_contentsSaid = false; }
+void UnpackHostReady() {
+    g_contentsSaid = false;
+    coop::host_spawn_watcher::dev::ArmSpawnRecord(true);   // from before the client acts: a content's spawn may go out inside the roll
+}
 
 // HOST, each poll while it waits for the client on an unpack step. The host's own commit counter is the no-change point of
 // the open-off red: the commit has been processed (a destroy commit counted, the eid dead), so an unpack that did not
@@ -558,6 +561,18 @@ const char* UnpackHostWatch(const Row& row, EL::ElementId eid, const Baseline& b
             ready = false;
             continue;
         }
+        // The eid is minted before its PropSpawn goes out (the census walk mints with no send): the line waits for the send,
+        // which is what makes a client's missing mirror a loss and no wait, and a send the session refused is the host's own fail.
+        if (coop::host_spawn_watcher::dev::SpawnRefused(id)) {
+            static std::string text;
+            text = "the host's PropSpawn for content eid " + std::to_string(static_cast<unsigned>(id)) +
+                   " was refused by the session";
+            return text.c_str();
+        }
+        if (!coop::host_spawn_watcher::dev::SpawnSent(id)) {
+            ready = false;
+            continue;
+        }
         eids += (eids.empty() ? "" : ",") + std::to_string(static_cast<unsigned>(id));
         if (!food) continue;
         // A content with no Key is counted by its eid and is never sent a FoodState (the lane sends keyed foods only).
@@ -568,6 +583,7 @@ const char* UnpackHostWatch(const Row& row, EL::ElementId eid, const Baseline& b
     }
     if (!ready) return nullptr;
     g_contentsSaid = true;
+    coop::host_spawn_watcher::dev::ArmSpawnRecord(false);
     UE_LOGI("%s host %s: contents counted, n=%zu eids %s", kTag, row.name, fresh, eids.empty() ? "none" : eids.c_str());
     Say(ContentsHead(row) + "n=" + std::to_string(fresh) + " poisoned=" + std::to_string(poisoned) + " eids=" + eids);
     return nullptr;

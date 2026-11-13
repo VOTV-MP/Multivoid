@@ -7,6 +7,7 @@
 
 #include "coop/net/session.h"
 
+#include "coop/net/prop_spawn_hook.h"  // the drill seam on SendPropSpawn
 #include "coop/net/net_clock.h"  // NowMs, the net layer's one steady clock
 
 #include "coop/dev/wire_census.h"
@@ -335,7 +336,9 @@ bool Session::SendPropRelease(const PropReleasePayload& payload) {
 }
 
 bool Session::SendPropSpawn(const PropSpawnPayload& payload) {
-    return SendReliable(ReliableKind::PropSpawn, &payload, sizeof(payload));
+    const bool sent = SendReliable(ReliableKind::PropSpawn, &payload, sizeof(payload));
+    if (const prop_spawn_hook::PropSpawnSentFn hook = prop_spawn_hook::PropSpawnSentHook()) hook(payload.elementId, sent);
+    return sent;
 }
 
 bool Session::SendPropDestroy(const PropDestroyPayload& payload) {

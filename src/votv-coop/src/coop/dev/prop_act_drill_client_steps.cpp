@@ -24,9 +24,9 @@ namespace EL = coop::element;
 
 void StepAwaitContents(const Row& row, void* player, uint64_t now) {
         // The host rolled the contents on its copy and says how many there are, how many it poisoned and their eids: the
-        // line is the event this step decides on. Each content's eid is registered and its PropSpawn queued in one game-thread
-        // call on the host (prop_lifecycle.cpp, the Init body: MarkPropElement then SendPropSpawn), and the line is sent
-        // after, on the same ordered Default lane, so every PropSpawn is handled here before the line is. A mirror then
+        // line is the event this step decides on. The host says it only once every listed eid's PropSpawn has gone out
+        // (host_spawn_watcher::dev::SpawnSent, recorded at Session::SendPropSpawn), on the same ordered Default lane, so every
+        // PropSpawn is handled here before the line is. A mirror then
         // missing is either parked on a deferred bind (its eid is marked in bind_wait: a class still loading, a position
         // wait; the wait ends on that event) or lost: no mark means nothing will make it, a FAIL at once. The host set the
         // MRE's poisonChance to 1, so one content is poisoned, and its poison rides the FoodState that follows its spawn.

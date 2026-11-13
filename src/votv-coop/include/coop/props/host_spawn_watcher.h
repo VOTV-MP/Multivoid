@@ -79,6 +79,13 @@ namespace dev {   // the act drill's unpack steps read this
 // clears the record. prop_act_host brackets an unpack's roll with it, so the record is exactly the actors that call made.
 void CaptureBirths(bool on);
 const std::vector<ue_wrap::CachedObjRef>& CapturedBirths();
+// While armed, every PropSpawn the session's funnel took is recorded by its element id (coop/net/prop_spawn_hook.h):
+// SpawnSent when the send entered the stream or the backlog, SpawnRefused when the session refused it. Arming clears the
+// record; disarming leaves the seam null. A birth's eid is minted before its spawn goes out (the census walk mints with
+// no send), so a drill that says "the spawn reached the peers" reads this, never the eid. Game thread.
+void ArmSpawnRecord(bool on);
+bool SpawnSent(uint32_t eid);
+bool SpawnRefused(uint32_t eid);
 }  // namespace dev
 
 }  // namespace coop::host_spawn_watcher

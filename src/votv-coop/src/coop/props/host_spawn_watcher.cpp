@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
+#include "coop/net/prop_spawn_hook.h"   // the drill seam the spawn record rides
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (drain: hotbar view-actor exclusion)
@@ -36,6 +37,7 @@
 #include <cmath>          // asin/atan2 for the FQuat -> FRotator conversion
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace coop::host_spawn_watcher {
@@ -483,6 +485,24 @@ void CaptureBirths(bool on) {
 }
 
 const std::vector<ue_wrap::CachedObjRef>& CapturedBirths() { return g_capturedBirths; }
+
+namespace {
+std::unordered_set<uint32_t> g_spawnSent, g_spawnRefused;   // GT-only, armed by a drill
+
+void OnPropSpawnSent(uint32_t eid, bool sent) {
+    UE_ASSERT_GAME_THREAD("host_spawn_watcher::OnPropSpawnSent");
+    (sent ? g_spawnSent : g_spawnRefused).insert(eid);
+}
+}  // namespace
+
+void ArmSpawnRecord(bool on) {
+    g_spawnSent.clear();
+    g_spawnRefused.clear();
+    coop::net::prop_spawn_hook::PropSpawnSentHook() = on ? &OnPropSpawnSent : nullptr;
+}
+
+bool SpawnSent(uint32_t eid) { return g_spawnSent.count(eid) != 0; }
+bool SpawnRefused(uint32_t eid) { return g_spawnRefused.count(eid) != 0; }
 }  // namespace dev
 
 
