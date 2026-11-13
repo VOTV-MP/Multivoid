@@ -250,6 +250,13 @@ void RunHost() {
     std::vector<ue_wrap::CachedObjRef> actors;
     bool reloaded = false;
     SpawnCandidates(Split(text), spawned, actors, reloaded);
+    // The verdict known is said at once, before any later leg: the second resolve loaded the class again. The mark
+    // releases the client, which waits for the host's word.
+    if (reloaded) {
+        PS::Mark("spawned", "NONE");
+        RV::Say(kTag, RV::Outcome::Fail, "a second resolve of a class in the same tick loaded it again");
+        return;
+    }
     if (spawned.size() < kWanted) {
         PS::Mark("spawned", "NONE");
         RV::Say(kTag, RV::Outcome::Invalid, "the host could spawn only %zu of the %zu classes it needs", spawned.size(),
@@ -269,8 +276,7 @@ void RunHost() {
             bound);
     UE_LOGI("class-resolve: HOST loads run=%llu, of them during the save replay=%llu",
             static_cast<unsigned long long>(CR::LoadsRun()), static_cast<unsigned long long>(CR::LoadsDuringReplay()));
-    if (reloaded) RV::Say(kTag, RV::Outcome::Fail, "a second resolve of a class in the same tick loaded it again");
-    else if (bound == spawned.size()) RV::Say(kTag, RV::Outcome::Pass);
+    if (bound == spawned.size()) RV::Say(kTag, RV::Outcome::Pass);
     else RV::Say(kTag, RV::Outcome::Fail, "the client holds a mirror of %zu of the %zu classes the host spawned", bound,
                  spawned.size());
     UE_LOGI("class-resolve: DONE on host");
