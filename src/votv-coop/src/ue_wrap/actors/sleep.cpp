@@ -8,6 +8,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -137,11 +138,18 @@ bool ReadNightmareChance(float& out) {
     out = 0.15f;
     void* bed = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offBed);
     if (!bed || !R::IsLive(bed)) return true;
-    // The bed's own field: a bed subclass is a new class, so the offset is asked of each one met.
+    // The bed's own field: a bed subclass is a new class, so the offset is asked of each one met, and a class reborn at
+    // the same address in another world is asked again.
     static void* s_bedCls = nullptr;
+    static uint32_t s_bedWorld = 0;
     static int32_t s_offBedProb = -1;
     void* cls = R::ClassOf(bed);
-    if (cls != s_bedCls) { s_bedCls = cls; s_offBedProb = R::FindPropertyOffset(cls, L"dreamProb"); }
+    const uint32_t world = world_identity::Generation();
+    if (cls != s_bedCls || world != s_bedWorld) {
+        s_bedCls = cls;
+        s_bedWorld = world;
+        s_offBedProb = R::FindPropertyOffset(cls, L"dreamProb");
+    }
     if (s_offBedProb >= 0) out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(bed) + s_offBedProb);
     return true;
 }

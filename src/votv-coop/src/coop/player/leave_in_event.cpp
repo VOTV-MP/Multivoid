@@ -87,13 +87,21 @@ bool Bind(BoundClass& b, const wchar_t* name) {
     return true;
 }
 
-// This world's menu graph and getEvent's out parameter. Steady state, with both classes bound, is two integer
-// compares; a new world's classes bind again at the class set's move.
+// This world's menu graph and getEvent's out parameter. Steady state, with both classes bound, is two listing-id
+// hash lookups; a new world's classes bind again at the class set's move. A class that binds without its function or
+// parameter leaves the watch inert for that world, which is said once.
 void Refresh() {
+    static bool sMissSaid = false;
     const uint64_t menuBefore = g_menuCls.listing;
     if (Bind(g_menuCls, L"ui_menu_C")) {
-        if (g_menuCls.listing != menuBefore)
-            g_menuGraph.store(R::FindFunction(g_menuCls.cls, L"ExecuteUbergraph_ui_menu"), std::memory_order_release);
+        if (g_menuCls.listing != menuBefore) {
+            void* graph = R::FindFunction(g_menuCls.cls, L"ExecuteUbergraph_ui_menu");
+            g_menuGraph.store(graph, std::memory_order_release);
+            if (!graph && !sMissSaid) {
+                sMissSaid = true;
+                UE_LOGW("leave_in_event: ui_menu_C has no ExecuteUbergraph_ui_menu here -- the pause menu's buttons wait for an event");
+            }
+        }
     } else if (menuBefore != 0) {
         g_menuGraph.store(nullptr, std::memory_order_release);
         g_menuCls.listing = 0;
@@ -102,7 +110,12 @@ void Refresh() {
     if (Bind(g_libCls, L"lib_C")) {
         if (g_libCls.listing != libBefore) {
             void* fn = R::FindFunction(g_libCls.cls, L"getEvent");
-            g_offIsEventActive.store(fn ? R::FindParamOffset(fn, L"isEventActive") : -1, std::memory_order_release);
+            const int32_t off = fn ? R::FindParamOffset(fn, L"isEventActive") : -1;
+            g_offIsEventActive.store(off, std::memory_order_release);
+            if (off < 0 && !sMissSaid) {
+                sMissSaid = true;
+                UE_LOGW("leave_in_event: lib_C::getEvent or its isEventActive parameter is not here -- the watch is inert");
+            }
         }
     } else if (libBefore != 0) {
         g_offIsEventActive.store(-1, std::memory_order_release);

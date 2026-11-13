@@ -38,7 +38,7 @@ void Install(coop::net::Session* session);
 void OnPuppetSpawned(int slot);
 
 // Per pump tick, on a connected client only: count the real seconds of the client's rest (sleep_rest's announced rest:
-// a bool, no engine read) and roll once at 25. The tick stays because nothing announces the passing of those seconds;
+// a bool, no engine read) and roll once, kGameRollDelayS / kNativeSleepDilation of them in. The tick stays because nothing announces the passing of those seconds;
 // the rest and its end do not need a poll here.
 void Tick();
 
