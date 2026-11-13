@@ -258,7 +258,6 @@ void RunHost() {
     if (!PS::AwaitText("f2_result", f2, kStepSec)) return;
     int f2Flip = 0, f2Click = 0;
     Parse2(f2, f2Flip, f2Click);
-    };
     if (f1Flip != 1 || f2Flip != 1) {
         EndNow(RV::Outcome::Invalid, false, "a faucet's state did not cross (client's press=%d, host's press=%d): its lane had not "
                "listed it", f1Flip, f2Flip);
