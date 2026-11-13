@@ -96,8 +96,14 @@ desk's next watched event (a local cap press, another cap label repaint), all wa
 `coop/interactables/desk_input_sync`. The label itself `[V]` (`harness/autotest/autotest_cap_label.cpp`: the join,
 then each peer plugging and pulling the module and pressing the cap with and without it, the tag and text read the
 same on both peers after every step, read once when the actor's level and module arrive; the first check that fails
-says `FAIL` and no later step runs). The red, which drops every repaint: `dev.cap_label_repaint_off`. The join's
-adopt has no red of its own: a cap change the host makes after its world is taken reaches the joiner live, and the
+says `FAIL` and no later step runs). A desk loaded from a save is restored by the gamemode's load (the desk's
+`setData`, which writes the cap level and the modules back and repaints no label), and on a host that runs before the
+lanes install, so no watch of the host can see it; the lane's start apply is the answer, as for every lane: once per
+session, at the first tick with the desk resolved, `desk_input_sync` repaints the label (`desk_input: the cap label
+repainted at install`). The drill's `saved` arm `[?]` runs the host on the rig's own save with a client joining, and
+both peers' labels must be the host's loaded level and module. The reds: `dev.cap_label_repaint_off` drops every
+repaint, `dev.cap_label_install_repaint_off` (the host, `saved` arm) only the start apply; which of them FAIL is read
+from the rig runs, not stated here `[?]`. The join's adopt has no red of its own: a cap change the host makes after its world is taken reaches the joiner live, and the
 live apply repaints the label, so a joiner without the adopt's repaint would still show the right label there. The
 repaint owed at the desk's BeginPlay (a state that reaches the desk before its screen widget exists) has no red
 either: no run has made it owed `[?]`.

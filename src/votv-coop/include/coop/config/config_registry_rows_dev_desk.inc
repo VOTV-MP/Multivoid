@@ -138,8 +138,16 @@ CFG_ENUM(desk_short_drill, "desk_short_drill", "dev", "off", "off|client|host|jo
 CFG_FLAG(cap_label_repaint_off, "cap_label_repaint_off", "dev", false, "VOTVCOOP_CAP_LABEL_REPAINT_OFF",
     "Developer (BOTH peers; the cap-label drill's red): no refiner cap label repaint runs, whether from the wire, a "
     "join adopt or a module plug or unplug, as before the lane, so the drill must FAIL.")
-CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh", "VOTVCOOP_CAP_LABEL_DRILL",
-    "Drill, the refiner's cap label on two peers; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. The host prepares the "
-    "cap at its third level with the Auto Processing module, the client joins, then each peer plugs, pulls and presses "
-    "in turn and both labels must be the actor's: 'rig: VERDICT cap-label PASS|FAIL|INVALID', the FAIL at the step "
-    "that failed. Red arm: cap_label_repaint_off (every repaint).")
+CFG_FLAG(cap_label_install_repaint_off, "cap_label_install_repaint_off", "dev", false,
+    "VOTVCOOP_CAP_LABEL_INSTALL_REPAINT_OFF",
+    "Developer (the HOST; the cap-label drill's saved-world red): the desk lane's start apply, the one cap label "
+    "repaint at install, does not run, so a host whose world was loaded from a save keeps its stale label and the "
+    "drill's saved arm must FAIL.")
+CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "VOTVCOOP_CAP_LABEL_DRILL",
+    "Drill, the refiner's cap label on two peers; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. fresh -- the host "
+    "prepares the cap at its third level with the Auto Processing module, the client joins, then each peer plugs, "
+    "pulls and presses in turn and both labels must be the actor's: 'rig: VERDICT cap-label PASS|FAIL|INVALID', the "
+    "FAIL at the step that failed. saved -- the host on the rig's own save (no --host-fresh), a client joins: the "
+    "host's label must be its loaded desk's level and module at once, and the client's the same after the join; a "
+    "save holding the defaults (level 0, no module) is INVALID. Red arms: cap_label_repaint_off (every repaint, both "
+    "peers), cap_label_install_repaint_off (the host, saved arm).")

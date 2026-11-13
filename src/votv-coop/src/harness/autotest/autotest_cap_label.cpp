@@ -8,14 +8,17 @@
 // logs `cap-label: STATE <step> ...`. The first failed check says `rig: VERDICT cap-label FAIL` and no later step
 // runs; a wait that ends on its bound says INVALID. The receiver waits for the actor's level and module, which its
 // apply writes in one game-thread task with the repaint, and reads its label once. Armed by the row cap_label_drill
-// on both peers (VOTVCOOP_CAN_DIR). Red: cap_label_repaint_off. The join's own adopt has no red: a change the host
-// makes after its world is taken reaches the joiner live and repaints it. The driver launches the client once the
-// host logs `STATE 0-before-join`.
+// on both peers (VOTVCOOP_CAN_DIR). Red: cap_label_repaint_off. The driver launches the client once the host logs
+// `STATE 0-before-join`. The saved arm (cap_label_drill=saved, the host on the rig's own save, no --host-fresh) skips
+// the steps: the host's loaded desk must show its saved level and module's label, which only the lane's install
+// repaint gives it, and the joiner the same one. Its red is cap_label_install_repaint_off.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
 #include "harness/autotest/peer_signal.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/game_thread.h"
@@ -312,8 +315,36 @@ bool PrepareCap(const char* stateName, Label& prepared) {
                  "0: expected the third level with the module and text '[3]', got " + Describe(prepared));
 }
 
+std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::cap_label_drill); }
+
+// The saved arm's host: its world was loaded from the rig's own save, whose desk the gamemode's load restored before
+// this lane installed, so its label is right only if the lane's install repaint ran. A client has begun to join by
+// the time it is read, which is long after the host's session ticked. The joiner must then show the host's label.
+void RunSavedHost() {
+    LogState("0-before-join");
+    if (!Await("client_begun")) return;
+    const Label held = Read();
+    if (held.level == 0 && !held.module) {
+        coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Invalid,
+                               "the save holds the defaults (level 0, no Auto Processing): a stale label could not be "
+                               "told from a right one");
+        return;
+    }
+    if (!CheckOwn(held, "0 (the host's loaded desk)")) return;
+    Mark("host_prepared", Format(held));
+    if (!Await("client_joined")) return;
+    UE_LOGI("cap-label: DONE");
+    coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Pass,
+                           "the host's loaded desk and the joiner's show the saved level and module's label: %s",
+                           Describe(held).c_str());
+}
+
 void RunHost() {
     if (!WaitFor("the desk and its label readable", 120, [&] { return Read().ok; })) return;
+    if (Arm() == "saved") {
+        RunSavedHost();
+        return;
+    }
     LogState("0-host-loaded");
     Label prepared;
     if (!PrepareCap("0-before-join", prepared)) return;
@@ -343,7 +374,7 @@ void RunClient() {
                "1: expected the host's label '" + hostLabel + "', got '" + Format(joined) + "'"))
         return;
     Mark("client_joined");
-    if (!RunSteps(false)) return;
+    if (Arm() != "saved" && !RunSteps(false)) return;
     UE_LOGI("cap-label: DONE");
 }
 

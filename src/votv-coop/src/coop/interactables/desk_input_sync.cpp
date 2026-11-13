@@ -72,6 +72,15 @@ bool CapRepaintOff() {
     static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_repaint_off);
     return s_off;
 }
+bool InstallRepaintOff() {
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_install_repaint_off);
+    return s_off;
+}
+
+// The lane's start apply: a desk loaded from a save was restored by the gamemode's load (the desk's setData), which
+// repaints no label and ran before this lane installed on a host, so the cap label shows the desk's defaults until
+// something repaints it. Once per session, at the first tick with the desk resolved.
+bool g_installRepaintDone = false;
 
 // Runs the applies the screen widget's absence left owed; one that cannot run yet stays owed. Game thread.
 void RunOwed(const char* at) {
@@ -276,6 +285,11 @@ void Tick() {
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPoll;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
+    if (!g_installRepaintDone) {
+        g_installRepaintDone = true;
+        // A repaint that cannot run yet stays owed, and the desk's next watched event runs it.
+        if (!InstallRepaintOff() && RepaintCapLevelOrDefer()) UE_LOGI("desk_input: the cap label repainted at install");
+    }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never
         // bursts stale diffs.
@@ -434,6 +448,7 @@ void OnDisconnect() {
     g_visDeferWarned = false;
     g_remapPending = false;
     g_capLabelPending = false;
+    g_installRepaintDone = false;
     g_nextPoll = {};
 }
 
