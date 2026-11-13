@@ -273,19 +273,28 @@ void RunHost() {
     const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
     UE_LOGI("world-sound: the alien sounds fired=%d", fired ? 1 : 0);
     const size_t mineMost = fired ? NoisersNow() : 0;
+    // Fewer than three noisers where the event dispatched is decided there: nothing later brings them, and no noise is
+    // waited for first.
+    if (fired && mineMost < kNoisers) {
+        EndNow(RV::Outcome::Fail, false, "alien: the host's event left %zu noisers on the host (three)", mineMost);
+        return;
+    }
     PS::Mark("alien_go");
-    const bool mineNoise = fired && WaitNoise();
-    std::string theirs;
-    if (!PS::AwaitText("alien_result", theirs, kAlienSec * 2 + 60)) return;
+    std::string count;
+    if (!PS::AwaitText("alien_count", count, kAlienSec + 60)) return;
     size_t cMost = 0;
-    int cNoise = 0, cApplied = 0;
-    sscanf_s(theirs.c_str(), "most=%zu noise=%d applied=%d", &cMost, &cNoise, &cApplied);
-    // Fewer than three noisers where the event dispatched is decided: nothing later brings them.
-    if ((fired && mineMost < kNoisers) || (cApplied && cMost < kNoisers)) {
+    int cApplied = 0;
+    sscanf_s(count.c_str(), "most=%zu applied=%d", &cMost, &cApplied);
+    if (cApplied && cMost < kNoisers) {
         EndNow(RV::Outcome::Fail, true, "alien: the host's event left %zu noisers on the host and %zu on the client (three each)",
                mineMost, cMost);
         return;
     }
+    const bool mineNoise = fired && WaitNoise();
+    std::string theirs;
+    if (!PS::AwaitText("alien_result", theirs, kAlienSec + 60)) return;
+    int cNoise = 0;
+    sscanf_s(theirs.c_str(), "noise=%d", &cNoise);
 
     // The sky's tp, last: two cues to the client. The host's hook sees each sound the sky plays (`matched`) and sends a
     // cue for it (`sent`), so a cue not sent is decided when its sound is played, and the client is told at once.
@@ -365,8 +374,9 @@ void RunClient() {
     if (go != "skip") {
         const bool applied = PS::WaitFor("the host's alien sounds dispatched here", kAlienSec, [replays0] { return Replays() > replays0; }, false);
         const size_t most = applied ? NoisersNow() : 0;
+        PS::Mark("alien_count", "most=" + std::to_string(most) + " applied=" + (applied ? "1" : "0"));   // the count first: it decides
         const bool noise = applied && WaitNoise();
-        PS::Mark("alien_result", "most=" + std::to_string(most) + " noise=" + (noise ? "1" : "0") + " applied=" + (applied ? "1" : "0"));
+        PS::Mark("alien_result", std::string("noise=") + (noise ? "1" : "0"));
     }
 
     // The sky's tp: the host says how many cues it sent once its sounds are played (none, in the red, and then nothing can
@@ -410,14 +420,19 @@ void RunJoinHost() {
             return !s.IsSlotConnected(1) || s.peerGenerationForSlot(1) != life1Gen;
         }))
         return;
+    // The host's counter lives as long as its session, across both of the client's lives: the join's own snapshots are
+    // the count at the ready edge less the count when life 1 was gone, before the new life's world was up.
+    uint32_t snapshots0 = 0;
+    OnGameThread([&] { snapshots0 = coop::event_active_sync::JoinSnapshotsSent(); });
     size_t atEdge = 0;
     uint32_t snapshots = 0;
-    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, &atEdge, &snapshots] {
+    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, snapshots0, &atEdge, &snapshots] {
             bool ready = false;
             OnGameThread([&] {
                 auto& s = harness::session_runtime::Session();
                 ready = s.IsSlotWorldReady(1) && s.peerGenerationForSlot(1) != life1Gen;
-                if (ready) snapshots = coop::event_active_sync::JoinSnapshotsSent();   // the connect replay ran in the edge's task
+                // The connect replay ran in the edge's own task.
+                if (ready) snapshots = coop::event_active_sync::JoinSnapshotsSent() - snapshots0;
             });
             if (ready) atEdge = NoisersNow();
             return ready;

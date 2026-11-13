@@ -215,18 +215,29 @@ bool LeaveAndReturn(const char* phase, const Now& before, std::string& why) {
     return back;
 }
 
+// Whether the world's events have all ended (an unreadable count is not "gone").
+bool WorldEventsGone() {
+    int32_t n = -1;
+    OnGameThread([&n] { ue_wrap::active_events::ReadCount(n); });
+    return n == 0;
+}
+
 // The roll point of this client's rest, or a dream, or the end of the rest: the events after which no dream can come
-// (or one has). RollPoints counts the point whether the roll was made or held back by the red arm.
+// (or one has). RollPoints counts the point whether the roll was made or held back by the red arm. A rest that ends
+// before its roll point was ended by something else (the game wakes every sleeper for an event), which is no verdict on
+// the roll.
 struct RollWatch {
     uint32_t pointsBefore = 0;
+    bool PointReached() const {
+        bool point = false;
+        OnGameThread([&] { point = coop::nightmare_roll::RollPoints() > pointsBefore; });
+        return point;
+    }
     bool Decided() const {
         HoldNeed();
-        bool point = false, restOver = false;
-        OnGameThread([&] {
-            point = coop::nightmare_roll::RollPoints() > pointsBefore;
-            restOver = !coop::sleep_rest::Resting();
-        });
-        return Read().dreaming || point || restOver;
+        bool restOver = false;
+        OnGameThread([&] { restOver = !coop::sleep_rest::Resting(); });
+        return Read().dreaming || PointReached() || restOver;
     }
 };
 
@@ -263,6 +274,12 @@ void RunHost() {
     const std::string why = !hidden     ? "the client's copy is not hidden here while the client dreams"
                             : !n.asleep ? "the host woke while the client dreamt"
                                         : "";
+    // A host that woke while an event runs was woken by it (the game wakes every sleeper for one): no verdict on the lane.
+    if (hidden && !n.asleep && !WorldEventsGone()) {
+        UE_LOGW("nightmare: ARM A host INVALID the host was woken by a world event while the client dreamt");
+        Mark("A_seen", "0");
+        return HostInvalid("the host was woken by a world event while the client dreamt");
+    }
     const bool seen = Check("A", why.empty(), why.empty() ? "slept through it, saw the client dream, its copy hidden" : why);
     Mark("A_seen", seen ? "1" : "0");
     if (!seen) return HostFail(why);
@@ -330,6 +347,11 @@ void RunClient() {
     const Now after = Read();
     Log("A", after);
     const bool dreamed = after.dreaming;
+    if (!dreamed && !watch.PointReached()) {
+        // The rest ended before its roll point: an event woke the sleeper, so the roll never came to be judged.
+        Mark("A_dream", Result(Res::Invalid, "the rest ended before its roll point (an event woke the client)"));
+        return;
+    }
     const std::string dWhy = dreamed ? "the client's own roll won and it dreams"
                                      : "the rest's roll point passed with no dream: the client never dreamt";
     Check("A", dreamed, dWhy);
@@ -405,12 +427,6 @@ void EndCrawlerEvents() {
                     ended ? 1 : 0, gone ? 1 : 0, n);
         }
     });
-}
-
-bool WorldEventsGone() {
-    int32_t n = -1;
-    OnGameThread([&n] { ue_wrap::active_events::ReadCount(n); });
-    return n == 0;
 }
 
 // The pace of a hold that lasts as long as the process does: a person's test, with no end to wait for.

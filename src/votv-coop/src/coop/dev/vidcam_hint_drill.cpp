@@ -56,7 +56,10 @@ const char* Name(VC::View v) {
 }
 
 void Finish(coop::rig_verdict::Outcome outcome, const char* why) {
-    UE_LOGI("[VIDCAM-HINT-DRILL] %s %s: %s", Me(), outcome == coop::rig_verdict::Outcome::Pass ? "PASS" : "end", why);
+    const char* const word = outcome == coop::rig_verdict::Outcome::Pass   ? "PASS"
+                             : outcome == coop::rig_verdict::Outcome::Fail ? "FAIL"
+                                                                           : "INVALID";
+    UE_LOGI("[VIDCAM-HINT-DRILL] %s %s: %s", Me(), word, why);
     coop::rig_verdict::Say("vidcam-hint", outcome, "%s", why);
     g_phase = Phase::Done;
 }
