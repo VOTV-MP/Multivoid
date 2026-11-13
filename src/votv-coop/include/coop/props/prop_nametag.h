@@ -5,9 +5,11 @@
 // and a tag the host put on reached no client. Now, on the PropNametag kind:
 //   HOST   -- its player's tag runs the game's own; the watch on the item's exit tells every client (op 2).
 //   CLIENT -- its player's click is refused there and asked of the host (op 1): the prop's key and the item's tag. The
-//             host applies it when the prop is within the sender's reach and a nametag was in the sender's hand, and
+//             host applies it when the prop is within the sender's reach and a nametag is in the sender's hand, and
 //             tells every client, the sender included, whose held item then goes as the game's own use takes it. A
-//             request the host will not grant is answered to its sender alone (op 3) and the item stays.
+//             request the host will not grant is answered to its sender alone (op 3) and the item stays. The hand is
+//             the one the hand lane has applied; a request that arrives while the sender's newest hand state is owed
+//             waits for its application.
 // A joiner's tags come with its save. Game thread.
 
 #pragma once

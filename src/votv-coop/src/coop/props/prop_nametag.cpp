@@ -5,12 +5,13 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"   // IntentTarget: the prop within the sender's reach
-#include "coop/net/net_clock.h"              // NowMs: the hand history's clock
+#include "coop/net/net_clock.h"              // NowMs: the budget of a sender's tags
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
-#include "coop/player/hand_history.h"        // a nametag in the sender's hand
+#include "coop/player/hand_item.h"           // a nametag in the sender's hand, as its owner announced it
 #include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"       // PerSlotState: a waiting request goes with its sender
 #include "coop/props/prop_key_index.h"
 
 #include "ue_wrap/actors/nametag.h"
@@ -46,8 +47,6 @@ UE_FACT_FN(kRowHandUse, "prop_nametag", nullptr, L"playerHandUse_LMB", AnyClass)
 constexpr int kTag = 0x4E544147;   // 'NTAG'
 // The item's own reach is the player's interaction trace, armLength long; the authority adds its pads.
 constexpr float    kReachUU     = 200.0f;
-// The hand lane paces what it shows of a client's hand; a click lands within this of the item being held.
-constexpr uint64_t kHandLagMs   = 3000;
 // One tag a second a client: an item is spent by its use, so a faster run is not one player's hand.
 constexpr uint64_t kPerSlotMs   = 1000;
 // CLIENT: a request the host did not answer in this long was refused; the item stays.
@@ -74,6 +73,13 @@ void*        g_hostProp = nullptr;
 std::wstring g_hostTag;
 // HOST: when each client slot's last tag was applied.
 std::map<uint8_t, uint64_t> g_lastBySlot;
+// HOST: a slot's request that waits for its owed hand state to be applied; at most one a slot.
+struct Parked {
+    bool         valid = false;
+    std::wstring key;
+    std::wstring tag;
+};
+coop::roster_ledger::PerSlotState<Parked> g_parked;
 uint64_t g_applied = 0, g_refused = 0;
 
 bool TagSane(const std::wstring& t) {
@@ -193,13 +199,13 @@ void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, const 
                 key.c_str());
 }
 
-// HOST: a client's request.
-void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
+// HOST: a request's judgement, with the sender's hand as the hand lane has applied it.
+void Judge(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
     if (!TagSane(tag)) { Refuse(s, slot, key, "the tag is empty, too long or carries a control character"); return; }
     void* prop = coop::prop_key_index::Find(key);
     if (!prop || !PR::IsDescendantOfProp(prop)) { Refuse(s, slot, key, "no prop of that key here"); return; }
     const uint64_t now = coop::net::NowMs();
-    if (!coop::hand_history::HeldWithin(slot, L"prop_nametag_C", kHandLagMs, now)) {
+    if (!coop::hand_item::HeldClassIs(slot, L"prop_nametag_C")) {
         Refuse(s, slot, key, "no nametag in the sender's hand");
         return;
     }
@@ -213,6 +219,34 @@ void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstrin
     Publish(s, key, slot, tag);
     UE_LOGI("prop_nametag: HOST tagged prop '%ls' '%ls' for slot %u (%llu for clients)", key.c_str(), tag.c_str(),
             static_cast<unsigned>(slot), static_cast<unsigned long long>(g_applied));
+}
+
+// HOST: a client's request. The hand state of the sender rode the same ordered lane ahead of it (a nametag is held
+// before it is clicked), but the host applies a client's hand states at a pace (hand_item's LatestWins), so the
+// state applied may be older than the one that arrived. While one is owed the request waits for its application,
+// the lane's own edge (OnHandApplied), and is judged against the hand then.
+void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
+    Parked& waiting = g_parked[slot];
+    if (waiting.valid) { Refuse(s, slot, key, "an earlier tag of this slot still waits for its hand state"); return; }
+    if (coop::hand_item::HandStateOwed(slot)) {
+        waiting.valid = true;
+        waiting.key   = key;
+        waiting.tag   = tag;
+        return;
+    }
+    Judge(s, key, tag, slot);
+}
+
+// The hand lane applied a state of `slot` (or settled an owed one): its waiting request is judged now.
+void OnHandApplied(uint8_t slot) {
+    if (slot >= coop::players::kMaxPeers) return;
+    Parked& waiting = g_parked[slot];
+    if (!waiting.valid || coop::hand_item::HandStateOwed(slot)) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    const Parked request = std::move(waiting);
+    waiting = Parked{};
+    if (!s || s->role() != coop::net::Role::Host) return;
+    Judge(*s, request.key, request.tag, slot);
 }
 
 // CLIENT: the host's tag. The author's held item goes, as the game's own use takes it.
@@ -239,6 +273,8 @@ void OnRefused(const std::wstring& key) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (!coop::hand_item::SubscribeHandApplied(&OnHandApplied))
+        UE_LOGE("prop_nametag: the hand lane's subscriber table is full -- a request waiting for its hand state is not released");
 }
 
 void Tick() {
@@ -298,6 +334,7 @@ void OnDisconnect() {
     g_hostItem = g_hostProp = nullptr;
     g_hostTag.clear();
     g_lastBySlot.clear();
+    for (int i = 0; i < g_parked.size(); ++i) g_parked[i] = Parked{};
     g_session.store(nullptr, std::memory_order_release);
 }
 

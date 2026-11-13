@@ -297,7 +297,8 @@ before this lane a tag reached another peer only through a save: a client's tag 
 host's reached no client. The nametag is the host's
 (`coop/props/prop_nametag`). The host player's click runs the game's own, and the watch on its exit tells every
 client. A client's click is refused there and asked of the host with the prop's key and the tag; the host applies it
-when the prop is within the sender's reach and a nametag was in the sender's hand within the hand lane's 3 s, at most
+when the prop is within the sender's reach and a nametag is in the sender's hand as the hand lane has applied it (the
+request waits while that hand state is still owed), at most
 one a second a client, and tells every client, the sender included, whose held item then goes as the game's use takes
 it. A request the host refuses is answered to its sender alone, and the item stays. The messages are the
 `PropNametag` kind: op 1 the client's request, op 2 the host's tag, op 3 its refusal. `[?]` the rig's proof (`coop/dev/nametag_drill`) is pending on this kind: a client's tag lands on the host's cup once
