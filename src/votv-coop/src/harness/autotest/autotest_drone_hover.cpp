@@ -1,11 +1,11 @@
 // harness/autotest/autotest_drone_hover.cpp -- TEST-ONLY: how steadily the delivery drone flies and hovers on each peer.
 //
 // The host runs its garage console's own verb (drone.triggerFly), so the drone flies. While it is active, each peer
-// samples its own drone's location and yaw about every 15 ms for up to two minutes, stamped on the game thread, and
-// scores how far each sample sits off the straight path through its neighbours (see Score), over the flight and over
-// the hover apart; the client also reads how its mirror played the stream (drone_sync::Stats). A copy whose own
-// physics pulls it between the stream's writes sits off its path while it hovers; a playback that runs out of poses
-// holds still and then jumps. The host says `rig: VERDICT drone-hover PASS|FAIL|INVALID`: PASS when, hovering, the
+// samples its own drone's location and yaw about once a frame, stamped on the game thread, until it has hovered a
+// fixed number of samples past the last bump (the flight's end is not awaited), and scores how far each sample sits
+// off the straight path through its neighbours (see Score), over the flight and the hover apart; the client also
+// reads how its mirror played the stream (drone_sync::Stats). A copy whose own physics pulls it between the stream's
+// writes sits off its path while it hovers; a playback that runs out of poses holds still and then jumps. The host says `rig: VERDICT drone-hover PASS|FAIL|INVALID`: PASS when, hovering, the
 // client's copy sits off its path at most twice as far as the host's drone, plus 2 cm and 0.05 degrees, and, flying,
 // its playback held past the newest pose in at most 1 frame in 100. The row drone_hover_kick bumps the client's
 // hovering copy twice, as a touch would; with the row drone_hover_body_red the client first puts the copy's root
@@ -46,7 +46,14 @@ using disc_drill::OnGameThread;
 constexpr const char* kTag = "drone-hover";
 constexpr int kStepSec = 120;
 constexpr int kSampleMs = 10;
-constexpr int kMaxSamples = 8000;  // Sleep(10) runs about 15 ms: two minutes
+constexpr int kMaxSamples = 8000;  // loop iterations: the INVALID backstop only, a run that never completed its window
+// The window is counted in samples from the hover's start: the bumps land at kBumpAt[], and the window ends
+// kAfterLastBump samples after the last one. 500 samples is 8 s on the host and 13 s on the client, and the starved
+// count that tells the arms apart (16 green, 4025 red, over a whole run) is far past its threshold by then.
+constexpr int kSpeedWindow = 20;       // samples the hover test looks back over
+constexpr double kHoverSpeedCms = 50;  // below this the drone hovers (the same line Score draws)
+constexpr size_t kBumpAt[2] = {200, 500};
+constexpr size_t kAfterLastBump = 500;
 
 double NowMs() {
     static LARGE_INTEGER f{};
@@ -142,8 +149,11 @@ Residual Score(const std::vector<Point>& d) {
 std::string Measure(const char* me, bool host) {
     std::vector<Point> pts;
     pts.reserve(kMaxSamples);
-    int phys = 0, idle = 0, kicks = 0;
-    bool ended = false;  // the flight ran to its end (the drone idle for 50 samples), not to the sample cap
+    int phys = 0, kicks = 0, slow = 0;
+    bool flown = false;      // the drone has been seen flying
+    bool complete = false;   // the window ran to its end, not to the iteration cap
+    size_t hoverStart = 0;   // index of the first hover sample, once the hover is latched
+    bool hovering = false;
     const bool kick = coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_kick);
     if (!host && coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_body_red)) {
         bool ok = false;
@@ -161,15 +171,26 @@ std::string Measure(const char* me, bool host) {
             OnGameThread([&] { ha = coop::drone_sync::HostActive(); });
             active = ha == 1;
         }
-        if (!c.ok || !active) {
-            if (!pts.empty() && ++idle > 50) { ended = true; break; }  // the flight is over
-            continue;
-        }
-        idle = 0;
+        if (!c.ok || !active) continue;
         if (c.phys) ++phys;
+        pts.push_back({c.ms, c.loc, c.yaw});
+        // The drone hovers once it has flown and then stays under kHoverSpeedCms across kSpeedWindow samples.
+        if (!hovering && pts.size() > static_cast<size_t>(kSpeedWindow)) {
+            const Point& o = pts[pts.size() - 1 - kSpeedWindow];
+            const double dx = c.loc.X - o.loc.X, dy = c.loc.Y - o.loc.Y, dz = c.loc.Z - o.loc.Z;
+            const double speed = std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.0 / (c.ms - o.ms);
+            if (speed >= kHoverSpeedCms) { flown = true; slow = 0; }
+            else if (flown && ++slow >= kSpeedWindow) {
+                hovering = true;
+                hoverStart = pts.size() - kSpeedWindow;
+                UE_LOGI("drone-hover: %hs hover began at sample %d", me, static_cast<int>(hoverStart));
+            }
+        }
+        if (!hovering) continue;
+        const size_t at = pts.size() - hoverStart;
         // drone_hover_kick: a bump, as a player or a prop touching the hovering copy gives it -- the
-        // client spins its copy's body at 720 deg/s and pushes it at 300 cm/s, at 70 s and again at 80 s.
-        if (!host && kick && (pts.size() == 4600 || pts.size() == 5300)) {
+        // client spins its copy's body at 720 deg/s and pushes it at 300 cm/s, at the hover's samples kBumpAt.
+        if (!host && kick && (at == kBumpAt[0] || at == kBumpAt[1])) {
             bool ok = false;
             OnGameThread([&] {
                 if (void* d = DR::Find())
@@ -179,7 +200,7 @@ std::string Measure(const char* me, bool host) {
             if (ok) ++kicks;
             UE_LOGI("drone-hover: CLIENT bumped its hovering copy (call=%d)", ok ? 1 : 0);
         }
-        pts.push_back({c.ms, c.loc, c.yaw});
+        if (at >= kBumpAt[1] + kAfterLastBump) { complete = true; break; }
     }
     // Every sample also goes to <VOTVCOOP_CAN_DIR>/drone_<role>.csv: ms, x, y, z, yaw.
     const std::string dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
@@ -199,7 +220,7 @@ std::string Measure(const char* me, bool host) {
             ms.starved, ms.delayMs);
     char buf[192];
     std::snprintf(buf, sizeof(buf), "%d %d %.4f %.4f %.4f %.4f %d %u %u %d %d", r.fly, r.hover, r.flyCm, r.flyDeg, r.hoverCm,
-                  r.hoverDeg, phys, ms.played, ms.starved, kicks, ended ? 1 : 0);
+                  r.hoverDeg, phys, ms.played, ms.starved, kicks, complete ? 1 : 0);
     return buf;
 }
 
@@ -228,25 +249,26 @@ void RunHost() {
     std::string theirs;
     PS::AwaitText("client_result", theirs, kStepSec);
     PS::Mark("host_done");
-    int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0, hk = 0, ck = 0, hEnded = 0, cEnded = 0;
+    int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0, hk = 0, ck = 0, hDone = 0, cDone = 0;
     unsigned hpl = 0, hst = 0, played = 0, starved = 0;
     double h[4] = {}, c[4] = {};
     if (sscanf_s(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl, &hst,
-                 &hk, &hEnded) != 11 ||
+                 &hk, &hDone) != 11 ||
         sscanf_s(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp, &played,
-                 &starved, &ck, &cEnded) != 11 ||
+                 &starved, &ck, &cDone) != 11 ||
         hh < 100 || ch < 100 || played < 500) {
         coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
                                "too few samples (host hover %d, client hover %d, client frames played %u)", hh, ch, played);
         return;
     }
-    // A verdict is decided by the flight having ended on both peers, and, with the bump armed, by both bumps having
-    // landed; otherwise the measurement was cut short and nothing was judged.
-    if (!hEnded || !cEnded ||
+    // The measurement is complete on a peer when its hover window ran out (the last bump landed and kAfterLastBump
+    // samples followed), and judged at once; a peer that hit the iteration cap first, or a bump that did not land,
+    // leaves nothing to judge.
+    if (!hDone || !cDone ||
         (coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_kick) && ck < 2)) {
         coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
-                               "the measurement was cut short (flight ended: host %d, client %d; bumps landed %d)", hEnded,
-                               cEnded, ck);
+                               "the window was not completed (host %d, client %d; bumps landed %d)", hDone, cDone,
+                               ck);
         return;
     }
     // Hovering, the client's copy sits off its path at most twice as far as the host's drone, plus 2 cm and 0.05
