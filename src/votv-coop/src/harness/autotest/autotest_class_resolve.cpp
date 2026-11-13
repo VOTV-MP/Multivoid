@@ -5,12 +5,13 @@
 // (a class a fresh client never touched), up to kCandidates, and names them to the host. The host loads and spawns the
 // first kWanted of them in front of its player, where its spawn watcher sends each as a PropSpawn. The client resolves
 // each wire class through class_resolve, which loads a class it has not loaded; it counts the mirrors it holds and
-// tells the host. The host judges and says `rig: VERDICT class-resolve PASS|FAIL|INVALID`: PASS when the client holds
+// tells the host once each class is DECIDED by an event: its mirror bound, or its own resolve refused it. The host judges
+// and says `rig: VERDICT class-resolve PASS|FAIL|INVALID`: PASS when the client holds
 // a bound mirror of every class the host spawned. INVALID when the client holds every prop class already, or the host
-// could not spawn kWanted of the candidates. Each wait is on the other peer's signal or a state, with a bound.
+// could not spawn kWanted of the candidates. Each wait is on an event, and its bound says INVALID only, never PASS or FAIL.
 //
 // Red arm: class_resolve_lookup_only=1 on the CLIENT turns the registry step off, so the client's resolve is the object
-// index alone, as before the resolver, and the spawns it cannot resolve are dropped: the host's verdict is FAIL.
+// index alone, as before the resolver; its resolve refuses each class (the deciding event) and the host's verdict is FAIL.
 // Lines: `class-resolve: ...`; the host's end is `class-resolve: DONE on host`, the client's `class-resolve: DONE on client`.
 
 #include "harness/autotest.h"   // IsClientRole, WaitPeerWorldReady
@@ -56,8 +57,8 @@ constexpr size_t kCandidates = 12;  // unloaded prop classes the client names: t
 constexpr size_t kWanted = 3;       // classes the host spawns and the client must mirror
 constexpr int kJoinSec = 480;
 constexpr int kStepSec = 240;       // the bound on one step of the other peer's
-constexpr int kMirrorSec = 60;      // the client's wait for its mirrors
-constexpr int kTrackSec = 20;       // the host's wait for its spawns to be tracked
+constexpr int kMirrorSec = 60;      // the client's bound on every class being decided: INVALID past it
+constexpr int kTrackSec = 20;       // the host's bound on its spawns being tracked: INVALID past it
 constexpr float kAheadCm = 250.f;
 constexpr float kApartCm = 110.f;
 
@@ -127,6 +128,24 @@ size_t MirrorsBound(const std::vector<std::wstring>& names) {
     return n;
 }
 
+// How many of `names` are decided here: a bound mirror, or a refusal this client's own resolver gave the class.
+size_t Decided(const std::vector<std::wstring>& names) {
+    size_t n = 0;
+    OnGameThread([&] {
+        for (const std::wstring& name : names) {
+            bool bound = false;
+            for (void* actor : R::FindObjectsByClass(name.c_str())) {
+                if (coop::remote_prop::ResolveMirrorEidByActor(actor) != coop::element::kInvalidId) {
+                    bound = true;
+                    break;
+                }
+            }
+            if (bound || CR::WasDeclined(name.c_str())) ++n;
+        }
+    });
+    return n;
+}
+
 void RunClient() {
     if (!WorldUp()) return;
     if (coop::config::ResolveFlag(coop::config_registry::rows::class_resolve_lookup_only)) {
@@ -146,10 +165,14 @@ void RunClient() {
     std::string spawnedText;
     if (!PS::AwaitText("spawned", spawnedText, kStepSec) || spawnedText == "NONE") return;
     const std::vector<std::wstring> spawned = Split(spawnedText);
-    PS::WaitFor("the host's spawns mirrored here", kMirrorSec, [&] { return MirrorsBound(spawned) == spawned.size(); },
-                false);
+    // Each class is decided by an event: its mirror is bound, or this client's own resolve refused it. The bound
+    // only says INVALID (a spawn that neither bound nor was refused).
+    if (!PS::WaitFor("every class the host spawned bound or refused here", kMirrorSec,
+                     [&] { return Decided(spawned) == spawned.size(); }))
+        return;
     const size_t bound = MirrorsBound(spawned);
-    UE_LOGI("class-resolve: CLIENT holds a bound mirror of %zu of the %zu classes the host spawned", bound, spawned.size());
+    UE_LOGI("class-resolve: CLIENT holds a bound mirror of %zu of the %zu classes the host spawned (%zu refused by its "
+            "own resolve)", bound, spawned.size(), spawned.size() - bound);
     PS::Mark("bound", std::to_string(bound));
     UE_LOGI("class-resolve: DONE on client");
 }
@@ -221,7 +244,10 @@ void RunHost() {
                 kWanted);
         return;
     }
-    PS::WaitFor("the host's spawns tracked", kTrackSec, [&] { return AllTracked(actors); }, false);
+    if (!PS::WaitFor("the host's spawns tracked", kTrackSec, [&] { return AllTracked(actors); })) {
+        PS::Mark("spawned", "NONE");   // the client has nothing to wait for
+        return;
+    }
     PS::Mark("spawned", Join(spawned));
 
     std::string boundText;
