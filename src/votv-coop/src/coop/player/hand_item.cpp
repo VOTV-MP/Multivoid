@@ -55,6 +55,7 @@ struct SlotHand {
     std::wstring name;  // Aprop_C 'name' FName (drives the generic prop mesh), may be empty
     std::wstring item;  // the hold slot's item name, which the game's item tables are keyed by
     std::wstring lastCls;  // the class held last: `cls` while it holds one, the one before once empty
+    uint32_t holdGen = 0;  // host: the hold announces applied for this occupant (HoldGeneration)
     // The measured view-relative hold transform, owner-authored and wire-carried.
     float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
     float relRot[3] = {0.f, 0.f, 0.f};  // item rotator {pitch,yaw,roll} in the view frame
@@ -229,19 +230,22 @@ void SendState(coop::net::Session& session, uint8_t slot, const SlotHand& h) {
 // Host: the hand states applied for a slot's occupant (StatesApplied).
 coop::roster_ledger::PerSlotState<uint32_t> g_statesApplied;
 
+HandAppliedFn g_appliedSubs[kMaxHandSubscribers];  // GT-only, added once at install
+
 // Host: one client's hand state applied, field by field: `lastCls` moves only while the hand holds
 // something, since the pry gate reads it once the hand is empty (LastHeldClassIs). Then re-sent to
 // every other ready client.
 void ApplyHandState(coop::net::Session& session, uint8_t slot, const SlotHand& in) {
     SlotHand& h = g_hands[slot];
     h.has = in.has; h.cls = in.cls; h.name = in.name; h.item = in.item;
-    if (in.has) h.lastCls = in.cls;
+    if (in.has) { h.lastCls = in.cls; ++h.holdGen; }
     std::memcpy(h.relPos, in.relPos, sizeof(h.relPos));
     std::memcpy(h.relRot, in.relRot, sizeof(h.relRot));
     h.haveRel = in.has;
     coop::hand_history::Note(slot, in.has, in.cls, coop::net::NowMs());
     SendState(session, slot, h);
     ++g_statesApplied[slot];
+    for (HandAppliedFn fn : g_appliedSubs) if (fn) fn(slot);
 }
 
 // Host: per slot, the newest changed hand state and its pace (coop/net/latest_wins.h); one struct, so both clear with the
@@ -762,6 +766,17 @@ void PayOwed(coop::net::Session& session) {
 
 bool HoldsItem(uint8_t slot) {
     return slot < coop::players::kMaxPeers && g_hands[slot].has;
+}
+
+uint32_t HoldGeneration(uint8_t slot) { return slot < coop::players::kMaxPeers ? g_hands[slot].holdGen : 0; }
+
+bool SubscribeHandApplied(HandAppliedFn fn) {
+    if (!fn) return false;
+    for (HandAppliedFn& s : g_appliedSubs) {
+        if (s == fn) return true;
+        if (!s) { s = fn; return true; }
+    }
+    return false;
 }
 
 bool HandStateOwed(uint8_t slot) {
