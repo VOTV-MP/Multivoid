@@ -50,6 +50,7 @@
 #include "coop/player/sleep_rest.h"
 #include "coop/player/nightmare_roll.h"
 #include "coop/player/level_visit.h"
+#include "coop/player/puppet_hide.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/creatures/wisp_attack_sync.h"  // Killer Wisp coop: host detect + neutralize + relay
 #include "coop/creatures/wisp_grab_hold.h"  // Killer Wisp: grab-window body placement (per-slot/full teardown)
@@ -442,6 +443,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::power_grid::OnPeerLeft(static_cast<uint8_t>(slot));  // and its generator ops
     coop::fuse_tower_ops::OnPeerLeft(static_cast<uint8_t>(slot));  // and its tower ops
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
+    coop::puppet_hide::Forget(static_cast<uint8_t>(slot));  // the reasons its copy was hidden for end with it
     coop::sleep_sync::OnDisconnectForSlot(slot);  // the leaver's rest state back to awake, told to every client
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
     coop::hook_sync::OnPeerLeftSlot(slot);  // the leaver's OWNER-PHASE hook mirrors; anchored ones are the host's and stay
@@ -572,6 +574,7 @@ DisconnectStats DisconnectAll() {
     coop::sleep_sync::OnDisconnect();
     coop::nightmare_roll::OnDisconnect();
     coop::level_visit::OnDisconnect();
+    coop::puppet_hide::OnDisconnect();  // every copy hidden for a dream or a visit is shown
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
     coop::prop_throw::OnDisconnect();  // the thrower's records of its own throws
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns

@@ -6,14 +6,12 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
+#include "coop/player/puppet_hide.h"
 #include "coop/player/sleep_rest.h"
 #include "coop/player/sleep_sync.h"
 
 #include "ue_wrap/actors/sleep.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/engine/engine.h"
 
 #include <atomic>
 #include <chrono>
@@ -64,20 +62,12 @@ void ResetRoll() {
 }
 
 // ---- the copies -------------------------------------------------------------------------------------
-bool g_want[coop::net::kMaxPeers] = {};    // the slot's player is in a nightmare, as sleep_sync last announced
-bool g_hidden[coop::net::kMaxPeers] = {};  // the slot's current copy is hidden by this
+bool g_want[coop::net::kMaxPeers] = {};  // the slot's player is in a nightmare, as sleep_sync last announced
 
-// Hide or show the slot's copy to match what its player's state says. A slot with no copy yet is left as it is:
-// OnPuppetSpawned applies it when the copy comes.
+// The slot's copy is hidden for the dream while its player's state says so: the reason is set or cleared at
+// coop/player/puppet_hide, the one owner of the flag.
 void ApplyHide(int slot) {
-    const bool want = g_want[slot] && !HideOff();
-    if (want == g_hidden[slot]) return;
-    coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
-    if (!p || !p->valid() || !p->actor()) return;
-    ue_wrap::engine::SetActorHiddenInGame(p->actor(), want);
-    g_hidden[slot] = want;
-    UE_LOGI("nightmare_roll: slot %d's copy %s -- %s", slot, want ? "hidden" : "shown",
-            want ? "that player is in a nightmare" : "that player is out of it");
+    coop::puppet_hide::Set(static_cast<uint8_t>(slot), coop::puppet_hide::Reason::Dream, g_want[slot] && !HideOff());
 }
 
 void OnPeerRest(int slot, coop::net::SleepPeerState state) {
@@ -97,8 +87,7 @@ uint32_t RollPoints() { return g_points; }
 
 void OnPuppetSpawned(int slot) {
     if (slot < 0 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
-    g_hidden[slot] = false;  // a new body starts shown
-    ApplyHide(slot);
+    ApplyHide(slot);  // the dream a player is in when its copy is born: a forgotten slot's reason is asked again
 }
 
 void Tick() {
@@ -140,11 +129,7 @@ void Tick() {
 
 void OnDisconnect() {
     ResetRoll();
-    for (int slot = 0; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-        g_want[slot] = false;
-        ApplyHide(slot);
-        g_hidden[slot] = false;
-    }
+    for (int slot = 0; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) g_want[slot] = false;
 }
 
 }  // namespace coop::nightmare_roll

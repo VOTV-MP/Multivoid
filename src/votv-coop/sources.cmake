@@ -187,6 +187,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/puppet_cremation.cpp
     src/coop/player/puppet_events.cpp
     src/coop/player/puppet_events_selftest.cpp
+    src/coop/player/puppet_hide.cpp
     src/coop/player/player_hit.cpp
     src/coop/player/cremator_hit.cpp
     src/coop/player/hit_intent.cpp

@@ -28,10 +28,10 @@ namespace coop::nightmare_roll {
 void Install(coop::net::Session* session);
 
 // A dream is spawned far outside the map and the dreamer is teleported into it, so its copy on every other machine
-// would cross the world to it and back. On every peer the copy of a player whose rest state is dreaming is hidden for the
-// length of the dream (AActor::SetActorHiddenInGame) and shown again when it is not. The rest state is taken from
-// sleep_sync's announcement of a change, and a copy that is spawned after its player went to dream is hidden by the
-// puppet drive's call below.
+// would cross the world to it and back. On every peer the copy of a player whose rest state is dreaming carries the dream
+// reason at coop/player/puppet_hide (which owns the hidden flag) for the length of the dream, and loses it when the
+// state is not. The rest state is taken from sleep_sync's announcement of a change, and a copy that is spawned after its
+// player went to dream is hidden by the puppet drive's call below.
 //
 // The puppet drive calls it once for each puppet it has just spawned, so a copy that did not exist when its player's state
 // arrived (a late join, a world change) is hidden too.
@@ -46,7 +46,7 @@ void Tick();
 // instrument: the nightmare drill decides "no dream came" at that point, since no dream can come in the rest after it.
 uint32_t RollPoints();
 
-// The session ended: the count starts again and every copy this hid is shown.
+// The session ended: the count starts again and no slot's player is in a dream (puppet_hide's own end shows the copies).
 void OnDisconnect();
 
 }  // namespace coop::nightmare_roll
