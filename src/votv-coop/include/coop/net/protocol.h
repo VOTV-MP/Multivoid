@@ -1271,14 +1271,16 @@ enum class ReliableKind : uint16_t {
     // sender's hand, the room in the tank), does it on its chipper, and its WoodchipperState answers, to the sender alone
     // when it refused. WoodchipperPayload.
     WoodchipperIntent = 233,
-    // HOST->ALL: an ATV of the host's beyond its rig -- its fuel and health with the count of gains the host applied, its
-    // modules, and whether it is empty or broken -- when any changes, every 2 s, and every ATV
-    // again at the ready edge (op 0); or its horn pressed or released by a driver, to every peer but that driver (op 1,
-    // 2). A client's copy takes it. Not relayed, not pre-world. AtvHostPayload.
+    // HOST->ALL: an ATV of the host's beyond its rig -- its fuel and health, its modules, whether it is empty or broken
+    // and its state sequence (op 16) -- when one of them changed, and every ATV again at a joiner's ready edge, to that
+    // slot alone; the answer to a client's request, to its sender alone (op 17, the request's id, the verdict and the
+    // host copy's state); or a driver's horn pressed or released, to every peer but that driver (op 18). A client's
+    // copy takes it. Not relayed, not pre-world. AtvHostPayload.
     AtvHostState = 240,
     // CLIENT->HOST: this client's player refuelled or repaired an ATV (op 1, 2, the gain), fitted or took off a module
-    // (op 3, 4), or, seated, pressed or released its horn (op 6, 7). Never
-    // relayed; the host does it on its own copy, and its AtvHostState answers. AtvHostPayload.
+    // (op 3, 4, the module's value), each with a request id, or, as the ATV's syncer, pressed or released its horn
+    // (op 5). Never relayed, never relayable; the host judges it on the game thread, writes its own copy and answers
+    // every request. AtvHostPayload.
     AtvRequest = 239,
 
     // CLIENT->HOST: this client pressed a coffee vending machine or a coffee maker (action 4), which its own copy
@@ -3877,26 +3879,35 @@ struct WoodchipperPayload {
 };
 static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 bytes");
 
-// An ATV's host state (AtvHostState), or a client's request (AtvRequest).
+// An ATV's host state (AtvHostState), or a client's request (AtvRequest). One payload, told apart by `op`: a request's
+// is 1..5, a state's 16..18.
 namespace atv_host_op {
-inline constexpr uint8_t kState = 0, kStateHornPress = 1, kStateHornRelease = 2;   // AtvHostState
-inline constexpr uint8_t kFuelGain = 1, kHealthGain = 2, kModuleAdd = 3, kModuleRemove = 4, kHornPress = 6,
-                         kHornRelease = 7;                                         // AtvRequest
+// AtvRequest (client -> host): the four acts of a player's item on an ATV, and the seated syncer's horn.
+inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kHorn = 5;
+// AtvHostState (host -> clients): the host copy's vitals, the answer to a request, and a horn edge.
+inline constexpr uint8_t kState = 16, kAnswer = 17, kHornEdge = 18;
 }  // namespace atv_host_op
-inline constexpr uint8_t kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10;
+// An answer's verdict, carried in `module`: 0 is a request the host applied, the rest refused it. `kGone` carries no state.
+namespace atv_host_reason {
+inline constexpr uint8_t kOk = 0, kNotReady = 1, kGone = 2, kReach = 3, kNoItem = 4, kRate = 5, kDuplicate = 6,
+                         kNotHeld = 7, kNotSyncer = 8, kMalformed = 9;
+}  // namespace atv_host_reason
+// `flags`: the host copy's empty and broken marks (a state, an answer); the horn is down (a horn request or edge).
+inline constexpr uint8_t kAtvHostHornDown = 0x01, kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10;
 struct AtvHostPayload {
     WireKey  key;          // 32 -- the ATV's Key
-    float    fuel;         // 4 -- the host's fuel (state)
-    float    health;       // 4 -- the host's health (state)
-    float    amount;       // 4 -- a refuel's or a repair's gain (request)
-    uint32_t gen;          // 4 -- the gains the host applied to this ATV (state)
+    float    fuel;         // 4 -- the host copy's fuel (a state, an answer)
+    float    health;       // 4 -- the host copy's health (a state, an answer)
+    float    amount;       // 4 -- a refuel's gain (request)
+    uint32_t reqId;        // 4 -- a request's id, per client, from 1; an answer echoes it (0 on a horn)
+    uint32_t stateSeq;     // 4 -- the state's sequence, per ATV, the host's (a state, an answer)
     uint8_t  op;           // 1 -- atv_host_op
-    uint8_t  flags;        // 1 -- kAtvHost*: the state's
-    uint8_t  module;       // 1 -- a fitted or taken-off module (request)
-    uint8_t  moduleCount;  // 1 -- how many of `modules` are fitted (state)
-    uint8_t  modules[16];  // 16 -- the fitted modules, in the ATV's order (state)
+    uint8_t  flags;        // 1 -- kAtvHost*
+    uint8_t  module;       // 1 -- a fitted or taken-off module's value (request); an answer's atv_host_reason
+    uint8_t  moduleCount;  // 1 -- how many of `modules` are fitted (a state, an answer)
+    uint8_t  modules[16];  // 16 -- the host copy's fitted module values, in the ATV's order (a state, an answer)
 };
-static_assert(sizeof(AtvHostPayload) == 68, "AtvHostPayload must be 68 bytes");
+static_assert(sizeof(AtvHostPayload) == 72, "AtvHostPayload must be 72 bytes");
 
 // The edge a PropConvert re-skins.
 namespace propconvert_kind {

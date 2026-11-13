@@ -1,12 +1,13 @@
-// coop/interactables/atv_host_sync.h -- what of an ATV is the host's beyond its rig, which stays with its driver
-// (atv_sync.h): its fuel and health, its modules and its horn. A client's own act runs on its copy and is sent to the
-// host, which does it on its own copy and sends every ATV's state back:
-//   - a refuel or repair is the rise its copy shows, a gain the host adds within reach; a client driver only lowers them;
-//   - a module fitted or taken off is written on the host's Modules, a refused fit refunded with its prop at the ATV;
-//   - the seated driver's horn, which the host and every other peer play.
+// coop/interactables/atv_host_sync.h -- what of an ATV is the host's beyond its rig, which stays with its syncer
+// (atv_sync.h): its fuel and health, its modules and its horn. The host's copy holds them. A client's own act runs on its
+// copy and is asked of the host (atv_host_judge.h), which judges it, writes its own copy and answers; this module is the
+// state side:
+//   - the host's ONE publish point: when a write to the host copy changed its fuel, health, modules, empty or broken, the
+//     ATV's state sequence is bumped and an AtvHostState goes to every client; nothing is sent on a timer;
+//   - a joiner at its world-ready edge gets every ATV's state, that slot alone;
+//   - a client applies a state to its copy of the ATV.
 // The seated driver's lights, brake and turbo are not here: they ride its condition block's stateBits (atv_sync.h).
-// The state goes when any of it changes, every 2 s and to a joiner; one sent before the host heard of a client's own act
-// waits 1.5 s on that client. Game thread. Overview: docs/vehicles.md.
+// Game thread. Overview: docs/vehicles.md.
 
 #pragma once
 
@@ -23,16 +24,17 @@ namespace coop::atv_host_sync {
 // Store the session. Idempotent; called every load tick.
 void Install(coop::net::Session* session);
 
-// The poll and the inboxes, on either role. Game thread.
+// The session while it is connected, else null. Game thread.
+coop::net::Session* LiveSession();
+
+// Per tick, on either role: the host serves its requests (atv_host_judge.h); a world change forgets what was the old
+// world's.
 void Tick();
 
-// A client's receiver: the host's state of an ATV, or its horn.
+// A client's receiver: the host's state of an ATV.
 void OnState(const coop::net::AtvHostPayload& p);
 
-// The host's receiver: a client's gain, module change or horn.
-void OnRequest(int senderSlot, const coop::net::AtvHostPayload& p);
-
-// Every ATV again for a joiner.
+// Every ATV's state again to the joiner in `slot`, that slot alone (the connect replay's world-ready edge).
 void QueueConnectBroadcastForSlot(int slot);
 
 // The session ended: everything is forgotten.
@@ -52,7 +54,41 @@ void NoteAppliedStateSeq(const std::wstring& key, uint32_t seq);
 // vitals of a state or a block are then not applied and no sequence is recorded.
 bool VitalsGated(const std::wstring& key);
 
+// What the state carries of an ATV: its vitals, the two marks and the module values.
+struct Vitals {
+    float   fuel = 0.f, health = 0.f;
+    uint8_t flags = 0;                 // kAtvHostEmpty, kAtvHostBroken
+    uint8_t count = 0;                 // how many of `modules` are fitted
+    uint8_t modules[16] = {};
+    bool operator==(const Vitals& o) const;
+};
+
+// The copy's vitals; false when the ATV, or its modules, do not read. Game thread.
+bool ReadVitals(void* atv, Vitals& out);
+
+// `out`'s key, state fields and sequence from `v` and the current sequence of `key`, under `opcode`. The caller sets
+// what is its own (an answer's request id and verdict).
+void FillState(const std::wstring& key, const Vitals& v, uint8_t opcode, coop::net::AtvHostPayload& out);
+
+// HOST, the one publish point: when `atv`'s vitals now differ from `before`, which the caller read ahead of its write,
+// bump the ATV's state sequence and send its state to every client (the sender of the request that caused it too: its
+// open-request gate holds it until the answer). True when it sent. A call that changed nothing sends nothing. Game thread.
+bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before);
+
+// HOST: a horn edge of `key`'s ATV to every client but `skipSlot` (-1: none).
+void SendHorn(const std::wstring& key, bool pressed, int skipSlot);
+
+// Our own writes to an ATV (a state applied, a request applied, a horn replayed) run inside one of these.
+class ApplyScope {
+public:
+    ApplyScope();
+    ~ApplyScope();
+    ApplyScope(const ApplyScope&) = delete;
+    ApplyScope& operator=(const ApplyScope&) = delete;
+};
+
 // [dev] The horns this peer played for another peer's press.
+void NoteHornPlayed();
 uint32_t HornsPlayed();
 
 }  // namespace coop::atv_host_sync

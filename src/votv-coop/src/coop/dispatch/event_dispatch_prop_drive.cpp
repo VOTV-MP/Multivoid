@@ -21,6 +21,7 @@
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
+#include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
@@ -296,13 +297,16 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::AtvHostPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (!std::isfinite(p.fuel) || !std::isfinite(p.health) || !std::isfinite(p.amount) ||
-            p.moduleCount > sizeof(p.modules)) {
-            UE_LOGW("event_feed: ATV host message malformed -- dropping");
+        // A request's body is the judge's to refuse: a malformed one that still names its ATV is answered.
+        if (request) {
+            ::coop::atv_host_judge::OnRequest(msg.senderPeerSlot, p);
             break;
         }
-        if (request) ::coop::atv_host_sync::OnRequest(msg.senderPeerSlot, p);
-        else ::coop::atv_host_sync::OnState(p);
+        if (!std::isfinite(p.fuel) || !std::isfinite(p.health) || p.moduleCount > sizeof(p.modules)) {
+            UE_LOGW("event_feed: ATV host state malformed -- dropping");
+            break;
+        }
+        ::coop::atv_host_sync::OnState(p);
         break;
     }
     case net::ReliableKind::DevLoadFiller: {

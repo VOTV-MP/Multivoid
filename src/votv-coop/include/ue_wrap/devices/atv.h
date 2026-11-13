@@ -72,6 +72,31 @@ bool  SetLights(void* atv, bool on);
 bool  SetBrake(void* atv, bool on);
 bool  SetTurbo(void* atv, bool on);
 
+// The ATV's vitals as the game keeps them: `fuel` and `health` (floats), and the `empty` and `brokenn` marks (bool bits).
+// The writers write the field alone: the game's own `fuelUp` and `toolboxFix` also clear the mark, so a caller that
+// mirrors them clears it itself, and `CallUpdHealth` is the game's repaint of a health written (smoke, the -1 floor).
+// False on null, an unresolved ATV_C or a class without the property (said once at the resolve). Game thread.
+bool  SetFuel(void* atv, float v);
+bool  SetHealth(void* atv, float v);
+bool  GetEmpty(void* atv);
+bool  SetEmpty(void* atv, bool v);
+bool  GetBroken(void* atv);
+bool  SetBroken(void* atv, bool v);
+bool  CallUpdHealth(void* atv);
+
+// The fitted modules: the live `Modules` array, one byte per module VALUE (the game's enum_physicalModules; each is the
+// value `physModToActor` maps to the module's prop class). ReadModules copies at most `cap` into `out` and returns how
+// many the ATV holds (it may exceed `cap`), or -1 when unreadable. WriteModules builds the array afresh in engine memory
+// (the old buffer is left to the engine's own lifetime, as the save-record writers do) and then runs the ATV's own
+// `updUpgrades`, which fits or takes off every part to match. Game thread.
+int   ReadModules(void* atv, uint8_t* out, int cap);
+bool  WriteModules(void* atv, const uint8_t* mods, int count);
+
+// The ATV's own horn on this copy: the honk key's press or release event, which also writes `input_alt` and, with the Fly
+// module fitted, Fly's `fly` flag (measured on a copy nobody drives). Both are put back as they were in the same frame, so
+// the replay sounds the horn and leaves the copy's own controls alone. False when the event did not dispatch. Game thread.
+bool  ReplayHorn(void* atv, bool press);
+
 // The ATV's own `checkIfRunout`: it calls `runout` when the tank or the health is down. The guard after fuel or health
 // is lowered from outside the game's own tick. False on null, an unresolved function or a call that did not dispatch.
 // Game thread.

@@ -6,6 +6,7 @@
 
 #include "ue_wrap/devices/atv.h"
 
+#include "ue_wrap/actors/save_record.h"  // ReadArr / WriteArrHeader / AllocZeroed -- the Modules array
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/component_calls.h"  // CallParamlessNamed -- the ATV's own parameterless functions
@@ -18,6 +19,7 @@
 #include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
+#include <cstring>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -44,6 +46,19 @@ int32_t g_speedTurboOff = -1;
 int32_t g_trapOff     = -1;       // trap     (a bool bit: the byte, with its mask below)
 uint8_t g_trapMask    = 0;
 int32_t g_tpOff       = -1;       // tp       (a UBillboardComponent*: where `explode` places its blast)
+int32_t g_emptyOff    = -1;       // empty, brokenn, input_alt, fly: bool bits, byte and mask each
+uint8_t g_emptyMask   = 0;
+int32_t g_brokenOff   = -1;
+uint8_t g_brokenMask  = 0;
+int32_t g_inputAltOff = -1;
+uint8_t g_inputAltMask = 0;
+int32_t g_flyOff      = -1;
+uint8_t g_flyMask     = 0;
+int32_t g_modulesOff  = -1;       // Modules (TArray<byte>)
+
+constexpr const wchar_t* kHonkPress = L"InpActEvt_atv_honk_K2Node_InputActionEvent_14";
+constexpr const wchar_t* kHonkRelease = L"InpActEvt_atv_honk_K2Node_InputActionEvent_15";
+constexpr int kModulesCap = 64;   // a Modules array longer than this is unreadable garbage
 
 int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
     int32_t o = R::FindPropertyOffset(cls, name);
@@ -113,6 +128,18 @@ bool EnsureResolved() {
         g_trapOff = -1;
         UE_LOGW("atv: trap offset not found -- the story event's trap stays host-only");
     }
+    // No fallback for the vitals' marks, the horn's two flags and the module arrays: a miss leaves that write false, said
+    // once, and the caller's lane reports what it could not carry.
+    struct Bit { int32_t* off; uint8_t* mask; const wchar_t* name; };
+    const Bit bits[] = {{&g_emptyOff, &g_emptyMask, L"empty"},         {&g_brokenOff, &g_brokenMask, L"brokenn"},
+                        {&g_inputAltOff, &g_inputAltMask, L"input_alt"}, {&g_flyOff, &g_flyMask, L"fly"}};
+    for (const Bit& b : bits)
+        if (!R::FindBoolProperty(cls, b.name, *b.off, *b.mask) || *b.off < 0 || *b.mask == 0) {
+            *b.off = -1;
+            UE_LOGW("atv: %ls offset not found -- the host's copy of it is not carried", b.name);
+        }
+    g_modulesOff = R::FindPropertyOffset(cls, L"modules");
+    if (g_modulesOff < 0) UE_LOGW("atv: modules offset not found -- an ATV's modules are not carried");
     // No fallback: a miss leaves a client's ATV explosion unrequested, since the host has no place to put it.
     g_tpOff = R::FindPropertyOffset(cls, L"tp");
     if (g_tpOff < 0) UE_LOGW("atv: tp offset not found -- a client's ATV explosion cannot be requested");
@@ -217,6 +244,66 @@ bool SetTurbo(void* atv, bool on) {
     *reinterpret_cast<float*>(reinterpret_cast<char*>(atv) + g_speedOff) =
         *reinterpret_cast<const float*>(reinterpret_cast<const char*>(atv) + g_speedTurboOff);
     return true;
+}
+
+bool SetFuel(void* atv, float v) {
+    if (!atv || g_fuelOff < 0) return false;
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(atv) + g_fuelOff) = v;
+    return true;
+}
+
+bool SetHealth(void* atv, float v) {
+    if (!atv || g_healthOff < 0) return false;
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(atv) + g_healthOff) = v;
+    return true;
+}
+
+bool GetEmpty(void* atv) { return atv && g_emptyOff >= 0 && ReadBit(atv, g_emptyOff, g_emptyMask); }
+
+bool SetEmpty(void* atv, bool v) {
+    if (!atv || g_emptyOff < 0) return false;
+    WriteBit(atv, g_emptyOff, g_emptyMask, v);
+    return true;
+}
+
+bool GetBroken(void* atv) { return atv && g_brokenOff >= 0 && ReadBit(atv, g_brokenOff, g_brokenMask); }
+
+bool SetBroken(void* atv, bool v) {
+    if (!atv || g_brokenOff < 0) return false;
+    WriteBit(atv, g_brokenOff, g_brokenMask, v);
+    return true;
+}
+
+bool CallUpdHealth(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updHealth"); }
+
+int ReadModules(void* atv, uint8_t* out, int cap) {
+    if (!atv || g_modulesOff < 0) return -1;
+    const save_record::Arr arr = save_record::ReadArr(atv, g_modulesOff);
+    if (arr.num > kModulesCap || (arr.num > 0 && !arr.data)) return -1;
+    for (int32_t i = 0; i < arr.num && i < cap && out; ++i) out[i] = arr.data[i];
+    return arr.num;
+}
+
+bool WriteModules(void* atv, const uint8_t* mods, int count) {
+    if (!atv || g_modulesOff < 0 || count < 0 || count > kModulesCap || (count > 0 && !mods)) return false;
+    void* buf = count == 0 ? nullptr : save_record::AllocZeroed(static_cast<size_t>(count), 1);
+    if (count > 0 && !buf) return false;
+    if (buf) std::memcpy(buf, mods, static_cast<size_t>(count));
+    save_record::WriteArrHeader(atv, g_modulesOff, buf, count);
+    return component_calls::CallParamlessNamed(atv, L"updUpgrades");
+}
+
+bool ReplayHorn(void* atv, bool press) {
+    if (!atv || g_inputAltOff < 0 || g_flyOff < 0) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(atv), press ? kHonkPress : kHonkRelease);
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid()) return false;
+    const bool alt = ReadBit(atv, g_inputAltOff, g_inputAltMask), fly = ReadBit(atv, g_flyOff, g_flyMask);
+    const bool ran = Call(atv, f);
+    WriteBit(atv, g_inputAltOff, g_inputAltMask, alt);
+    WriteBit(atv, g_flyOff, g_flyMask, fly);
+    return ran;
 }
 
 bool CheckIfRunout(void* atv) {

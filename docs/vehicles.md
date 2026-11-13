@@ -82,29 +82,34 @@ The rig's pose stays with the peer driving it. Everything else the ATV keeps is 
 its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
 
 - **Fuel and health.** A client's refuel (a gas can's `fuelUp`) or repair (a toolbox's `toolboxFix`) runs on its copy,
-  and the rise its copy shows, read at the client's poll, goes to the host as a gain. The host checks the sender's world,
-  the ATV and its reach (8 m), or that it is seated, and adds it on its own copy. A client driver's blocks only lower
-  them: the host takes the lower of its value and the block's, from a block whose `ackSeq` is the ATV's current state
-  sequence (the newest host state whose vitals the driver applied; any other block's vitals are ignored), then runs the
-  ATV's own `checkIfRunout`. The host's own values and sequence ride every block it sends or re-sends, and a client takes
-  them from those blocks. `AtvHostState` carries them with a count of the gains the host applied, so the driver's own
-  copy also takes a gain or a lowering the host made.
-- **Modules.** A fit (`playerUsedOn` with an upgrade in hand) and a take-off (`upgradeTake`) run on the client's copy, and
-  each change to its `Modules` goes to the host, which writes its own and runs `updUpgrades`. A fit the host would not
-  make is refunded with that module's prop at the ATV; the take-off's module travels as the client's own birth.
+  where the can drains and the toolbox is spent, and is asked of the host as a request with an id. The host's judge
+  (`coop/interactables/atv_host_judge`) serves each sender's requests from a queue of eight at four a second; a request
+  whose sender's world is not ready on the host, or whose hand state the host still owes, waits at the head. It judges
+  that the sender is alive and within 8 m of the ATV or seated in it, that a refuel's sender holds a gas can and the tank
+  has room, and that a repair's sender held a toolbox (it spends itself) and the health is under 100. It then writes its
+  own copy as the verbs' own bodies do (fuel up and `empty` cleared; health to 100, `brokenn` cleared, the game's
+  `updHealth`), publishes, and answers the sender alone with the verdict, the copy's state and its sequence. A client
+  driver's blocks only lower them: the host takes the lower of its value and the block's, from a block whose `ackSeq` is
+  the ATV's current state sequence (the newest host state whose vitals the driver applied; any other block's vitals are
+  ignored), then runs the ATV's own `checkIfRunout`. The host's own values and sequence ride every block it sends or
+  re-sends, and a client takes them from those blocks.
+- **Modules.** A fit (`playerUsedOn` with an upgrade in hand) and a take-off (`upgradeTake`) run on the client's copy and
+  are asked of the host the same way, by the module's value. The host fits one its copy does not hold and takes off one
+  it does, writes its `Modules` and runs `updUpgrades`. A fit refused as a duplicate, after the hand check passed, is
+  refunded with that module's prop at the ATV.
 - **Lights, brake and turbo.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights 0x20, turbo
   0x40) at each block build. The host takes them from an admitted block and runs the ATV's own light, brake and turbo
   bodies on its copy for each bit that changed; its re-send carries exactly these three to the other clients, which do the
   same on their copies. A client never applies them to an ATV it syncs. `[?]` built to the design, not yet run.
-- **The horn.** The seated driver's press and release go to the host, which plays the ATV's own horn and sends it to every
-  other peer; the host's own horn goes straight to every client.
+- **The horn.** The ATV's syncer's press and release go to the host, which judges that the sender syncs the ATV (at eight
+  a second, a release never refused), plays the ATV's own horn on its copy (the replay also toggles the copy's `input_alt`
+  and the Fly module's flag, which are put back in the same frame) and sends it to every other peer. A horn a client
+  holds down is released by the host when its seat ends, its stream goes silent or the table clears.
 
-The host sends each ATV's state when any of it changes, every 2 s, and to a joiner at its ready edge. A state the host sent
-before it heard of a client's own act waits 1.5 s on that client, so it does not undo the act on the copy. The map is a
-display of the ATV's own place, and its module is a module. The padlock and the crowbar have no body on the ATV. `[V]`
-(`harness/autotest/autotest_atv_host.cpp`: a client's refuel, repair, seat, lights, brake, turbo, horn, module fit and
-take-off, a seated client's fuel burnt down, the host's module fit and take-off, seat, lights and horn, every step read
-the same on both peers; run on the code before it, each of the client's acts stayed on its own copy.)
+The host publishes an ATV's state at one point: when a write to its copy changed the fuel, health, modules, `empty` or
+`brokenn`, the ATV's state sequence is bumped and the state goes to every client, with no timer; a joiner is sent every
+ATV's state at its ready edge. The map is a display of the ATV's own place, and its module is a module. The padlock and
+the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 
 ## Who owns what
 
@@ -118,10 +123,10 @@ the same on both peers; run on the code before it, each of the client's acts sta
 | every route to an ATV's damage and death (the two blast verbs, the explosion) | the tick owner | a copy that does not own the tick cancels them at the script gate; the owner takes every blast that reaches it |
 | the story event's trap | the host | the host copy's `trap` rides the stamp (bit 4); the driven copy fires it |
 | the condition values | the syncer | overwritten on the mirror, re-derived on edges |
-| fuel and health | the host | a client's refuel or repair is a gain the host adds; a client driver only lowers them |
-| the modules | the host | a client's fit or take-off is a request the host makes on its copy |
+| fuel and health | the host | a client's refuel or repair is a request the host judges and applies on its copy; a client driver only lowers them |
+| the modules | the host | a client's fit or take-off is a request the host judges and makes on its copy |
 | lights, brake, turbo | the syncer | the syncer's copy's bools ride its block's `stateBits`; the host applies each change and re-sends |
-| the horn | the host, from the seated driver | the press and release are requests; the horn plays on every other peer |
+| the horn | the host, from the syncer | the press and release are requests the host judges; the horn plays on every other peer |
 | tyre and spare presence | the host | consumed from the host's own copy only |
 | a runtime ATV's identity | the host | its game key, announced |
 
@@ -135,8 +140,8 @@ the same on both peers; run on the code before it, each of the client's acts sta
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
-| `AtvHostState` | the host to all | an ATV's fuel, health and gains applied, its modules, empty and broken; or a driver's horn |
-| `AtvRequest` | a client to the host | a refuel's or repair's gain, a module fitted or taken off, the seated driver's horn |
+| `AtvHostState` | the host to all | an ATV's fuel, health, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state); a driver's horn |
+| `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off (each with a request id), the syncer's horn |
 
 ## Late join
 
