@@ -33,6 +33,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::prop_nametag {
 namespace {
@@ -96,9 +97,20 @@ constexpr size_t       kMaxTagged = 1024;
 bool                   g_taggedFullSaid = false;
 // CLIENT: tags for props this client does not hold yet, by key, latest wins. A joiner's replay reaches it ahead of the
 // snapshot that births some of the props; the park is retried only when the key index moves (prop_key_index::Version).
+// A new park sets the version to a value no index has, so the next Tick walks once and a move that came before the
+// park (the index drained inside a Find) is not taken for one already seen. The park is the world's: it goes with the
+// world generation, and with the session.
 std::map<std::wstring, std::wstring> g_unbound;
+constexpr uint64_t                   kWalkNext = ~0ull;
 uint64_t                             g_unboundVersion = 0;
+uint32_t                             g_unboundGen = 0;
 constexpr size_t                     kMaxUnbound = 256;
+// HOST: the keys of tagged props a joiner's replay could not read yet (the key index answered Pending), per slot, tried
+// again each tick until the index answers.
+coop::roster_ledger::PerSlotState<std::vector<std::wstring>> g_joinRetry;
+bool                                                         g_joinRetryOwed = false;
+// HOST: g_tagged is walked when the key index's table moves, which a prop's destroy does.
+uint64_t g_taggedVersion = 0;
 
 // A tag is the first line of a notebook page, so a tab can stand in it; the other control units cannot be typed there.
 bool TagSane(const std::wstring& t) {
@@ -325,9 +337,11 @@ void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author)
     ++g_publishedSeen;
     void* prop = coop::prop_key_index::Find(key);
     if (!prop) {
+        const uint32_t gen = ue_wrap::world_identity::Generation();
+        if (gen != g_unboundGen) { g_unbound.clear(); g_unboundGen = gen; }
         if (g_unbound.size() < kMaxUnbound || g_unbound.count(key)) {
             g_unbound[key] = tag;
-            g_unboundVersion = coop::prop_key_index::Version();
+            g_unboundVersion = kWalkNext;
             UE_LOGI("prop_nametag: the host's tag '%ls' for prop '%ls' waits -- no copy of it here yet (%zu waiting)",
                     tag.c_str(), key.c_str(), g_unbound.size());
         } else {
@@ -360,6 +374,11 @@ void OnRefused(const std::wstring& key, uint8_t reason) {
 // answer, so the walk runs when its Version has.
 void RetryUnbound() {
     if (g_unbound.empty()) return;
+    if (ue_wrap::world_identity::Generation() != g_unboundGen) {
+        UE_LOGI("prop_nametag: the world changed -- %zu waiting tag(s) dropped with it", g_unbound.size());
+        g_unbound.clear();
+        return;
+    }
     const uint64_t version = coop::prop_key_index::Version();
     if (version == g_unboundVersion) return;
     g_unboundVersion = version;
@@ -376,6 +395,60 @@ void RetryUnbound() {
     }
 }
 
+// HOST: one tagged prop named to one joiner, with the tag it carries now.
+enum class Named { Sent, Gone, Later, Failed };
+Named NameTo(coop::net::Session& s, int slot, const std::wstring& key) {
+    void*      prop = nullptr;
+    const auto read = coop::prop_key_index::Resolve(key, &prop);
+    if (read == coop::prop_key_index::Read::Miss) return Named::Gone;    // the prop is gone, and its tag with it
+    if (read == coop::prop_key_index::Read::Pending) return Named::Later;   // the index cannot answer yet
+    std::wstring tag;
+    if (!NT::ReadPropNametag(prop, tag) || tag.size() > kMaxTagChars) {
+        UE_LOGW("prop_nametag: prop '%ls' could not be read at slot %d's connect replay -- its tag is not named",
+                key.c_str(), slot);
+        return Named::Failed;
+    }
+    const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, kAuthorHost, tag);
+    if (s.SendReliableToSlot(slot, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) return Named::Sent;
+    UE_LOGW("prop_nametag: the tag of prop '%ls' did not send to slot %d at its connect replay", key.c_str(), slot);
+    return Named::Failed;
+}
+
+// HOST: the replay's props the index could not answer for, asked again each tick until it does.
+void RetryJoinTags() {
+    if (!g_joinRetryOwed) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    g_joinRetryOwed = false;
+    if (!s || s->role() != coop::net::Role::Host) return;
+    for (int slot = 1; slot < g_joinRetry.size(); ++slot) {
+        std::vector<std::wstring>& owed = g_joinRetry[slot];
+        if (owed.empty()) continue;
+        std::vector<std::wstring> still;
+        for (const std::wstring& key : owed) {
+            if (!g_tagged.count(key)) continue;
+            const Named n = NameTo(*s, slot, key);
+            if (n == Named::Later) still.push_back(key);
+            else if (n == Named::Gone) g_tagged.erase(key);
+        }
+        owed.swap(still);
+        if (!owed.empty()) g_joinRetryOwed = true;
+    }
+}
+
+// HOST: a tagged prop that was destroyed leaves g_tagged. The key index's table moves when a prop dies, so the walk runs
+// then; a Pending answer keeps the key.
+void PruneTagged() {
+    if (g_tagged.empty()) return;
+    const uint64_t version = coop::prop_key_index::Version();
+    if (version == g_taggedVersion) return;
+    g_taggedVersion = version;
+    for (auto it = g_tagged.begin(); it != g_tagged.end();) {
+        void* prop = nullptr;
+        if (coop::prop_key_index::Resolve(*it, &prop) == coop::prop_key_index::Read::Miss) it = g_tagged.erase(it);
+        else ++it;
+    }
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -386,6 +459,8 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     RetryUnbound();
+    RetryJoinTags();
+    PruneTagged();
     if (g_watchSettled) return;
     if (!g_watchRegistered) {
         g_watchRegistered = sg::WatchName(kRowHandUse, kTag, &OnUsePre, &OnUsePost);
@@ -436,22 +511,18 @@ void SendJoinTags(int slot) {
     if (!s || s->role() != coop::net::Role::Host || g_tagged.empty()) return;
     static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::nametag_no_join_replay);
     if (s_off) return;   // the nametag drill's red: the join as it was before this answer
-    size_t sent = 0;
+    size_t sent = 0, later = 0;
+    g_joinRetry[slot].clear();
     for (auto it = g_tagged.begin(); it != g_tagged.end();) {
-        void*      prop = nullptr;
-        const auto read = coop::prop_key_index::Resolve(*it, &prop);
-        if (read == coop::prop_key_index::Read::Miss) { it = g_tagged.erase(it); continue; }   // gone, and its tag with it
-        const std::wstring& key = *it++;
-        std::wstring tag;
-        if (read != coop::prop_key_index::Read::Hit || !NT::ReadPropNametag(prop, tag) || tag.size() > kMaxTagChars) {
-            UE_LOGW("prop_nametag: prop '%ls' could not be read at slot %d's connect replay -- its tag is not named",
-                    key.c_str(), slot);
-            continue;
+        switch (NameTo(*s, slot, *it)) {
+        case Named::Sent:   ++sent; ++it; break;
+        case Named::Gone:   it = g_tagged.erase(it); break;
+        case Named::Later:  g_joinRetry[slot].push_back(*it); g_joinRetryOwed = true; ++later; ++it; break;
+        case Named::Failed: ++it; break;
         }
-        const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, kAuthorHost, tag);
-        if (s->SendReliableToSlot(slot, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) ++sent;
     }
-    UE_LOGI("prop_nametag: slot %d world-ready -- %zu of %zu tagged prop(s) named to it", slot, sent, g_tagged.size());
+    UE_LOGI("prop_nametag: slot %d world-ready -- %zu of %zu tagged prop(s) named to it, %zu to be asked again", slot,
+            sent, g_tagged.size(), later);
 }
 
 uint64_t AppliedForClients() { return g_applied; }
@@ -475,6 +546,10 @@ void OnDisconnect() {
     g_taggedFullSaid = false;
     g_unbound.clear();
     g_unboundVersion = 0;
+    g_unboundGen = 0;
+    g_taggedVersion = 0;
+    g_joinRetryOwed = false;
+    for (int i = 0; i < g_joinRetry.size(); ++i) g_joinRetry[i].clear();
     for (int i = 0; i < g_budget.size(); ++i) g_budget[i].Reset();
     for (int i = 0; i < g_parked.size(); ++i) g_parked[i] = Parked{};
     g_session.store(nullptr, std::memory_order_release);
