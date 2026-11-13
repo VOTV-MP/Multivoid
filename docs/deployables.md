@@ -54,8 +54,10 @@ hook's save key (`HookRetrieve`). The host takes its hook away without a drop wh
 sender's puppet, with the authority's pads, and tells every client the hook is gone, naming the taker; the taker's
 copy then runs the game's own pickup, so the item lands in that player's inventory, or at its feet when the inventory
 is full, and every other copy goes. The host player's own pickup runs the game's and is told the same way: a copy a
-joiner's save loaded has no other word that the hook went. A refused request has no answer; the copy stays and the
-player may press again (`coop/items/hook_retrieve`). `[V]` on the rig (`coop/dev/hook_retrieve_drill`): a client takes
+joiner's save loaded has no other word that the hook went. A refused request is answered to its sender alone and the
+copy stays; a client asks once per hook until the host's word for it comes, then may press again
+(`coop/items/hook_retrieve`). A hook taken between a joiner's save and its world-ready is not told to that joiner, whose
+copy then stands (`[?]`, the word is not sent to a slot before its world-ready). `[V]` on the rig (`coop/dev/hook_retrieve_drill`): a client takes
 a mirror and a save-loaded copy, and the host takes its hook while the client holds each kind of copy; the reds fail,
 `nocollision` with no pose of the aim fan putting the client's look on its copy, the reported symptom, and
 `clientruns` with the host's hook still standing.

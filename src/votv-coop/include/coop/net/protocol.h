@@ -725,9 +725,12 @@ enum class ReliableKind : uint16_t {
     // sender's reach), destroys its hook without a drop and answers. op 1 (HOST->ALL): the hook of that
     // key is gone on the host -- a client's pickup it granted, or the host player's own -- and every
     // client takes its copy away; `taker`, when it names a client, replays the pickup on that client's
-    // copy, so the item lands in that player's inventory and nowhere else. A refused op 0 is not
-    // answered: the copy stays and the player may use it again. Never relayed; not pre-world. Late join:
-    // none, the save carries the hooks that stand. HookRetrievePayload.
+    // copy, so the item lands in that player's inventory and nowhere else. A refused op 0 is answered
+    // with op 2 (HOST->that client): the copy stays and the player may use it again; a client asks once
+    // per hook until op 1 or op 2 for it arrives. Never relayed; not pre-world. Late join: the save
+    // carries the hooks that stand; an op 1 is not sent to a slot before its world-ready, so a hook
+    // taken between a joiner's save and its world-ready leaves its copy standing there, unmeasured.
+    // HookRetrievePayload.
     HookRetrieve = 260,
 
     // Host to all: the driven prop at eid has come to rest, or a hand took it -- its final pose and
@@ -2933,6 +2936,7 @@ static_assert(sizeof(HookDestroyPayload) == 4, "HookDestroyPayload must be 4 byt
 // shares: the host's adopted hook, a client's anchored mirror and a joiner's copy from the save.
 inline constexpr uint8_t kHookRetrieveRequest = 0;   // CLIENT->HOST: my player took this hook
 inline constexpr uint8_t kHookRetrieveGone    = 1;   // HOST->ALL: this hook is gone
+inline constexpr uint8_t kHookRetrieveRefused = 2;   // HOST->the requester: its request for this hook was refused
 inline constexpr uint8_t kHookRetrieveNoTaker = 0xFF;
 struct HookRetrievePayload {
     WireKey key;     // 32 -- the hook's save key

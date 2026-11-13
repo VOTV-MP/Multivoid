@@ -25,11 +25,12 @@
 
 #include "hook_sync_detail.h"
 
+#include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::hook_retrieve {
 namespace {
@@ -50,27 +51,30 @@ constexpr int kTag = 0x484B5254;  // 'HKRT'
 // The look that offers the pickup is the player's interaction trace, armLength long (200); the pads for the puppet's
 // lag are the authority's own. Either end within it is enough: a player takes a hook by whichever sphere it looks at.
 constexpr float kReachUU = 200.0f;
-// CLIENT: one request per hook in this window; a press the host refused can be pressed again after it.
-constexpr uint64_t kRepeatMs = 2000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchRegistered = false;
 bool g_watchSettled = false;
 
-// CLIENT: the last hook asked for, and when.
-std::wstring g_pendingKey;
-uint64_t     g_pendingMs = 0;
+// CLIENT: the hooks asked of the host and not yet answered, by save key. A press on one of them is refused without a
+// second request; the host's Gone or Refused for the key, or the session's end, releases it. A handful at most.
+std::vector<std::wstring> g_inFlight;
 // CLIENT: the copy whose pickup the host granted, while the game's own pickup runs on it.
 void* g_replay = nullptr;
 // HOST: the hook the host player's own pickup is running on, between the watch's entry and exit.
 void*        g_hostPress = nullptr;
 std::wstring g_hostPressKey;
 
-uint64_t g_sent = 0, g_granted = 0, g_refused = 0, g_taken = 0;
+// g_sent, g_refusedAnswers and g_taken are the client's: requests asked, refusals answered, pickups the host's grant
+// ran here. g_granted and g_refused are the host's.
+uint64_t g_sent = 0, g_granted = 0, g_refused = 0, g_taken = 0, g_refusedAnswers = 0;
 
-uint64_t NowMs() {
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count());
+bool InFlight(const std::wstring& key) {
+    return std::find(g_inFlight.begin(), g_inFlight.end(), key) != g_inFlight.end();
+}
+
+void Release(const std::wstring& key) {
+    g_inFlight.erase(std::remove(g_inFlight.begin(), g_inFlight.end(), key), g_inFlight.end());
 }
 
 // The watch is on every class's actionOptionIndex, so a door, a toggle or a coin asks too. Whether a class sits under
@@ -118,11 +122,19 @@ void SendGone(coop::net::Session& s, const std::wstring& key, uint8_t taker) {
                 key.c_str());
 }
 
-void Refuse(uint8_t slot, const std::wstring& key, const char* why) {
+// HOST: a request the host will not grant is answered to its sender alone, which releases that client's latch.
+void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, const char* why) {
     ++g_refused;
     if (g_refused <= 20 || g_refused % 50 == 0)
         UE_LOGI("hook_retrieve: slot %u's pickup of hook '%ls' refused (%s)", static_cast<unsigned>(slot), key.c_str(),
                 why);
+    HookRetrievePayload r{};
+    coop::net::WireKeyFromString(key, r.key);
+    r.op    = coop::net::kHookRetrieveRefused;
+    r.taker = coop::net::kHookRetrieveNoTaker;
+    if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::HookRetrieve, &r, sizeof(r)))
+        UE_LOGW("hook_retrieve: the refusal of slot %u's pickup of hook '%ls' did not send -- its client holds the "
+                "request until the session ends", static_cast<unsigned>(slot), key.c_str());
 }
 
 sg::Verdict OnActionPre(const sg::Call& c) {
@@ -142,8 +154,7 @@ sg::Verdict OnActionPre(const sg::Call& c) {
                 "stays)", c.object);
         return sg::Verdict::Cancel;
     }
-    const uint64_t now = NowMs();
-    if (key == g_pendingKey && now - g_pendingMs < kRepeatMs) return sg::Verdict::Cancel;
+    if (InFlight(key)) return sg::Verdict::Cancel;   // asked already: the host's answer comes
     HookRetrievePayload p{};
     coop::net::WireKeyFromString(key, p.key);
     p.op    = coop::net::kHookRetrieveRequest;
@@ -152,8 +163,7 @@ sg::Verdict OnActionPre(const sg::Call& c) {
         UE_LOGW("hook_retrieve: the pickup of hook '%ls' was not sent -- the hook stays; use it again", key.c_str());
         return sg::Verdict::Cancel;
     }
-    g_pendingKey = key;
-    g_pendingMs  = now;
+    g_inFlight.push_back(key);
     ++g_sent;
     UE_LOGI("hook_retrieve: this client took hook '%ls' -- asked of the host (%llu asked)", key.c_str(),
             static_cast<unsigned long long>(g_sent));
@@ -175,10 +185,10 @@ void OnActionPost(const sg::Call& c) {
 void OnRequest(coop::net::Session& s, const std::wstring& key, uint8_t slot) {
     void* hook = D::FindHookByKey(key);
     // No hook is the ordinary end of a second press, or of two players taking one hook.
-    if (!hook) { Refuse(slot, key, "no hook of that key here -- already taken"); return; }
+    if (!hook) { Refuse(s, slot, key, "no hook of that key here -- already taken"); return; }
     ue_wrap::FVector a{}, b{};
     if (!H::EndLocations(hook, a, b)) {
-        if (!E::TryGetActorLocation(hook, a)) { Refuse(slot, key, "the hook's ends do not read"); return; }
+        if (!E::TryGetActorLocation(hook, a)) { Refuse(s, slot, key, "the hook's ends do not read"); return; }
         b = a;
     }
     const auto tok = coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU);
@@ -186,7 +196,7 @@ void OnRequest(coop::net::Session& s, const std::wstring& key, uint8_t slot) {
     if (!atA) {
         const auto atB = tok.AuthorizeSegment(b, b);
         if (!atB) {
-            Refuse(slot, key, coop::element::OutcomeName(atA.outcome));
+            Refuse(s, slot, key, coop::element::OutcomeName(atA.outcome));
             return;
         }
     }
@@ -194,7 +204,7 @@ void OnRequest(coop::net::Session& s, const std::wstring& key, uint8_t slot) {
     ue_wrap::CachedObjRef incarnation;
     incarnation.Set(hook);
     E::DestroyActor(hook);
-    if (incarnation.Alive()) { Refuse(slot, key, "the hook is still live after its destroy"); return; }
+    if (incarnation.Alive()) { Refuse(s, slot, key, "the hook is still live after its destroy"); return; }
     ++g_granted;
     SendGone(s, key, slot);
     UE_LOGI("hook_retrieve: HOST granted slot %u its pickup of hook '%ls' (%llu granted)", static_cast<unsigned>(slot),
@@ -203,7 +213,6 @@ void OnRequest(coop::net::Session& s, const std::wstring& key, uint8_t slot) {
 
 // CLIENT: the hook is gone on the host. The taker's copy runs the game's own pickup; every other copy goes.
 void OnGone(const std::wstring& key, uint8_t taker) {
-    if (key == g_pendingKey) g_pendingKey.clear();
     void* copy = D::FindHookByKey(key);
     const bool mine = taker == coop::players::Registry::Get().LocalPeerId();
     if (!mine) {
@@ -283,16 +292,28 @@ void OnMsg(const HookRetrievePayload& p, int senderPeerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     if (senderPeerSlot < 0 || senderPeerSlot >= coop::players::kMaxPeers) return;
-    if (!H::EnsureResolved()) return;
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     if (key.empty()) return;
     if (p.op == coop::net::kHookRetrieveRequest) {
         if (s->role() != coop::net::Role::Host || senderPeerSlot == 0) return;
+        // Every request that reaches the host is answered: a grant by Gone, anything else by Refused.
+        if (!H::EnsureResolved()) {
+            Refuse(*s, static_cast<uint8_t>(senderPeerSlot), key, "the hook wrapper is not resolved on the host");
+            return;
+        }
         OnRequest(*s, key, static_cast<uint8_t>(senderPeerSlot));
         return;
     }
+    if (s->role() != coop::net::Role::Client || senderPeerSlot != 0) return;   // the host's word alone
+    if (p.op == coop::net::kHookRetrieveRefused) {
+        Release(key);
+        ++g_refusedAnswers;
+        UE_LOGI("hook_retrieve: the host refused this client's pickup of hook '%ls' -- the copy stays", key.c_str());
+        return;
+    }
     if (p.op == coop::net::kHookRetrieveGone) {
-        if (s->role() != coop::net::Role::Client || senderPeerSlot != 0) return;   // the host's word alone
+        Release(key);   // before anything that can return: the answer has come
+        if (!H::EnsureResolved()) return;
         OnGone(key, p.taker);
     }
 }
@@ -303,15 +324,17 @@ void PrepareAnchoredCopy(void* mirror) {
 }
 
 uint64_t GrantedCount() { return g_granted; }
+uint64_t AskedCount() { return g_sent; }
+uint64_t TakenCount() { return g_taken; }
+uint64_t RefusedAnswerCount() { return g_refusedAnswers; }
 
 void OnDisconnect() {
     if (g_sent || g_granted || g_refused || g_taken)
         UE_LOGI("hook_retrieve: session end -- asked=%llu granted=%llu refused=%llu taken=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_granted),
                 static_cast<unsigned long long>(g_refused), static_cast<unsigned long long>(g_taken));
-    g_sent = g_refused = g_taken = 0;
-    g_pendingKey.clear();
-    g_pendingMs = 0;
+    g_sent = g_refused = g_taken = g_refusedAnswers = 0;
+    g_inFlight.clear();
     g_replay = nullptr;
     g_hostPress = nullptr;
     g_hostPressKey.clear();

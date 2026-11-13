@@ -5,9 +5,10 @@
 // the hook; run on a client's copy it would do that there alone. So on a client it is refused and asked of the host
 // by the hook's save key, the name every copy shares. The host takes its hook away without a drop when an end is
 // within the sender's reach and tells every client the hook is gone, naming the taker, whose copy then runs the
-// game's pickup. The host player's own pickup runs the game's and is told the same way. A refused request has no
-// answer: the copy stays. A player's own hook before its second end anchors is the owner lane's (hook_sync).
-// Game thread.
+// game's pickup. The host player's own pickup runs the game's and is told the same way. A refused request is answered
+// to its sender alone and the copy stays. A client holds one request per hook in flight: a press on that hook asks
+// nothing more until the host's Gone or Refused for it, or the session's end. A player's own hook before its second
+// end anchors is the owner lane's (hook_sync). Game thread.
 
 #pragma once
 
@@ -35,6 +36,12 @@ void PrepareAnchoredCopy(void* mirror);
 
 // HOST: the pickups granted to a client since the process started (the drill reads it).
 uint64_t GrantedCount();
+
+// CLIENT, this session (the drill reads them): the requests asked of the host, the pickups its grant ran here, and the
+// refusals it answered.
+uint64_t AskedCount();
+uint64_t TakenCount();
+uint64_t RefusedAnswerCount();
 
 void OnDisconnect();
 
