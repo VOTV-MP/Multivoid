@@ -76,7 +76,7 @@ Phase g_phase = Phase::None;
 std::wstring g_map, g_lastEnd;
 void* g_streaming = nullptr;
 void* g_level = nullptr;
-void* g_controller = nullptr;  // this machine's player controller, as the placed player held it
+void* g_controller = nullptr;  // this machine's player controller, kept at the trip's start for the visit's end
 // The world's own actors (its persistent level's) when the visit began: what a map's script spawns lands in that level
 // too, far below the world, and is told apart from them at the end and removed with the map.
 std::unordered_set<void*> g_worldActors;
@@ -155,6 +155,17 @@ void* HeldActor(void* me) {
 }
 
 bool InVisitedLevel(void* obj) { return obj && g_level && R::IsLive(obj) && R::OuterOf(obj) == g_level; }
+
+// Whether `obj` belongs to the visited map, for the whole visit: once the level is known, its own objects; while it
+// still loads (its BeginPlay and first ticks run inside the engine's add-to-world, before the tick below sees it), any
+// object of a level other than the world's own.
+bool FromVisitedMap(void* obj) {
+    if (g_phase == Phase::None || !obj || !R::IsLive(obj)) return false;
+    if (g_level) return InVisitedLevel(obj);
+    void* level = R::OuterOf(obj);
+    void* mine = R::OuterOf(Local());
+    return level && mine && level != mine && R::NameEquals(R::NameOf(R::ClassOf(level)), L"Level");
+}
 
 // The host's world.backrooms, the session's value on every peer, kept as it changes (config::Subscribe): the clip check
 // below asks for it on every tick, and a layered resolve reads the environment each time.
@@ -263,6 +274,7 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
                                                                  ? L"$TPzHL8tj^f@6DJ!JmqkMmhHQUPG*5rTfxWR"
                                                                  : L"");
         }
+        g_controller = E::GetController(me);  // the placed player takes it as its level begins play: kept now
         coop::death_revive::ClearBlackScreenNow();
         g_worldActors.clear();
         for (void* a : WorldLevelActors()) g_worldActors.insert(a);
@@ -304,7 +316,7 @@ sg::Verdict OnEndPre(const sg::Call& call) {
     static int32_t sCtxOff = -1;
     if (sCtxOff < 0) sCtxOff = R::FindParamOffset(call.function, L"__WorldContext");
     void* ctx = sCtxOff >= 0 ? *reinterpret_cast<void* const*>(call.locals + sCtxOff) : nullptr;
-    if (!InVisitedLevel(ctx) && !InVisitedLevel(call.callerObject)) return sg::Verdict::Run;
+    if (!FromVisitedMap(ctx) && !FromVisitedMap(call.callerObject)) return sg::Verdict::Run;
     if (::GetTickCount64() - g_loadAtMs < kUntitledSequenceMs && call.callerObject &&
         R::NameStartsWith(R::NameOf(R::ClassOf(call.callerObject)), L"untitled_untitled") &&
         !HookInMap()) {
@@ -317,6 +329,13 @@ sg::Verdict OnEndPre(const sg::Call& call) {
         }
         return sg::Verdict::Cancel;
     }
+    if (!g_level) {
+        static bool s_saidLoading = false;
+        if (!s_saidLoading) {
+            s_saidLoading = true;
+            UE_LOGI("level_visit: the visited map's End during loading is cancelled");
+        }
+    }
     const std::wstring by = call.callerObject ? R::ClassNameOf(call.callerObject) : std::wstring(L"?");
     const std::wstring in = call.callerFunction ? R::ToString(R::NameOf(call.callerFunction)) : std::wstring(L"?");
     g_endBy += L", End from " + by + L"." + in + L" on " + (ctx ? R::ClassNameOf(ctx) : std::wstring(L"?"));
@@ -328,11 +347,18 @@ sg::Verdict OnEndPre(const sg::Call& call) {
 sg::Verdict OnQuitGamePre(void* context, void* sourceObject, const uint8_t* parms) {
     if (g_phase == Phase::None) return sg::Verdict::Run;
     void* worldContext = (parms && g_quitCtxOff >= 0) ? *reinterpret_cast<void* const*>(parms + g_quitCtxOff) : nullptr;
-    if (!InVisitedLevel(sourceObject) && !InVisitedLevel(context) && !InVisitedLevel(worldContext))
+    if (!FromVisitedMap(sourceObject) && !FromVisitedMap(context) && !FromVisitedMap(worldContext))
         return sg::Verdict::Run;
     if (g_hookCheckQuit) {
         g_hookCheckQuit = false;
         return sg::Verdict::Cancel;
+    }
+    if (!g_level) {
+        static bool s_saidLoading = false;
+        if (!s_saidLoading) {
+            s_saidLoading = true;
+            UE_LOGI("level_visit: the visited map's QuitGame during loading is cancelled");
+        }
     }
     g_endBy += L", QuitGame from " + (sourceObject ? R::ClassNameOf(sourceObject) : std::wstring(L"?")) + L" on " +
                (worldContext ? R::ClassNameOf(worldContext) : std::wstring(L"?"));
@@ -514,6 +540,7 @@ void Finish(bool revive, const wchar_t* why) {
                       : "the player is already back");
     g_lastEnd = why;
     g_endBy.clear();
+    g_controller = nullptr;
     g_quietUntilMs.store(::GetTickCount64() + kQuietMs);
     g_phase = Phase::None;
     g_streaming = nullptr;
@@ -574,7 +601,6 @@ ue_wrap::FVector TakePlacedPlayer(void* me) {
         E::TryGetActorLocation(c.found, at);
         void* pc = E::GetController(c.found);
         if (pc && me && E::GetController(me) == nullptr) {
-            g_controller = pc;
             UE_LOGI("level_visit: the map's placed player had taken the controller -- given back (ok=%d)",
                     Possess(pc, me) ? 1 : 0);
         }
@@ -677,7 +703,8 @@ void Tick() {
         g_carried = h;
         g_carriedClass = R::ClassOf(h);
     }
-    if (g_endAsked.load()) return Finish(g_endIsDeath.load(), L"the map's own end");
+    // A map that ends before it has loaded ends a visit the player never began: it is still in the world.
+    if (g_endAsked.load()) return Finish(g_phase == Phase::In && g_endIsDeath.load(), L"the map's own end");
     if (g_phase == Phase::Loading) {
         // Polled: the streaming level's own loaded event (ULevelStreaming's OnLevelLoaded / OnLevelShown) would announce
         // it, but no production code of ours binds an engine delegate (the one binder in the tree, coop/dev/
@@ -691,7 +718,7 @@ void Tick() {
                     LI::DescribeState(g_streaming).c_str());
         }
         if (!g_level) {
-            if (::GetTickCount64() - g_loadAtMs > kLoadBoundMs) Finish(true, L"the map did not load");
+            if (::GetTickCount64() - g_loadAtMs > kLoadBoundMs) Finish(false, L"the map did not load");
             return;
         }
         const ue_wrap::FVector start = TakePlacedPlayer(me);

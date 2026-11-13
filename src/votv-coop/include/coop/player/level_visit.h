@@ -16,7 +16,9 @@
 
 // Each map ends the game itself: the backrooms after 600 s (lib_C::End, which quits), the others by lib_C::End and
 // direct calls of QuitGame on their own timers and triggers. A call of either from the visited level is refused and
-// answered as a death: coop/player/death_revive revives the player in the world, carrying what it carried. A visitor
+// answered as a death: coop/player/death_revive revives the player in the world, carrying what it carried. The refusal
+// holds from the trip's start, while the map still loads too (its level is then any but the world's own); a map that ends
+// before it has loaded ends a visit the player never began, and nothing is revived. A visitor
 // who comes back any other way (a death the usual revive answers) ends the visit too. At the end the level is
 // unloaded and what its script changed for the whole process is put back: the game instance's slot name and game
 // mode, the event it raised, the reverb, and the two strings the clip writes (a map checks them). A map's own props
