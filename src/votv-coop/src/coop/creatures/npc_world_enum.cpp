@@ -158,9 +158,10 @@ struct ExSpawnSource {
 };
 constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
 // The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
-// so its source is narrowed to the two outputs of the night roll (mainGamemode_C::CustomEvent_5, an Octa or a
-// night egg), whose client roll the spawn authority refuses.
-constexpr const wchar_t* kGeomOctaNpcOutputs[] = {L"geomOcta_C", L"eg_C", nullptr};
+// so its source is narrowed to the outputs whose client roll the spawn authority refuses: the night roll's
+// (mainGamemode_C::CustomEvent_5, an Octa or a night egg) and the four ambient UFO timers' (coop/world/ufo_sync).
+constexpr const wchar_t* kGamemodeOutputs[] = {L"geomOcta_C", L"eg_C", L"ufo_ballfo_C", L"ufo_boofo_spawn1_C",
+                                               L"ufo_pillfo_C", L"ufo_joel_C", nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
@@ -171,7 +172,7 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"prop_coingun_C",          nullptr},          // the sell gun's coin mint
     {L"jellyfishPath_C",         nullptr},          // the space jellyfish's seven (world-actor lane)
     {L"trigger_eventer_C",       kEventerOutputs},  // the scheduler's dispatcher
-    {L"mainGamemode_C",          kGeomOctaNpcOutputs}, // the night roll's Octa or egg, and the spawn menu's Octa
+    {L"mainGamemode_C",          kGamemodeOutputs}, // the night roll's Octa or egg, the spawn menu's Octa, the UFOs
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
@@ -270,7 +271,7 @@ void InstallExSpawnCatch() {
                 "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
                 "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C, "
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
-                "mainGamemode_C -> geomOcta_C + eg_C, ticker_deerSpawner_C -> deer_C, "
+                "mainGamemode_C -> geomOcta_C + eg_C + the four ambient UFOs, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "
                 "tentacleBallsFollower_C -> tentacleBall_C, blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
                 "now enroll)");

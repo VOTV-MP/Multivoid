@@ -313,6 +313,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"mainplayer_c", L"timerholdflashlight", L"mainplayer_c.timerholdflashlight", 0x6a2d5d90ab51fa2dull, 0x760d7e465c2c5551ull},
     {L"mainplayer_c", L"updateflashlight", L"mainplayer_c.updateflashlight", 0x6a2d5d90ab51fa2dull, 0x730f5fa3202142acull},
     {L"mainplayer_c", L"useselectedaction", L"mainplayer_c.useselectedaction", 0x6a2d5d90ab51fa2dull, 0x1020fb0295b51e67ull},
+    {L"midasufotest_c", L"runtrigger", L"midasufotest_c.runtrigger", 0xce1a7ca786fd2555ull, 0xc91eb168c323e5d2ull},
     {L"mushroommaster_c", L"spawn", L"mushroommaster_c.spawn", 0x6a2d5d90ab51fa2dull, 0xcda8e5571000d622ull},
     {L"mushroomspawner_c", L"spawn", L"mushroomspawner_c.spawn", 0x6a2d5d90ab51fa2dull, 0x9ff39c40f5d54ac3ull},
     {L"mushroomspore_c", L"bndevt__mushroomspore_sphere_k2node_componentboundevent_0_componenthitsignature__delegatesignature", L"mushroomspore_c.bndevt__mushroomspore_sphere_k2node_componentboundevent_0_componenthitsignature__delegatesignature", 0x28c5926c7d6d77e6ull, 0xdb6dc97a7919c231ull},

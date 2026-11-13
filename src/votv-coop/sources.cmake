@@ -121,6 +121,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/keypad_verbs.cpp
     src/coop/interactables/sleepingbag_sync.cpp
     src/coop/world/time_sync.cpp
+    src/coop/world/ufo_sync.cpp
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
     src/coop/world/power_decay.cpp
