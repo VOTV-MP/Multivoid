@@ -173,6 +173,8 @@ void RunClient() {
     const size_t bound = MirrorsBound(spawned);
     UE_LOGI("class-resolve: CLIENT holds a bound mirror of %zu of the %zu classes the host spawned (%zu refused by its "
             "own resolve)", bound, spawned.size(), spawned.size() - bound);
+    UE_LOGI("class-resolve: CLIENT loads run=%llu, of them during the save replay=%llu",
+            static_cast<unsigned long long>(CR::LoadsRun()), static_cast<unsigned long long>(CR::LoadsDuringReplay()));
     PS::Mark("bound", std::to_string(bound));
     UE_LOGI("class-resolve: DONE on client");
 }
@@ -180,9 +182,12 @@ void RunClient() {
 // ---- HOST ------------------------------------------------------------------------------------------------------
 
 // Loads (through the resolver) and spawns `names` in front of the host's player until kWanted stand; the classes that
-// stood are in `spawned`, their actors in `actors`.
+// stood are in `spawned`, their actors in `actors`. The host loads the CLIENT's candidates here on purpose, as a test
+// driver that stands in for the host's own gameplay reaching a class (shipping code never loads on a client's name), and
+// loads Immediate because the drill acts in place on the game thread, with nothing to wait for. Each class is resolved
+// twice in the same tick: the second resolve must load nothing (the first one's drain lists the class), else `reloaded`.
 void SpawnCandidates(const std::vector<std::wstring>& names, std::vector<std::wstring>& spawned,
-                     std::vector<ue_wrap::CachedObjRef>& actors) {
+                     std::vector<ue_wrap::CachedObjRef>& actors, bool& reloaded) {
     OnGameThread([&] {
         void* me = coop::players::Registry::Get().Local();
         ue_wrap::FVector at{};
@@ -191,6 +196,12 @@ void SpawnCandidates(const std::vector<std::wstring>& names, std::vector<std::ws
         for (const std::wstring& name : names) {
             if (spawned.size() >= kWanted) break;
             const auto r = CR::ResolveClass(name.c_str(), ue_wrap::prop::PropFamily(), CR::Load::Immediate);
+            const uint64_t loadsAfterFirst = CR::LoadsRun();
+            const auto again = CR::ResolveClass(name.c_str(), ue_wrap::prop::PropFamily(), CR::Load::Immediate);
+            if (CR::LoadsRun() != loadsAfterFirst || again.cls != r.cls) {
+                reloaded = true;
+                UE_LOGW("class-resolve: HOST a second resolve of %ls in the same tick loaded it again", name.c_str());
+            }
             if (r.state != CR::ClassState::Found) {
                 UE_LOGW("class-resolve: HOST cannot resolve %ls (state %d) -- skipped", name.c_str(),
                         static_cast<int>(r.state));
@@ -237,7 +248,8 @@ void RunHost() {
     }
     std::vector<std::wstring> spawned;
     std::vector<ue_wrap::CachedObjRef> actors;
-    SpawnCandidates(Split(text), spawned, actors);
+    bool reloaded = false;
+    SpawnCandidates(Split(text), spawned, actors, reloaded);
     if (spawned.size() < kWanted) {
         PS::Mark("spawned", "NONE");
         RV::Say(kTag, RV::Outcome::Invalid, "the host could spawn only %zu of the %zu classes it needs", spawned.size(),
@@ -255,7 +267,10 @@ void RunHost() {
     const size_t bound = static_cast<size_t>(std::stoul(boundText));
     UE_LOGI("class-resolve: HOST spawned %zu classes the client had not loaded; the client holds %zu mirrors", spawned.size(),
             bound);
-    if (bound == spawned.size()) RV::Say(kTag, RV::Outcome::Pass);
+    UE_LOGI("class-resolve: HOST loads run=%llu, of them during the save replay=%llu",
+            static_cast<unsigned long long>(CR::LoadsRun()), static_cast<unsigned long long>(CR::LoadsDuringReplay()));
+    if (reloaded) RV::Say(kTag, RV::Outcome::Fail, "a second resolve of a class in the same tick loaded it again");
+    else if (bound == spawned.size()) RV::Say(kTag, RV::Outcome::Pass);
     else RV::Say(kTag, RV::Outcome::Fail, "the client holds a mirror of %zu of the %zu classes the host spawned", bound,
                  spawned.size());
     UE_LOGI("class-resolve: DONE on host");
