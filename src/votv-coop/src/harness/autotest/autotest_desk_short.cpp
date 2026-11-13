@@ -8,9 +8,9 @@
 //                  PASS|FAIL|INVALID`: PASS when both desks shorted and both panels read the same changed mask; FAIL
 //                  at once when the actor's short was not announced (red: desk_short_off on the acting peer) or the
 //                  host refused the client's ask, and the host then runs no later leg.
-//   join           With the rig's --rejoin. The client leaves; the host keeps its desk shorting until the client's world
-//                  is ready again; the rejoined client (VOTVCOOP_DESK_SHORT_DRILL_REJOIN=1) must have had its desk
-//                  shorted at that edge: `rig: VERDICT desk-short-join`. Red: desk_short_replay_off on the host.
+//   join           With the rig's --rejoin. The client leaves once its join is over; the host keeps its desk
+//                  shorting until the client's world is ready again; the rejoined client
+//                  (VOTVCOOP_DESK_SHORT_DRILL_REJOIN=1) must have had its desk shorted at that edge: `rig: VERDICT desk-short-join`. Red: desk_short_replay_off on the host.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -322,7 +322,7 @@ void RunJoinHost() {
 }
 
 void RunJoinClient() {
-    if (!disc_drill::HostPuppetUp()) return;
+    if (!disc_drill::HostPuppetUp() || !disc_drill::ClientJoined()) return;
     PS::Mark("client_done");
     PS::Await("host_ack", 60);
     OnGameThread([] {

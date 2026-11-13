@@ -8,6 +8,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/host_world_settle.h"
+#include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/object_index.h"
@@ -55,6 +56,19 @@ inline bool HostPuppetUp() {
             have = p && p->valid();
         });
         return have;
+    });
+}
+
+// CLIENT: its join is over (the world announced and the join's progress idle, the predicate `rig: READY joined` stands
+// on), the moment a peer may act or leave without cutting the join off.
+inline bool ClientJoined() {
+    return peer_signal::WaitFor("this client's join complete", 240, [] {
+        bool done = false;
+        OnGameThread([&] {
+            done = coop::net_pump::HasAnnouncedWorldReady() &&
+                   coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
+        });
+        return done;
     });
 }
 
