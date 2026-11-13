@@ -10,4 +10,7 @@ namespace coop::event_fire_sync {
 // unknown -- the default is no replay.
 int ReplayVerdict(const std::string& name, const char** laneOut);
 
+// Is the row one the game rolls through runSpecialEvent, so an in-flight replay of it is a special, not a runEvent.
+bool IsSpecialRow(const std::string& name);
+
 }  // namespace coop::event_fire_sync

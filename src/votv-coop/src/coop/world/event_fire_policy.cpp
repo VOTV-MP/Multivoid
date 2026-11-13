@@ -110,6 +110,8 @@ static bool IsPrankRow(const std::string& n) {
     return n.rfind("arirInteraction_", 0) == 0;
 }
 
+bool IsSpecialRow(const std::string& name) { return name == "alienSounds"; }
+
 int ReplayVerdict(const std::string& name, const char** laneOut) {
     for (const char* r : kReplayRows)
         if (name == r) return 1;

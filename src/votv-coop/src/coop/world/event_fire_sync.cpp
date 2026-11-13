@@ -674,7 +674,8 @@ void ReplayInFlightRow(const std::string& rowName) {
         return;
     }
     DrainPending();
-    PendingFire pf{ FireKind::RunEvent, rowName, /*activeOverride=*/true };
+    // A row the game rolls as a special (the alien sounds) is run as one: runEvent has no case for its name.
+    PendingFire pf{ IsSpecialRow(rowName) ? FireKind::SpecialEvent : FireKind::RunEvent, rowName, /*activeOverride=*/true };
     if (g_pending.empty()) {
         const ReplayStep step = TryReplay(pf);
         if (step == ReplayStep::Done) return;
@@ -685,7 +686,7 @@ void ReplayInFlightRow(const std::string& rowName) {
     // landed in the pre-world window), upgrade it in place: two entries would double-dispatch,
     // and the plain copy alone could history-skip the in-flight replay.
     for (auto& q : g_pending) {
-        if (q.kind == FireKind::RunEvent && q.name == rowName) {
+        if (q.kind == pf.kind && q.name == rowName) {
             q.activeOverride = true;
             UE_LOGI("event_fire: in-flight '%s' already queued -- upgraded to active-override",
                     rowName.c_str());
