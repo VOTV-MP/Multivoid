@@ -1,7 +1,5 @@
 // harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds, a faucet's click and the alien
-// noises across two peers.
-// Every verdict is decided by an event (a flip, a count, the dispatch of the host's alien event, the host's decision at an
-// edge); a bound passing with none is INVALID, never a measured shortfall, which is a FAIL at once.
+// noises across two peers. A verdict is decided by an event; a bound passing with none is INVALID.
 //
 // Armed by the row world_sound_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR). What a peer hears cannot be
 // read back, so each term is the OTHER peer's receipt and its play call, from the lane's own counts:
