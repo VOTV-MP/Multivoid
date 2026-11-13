@@ -53,6 +53,7 @@ const std::string& PhaseName() {
 // The lines the two peers say to each other in the lobby chat.
 std::string ReadyHead(const Row& r) { return std::string(kTag) + " host " + r.name + " ready eid="; }
 std::string DoneHead(const Row& r, int slot) { return std::string(kTag) + " c" + std::to_string(slot) + " " + r.name + " done "; }
+std::string UprightHead(const Row& r) { return std::string(kTag) + " c" + std::to_string(kClientSlot) + " " + r.name + " upright"; }
 std::string DragHead(const Row& r, bool fromHost) {
     return std::string(kTag) + (fromHost ? " host " : " c" + std::to_string(kClientSlot) + " ") + r.name + " dragged: ";
 }
@@ -100,9 +101,6 @@ int g_fanDir = -1;                       // the fan index a step's first target 
 constexpr float kDropCm = 40.f;          // above the floor, so the prop settles
 constexpr float kFloorDownCm = 400.f;    // how far under the puppet's middle the floor is looked for
 constexpr float kMinColumnCm = 20.f;     // a column whose floor is nearer than this to its start began inside geometry
-// The floor is looked for from this far above the puppet's root: a ragdolled puppet's root lies on the floor, and a trace
-// that starts there reads the floor as geometry it began inside.
-constexpr float kTraceLiftCm = 120.f;
 constexpr float kNpcLiftCm = 60.f;       // a kerfur NPC is placed above the floor so its capsule clears it
 
 const Phase* ActivePhase() {
@@ -148,6 +146,7 @@ void HostFail(const Row* row, const std::string& why) {
     UE_LOGW("%s host %s FAIL -- %s%s%s", kTag, PhaseName().c_str(), row ? row->name : "", row ? ": " : "", why.c_str());
     HostEnds(End::Fail, std::string(row ? row->name : "") + ": " + why);
     g_hstep = HStep::Done;
+    SnackRestoreTilt();   // a beer tilted for the spill arm is put back as it was
 }
 
 // A bound ran out with no event to decide on: the run measured nothing, so it is INVALID, never a verdict on the lane. The
@@ -156,6 +155,7 @@ void HostInvalid(const Row* row, const std::string& why) {
     UE_LOGW("%s host %s INVALID -- %s%s%s", kTag, PhaseName().c_str(), row ? row->name : "", row ? ": " : "", why.c_str());
     HostEnds(End::Invalid, std::string(row ? row->name : "") + ": " + why);
     g_hstep = HStep::Done;
+    SnackRestoreTilt();
 }
 
 // What the client said when its step ended other than ok: its FAIL stays a FAIL, its INVALID stays INVALID.
@@ -316,6 +316,12 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         HEnter(HStep::Spawn);
         return;
     case HStep::Spawn: {
+        // A row's target is placed by slot 1's puppet, so the next row waits for the line that says the client stands (a
+        // ragdolled puppet lies at floor level): an event, with a bound that only says INVALID. The first row has none.
+        if (g_hrow > 0 && !ClientSaid(kClientSlot, UprightHead(ph.rows[g_hrow - 1]), nullptr)) {
+            if (HExpired(kDoneBoundMs)) HostInvalid(&row, "the client never said its player stood after the step before");
+            return;
+        }
         if (row.target == Target::Client) {
             // The client makes this step's target; the counters are taken now and the client acts on the line.
             SayReady(row);
@@ -510,13 +516,13 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
             const float x = at.X + dx * ahead, y = at.Y + dy * ahead;
             float floorZ = 0.f;
             void* p = nullptr;
-            if (!DP::FloorAt(player, x, y, at.Z + kTraceLiftCm, kFloorDownCm + kTraceLiftCm, kMinColumnCm, &floorZ)) continue;
+            if (!DP::FloorAt(player, x, y, at.Z, kFloorDownCm, kMinColumnCm, &floorZ)) continue;
             if (!coop::director::RouteInLegs(player, at, FVector{x, y, floorZ}, kReachCm)) {
                 UE_LOGI("%s host %s: no route from slot 1's puppet reaches the column %.0f uu away at %.0f deg",
                         kTag, row.name, ahead, kFanDeg[i]);
                 continue;
             }
-            const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z + kTraceLiftCm, kFloorDownCm + kTraceLiftCm, kMinColumnCm,
+            const DP::Drop d = DP::DropOnFloor(player, cls, kKerfurNpc, x, y, at.Z, kFloorDownCm, kMinColumnCm,
                                                npc ? kDropCm + kNpcLiftCm : kDropCm, &p, &floorZ);
             if (d == DP::Drop::NoFloor) continue;
             if (d == DP::Drop::SpawnFailed) return "the target did not spawn";
@@ -532,10 +538,10 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     static const char* const kMiss[] = {"floor", "trace did not run", "no hit", "starts inside geometry"};
     DP::FloorMiss facing = DP::FloorMiss::None, own = DP::FloorMiss::None;
     float z = 0.f;
-    DP::FloorAt(player, at.X + fwd.X / len * kAheadCm[0], at.Y + fwd.Y / len * kAheadCm[0], at.Z + kTraceLiftCm,
-                kFloorDownCm + kTraceLiftCm,
+    DP::FloorAt(player, at.X + fwd.X / len * kAheadCm[0], at.Y + fwd.Y / len * kAheadCm[0], at.Z,
+                kFloorDownCm,
                 kMinColumnCm, &z, &facing);
-    DP::FloorAt(player, at.X, at.Y, at.Z + kTraceLiftCm, kFloorDownCm + kTraceLiftCm, kMinColumnCm, &z, &own);
+    DP::FloorAt(player, at.X, at.Y, at.Z, kFloorDownCm, kMinColumnCm, &z, &own);
     static char why[220];
     std::snprintf(why, sizeof why, "INVALID: no floor a route reaches was found round slot 1's puppet (puppet at %.0f %.0f "
                   "%.0f; facing column: %s; own column: %s)", at.X, at.Y, at.Z, kMiss[static_cast<int>(facing)],

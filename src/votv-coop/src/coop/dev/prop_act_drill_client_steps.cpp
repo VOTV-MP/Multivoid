@@ -5,10 +5,12 @@
 #include "coop/dev/prop_act_drill.h"
 #include "prop_act_drill_client_steps.h"
 
+#include "coop/dev/drill_chat_pace.h"
 #include "coop/element/registry.h"
 
 #include "ue_wrap/actors/effects.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -99,6 +101,42 @@ void StepAwaitCopy(const Row& row, void* /*player*/, uint64_t now) {
             return;
         }
         return;
+}
+
+void StepAwaitUpright(const Row& row, void* player, uint64_t now) {
+    // The next row's target is placed by this player's puppet, so the host waits for this line before it spawns it: a
+    // player lying in a ragdoll (mainPlayer.isRagdoll) has not finished, and the line waits for the flag to clear. The
+    // wait ends on that event; only a bound that runs out first says INVALID. The verdict of the step is already said.
+    static bool sSaid = false;
+    bool ragdoll = false, dead = false;
+    const bool read = ue_wrap::engine::ReadMainPlayerRagdollState(player, ragdoll, dead);
+    if (read && ragdoll && !dead) {
+        if (!sSaid) {
+            sSaid = true;
+            std::vector<ue_wrap::effects::Entry> fx;
+            std::string live;
+            if (!ue_wrap::effects::List(&fx)) live = " unread";
+            else
+                for (const auto& e : fx)
+                    if (e.live) live += " " + std::string(e.name.begin(), e.name.end());
+            UE_LOGI("%s c%d %s: the player is ragdolled after %s; live effects:%s", kTag, kClientSlot,
+                    PhaseName().c_str(), row.name, live.empty() ? " none" : live.c_str());
+        }
+        if (CExpired(kStandBoundMs)) {
+            UE_LOGW("%s c%d %s INVALID -- %s: the player stayed ragdolled", kTag, kClientSlot, PhaseName().c_str(), row.name);
+            RigSay(End::Invalid, std::string(row.name) + ": the player stayed ragdolled");
+            g_cstep = CStep::Done;
+        }
+        return;
+    }
+    if (!read) UE_LOGW("%s c%d %s: the player's ragdoll state could not be read; it is taken as standing", kTag, kClientSlot,
+                       PhaseName().c_str());
+    if (now < g_nextSayMs) return;   // a client's chat passes the host's rate limit only at the drills' spacing
+    sSaid = false;
+    Say(UprightHead(row));
+    g_nextSayMs = now + coop::dev::kTalkEveryMs;
+    ++g_crow;
+    CEnter(CStep::AwaitReady);
 }
 
 }  // namespace coop::dev::prop_act_drill

@@ -180,6 +180,7 @@ std::string SnackSettledHead(const Row& row);
 std::string SnackCopyNow(void* mirror);   // "uses <n> open <0|1>" of this client's copy, for a FAIL line
 void SnackHostMarker(const Row& row, coop::element::ElementId eid, const Baseline& base);   // HOST, each poll in AwaitDone
 void SnackStepReset();
+void SnackRestoreTilt();   // HOST: a tilted beer is put back as it was (the phase ended, or a bound ran out mid-tilt)
 const char* SnackHeldVerdict(void* held, const std::string& tail);
 bool SnackMirrorHoldsReady(void* mirror, const std::string& tail);   // CLIENT: the mirror's uses and open are the line's
 
@@ -206,6 +207,9 @@ uint64_t NowMs();
 const std::string& PhaseName();
 std::string ReadyHead(const Row& r);
 std::string DoneHead(const Row& r, int slot = kClientSlot);
+// The client's line that its player stands after a step (not ragdolled), said once its verdict is out and another row follows:
+// the host places the next row's target only after it.
+std::string UprightHead(const Row& r);
 // The head of a grab row's two mid-step lines: the client's "grabbed" and the host's "driven" follow it.
 std::string DragHead(const Row& r, bool fromHost);
 void Say(const std::string& line);

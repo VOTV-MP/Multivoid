@@ -16,11 +16,15 @@
 namespace coop::dev::prop_act_drill {
 
 enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
-                             AwaitReply, AwaitContents, AwaitPoison, AwaitCopy, Say, Done };
+                             AwaitReply, AwaitContents, AwaitPoison, AwaitCopy, AwaitUpright, Say, Done };
 
 constexpr uint64_t kCopyBoundMs = 30000;   // a snack arm: the act's end to this client's copies showing the host's state
+constexpr uint64_t kStandBoundMs = 60000;  // a step's end to the player standing again (a bound only says INVALID)
 
+extern CStep g_cstep;                                   // the machine's step
 extern uint64_t g_cNextMs;                              // the next poll of the step that waits
+extern uint64_t g_nextSayMs;                            // the next chat line this client may say
+extern size_t g_crow;                                   // the row the machine is on
 extern coop::element::ElementId g_ceid;                 // the step's target's eid
 extern ue_wrap::CachedObjRef g_mirror;                  // the step's target
 extern std::string g_readyRest;                         // the text after the host's ready line's eid
@@ -38,5 +42,8 @@ void ClientPass(const detail::Row& row, const char* what);
 void StepAwaitContents(const detail::Row& row, void* player, uint64_t now);
 void StepAwaitPoison(const detail::Row& row, void* player, uint64_t now);
 void StepAwaitCopy(const detail::Row& row, void* player, uint64_t now);
+// After a step's verdict went out and another row follows: waits for mainPlayer.isRagdoll to clear, then says the line the host
+// waits on before it places the next row, and moves to it.
+void StepAwaitUpright(const detail::Row& row, void* player, uint64_t now);
 
 }  // namespace coop::dev::prop_act_drill
