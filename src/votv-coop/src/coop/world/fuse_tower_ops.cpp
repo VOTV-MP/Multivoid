@@ -230,6 +230,8 @@ void Refused(uint8_t sender, const FuseTowerPayload& p, const char* refusal, Fau
 // Whether the fuse in the sender's hand paid for this insert, judged as the request arrives: the hold it was sent from,
 // if the hand lane still owes it, is applied first, then hand_spend counts the use. The result goes with the entry, so
 // a request that waits in the queue behind an earlier one is not judged against a hand that has emptied or moved on.
+// A request Spend never counted is the client's loss: the host cannot see its inventory, so it refunds only what it
+// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation).
 // The two easiest difficulties spend no fuse.
 bool PaidByHand(uint8_t sender, const FuseTowerPayload& p) {
     if (p.op != coop::net::kFuseTowerOpInsert || FK::EasyInsert()) return false;

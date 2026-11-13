@@ -228,6 +228,9 @@ bool HitSwings(uint8_t slot, std::wstring& item) {
 // Whether the upgrade in the sender's hand paid for this install, judged as the request arrives: the hold it was sent
 // from, if the hand lane still owes it, is applied first, then hand_spend counts the use. The result goes with the
 // entry, so a request that waits in the queue behind an earlier one is not judged against a hand that has moved on.
+// A request Spend never counted is the client's loss: the host cannot see its inventory, so it refunds only what it
+// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation) or by
+// an install at a generator unreadable at the take, which refunds nothing.
 bool PaidByHand(uint8_t sender, const PowerGridPayload& p) {
     if (p.op != coop::net::kPowerGridOpUpgrade) return false;
     coop::hand_item::ApplyOwedNow(sender);
@@ -582,6 +585,27 @@ sg::Verdict OnUpdUpgradesPre(const sg::Call& call) {
     return sg::Verdict::Run;
 }
 
+// A client's insert of a held upgrade, as it begins: the generator's playerUsedOn spends the upgrade it is handed, and
+// updUpgrades (watched above) runs after that, with no held actor left to announce. An upgrade from the hold slot is
+// announced to the host here, before the spend, so the hold is on the one ordered lane ahead of the install op, even
+// when it was picked up and used within one tick. A hold already announced makes none.
+sg::Verdict OnInsertPre(const sg::Call& call) {
+    auto* s = Connected();
+    if (!IsClient(s) || g_applying || !call.object || !coop::net_pump::IsInAnnouncedWorld(call.object))
+        return sg::Verdict::Run;
+    static void* s_fn = nullptr;
+    static int32_t s_off = -1;
+    if (call.function != s_fn) {
+        s_fn = call.function;
+        s_off = R::FindParamOffset(call.function, L"holdObject");
+    }
+    if (s_off < 0) return sg::Verdict::Run;
+    void* held = *reinterpret_cast<void* const*>(call.locals + s_off);
+    if (held && GEN::IsUpgrade(held) && coop::hand_item::IsLocalHandViewActor(held))
+        coop::hand_item::AnnounceHeldNow(*s, coop::players::Registry::Get().Local(), held);
+    return sg::Verdict::Run;
+}
+
 // A client's Activate press, as it begins: its generator and that generator's row.
 sg::Verdict OnActivatePre(const sg::Call& call) {
     RecordVerb(kVerbActivate, call.function);
@@ -641,6 +665,7 @@ UE_FACT_FN(kRowBreak, "power_grid", L"generator_C", L"break", Declared);
 UE_FACT_FN(kRowDamage, "power_grid", L"generator_C", L"damage", Declared);
 UE_FACT_FN(kRowFullFix, "power_grid", L"generator_C", L"fullFix", Declared);
 UE_FACT_FN(kRowUpdUpgrades, "power_grid", L"generator_C", L"updUpgrades", Declared);
+UE_FACT_FN(kRowPlayerUsedOn, "power_grid", L"generator_C", L"playerUsedOn", Declared);
 UE_FACT_FN(kRowUpd, "power_grid", L"generator_C", L"upd", Declared);
 UE_FACT_FN(kRowActionOptionIndex, "power_grid", L"generator_C", L"actionOptionIndex", Declared);
 UE_FACT_FN(kRowAddDamage, "power_grid", L"generator_C", L"addDamage", Declared);
@@ -656,6 +681,7 @@ constexpr WatchDef kWatches[] = {
     { &kRowDamage,            0x5047444D /*'PGDM'*/, &OnOwnEditPre,     &OnGenHostPost },
     { &kRowFullFix,           0x50474658 /*'PGFX'*/, &OnOwnEditPre,     &OnGenHostPost },
     { &kRowUpdUpgrades,       0x50475550 /*'PGUP'*/, &OnUpdUpgradesPre, &OnGenHostPost },
+    { &kRowPlayerUsedOn,       0x50475549 /*'PGUI'*/, &OnInsertPre,       nullptr },
     { &kRowUpd,               0x50475544 /*'PGUD'*/, &OnUpdPre,         &OnGenHostPost },
     { &kRowActionOptionIndex, 0x5047414F /*'PGAO'*/, &OnActivatePre,    &OnActivatePost },
     { &kRowAddDamage,         0x50474144 /*'PGAD'*/, &OnHitPre,         nullptr },
