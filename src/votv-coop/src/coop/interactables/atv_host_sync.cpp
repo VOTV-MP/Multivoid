@@ -2,6 +2,7 @@
 
 #include "coop/interactables/atv_host_sync.h"
 
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_gate.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_sync.h"
@@ -27,6 +28,7 @@ namespace {
 namespace A = ue_wrap::atv;
 using Payload = coop::net::AtvHostPayload;
 namespace op = coop::net::atv_host_op;
+namespace DE = coop::atv_drill_events;
 
 constexpr int kMaxModules = 16;   // what a state carries: Payload::modules
 
@@ -75,7 +77,7 @@ void* Find(const std::wstring& key) {
 // CLIENT: one host state written onto this peer's copy, then its sequence recorded as the newest this client applied.
 // Fuel and health as the host holds them, even over the syncer's own lower values (the burn of one round trip is lost,
 // which the design states); the marks; the modules through the ATV's own updUpgrades, only when they differ.
-void ApplyState(const std::wstring& key, void* atv, const Payload& p) {
+void ApplyState(const std::wstring& key, void* atv, const Payload& p, int source) {
     ApplyScope applying;
     A::SetFuel(atv, p.fuel);
     if (A::GetHealth(atv) != p.health) {
@@ -92,6 +94,20 @@ void ApplyState(const std::wstring& key, void* atv, const Payload& p) {
     }
     NoteAppliedStateSeq(key, p.stateSeq);
     ++g_n.applied;
+    DE::Note(DE::kStateApplied, static_cast<int32_t>(p.stateSeq), source, p.moduleCount, A::GetFuel(atv), A::GetHealth(atv));
+}
+
+// [dev] The drill's fixture: the next state for this ATV is held, not applied, until the copy builds its next condition
+// block, so the block carries the ack of the state before it (atv_host_sync.h).
+std::wstring g_holdKey;
+Payload g_held{};
+bool g_haveHeld = false;
+
+void ReleaseHeld() {
+    if (!g_haveHeld) return;
+    g_haveHeld = false;
+    void* atv = Find(g_holdKey);
+    if (atv) ApplyState(g_holdKey, atv, g_held, 0);
 }
 
 // ---- CLIENT: the open-request gate ----
@@ -197,6 +213,7 @@ bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before) 
     FillState(key, now, op::kState, p);
     s->SendReliable(coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
     ++g_n.published;
+    DE::Note(DE::kPublished, static_cast<int32_t>(p.stateSeq), now.count, 0, now.fuel, now.health);
     UE_LOGI("atv_host: '%ls' state #%u published -- fuel %.1f health %.1f modules %hs%s%s", key.c_str(), p.stateSeq,
             now.fuel, now.health, ModulesText(now).c_str(), (now.flags & coop::net::kAtvHostEmpty) ? " empty" : "",
             (now.flags & coop::net::kAtvHostBroken) ? " broken" : "");
@@ -225,7 +242,9 @@ void OnState(const Payload& p) {
         // The host's replay of a driver's horn: the copy sounds it and keeps its own controls.
         if (!atv) return;
         ApplyScope applying;
-        A::ReplayHorn(atv, (p.flags & coop::net::kAtvHostHornDown) != 0);
+        const bool down = (p.flags & coop::net::kAtvHostHornDown) != 0;
+        A::ReplayHorn(atv, down);
+        DE::Note(DE::kHornPlayed, down ? 1 : 0);
         return;
     }
     if (p.op == op::kAnswer) {
@@ -239,9 +258,12 @@ void OnState(const Payload& p) {
         ids.erase(std::find(ids.begin(), ids.end(), p.reqId));
         ++g_n.answered;
         coop::atv_gate::OnAnswer(p.reqId, p.module);
-        if (!ids.empty()) return;   // the state this answer carries is not applied: a request of this client's is still out
-        g_gate.erase(it);
-        if (atv && p.module != coop::net::atv_host_reason::kGone) ApplyState(key, atv, p);
+        const bool closed = ids.empty();
+        if (closed) {
+            g_gate.erase(it);
+            if (atv && p.module != coop::net::atv_host_reason::kGone) ApplyState(key, atv, p, 1);
+        }   // else the state this answer carries is not applied: a request of this client's is still out
+        DE::Note(DE::kAnswer, static_cast<int32_t>(p.reqId), p.module, closed ? 1 : 0, p.fuel, p.health, p.moduleCount);
         return;
     }
     if (p.op != op::kState) {
@@ -256,7 +278,21 @@ void OnState(const Payload& p) {
         ++g_n.gated;
         return;
     }
-    ApplyState(key, atv, p);
+    if (g_holdKey == key) {
+        g_held = p;
+        g_haveHeld = true;
+        return;
+    }
+    ApplyState(key, atv, p, 0);
+}
+
+void HoldNextStateForDrill(const std::wstring& key) {
+    ReleaseHeld();
+    g_holdKey = key;
+}
+
+void NoteBlockBuilt(const std::wstring& key) {
+    if (g_haveHeld && key == g_holdKey) ReleaseHeld();
 }
 
 uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
@@ -313,7 +349,7 @@ void NoteAtvIndexed(const std::wstring& key, void* atv) {
         if (coop::net::StringFromWireKey(it->key) != key) continue;
         const Payload p = *it;
         g_unadopted.erase(it);
-        if (!VitalsGated(key)) ApplyState(key, atv, p);
+        if (!VitalsGated(key)) ApplyState(key, atv, p, 2);
         return;
     }
 }

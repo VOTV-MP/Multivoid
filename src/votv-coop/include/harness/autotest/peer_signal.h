@@ -29,6 +29,10 @@ bool Await(const char* name, int seconds = 240);
 // Await, and `out` receives the signal's first line. Same fresh-only rule and the same INVALID verdict on a timeout.
 bool AwaitText(const char* name, std::string& out, int seconds = 240);
 
+// The signal `name`'s first line if it was written since Begin, without waiting and without a verdict on a miss: for a drill
+// that polls a signal alongside another state.
+bool Peek(const char* name, std::string& out);
+
 namespace detail {
 void SleepStep();                                    // one 100 ms poll step
 void ReportTimeout(const char* what, int boundSeconds);  // the INVALID verdict of WaitFor

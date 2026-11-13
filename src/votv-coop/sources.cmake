@@ -87,6 +87,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/woodchipper_gate.cpp
     src/coop/interactables/atv_gate.cpp
     src/coop/interactables/atv_host_judge.cpp
+    src/coop/interactables/atv_drill_events.cpp
     src/coop/interactables/atv_host_sync.cpp
     src/coop/interactables/upgrade_sync.cpp
     src/coop/interactables/interactable_sync.cpp

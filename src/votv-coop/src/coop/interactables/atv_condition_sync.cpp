@@ -6,6 +6,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/wire_key_util.h"
@@ -67,6 +68,8 @@ bool ApplyVitalsRule(void* actor, const std::wstring& key, bool fromHost, const 
                      AC::Snapshot& in) {
     namespace H = coop::atv_host_sync;
     const float curFuel = ue_wrap::atv::GetFuel(actor), curHealth = ue_wrap::atv::GetHealth(actor);
+    const float blockFuel = in.fuel;
+    namespace DE = coop::atv_drill_events;
     if (fromHost) {
         if (H::VitalsGated(key)) {
             in.fuel = curFuel;
@@ -74,15 +77,18 @@ bool ApplyVitalsRule(void* actor, const std::wstring& key, bool fromHost, const 
         } else {
             H::NoteAppliedStateSeq(key, p.ackSeq);
         }
+        DE::Note(DE::kBlock, 1, 0, 0, curFuel, in.fuel, blockFuel);
         return false;
     }
-    if (p.ackSeq == H::CurrentStateSeq(key)) {
+    const bool acked = p.ackSeq == H::CurrentStateSeq(key);
+    if (acked) {
         in.fuel = std::fmin(curFuel, in.fuel);
         in.health = std::fmin(curHealth, in.health);
     } else {
         in.fuel = curFuel;
         in.health = curHealth;
     }
+    DE::Note(DE::kBlock, 0, acked ? 1 : 0, 0, curFuel, in.fuel, blockFuel);
     return in.fuel < curFuel || in.health < curHealth;
 }
 

@@ -15,10 +15,22 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net { class Session; }
 
 namespace coop::atv_gate {
+
+// The ATV functions this module watches, one row each (the verbs' own bodies and the honk key's two events).
+enum Row : int { kFuelUp, kToolbox, kUsedOn, kTake, kHonkPress, kHonkRelease, kRowCount };
+
+// [dev] How often `row`'s watch has run this process, one relaxed bump a hit (the honk rows at their POST, the others at
+// their PRE): the ATV drill's way to learn that the game answered an act. Any thread.
+uint32_t Seen(Row row);
+
+// [dev] A request the drill makes in a player's place, a forged one: registered in the open-request gate and sent as the
+// real path does (op = atv_host_op, a horn press for kHorn). The id, or 0 when nothing was sent. Game thread.
+uint32_t SendForDrill(const std::wstring& key, uint8_t op, float amount, uint8_t module);
 
 // Register the watches, once for the process, from the load-window installs (subsystems::InstallLoadWatchers). A watch
 // that did not register is said in one ERROR line. Idempotent. Any thread.

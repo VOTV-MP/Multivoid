@@ -2,6 +2,9 @@
 
 #include "coop/interactables/atv_gate.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/net/protocol.h"
@@ -43,7 +46,7 @@ UE_FACT_FN(kRowUpgradeTake, "atv_gate", L"ATV_C", L"upgradeTake", Declared);
 UE_FACT_FN(kRowHonkPress, "atv_gate", L"ATV_C", L"InpActEvt_atv_honk_K2Node_InputActionEvent_14", Declared);
 UE_FACT_FN(kRowHonkRelease, "atv_gate", L"ATV_C", L"InpActEvt_atv_honk_K2Node_InputActionEvent_15", Declared);
 
-enum Row { kFuelUp, kToolbox, kUsedOn, kTake, kHonkPress, kHonkRelease, kRowCount };
+namespace DE = coop::atv_drill_events;
 const ue_wrap::facts::Function* const kRows[kRowCount] = {&kRowFuelUp,    &kRowToolboxFix, &kRowPlayerUsedOn,
                                                           &kRowUpgradeTake, &kRowHonkPress, &kRowHonkRelease};
 const char* const kRowTag[kRowCount] = {"fuelUp", "toolboxFix", "playerUsedOn", "upgradeTake", "honk press", "honk release"};
@@ -52,6 +55,7 @@ constexpr float kMax = 100.f;
 constexpr size_t kMaxTakeoffs = 8;
 
 std::atomic<bool> g_watched{false};
+std::atomic<uint32_t> g_seen[kRowCount];   // per row: the watch's hits, for the drill
 std::atomic<uint32_t> g_registered{0};   // bit i: row i's watch registered
 bool g_settled = false;                  // game thread
 
@@ -94,9 +98,11 @@ Who RoleNow() {
 
 sg::Verdict OnPre(const sg::Call& call) {
     const int row = call.tag - kTagBase;
+    if (row < 0 || row >= kRowCount) return sg::Verdict::Run;
+    g_seen[row].fetch_add(1, std::memory_order_relaxed);
     Pend& pd = g_pend[row];
     pd.valid = false;
-    if (H::Applying() || row < 0 || row >= kRowCount) return sg::Verdict::Run;
+    if (H::Applying()) return sg::Verdict::Run;
     const Who role = RoleNow();
     if (role == Who::None) return sg::Verdict::Run;
     const bool client = role == Who::Client;
@@ -135,6 +141,15 @@ sg::Verdict OnPre(const sg::Call& call) {
 
 // ---- POST: the host publishes what changed; a client asks for what its copy's verb did ----
 
+// The request a client's POST owes the host: the id it was opened under, or 0 and the drill's event that the act ran with
+// none opened (the open-request gate refused it, or the row is off).
+uint32_t Request(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
+    const uint32_t id = H::Ask(key, opcode, amount, module);
+    if (id) DE::Note(DE::kAsked, opcode, static_cast<int32_t>(id), 0, amount);
+    else DE::Note(DE::kUngated, opcode);
+    return id;
+}
+
 bool Has(const H::Vitals& v, uint8_t m) { return std::find(v.modules, v.modules + v.count, m) != v.modules + v.count; }
 
 void OnPost(const sg::Call& call) {
@@ -158,21 +173,21 @@ void OnPost(const sg::Call& call) {
         // The pour's gain is the fuel the copy's own body took from the can; a zero gain asks nothing.
         const float gain = std::fmin(now.fuel - pd.before.fuel, kMax);
         if (pd.viaPour && gain > 0.f) {
-            if (H::Ask(key, op::kRefuel, gain, 0))
+            if (Request(key, op::kRefuel, gain, 0))
                 UE_LOGI("atv_gate: this player poured %.1f into '%ls' -- the host adds it", gain, key.c_str());
         }
         break;
     }
     case kToolbox:
         // Once per hold: the first call that took the health to 100; the frames after it change nothing.
-        if (std::floor(pd.before.health) < kMax && std::floor(now.health) >= kMax && H::Ask(key, op::kRepair, 0.f, 0))
+        if (std::floor(pd.before.health) < kMax && std::floor(now.health) >= kMax && Request(key, op::kRepair, 0.f, 0))
             UE_LOGI("atv_gate: this player repaired '%ls' -- the host repairs it", key.c_str());
         break;
     case kUsedOn:
         if (now.count == pd.before.count + 1) {
             for (int i = 0; i < now.count; ++i) {
                 if (Has(pd.before, now.modules[i])) continue;
-                if (H::Ask(key, op::kFit, 0.f, now.modules[i]))
+                if (Request(key, op::kFit, 0.f, now.modules[i]))
                     UE_LOGI("atv_gate: this player fitted module %u on '%ls' -- the host fits it",
                             static_cast<unsigned>(now.modules[i]), key.c_str());
                 break;
@@ -181,7 +196,7 @@ void OnPost(const sg::Call& call) {
         break;
     case kTake:
         if (now.count + 1 == pd.before.count && !Has(now, pd.value)) {
-            const uint32_t id = H::Ask(key, op::kTakeoff, 0.f, pd.value);
+            const uint32_t id = Request(key, op::kTakeoff, 0.f, pd.value);
             if (!id) break;
             UE_LOGI("atv_gate: this player took module %u off '%ls' -- the host takes it off",
                     static_cast<unsigned>(pd.value), key.c_str());
@@ -203,8 +218,10 @@ void OnPost(const sg::Call& call) {
 // The honk key's press and release on the copy a player drives. The host's own goes to every client; a client's, as the
 // ATV's syncer, goes to the host.
 void OnHonkPost(const sg::Call& call) {
+    const int row = call.tag - kTagBase;
+    if (row == kHonkPress || row == kHonkRelease) g_seen[row].fetch_add(1, std::memory_order_relaxed);
     if (H::Applying()) return;
-    const bool down = call.tag - kTagBase == kHonkPress;
+    const bool down = row == kHonkPress;
     const std::wstring key = A::GetKeyString(call.object);
     if (!coop::atv_sync::AnnounceableAtvKey(key)) return;
     const Who role = RoleNow();
@@ -219,6 +236,16 @@ void OnHonkPost(const sg::Call& call) {
 }
 
 }  // namespace
+
+uint32_t Seen(Row row) { return row >= 0 && row < kRowCount ? g_seen[row].load(std::memory_order_relaxed) : 0u; }
+
+uint32_t SendForDrill(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
+    if (opcode == op::kHorn) {
+        H::AskHorn(key, true);
+        return 0;
+    }
+    return H::Ask(key, opcode, amount, module);
+}
 
 void Install(coop::net::Session* /*session*/) {
     if (g_watched.exchange(true, std::memory_order_acq_rel)) return;

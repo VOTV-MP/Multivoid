@@ -71,16 +71,18 @@ CFG_ENUM(atv_eject_drill, "atv_eject_drill", "dev", "off", "off|host|client",
 CFG_FLAG(atv_eject_red, "atv_eject_red", "dev", false, "VOTVCOOP_ATV_EJECT_RED",
     "Developer red arm: never set. The receiving copy inverts its wheel presence rule (the host's own presence is "
     "skipped, a client syncer's is consumed), so both arms of the ATV eject drill must fail.")
-CFG_FLAG(atv_gate_probe, "atv_gate_probe", "dev", false, "VOTVCOOP_ATV_GATE_PROBE",
-    "Probe (BOTH peers): which of an ATV's own functions fire (gascanFuel, fuelUp, toolboxFix, playerUsedOn, upgradeTake, "
-    "Upd Lights, setBrake, unturbo, the lights, brake, turbo and honk input events), one [ATVG] line each -- the role, the "
-    "function, the seam that saw it (the script gate or ProcessEvent), the ATV's key, whether the copy is a mirror and the "
-    "calling Blueprint function. At most 200 lines per function and seam, the rest counted. Observe only: it never "
-    "cancels a call. Off, no watch is registered.")
-CFG_FLAG(atv_gate_drill, "atv_gate_drill", "dev", false, "VOTVCOOP_ATV_GATE_DRILL",
-    "Drill (BOTH peers, with atv_gate_probe=1): the client walks to the save's ATV with the director and does each act the "
-    "player's way -- a gas can, a toolbox and a module in the hand pressed on it with the fire key, the module taken off "
-    "through the upgrades screen, then seated, the lights, brake, turbo and horn keys -- and the host does the can, the "
-    "toolbox and the seat on its own ATV. Each step prints a [ATVG-DRILL] MEASURE line with that peer's [ATVG] counts. "
-    "Ends on rig: VERDICT atvprobe PASS (every step ran) or INVALID with the reason. MUTATES the ATV's fuel, health "
-    "and modules.")
+CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
+    "off|green|atv_gate_off|atv_ack_off|atv_judge_off|atv_dup_module|atv_refund_off|atv_publish_off|atv_joiner_rows_off|"
+    "atv_bits_off|atv_horn_judge_off|atv_gate_hold_off|atv_park_off",
+    "VOTVCOOP_ATV_GATE_DRILL",
+    "Drill (BOTH peers, plus a third client as observer): the client, the host and the observer do each act a player does "
+    "at an ATV -- a refuel, a repair, a module fitted and taken off, the seat, lights, brake, turbo and horn, a drive -- and "
+    "every step is decided by an event of the ATV host path, never a clock (coop/interactables/atv_drill_events). The client "
+    "leaves and rejoins for the joiner and park steps. Ends on rig: VERDICT atv PASS|FAIL|INVALID said by the host, each "
+    "step on an `atv-drill: step <n> PASS|FAIL|INVALID` line. green is the whole run; each other value is a red, read only "
+    "by the module whose mechanism it disables, and must FAIL at its step: atv_gate_off (the client's rows ask nothing), "
+    "atv_ack_off (the host takes a block's vitals unacked), atv_judge_off (every request judged ok), atv_dup_module (a "
+    "duplicate fit allowed), atv_refund_off (a refused fit not refunded), atv_publish_off (the host's own acts not "
+    "published), atv_joiner_rows_off (a state for an unadopted ATV dropped), atv_bits_off (a block's control bits "
+    "ignored), atv_horn_judge_off (any sender may press the horn), atv_gate_hold_off (a state applies while the "
+    "open-request gate is shut), atv_park_off (a request is judged before its sender's world is ready). MUTATES the ATV.")

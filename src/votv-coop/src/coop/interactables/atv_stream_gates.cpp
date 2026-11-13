@@ -6,6 +6,8 @@
 
 #include "coop/interactables/atv_sync_internal.h"
 
+#include "coop/interactables/atv_drill_events.h"
+
 #include "coop/net/protocol.h"
 
 #include "ue_wrap/devices/atv.h"
@@ -69,6 +71,14 @@ void TakeControls(AtvEntry& e, uint8_t stateBits) {
     if ((changed & coop::net::kAtvLights) && lights != A::GetLights(e.actor)) A::SetLights(e.actor, lights);
     if ((changed & coop::net::kAtvBrake) && brake != A::GetBrake(e.actor)) A::SetBrake(e.actor, brake);
     if ((changed & coop::net::kAtvTurbo) && turbo != A::GetTurbo(e.actor)) A::SetTurbo(e.actor, turbo);
+    if (changed) {
+        // [dev] the drill's event: which of the changed bits the copy now shows as the block says.
+        uint8_t equal = 0;
+        if (lights == A::GetLights(e.actor)) equal |= coop::net::kAtvLights;
+        if (brake == A::GetBrake(e.actor)) equal |= coop::net::kAtvBrake;
+        if (turbo == A::GetTurbo(e.actor)) equal |= coop::net::kAtvTurbo;
+        coop::atv_drill_events::Note(coop::atv_drill_events::kControls, changed, changed & equal);
+    }
 }
 
 // HOST: the re-arm of an accepted explosion request. The game re-arms at health >= 0 (its explode test is the old value

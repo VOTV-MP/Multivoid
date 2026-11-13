@@ -93,7 +93,6 @@
 #include "coop/dev/fireext_drill.h"  // [dev] a wall-mounted fire extinguisher taken off and carried, watched on both peers
 #include "coop/dev/feedback_probe.h"  // [dev] every hint and 2D sound this peer makes, logged by role
 #include "coop/dev/kerfur_seat_probe.h"  // [dev] which seat sees a kerfur radial command, logged by role
-#include "coop/dev/atv_gate_probe.h"  // [dev] which of an ATV's own functions fire, and through which seam
 #include "coop/dev/requester_feedback_exercise.h"  // [dev] the requester feedback's hint, raised inside a scope for slot 1
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/food_clock_probe.h"  // the food record's arrival catch-up and the two clocks behind it
@@ -192,7 +191,6 @@ void Install(coop::net::Session& session) {
     coop::dev::impact_damage_probe::Install();  // [dev] the impactDamage watch (a latched read unless impact_damage_probe=1)
     coop::dev::feedback_probe::Install(&session);  // [dev] the hint watch and the 2D sound hook (a latched read unless feedback_probe=1)
     coop::dev::kerfur_seat_probe::Install(&session);  // [dev] the actionName and useSelectedAction watches (a latched read unless kerfur_seat_probe=1)
-    coop::dev::atv_gate_probe::Install(&session);  // [dev] the ATV's function watches and observers (a latched read unless atv_gate_probe=1)
     coop::dev::requester_feedback_exercise::Install(&session);  // [dev] the host's one hint inside slot 1's scope (a latched read unless requester_feedback_exercise=1)
 }
 
@@ -229,7 +227,6 @@ void EndSession() {
     coop::dev::impact_damage_probe::OnDisconnect();  // [dev] the session's call count is said and cleared
     coop::dev::feedback_probe::OnDisconnect();  // [dev] the window's dropped count is said
     coop::dev::kerfur_seat_probe::OnDisconnect();  // [dev] the session's call counts are said and cleared
-    coop::dev::atv_gate_probe::OnDisconnect();  // [dev] the session's call counts are said and cleared
     coop::dev::requester_feedback_exercise::OnDisconnect();  // [dev] the once-latch clears
     coop::dev::pr64_drill::OnDisconnect();  // [dev] the arm's steps and its walk belong to one session
     coop::dev::container_route_drill::OnDisconnect();  // [dev] the fixtures and the steps belong to one session

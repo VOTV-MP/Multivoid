@@ -1,21 +1,23 @@
-// coop/dev/atv_gate_drill_detail.h -- private to the ATV gate drill: the acts a player does at an ATV
-// (atv_gate_drill_acts.cpp) as the sequencer (atv_gate_drill.cpp) runs them. Every act is called from the drill's own
-// thread, hops to the game thread for the engine, and returns false with `why` set when the act could not be issued.
-// An act that was issued and drew no answer from the game is a result to measure, not a failure.
+// coop/dev/atv_gate_drill_detail.h -- private to the ATV drill: the acts a player does at an ATV (atv_gate_drill_acts.cpp),
+// the steps that judge them (atv_gate_drill_steps.cpp, atv_gate_drill_forged.cpp) and the sequencer that runs both
+// (atv_gate_drill.cpp). Every act is called from the drill's own thread, hops to the game thread for the engine, and returns
+// false with `why` set when it could not be issued; a step whose act could not be issued is INVALID.
 #pragma once
 
-#include "coop/dev/atv_gate_probe.h"
+#include "coop/interactables/atv_drill_events.h"
+
+#include "harness/autotest/peer_signal.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
-#include <initializer_list>
 #include <string>
+#include <utility>
 
 namespace coop::dev::atv_gate_drill::detail {
 
-inline constexpr const char* kTag = "atvprobe";
+inline constexpr const char* kTag = "atv";
 
 // Runs `fn` on the game thread and returns when it has run. The drill's thread calls this; the game thread never does.
 template <class Fn>
@@ -23,93 +25,128 @@ void OnGt(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
 }
 
-// One act: `key` names the ATV (its game Key, the same on both peers).
-using ActFn = bool (*)(const std::wstring& key, std::string& why);
+// The three peers: the host, the client in slot 1 (the actor of most steps, which leaves and rejoins) and the observer.
+enum Role : int { kHost = 0, kClient = 1, kObserver = 2, kRoles = 3 };
+const char* RoleName(Role r);
 
-// ---- the ATV and what the sequencer reads of it ----
-
-// What a step reads of the ATV on this peer, before and after.
+// What a step reads of the ATV on this peer, for an act's precondition.
 struct Vitals {
     float fuel = -1.f;
     float health = -1.f;
     int   modules = -1;
     bool  seated = false;   // this peer's player is in the seat
-    int   alt = -1;         // input_alt, which the horn writes and the Fly module shares; -1 unreadable
-    int   fly = -1;         // the Fly module flag the horn sets
-    int   hasFly = -1;      // the Fly module is fitted
 };
 Vitals ReadVitals(const std::wstring& key);
 
 // The world's ATV nearest the local player by NavMesh route, its key; empty when none has a route. Host side.
 std::wstring ChooseAtv();
-
-// The copy this peer holds under `key` is indexed. Client side.
-bool CopyResolves(const std::wstring& key);
-
-// The director walks the local player to within reach of the ATV; a deadline bounds it.
-bool WalkToAtv(const std::wstring& key, std::string& why);
+bool CopyResolves(const std::wstring& key);                       // this peer's copy under `key` is indexed
+bool WalkToAtv(const std::wstring& key, std::string& why);        // the director walks the player beside the ATV
 
 // ---- the acts ----
+bool PourCan(const std::wstring& key, std::string& why);          // a gas can in the hand, the fire key held on the ATV
+bool UseToolbox(const std::wstring& key, std::string& why);       // a toolbox in the hand, the fire key held on the ATV
+bool FitModule(const std::wstring& key, std::string& why);        // a module in the hand, the fire key on the ATV
+bool TakeModuleOff(const std::wstring& key, std::string& why);    // the upgrades screen and a click on a module's button
+bool ModuleToHand(const std::wstring& key, std::string& why);     // the module in the hand, no act
+bool EmptyHand(const std::wstring& key, std::string& why);
+bool Sit(const std::wstring& key, std::string& why);              // the game's seat verb
+bool Leave(const std::wstring& key, std::string& why);            // the dismount key
+bool Lights(const std::wstring& key, std::string& why);           // the lights key
+bool Brake(const std::wstring& key, std::string& why);            // the brake key
+bool TurboOn(const std::wstring& key, std::string& why);          // the turbo key down, left down
+bool HornPress(const std::wstring& key, std::string& why);        // the horn key down
+bool HornRelease(const std::wstring& key, std::string& why);      // the horn key up
+bool HornTap(const std::wstring& key, std::string& why);          // down and up
+bool DriveOn(const std::wstring& key, std::string& why);          // the brake off and the throttle key down
+void DriveOff(const std::wstring& key);                           // the throttle key up
 
-bool PourCan(const std::wstring& key, std::string& why);        // a gas can in the hand, the fire key held on the ATV
-bool UseToolbox(const std::wstring& key, std::string& why);     // a toolbox in the hand, the fire key held on the ATV
-bool FitModule(const std::wstring& key, std::string& why);      // a module in the hand, the fire key on the ATV
-bool FitFly(const std::wstring& key, std::string& why);         // the Fly module in the hand, the fire key on the ATV
-bool TakeModuleOff(const std::wstring& key, std::string& why);  // the upgrades screen and a click on a module's button
-bool Sit(const std::wstring& key, std::string& why);            // the game's seat verb
-bool Leave(const std::wstring& key, std::string& why);          // the brake key, then the dismount key
-bool Lights(const std::wstring& key, std::string& why);         // the lights key
-bool Brake(const std::wstring& key, std::string& why);          // the brake key
-bool Turbo(const std::wstring& key, std::string& why);          // the turbo key down and up
-bool Honk(const std::wstring& key, std::string& why);           // the horn key down and up
+// The host's own copy's fuel and health set, published through the host's one publish point as any change of the host copy.
+bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why);
 
-// The ATV's fuel on this peer's copy set to the low value a refuel measures a gain from. A setup write, not an act.
-bool Drain(const std::wstring& key, std::string& why);
+// A fitted module's value on this peer's copy (the first), or -1.
+int FirstModule(const std::wstring& key);
+// The hand holds a module prop.
+bool HandHoldsModule();
 
-// The seated player's throttle key held for kBurnS seconds with the brake on: the window in which a copy nobody drives
-// is read for burn (the step's actor drives; the other peer's copy is the idle one).
-bool IdleBurn(const std::wstring& key, std::string& why);
+// ---- the sequencer's shared state, and what a step is ----
 
-// The horn's two events fired on this peer's own copy while nobody sits, each logging the horn's fields before and after.
-bool HonkReplayPress(const std::wstring& key, std::string& why);
-bool HonkReplayRelease(const std::wstring& key, std::string& why);
+namespace DE = coop::atv_drill_events;
 
-// A gas can released from the hand over the ATV's fuelbox with the drop key.
-bool DropCanInFuelbox(const std::wstring& key, std::string& why);
+inline constexpr int kEventS = 40;   // a bound on an event: past it the run is INVALID, never a verdict
 
-// A note the last act left for the other peer (the can's key), taken once. The sequencer sends it with the act's signal;
-// the observer hands it to ObserveNote with the step's name.
-std::string TakeNote();
-void ObserveNote(const char* step, const std::string& note);
+// A verdict decided anywhere ends every peer's sequence: the deciding peer marks `atv_end` ("F <text>" or "I <text>"), the host
+// says the verdict at once, and every wait of the sequencer returns on the mark. Aborted() is true from then on.
+void SetRole(Role r);   // this peer's role, set once at the start
+bool Aborted();
+void End(char kind, const std::string& text);   // decide the run's end here: mark it, and say it when this is the host
+// The signal `name`, polled; false when the run was aborted or the bound passed (INVALID is decided by End).
+bool AwaitMark(const std::string& name, std::string& out, int boundS);
+void SleepStep();
 
-// ---- the helpers the act files share (atv_gate_drill_acts.cpp) ----
+template <class Pred>
+bool WaitUntil(const char* what, int boundS, Pred pred) {
+    for (int i = 0; i < boundS * 10; ++i) {
+        if (Aborted()) return false;
+        if (pred()) return true;
+        SleepStep();
+    }
+    if (!Aborted()) End('I', std::string(what) + " not within " + std::to_string(boundS) + " s");
+    return false;
+}
 
-inline constexpr int   kAnswerS = 6;          // the game answers a fire press within this, or it did not
-inline constexpr float kLowFuel = 20.f;       // the tank a refuel's gain is measured from
-inline constexpr float kCanFuel = 100.f;      // a gas can's hold record loads empty without it
-inline constexpr const wchar_t* kCanClass = L"prop_gascan_C";
+enum class Out { Pass, Fail, Invalid, Stopped };
+struct Result {
+    Out out = Out::Stopped;
+    std::string text;
+};
+inline Result Pass(std::string t) { return {Out::Pass, std::move(t)}; }
+inline Result Fail(std::string t) { return {Out::Fail, std::move(t)}; }
+inline Result Invalid(std::string t) { return {Out::Invalid, std::move(t)}; }
+inline Result Stopped() { return {Out::Stopped, "the run was decided elsewhere"}; }
 
-void* Me();                                                                   // the local player; game thread
-void* Atv(const std::wstring& key);                                           // this peer's copy under `key`; game thread
-void* ObjProp(void* o, const wchar_t* name);                                  // a pointer property by name, or null
-bool ReadFloat(void* o, const wchar_t* name, float& v);
-bool WriteFloat(void* o, const wchar_t* name, float v);
-bool CallByName(void* obj, const wchar_t* name);                              // a no-parameter function, called as the engine does
-bool HandIs(const wchar_t* cls);                                              // drill thread
-bool HandEmpty();                                                             // drill thread
-bool TakeHand(const wchar_t* row, const wchar_t* cls, const float* fuel = nullptr);   // drill thread
-bool Rose(const atv_gate_probe::Counts& base, std::initializer_list<atv_gate_probe::Fn> fns);   // drill thread
-atv_gate_probe::Counts ProbeCounts();                                         // drill thread
-bool WalkTo(const ue_wrap::FVector& at, float reachCm, bool carry, const char* what, std::string& why);   // drill thread
-bool PressAtv(const std::wstring& key, const wchar_t* fn, std::string& why);  // one of the ATV's key events, seated; drill thread
-const char* RoleName();
+// One step as one peer sees it.
+struct Ctx {
+    Role me = kHost;
+    std::wstring key;
+    std::string id;
+    uint32_t cur[DE::kEventCount] = {};   // each event's count before the step's setup: a step reads what follows
+    uint32_t seq0 = 0;                    // the host's stateSeq at the step's barrier
+    uint32_t reqId = 0;                   // the forged request the actor made
+    float fuel0 = -1.f, health0 = -1.f;   // this copy's vitals at the barrier
+    int modules0 = -1;
+};
 
-// A bool property of `o` (-1 when the class has none); game thread.
-int ReadBoolField(void* o, const wchar_t* name);
+// A fact one peer leaves for the others in this step ("<id>_f_<role>"), and the wait for it.
+void Fact(Ctx& c, const std::string& text);
+bool AwaitFact(Ctx& c, Role from, std::string& text);
 
-// This copy's own isDrive read every half second, on a helper thread, from Start to Stop; Stop says the count of true
-// readings. For the two idle-burn windows, on both peers: a copy nobody drives with isDrive false burns nothing of its own.
-void StartDriveSampling(const std::wstring& key);
-void StopDriveSampling(const char* drivenBy);
+// The next record of `e` that `pred` accepts, polled. 1 found, 0 the bound passed (INVALID said), -1 the run ended.
+template <class Pred>
+int WaitRec(Ctx& c, DE::Event e, Pred pred, DE::Rec& out) {
+    for (int i = 0; i < kEventS * 10; ++i) {
+        if (Aborted()) return -1;
+        while (DE::Next(e, c.cur[e], out))
+            if (pred(out)) return 1;
+        SleepStep();
+    }
+    if (!Aborted()) End('I', "no decision event within " + std::to_string(kEventS) + " s");
+    return 0;
+}
+
+struct Step {
+    const char* id;
+    Role actor;
+    const char* what;
+    bool (*prelude)(Ctx&, std::string&);   // host only, before the barrier
+    bool (*setup)(Ctx&, std::string&);     // every peer, after the barrier and before the act
+    bool (*act)(Ctx&, std::string&);       // the actor
+    Result (*decide)(Ctx&);                // every peer, on the events
+    void (*teardown)(Ctx&);                // every peer, after its decision
+};
+
+// The steps before the client leaves (atv_gate_drill_steps.cpp).
+extern const Step kSteps[];
+extern const int kStepCount;
 
 }  // namespace coop::dev::atv_gate_drill::detail

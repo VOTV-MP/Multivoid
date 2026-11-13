@@ -105,4 +105,10 @@ void AskHorn(const std::wstring& key, bool down);
 void NoteAtvGone(const std::wstring& key);
 void NoteAtvIndexed(const std::wstring& key, void* atv);
 
+// [dev] CLIENT, the ATV drill's fixture: the next state for `key` is held, not applied, until this copy builds its next
+// condition block (NoteBlockBuilt, from the block's fill), so that block carries the ack of the state before it. An empty
+// key disarms and applies a state still held.
+void HoldNextStateForDrill(const std::wstring& key);
+void NoteBlockBuilt(const std::wstring& key);
+
 }  // namespace coop::atv_host_sync

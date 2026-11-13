@@ -279,8 +279,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
         UE_LOGI("harness: mannequin_drill is a walker drill value (%s) -- spawning the mannequin drill thread", RoleStr(role));
         if (HANDLE h = ::CreateThread(nullptr, 0, &coop::dev::mannequin_walker_drill::Thread, nullptr, 0, nullptr)) ::CloseHandle(h);
     }
-    // The ATV gate probe's drill: each act a player does at an ATV, with atv_gate_probe saying which functions it reached.
-    SpawnIfRow(coop::config_registry::rows::atv_gate_drill, "ATV gate drill", &coop::dev::atv_gate_drill::Thread, role);
+    // The ATV drill: each act a player does at an ATV, decided on the events of the host path, green and eleven reds.
+    SpawnIfEnum(coop::config_registry::rows::atv_gate_drill, "ATV drill", &coop::dev::atv_gate_drill::Thread, role);
 }
 
 }  // namespace harness::autotest

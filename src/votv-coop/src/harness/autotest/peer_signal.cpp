@@ -85,6 +85,15 @@ bool AwaitText(const char* name, std::string& out, int seconds) {
     return false;
 }
 
+bool Peek(const char* name, std::string& out) {
+    const std::string path = g_dir + "\\" + name;
+    std::ifstream f(path, std::ios::binary);
+    std::string s;
+    if (!f || !std::getline(f, s) || s.empty() || !WrittenSinceStart(path)) return false;
+    out = s;
+    return true;
+}
+
 namespace detail {
 void SleepStep() { ::Sleep(100); }
 void ReportTimeout(const char* what, int boundSeconds) {

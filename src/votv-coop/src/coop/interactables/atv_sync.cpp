@@ -188,6 +188,7 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     const auto* session = g_session.load(std::memory_order_acquire);
     p.ackSeq = session && session->role() == coop::net::Role::Host ? coop::atv_host_sync::CurrentStateSeq(key)
                                                                       : coop::atv_host_sync::AppliedStateSeq(key);
+    coop::atv_host_sync::NoteBlockBuilt(key);   // [dev] the drill's held state is applied after this block's ack was read
     return true;
 }
 

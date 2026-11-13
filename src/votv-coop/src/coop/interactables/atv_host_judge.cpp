@@ -2,6 +2,7 @@
 
 #include "coop/interactables/atv_host_judge.h"
 
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/net/intent_bucket.h"
@@ -38,6 +39,7 @@ namespace A = ue_wrap::atv;
 namespace H = coop::atv_host_sync;
 namespace N = coop::net;
 namespace op = coop::net::atv_host_op;
+namespace DE = coop::atv_drill_events;
 namespace why = coop::net::atv_host_reason;
 using Payload = N::AtvHostPayload;
 using Clock = std::chrono::steady_clock;
@@ -118,10 +120,12 @@ void Refund(void* atv, uint8_t module) {
     ue_wrap::FVector at{};
     if (!cls || !ue_wrap::engine::TryGetActorLocation(atv, at)) {
         UE_LOGW("atv_host: no prop class for module %u -- the refused fit is not refunded", static_cast<unsigned>(module));
+        DE::Note(DE::kRefund, 0);
         return;
     }
     ue_wrap::engine::SpawnActor(cls, {at.X, at.Y, at.Z + 120.f});
     ++g_n.refunded;
+    DE::Note(DE::kRefund, 1);
 }
 
 bool WellFormed(const Payload& p) {
@@ -139,6 +143,9 @@ bool WellFormed(const Payload& p) {
 void Applied(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv,
              const H::Vitals& before, const char* what) {
     H::PublishIfChanged(key, atv, before);
+    H::Vitals after;
+    if (H::ReadVitals(atv, after))
+        DE::Note(DE::kAccepted, p.op, slot, static_cast<int32_t>(H::CurrentStateSeq(key)), after.fuel, after.health, after.count);
     ++g_n.accepted[p.op < 6 ? p.op : 0];
     UE_LOGI("atv_host: slot %u %s '%ls' on the host", static_cast<unsigned>(slot), what, key.c_str());
     Answer(s, slot, p, why::kOk, atv);
@@ -262,6 +269,7 @@ void Sound(const std::wstring& key, void* atv, bool down, int skipSlot) {
         H::ApplyScope applying;
         A::ReplayHorn(atv, down);
     }
+    DE::Note(DE::kHornPlayed, down ? 1 : 0);
     H::SendHorn(key, down, skipSlot);
 }
 
@@ -277,6 +285,7 @@ void OnHorn(N::Session& s, uint8_t slot, const std::wstring& key, const Payload&
     const auto held = g_hornDown.find(key);
     if (down) {
         if (t.syncerSlot != slot) {
+            DE::Note(DE::kHornHandled, slot, 1);
             ++g_n.hornsRefused;
             g_refusals.Note(slot, "a horn from a slot that does not sync the ATV", now);
             return;
