@@ -153,6 +153,10 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"skyUfo_C",                   // high-altitude sky UFO
     L"jellyfish_C",                // space jellyfish
     L"morningUfo_C",               // morningGay event UFO
+    L"ufo_ballfo_C",               // the gamemode's ambient UFOs (coop/world/ufo_sync): the ball,
+    L"ufo_boofo_spawn1_C",         // the boo,
+    L"ufo_pillfo_C",               // the pill,
+    L"ufo_joel_C",                 // and Joel over the radio tower
     L"tentacleBallsFollower_C",    // tentacle-balls follower
     L"soltomiaCleaning_C",         // soltomia cleaning craft
     L"kocker_C",                   // kocker

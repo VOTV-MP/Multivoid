@@ -75,6 +75,7 @@
 #include "coop/items/hook_anchor.h"
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
+#include "coop/world/ufo_sync.h"  // the paths of the UFOs still flying, and the Midas run
 #include "coop/world/spill_sync.h"
 #include "coop/world/vent_crawler_sync.h"
 #include "coop/world/weather_sync.h"
@@ -178,6 +179,8 @@ void ConnectReplayForSlot(int slot) {
     coop::event_active_sync::SendJoinSnapshotForSlot(slot);
     // Each creature's count, after its NPC spawn (the queue above, same lane): the joiner applies a count at the bind.
     coop::creature_event_relay::SendJoinSnapshotForSlot(slot);
+    // The rolled path of each ambient UFO still flying, after its world-actor spawn; the Midas run while it flies.
+    coop::ufo_sync::SendJoinSnapshotForSlot(slot);
     // The alarm lane's late-join answer: the current alarm state, unconditionally, so a mid-alarm
     // joiner starts its klaxon on arrival.
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);

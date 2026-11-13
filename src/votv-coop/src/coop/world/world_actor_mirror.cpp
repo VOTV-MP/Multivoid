@@ -18,6 +18,7 @@
 #include "coop/element/world_actor.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/world/ufo_sync.h"  // a UFO copy flies again; one the host ends gives back its event
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/class_resolve.h"
@@ -255,6 +256,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // overwritten each frame by the pose drive's location and rotation writes (the MTA
     // dead-reckoning model).
     E::SetActorTickEnabled(spawned, false);
+    coop::ufo_sync::OnMirrorMaterialized(spawned);  // an ambient UFO animates its own parts and flies again
     // A pose-driven mirror must not also simulate: the two fight and the mirror drifts off the
     // host's transform. The coin simulates with its sphere and the jellyfish with its capsule, each its
     // root; whatever component a mirrored class simulates with is stopped, found from its members.
@@ -311,6 +313,7 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
     // plus a destroy call. If its slot was recycled (this can race a world teardown), the plain
     // check passes the foreign occupant and the call runs on the wrong object.
     if (actor && sp.k2DestroyFn && R::IsLiveByIndex(actor, drained->GetInternalIdx())) {
+        coop::ufo_sync::OnMirrorEnding(actor);
         R::CallFunction(actor, sp.k2DestroyFn, nullptr);
         UE_LOGI("world-actor[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
                 payload.elementId, actor);

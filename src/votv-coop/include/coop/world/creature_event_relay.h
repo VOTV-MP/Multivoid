@@ -46,6 +46,11 @@ void OnMirrorBound(coop::element::ElementId eid, void* actor);
 // CLIENT, game thread (event_feed drain): a creature's count from the host.
 void OnReliable(const coop::net::CreatureEventActivePayload& payload);
 
+// Game thread: retract the registry entry `actor`'s own setEvent(true) made, when the registry holds one -- a lane
+// that destroys an actor whose script ends its event only on its own way out (coop/world/ufo_sync). True when it
+// held one and the retraction ran.
+bool RetractEntryOf(void* actor);
+
 // Teardown: retract what a client still has applied, drop both halves' state and the session.
 void OnDisconnect();
 
