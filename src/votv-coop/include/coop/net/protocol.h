@@ -693,8 +693,10 @@ enum class ReliableKind : uint16_t {
     // op 2 (HOST->ALL): the prop of that key carries this tag now, and `author` names the slot whose item it
     // was: every client applies it, and the author's held item is spent. op 3 (HOST->the requester): its
     // request was refused, the item stays, and the client may use it again; a client asks once until op 2
-    // for it or op 3 arrives. Never relayed. Late join: a joiner's save carries the tags that stood at its cut
-    // (coop/props/prop_nametag). PropNametagPayload.
+    // for it or op 3 arrives. Never relayed. Late join: a joiner's save carries the tags that stood at its cut, and its
+    // connect replay sends it, alone, an op 2 for each prop whose tag this session published, inside the snapshot
+    // scope ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by
+    // key (coop/props/prop_nametag). PropNametagPayload.
     PropNametag = 261,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host

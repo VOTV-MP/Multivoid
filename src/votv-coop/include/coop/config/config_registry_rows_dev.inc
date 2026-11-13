@@ -527,6 +527,9 @@ CFG_STRING(nametag_drill, "nametag_drill", "dev", "", "VOTVCOOP_NAMETAG_DRILL", 
     "copy carries the host's tag.")
 CFG_FLAG(nametag_client_runs, "nametag_client_runs", "dev", false, "VOTVCOOP_NAMETAG_CLIENT_RUNS",
     "Developer: a client's nametag runs the game's own use there instead of asking the host (the nametag drill's red).")
+CFG_FLAG(nametag_no_join_replay, "nametag_no_join_replay", "dev", false, "VOTVCOOP_NAMETAG_NO_JOIN_REPLAY",
+    "Developer (the host): the host does not name, at a joiner's connect, the tags put on since its save was cut (the "
+    "nametag drill's window red: the joiner's copy stays untagged).")
 CFG_ENUM(prop_syncer_drill, "prop_syncer_drill", "dev", "off", "off|kick|forge", "VOTVCOOP_PROP_SYNCER_DRILL",
     "Drill (host and BOTH clients, the same value; three peers): a client syncs a prop its own interaction moves. "
     "kick: the client in slot 1 walks to a keyed prop with the director, claims it, kicks it with the game's own "

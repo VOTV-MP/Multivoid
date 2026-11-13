@@ -69,6 +69,7 @@
 #include "coop/creatures/piramid_sync.h"  // piramid event choreography lane (mirror brain suppression + PyramidGather)
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/prop_nametag.h"  // the tags put on this session, again
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
@@ -103,6 +104,7 @@ void ConnectReplayForSlot(int slot) {
         coop::net::SnapshotSendScope scope(slot);  // the removes are the snapshot's, so the join gate passes them
         coop::join_window_baseline::SendDivergenceDeletes(slot);
         coop::hook_retrieve::SendJoinGone(slot);  // and the anchored hooks it holds that were taken since: its copy goes too
+        coop::prop_nametag::SendJoinTags(slot);  // and every tag put on this session, ahead of the snapshot's props: a copy its save loaded takes it, one the snapshot births waits for it
     }
     // Every dish code, sent here and held by the join gate until the snapshot completes, so a set that goes whole lands
     // before its Complete and a joined client holds the host's codes, a midnight since the capture

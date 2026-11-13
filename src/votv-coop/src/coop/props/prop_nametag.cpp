@@ -29,6 +29,7 @@
 #include <atomic>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -80,6 +81,18 @@ struct Parked {
 };
 coop::roster_ledger::PerSlotState<Parked> g_parked;
 uint64_t g_applied = 0, g_refused = 0;
+// HOST: the keys of the props whose tag this session published, which a joiner's connect replay names to it. A joiner's
+// save is cut at one instant and the host plays on while it loads; a publish is not sent to a slot before its
+// world-ready (session.cpp's pre-world gate), and a prop's spawn row and record carry no nametag (prop_save_data.h). A
+// set of keys: the tag itself is read off the prop at the replay, so it is the one then.
+std::set<std::wstring> g_tagged;
+constexpr size_t       kMaxTagged = 1024;
+bool                   g_taggedFullSaid = false;
+// CLIENT: tags for props this client does not hold yet, by key, latest wins. A joiner's replay reaches it ahead of the
+// snapshot that births some of the props; the park is retried only when the key index moves (prop_key_index::Version).
+std::map<std::wstring, std::wstring> g_unbound;
+uint64_t                             g_unboundVersion = 0;
+constexpr size_t                     kMaxUnbound = 256;
 
 bool TagSane(const std::wstring& t) {
     if (t.empty() || t.size() > kMaxTagChars) return false;
@@ -123,6 +136,13 @@ void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, con
         UE_LOGW("prop_nametag: the tag of prop '%ls' is %zu characters, more than the wire carries (%zu) -- the clients "
                 "keep the one they show", key.c_str(), tag.size(), kMaxTagChars);
         return;
+    }
+    if (g_tagged.size() < kMaxTagged || g_tagged.count(key)) {
+        g_tagged.insert(key);
+    } else if (!g_taggedFullSaid) {
+        g_taggedFullSaid = true;
+        UE_LOGW("prop_nametag: %zu props carry a tag published this session -- a joiner is not told the tags after them",
+                kMaxTagged);
     }
     const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, author, tag);
     if (!s.SendReliable(coop::net::ReliableKind::PropNametag, &p, sizeof(p)))
@@ -264,9 +284,21 @@ void OnHandApplied(uint8_t slot) {
 // CLIENT: the host's tag. The author's held item goes, as the game's own use takes it.
 void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author) {
     void* prop = coop::prop_key_index::Find(key);
-    if (!prop || !NT::ApplyPropNametag(prop, tag)) {
-        UE_LOGW("prop_nametag: the host's tag '%ls' for prop '%ls' did not apply here (%s)", tag.c_str(), key.c_str(),
-                prop ? "the copy did not take it" : "no copy of that key");
+    if (!prop) {
+        if (g_unbound.size() < kMaxUnbound || g_unbound.count(key)) {
+            g_unbound[key] = tag;
+            g_unboundVersion = coop::prop_key_index::Version();
+            UE_LOGI("prop_nametag: the host's tag '%ls' for prop '%ls' waits -- no copy of it here yet (%zu waiting)",
+                    tag.c_str(), key.c_str(), g_unbound.size());
+        } else {
+            UE_LOGW("prop_nametag: the host's tag '%ls' for prop '%ls' is dropped -- no copy of it here and %zu tags "
+                    "already wait", tag.c_str(), key.c_str(), kMaxUnbound);
+        }
+    } else {
+        g_unbound.erase(key);   // a newer word for a prop that is here: an older wait must not land over it
+        if (!NT::ApplyPropNametag(prop, tag))
+            UE_LOGW("prop_nametag: the host's tag '%ls' for prop '%ls' did not apply here (the copy did not take it)",
+                    tag.c_str(), key.c_str());
     }
     if (author != coop::players::Registry::Get().LocalPeerId() || g_pending.key != key) return;
     if (void* item = g_pending.item.Get()) E::DestroyActor(item);
@@ -281,6 +313,26 @@ void OnRefused(const std::wstring& key) {
     g_pending = Pending{};
 }
 
+// CLIENT: the waiting tags whose props have appeared. Nothing but the key index's own table moving can change an
+// answer, so the walk runs when its Version has.
+void RetryUnbound() {
+    if (g_unbound.empty()) return;
+    const uint64_t version = coop::prop_key_index::Version();
+    if (version == g_unboundVersion) return;
+    g_unboundVersion = version;
+    for (auto it = g_unbound.begin(); it != g_unbound.end();) {
+        void* prop = coop::prop_key_index::Find(it->first);
+        if (!prop) { ++it; continue; }
+        if (NT::ApplyPropNametag(prop, it->second))
+            UE_LOGI("prop_nametag: prop '%ls' is here now -- the host's tag '%ls' applied", it->first.c_str(),
+                    it->second.c_str());
+        else
+            UE_LOGW("prop_nametag: prop '%ls' is here now but did not take the host's tag '%ls'", it->first.c_str(),
+                    it->second.c_str());
+        it = g_unbound.erase(it);
+    }
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -290,6 +342,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
+    RetryUnbound();
     if (g_watchSettled) return;
     if (!g_watchRegistered) {
         g_watchRegistered = sg::WatchName(kRowHandUse, kTag, &OnUsePre, &OnUsePost);
@@ -331,6 +384,33 @@ void OnMsg(const PropNametagPayload& p, int senderPeerSlot) {
     OnPublish(key, TagOf(p), p.author);
 }
 
+// The join's answer, the shape of hook_retrieve's SendJoinGone and join_window_baseline's removes: a joiner's save is a
+// photograph, the host plays on while it loads, and a tag is not sent to a slot before its world-ready. So at the slot's
+// connect replay each prop whose tag this session published is named to that slot alone, with the tag it carries now.
+void SendJoinTags(int slot) {
+    if (!GT::IsGameThread() || slot < 1 || slot >= coop::players::kMaxPeers) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host || g_tagged.empty()) return;
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::nametag_no_join_replay);
+    if (s_off) return;   // the nametag drill's red: the join as it was before this answer
+    size_t sent = 0;
+    for (auto it = g_tagged.begin(); it != g_tagged.end();) {
+        void*      prop = nullptr;
+        const auto read = coop::prop_key_index::Resolve(*it, &prop);
+        if (read == coop::prop_key_index::Read::Miss) { it = g_tagged.erase(it); continue; }   // gone, and its tag with it
+        const std::wstring& key = *it++;
+        std::wstring tag;
+        if (read != coop::prop_key_index::Read::Hit || !NT::ReadPropNametag(prop, tag) || tag.size() > kMaxTagChars) {
+            UE_LOGW("prop_nametag: prop '%ls' could not be read at slot %d's connect replay -- its tag is not named",
+                    key.c_str(), slot);
+            continue;
+        }
+        const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, kAuthorHost, tag);
+        if (s->SendReliableToSlot(slot, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) ++sent;
+    }
+    UE_LOGI("prop_nametag: slot %d world-ready -- %zu of %zu tagged prop(s) named to it", slot, sent, g_tagged.size());
+}
+
 uint64_t AppliedForClients() { return g_applied; }
 
 void OnDisconnect() {
@@ -342,6 +422,10 @@ void OnDisconnect() {
     g_hostItem = g_hostProp = nullptr;
     g_hostTag.clear();
     g_itemClass.clear();
+    g_tagged.clear();
+    g_taggedFullSaid = false;
+    g_unbound.clear();
+    g_unboundVersion = 0;
     g_lastBySlot.clear();
     for (int i = 0; i < g_parked.size(); ++i) g_parked[i] = Parked{};
     g_session.store(nullptr, std::memory_order_release);

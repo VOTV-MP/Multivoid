@@ -536,7 +536,9 @@ prop's frozen and sleep converge with its snapshot row and its correction (stati
 a move gets a correction too, so an extinguisher taken off its mount during the window is loose on
 the joiner; a wall-attach component's owner converges its stuck state there through the component's
 own unstick or force-stick, so a sign pried in the window is off its wall. A stuck prop otherwise
-reaches a joiner through the save, which carries the frozen and static state. A prop's nametag comes with the save.
+reaches a joiner through the save, which carries the frozen and static state. A prop's nametag comes with the save, and a tag put on after the save's cut with the host's connect replay: each prop
+whose tag the session published is named to the joiner alone with the tag it carries then, ahead of the snapshot's
+props, so a copy the save loaded takes it at once and a prop the snapshot births takes it when it appears `[?]`.
 Container slices are
 sent per live container at the ready edge. A joiner gets no held-prop or driven-prop pose until its
 world is ready, since the release and the end edge that close them are not sent to a world that is

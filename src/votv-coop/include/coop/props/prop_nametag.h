@@ -10,7 +10,8 @@
 //             request the host will not grant is answered to its sender alone (op 3) and the item stays. The hand is
 //             the one the hand lane has applied; a request that arrives while the sender's newest hand state is owed
 //             waits for its application.
-// A joiner's tags come with its save. Game thread.
+// A joiner's tags come with its save, and the ones put on since its cut with the host's connect replay (SendJoinTags).
+// A prop's spawn row and record carry no nametag. Game thread.
 
 #pragma once
 
@@ -30,6 +31,12 @@ void Tick();
 
 // A PropNametag arrived: a client's request on the host, the host's tag or refusal on a client.
 void OnMsg(const coop::net::PropNametagPayload& p, int senderPeerSlot);
+
+// HOST: the slot's connect replay (inside the snapshot scope, ahead of the snapshot). Each prop whose tag this session
+// published is named to that slot alone, with the tag it carries now: the joiner's save is a photograph, and a tag is
+// not sent to a slot before its world-ready, so a tag put on after its cut reaches it here. A prop the snapshot births
+// after this is tagged when it appears (CLIENT: the tag waits by key).
+void SendJoinTags(int slot);
 
 // HOST: the tags applied from a client's request since the process started (the drill reads it).
 uint64_t AppliedForClients();
