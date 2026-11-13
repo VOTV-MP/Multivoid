@@ -84,9 +84,11 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
 - **Fuel and health.** A client's refuel (a gas can's `fuelUp`) or repair (a toolbox's `toolboxFix`) runs on its copy,
   where the can drains and the toolbox is spent, and is asked of the host as a request with an id. The host's judge
   (`coop/interactables/atv_host_judge`) serves each sender's requests from a queue of eight at four a second; a request
-  whose sender's world is not ready on the host, or whose hand state the host still owes, waits at the head. It judges
-  that the sender is alive and within 8 m of the ATV or seated in it, that a refuel's sender holds a gas can and the tank
-  has room, and that a repair's sender held a toolbox (it spends itself) and the health is under 100. It then writes its
+  whose sender's world is not ready on the host, or whose hand state the host still owes, waits at the head until the
+  slot's world-ready edge or its applied hand state releases it. It judges that the sender is alive and within 8 m of the
+  ATV or seated in it, that a refuel's sender holds a gas can and the tank has room, and that a repair's sender last held
+  a toolbox (ten uses of one hold) and the health is under 100; a tank or health already full is refused as `full`. It
+  then writes its
   own copy as the verbs' own bodies do (fuel up and `empty` cleared; health to 100, `brokenn` cleared, the game's
   `updHealth`), publishes, and answers the sender alone with the verdict, the copy's state and its sequence. A client
   driver's blocks only lower them: the host takes the lower of its value and the block's, from a block whose `ackSeq` is
@@ -95,8 +97,9 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
   re-sends, and a client takes them from those blocks.
 - **Modules.** A fit (`playerUsedOn` with an upgrade in hand) and a take-off (`upgradeTake`) run on the client's copy and
   are asked of the host the same way, by the module's value. The host fits one its copy does not hold and takes off one
-  it does, writes its `Modules` and runs `updUpgrades`. A fit refused as a duplicate, after the hand check passed, is
-  refunded with that module's prop at the ATV.
+  it does, writes its `Modules` and runs `updUpgrades`. A fit's module must be of the class the sender's hand last held,
+  once per item. A fit refused as a duplicate, after the hand check passed, is refunded with that module's prop at the ATV.
+  A copy that is adopted holding no state of the host's asks for it (request op 6), and the host answers with its state.
 - **Lights, brake and turbo.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights 0x20, turbo
   0x40) at each block build. The host takes them from an admitted block and runs the ATV's own light, brake and turbo
   bodies on its copy for each bit that changed; its re-send carries exactly these three to the other clients, which do the
