@@ -1,6 +1,6 @@
 // harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds, a faucet's click and the alien
-// noises across two peers. A verdict is decided by an event; a bound passing with none is INVALID.
-//
+// noises across two peers. A verdict is decided by an event; a bound passing with none is INVALID. A client acts and
+// leaves only once its own join is over, and the host's first step waits for that client's slot to be world-ready.
 // Armed by the row world_sound_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR). What a peer hears cannot be
 // read back, so each term is the OTHER peer's receipt and its play call, from the lane's own counts:
 //   1     A faucet each peer spawns under one key is pressed by the client, then by the host: the other peer's copy must
@@ -233,6 +233,12 @@ void EndNow(RV::Outcome outcome, bool alienDone, const char* what, ...) {
 void RunHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
+    if (!PS::WaitFor("the client's slot world-ready", 120, [] {
+            bool ready = false;
+            OnGameThread([&] { ready = harness::session_runtime::Session().IsSlotWorldReady(1); });
+            return ready;
+        }))
+        return;
     const std::string key = SpawnFaucet("");
     UE_LOGI("world-sound: host faucet key='%hs'", key.c_str());
     PS::Mark("faucet_key", key);
@@ -348,7 +354,7 @@ void RunHost() {
 }
 
 void RunClient() {
-    if (!disc_drill::HostPuppetUp()) return;
+    if (!disc_drill::HostPuppetUp() || !disc_drill::ClientJoined()) return;
     PS::Mark("client_ready");
     std::string key;
     if (!PS::AwaitText("faucet_key", key, kStepSec)) return;
@@ -467,7 +473,7 @@ void RunJoinHost() {
 }
 
 void RunJoinClient() {
-    if (!disc_drill::HostPuppetUp()) return;
+    if (!disc_drill::HostPuppetUp() || !disc_drill::ClientJoined()) return;
     PS::Mark("client_ready");
     if (!PS::Await("alien_out", kStepSec)) return;
     PS::Mark("client_done");
