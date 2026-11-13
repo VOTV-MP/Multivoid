@@ -19,18 +19,24 @@
 
 namespace coop::net {
 class Session;
-struct PropNametagPayload;
+struct BlobChunkPayload;
 }  // namespace coop::net
 
 namespace coop::prop_nametag {
 
 void Install(coop::net::Session* session);
 
-// Registers the watch on the item's use and settles it.
+// Registers the watch on the item's use and settles it, sweeps the half-assembled messages, and retries what the key index
+// could not answer yet.
 void Tick();
 
-// A PropNametag arrived: a client's request on the host, the host's tag or refusal on a client.
-void OnMsg(const coop::net::PropNametagPayload& p, int senderPeerSlot);
+// One chunk of a PropNametag message arrived (game thread, in the drain): when the message is whole, a client's request on
+// the host, the host's tag or refusal on a client. Every length is read from the assembled body; what does not add up to
+// it is refused (the host answers op 3) and never read past.
+void OnChunk(coop::net::Session& session, const coop::net::BlobChunkPayload& chunk, int senderPeerSlot);
+
+// A peer left: the chunks it had half sent go.
+void OnPeerGone(uint8_t slot);
 
 // HOST: the slot's connect replay (inside the snapshot scope, ahead of the snapshot). Each prop whose tag this session
 // published is named to that slot alone, with the tag it carries now: the joiner's save is a photograph, and a tag is

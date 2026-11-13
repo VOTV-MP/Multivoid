@@ -5,11 +5,11 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"   // IntentTarget: the prop within the sender's reach
+#include "coop/net/blob_chunks.h"
 #include "coop/net/intent_bucket.h"          // a sender's budget of tags
 #include "coop/net/net_clock.h"              // NowMs: the budget's clock
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"           // a nametag in the sender's hand, as its owner announced it
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"       // PerSlotState: a waiting request goes with its sender
@@ -28,6 +28,7 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <set>
@@ -44,7 +45,7 @@ namespace NT = ue_wrap::nametag;
 namespace PR = ue_wrap::prop;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
-using coop::net::PropNametagPayload;
+namespace BC = coop::blob_chunks;
 
 // The item's left click, prop_nametag_C::playerHandUse_LMB. The any-class row the coin gun and the trash packer
 // already watch: the callbacks keep the nametag item alone.
@@ -121,21 +122,65 @@ bool TagSane(const std::wstring& t) {
     return true;
 }
 
-PropNametagPayload MakePayload(uint8_t op, const std::wstring& key, uint8_t author, const std::wstring& tag,
-                               uint8_t reason = 0) {
-    PropNametagPayload p{};
-    coop::net::WireKeyFromString(key, p.key);
-    p.op       = op;
-    p.author   = author;
-    p.reason   = reason;
-    p.tagChars = static_cast<uint8_t>(tag.size() < kMaxTagChars ? tag.size() : kMaxTagChars);
-    for (size_t i = 0; i < p.tagChars; ++i) p.tag[i] = static_cast<uint16_t>(tag[i]);
-    return p;
+// The message body, little-endian: [op][reason][author][key length][key][tag length u16][tag, UTF-16]. Its longest is a key
+// of 31 and a tag of kMaxTagChars; a chunk count above what that needs is refused before an assembly reserves for it.
+struct Body {
+    uint8_t      op = 0, reason = 0, author = 0;
+    std::wstring key;
+    std::wstring tag;
+};
+constexpr size_t kHeadBytes = 4;
+constexpr size_t kMaxBody   = kHeadBytes + kMaxKeyChars + 2 + 2 * kMaxTagChars;
+constexpr size_t kChunkData = sizeof(coop::net::BlobChunkPayload{}.data);
+constexpr size_t kMaxChunks = (kMaxBody + kChunkData - 1) / kChunkData;
+static_assert(kMaxBody <= coop::blob_chunks::MaxBlobBytes(), "a nametag message must fit the blob ceiling");
+static_assert(kMaxChunks <= 255, "a nametag message's chunk count is a u8");
+
+// Empty when the key or the tag is past what the body can say: nothing is cut.
+std::vector<uint8_t> Pack(const Body& b) {
+    if (b.key.size() > kMaxKeyChars || b.tag.size() > kMaxTagChars) return {};
+    std::vector<uint8_t> out;
+    out.reserve(kHeadBytes + b.key.size() + 2 + 2 * b.tag.size());
+    out.push_back(b.op);
+    out.push_back(b.reason);
+    out.push_back(b.author);
+    out.push_back(static_cast<uint8_t>(b.key.size()));
+    for (wchar_t c : b.key) out.push_back(static_cast<uint8_t>(c & 0xFF));
+    const size_t n = b.tag.size();
+    out.push_back(static_cast<uint8_t>(n & 0xFF));
+    out.push_back(static_cast<uint8_t>((n >> 8) & 0xFF));
+    for (wchar_t c : b.tag) {
+        out.push_back(static_cast<uint8_t>(c & 0xFF));
+        out.push_back(static_cast<uint8_t>((c >> 8) & 0xFF));
+    }
+    return out;
+}
+
+// Strict: every length is read from the body and must add up to it exactly. The key is filled as soon as it has been read
+// whole, so a refusal can name it even when the tag is the part that is wrong.
+bool Unpack(const std::vector<uint8_t>& b, Body& out, const char** why) {
+    out = Body{};
+    if (b.size() < kHeadBytes + 2) { *why = "shorter than its head"; return false; }
+    out.op     = b[0];
+    out.reason = b[1];
+    out.author = b[2];
+    const size_t keyLen = b[3];
+    if (keyLen > kMaxKeyChars || b.size() < kHeadBytes + keyLen + 2) { *why = "a key length the body cannot hold"; return false; }
+    size_t o = kHeadBytes;
+    for (size_t i = 0; i < keyLen; ++i) out.key.push_back(static_cast<wchar_t>(b[o + i]));
+    o += keyLen;
+    const size_t tagLen = static_cast<size_t>(b[o]) | (static_cast<size_t>(b[o + 1]) << 8);
+    o += 2;
+    if (tagLen > kMaxTagChars) { *why = "a tag longer than the game's name holds"; return false; }
+    if (o + tagLen * 2 != b.size()) { *why = "a tag length that does not add up to the body"; return false; }
+    for (size_t i = 0; i < tagLen; ++i, o += 2)
+        out.tag.push_back(static_cast<wchar_t>(b[o] | (b[o + 1] << 8)));
+    return true;
 }
 
 const char* ReasonName(uint8_t reason) {
     switch (reason) {
-    case coop::net::kPropNametagBadTag:     return "the tag is empty, over 96 units or holds a control character";
+    case coop::net::kPropNametagBadTag:     return "the tag is empty, over 1023 units, holds a control character, or the message is malformed";
     case coop::net::kPropNametagNoProp:     return "the host holds no prop of that key";
     case coop::net::kPropNametagNoItem:     return "no nametag in the sender's hand";
     case coop::net::kPropNametagTooFast:    return "the sender is past its budget";
@@ -144,12 +189,6 @@ const char* ReasonName(uint8_t reason) {
     case coop::net::kPropNametagBusy:       return "an earlier tag of the sender still waits for its hand state";
     default:                                return "a reason this build does not know";
     }
-}
-
-std::wstring TagOf(const PropNametagPayload& p) {
-    std::wstring t;
-    for (size_t i = 0; i < p.tagChars; ++i) t.push_back(static_cast<wchar_t>(p.tag[i]));
-    return t;
 }
 
 std::wstring KeyOf(void* prop) {
@@ -165,6 +204,22 @@ void* PlayerOf(const sg::Call& c) {
     return p ? p : coop::players::Registry::Get().Local();
 }
 
+// The messages this lane sends are chunked blobs on the Default lane (blob_chunks), as PropSaveDataIntent's and
+// KerfurCommand's are (kerfur_command_wire.cpp Send): ordered with the hand state and the spawns. `slot` < 0 is every
+// peer with a world; else that peer alone. The assembly of the chunks that arrive is one per kind, keyed by sender.
+BC::Assembler g_asm;
+uint32_t      g_blobSeq = 1;
+std::chrono::steady_clock::time_point g_nextSweep{};
+constexpr std::chrono::seconds kSweepEvery{1};
+constexpr std::chrono::seconds kAssemblyTtl{30};
+
+bool SendBody(coop::net::Session& s, int slot, const Body& b) {
+    const std::vector<uint8_t> blob = Pack(b);
+    if (blob.empty()) return false;
+    return slot < 0 ? BC::SendBlob(&s, coop::net::ReliableKind::PropNametag, g_blobSeq++, blob)
+                    : BC::SendBlobToSlot(&s, slot, coop::net::ReliableKind::PropNametag, g_blobSeq++, blob);
+}
+
 // HOST: the prop of `key` carries `tag` now; every client is told.
 void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, const std::wstring& tag) {
     if (tag.size() > kMaxTagChars) {
@@ -173,8 +228,8 @@ void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, con
         static bool s_said = false;
         if (!s_said) {
             s_said = true;
-            UE_LOGW("prop_nametag: the host player's tag on prop '%ls' is %zu characters, over the %zu one message "
-                    "carries -- the clients keep the one they show (said once)", key.c_str(), tag.size(), kMaxTagChars);
+            UE_LOGW("prop_nametag: the host player's tag on prop '%ls' is %zu characters, over the %zu a name holds "
+                    "-- the clients keep the one they show (said once)", key.c_str(), tag.size(), kMaxTagChars);
         }
         return;
     }
@@ -185,9 +240,9 @@ void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, con
         UE_LOGW("prop_nametag: %zu props carry a tag published this session -- a joiner is not told the tags after them",
                 kMaxTagged);
     }
-    const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, author, tag);
     // A host with no client that has a world has no one to tell; the joiner's connect replay names the tag.
-    if (!s.SendReliable(coop::net::ReliableKind::PropNametag, &p, sizeof(p)) && s.AnyWorldReadyPeer())
+    if (!s.AnyWorldReadyPeer()) return;
+    if (!SendBody(s, -1, Body{coop::net::kPropNametagPublish, 0, author, key, tag}))
         UE_LOGW("prop_nametag: the tag of prop '%ls' did not send -- the clients keep the one they show",
                 key.c_str());
 }
@@ -243,8 +298,7 @@ sg::Verdict OnUsePre(const sg::Call& c) {
         }
         return sg::Verdict::Cancel;
     }
-    const PropNametagPayload p = MakePayload(coop::net::kPropNametagRequest, key, 0, tag);
-    if (!s->SendReliableToSlot(0, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) {
+    if (!SendBody(*s, 0, Body{coop::net::kPropNametagRequest, 0, 0, key, tag})) {
         UE_LOGW("prop_nametag: the tag for prop '%ls' was not sent -- the item stays; use it again", key.c_str());
         return sg::Verdict::Cancel;
     }
@@ -287,8 +341,7 @@ void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, uint8_
     if (g_refused <= 20 || g_refused % 50 == 0)
         UE_LOGI("prop_nametag: slot %u's tag on prop '%ls' refused (%s%s%s)", static_cast<unsigned>(slot), key.c_str(),
                 ReasonName(reason), detail ? ": " : "", detail ? detail : "");
-    const PropNametagPayload r = MakePayload(coop::net::kPropNametagRefused, key, 0, std::wstring(), reason);
-    if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::PropNametag, &r, sizeof(r)))
+    if (!SendBody(s, slot, Body{coop::net::kPropNametagRefused, reason, 0, key, std::wstring()}))
         UE_LOGW("prop_nametag: the refusal of slot %u's tag on prop '%ls' did not send", static_cast<unsigned>(slot),
                 key.c_str());
 }
@@ -328,12 +381,12 @@ void Judge(coop::net::Session& s, const std::wstring& key, const std::wstring& t
             static_cast<unsigned>(slot), static_cast<unsigned long long>(g_applied));
 }
 
-// HOST: a client's request. The hand state of the sender rode the same ordered lane ahead of it (a nametag is held
-// before it is clicked), but the host applies a client's hand states at a pace (hand_item's LatestWins), so the
-// state applied may be older than the one that arrived. While one is owed the request waits for its application,
-// the lane's own edge (OnHandApplied), and is judged against the hand then. Two residuals, each answered by op 3 with
-// the item kept: a click made before its owner's announce (the client does not wait for OwnAnnounced; the drill does),
-// and a hand swapped away within the drain the request is posted to, which is judged against the newer hand.
+// HOST: a client's request. The hand state of the sender rode the same ordered Default lane ahead of it (a nametag is held
+// before it is clicked), and the drain applies each message in arrival order, the request inline as PropSaveData's chunks
+// are. But the host applies a client's hand states at a pace (hand_item's LatestWins), so the state applied may be older
+// than the one that arrived. While one is owed the request waits for its application, the lane's own edge
+// (OnHandApplied), and is judged against the hand then. One residual, answered by op 3 with the item kept: a click made
+// before its owner's announce (the client does not wait for OwnAnnounced; the drill does).
 void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
     Parked& waiting = g_parked[slot];
     if (waiting.valid) { Refuse(s, slot, key, coop::net::kPropNametagBusy); return; }
@@ -391,11 +444,50 @@ void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author)
 
 // CLIENT: the host refused this client's request: the item stays and the client may use it again.
 void OnRefused(const std::wstring& key, uint8_t reason) {
-    if (g_pending.key != key) return;
+    if (g_pending.key.empty() || (!key.empty() && g_pending.key != key)) return;   // an empty key answers the one request in flight
     ++g_refusedAnswers;
     UE_LOGW("prop_nametag: the host refused this client's tag on prop '%ls' (%s) -- the item stays", key.c_str(),
             ReasonName(reason));
     g_pending = Pending{};
+}
+
+// One whole message. The host answers a request it cannot read with the refusal, naming the key when it could be read, as
+// it answers every request it can; anything else a peer should not send is dropped and logged.
+void OnBody(coop::net::Session& s, const std::vector<uint8_t>& blob, int senderPeerSlot) {
+    const bool host = s.role() == coop::net::Role::Host;
+    Body b;
+    const char* why = "";
+    if (!Unpack(blob, b, &why)) {
+        if (!host) { DropLogged(why, senderPeerSlot, b.op); return; }
+        const uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
+        // A refusal costs the host a send, so it is paid from the sender's budget like a judgement.
+        if (g_budget[slot].Take(kTagBudget, coop::net::NowMs())) Refuse(s, slot, b.key, coop::net::kPropNametagBadTag, why);
+        else DropLogged("a malformed message past the sender's budget", senderPeerSlot, b.op);
+        return;
+    }
+    if (host) {
+        if (b.op != coop::net::kPropNametagRequest || b.key.empty()) {
+            DropLogged("a client may only ask, and by a prop's key", senderPeerSlot, b.op);
+            return;
+        }
+        OnRequest(s, b.key, b.tag, static_cast<uint8_t>(senderPeerSlot));
+        return;
+    }
+    if (b.op == coop::net::kPropNametagRefused) { OnRefused(b.key, b.reason); return; }
+    if (b.op != coop::net::kPropNametagPublish || b.key.empty()) {
+        DropLogged("an op this build does not know, or a tag with no prop", senderPeerSlot, b.op);
+        return;
+    }
+    OnPublish(b.key, b.tag, b.author);
+}
+
+// The half-assembled messages of a peer that stopped sending are reclaimed after a TTL.
+void SweepAssemblies() {
+    if (g_asm.Idle()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_nextSweep) return;
+    g_nextSweep = now + kSweepEvery;
+    g_asm.Sweep(now, kAssemblyTtl);
 }
 
 // CLIENT: the waiting tags whose props have appeared. Nothing but the key index's own table moving can change an
@@ -436,8 +528,7 @@ Named NameTo(coop::net::Session& s, int slot, const std::wstring& key) {
                 key.c_str(), slot);
         return Named::Failed;
     }
-    const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, kAuthorHost, tag);
-    if (s.SendReliableToSlot(slot, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) return Named::Sent;
+    if (SendBody(s, slot, Body{coop::net::kPropNametagPublish, 0, kAuthorHost, key, tag})) return Named::Sent;
     UE_LOGW("prop_nametag: the tag of prop '%ls' did not send to slot %d at its connect replay", key.c_str(), slot);
     return Named::Failed;
 }
@@ -486,6 +577,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
+    SweepAssemblies();
     RetryUnbound();
     RetryJoinTags();
     PruneTagged();
@@ -509,35 +601,28 @@ void Tick() {
                 kRowHandUse.Name());
 }
 
-void OnMsg(const PropNametagPayload& p, int senderPeerSlot) {
+void OnChunk(coop::net::Session& session, const coop::net::BlobChunkPayload& chunk, int senderPeerSlot) {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
+    if (!s || s != &session || !s->connected()) return;
     if (senderPeerSlot < 0 || senderPeerSlot >= coop::players::kMaxPeers) return;
-    const std::wstring key = coop::net::StringFromWireKey(p.key);
-    if (key.empty()) return;
-    if (p.op == coop::net::kPropNametagRequest) {
-        if (s->role() != coop::net::Role::Host || senderPeerSlot == 0) {
-            DropLogged("a request reaches the host from a client alone", senderPeerSlot, p.op);
-            return;
-        }
-        const uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
-        // Every request that names a prop is answered: a grant by the publish, anything else by the refusal.
-        if (p.tagChars > kMaxTagChars) { Refuse(*s, slot, key, coop::net::kPropNametagBadTag); return; }
-        OnRequest(*s, key, TagOf(p), slot);
+    // A request reaches the host from a client alone, and the host's word reaches a client from the host alone.
+    if ((s->role() == coop::net::Role::Host) == (senderPeerSlot == 0)) {
+        DropLogged("a message from the wrong side of the link", senderPeerSlot, 0);
         return;
     }
-    if (s->role() != coop::net::Role::Client || senderPeerSlot != 0) {   // the host's word alone
-        DropLogged("an answer or a tag is the host's word, to a client", senderPeerSlot, p.op);
+    // A header that declares more chunks than a nametag needs is refused before the assembler reserves for it, as MTA's
+    // latent receiver refuses a declared size at the first part (CLatentReceiver.cpp:128-129).
+    if (chunk.chunks > kMaxChunks) {
+        DropLogged("a header that declares more chunks than a nametag needs", senderPeerSlot, 0);
         return;
     }
-    if (p.op == coop::net::kPropNametagRefused) { OnRefused(key, p.reason); return; }
-    if (p.op != coop::net::kPropNametagPublish || p.tagChars > kMaxTagChars) {
-        DropLogged("an op this build does not know, or a tag longer than the message carries", senderPeerSlot, p.op);
-        return;
-    }
-    OnPublish(key, TagOf(p), p.author);
+    std::vector<uint8_t> blob;
+    if (!g_asm.OnChunk(chunk, static_cast<uint8_t>(senderPeerSlot), blob)) return;
+    OnBody(*s, blob, senderPeerSlot);
 }
+
+void OnPeerGone(uint8_t slot) { g_asm.ClearSlot(slot); }
 
 // The join's answer, the shape of hook_retrieve's SendJoinGone and join_window_baseline's removes: a joiner's save is a
 // photograph, the host plays on while it loads, and a tag is not sent to a slot before its world-ready. So at the slot's
@@ -585,6 +670,8 @@ void OnDisconnect() {
     g_unboundVersion = 0;
     g_unboundGen = 0;
     g_taggedVersion = 0;
+    g_asm.Clear();
+    g_blobSeq = 1;
     g_joinRetryOwed = false;
     for (int i = 0; i < g_joinRetry.size(); ++i) g_joinRetry[i].clear();
     for (int i = 0; i < g_budget.size(); ++i) g_budget[i].Reset();

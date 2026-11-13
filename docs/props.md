@@ -302,9 +302,9 @@ request waits while that hand state is still owed), within the sender's budget (
 occupant of the slot), and tells every client, the sender included, whose held item then goes as the game's use takes
 it; the item is the client's own, so it is spent there. A request the host refuses is answered to its sender alone with
 the reason, and the item stays. The messages are the `PropNametag` kind: op 1 the client's request, op 2 the host's
-tag, op 3 its refusal. A tag is the first line of a notebook page, which the game does not bound in length; one message
-carries 96 UTF-16 units, so a longer tag is refused with a reason, never cut. A tag the host cannot publish is logged
-once. `[?]` the rig's proof of this lane's final bytes (`coop/dev/nametag_drill`) is pending: a client's tag lands on
+tag, op 3 its refusal, a chunked blob on the Default lane, so it is ordered with the hand state and the spawns. A tag is the
+first line of a notebook page, which the game does not bound in length, so a tag crosses at the length an FName holds,
+1023 UTF-16 units; the host reads every length from the message and refuses what does not add up, with the reason. A tag the host cannot publish is logged once. `[?]` the rig's proof of this lane's final bytes (`coop/dev/nametag_drill`) is pending: a client's tag lands on
 the host's cup once and its item is spent; the host player's tag reaches the client's copy; a tag the host puts on between a joiner's save being
 cut and its world being ready is on its copy at the join's end (window mode). The reds: `nametag_client_runs` (the click asks
 the host nothing: the client says fail at once) and `nametag_no_join_replay` (window mode: the copy stays untagged).

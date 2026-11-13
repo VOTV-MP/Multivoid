@@ -686,17 +686,16 @@ enum class ReliableKind : uint16_t {
     // relayed: a client's record reaches other peers only after the host has taken it.
     PropSaveDataIntent = 131,
 
-    // A prop's nametag, named by the prop's key (coop/props/prop_nametag). op 1 (CLIENT->HOST): this client's
-    // player used a nametag item on the prop, which the client refused there; the request carries the tag
-    // the item reads. The host judges it (a prop of that key here within the sender's reach, a nametag in the
-    // sender's hand, the tag well formed, the sender within its budget), applies the tag and publishes it.
-    // op 2 (HOST->ALL): the prop of that key carries this tag now, and `author` names the slot whose item it
-    // was: every client applies it, and the author's held item is spent. op 3 (HOST->the requester): its
-    // request was refused, with a reason, the item stays, and the client may use it again; a client asks once until op 2
-    // for it or op 3 arrives. Never relayed. Late join: a joiner's save carries the tags that stood at its cut, and its
-    // connect replay sends it, alone, an op 2 for each prop whose tag this session published, inside the snapshot
-    // scope ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by
-    // key (coop/props/prop_nametag). PropNametagPayload.
+    // A prop's nametag, named by the prop's key (coop/props/prop_nametag). A chunked blob on the Default lane, so it
+    // is ordered with the hand state and the spawn it follows. op 1 (CLIENT->HOST): this client's player used a nametag
+    // item on the prop, which the client refused there; the request carries the tag the item reads. The host judges it
+    // (a prop of that key here within the sender's reach, a nametag in the sender's hand, the tag well formed, the sender
+    // within its budget), applies the tag and publishes it. op 2 (HOST->ALL): the prop of that key carries this tag now,
+    // and `author` names the slot whose item it was: every client applies it, and the author's held item is spent. op 3
+    // (HOST->the requester): its request was refused, with a reason, the item stays, and the client may use it again; a
+    // client asks once until op 2 for it or op 3 arrives. Never relayed. Late join: a joiner's save carries the tags that
+    // stood at its cut, and its connect replay sends it, alone, an op 2 for each prop whose tag this session published,
+    // ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by key.
     PropNametag = 261,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
@@ -2407,30 +2406,22 @@ static_assert(sizeof(PropDestroyPayload) == 40, "PropDestroyPayload must be 40 b
 
 // PropNametag. The prop is named by its key, the one name every copy of a prop shares. The tag is UTF-16 code
 // units. The game takes a tag from the first line of a notebook page into an FName and bounds no length there (its
-// page limit is 32 lines); the engine's FName holds up to 1023 units (not measured here). One datagram carries 96, the
-// bound of this message: a longer tag is refused with a reason, never cut.
+// page limit is 32 lines), so the bound is the FName's: the engine's name size of 1024 less its terminator (not
+// measured here). The message is a chunked blob (BlobChunkPayload, coop/net/blob_chunks) on the Default lane, whose
+// body is, little-endian: [op u8][reason u8][author u8][key length u8, 0..31][key][tag length u16][tag, UTF-16].
+// A receiver reads every length from the body and refuses what does not add up to it exactly.
 inline constexpr uint8_t kPropNametagRequest  = 1;   // CLIENT->HOST: my player's nametag on this prop
 inline constexpr uint8_t kPropNametagPublish  = 2;   // HOST->ALL: this prop carries this tag
 inline constexpr uint8_t kPropNametagRefused  = 3;   // HOST->the requester: its request was refused
-inline constexpr int     kPropNametagMaxChars = 96;
+inline constexpr int     kPropNametagMaxChars = 1023;
 // Why a request was refused (op 3's `reason`).
-inline constexpr uint8_t kPropNametagBadTag     = 1;   // the tag is empty, over kPropNametagMaxChars, or holds a control unit
+inline constexpr uint8_t kPropNametagBadTag     = 1;   // the tag is empty, over kPropNametagMaxChars, holds a control unit, or the body is malformed
 inline constexpr uint8_t kPropNametagNoProp     = 2;   // the host holds no prop of that key
 inline constexpr uint8_t kPropNametagNoItem     = 3;   // no nametag in the sender's hand, as the hand lane has it
 inline constexpr uint8_t kPropNametagTooFast    = 4;   // the sender is past its budget
 inline constexpr uint8_t kPropNametagOutOfReach = 5;   // the prop is not within the sender's reach
 inline constexpr uint8_t kPropNametagNotTaken   = 6;   // the host's prop did not take the tag
 inline constexpr uint8_t kPropNametagBusy       = 7;   // an earlier request of the sender still waits for its hand state
-struct PropNametagPayload {
-    WireKey  key;                        // 32  -- the prop's key
-    uint8_t  op;                         // 1   -- kPropNametag*
-    uint8_t  author;                     // 1   -- op 2: the slot whose item it was (0 the host); zero for ops 1 and 3
-    uint8_t  tagChars;                   // 1   -- code units used in `tag`; 0 for op 3
-    uint8_t  reason;                     // 1   -- op 3: kPropNametag* reason; zero otherwise
-    uint16_t tag[kPropNametagMaxChars];  // 192 -- UTF-16, the units past tagChars zero
-};
-static_assert(sizeof(PropNametagPayload) == 228, "PropNametagPayload must be 228 bytes");
-static_assert(sizeof(PropNametagPayload) <= 256 - 20 - 8, "PropNametagPayload must fit in one reliable datagram");
 
 // A placement intent (PropDropIntent), client to host: the identity the host needs to spawn the
 // authoritative prop by key (class, key, row name), the placement transform and scale, and the

@@ -750,16 +750,17 @@ bool HandleEntityEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::PropNametag: {
-        // op 1 a client's nametag on a prop, to the host; op 2 the host's tag for every client; op 3 the host's refusal.
-        if (msg.payloadLen < sizeof(net::PropNametagPayload)) {
+        // A prop's nametag, a chunked blob (op 1 a client's, to the host; op 2 the host's tag for every client; op 3 the
+        // host's refusal). Handled in the drain, in arrival order, as PropSaveData is: the hand state ahead of a request
+        // on the one Default lane is applied before the request is judged.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: PropNametag payload too short (%zu < %zu)", static_cast<size_t>(msg.payloadLen),
-                    sizeof(net::PropNametagPayload));
+                    sizeof(net::BlobChunkPayload));
             break;
         }
-        net::PropNametagPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        const int slot = msg.senderPeerSlot;
-        ue_wrap::game_thread::Post([p, slot] { ::coop::prop_nametag::OnMsg(p, slot); });
+        net::BlobChunkPayload chunk{};
+        std::memcpy(&chunk, msg.payload, sizeof(chunk));
+        ::coop::prop_nametag::OnChunk(session, chunk, msg.senderPeerSlot);
         break;
     }
     default:
