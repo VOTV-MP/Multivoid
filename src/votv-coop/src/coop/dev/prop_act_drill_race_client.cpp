@@ -343,7 +343,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (st == 0) return;
         g_walk.reset();
         if (st == 2) {
-            Fail(r, "the walk to the mirror did not arrive");
+            Invalid(r, "the walk to the mirror did not arrive");
             return;
         }
         CEnter(CStage::AwaitGather);

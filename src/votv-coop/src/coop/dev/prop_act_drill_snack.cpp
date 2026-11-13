@@ -16,11 +16,13 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/snack.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <cmath>
 #include <cstdint>
@@ -186,17 +188,50 @@ const char* CancelHostUse(void* actor) {
 struct Tilt {
     ue_wrap::CachedObjRef actor;
     FRotator rot{};
+    FVector at{};
     bool on = false;
+    int samples = 0;   // host polls still to log the beer's state after the restore
 };
 Tilt g_tilt;
 
+// AActor::GetActorEnableCollision of the beer, 1 or 0; -1 when it could not be read.
+int ReadCollision(void* beer) {
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(beer), L"GetActorEnableCollision");
+    if (!fn) return -1;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(beer, f) ? (f.Get<bool>(L"ReturnValue") ? 1 : 0) : -1;
+}
+
+// What the fall after a restore is read from (the cause was never measured): the beer's height against the recorded one, the
+// actor's collision flag, whether its root simulates and its speed.
+void SampleBeer(const char* when) {
+    void* const beer = g_tilt.actor.Get();
+    if (!beer) return;
+    FVector at{}, lin{}, ang{};
+    E::TryGetActorLocation(beer, at);
+    E::GetActorRootPhysicsVelocity(beer, lin, ang);
+    UE_LOGI("%s host snack: beer %s: z=%.1f (recorded %.1f) collision=%d simulating=%d speed=%.0f cm/s", kTag, when, at.Z,
+            g_tilt.at.Z, ReadCollision(beer), E::IsActorRootSimulatingPhysics(beer) ? 1 : 0,
+            std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
+}
+
+// Puts the beer back as it was: the recorded pose first (rotation and place, physics still off), the actor's collision on
+// (UPrimitiveComponent::SetSimulatePhysics changes the simulation only and the pin never touched collision, so this
+// is made certain and not assumed), then physics, then its velocity zeroed so nothing the body carried out of the pin
+// moves it. Its state is logged before and after, and on the polls that follow (SnackHostMarker).
 void RestoreTilt() {
     if (!g_tilt.on) return;
     g_tilt.on = false;
     void* const beer = g_tilt.actor.Get();
     if (!beer) return;
-    if (!E::SetActorRotation(beer, g_tilt.rot) || !E::SetActorSimulatePhysics(beer, true))
-        UE_LOGW("%s host snack: the tilted beer could not be put back as it was", kTag);
+    SampleBeer("pinned, before the restore");
+    const bool posed = E::SetActorRotation(beer, g_tilt.rot) && E::SetActorLocation(beer, g_tilt.at);
+    E::SetActorEnableCollision(beer, true);
+    const bool simulating = E::SetActorSimulatePhysics(beer, true);
+    E::SetActorRootPhysicsVelocity(beer, FVector{}, FVector{});
+    if (!posed || !simulating) UE_LOGW("%s host snack: the tilted beer could not be put back as it was", kTag);
+    SampleBeer("right after the restore");
+    g_tilt.samples = 5;
 }
 
 const char* TiltFailed(const char* why) {
@@ -212,6 +247,7 @@ const char* TiltUntilSpilled(void* actor, uint64_t sinceMs, bool* done) {
         if (!SN::ReadSnackState(actor, uses, open) || !E::TryGetActorRotation(actor, rot)) return "the beer's state could not be read";
         g_tilt.actor.Set(actor);
         g_tilt.rot = rot;
+        E::TryGetActorLocation(actor, g_tilt.at);
         g_tilt.on = true;
         FRotator tilt{kTiltPitch, rot.Yaw, 0.f};
         if (!E::SetActorSimulatePhysics(actor, false)) return TiltFailed("the beer's physics could not be stopped for the tilt");
@@ -369,6 +405,8 @@ bool g_settledSaid = false;
 void SnackStepReset() {
     g_settledSaid = false;
     RestoreTilt();
+    g_tilt.samples = 0;
+    g_tilt.actor.Reset();
 }
 
 void SnackRestoreTilt() { RestoreTilt(); }
@@ -379,6 +417,10 @@ void SnackRestoreTilt() { RestoreTilt(); }
 // (session_lanes.h LaneForKind, send_backlog.cpp SendLocked_), so a client that reads it has already taken every
 // birth, record and destroy the host sent for the act: what its copies show then cannot change, and it decides on it.
 void SnackHostMarker(const Row& row, EL::ElementId eid, const Baseline& base) {
+    if (g_tilt.samples > 0) {
+        --g_tilt.samples;
+        SampleBeer("after the restore");
+    }
     if (g_settledSaid || coop::snack_act::dev::MarksPending()) return;
     // The host's record for the copy has gone out, not parked or refused and waiting to go again.
     if (void* const host = EL::LivePropActor(eid)) {
