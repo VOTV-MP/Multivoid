@@ -138,3 +138,20 @@ CFG_ENUM(desk_short_drill, "desk_short_drill", "dev", "off", "off|client|host|jo
 CFG_FLAG(cap_label_repaint_off, "cap_label_repaint_off", "dev", false, "VOTVCOOP_CAP_LABEL_REPAINT_OFF",
     "Developer (BOTH peers; the cap-label drill's red): no refiner cap label repaint runs, whether from the wire, a "
     "join adopt or a module plug or unplug, as before the lane, so the drill must FAIL.")
+CFG_FLAG(cap_label_join_repaint_off, "cap_label_join_repaint_off", "dev", false, "VOTVCOOP_CAP_LABEL_JOIN_REPAINT_OFF",
+    "Developer (the JOINING peer; the cap-label drill's join red): the join adopt writes the host's cap level and does "
+    "not repaint the label, so the joiner's first step must FAIL.")
+CFG_FLAG(cap_label_beginplay_off, "cap_label_beginplay_off", "dev", false, "VOTVCOOP_CAP_LABEL_BEGINPLAY_OFF",
+    "Developer (the cap-label drill's red): a cap label repaint owed because the desk's screen widget was not assigned "
+    "is not run at the desk's BeginPlay.")
+CFG_FLAG(cap_label_setdata_off, "cap_label_setdata_off", "dev", false, "VOTVCOOP_CAP_LABEL_SETDATA_OFF",
+    "Developer (the HOST; the cap-label drill's saved-world red): the desk's setData, the save's restore, does not "
+    "repaint the cap label, so the drill's saved arm must FAIL when the save holds a cap level or the module.")
+CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "VOTVCOOP_CAP_LABEL_DRILL",
+    "Drill, the refiner's cap label on two peers; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. The host prepares the "
+    "cap at its third level with the Auto Processing module, the client joins, then each peer plugs, pulls and presses "
+    "in turn and both labels must be the actor's: 'rig: VERDICT cap-label PASS|FAIL|INVALID', the FAIL at the step "
+    "that failed. fresh -- the host's world is whatever it is (a New Game needs no restore). saved -- the host's world "
+    "is the rig's own save, no --host-fresh: its label is checked at once after the desk's setData, and a save holding "
+    "the defaults (level 0, no module) is INVALID. Red arms: cap_label_repaint_off (every repaint), "
+    "cap_label_join_repaint_off (the joiner's adopt), cap_label_setdata_off (saved arm, the host).")

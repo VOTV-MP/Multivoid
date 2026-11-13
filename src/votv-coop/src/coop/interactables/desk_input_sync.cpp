@@ -56,7 +56,9 @@ bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
 // (the Blueprint dump enters its ubergraph at 13120, the one write of `widget`), which the post watch below
 // announces, so each owed apply runs there and nothing polls for it. The widget's own Construct is no substitute:
 // the precondition is the desk's field, not the widget's slate. A mode applies there and only then moves the
-// baseline (the desk's flag still holds the old mode until then, so the poll sees no local edge).
+// baseline (the desk's flag still holds the old mode until then, so the poll sees no local edge). An apply that
+// still cannot run (the desk's class unresolved, or its widget unassigned) stays owed and runs at the desk's next
+// event the lane watches: its setData, a local cap press, the cap label repaint of a wire apply or a module change.
 bool g_visPending = false;
 bool g_visPendingValue = false;
 bool g_visDeferWarned = false;
@@ -65,7 +67,26 @@ bool g_capLabelPending = false;
 constexpr int kTagDeskBeginPlay = 0x44534B01;  // 'DSK' 1
 UE_FACT_FN(kRowDeskBeginPlay, "desk_input_sync", L"analogDScreenTest_C", L"ReceiveBeginPlay", Declared);
 
-void OnDeskBeginPlayPost(const sg::Call&) {
+// The cap-label drill's reds, each a default-off [dev] row that drops ONE mechanism's repaint.
+bool CapRepaintOff() {
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_repaint_off);
+    return s_off;
+}
+bool JoinRepaintOff() {
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_join_repaint_off);
+    return s_off;
+}
+bool BeginPlayRepaintOff() {
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_beginplay_off);
+    return s_off;
+}
+bool SetDataRepaintOff() {
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_setdata_off);
+    return s_off;
+}
+
+// Runs the applies the screen widget's absence left owed; one that cannot run yet stays owed. Game thread.
+void RunOwed(bool atBeginPlay, const char* at) {
     if (!g_visPending && !g_remapPending && !g_capLabelPending) return;
     if (!CD::EnsureResolved()) return;
     if (g_visPending) {
@@ -73,29 +94,38 @@ void OnDeskBeginPlayPost(const sg::Call&) {
         if (CD::ApplyVisualizerMode(g_visPendingValue)) {
             g_visPending = false;
             if (g_primed) g_baseline.visualizerMode = g_visPendingValue;
-            UE_LOGI("desk_input: deferred signal-view mode %d applied (the desk's screen widget assigned)",
-                    g_visPendingValue ? 1 : 0);
+            UE_LOGI("desk_input: deferred signal-view mode %d applied (at %s)", g_visPendingValue ? 1 : 0, at);
         }
     }
     if (g_remapPending && CD::RepaintRemap()) {
         g_remapPending = false;
-        UE_LOGI("desk_input: deferred remap repaint done (the desk's screen widget assigned)");
+        UE_LOGI("desk_input: deferred remap repaint done (at %s)", at);
     }
-    if (g_capLabelPending && CD::RepaintCapLevel()) {
+    if (g_capLabelPending && !(atBeginPlay && BeginPlayRepaintOff()) && CD::RepaintCapLevel()) {
         g_capLabelPending = false;
-        UE_LOGI("desk_input: deferred cap label repaint done (the desk's screen widget assigned)");
+        UE_LOGI("desk_input: deferred cap label repaint done (at %s)", at);
     }
 }
 
-// The desk's setData is the save's restore: it writes the cap level and the physical modules back and repaints no
-// label. The post watch latches that the desk's save data has been applied this session, for the cap-label drill's
-// host, which must prepare the desk only after the restore (the gamemode's load runs it, so it can land after the
-// session starts).
-constexpr int kTagDeskSetData = 0x44534B02;  // 'DSK' 2
-UE_FACT_FN(kRowDeskSetData, "desk_input_sync", L"analogDScreenTest_C", L"setData", Declared);
+// A desk's BeginPlay is a world's: the save's restore of it (setData) is still to come, so the latch below starts
+// over, and the owed applies run here.
 std::atomic<bool> g_deskDataApplied{false};
 
+void OnDeskBeginPlayPost(const sg::Call&) {
+    g_deskDataApplied.store(false, std::memory_order_release);
+    RunOwed(true, "the desk's BeginPlay");
+}
+
+// The desk's setData is the save's restore: it writes the cap level and the physical modules back and repaints no
+// label, so the restore owes the cap label's repaint (run here, or at the next event while the screen widget is
+// not assigned). The latch says the restore has landed, for the cap-label drill's host, which prepares the desk
+// only after it (the gamemode's load runs it, so it can land after the session starts).
+constexpr int kTagDeskSetData = 0x44534B02;  // 'DSK' 2
+UE_FACT_FN(kRowDeskSetData, "desk_input_sync", L"analogDScreenTest_C", L"setData", Declared);
+
 void OnDeskSetDataPost(const sg::Call&) {
+    if (!CapRepaintOff() && !SetDataRepaintOff()) g_capLabelPending = true;
+    RunOwed(false, "the desk's setData");
     if (!g_deskDataApplied.exchange(true, std::memory_order_acq_rel))
         UE_LOGI("desk_input: the desk's save data applied");
 }
@@ -212,8 +242,10 @@ void PollOnce(coop::net::Session* s) {
         SendDelta(s, DeskInputField::PlayVolume, 0, cur.playVolume, false);
     if (cur.playSelectIndex != g_baseline.playSelectIndex)
         SendDelta(s, DeskInputField::PlaySelectIndex, 0, cur.playSelectIndex, false);
-    if (cur.compMaxLevel != g_baseline.compMaxLevel)
+    if (cur.compMaxLevel != g_baseline.compMaxLevel) {
         SendDelta(s, DeskInputField::CompMaxLevel, 0, cur.compMaxLevel, false);
+        RunOwed(false, "a local cap press");
+    }
     if (cur.remapMin != g_baseline.remapMin && std::isfinite(cur.remapMin))
         SendDelta(s, DeskInputField::RemapMin, cur.remapMin, 0, false);
     if (cur.remapMax != g_baseline.remapMax && std::isfinite(cur.remapMax))
@@ -358,14 +390,17 @@ bool RepaintRemapOrDefer() {
 
 bool RepaintCapLevelOrDefer() {
     // The cap-label drill's red: no repaint runs, as before the lane.
-    static const bool s_repaintOff = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_repaint_off);
-    if (s_repaintOff) return false;
-    if (CD::RepaintCapLevel()) {
-        g_capLabelPending = false;
-        return true;
-    }
-    g_capLabelPending = true;
-    return false;
+    if (CapRepaintOff()) return false;
+    const bool ran = CD::RepaintCapLevel();
+    g_capLabelPending = !ran;
+    if (ran) RunOwed(false, "a cap label repaint");  // the widget stands: what else was owed can run
+    return ran;
+}
+
+bool RepaintCapLevelForJoinAdopt() {
+    // The cap-label drill's join red: the joiner's adopt repaint is dropped.
+    if (JoinRepaintOff()) return false;
+    return RepaintCapLevelOrDefer();
 }
 
 void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot) {

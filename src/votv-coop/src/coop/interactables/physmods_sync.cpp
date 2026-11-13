@@ -139,7 +139,7 @@ bool AdoptCanonical(const uint8_t bytes[PM::kSlots]) {
     PM::CallUpdPhysMods();
     // Unread, the label is repainted anyway: a join's first canonical can land over a desk that read nothing.
     if (hadBefore) RepaintCapLabelIfModuleChanged(before, bytes);
-    else coop::desk_input_sync::RepaintCapLevelOrDefer();
+    else coop::desk_input_sync::RepaintCapLevelForJoinAdopt();
     return true;
 }
 

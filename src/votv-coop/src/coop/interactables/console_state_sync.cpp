@@ -478,9 +478,9 @@ void OnDeskState(const coop::net::DeskStatePayload& p) {
     // updRemap is the one painter that is held back: it writes the screen widget, which can be absent here, so
     // it runs through the deferral below.
     if (CD::WriteScalars(sc, CD::kPaintAll & ~CD::kPaintRemap)) {
-        // A desk whose screen widget is not live yet keeps the repaint and the mode until it is (desk_input_sync's tick).
+        // A desk whose screen widget is not live yet keeps the repaint and the mode until it is (desk_input_sync's watch of the desk's events).
         coop::desk_input_sync::RepaintRemapOrDefer();
-        coop::desk_input_sync::RepaintCapLevelOrDefer();  // the host's cap level, as its label shows it
+        coop::desk_input_sync::RepaintCapLevelForJoinAdopt();  // the host's cap level, as its label shows it
         coop::desk_input_sync::ApplyVisualizerModeOrDefer(sc.visualizerMode);
         // Prime the input lane's poll baselines, so the seeded values never read as local edges.
         coop::desk_input_sync::PrimeBaselines();
