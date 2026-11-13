@@ -56,7 +56,7 @@ void Tick(coop::net::Session& session) {
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
     coop::point_sack_intent::Tick();    // settle the point sack watch
-    coop::prop_nametag::Tick();         // settle the nametag watch; CLIENT: an unanswered tag request runs out
+    coop::prop_nametag::Tick();         // settle the nametag watch
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
     { ue_wrap::ScopedWalkTimer _w{"sync:desk_verb"}; coop::desk_verb_intent::Tick(session); }  // settle its seams; HOST: run one queued desk press a tick a client
     { ue_wrap::ScopedWalkTimer _w{"sync:cord"}; coop::cord_sync::Tick(); }  // settle its watches; HOST: the seed a joiner is owed; CLIENT: retry the parked links

@@ -49,8 +49,6 @@ constexpr int kTag = 0x4E544147;   // 'NTAG'
 constexpr float    kReachUU     = 200.0f;
 // One tag a second a client: an item is spent by its use, so a faster run is not one player's hand.
 constexpr uint64_t kPerSlotMs   = 1000;
-// CLIENT: a request the host did not answer in this long was refused; the item stays.
-constexpr uint64_t kPendingMs   = 5000;
 constexpr size_t   kMaxKeyChars = sizeof(coop::net::WireKey::data);
 constexpr size_t   kMaxTagChars = coop::net::kPropNametagMaxChars;
 constexpr uint8_t  kAuthorHost  = 0;
@@ -59,12 +57,11 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchRegistered = false;
 bool g_watchSettled = false;
 
-// CLIENT: the request in flight -- the prop's key, the tag, and the item in hand the host's answer spends.
+// CLIENT: the request in flight -- the prop's key and the item in hand the host's answer spends. Released by the host's
+// tag for it (OnPublish), its refusal (OnRefused) or the session's end: every request the host reads is answered.
 struct Pending {
     std::wstring key;
-    std::wstring tag;
     ue_wrap::CachedObjRef item;
-    uint64_t sentMs = 0;
 };
 Pending g_pending;
 // HOST: the host player's own use, between the watch's entry and exit.
@@ -156,17 +153,14 @@ sg::Verdict OnUsePre(const sg::Call& c) {
                 "applied", tag.c_str(), prop, key.c_str());
         return sg::Verdict::Cancel;
     }
-    const uint64_t now = coop::net::NowMs();
-    if (g_pending.key == key && now - g_pending.sentMs < kPendingMs) return sg::Verdict::Cancel;   // asked already
+    if (!g_pending.key.empty()) return sg::Verdict::Cancel;   // asked already: the host's answer comes
     const PropNametagPayload p = MakePayload(coop::net::kPropNametagRequest, key, 0, tag);
     if (!s->SendReliableToSlot(0, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) {
         UE_LOGW("prop_nametag: the tag for prop '%ls' was not sent -- the item stays; use it again", key.c_str());
         return sg::Verdict::Cancel;
     }
     g_pending.key = key;
-    g_pending.tag = tag;
     g_pending.item.Set(c.object);
-    g_pending.sentMs = now;
     UE_LOGI("prop_nametag: this client tagged prop '%ls' '%ls' -- asked of the host", key.c_str(), tag.c_str());
     return sg::Verdict::Cancel;
 }
@@ -278,10 +272,6 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
-    if (g_pending.sentMs && coop::net::NowMs() - g_pending.sentMs > kPendingMs) {
-        UE_LOGI("prop_nametag: no answer for the tag on prop '%ls' -- refused; the item stays", g_pending.key.c_str());
-        g_pending = Pending{};
-    }
     if (g_watchSettled) return;
     if (!g_watchRegistered) {
         g_watchRegistered = sg::WatchName(kRowHandUse, kTag, &OnUsePre, &OnUsePost);
