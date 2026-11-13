@@ -255,7 +255,9 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     if (read && p.op == coop::net::kPowerGridOpUpgrade) {
         coop::hand_item::ApplyOwedNow(sender);
         spent = coop::power_upgrade::TakeSpend(sender, p.index);
-        if (!spent && coop::hand_spend::Spend(sender, kUpgradeClass, 1)) {
+        if (spent) {
+            coop::hand_spend::Burn(sender, kUpgradeClass, 1);  // one upgrade, one credit
+        } else if (coop::hand_spend::Spend(sender, kUpgradeClass, 1)) {
             spent = true;
             UE_LOGI("power_grid: slot %u's install at generator %u is paid by the upgrade its hand held", sender,
                     p.index);

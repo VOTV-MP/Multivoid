@@ -258,7 +258,9 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     if (needSpend) {
         coop::hand_item::ApplyOwedNow(sender);
         spent = TakeSpend(sender, kind, p.tower);
-        if (!spent && coop::hand_spend::Spend(sender, kFuseClass, 1)) {
+        if (spent) {
+            coop::hand_spend::Burn(sender, kFuseClass, 1);  // one fuse, one credit
+        } else if (coop::hand_spend::Spend(sender, kFuseClass, 1)) {
             spent = true;
             UE_LOGI("fuse_tower: slot %u's insert of tower %d is paid by the fuse its hand held", sender, p.tower);
         }
