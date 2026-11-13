@@ -83,26 +83,44 @@ void Tick(coop::net::Session* s) {
         g_since = Clock::now();
         g_phase = Phase::WaitShown;
         return;
-    case Phase::WaitShown:
-        if (shown == VC::View::Viewfinder) {
+    // Each wait ends on the game's own overlay: ReadView reads the widget's visibility the manager's updUI wrote, so
+    // the tick that reads the new state is after the updUI that wrote it, and the watch's post callback (which ran at
+    // that updUI's end) has had its turn. The HUD's published state then equals it (PASS path) or does not (FAIL, decided
+    // there, since nothing later changes it). The bound only says INVALID: the game never changed its overlay.
+    case Phase::WaitShown: {
+        VC::View truth = VC::View::None;
+        if (!VC::ReadView(truth)) truth = VC::View::None;
+        if (truth == VC::View::Viewfinder) {
+            if (shown != VC::View::Viewfinder)
+                return Finish(coop::rig_verdict::Outcome::Fail,
+                              (std::string("the game's overlay shows the viewfinder and the HUD's state says ") + Name(shown))
+                                  .c_str());
             UE_LOGI("[VIDCAM-HINT-DRILL] %s: the viewfinder shows; emptying the hand", Me());
             if (!coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr))
                 return Finish(coop::rig_verdict::Outcome::Invalid, "the hand could not be emptied");
             g_since = Clock::now();
             g_phase = Phase::WaitHidden;
         } else if (Clock::now() - g_since > kBound) {
-            Finish(coop::rig_verdict::Outcome::Fail,
-                   (std::string("with the camera in hand the overlay state never said viewfinder (it says ") +
-                    Name(shown) + ")").c_str());
+            Finish(coop::rig_verdict::Outcome::Invalid,
+                   (std::string("with the camera in hand the game's overlay never showed the viewfinder (it reads ") +
+                    Name(truth) + ")").c_str());
         }
         return;
-    case Phase::WaitHidden:
-        if (shown == VC::View::None)
+    }
+    case Phase::WaitHidden: {
+        VC::View truth = VC::View::None;
+        if (!VC::ReadView(truth)) truth = VC::View::None;
+        if (truth == VC::View::None) {
+            if (shown != VC::View::None)
+                return Finish(coop::rig_verdict::Outcome::Fail,
+                              (std::string("the game's overlay is gone and the HUD's state says ") + Name(shown)).c_str());
             Finish(coop::rig_verdict::Outcome::Pass, "the viewfinder showed with the camera in hand and cleared with it away");
-        else if (Clock::now() - g_since > kBound)
-            Finish(coop::rig_verdict::Outcome::Fail,
-                   (std::string("with the hand empty the overlay state never cleared (it says ") + Name(shown) + ")").c_str());
+        } else if (Clock::now() - g_since > kBound) {
+            Finish(coop::rig_verdict::Outcome::Invalid,
+                   (std::string("with the hand empty the game's overlay never cleared (it reads ") + Name(truth) + ")").c_str());
+        }
         return;
+    }
     case Phase::Done:
         return;
     }
