@@ -70,6 +70,12 @@ bool HandleContainerActEvent(net::Session& session,
 // handle press, checked for role()==Host AND a client sender slot.
 bool HandleCrematorEvent(net::Session& session,
                          const net::Session::ReliableMessage& msg);
+// Cargo lift family: the lift's direction and a call-button press. CargoLiftState is the HOST->CLIENT state, dropped on
+// the host and from any sender but slot 0; CargoLiftIntent is a client's press, checked for role()==Host AND a client
+// sender slot.
+bool HandleCargoLiftEvent(net::Session& session,
+                          const net::Session::ReliableMessage& msg);
+
 // Requester-feedback family: what a verb the host ran for a client showed on the host (a hint, a glossary entry, a
 // 2D sound), sent to that client for its own machine to show. RequesterFeedback is the HOST->CLIENT kind, dropped
 // on the host and from any sender but slot 0.

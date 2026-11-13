@@ -71,6 +71,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_feed.cpp
     src/coop/dispatch/event_dispatch_container_act.cpp
     src/coop/dispatch/event_dispatch_cremator.cpp
+    src/coop/dispatch/event_dispatch_cargo_lift.cpp
     src/coop/dispatch/event_dispatch_economy.cpp
     src/coop/dispatch/event_dispatch_entity.cpp
     src/coop/dispatch/event_dispatch_intent.cpp

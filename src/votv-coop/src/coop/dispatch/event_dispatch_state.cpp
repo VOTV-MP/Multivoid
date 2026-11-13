@@ -52,9 +52,8 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
     case net::ReliableKind::CameraActiveState:  // a security camera's active bit, host-authored
     case net::ReliableKind::CameraLightState:   // a security camera's spotlight bit, host-authored
-    case net::ReliableKind::CargoLiftState:     // the cargo lift's direction, host-authored
     case net::ReliableKind::LockerDoorState: {  // lockers and the drone-console doors, the same shape
-        // DoorState, LightGroupState, the two camera kinds and CargoLiftState are the host-authored kinds in this
+        // DoorState, LightGroupState and the two camera kinds are the host-authored kinds in this
         // otherwise symmetric family, so they do not get the family's any-peer-may-send treatment: a
         // client that authored one would drive the host's and every other client's doors, lights or
         // cameras, the pollution host authority prevents. The host's receive edge refuses a client's

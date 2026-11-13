@@ -16,7 +16,6 @@
 #include "coop/player/hit_intent.h"  // CLIENT->HOST a swing that hit a creature's mirror
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
-#include "coop/interactables/cargo_lift.h"
 #include "coop/interactables/atv_authority.h"  // CLIENT->HOST an ATV seat or takeover request, judged by the host
 #include "coop/interactables/camera_toggle_intent.h"  // CLIENT->HOST use of a security camera, or its laptop light button
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
@@ -107,29 +106,6 @@ bool HandleIntentEvent(net::Session& session,
         net::SleepingbagIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::sleepingbag_sync::OnIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
-        break;
-    }
-    case net::ReliableKind::CargoLiftIntent: {
-        // CLIENT->HOST: a client pressed the cargo lift's call button, `action` the direction it wants. The lift's
-        // resolve, the reach and the rate live in the module; the format lives here. coop::cargo_lift::OnIntent.
-        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
-            UE_LOGW("event_feed: CargoLiftIntent dropped (role or sender slot %d)", msg.senderPeerSlot);
-            break;
-        }
-        net::KeyedTogglePayload p{};
-        if (msg.payloadLen != sizeof(p)) {
-            UE_LOGW("event_feed: CargoLiftIntent payload size %zu, not %zu", static_cast<size_t>(msg.payloadLen),
-                    sizeof(p));
-            break;
-        }
-        std::memcpy(&p, msg.payload, sizeof(p));
-        // The trust boundary: a key the wire can hold, and a direction that is a bool.
-        if (p.key.len > sizeof(p.key.data) || p.action > 1) {
-            UE_LOGW("event_feed: CargoLiftIntent key length %u or action %u out of range -- dropping",
-                    static_cast<unsigned>(p.key.len), static_cast<unsigned>(p.action));
-            break;
-        }
-        coop::cargo_lift::OnIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::CameraToggleIntent: {
