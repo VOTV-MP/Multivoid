@@ -70,12 +70,8 @@ bool HostRejoin(const std::wstring& key) {
         if (e.i1 == 0) parked = true;
         return e.i1 != 0;
     }, r);
+    // An answer with the slot not ready (phase 2) is the run-wide FAIL Aborted() says, at whatever join it comes.
     if (w != 1) return false;
-    if (r.i1 == 2) {
-        UE_LOGI("atv-drill: step 16 FAIL: the host answered a request from a slot whose world was not ready (it was not parked)");
-        End('F', "step 16 (a request at the joiner's world-ready edge is parked) on the host: answered before the slot's world was ready");
-        return false;
-    }
     if (!parked) {
         End('I', "step 16: the request was answered after a park the host never recorded");
         return false;

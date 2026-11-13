@@ -46,8 +46,24 @@ void SayEnd(const std::string& text) {
 
 void SetRole(Role r) { g_me = r; }
 
+// HOST: whether any request was answered with its slot's world not ready (the park's event, phase 2). Read on every wait of the
+// run, not only at step 16: with the park off, the first such answer is a joiner's own adoption sync, which comes at its
+// first join and leaves its gate shut, so the run would otherwise end INVALID at the next barrier (f7-atv_park_off).
+bool AnsweredUnparked() {
+    static uint32_t cursor = 0;
+    DE::Rec r;
+    while (DE::Next(DE::kPark, cursor, r))
+        if (r.i1 == 2) return true;
+    return false;
+}
+
 bool Aborted() {
     if (g_aborted.load()) return true;
+    if (g_me == kHost && AnsweredUnparked()) {
+        UE_LOGI("atv-drill: step 16 FAIL: the host answered a request from a slot whose world was not ready (it was not parked)");
+        End('F', "step 16 (a request at the joiner's world-ready edge is parked) on the host: answered before the slot's world was ready");
+        return true;
+    }
     std::string text;
     if (!PS::Peek(kEndMark, text)) return false;
     g_aborted.store(true);
