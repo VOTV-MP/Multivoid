@@ -175,6 +175,7 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+    {L"blackballSpawner_C",      nullptr},          // the orb event: its ubergraph mints npc_orborb_C
 };
 
 // Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.
@@ -271,7 +272,8 @@ void InstallExSpawnCatch() {
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
                 "mainGamemode_C -> geomOcta_C + eg_C, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "
-                "tentacleBallsFollower_C -> tentacleBall_C; EX_CallMath spawns now enroll)");
+                "tentacleBallsFollower_C -> tentacleBall_C, blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
+                "now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "
                 "NOT mirror this session (event-swarm wisps host-only)");

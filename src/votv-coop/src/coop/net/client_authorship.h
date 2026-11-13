@@ -268,6 +268,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::RequesterFeedback:
     case ReliableKind::KerfurCommandAnswer:
     case ReliableKind::WalkerState:
+    case ReliableKind::OrbEvent:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a value that names no kind: refused like Host

@@ -4,6 +4,7 @@
 
 #include "puppet_identity_internal.h"  // the rows and seams shared with the scan file (src-local)
 
+#include "coop/creatures/orb_authority.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/log.h"
@@ -76,6 +77,7 @@ UE_FACT_FN(kRowPuppetSkullzone, "puppet_identity", L"skullzone_C",
            L"BndEvt__dest_K2Node_ComponentBoundEvent_2_ComponentBeginOverlapSignature__DelegateSignature", Declared);
 
 sg::Verdict OnWholePre(const sg::Call& call);
+sg::Verdict OnOrborbPre(const sg::Call& call);
 sg::Verdict OnBoxMarkPre(const sg::Call& call);
 sg::Verdict OnRunTriggerPre(const sg::Call& call);
 sg::Verdict OnGruntPre(const sg::Call& call);
@@ -98,7 +100,7 @@ const Watch kWatches[] = {
     {&kRowPuppetWispO, kWispO, &OnWholePre, nullptr},
     {&kRowPuppetWispP, kWispP, &OnWispPPre, &OnWispPPost},
     {&kRowPuppetKelura, kKelura, &OnWholePre, nullptr},
-    {&kRowPuppetOrborb, kOrborb, &OnWholePre, nullptr},
+    {&kRowPuppetOrborb, kOrborb, &OnOrborbPre, nullptr},
     {&kRowPuppetWellTpBegin, kWellTpBegin, &OnWholePre, nullptr},
     {&kRowPuppetWellTpEnd, kWellTpEnd, &OnWholePre, nullptr},
     {&kRowPuppetDreamBoulder, kDreamBoulder, &OnWholePre, nullptr},
@@ -202,6 +204,16 @@ sg::Verdict OnWholePre(const sg::Call& call) {
     if (!actor || !PL::Registry::Get().IsPuppetBody(actor)) return sg::Verdict::Run;
     NoteRefused(kWatches[index].counter, actor);
     return sg::Verdict::Cancel;
+}
+
+// The black orb's touch is the host's to judge (coop/creatures/orb_authority): a client refuses every touch of its
+// copy, and the host begins the encounter for a client's body itself. A puppet's touch still counts as refused here.
+sg::Verdict OnOrborbPre(const sg::Call& call) {
+    const int index = call.tag - kPiTagBase;
+    if (index < 0 || index >= kWatchCount) return sg::Verdict::Run;
+    void* actor = Toucher(index, call);
+    if (actor && PL::Registry::Get().IsPuppetBody(actor)) NoteRefused(kWatches[index].counter, actor);
+    return coop::orb_authority::OnTouchPre(call.object, actor);
 }
 
 sg::Verdict OnBoxMarkPre(const sg::Call& call) {

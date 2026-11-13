@@ -104,6 +104,7 @@ UE_FACT_FN(kRowSphereHitMushroomSpore, "spawn_authority", L"mushroomSpore_C",
            L"BndEvt__mushroomSpore_Sphere_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
            Declared);
 UE_FACT_FN(kRowTrySpawnHerbOutsideChurch, "spawn_authority", L"outsideChurch_C", L"trySpawnHerb", Declared);
+UE_FACT_FN(kRowReceiveTickBlackballSpawner, "spawn_authority", L"blackballSpawner_C", L"ReceiveTick", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries.
 struct Row {
@@ -218,6 +219,11 @@ constexpr Row kRows[] = {
     // Delay resumes and the reap of the walkers it counts are all scheduled from that entry, in exclusive branches, so the
     // tick's row refuses every one. The host's walker, the statue's stand swap and its end cross as keyed props.
     {&kRowReceiveTickTickerMannequinSpawner, "mannequinSpawner.ReceiveTick"},
+    // The orb event's spawner: its tick counts player 0's laps around it, and past maxlaps mints an npc_orborb_C on the
+    // navmesh 200 m from that camera. On a client player 0 is the client, so its own tick would mint a private orb the
+    // host never saw. The host's orb crosses by the source-gated catch and its encounter is the host's
+    // (coop/creatures/orb_authority).
+    {&kRowReceiveTickBlackballSpawner,       "blackballSpawner.ReceiveTick"},
     // The plant spawners: each product is a growingPlant_C, which the host's plant_sync sends as PlantState, so a
     // client's own would stand apart from the host's under another key. The winter bush ticker's timer entry plants
     // one bush on a random trace (ticker_bushSpawning UG @206, spawnBush). A spore's hit plants a shroom_7 at the hit
