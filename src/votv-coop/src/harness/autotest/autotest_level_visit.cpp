@@ -674,7 +674,12 @@ void RunCloseClient() {
     if (LV::Stats().tripsStarted > before.tripsStarted)
         { Emit("held", Res::Fail, "a clip took a trip while the host had the backrooms closed"); return; }
     if (!decided) { Emit("held", Res::Invalid, "no clip check was answered no in the time asked: " + ClipDiag()); return; }
-    if (!Emit("held", Res::Pass, "the clip check was answered no while the host had the backrooms closed")) return;
+    // A refused clip leaves the player as before: no black screen of the clip's chain stands. A chain past its check when
+    // the setting arrived puts one up and the lane takes it down on its next turn, so the read waits for it to be gone.
+    if (!PS::WaitFor("the clip's black screen gone", kSettleSec, [] { return Read().black == 0; }, false))
+        { Emit("held", Res::Fail, "a black screen still stands after the refused clip"); return; }
+    if (!Emit("held", Res::Pass, "the clip check was answered no while the host had the backrooms closed, and no black "
+                                 "screen stands")) return;
     if (!PS::Await("reopened")) return;
     if (!PS::WaitFor("the host's open setting", kSettleSec, [] { return BackroomsAllowed(); }, false))
         { Emit("reopened_clip", Res::Invalid, "the host's open setting never reached this client"); return; }

@@ -257,6 +257,17 @@ sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+// A clip chain that reached loadLevel has put up its black screen (mainPlayer_C's tick: Create(blackScreen_C),
+// AddToViewport 666, teleportWObackrooms, then loadLevel). With the call refused nothing follows that would take it
+// down, so it is detached here, on the next game-thread turn (the detach runs engine code, which the VM's body loop
+// must not).
+void ClearRefusedClipScreen() {
+    ue_wrap::game_thread::Post([] {
+        const bool cleared = coop::death_revive::ClearBlackScreenNow();
+        UE_LOGI("level_visit: the black screen a refused clip put up is cleared (%d)", cleared ? 1 : 0);
+    });
+}
+
 sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     if (!call.locals || !call.function || !InSession()) return sg::Verdict::Run;
     void* owner = R::OuterOf(call.function);
@@ -287,12 +298,14 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     if ((E::ReadMainPlayerSittingOn(author, on) && on) || (E::GetAttachParentActor(author, parent) && parent)) {
         UE_LOGW("level_visit: a trip to %ls while the player is seated or riding is refused -- the clip never sends "
                 "one", R::ToString(level).c_str());
+        ClearRefusedClipScreen();
         return sg::Verdict::Cancel;
     }
     const std::wstring map = R::ToString(level);
     // The host's closed switch holds for a chain that passed the clip check before the row reached this machine too.
     if (g_closed.load() && !CloseOff()) {
         UE_LOGI("level_visit: a trip to %ls is refused -- the host has closed the backrooms", map.c_str());
+        ClearRefusedClipScreen();
         return sg::Verdict::Cancel;
     }
     // One visit at a time: a second call of the clip chain (or of a clip after the first is let through) is not a trip.
