@@ -10,8 +10,10 @@
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
 #include "coop/props/prop_hold.h"
+#include "coop/props/prop_save_data.h"
 #include "coop/props/snack_act.h"
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/snack.h"
 #include "ue_wrap/core/log.h"
@@ -288,13 +290,14 @@ Judged JudgeSnack(const Row& row, EL::ElementId eid, const Baseline& base, std::
     if (row.ends == Ends::Ended) {
         if (host) {
             *why = "the host's copy is still live after its last use";
-            return Judged::Wait;
+            return Judged::Fail;   // the end commit is counted and the host ends its copy in the same call: final
         }
         uint32_t total = 0, tracked = 0;
         WrapperCensus(&total, &tracked);
         if (total != 1 || tracked != 1) {
             *why = std::to_string(total) + " wrappers on the host (" + std::to_string(tracked) + " tracked), 1 expected";
-            return total > 1 ? Judged::Fail : Judged::Wait;
+            // The wrapper is born inside the commit, so none or two is final; one not yet tracked waits for the expression tick.
+            return total == 1 ? Judged::Wait : Judged::Fail;
         }
         *why = "one snack commit (ended), the host's copy gone and one wrapper on the host";
         return Judged::Pass;
@@ -343,6 +346,10 @@ void SnackStepReset() { g_settledSaid = false; }
 // birth, record and destroy the host sent for the act: what its copies show then cannot change, and it decides on it.
 void SnackHostMarker(const Row& row, EL::ElementId eid, const Baseline& base) {
     if (g_settledSaid || coop::snack_act::dev::MarksPending()) return;
+    // The host's record for the copy has gone out, not parked or refused and waiting to go again.
+    if (void* const host = EL::LivePropActor(eid)) {
+        if (coop::prop_save_data::dev::Unsettled(ue_wrap::prop::GetInteractableKeyString(host))) return;
+    }
     std::string why;
     if (JudgeSnack(row, eid, base, &why) == Judged::Wait) return;
     g_settledSaid = true;
@@ -369,6 +376,8 @@ Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, EL::Ele
     bool wantOpen = false;
     Expect(*row.snack, readyUses, readyOpen, &wantUses, &wantOpen);
     void* const now = EL::LivePropActor(eid);
+    // The host said `settled`, and this client's record for the copy is not parked or held by the apply budget: its state is final.
+    if (now && coop::prop_save_data::dev::Unsettled(ue_wrap::prop::GetInteractableKeyString(now))) settled = false;
     if (row.ends == Ends::Ended) {
         if (was.Alive() || now) {
             *why = "this client's copy is still live after the last use";

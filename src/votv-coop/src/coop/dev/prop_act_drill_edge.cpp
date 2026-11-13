@@ -76,12 +76,14 @@ bool HExpired(uint64_t bound) { return NowMs() - g_hsMs > bound; }
 
 void HostFail(const EdgeRow* row, const std::string& why) {
     UE_LOGW("%s host %s FAIL -- %s%s%s", kTag, PhaseName().c_str(), row ? row->act.name : "", row ? ": " : "", why.c_str());
+    HostEnds(End::Fail, std::string(row ? row->act.name : "") + ": " + why);
     g_hs = HStage::Done;
 }
 
 // A bound ran out with no event to decide on: INVALID, never a verdict on the lane. The phase stops as it does on a FAIL.
 void HostInvalid(const EdgeRow* row, const std::string& why) {
     UE_LOGW("%s host %s INVALID -- %s%s%s", kTag, PhaseName().c_str(), row ? row->act.name : "", row ? ": " : "", why.c_str());
+    HostEnds(End::Invalid, std::string(row ? row->act.name : "") + ": " + why);
     g_hs = HStage::Done;
 }
 
@@ -388,6 +390,7 @@ void HostStep(coop::net::Session* s) {
                                       std::to_string(sum));
                 return;
             }
+            HostEnds(End::Pass, "all steps held");
             UE_LOGI("%s host edge PASS -- all %u steps held", kTag, static_cast<unsigned>(kEdgeRowCount));
             g_hs = HStage::Done;
             return;

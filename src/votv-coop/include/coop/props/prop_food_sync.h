@@ -59,6 +59,8 @@ void OnDisconnect();
 namespace dev {   // the act drill's MRE step reads this
 // HOST: whether a FoodState for the food of that Key has gone out to every peer (a join's per-slot re-send is not one).
 bool StateSentFor(const std::wstring& key);
+// CLIENT: whether a FoodState for the food of that Key still waits for its copy (the pending set): its value is not applied yet.
+bool StateWaiting(const std::wstring& key);
 }  // namespace dev
 
 }  // namespace coop::props::prop_food_sync

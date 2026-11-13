@@ -785,9 +785,7 @@ void OnPeerGone(uint8_t senderSlot) {
         if (it->second.senderSlot == senderSlot) { const auto dead = it++; Unpark(dead); }
         else ++it;
     }
-    // The occupancy goes with the rows. Leaving it behind wedges the NEXT occupant of this slot to
-    // a single parked record, evicting its own on every arrival, and turns each Park into two full
-    // scans of the park -- slots are recycled lowest-free, so the next joiner inherits it.
+    // The occupancy goes with the rows: left behind, a recycled slot's next occupant is wedged to one parked record.
     g_parkUse.erase(senderSlot);
     g_intentRate.erase(senderSlot);   // and a fresh occupant starts with a fresh rate window
     for (auto it = g_awaiting.begin(); it != g_awaiting.end();) {
@@ -796,4 +794,5 @@ void OnPeerGone(uint8_t senderSlot) {
     }
 }
 
+namespace dev { bool Unsettled(const std::wstring& key) { return g_parked.count(key) != 0 || g_retry.count(key) != 0; } }
 }  // namespace coop::prop_save_data

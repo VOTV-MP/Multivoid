@@ -276,12 +276,17 @@ void Tick(coop::net::Session* s) {
     InstallSpillHook();
     if (!g_grimeClass.Alive()) g_grimeClass.Set(ue_wrap::object_index::ClassByName(L"grimeProjectile_C"));
     if (g_marks.empty()) return;
-    for (const ue_wrap::CachedObjRef& m : g_marks) {
-        void* const actor = m.Get();
+    // A mark leaves once its record has gone out. A declined Publish with no peer ready to take it (nobody in the world yet)
+    // keeps the mark for the next tick; one the transport refused is registered by the lane and sent again by it.
+    size_t kept = 0;
+    for (size_t i = 0; i < g_marks.size(); ++i) {
+        void* const actor = g_marks[i].Get();
         if (!actor || !IsWorldSnack(actor)) continue;
-        coop::prop_save_data::Publish(s, actor, ue_wrap::prop::GetInteractableKeyString(actor));
+        if (!coop::prop_save_data::Publish(s, actor, ue_wrap::prop::GetInteractableKeyString(actor)) &&
+            !s->AnyWorldReadyPeer())
+            g_marks[kept++] = g_marks[i];
     }
-    g_marks.clear();
+    g_marks.resize(kept);
 }
 
 namespace dev {

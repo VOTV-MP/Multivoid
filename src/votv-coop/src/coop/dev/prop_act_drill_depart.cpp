@@ -68,12 +68,14 @@ bool HExpired(uint64_t bound) { return NowMs() - g_hsMs > bound; }
 
 void HostFail(const std::string& why) {
     UE_LOGW("%s host %s FAIL -- %s", kTag, kDepartRow.name, why.c_str());
+    HostEnds(End::Fail, why);
     g_hs = HStage::Done;
 }
 
 // A bound ran out with no event to decide on: INVALID, never a verdict on the lane.
 void HostInvalid(const std::string& why) {
     UE_LOGW("%s host %s INVALID -- %s", kTag, kDepartRow.name, why.c_str());
+    HostEnds(End::Invalid, why);
     g_hs = HStage::Done;
 }
 
@@ -212,14 +214,19 @@ void HostStep(coop::net::Session* s) {
         const bool settled = destroys == 1 && EL::LivePropActor(g_eid) == nullptr &&
                              coop::prop_hold::ReservationCount(kSlot) == 0;
         if (!settled) {
-            if (HExpired(kJudgeBoundMs))
-                HostInvalid("the honest take left " + std::to_string(destroys) + " destroy commits, a live target or a reservation");
+            // The host's commit handler counts, destroys and releases in one call: once a commit is counted the state is
+            // final, and a wrong count, a live target or a standing reservation is the failure. Only no commit yet waits.
+            if (destroys != 0)
+                HostFail("the honest take left " + std::to_string(destroys) + " destroy commits, a live target or a reservation");
+            else if (HExpired(kJudgeBoundMs))
+                HostInvalid("the honest take's commit never reached the host");
             return;
         }
         if (PAH::TallyOf(Tally::BadCommit) - g_base.badCommit != 1) {
             HostFail("the honest take was tallied bad");
             return;
         }
+        HostEnds(End::Pass, "the departure released the reservation, the forged commit was bad, the honest take destroyed the prop once");
         UE_LOGI("%s host depart PASS -- the departure released the reservation, the forged commit was bad and "
                 "destroyed nothing, the honest take destroyed the prop once", kTag);
         g_hs = HStage::Done;
@@ -252,6 +259,7 @@ bool CExpired(uint64_t bound) { return NowMs() - g_csMs > bound; }
 
 void Fail(const std::string& why) {
     UE_LOGW("%s c%d depart FAIL -- %s", kTag, kSlot, why.c_str());
+    RigSay(End::Fail, why);
     PAR::dev::HoldCommits(false);
     g_sayLine = DoneHead(kDepartRow) + "fail " + why.substr(0, 120);
     CEnter(CStage::Say);
@@ -260,6 +268,7 @@ void Fail(const std::string& why) {
 // A bound ran out with no event to decide on: INVALID, said to the host as such.
 void Invalid(const std::string& why) {
     UE_LOGW("%s c%d depart INVALID -- %s", kTag, kSlot, why.c_str());
+    RigSay(End::Invalid, why);
     PAR::dev::HoldCommits(false);
     g_sayLine = DoneHead(kDepartRow) + "invalid " + why.substr(0, 120);
     CEnter(CStage::Say);
@@ -348,7 +357,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         // The host's record is replayed to a joiner, so the first life's ready line reaches the newcomer as history.
         // Life 1 acts only on a ready line that arrived live; the newcomer waits for its own line. A life 1 that
         // first reads the ready line after the feed has retired it from the live tier (11 s) would wait for a line
-        // that never comes, and the bound below FAILs it: loud, never a pass.
+        // that never comes, and the bound below says INVALID: loud, never a pass.
         if (!poll) return;
         std::string rest;
         if (HostSaid(NewcomerHead(), &rest)) {
@@ -440,6 +449,11 @@ void DepartHostTick(coop::net::Session* s) {
 
 void DepartClientTick(coop::net::Session* s) {
     if (g_cs == CStage::Done) return;
+    if (HostEnded()) {   // the host decided: no bound of this client says a second verdict
+        PAR::dev::HoldCommits(false);
+        g_cs = CStage::Done;
+        return;
+    }
     void* const player = coop::players::Registry::Get().Local();
     if (!player) return;
     ClientStep(s, player, NowMs());

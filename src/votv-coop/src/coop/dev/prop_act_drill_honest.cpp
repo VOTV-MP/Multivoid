@@ -538,7 +538,8 @@ const char* MreHostWatch(const Row& row, EL::ElementId eid, const Baseline& base
     ForEachHostFood([&](EL::ElementId id, void* actor, const std::wstring& key) {
         if (g_hostFoodsBefore.count(id)) return;
         ++fresh;
-        if (!coop::props::prop_food_sync::dev::StateSentFor(key)) allSent = false;
+        // A content with no Key is counted by its eid and is never sent a FoodState (the lane sends keyed foods only).
+        if (!key.empty() && key != L"None" && !coop::props::prop_food_sync::dev::StateSentFor(key)) allSent = false;
         ue_wrap::food::Poison poison;
         if (ue_wrap::food::ReadPoison(actor, poison) && poison.delay > 0.f && poison.strength > 0.f) ++poisoned;
     });

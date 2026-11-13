@@ -92,6 +92,7 @@ void ReleaseCommits() {
 
 void Fail(const EdgeRow& r, const std::string& why) {
     UE_LOGW("%s c%d edge FAIL -- %s: %s", kTag, kSlot, r.act.name, why.c_str());
+    RigSay(End::Fail, std::string(r.act.name) + ": " + why);
     LetGoAll();
     g_sayLine = DoneHead(r.act) + "fail " + why.substr(0, 120);
     g_sayFailed = true;
@@ -102,6 +103,7 @@ void Fail(const EdgeRow& r, const std::string& why) {
 // A bound ran out with no event to decide on: INVALID, said to the host as such; the phase stops as it does on a FAIL.
 void Invalid(const EdgeRow& r, const std::string& why) {
     UE_LOGW("%s c%d edge INVALID -- %s: %s", kTag, kSlot, r.act.name, why.c_str());
+    RigSay(End::Invalid, std::string(r.act.name) + ": " + why);
     LetGoAll();
     g_sayLine = DoneHead(r.act) + "invalid " + why.substr(0, 120);
     g_sayFailed = true;
@@ -509,6 +511,11 @@ void EdgeInstall(coop::net::Session* s) {
 
 void EdgeClientTick(coop::net::Session* s) {
     if (g_cs == CStage::Done) return;
+    if (HostEnded()) {   // the host decided: no bound of this client says a second verdict
+        LetGoAll();
+        g_cs = CStage::Done;
+        return;
+    }
     void* const player = coop::players::Registry::Get().Local();
     if (!player) return;
     ClientStep(s, player, NowMs());

@@ -11,18 +11,21 @@
 // (with --observer; prop_act_drill_race.cpp, prop_act_drill_race_client.cpp). depart: a client leaves holding a
 // reservation and a newcomer takes its slot (with --rejoin; prop_act_drill_depart.cpp). edge: the windows of the ask
 // (prop_act_drill_edge.cpp, prop_act_drill_edge_client.cpp). A FAIL is the lane failing; every wait on the other peer
-// ends on a chat line or a counter, and its bound is a bound that FAILs the step, never a wait.
+// ends on a chat line or a counter, and a bound that runs out first only says INVALID (a verdict is decided by an event, never by a clock).
 
 #pragma once
 
 #include "coop/element/element.h"
 #include "coop/props/prop_act_host.h"
 
+#include "ue_wrap/actors/effects.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -50,7 +53,7 @@ inline constexpr float kReachCm = 120.f;       // the client's stop beside the m
 inline constexpr int kWalkDeadlineS = 60;      // the director's own bound on the walk
 inline constexpr float kPairGapCm = 60.f;      // a pair's second prop, further along the spawn line
 
-// Bounds: each ends a step that did not get its line or its count, and FAILs it.
+// Bounds: each ends a step that did not get its line or its count, and says INVALID: the run measured nothing, which is no verdict on the lane.
 inline constexpr uint64_t kReadyBoundMs = 120000;   // CLIENT: a step's start to the host's ready line
 inline constexpr uint64_t kMirrorBoundMs = 60000;   // CLIENT: the ready line to the mirror being here
 inline constexpr uint64_t kReplyBoundMs = 30000;    // CLIENT: the call to no request pending
@@ -121,7 +124,7 @@ struct Row {
     // A refused row: the term of the host's judge that refuses it, the tally its count must rise by one.
     coop::prop_act_host::Tally fitTally = coop::prop_act_host::Tally::kCount;
     // HOST, after the target is announced and before the ready line: called each poll until `*done`. `sinceMs` is 0 on
-    // the first call, then the time since it. A non-null return FAILs the step with it.
+    // the first call, then the time since it. A non-null return FAILs the step with it, or, with the prefix "INVALID: ", says the bound ran out.
     const char* (*hostPrep)(void* actor, uint64_t sinceMs, bool* done) = nullptr;
     const SnackArm* snack = nullptr;   // a snack arm: the ready line carries the host copy's uses and open
 };
@@ -205,6 +208,24 @@ std::string DoneHead(const Row& r, int slot = kClientSlot);
 // The head of a grab row's two mid-step lines: the client's "grabbed" and the host's "driven" follow it.
 std::string DragHead(const Row& r, bool fromHost);
 void Say(const std::string& line);
+
+// The verdict a rig stops on (coop/session/rig_verdict.h), tagged act-<phase>, beside the drill's own lines. HostEnds is
+// the host's end of the phase: the verdict, and for a FAIL or an INVALID the line a client stops on (EndedHead; HostEnded
+// reads it live), so no client runs on to its own bound after the host has decided.
+enum class End : uint8_t { Pass, Fail, Invalid };
+void RigSay(End e, const std::string& why);
+void HostEnds(End e, const std::string& why);
+std::string EndedHead();
+bool HostEnded();
+
+// The MRE step's client reads (prop_act_drill_mre.cpp): the host-born food mirrors this client holds that `had` lacks
+// (`*all` collects every food mirror's id; `*poisoned` names the first carrying poison; `*waiting` says a FoodState for
+// one of the new ones still waits for its copy), the live foodPoison effects and the poisoned food's own bite.
+size_t FoodMirrorsNotIn(const std::unordered_set<coop::element::ElementId>& had,
+                        std::unordered_set<coop::element::ElementId>* all, void** poisoned = nullptr,
+                        bool* waiting = nullptr);
+int FoodPoisonLive(const std::vector<ue_wrap::effects::Entry>& list);
+bool CallBitten(void* food, void* player);
 
 // The text after `head` in the first row of the lobby record that `slot` said; false when none yet. HOST.
 bool ClientSaid(int slot, const std::string& head, std::string* rest);

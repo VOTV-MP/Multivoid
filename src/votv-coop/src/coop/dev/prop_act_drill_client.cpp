@@ -82,42 +82,6 @@ std::unordered_set<EL::ElementId> g_foodsBefore;
 size_t g_freshContents = 0;   // the opened row's contents that arrived
 int g_poisonBefore = 0;       // foodPoison entries live before the poisoned content's bite
 
-// The prop_food_C mirrors this client holds. `*all` collects their ids; the count is those `had` lacks, and `*poisoned`
-// names the first of them whose poison fields read above 0 (what the host's FoodState carried onto it).
-size_t FoodMirrorsNotIn(const std::unordered_set<EL::ElementId>& had, std::unordered_set<EL::ElementId>* all,
-                        void** poisoned = nullptr) {
-    static std::vector<EL::Registry::ActorIdPair> pairs;
-    EL::Registry::Get().SnapshotActorsByType(EL::ElementType::Prop, pairs);
-    size_t fresh = 0;
-    for (const auto& p : pairs) {
-        if (!p.mirror || !p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !ue_wrap::food::IsFood(p.actor))
-            continue;
-        if (all) all->insert(p.id);
-        if (had.count(p.id)) continue;
-        ++fresh;
-        ue_wrap::food::Poison poison;
-        if (poisoned && !*poisoned && ue_wrap::food::ReadPoison(p.actor, poison) && poison.delay > 0.f &&
-            poison.strength > 0.f)
-            *poisoned = p.actor;
-    }
-    return fresh;
-}
-
-int FoodPoisonLive(const std::vector<ue_wrap::effects::Entry>& list) {
-    int n = 0;
-    for (const auto& e : list)
-        if (e.live && _wcsicmp(e.name.c_str(), L"foodPoison") == 0) ++n;
-    return n;
-}
-
-// The food's `bitten(player)`: the bite's own poison branch (prop_food.cpp), which a press on the food reaches.
-bool CallBitten(void* food, void* player) {
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(food), L"bitten");
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return f.valid() && f.Set<void*>(L"player", player) && ue_wrap::Call(food, f);
-}
-
 void CEnter(CStep s) {
     g_cstep = s;
     g_cStepMs = NowMs();
@@ -128,6 +92,7 @@ bool CExpired(uint64_t bound) { return NowMs() - g_cStepMs > bound; }
 // A failed step is logged now and said to the host at the next chat slot; the phase stops there.
 void ClientFail(const Row& row, const std::string& why) {
     UE_LOGW("%s c%d %s FAIL -- %s: %s", kTag, kClientSlot, PhaseName().c_str(), row.name, why.c_str());
+    RigSay(End::Fail, std::string(row.name) + ": " + why);
     g_sayLine = DoneHead(row) + "fail " + why.substr(0, 120);
     g_sayFailed = true;
     CEnter(CStep::Say);
@@ -136,6 +101,7 @@ void ClientFail(const Row& row, const std::string& why) {
 // A bound ran out with no event to decide on: INVALID, said to the host as such, and the phase stops as it does on a FAIL.
 void ClientInvalid(const Row& row, const std::string& why) {
     UE_LOGW("%s c%d %s INVALID -- %s: %s", kTag, kClientSlot, PhaseName().c_str(), row.name, why.c_str());
+    RigSay(End::Invalid, std::string(row.name) + ": " + why);
     g_sayLine = DoneHead(row) + "invalid " + why.substr(0, 120);
     g_sayFailed = true;
     CEnter(CStep::Say);
@@ -482,6 +448,11 @@ const char* RunVerb(const Row& row, void* player, void* mirror) {
 
 void ClientTick(coop::net::Session* s, const Phase& ph) {
     if (g_cstep == CStep::Done) return;
+    // The host ended the phase on its own verdict: nothing more is run here, and no bound of this client says a second one.
+    if (HostEnded()) {
+        g_cstep = CStep::Done;
+        return;
+    }
     void* const player = coop::players::Registry::Get().Local();
     if (!player) return;
     const uint64_t now = NowMs();
@@ -574,7 +545,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             return;
         }
         // A snack arm acts on a mirror that already holds the host's uses and open (its record is published after the
-        // host's write): the instrument waits for it, bounded, and the arm FAILs when it never does.
+        // host's write): the instrument waits for it, bounded, and the arm is INVALID when it never does.
         if (row.snack && !SnackMirrorHoldsReady(g_mirror.Get(), g_readyRest)) {
             if (CExpired(kCopyBoundMs)) ClientInvalid(row, "the mirror never held the host's uses and open from the ready line");
             return;
@@ -663,7 +634,13 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         const size_t sentN = static_cast<size_t>(std::strtoul(said.c_str() + (said.find("n=") == std::string::npos ? 0 : said.find("n=") + 2), nullptr, 10));
         const size_t hostPoisoned = static_cast<size_t>(std::strtoul(said.c_str() + (said.find("poisoned=") == std::string::npos ? 0 : said.find("poisoned=") + 9), nullptr, 10));
         void* poisoned = nullptr;
-        g_freshContents = FoodMirrorsNotIn(g_foodsBefore, nullptr, &poisoned);
+        bool waiting = false;
+        g_freshContents = FoodMirrorsNotIn(g_foodsBefore, nullptr, &poisoned, &waiting);
+        // A FoodState that still waits for its copy has not been applied: what the contents show is not final until it has.
+        if (waiting) {
+            if (CExpired(kContentsBoundMs)) ClientInvalid(row, "a FoodState for a content never drained from the pending set");
+            return;
+        }
         if (g_freshContents != sentN) {
             ClientFail(row, "the host rolled " + std::to_string(sentN) + " contents, " + std::to_string(g_freshContents) +
                                 " reached this client");

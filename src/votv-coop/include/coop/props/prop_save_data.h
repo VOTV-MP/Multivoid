@@ -108,4 +108,10 @@ void OnDisconnect();
 // Drop every parked record from one sender slot (a recycled slot must not inherit them).
 void OnPeerGone(uint8_t senderSlot);
 
+namespace dev {   // the act drill's snack arms read this
+// Whether a record for that Key is parked here (waiting to apply) or was refused by the transport and waits to go again:
+// what the peers show for the prop is not final until it has drained. Game thread.
+bool Unsettled(const std::wstring& key);
+}  // namespace dev
+
 }  // namespace coop::prop_save_data

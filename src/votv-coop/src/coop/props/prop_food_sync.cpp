@@ -683,6 +683,7 @@ void QueueConnectBroadcastForSlot(int slot) {
 
 namespace dev {
 bool StateSentFor(const std::wstring& key) { return g_sent.count(key) != 0; }
+bool StateWaiting(const std::wstring& key) { return g_pending.count(key) != 0; }
 }  // namespace dev
 
 void OnDisconnect() {

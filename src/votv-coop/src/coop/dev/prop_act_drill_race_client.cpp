@@ -76,6 +76,7 @@ void LetGo(void* player) {
 
 void Fail(const RaceRow& r, const std::string& why) {
     UE_LOGW("%s c%d race FAIL -- %s: %s", kTag, g_slot, r.act.name, why.c_str());
+    RigSay(End::Fail, std::string(r.act.name) + ": " + why);
     if (g_slot == kSlotC1) PAR::dev::HoldCommits(false);
     LetGo(coop::players::Registry::Get().Local());
     g_sayLine = DoneHead(r.act, g_slot) + "fail " + why.substr(0, 120);
@@ -87,6 +88,7 @@ void Fail(const RaceRow& r, const std::string& why) {
 // A bound ran out with no event to decide on: INVALID, said to the host as such; the phase stops as it does on a FAIL.
 void Invalid(const RaceRow& r, const std::string& why) {
     UE_LOGW("%s c%d race INVALID -- %s: %s", kTag, g_slot, r.act.name, why.c_str());
+    RigSay(End::Invalid, std::string(r.act.name) + ": " + why);
     if (g_slot == kSlotC1) PAR::dev::HoldCommits(false);
     LetGo(coop::players::Registry::Get().Local());
     g_sayLine = DoneHead(r.act, g_slot) + "invalid " + why.substr(0, 120);
@@ -298,7 +300,7 @@ void Arrived(const RaceRow& r, void* player) {
 bool C1Done(const RaceRow& r, bool* failed) {
     std::string rest;
     if (!HostSaid(DoneHead(r.act, kSlotC1), &rest)) return false;
-    *failed = rest.compare(0, 4, "fail") == 0;
+    *failed = rest.compare(0, 4, "fail") == 0 || rest.compare(0, 8, "invalid ") == 0;   // c1 ended the phase either way
     return true;
 }
 
@@ -450,6 +452,12 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
 
 void RaceClientTick(coop::net::Session* s) {
     if (g_cs == CStage::Done) return;
+    if (HostEnded()) {   // the host decided: no bound of this client says a second verdict
+        if (g_slot == kSlotC1) PAR::dev::HoldCommits(false);
+        LetGo(coop::players::Registry::Get().Local());
+        g_cs = CStage::Done;
+        return;
+    }
     void* const player = coop::players::Registry::Get().Local();
     if (!player) return;
     ClientStep(s, player, NowMs());

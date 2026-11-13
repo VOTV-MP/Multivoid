@@ -19,6 +19,7 @@
 #include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
+#include "coop/session/rig_verdict.h"
 #include "coop/save/join_window_baseline.h"
 
 #include "ue_wrap/actors/prop_flags.h"
@@ -57,6 +58,21 @@ std::string DragHead(const Row& r, bool fromHost) {
 }
 
 void Say(const std::string& line) { coop::chat_sync::QueueSend(line); }
+
+void RigSay(End e, const std::string& why) {
+    using O = coop::rig_verdict::Outcome;
+    const std::string tag = "act-" + PhaseName();
+    coop::rig_verdict::Say(tag.c_str(), e == End::Pass ? O::Pass : e == End::Fail ? O::Fail : O::Invalid, "%s", why.c_str());
+}
+
+std::string EndedHead() { return std::string(kTag) + " host " + PhaseName() + " ended"; }
+
+void HostEnds(End e, const std::string& why) {
+    RigSay(e, why);
+    if (e != End::Pass) Say(EndedHead());
+}
+
+bool HostEnded() { return HostSaidLive(EndedHead(), nullptr); }
 
 }  // namespace detail
 
@@ -127,6 +143,7 @@ bool HExpired(uint64_t bound) { return NowMs() - g_hStepMs > bound; }
 
 void HostFail(const Row* row, const std::string& why) {
     UE_LOGW("%s host %s FAIL -- %s%s%s", kTag, PhaseName().c_str(), row ? row->name : "", row ? ": " : "", why.c_str());
+    HostEnds(End::Fail, std::string(row ? row->name : "") + ": " + why);
     g_hstep = HStep::Done;
 }
 
@@ -134,6 +151,7 @@ void HostFail(const Row* row, const std::string& why) {
 // phase stops as it does on a FAIL.
 void HostInvalid(const Row* row, const std::string& why) {
     UE_LOGW("%s host %s INVALID -- %s%s%s", kTag, PhaseName().c_str(), row ? row->name : "", row ? ": " : "", why.c_str());
+    HostEnds(End::Invalid, std::string(row ? row->name : "") + ": " + why);
     g_hstep = HStep::Done;
 }
 
@@ -414,6 +432,7 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
                 HEnter(HStep::Spawn);
                 return;
             }
+            HostEnds(End::Pass, "all steps held");
             UE_LOGI("%s host %s PASS -- all %u steps held", kTag, ph.name, static_cast<unsigned>(ph.count));
             g_hstep = HStep::Done;
             return;

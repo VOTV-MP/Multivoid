@@ -124,6 +124,7 @@ void ClearGrab() {
 void HostFail(const RaceRow* row, const std::string& why) {
     ClearGrab();
     UE_LOGW("%s host %s FAIL -- %s%s%s", kTag, PhaseName().c_str(), row ? row->act.name : "", row ? ": " : "", why.c_str());
+    HostEnds(End::Fail, std::string(row ? row->act.name : "") + ": " + why);
     g_hs = HStage::Done;
 }
 
@@ -131,6 +132,7 @@ void HostFail(const RaceRow* row, const std::string& why) {
 void HostInvalid(const RaceRow* row, const std::string& why) {
     ClearGrab();
     UE_LOGW("%s host %s INVALID -- %s%s%s", kTag, PhaseName().c_str(), row ? row->act.name : "", row ? ": " : "", why.c_str());
+    HostEnds(End::Invalid, std::string(row ? row->act.name : "") + ": " + why);
     g_hs = HStage::Done;
 }
 
@@ -419,10 +421,12 @@ void HostStep(coop::net::Session* s) {
         return;
     }
     case HStage::AwaitDone: {
-        // c1's destroy commit processed: the host's fan-out of that destroy is sent, and this line follows it on the same
-        // ordered Default lane (session_lanes.h LaneForKind, FIFO), so a client that reads it has taken the destroy. The
+        // The destroy commit processed (c1's, or c2's in the row where c2 takes c1's disc): the host's fan-out of it
+        // is sent, and this line follows it on the same ordered Default lane (session_lanes.h LaneForKind, FIFO), so a client that reads it has taken the destroy. The
         // clients decide on it: a copy that still stands then is the failing event.
-        if (!g_fannedSaid && Since(PAH::CommitsOf(kSlotC1, PAH::internal::CommitStep::Destroy), g_base.destroy1) > 0) {
+        const bool c2Destroys = r.blocker == Blocker::C2Takes;   // that row's destroy is c2's commit, fanned out to c1's disc
+        if (!g_fannedSaid && Since(PAH::CommitsOf(c2Destroys ? kSlotC2 : kSlotC1, PAH::internal::CommitStep::Destroy),
+                                   c2Destroys ? g_base.destroy2 : g_base.destroy1) > 0) {
             g_fannedSaid = true;
             Say(HostLine(r, "fanned"));
         }
@@ -454,6 +458,7 @@ void HostStep(coop::net::Session* s) {
                 HEnter(kRaceRows[g_hrow].act.target == Target::Client ? HStage::AwaitKey : HStage::Spawn);
                 return;
             }
+            HostEnds(End::Pass, "all steps held");
             UE_LOGI("%s host race PASS -- all %u steps held", kTag, static_cast<unsigned>(kRaceRowCount));
             g_hs = HStage::Done;
             return;
