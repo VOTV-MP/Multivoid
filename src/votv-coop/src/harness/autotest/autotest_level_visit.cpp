@@ -1,22 +1,15 @@
 // harness/autotest/autotest_level_visit.cpp -- TEST-ONLY: a clip's trip to another map is the clipping player's alone,
-// and comes back as a death does (coop/player/level_visit). The level_visit_drill row names the arm; its siblings
-// (level_visit_start, _look, _map, _end, _dump_dir) shape the visit, and level_visit_hide_off, level_visit_copy_cancel_off
-// and backrooms_close_off are the red arms.
-
-// client / host: the visitor (the client, or the host) takes the trip (level_visit_start: clip = the game's own clip,
-// call = the clip's own lib_C::loadLevel with a camera in hand, none = a death in the world, the control), stays until
-// the other peer, the watcher, has seen the visitor's copy hidden, ends the visit (level_visit_end: end = lib_C::End from
-// the map's level script, quit = QuitGame, wait = the map's own clock, death = a lethal hit), and comes back. The watcher
-// judges its copy of the visitor by the poses it applies: hidden at the first pose below the visit floor, shown at the
-// first pose back above it, each within a few more poses. After a clip it also counts the trip the visitor's copy
-// authored on the watcher's own machine, which the gate cancels. close: the host closes the backrooms; the client's
-// clip is answered no, and after the host opens them again the clip takes a trip. join: the host takes the trip and
-// stays; a client that joins later must find the host's copy hidden at the first pose it applies.
-//
-// Every step ends on the other peer's signal (peer_signal, VOTVCOOP_CAN_DIR) or on the state it waits for, never a
-// clock. A check's outcome is said where it is decided (`level-visit: ARM <name> <role> PASS|FAIL|INVALID`, and a
-// failure also `rig: VERDICT level-visit`), no later leg runs, and a bound that runs out says INVALID only. The host
-// says the one PASS.
+// and comes back as a death does (coop/player/level_visit). The level_visit_drill row names the arm and its sibling rows
+// shape the visit; the red arms are level_visit_hide_off, level_visit_copy_cancel_off and backrooms_close_off.
+// client / host: the visitor takes the trip, stays until the watcher has judged its copy of the visitor hidden by the
+// poses it applies, ends the visit and comes back; the watcher judges the copy hidden at the first pose below the visit
+// floor and shown at the first pose back above it, and after a clip counts the trip the visitor's copy authored on its
+// own machine, which the gate cancels. close: the host closes the backrooms, the client's clip is answered no, and after
+// the host opens them again it takes a trip. join: the host takes the trip and stays; a client that joins later must
+// find the host's copy hidden at the first pose it applies.
+// Every step ends on the other peer's signal (peer_signal) or on the state it waits for, never a clock. A check's
+// outcome is said where it is decided (`level-visit: ARM <name> <role> PASS|FAIL|INVALID`, a failure also
+// `rig: VERDICT level-visit`), no later leg runs, and a bound that runs out says INVALID only. The host says the PASS.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -63,7 +56,6 @@ namespace E    = ue_wrap::engine;
 namespace OI   = ue_wrap::object_index;
 namespace LV   = coop::level_visit;
 namespace RV   = coop::rig_verdict;
-namespace ROW  = coop::config_registry::rows;
 using disc_drill::OnGameThread;
 
 constexpr const char* kTag = "level-visit";
@@ -294,12 +286,12 @@ struct Plan {
 
 Plan PlanFromRows() {
     Plan p;
-    p.start = coop::config::ResolveEnum(ROW::level_visit_start);
-    p.look = coop::config::ResolveEnum(ROW::level_visit_look);
-    p.map = coop::config::ResolveString(ROW::level_visit_map);
+    p.start = coop::config::ResolveEnum(coop::config_registry::rows::level_visit_start);
+    p.look = coop::config::ResolveEnum(coop::config_registry::rows::level_visit_look);
+    p.map = coop::config::ResolveString(coop::config_registry::rows::level_visit_map);
     if (p.map.empty()) p.map = "sl_backroomsObsolete";
-    p.end = coop::config::ResolveEnum(ROW::level_visit_end);
-    p.dump = coop::config::ResolveString(ROW::level_visit_dump_dir);
+    p.end = coop::config::ResolveEnum(coop::config_registry::rows::level_visit_end);
+    p.dump = coop::config::ResolveString(coop::config_registry::rows::level_visit_dump_dir);
     p.camera = p.start != "clip" && p.look != "lamp";
     return p;
 }
@@ -619,20 +611,20 @@ void RunPair(const std::string& arm) {
 // host closes and opens; the client clips.
 bool BackroomsAllowed() {
     bool on = true;
-    OnGameThread([&on] { on = coop::config::ResolveFlag(ROW::world_backrooms); });
+    OnGameThread([&on] { on = coop::config::ResolveFlag(coop::config_registry::rows::world_backrooms); });
     return on;
 }
 
 void RunCloseHost() {
     if (!disc_drill::HostWorldUp() || !PS::Await("client_ready", 480)) return;
     OnGameThread([] {
-        const auto r = coop::config::SetValue(ROW::world_backrooms, "0");
+        const auto r = coop::config::SetValue(coop::config_registry::rows::world_backrooms, "0");
         UE_LOGI("level-visit: host closed the backrooms (set result %d)", static_cast<int>(r));
     });
     PS::Mark("closed");
     if (!Heard("held")) return;
     OnGameThread([] {
-        const auto r = coop::config::ResetValue(ROW::world_backrooms);
+        const auto r = coop::config::ResetValue(coop::config_registry::rows::world_backrooms);
         UE_LOGI("level-visit: host opened the backrooms again (reset result %d)", static_cast<int>(r));
     });
     PS::Mark("reopened");
@@ -705,7 +697,7 @@ void RunJoinClient() {
 }  // namespace
 
 DWORD WINAPI LevelVisitThread(LPVOID /*arg*/) {
-    const std::string arm = coop::config::ResolveEnum(ROW::level_visit_drill);
+    const std::string arm = coop::config::ResolveEnum(coop::config_registry::rows::level_visit_drill);
     if (!PS::Begin(kTag)) return 0;
     if (arm != "close")
         OnGameThread([] {
