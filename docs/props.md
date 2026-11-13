@@ -317,7 +317,7 @@ held container waits too. A prop still in the box by then with no driver is pre-
 runs on it, since it fires no second overlap, and the game's own body may still refuse it. A refusal stands while the
 same drive does, until the container changes. A client's own copy of the call on a shared mirror is cancelled whoever
 calls it (the container's own overlap graph, a drone sack's trigger), since the mirror is display only; only a roomba's own
-graph runs, because its put files a prop that graph just spawned. A joiner needs no replay: the put is one host step, so a joiner seeded
+graph runs, on the host, because its put files a prop that graph just spawned. A joiner needs no replay: the put is one host step, so a joiner seeded
 before it receives the prop's destroy and the container's publication, and one seeded after receives the container with
 the record `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
@@ -471,6 +471,16 @@ its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use 
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
 answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
 
+The robot cleaner (`prop_roomba_C`) drives itself by physics: its tick turns its wheels, a random roll and its bumper's
+hits pick its turns, and its overlap takes items from the trash piles it passes into its own container. Each peer ran
+that on its own copy, so the copies drove apart. It is the host's: a client refuses the cleaner's tick and its pickup at
+the script-body gate, and while the host's cleaner runs the host claims its drive, so every copy follows the host's pose
+on the drive stream and a client turns the brushes itself. A client's press of the switch (action 5) is refused and
+asked of the host (`RoombaIntent`), which judges the reach and presses its own cleaner; every change of its `active`
+goes out (`RoombaState`), to a joiner too, and a copy takes it through the cleaner's own `use`, which sets its light,
+sound and box (`coop/props/roomba_sync`) `[V]` (`coop/dev/roomba_probe`: the host's cleaner switched on, the client's
+copy within 10 cm of it each second and resting 1 cm from it; the client's press switched the host's off and its own).
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -483,6 +493,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | container contents | the host | slices of its object array; an extraction is an intent |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
+| the robot cleaner | the host | its drive on the drive stream; its switch a request; a client's tick and pickup refused |
 | notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
 | notebook page text | the editing peer; the host takes it from the claim's holder, or from anyone while it is free | the notebook's own save record on the record lane, at the editor's commit and at the close |
 | a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
@@ -499,6 +510,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropPropsIntent`, `PropPropsState` | a client to the host; the host to all, or to the sender alone for a refusal | a client's press of the prop-properties tool with the tool's four values; a prop's static, frozen and sleep read back from the host's copy, or the reason the press was refused `[?]` |
 | `PropDrivePose` (stream) | the host to all; a syncing client to the host | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation; a client's rows of the prop its own interaction moves, which the host judges before it relays one `[?]` |
 | `PropDriveEnd` | the host to all; a syncing client to the host | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation; a client's End is admitted when it is the row's syncer `[?]` |
+| `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
 | `PropSyncClaim`, `PropSyncAnswer` | a client to the host; the host to that client | a client's request to sync a prop its interaction moves, and the host's grant, refusal (with the reason) or revoke (with the generation); the host also grants a thrown prop to its thrower unasked, `seq` being the throw sequence `[?]` |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, a throw or an unavoidable birth, for the host to author, with the placed root's velocity and the throw sequence |
 | `PropStickState` | the peer that sticks or frees it, to all | frozen or static, the commit pose and the hold the stick ended; or an unstick, with the pose and velocity |
@@ -559,6 +571,7 @@ prop resolves.
 | a client's intents | `coop/props/prop_drop_intent`; a thrown prop: `coop/props/prop_throw`, `coop/net/throw_bounds` |
 | the stick | `coop/props/prop_stick_sync` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
+| the robot cleaner | `coop/props/roomba_sync`; `coop/dev/roomba_probe` |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
