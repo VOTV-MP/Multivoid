@@ -62,6 +62,12 @@ bool LocalHolds(const wchar_t* key);
 // is authoritative; on a client it is the broadcast mirror. Game thread.
 uint8_t HolderOf(const wchar_t* key);
 
+// HOST, for the seat-ragdoll drill: whether `slot`'s player lies in its ragdoll or is dead, by the read the desk
+// hold's reconcile makes, and how many passes that reconcile has run. A verdict about the hold is taken once a pass has
+// run after the knock-down was seen. Game thread.
+bool KnockedDown(uint8_t slot);
+uint32_t ReconcilePasses();
+
 // A lane that must finish something before this peer lets go of a claim registers here, from its Install
 // (idempotent). Asked every tick a release of the LOCAL claim `key` is due, before it is sent: true holds
 // the release, and the interface edge is read again on the next tick, so the claim stays with this peer

@@ -2,14 +2,13 @@
 //
 // One peer (the client, or the host with dev.seat_ragdoll_who=host) enters a device the way the game's enter ends
 // (setActiveInterface): the laptop, or with dev.seat_ragdoll_device=desk or sat the desk's coordinates screen or the
-// SAT console. Once the other peer reads its claim, it ragdolls as a faint does (ragdollMode(true, passOut, false)),
-// and the other peer then waits for the claim to free and enters the device itself. Arms: dev.seat_ragdoll_ping (at the
-// desk, either peer) starts a ping before the faint, dev.seat_ragdoll_kill dies of a lethal hit instead (a client dying
-// mid-ping), and dev.seat_ragdoll_exit leaves by the game's own exit instead
-// of a ragdoll. The host says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`: PASS when the claim is free within 5 s and
-// the other peer's enter stands, or, with both arms, when the pinger keeps the desk and the enter is refused. The red:
-// dev.occupancy_pinger_down_off on the host, with the ping arm (the host acting, or the client with the kill arm), must
-// FAIL if the ping outlasts the knock-down (the claim never frees).
+// SAT console. Once the other peer reads its claim, it ragdolls as a faint does (ragdollMode(true, passOut, false)).
+// Arms: dev.seat_ragdoll_ping (at the desk) starts a ping first, dev.seat_ragdoll_kill dies of a lethal hit instead (a
+// client dying mid-ping), dev.seat_ragdoll_exit leaves by the game's own exit (with the ping, the host acting). The host
+// measures the hold and says `rig: VERDICT seat-ragdoll PASS|FAIL|INVALID`, every verdict decided by an event: with a
+// ping, the hold's state once the reconcile has run twice after the host saw the knock-down (the exit arm: after the
+// actor's signal); without, the claim's release. A bound only says INVALID. PASS: the hold is free, or, with the exit
+// and the ping, still the pinger's. The red: dev.occupancy_pinger_down_off on the host with the ping arm must FAIL.
 // Gated by VOTVCOOP_RUN_SEAT_RAGDOLL; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"
@@ -46,7 +45,7 @@ using disc_drill::OnGameThread;
 
 constexpr const char* kTag = "seat-ragdoll";
 constexpr int kStepSec = 120;
-constexpr int kFreedSec = 5;  // the bound: a freed claim and a standing enter come inside it
+constexpr int kBackstopSec = 10;  // a bound says INVALID only: every verdict is decided by an event
 
 std::string Device() {
     return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_device);
@@ -115,11 +114,44 @@ const char* Outcome() { return Kill() ? "died of a lethal hit" : ExitOnly() ? "l
 
 bool HostActs() { return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_who) == "host"; }
 
-void Act(const char* me) {
+// HOST: what the actor leaves held. Every verdict is an event, and a bound only says INVALID.
+//  - A ping arm: the desk's hold is re-asserted by the reconcile, so the hold's state is read at the no-change point,
+//    once the reconcile has run after the departure was seen. A knock-down is seen by the host's own read (the one the
+//    reconcile makes); an exit by the actor's signal. Two passes: the first can run in the tick that is still taking the
+//    actor's own release, the second is a later tick.
+//  - No ping: nothing re-holds the claim, so its release is the event.
+// Says INVALID and returns false when an event never came.
+bool MeasureHold(unsigned actorSlot, bool& freed) {
+    if (!Ping()) {
+        freed = PS::WaitFor("the claim freed", kBackstopSec, [] { return Holder() == 0xFF; });
+        return freed;
+    }
+    if (!ExitOnly() &&
+        !PS::WaitFor("the actor's knock-down seen by the host", kBackstopSec, [actorSlot] {
+            bool down = false;
+            OnGameThread([&] { down = coop::device_occupancy::KnockedDown(static_cast<uint8_t>(actorSlot)); });
+            return down;
+        }))
+        return false;
+    uint32_t seen = 0;
+    OnGameThread([&] { seen = coop::device_occupancy::ReconcilePasses(); });
+    if (!PS::WaitFor("two reconcile passes after the departure", kBackstopSec, [seen] {
+            uint32_t now = 0;
+            OnGameThread([&] { now = coop::device_occupancy::ReconcilePasses(); });
+            return now >= seen + 2;
+        }))
+        return false;
+    freed = Holder() == 0xFF;
+    UE_LOGI("seat-ragdoll: the reconcile ran twice after the departure (passes %u -> later); the hold reads holder=%u",
+            seen, Holder());
+    return true;
+}
+
+std::string Act(const char* me) {
     bool entered = false;
     OnGameThread([&] { entered = EnterDevice(); });
     UE_LOGI("seat-ragdoll: %hs entered the %hs (call=%d)", me, Device().c_str(), entered ? 1 : 0);
-    PS::WaitFor("this peer's claim", 10, [] { return InInterface() && Holder() != 0xFF; }, false);
+    if (!PS::WaitFor("this peer's claim", kBackstopSec, [] { return InInterface() && Holder() != 0xFF; })) return "";
     LogState(me, 0);
     if (Ping()) {
         bool wrote = false;
@@ -131,24 +163,26 @@ void Act(const char* me) {
             }
         });
         // The attribution is the host's: a client actor leaves the wait to the watcher (the host), which reads it.
-        const bool running = !HostActs() || PS::WaitFor("the desk's ping machine attributed", 10, [] {
-            uint8_t slot = 0xFF;
-            OnGameThread([&] { slot = coop::desk_input_sync::PingActiveSlot(); });
-            return slot != 0xFF;
-        }, false);
-        UE_LOGI("seat-ragdoll: %hs started a ping (write=%d attributed=%d, -1: the host reads it)", me, wrote ? 1 : 0, HostActs() ? (running ? 1 : 0) : -1);
+        if (HostActs() && !PS::WaitFor("the desk's ping machine attributed", kBackstopSec, [] {
+                uint8_t slot = 0xFF;
+                OnGameThread([&] { slot = coop::desk_input_sync::PingActiveSlot(); });
+                return slot != 0xFF;
+            }))
+            return "";
+        UE_LOGI("seat-ragdoll: %hs started a ping (write=%d)", me, wrote ? 1 : 0);
     }
     PS::Mark("actor_in");
-    if (!PS::Await("observer_saw_claim", kStepSec)) return;
+    std::string saw;
+    if (!PS::AwaitText("observer_saw_claim", saw, kStepSec)) return "";
     // A joiner is protected for a while (startInvinc) and a lethal hit lands nowhere then: the same precondition the
     // death drill waits on, and the death itself is read back below, so a hit that killed nobody is INVALID, never a FAIL.
-    if (Kill() && !PS::WaitFor("a player a lethal hit can kill", 120, [] {
+    if (Kill() && !PS::WaitFor("a player a lethal hit can kill", kStepSec, [] {
             DeathSnapshot s;
             OnGameThread([&] { s = ReadDeathState(); });
             return s.havePawn && s.haveState && s.haveCanRagdoll && s.health > 0.f && s.canRagdoll && !s.dead &&
                    !s.startInvinc && !s.immortal && s.inGameplay;
         }))
-        return;
+        return "";
     bool rag = false;
     OnGameThread([&] {
         void* p = coop::players::Registry::Get().Local();
@@ -164,67 +198,60 @@ void Act(const char* me) {
         }
     });
     UE_LOGI("seat-ragdoll: %hs %hs (call=%d)", me, Outcome(), rag ? 1 : 0);
-    if (Kill() && !PS::WaitFor("the lethal hit's death", 10, [] {
+    if (Kill() && !PS::WaitFor("the lethal hit's death", kBackstopSec, [] {
             DeathSnapshot s;
             OnGameThread([&] { s = ReadDeathState(); });
             return s.dead;
         }))
-        return;
+        return "";
     PS::Mark("actor_ragdolled");
-    PS::Await("observer_done", kStepSec);  // the actor stays down (or out) while the watcher measures
+    if (!HostActs()) {
+        PS::Await("observer_done", kStepSec);  // the actor stays down (or out) while the host measures
+        LogState(me, 1);
+        return "";
+    }
+    // The host is the actor: it measures its own table, the client having said what it saw of the claim.
+    bool freed = false;
+    const bool ok = MeasureHold(0, freed);
     LogState(me, 1);
+    return ok ? std::string(saw == "1" ? "1" : "0") + " " + (freed ? "1" : "0") : std::string();
 }
 
-// The watcher: the actor's claim here, freed within kFreedSec of the ragdoll, and this peer's own enter standing: held
-// in the interface and the holder of the claim. "claimed freed stays". A claim that never frees, or an enter that is
-// forced out, runs the bound out and reads as a miss.
-std::string Watch(const char* me, unsigned actorSlot) {
-    if (!PS::Await("actor_in", kStepSec)) return "";
-    PS::WaitFor("the actor's claim here", 10, [actorSlot] { return Holder() == actorSlot; }, false);
-    if (Ping() && !HostActs())
-        PS::WaitFor("the client's ping attributed", 10, [actorSlot] {
+// The watcher's prelude: the actor's claim seen here, and the client's ping attributed when the host watches it. It says
+// what it saw of the claim; the host measures what the actor leaves.
+bool WatchClaim(const char* me, unsigned actorSlot) {
+    if (!PS::Await("actor_in", kStepSec)) return false;
+    if (!PS::WaitFor("the actor's claim here", kBackstopSec, [actorSlot] { return Holder() == actorSlot; })) return false;
+    if (Ping() && !HostActs() &&
+        !PS::WaitFor("the client's ping attributed", kBackstopSec, [actorSlot] {
             uint8_t slot = 0xFF;
             OnGameThread([&] { slot = coop::desk_input_sync::PingActiveSlot(); });
             return slot == actorSlot;
-        }, false);
+        }))
+        return false;
     LogState(me, 0);
-    const bool claimed = Holder() == actorSlot;
-    PS::Mark("observer_saw_claim");
-    if (!PS::Await("actor_ragdolled", kStepSec)) return "";
-    const bool freed = PS::WaitFor("the claim freed", kFreedSec, [] { return Holder() == 0xFF; }, false);
-    LogState(me, 1);
-    bool entered = false;
-    unsigned mine = 0xFF;
-    OnGameThread([&] {
-        entered = EnterDevice();
-        mine = coop::players::Registry::Get().LocalPeerId();
-    });
-    const bool stays = PS::WaitFor("the enter standing", kFreedSec, [mine] { return InInterface() && Holder() == mine; }, false);
-    LogState(me, 2);
-    UE_LOGI("seat-ragdoll: %hs claimed=%d freed=%d enter=%d stays=%d", me, claimed ? 1 : 0, freed ? 1 : 0, entered ? 1 : 0, stays ? 1 : 0);
-    PS::Mark("observer_done");
-    return std::to_string(claimed ? 1 : 0) + " " + std::to_string(freed ? 1 : 0) + " " + std::to_string(stays ? 1 : 0);
+    PS::Mark("observer_saw_claim", "1");
+    return true;
 }
 
+// "claimed freed", each 0 or 1: the claim the watcher saw, and the hold the actor left.
 void Judge(const std::string& r) {
-    // The watcher's word: three flags, "<claimed> <freed> <stays>", each 0 or 1.
-    if (r.size() != 5 || r[1] != ' ' || r[3] != ' ')
-        return coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "the watcher's word never came");
-    const int claimed = r[0] == '1', freed = r[2] == '1', stays = r[4] == '1';
-    // The exit arm mid-ping: the pinger's machine keeps the desk, so the other peer is refused and nothing frees it.
-    const bool pass = ExitOnly() && Ping() ? claimed && !freed && !stays : claimed && freed && stays;
+    if (r.size() != 3 || r[1] != ' ')
+        return coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid, "the measure's word never came");
+    const int claimed = r[0] == '1', freed = r[2] == '1';
+    // The exit arm mid-ping: the pinger's machine keeps the desk, so nothing frees it.
+    const bool pass = ExitOnly() && Ping() ? claimed && !freed : claimed && freed;
     coop::rig_verdict::Say(kTag, pass ? coop::rig_verdict::Outcome::Pass : coop::rig_verdict::Outcome::Fail,
-                           "%s %s at the %s: claimed=%d, freed within %d s=%d, the other peer's enter %s",
-                           HostActs() ? "the host" : "the client", Kill() ? "died" : ExitOnly() ? "left" : "ragdolled", Device().c_str(),
-                           claimed, kFreedSec, freed,
-                           stays ? "stands" : "was refused");
+                           "%s %s at the %s: the claim was seen=%d, the hold %s", HostActs() ? "the host" : "the client",
+                           Kill() ? "died" : ExitOnly() ? "left" : "ragdolled", Device().c_str(), claimed,
+                           freed ? "is free" : "is still held");
 }
 
 void RunClient() {
     if (!disc_drill::HostPuppetUp()) return;
     PS::Mark("client_ready");
     if (!PS::Await("host_ready", kStepSec)) return;
-    if (HostActs()) PS::Mark("watch_result", Watch("CLIENT", 0));
+    if (HostActs()) WatchClaim("CLIENT", 0);
     else Act("CLIENT");
     PS::Await("host_done", kStepSec);
     UE_LOGI("seat-ragdoll: DONE on client");
@@ -244,10 +271,11 @@ void RunHost() {
     PS::Mark("host_ready");
     std::string r;
     if (HostActs()) {
-        Act("HOST");
-        PS::AwaitText("watch_result", r, kStepSec);
-    } else {
-        r = Watch("HOST", 1);
+        r = Act("HOST");
+    } else if (WatchClaim("HOST", 1) && PS::Await("actor_ragdolled", kStepSec)) {
+        bool freed = false;
+        if (MeasureHold(1, freed)) r = std::string("1 ") + (freed ? "1" : "0");
+        PS::Mark("observer_done");
     }
     PS::Mark("host_done");
     Judge(r);

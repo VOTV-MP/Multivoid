@@ -135,6 +135,7 @@ const wchar_t* const kDeskClaim = L"desk";
 bool g_deskFsmHold = false;
 bool g_pingerDown = false;  // latched for the current ping run, cleared when no ping runs
 std::chrono::steady_clock::time_point g_nextFsmHoldPoll{};
+uint32_t g_reconcilePasses = 0;  // passes the host's reconcile has run (a drill's no-change point)
 
 void SendClaim(coop::net::Session* s, const std::wstring& key, uint8_t slot, bool busy);  // fwd
 uint8_t LocalSlot();                                                                     // fwd
@@ -173,6 +174,7 @@ void ReconcileDeskFsmHold(coop::net::Session* s) {
     const auto now = std::chrono::steady_clock::now();
     if (now < g_nextFsmHoldPoll) return;
     g_nextFsmHoldPoll = now + std::chrono::milliseconds(250);
+    ++g_reconcilePasses;
 
     // The drill's red: a knocked-down pinger keeps the desk, as before the lane.
     static const bool s_pingerDownOff =
@@ -596,6 +598,10 @@ uint8_t HolderOf(const wchar_t* key) {
     auto it = g_busy.find(key);
     return it == g_busy.end() ? 0xFF : it->second;
 }
+
+bool KnockedDown(uint8_t slot) { return PlayerDown(slot); }
+
+uint32_t ReconcilePasses() { return g_reconcilePasses; }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);

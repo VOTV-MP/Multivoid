@@ -57,9 +57,10 @@ desk's physical buttons never set it, which is why the input lane below is claim
 While a peer's ping runs, the host keeps the desk claimed for that peer after it leaves, so no
 other aim moves the dots its machine is consuming. A pinger knocked down (a faint, a KO, a death)
 holds it no longer: its ragdoll left the desk as any exit does, and the next player can sit while the
-machine runs on `[V]` (`harness/autotest/autotest_seat_ragdoll.cpp`: the host faints mid-ping and the
-client's enter stands; on the code before it the client was force-exited until the ping ended, 13 s;
-a plain exit mid-ping still keeps the desk, and a faint without a ping frees any device within 1 s;
+machine runs on `[?]` (`harness/autotest/autotest_seat_ragdoll.cpp`: the host faints mid-ping and the desk's hold reads
+free once the host's reconcile has run after the faint; on the code before it the client was force-exited until the
+ping ended, 13 s, by the PR's own measure of the enter; a plain exit mid-ping still keeps the desk, and a faint without
+a ping frees any device;
 its red, `dev.occupancy_pinger_down_off` on the host, keeps the desk and fails the drill). The knock-down
 is read at the host's 250 ms reconcile, which stays a poll because the ping attribution it runs on is
 itself polled off the desk machine's flag; the host's stand-up has no watchable announcement. A client's death rides the
