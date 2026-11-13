@@ -194,7 +194,7 @@ const char* TiltUntilSpilled(void* actor, uint64_t sinceMs, bool* done) {
         *done = true;
         return nullptr;
     }
-    return sinceMs > kSpillBoundMs ? "the tilted beer spilled no use in the bound" : nullptr;
+    return sinceMs > kSpillBoundMs ? "INVALID: the tilted beer spilled no use in the bound" : nullptr;
 }
 
 // HOST, after the target is announced: the copy's capture and writes on the first call, then the arm's own work.
@@ -321,6 +321,35 @@ const Phase& Snack() {
     return p;
 }
 
+std::string SnackCopyNow(void* mirror) {
+    int32_t uses = 0;
+    bool open = false;
+    if (!SN::ReadSnackState(mirror, uses, open)) return "unread";
+    return "uses " + std::to_string(uses) + " open " + (open ? "1" : "0");
+}
+
+std::string SnackSettledHead(const Row& row) { return std::string(kTag) + " host " + row.name + " settled"; }
+
+namespace {
+bool g_settledSaid = false;
+}
+
+void SnackStepReset() { g_settledSaid = false; }
+
+// HOST, each poll while it waits for the client: once the host has processed the act (its commit counted, its copy
+// applied, published or ended, its wrapper expressed) it says `settled`, once. The line rides the lobby chat, which is
+// the Default lane the host's PropSpawn, record and PropDestroy ride, FIFO behind them
+// (session_lanes.h LaneForKind, send_backlog.cpp SendLocked_), so a client that reads it has already taken every
+// birth, record and destroy the host sent for the act: what its copies show then cannot change, and it decides on it.
+void SnackHostMarker(const Row& row, EL::ElementId eid, const Baseline& base) {
+    if (g_settledSaid || coop::snack_act::dev::MarksPending()) return;
+    std::string why;
+    if (JudgeSnack(row, eid, base, &why) == Judged::Wait) return;
+    g_settledSaid = true;
+    Say(SnackSettledHead(row));
+    UE_LOGI("%s host %s: settled (%s)", kTag, row.name, why.c_str());
+}
+
 std::string SnackReadyTail(void* hostActor) {
     bool open = false;
     if (!SN::ReadSnackState(hostActor, g_readyUses, open)) g_readyUses = -1;
@@ -329,7 +358,7 @@ std::string SnackReadyTail(void* hostActor) {
 }
 
 Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, EL::ElementId eid, const std::string& tail,
-                       std::string* why) {
+                       bool settled, std::string* why) {
     int32_t readyUses = 0;
     bool readyOpen = false;
     if (!ParseTail(tail, &readyUses, &readyOpen)) {
@@ -343,13 +372,13 @@ Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, EL::Ele
     if (row.ends == Ends::Ended) {
         if (was.Alive() || now) {
             *why = "this client's copy is still live after the last use";
-            return Judged::Wait;
+            return settled ? Judged::Fail : Judged::Wait;
         }
         uint32_t total = 0, tracked = 0;
         WrapperCensus(&total, &tracked);
         if (tracked == 0) {
             *why = "the host's wrapper has not reached this client (" + std::to_string(total) + " untracked)";
-            return Judged::Wait;
+            return settled ? Judged::Fail : Judged::Wait;
         }
         if (total != 1) {
             *why = std::to_string(total) + " wrappers on this client, 1 expected (a ghost beside the host's)";
@@ -360,19 +389,19 @@ Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, EL::Ele
     }
     if (!now) {
         *why = "the mirror is not on this client";
-        return Judged::Wait;
+        return settled ? Judged::Fail : Judged::Wait;
     }
     if (row.ends == Ends::Respawn ? was.Is(now) : !was.Is(now)) {
         *why = row.ends == Ends::Respawn ? "the old copy still stands: the host's birth has not come"
                                          : "the mirror was replaced on a use that leaves it";
-        return row.ends == Ends::Respawn ? Judged::Wait : Judged::Fail;
+        return row.ends == Ends::Respawn && !settled ? Judged::Wait : Judged::Fail;
     }
     int32_t uses = 0;
     bool open = false;
     if (!SN::ReadSnackState(now, uses, open) || uses != wantUses || open != wantOpen) {
         *why = "this client's copy holds uses " + std::to_string(uses) + " open " + (open ? "1" : "0") +
                ", expected uses " + std::to_string(wantUses) + " open " + (wantOpen ? "1" : "0");
-        return Judged::Wait;
+        return settled ? Judged::Fail : Judged::Wait;
     }
     *why = "this client's copy holds uses " + std::to_string(uses) + " open " + (open ? "1" : "0");
     return Judged::Pass;

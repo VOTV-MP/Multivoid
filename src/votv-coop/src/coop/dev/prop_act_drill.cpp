@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace coop::dev::prop_act_drill {
@@ -129,6 +130,19 @@ void HostFail(const Row* row, const std::string& why) {
     g_hstep = HStep::Done;
 }
 
+// A bound ran out with no event to decide on: the run measured nothing, so it is INVALID, never a verdict on the lane. The
+// phase stops as it does on a FAIL.
+void HostInvalid(const Row* row, const std::string& why) {
+    UE_LOGW("%s host %s INVALID -- %s%s%s", kTag, PhaseName().c_str(), row ? row->name : "", row ? ": " : "", why.c_str());
+    g_hstep = HStep::Done;
+}
+
+// What the client said when its step ended other than ok: its FAIL stays a FAIL, its INVALID stays INVALID.
+void HostReported(const Row* row, const std::string& said) {
+    if (said.compare(0, 8, "invalid ") == 0) HostInvalid(row, "the client reported: " + said.substr(8));
+    else HostFail(row, "the client reported: " + said);
+}
+
 // The counters of the client's slot as the step begins, and the watch on its raw PropDestroy messages naming
 // the step's props.
 Baseline TakeBaseline(const Row& row, EL::ElementId eid, EL::ElementId eid2) {
@@ -158,7 +172,7 @@ bool TargetAnnounced(const Row& row, ue_wrap::CachedObjRef& ref, EL::ElementId* 
     }
     *eid = EL::Registry::Get().EidForActor(actor);
     if (*eid != EL::kInvalidId) return true;
-    if (HExpired(kAnnounceBoundMs)) HostFail(&row, "the spawned prop was never announced");
+    if (HExpired(kAnnounceBoundMs)) HostInvalid(&row, "the spawned prop was never announced");
     return false;
 }
 
@@ -174,7 +188,7 @@ bool KerfurPropReady(const Row& row) {
         const EL::ElementId npcEid = EL::Registry::Get().EidForActor(npc);
         g_kerfurId = npcEid != EL::kInvalidId ? KE::GetKerfurIdForEid(npcEid) : EL::kInvalidId;
         if (g_kerfurId == EL::kInvalidId) {
-            if (HExpired(kAnnounceBoundMs)) HostFail(&row, "the kerfur NPC never got a kerfur record");
+            if (HExpired(kAnnounceBoundMs)) HostInvalid(&row, "the kerfur NPC never got a kerfur record");
             return false;
         }
         if (!DP::TurnOffKerfur(npc)) {
@@ -187,7 +201,7 @@ bool KerfurPropReady(const Row& row) {
     }
     void* const prop = FindKerfurProp(g_kerfurId);
     if (!prop) {
-        if (HExpired(kAnnounceBoundMs)) HostFail(&row, "the turned-off kerfur's prop was never found");
+        if (HExpired(kAnnounceBoundMs)) HostInvalid(&row, "the turned-off kerfur's prop was never found");
         return false;
     }
     g_target.Set(prop);
@@ -200,6 +214,7 @@ void SayReady(const Row& row) {
     std::string line = ReadyHead(row) + std::to_string(Wire(g_eid));
     if (g_eid2 != EL::kInvalidId) line += " eid2=" + std::to_string(Wire(g_eid2));
     if (row.snack) line += SnackReadyTail(g_target.Get());
+    if (row.ends == Ends::Opened) MreHostReady();
     Say(line);
     UE_LOGI("%s host %s said ready: eid %u", kTag, row.name, Wire(g_eid));
     HEnter(row.grab ? HStep::AwaitGrab : HStep::AwaitDone);
@@ -256,6 +271,7 @@ void ResetStep() {
     g_eid = g_eid2 = g_kerfurId = EL::kInvalidId;
     g_turnedOff = false;
     g_prepMs = 0;
+    SnackStepReset();
 }
 
 void HostTick(coop::net::Session* s, const Phase& ph) {
@@ -318,7 +334,8 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
             if (!g_prepMs) g_prepMs = now;
             bool done = false;
             if (const char* why = row.hostPrep(actor, since, &done)) {
-                HostFail(&row, why);
+                if (std::strncmp(why, "INVALID: ", 9) == 0) HostInvalid(&row, why + 9);   // a bound, not a verdict
+                else HostFail(&row, why);
                 return;
             }
             if (!done) return;
@@ -335,10 +352,10 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         if (!ClientSaid(kClientSlot, DragHead(row, false) + "grabbed", nullptr)) {
             std::string failed;
             if (ClientSaid(kClientSlot, DoneHead(row), &failed)) {
-                HostFail(&row, "the client reported: " + failed);
+                HostReported(&row, failed);
                 return;
             }
-            if (HExpired(kDoneBoundMs)) HostFail(&row, "the client never grabbed the prop");
+            if (HExpired(kDoneBoundMs)) HostInvalid(&row, "the client never grabbed the prop");
             return;
         }
         HEnter(HStep::AwaitDrive);
@@ -350,7 +367,7 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
             return;
         }
         if (!PRP::IsActorDrivenByOtherThan(actor, -1)) {
-            if (HExpired(kDragBoundMs)) HostFail(&row, "the host never saw the drag");
+            if (HExpired(kDragBoundMs)) HostInvalid(&row, "the host never saw the drag");
             return;
         }
         UE_LOGI("%s host %s: the dragged prop is driven by another peer (host copy simulating=%d)", kTag, row.name,
@@ -360,13 +377,22 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         return;
     }
     case HStep::AwaitDone: {
+        // The host's own events first: a snack's `settled` and an MRE's contents line, which the client decides on, and the
+        // MRE's commit processed with no open, which ends the phase here.
+        if (row.snack) SnackHostMarker(row, g_eid, g_base);
+        if (row.ends == Ends::Opened) {
+            if (const char* why = MreHostWatch(row, g_eid, g_base)) {
+                HostFail(&row, why);
+                return;
+            }
+        }
         std::string rest;
         if (!ClientSaid(kClientSlot, DoneHead(row), &rest)) {
-            if (HExpired(kDoneBoundMs)) HostFail(&row, "the client never said it was done");
+            if (HExpired(kDoneBoundMs)) HostInvalid(&row, "the client never said it was done");
             return;
         }
         if (rest != "ok") {
-            HostFail(&row, "the client reported: " + rest);
+            HostReported(&row, rest);
             return;
         }
         HEnter(HStep::Judge);
@@ -376,7 +402,7 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         std::string why;
         switch (ph.judge(row, g_eid, g_base, &why)) {
         case Judged::Wait:
-            if (HExpired(kJudgeBoundMs)) HostFail(&row, "still waiting: " + why);
+            if (HExpired(kJudgeBoundMs)) HostInvalid(&row, "still waiting: " + why);
             return;
         case Judged::Fail:
             HostFail(&row, why);

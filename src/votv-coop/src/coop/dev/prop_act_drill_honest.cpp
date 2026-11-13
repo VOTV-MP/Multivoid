@@ -9,8 +9,11 @@
 #include "coop/element/registry.h"
 #include "coop/props/prop_act_host.h"
 #include "coop/props/prop_act_request.h"
+#include "coop/props/prop_food_sync.h"
 #include "coop/props/remote_prop.h"
 
+#include "ue_wrap/actors/food.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_flags.h"
 #include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/asset_load.h"
@@ -31,6 +34,8 @@
 #include <cstring>
 #include <cwchar>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace coop::dev::prop_act_drill::detail {
 namespace {
@@ -198,6 +203,15 @@ const char* BinFail(void* bin, const char* why) {
     return why;
 }
 
+// The prep's own bounds: the physics settle or the bin's take had no event by its bound, so the run measured nothing. The
+// diagnostic line is the same; the returned text carries the prefix the core reads as INVALID, never as a FAIL.
+const char* BinInvalid(void* bin, const char* why) {
+    BinFail(bin, why);
+    static std::string text;
+    text = std::string("INVALID: ") + why;
+    return text.c_str();
+}
+
 // The wastebasket is loaded as the game loads it: an item dropped into its Box settles, and the bin's own tick freezes it
 // and attaches it, which turns the bin's canCollect off (checkPickup). The bin must first have come to rest (its place
 // unchanged across two polls) and stand upright; then a small item (the pills) is dropped above it and awaited to rest in
@@ -210,7 +224,7 @@ const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
         const bool rest = g_bin.haveBinAt && Unmoved(g_bin.binAt, binAt);
         g_bin.binAt = binAt;
         g_bin.haveBinAt = true;
-        if (!rest) return sinceMs > kBinLoadBoundMs ? BinFail(bin, "the bin never came to rest") : nullptr;
+        if (!rest) return sinceMs > kBinLoadBoundMs ? BinInvalid(bin, "the bin never came to rest") : nullptr;
         const FVector up = E::GetActorUpVector(bin);
         if (up.X == 0.f && up.Y == 0.f && up.Z == 0.f) return BinFail(bin, "the bin's up vector is unread");
         if (up.Z <= kBinUprightZ) return BinFail(bin, "the bin came to rest on its side");
@@ -238,13 +252,13 @@ const char* LoadBin(void* bin, uint64_t sinceMs, bool* done) {
         g_bin.itemAt = at;
         g_bin.haveItemAt = true;
         if (!rest)
-            return sinceMs - g_bin.phaseMs > kBinLoadBoundMs ? BinFail(bin, "the item never came to rest") : nullptr;
+            return sinceMs - g_bin.phaseMs > kBinLoadBoundMs ? BinInvalid(bin, "the item never came to rest") : nullptr;
         g_bin.rested = true;
         g_bin.phaseMs = sinceMs;
         const float dx = at.X - binAt.X, dy = at.Y - binAt.Y, dz = at.Z - binAt.Z;
         if (dx * dx + dy * dy + dz * dz > kBinInsideCm * kBinInsideCm) return BinFail(bin, "the item did not land in the bin");
     }
-    return sinceMs - g_bin.phaseMs > kBinTakeBoundMs ? BinFail(bin, "the bin never took the item") : nullptr;
+    return sinceMs - g_bin.phaseMs > kBinTakeBoundMs ? BinInvalid(bin, "the bin never took the item") : nullptr;
 }
 
 // A frozen heavy prop, on the host's copy and on the client's (frozen is not synced, and the client's own hold of a
@@ -480,6 +494,58 @@ void* FindKerfurProp(EL::ElementId kerfurId) {
         },
         &ctx);
     return ctx.found;
+}
+
+// ---- the MRE step's host events -----------------------------------------------------------------------------------
+
+namespace {
+std::unordered_set<EL::ElementId> g_hostFoodsBefore;   // the host's foods when the MRE step was said ready
+bool g_contentsSaid = false;
+
+// Every food of the host's own (a host-born one has no mirror row), with its eid and Key.
+template <class Fn>
+void ForEachHostFood(Fn&& fn) {
+    static std::vector<EL::Registry::ActorIdPair> pairs;
+    EL::Registry::Get().SnapshotActorsByType(EL::ElementType::Prop, pairs);
+    for (const auto& p : pairs) {
+        if (p.mirror || !p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !ue_wrap::food::IsFood(p.actor)) continue;
+        fn(p.id, p.actor, ue_wrap::prop::GetInteractableKeyString(p.actor));
+    }
+}
+}  // namespace
+
+std::string ContentsHead(const Row& r) { return std::string(kTag) + " host " + r.name + " contents "; }
+
+void MreHostReady() {
+    g_contentsSaid = false;
+    g_hostFoodsBefore.clear();
+    ForEachHostFood([](EL::ElementId id, void*, const std::wstring&) { g_hostFoodsBefore.insert(id); });
+}
+
+// HOST, each poll while it waits for the client on an MRE step. The host's own commit counter is the no-change point of
+// the open-off red: the commit has been processed (a destroy commit counted, the eid dead), so an open that did not
+// happen will not happen. Once the contents are rolled and their FoodStates are on the wire, it says how many there are
+// and how many it poisoned: the line follows the FoodStates on the Default lane (session_lanes.h LaneForKind, FIFO), so
+// a client that reads it has taken them, and what it shows then is final.
+const char* MreHostWatch(const Row& row, EL::ElementId eid, const Baseline& base) {
+    if (Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys) == 0 || EL::LivePropActor(eid))
+        return nullptr;
+    if (Since(PAH::MreOpens(), base.mreOpens) == 0)
+        return "the host processed the MRE's commit with no open: 0 MRE opens on the host, 1 expected";
+    if (g_contentsSaid) return nullptr;
+    size_t fresh = 0, poisoned = 0;
+    bool allSent = true;
+    ForEachHostFood([&](EL::ElementId id, void* actor, const std::wstring& key) {
+        if (g_hostFoodsBefore.count(id)) return;
+        ++fresh;
+        if (!coop::props::prop_food_sync::dev::StateSentFor(key)) allSent = false;
+        ue_wrap::food::Poison poison;
+        if (ue_wrap::food::ReadPoison(actor, poison) && poison.delay > 0.f && poison.strength > 0.f) ++poisoned;
+    });
+    if (fresh == 0 || !allSent) return nullptr;
+    g_contentsSaid = true;
+    Say(ContentsHead(row) + "n=" + std::to_string(fresh) + " poisoned=" + std::to_string(poisoned));
+    return nullptr;
 }
 
 const Phase& Honest() {

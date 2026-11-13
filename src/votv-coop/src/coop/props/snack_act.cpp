@@ -286,6 +286,7 @@ void Tick(coop::net::Session* s) {
 
 namespace dev {
 void MarkForPublication(void* actor) { Mark(actor); }
+bool MarksPending() { return !g_marks.empty(); }
 }  // namespace dev
 
 void OnDisconnect() {

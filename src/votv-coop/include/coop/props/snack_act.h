@@ -89,6 +89,8 @@ void Tick(coop::net::Session* s);
 namespace dev {   // the act drill's snack phase
 // Marks a snack the drill wrote through its record on the host, so the drain publishes it. Game thread.
 void MarkForPublication(void* actor);
+// Whether a mark still waits for the drain: the host's publication for it is not sent yet. Game thread.
+bool MarksPending();
 }  // namespace dev
 
 // The session ended: the marks are dropped.

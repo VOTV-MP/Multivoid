@@ -133,6 +133,14 @@ void ClientFail(const Row& row, const std::string& why) {
     CEnter(CStep::Say);
 }
 
+// A bound ran out with no event to decide on: INVALID, said to the host as such, and the phase stops as it does on a FAIL.
+void ClientInvalid(const Row& row, const std::string& why) {
+    UE_LOGW("%s c%d %s INVALID -- %s: %s", kTag, kClientSlot, PhaseName().c_str(), row.name, why.c_str());
+    g_sayLine = DoneHead(row) + "invalid " + why.substr(0, 120);
+    g_sayFailed = true;
+    CEnter(CStep::Say);
+}
+
 void ClientPass(const Row& row, const char* what) {
     UE_LOGI("%s c%d %s step %s PASS -- %s", kTag, kClientSlot, PhaseName().c_str(), row.name, what);
     g_sayLine = DoneHead(row) + "ok";
@@ -203,12 +211,17 @@ void ClientAct(const Row& row, void* player) {
         ClientRead(row, player);
         return;
     }
+    // The use's own call has returned. A snack's use that ran unasked (the family routed native) is seen here, at the call:
+    // no request is open and the copy changed or ended, which is the event the red arm ends on.
     if (!g_mirror.Alive()) {
-        ClientFail(row, "the mirror was gone right after the call: the act was not cancelled at the call");
+        ClientFail(row, row.snack ? "the use ran unasked on this client's copy: it ended with no request sent"
+                                  : "the mirror was gone right after the call: the act was not cancelled at the call");
         return;
     }
     if (PAR::dev::PendingId() == 0) {
-        ClientFail(row, "the call opened no request");
+        ClientFail(row, row.snack ? "the use ran unasked on this client's copy: no request was sent and its state is " +
+                                        SnackCopyNow(g_mirror.Get())
+                                  : std::string("the call opened no request"));
         return;
     }
     UE_LOGI("%s c%d %s %s: the call was cancelled and asked (request %u)", kTag, kClientSlot, PhaseName().c_str(), row.name,
@@ -490,7 +503,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         g_cNextMs = now + kPollEveryMs;
         std::string rest;
         if (!HostSaid(ReadyHead(row), &rest)) {
-            if (CExpired(kReadyBoundMs)) ClientFail(row, "the host never said the step was ready");
+            if (CExpired(kReadyBoundMs)) ClientInvalid(row, "the host never said the step was ready");
             return;
         }
         g_ceid = g_ceid2 = EL::kInvalidId;
@@ -515,11 +528,11 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         void* const mirror = EL::LivePropActor(g_ceid);
         void* const second = g_ceid2 != EL::kInvalidId ? EL::LivePropActor(g_ceid2) : nullptr;
         if (!mirror || (g_ceid2 != EL::kInvalidId && !second)) {
-            if (CExpired(kMirrorBoundMs)) ClientFail(row, "the host's prop never reached this client");
+            if (CExpired(kMirrorBoundMs)) ClientInvalid(row, "the host's prop never reached this client");
             return;
         }
         if ((row.fillStep || row.ends == Ends::Stays) && !HintWatchLive()) {
-            if (CExpired(kMirrorBoundMs)) ClientFail(row, "the addHint watch never went live");
+            if (CExpired(kMirrorBoundMs)) ClientInvalid(row, "the addHint watch never went live");
             return;
         }
         g_invBefore = InventoryCount(row.leaf);
@@ -557,13 +570,13 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         g_cNextMs = now + kPollEveryMs;
         if (g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), row.verb)) {
             if (CExpired(kGatherBoundMs))
-                ClientFail(row, "the mirror never became gatherable here (the host's drive did not end)");
+                ClientInvalid(row, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
         // A snack arm acts on a mirror that already holds the host's uses and open (its record is published after the
         // host's write): the instrument waits for it, bounded, and the arm FAILs when it never does.
         if (row.snack && !SnackMirrorHoldsReady(g_mirror.Get(), g_readyRest)) {
-            if (CExpired(kCopyBoundMs)) ClientFail(row, "the mirror never held the host's uses and open from the ready line");
+            if (CExpired(kCopyBoundMs)) ClientInvalid(row, "the mirror never held the host's uses and open from the ready line");
             return;
         }
         if (row.grab) {
@@ -585,7 +598,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
             return;
         }
         if (st == coop::director::ClearState::Working) {
-            if (CExpired(kHandClearBoundMs)) ClientFail(row, "the hand did not clear before the grab");
+            if (CExpired(kHandClearBoundMs)) ClientInvalid(row, "the hand did not clear before the grab");
             return;
         }
         g_clear.reset();
@@ -606,7 +619,7 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
                 return;
             }
             if (st == coop::director::GrabState::Working) {
-                if (CExpired(kGrabBoundMs)) ClientFail(row, "the grab neither took nor failed in time");
+                if (CExpired(kGrabBoundMs)) ClientInvalid(row, "the grab neither took nor failed in time");
                 return;
             }
             g_grabbed = true;
@@ -623,31 +636,43 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
         if (!HostSaid(DragHead(row, true) + "driven", nullptr)) {
-            if (CExpired(kDrivenBoundMs)) ClientFail(row, "the host never saw the drag");
+            if (CExpired(kDrivenBoundMs)) ClientInvalid(row, "the host never saw the drag");
             return;
         }
         ClientAct(row, player);
         return;
     case CStep::AwaitReply:
         if (PAR::dev::PendingId() != 0) {
-            if (CExpired(kReplyBoundMs)) ClientFail(row, "the request was still pending");
+            if (CExpired(kReplyBoundMs)) ClientInvalid(row, "the request was still pending");
             return;
         }
         ClientRead(row, player);
         return;
     case CStep::AwaitContents: {
-        // The host rolled the contents on its copy: they reach this client as mirrors, none rolled here. The host set the
-        // MRE's poisonChance to 1, so one content is poisoned, and its poison rides the FoodState that follows its spawn.
+        // The host rolled the contents on its copy and says, behind their births and FoodStates on the same ordered
+        // lane, how many there are and how many it poisoned: the line is the event this step decides on, and what this
+        // client holds when it reads it is final. The host set the MRE's poisonChance to 1, so one content is poisoned, and
+        // its poison rides the FoodState that follows its spawn.
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
+        std::string said;
+        if (!HostSaid(ContentsHead(row), &said)) {
+            if (CExpired(kContentsBoundMs)) ClientInvalid(row, "the host never said the contents were sent");
+            return;
+        }
+        const size_t sentN = static_cast<size_t>(std::strtoul(said.c_str() + (said.find("n=") == std::string::npos ? 0 : said.find("n=") + 2), nullptr, 10));
+        const size_t hostPoisoned = static_cast<size_t>(std::strtoul(said.c_str() + (said.find("poisoned=") == std::string::npos ? 0 : said.find("poisoned=") + 9), nullptr, 10));
         void* poisoned = nullptr;
         g_freshContents = FoodMirrorsNotIn(g_foodsBefore, nullptr, &poisoned);
-        if (g_freshContents == 0) {
-            if (CExpired(kContentsBoundMs)) ClientFail(row, "no content the host rolled reached this client");
+        if (g_freshContents != sentN) {
+            ClientFail(row, "the host rolled " + std::to_string(sentN) + " contents, " + std::to_string(g_freshContents) +
+                                " reached this client");
             return;
         }
         if (!poisoned) {
-            if (CExpired(kContentsBoundMs)) ClientFail(row, "no poisoned content reached this client");
+            ClientFail(row, hostPoisoned ? "no poisoned content reached this client: the host poisoned " +
+                                               std::to_string(hostPoisoned) + " and its FoodStates carried none"
+                                         : "no poisoned content reached this client: the host rolled none");
             return;
         }
         // Its bite: the game's own `bitten` adds the foodPoison effect when both fields read above 0, as a press on it does.
@@ -661,11 +686,13 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         return;
     }
     case CStep::AwaitPoison: {
+        // The bite call has returned: the effect it adds is there at this poll, or the bite added none. Decided at this
+        // poll, with no wait.
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
         std::vector<ue_wrap::effects::Entry> list;
         if (!ue_wrap::effects::List(&list) || FoodPoisonLive(list) <= g_poisonBefore) {
-            if (CExpired(kContentsBoundMs)) ClientFail(row, "the bite of a poisoned content added no foodPoison here");
+            ClientFail(row, "the bite of a poisoned content added no foodPoison here");
             return;
         }
         ue_wrap::effects::Remove(L"foodPoison");   // the drill's next rows eat: leave the player as it was
@@ -678,9 +705,12 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
         std::string why;
-        switch (SnackClientCopy(row, g_mirror, g_ceid, g_readyRest, &why)) {
+        // The host's `settled` line is the event: it follows every birth, record and destroy the host sent for the act on
+        // one ordered lane, so once it is read what this client shows is final, a mismatch is a FAIL and no wait remains.
+        // A bound that runs out before it, with the copies still short, only says INVALID.
+        switch (SnackClientCopy(row, g_mirror, g_ceid, g_readyRest, HostSaid(SnackSettledHead(row), nullptr), &why)) {
         case Judged::Wait:
-            if (CExpired(kCopyBoundMs)) ClientFail(row, "still waiting: " + why);
+            if (CExpired(kCopyBoundMs)) ClientInvalid(row, "the host's settled line never came: " + why);
             return;
         case Judged::Fail:
             ClientFail(row, why);

@@ -681,6 +681,10 @@ void QueueConnectBroadcastForSlot(int slot) {
     }
 }
 
+namespace dev {
+bool StateSentFor(const std::wstring& key) { return g_sent.count(key) != 0; }
+}  // namespace dev
+
 void OnDisconnect() {
     if (g_published || g_applied || g_bitesSent || g_bitesTaken || g_bitesRefused || g_releasesRefused)
         UE_LOGI("prop_food_sync: session end -- published=%u applied=%u bites sent=%u taken=%u refused=%u releases "

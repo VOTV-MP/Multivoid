@@ -157,12 +157,25 @@ struct Phase {
 const Phase& Honest();   // prop_act_drill_honest.cpp
 const Phase& Snack();    // prop_act_drill_snack.cpp
 
+// The MRE step's host events (prop_act_drill_honest.cpp). MreHostReady is called when the step is said ready; MreHostWatch
+// each poll while the host waits for the client: a FAIL text when the host processed the commit with no open, else null,
+// and once the contents' FoodStates are on the wire it says ContentsHead + "n=<contents> poisoned=<poisoned>".
+std::string ContentsHead(const Row& r);
+void MreHostReady();
+const char* MreHostWatch(const Row& row, coop::element::ElementId eid, const Baseline& base);
+
 // The snack arms' shared reads (prop_act_drill_snack.cpp). HOST: SnackReadyTail is " uses=<n> open=<0|1>" of the copy, kept
 // as what the step was said ready on. CLIENT: SnackClientCopy judges this client's copies against that line (`was` is
 // the mirror the act ran on); SnackHeldVerdict is null when the held item carries the host's uses and open.
 std::string SnackReadyTail(void* hostActor);
+// `settled`: the host's marker (SnackSettledHead) has come, so what this client shows is final: a mismatch is a FAIL, and
+// before it a Wait.
 Judged SnackClientCopy(const Row& row, const ue_wrap::CachedObjRef& was, coop::element::ElementId eid,
-                       const std::string& tail, std::string* why);
+                       const std::string& tail, bool settled, std::string* why);
+std::string SnackSettledHead(const Row& row);
+std::string SnackCopyNow(void* mirror);   // "uses <n> open <0|1>" of this client's copy, for a FAIL line
+void SnackHostMarker(const Row& row, coop::element::ElementId eid, const Baseline& base);   // HOST, each poll in AwaitDone
+void SnackStepReset();
 const char* SnackHeldVerdict(void* held, const std::string& tail);
 bool SnackMirrorHoldsReady(void* mirror, const std::string& tail);   // CLIENT: the mirror's uses and open are the line's
 
