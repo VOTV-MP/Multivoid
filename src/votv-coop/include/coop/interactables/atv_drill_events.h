@@ -3,7 +3,7 @@
 // Each ATV mechanism that a drill judges says, at the point where its outcome is decided, one record: a request opened or
 // not, an answer arriving, a state applied, a block admitted, a request judged, a module refunded. The drill reads the
 // records and decides on them, never on a clock; a time bound in the drill can only call a run INVALID. The records are
-// kept only while the `atv_gate_drill` row is on (a static compare at each emit point), 32 per event, newest over oldest.
+// kept only while the `atv_gate_drill` row is on (a static compare at each emit point), 256 per event, newest over oldest.
 // Written on the game thread, read from the drill's thread under one lock.
 //
 // The fields of a record by event are the comments on `Event`.

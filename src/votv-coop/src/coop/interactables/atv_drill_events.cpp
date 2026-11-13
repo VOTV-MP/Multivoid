@@ -11,7 +11,7 @@
 namespace coop::atv_drill_events {
 namespace {
 
-constexpr uint32_t kRing = 32;
+constexpr uint32_t kRing = 256;   // a block at 20 Hz through a whole act (a 5 s drive is 100) before the decision reads
 
 struct Ring {
     Rec recs[kRing];

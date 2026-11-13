@@ -280,7 +280,8 @@ Result D7(Ctx& c) {
     return Pass("this copy applied the host's refuel");
 }
 
-// 8 and 9: a burn reaches the copy that does not drive: the host through the client's acked blocks, the others through the
+// 8 and 9 (decided against this copy's fuel at the barrier, a state no ring overrun can lose: the burn's own blocks come
+// during the act, before the decision reads, f4/f5-green): a burn reaches the copy that does not drive: the host through the client's acked blocks, the others through the
 // host's blocks. Decided on the block that lowers the copy's fuel.
 Result DecideBurn(Ctx& c, Role driver) {
     uint32_t applied = 0, current = 0;
@@ -294,7 +295,7 @@ Result DecideBurn(Ctx& c, Role driver) {
     const bool onHost = c.me == kHost;
     if (WaitRec(c, DE::kBlock, [&](const DE::Rec& b) {
             if (b.i0 == (onHost ? 0 : 1)) { last = b; ++seen; }
-            return onHost ? (b.i0 == 0 && b.i1 == 1 && b.f1 < b.f0 - kFallFuel) : (b.i0 == 1 && b.f2 < b.f0 - kFallFuel);
+            return onHost ? (b.i0 == 0 && b.i1 == 1 && b.f1 < c.fuel0 - kFallFuel) : (b.i0 == 1 && b.f2 < c.fuel0 - kFallFuel);
         }, r) != 1) {
         // What the blocks said while no burn came: the instrument for a burn that never reached this copy.
         UE_LOGI("atv-drill: no burn reached this copy: %d blocks seen, the last acked=%d copy %.2f -> %.2f, its own %.2f; "
