@@ -395,8 +395,9 @@ void HostTick(coop::net::Session* s) {
     if (HostTags() && TagTick(player, true)) return;
     switch (g_step) {
     case Step::Arm: {
-        // Before whom the cup stands: the client's puppet once the client has taken its snapshot of the cups that stand,
-        // or in window mode the host itself, before anyone joined.
+        // Before whom the cup stands: the one who walks to it. The run arm's client walks, so the cup stands before its
+        // puppet; in the host and window arms the host walks, so before the host itself: a cup before the puppet put the
+        // puppet between the host and the cup, and the host's walk never left its spot.
         void* before = nullptr;
         if (WindowMode()) {
             if (!coop::host_world_settle::Settled()) return;   // the world's own start-up is over (rig: READY hosting)
@@ -408,7 +409,7 @@ void HostTick(coop::net::Session* s) {
                 if (Expired(kReadyBoundMs)) Abandon("the client never said it had taken its snapshot of the cups");
                 return;
             }
-            before = coop::puppet_drive::Puppet(1).GetActor();
+            before = HostTags() ? player : coop::puppet_drive::Puppet(1).GetActor();
         }
         ue_wrap::FVector at{};
         if (!before || !R::IsLive(before) || !E::TryGetActorLocation(before, at)) return;
@@ -417,7 +418,7 @@ void HostTick(coop::net::Session* s) {
         if (!g_cup.Get()) { Abandon("the cup did not spawn"); return; }
         g_applied0 = coop::prop_nametag::AppliedForClients();
         UE_LOGI("%shost: a cup '%ls' spawned before %s", kHead, PR::GetInteractableKeyString(g_cup.Get()).c_str(),
-                WindowMode() ? "the host" : "the client's puppet");
+                HostTags() ? "the host" : "the client's puppet");
         if (WindowMode()) StartWalk(true);
         else Next(TheMode() == Mode::Host ? Step::Wait : Step::Watch);
         return;
