@@ -459,9 +459,22 @@ Judged Judge(const Row& row, coop::element::ElementId eid, const Baseline& base,
 
 }  // namespace
 
+// A food at ripeness 0 or below ragdolls its eater unless the eater is strong (prop_food.cpp, eat: `ripeness <= 0` and not
+// `isStrong` call ragdollMode), and a ragdolled puppet sinks, so the next step finds no floor to spawn on. The copy is
+// made fresh (the class default, 7200) as it is made a last use, and its ripeness is said, so a ragdoll after the eat
+// names its cause.
+constexpr float kFreshRipeness = 7200.f;
+
 const char* SetLastUse(void*, void* mirror) {
     static R::InstanceOffset sUses{L"uses"};
-    return WriteField<int32_t>(sUses, mirror, 1) ? nullptr : "the copy's uses could not be written";
+    if (!WriteField<int32_t>(sUses, mirror, 1)) return "the copy's uses could not be written";
+    ue_wrap::food::Condition c;
+    if (ue_wrap::food::Read(mirror, c)) {
+        UE_LOGI("%s c1 eaten food: ripeness %.0f before, made fresh (%.0f)", kTag, c.ripeness, kFreshRipeness);
+        c.ripeness = kFreshRipeness;
+        if (!ue_wrap::food::Write(mirror, c)) return "the copy's ripeness could not be written";
+    }
+    return nullptr;
 }
 
 bool HintWatchLive() {

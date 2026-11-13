@@ -320,14 +320,14 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         }
         void* actor = nullptr;
         if (const char* why = SpawnTarget(row, 0.f, &actor)) {
-            HostFail(&row, why);
+            if (const char* bad = InvalidText(why)) HostInvalid(&row, bad); else HostFail(&row, why);
             return;
         }
         g_target.Set(actor);
         if (row.target == Target::HostTwo) {
             void* second = nullptr;
             if (const char* why = SpawnTarget(row, kPairGapCm, &second)) {
-                HostFail(&row, why);
+                if (const char* bad = InvalidText(why)) HostInvalid(&row, bad); else HostFail(&row, why);
                 return;
             }
             g_target2.Set(second);
@@ -352,7 +352,7 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
             if (!g_prepMs) g_prepMs = now;
             bool done = false;
             if (const char* why = row.hostPrep(actor, since, &done)) {
-                if (std::strncmp(why, "INVALID: ", 9) == 0) HostInvalid(&row, why + 9);   // a bound, not a verdict
+                if (const char* bad = InvalidText(why)) HostInvalid(&row, bad);   // a bound, not a verdict
                 else HostFail(&row, why);
                 return;
             }
@@ -532,8 +532,8 @@ const char* SpawnTarget(const Row& row, float extraCm, void** out) {
     DP::FloorAt(player, at.X + fwd.X / len * kAheadCm[0], at.Y + fwd.Y / len * kAheadCm[0], at.Z, kFloorDownCm,
                 kMinColumnCm, &z, &facing);
     DP::FloorAt(player, at.X, at.Y, at.Z, kFloorDownCm, kMinColumnCm, &z, &own);
-    static char why[200];
-    std::snprintf(why, sizeof why, "no floor a route reaches was found round slot 1's puppet (puppet at %.0f %.0f "
+    static char why[220];
+    std::snprintf(why, sizeof why, "INVALID: no floor a route reaches was found round slot 1's puppet (puppet at %.0f %.0f "
                   "%.0f; facing column: %s; own column: %s)", at.X, at.Y, at.Z, kMiss[static_cast<int>(facing)],
                   kMiss[static_cast<int>(own)]);
     return why;

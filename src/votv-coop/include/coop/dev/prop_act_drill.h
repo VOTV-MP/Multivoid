@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -232,9 +233,14 @@ bool ClientSaid(int slot, const std::string& head, std::string* rest);
 
 // Spawns the row's class on the first floor round slot 1's puppet (its facing first, then a fan of 8 directions) that
 // a NavMesh route from the puppet reaches within kReachCm, `extraCm` further along the same direction when it is a
-// pair's second. Null on success, else why not. HOST. ClientPuppetReady is what an arm gate waits on before it: the
-// puppet is live and has a pose.
+// pair's second. Null on success, else why not: a no-floor miss is a SETUP failure (the puppet may have fallen) and carries the
+// prefix InvalidText reads, so the host says INVALID, not FAIL. HOST. ClientPuppetReady is what an arm gate waits on before it:
+
 const char* SpawnTarget(const Row& row, float extraCm, void** out);
+
+// The text after the "INVALID: " prefix a setup or prep returns for a bound or a precondition that was not met, else null: the
+// host then says INVALID, never FAIL.
+inline const char* InvalidText(const char* text) { return text && std::strncmp(text, "INVALID: ", 9) == 0 ? text + 9 : nullptr; }
 bool ClientPuppetReady();
 
 // True when the mirror is there and the host's drive no longer parks it: the state a player meets it in. The host's

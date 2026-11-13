@@ -117,7 +117,7 @@ void HostStep(coop::net::Session* s) {
     case HStage::Spawn: {
         void* actor = nullptr;
         if (const char* why = SpawnTarget(kDepartRow, 0.f, &actor)) {
-            HostFail(why);
+            if (const char* bad = InvalidText(why)) HostInvalid(bad); else HostFail(why);
             return;
         }
         g_target.Set(actor);

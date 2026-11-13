@@ -330,14 +330,14 @@ void HostStep(coop::net::Session* s) {
     case HStage::Spawn: {
         void* actor = nullptr;
         if (const char* why = SpawnTarget(r.act, 0.f, &actor)) {
-            HostFail(&r, why);
+            if (const char* bad = InvalidText(why)) HostInvalid(&r, bad); else HostFail(&r, why);
             return;
         }
         g_target.Set(actor);
         if (TwoProps(r.kind)) {
             void* second = nullptr;
             if (const char* why = SpawnTarget(r.act, kPairGapCm, &second)) {
-                HostFail(&r, why);
+                if (const char* bad = InvalidText(why)) HostInvalid(&r, bad); else HostFail(&r, why);
                 return;
             }
             g_target2.Set(second);
