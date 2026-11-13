@@ -227,6 +227,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/npc_world_enum.cpp
     src/coop/creatures/piramid_sync.cpp
     src/coop/creatures/geom_octa_sync.cpp
+    src/coop/creatures/orb_authority.cpp
     src/coop/creatures/geom_octa_relay.cpp
     src/coop/creatures/roach_sync.cpp
     src/coop/creatures/ambient_creature_sync.cpp

@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 288;
+inline constexpr uint16_t kProtocolVersion = 289;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1384,6 +1384,12 @@ enum class ReliableKind : uint16_t {
     // change of either and again to a joiner alone at its ready edge. A client holds one for a copy that is not here yet and
     // applies it at the copy's birth. Not relayed, not pre-world. WalkerStatePayload.
     WalkerState = 231,
+    // HOST->CLIENT: the black orb's encounter (npc_orborb_C), which the host judges (coop/creatures/orb_authority).
+    // Begin, to every client: the host's orb began its encounter, and each client's copy runs its own begin. Death, to
+    // the toucher alone: the orb caught that player, whose machine answers the run's end as a death. Never relayed; not
+    // pre-world (a Begin for a copy not yet made is dropped). Late join: none, an encounter is ten seconds. Host-
+    // authored: a client's copy is refused at the host's receive edge. OrbEventPayload.
+    OrbEvent = 258,
 };
 
 #pragma pack(push, 1)
@@ -4454,6 +4460,17 @@ inline constexpr uint8_t kGeomOctaOpVerdict = 1;
 inline constexpr uint8_t kGeomOctaTargetNone    = 0;
 inline constexpr uint8_t kGeomOctaTargetSlot    = 1;
 inline constexpr uint8_t kGeomOctaTargetElement = 2;
+
+// The black orb's encounter (OrbEvent): the orb's NPC element id and what happened.
+inline constexpr uint8_t kOrbEventBegin = 1;  // to every client: the host's orb began
+inline constexpr uint8_t kOrbEventDeath = 2;  // to the toucher: the orb caught this player
+struct OrbEventPayload {
+    uint32_t eid;     // the orb's NPC element id (host-allocated)
+    uint8_t  op;      // kOrbEvent*
+    uint8_t  pad[3];  // zero
+};
+static_assert(sizeof(OrbEventPayload) == 8, "OrbEventPayload must be 8 bytes");
+static_assert(sizeof(OrbEventPayload) <= 256 - 20 - 8, "OrbEventPayload must fit in one reliable datagram");
 
 struct GeomOctaEventPayload {
     uint8_t  op;
