@@ -1444,6 +1444,14 @@ enum class ReliableKind : uint16_t {
     // still flying and the Midas run while it lasts. Host-authored: a client's copy is refused at the host's receive
     // edge. UfoEventPayload.
     UfoEvent = 259,
+    // HOST->ALL: a robot cleaner (prop_roomba_C) of the host's switched on or off (coop/props/roomba_sync), when its
+    // `active` changes and to a joiner at its ready edge; a client's copy takes it through the cleaner's own `use`. While
+    // it runs, the host's copy drives and its pose rides PropDrivePose. Never relayed; not pre-world. RoombaPayload.
+    RoombaState = 245,
+    // CLIENT->HOST: this client's player pressed a robot cleaner's switch (action 5); `active` is the state it wants.
+    // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
+    // RoombaPayload.
+    RoombaIntent = 246,
 };
 
 #pragma pack(push, 1)
@@ -2242,6 +2250,14 @@ struct SusHoleIntentPayload {
 };
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
+
+// A robot cleaner's switch (RoombaState, RoombaIntent): the cleaner's prop element id and its `active`.
+struct RoombaPayload {
+    uint32_t eid;     // the cleaner's prop element id
+    uint8_t  active;  // 1 on, 0 off: the state after the press (a state) or the one asked for (an intent)
+    uint8_t  pad[3];  // zero
+};
+static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set
