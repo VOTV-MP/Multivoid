@@ -6,6 +6,7 @@
 #include "prop_act_drill_client_steps.h"
 
 #include "coop/dev/drill_chat_pace.h"
+#include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 
 #include "ue_wrap/actors/effects.h"
@@ -23,10 +24,12 @@ namespace EL = coop::element;
 
 void StepAwaitContents(const Row& row, void* player, uint64_t now) {
         // The host rolled the contents on its copy and says how many there are, how many it poisoned and their eids: the
-        // line is the event this step decides on. A food's line follows its birth and FoodState on the same ordered lane,
-        // so what this client holds when it reads it is final; another content has no such marker, so a mirror still
-        // missing waits (the bound says INVALID). The host set the MRE's poisonChance to 1, so one content is poisoned,
-        // and its poison rides the FoodState that follows its spawn.
+        // line is the event this step decides on. Each content's eid is registered and its PropSpawn queued in one game-thread
+        // call on the host (prop_lifecycle.cpp, the Init body: MarkPropElement then SendPropSpawn), and the line is sent
+        // after, on the same ordered Default lane, so every PropSpawn is handled here before the line is. A mirror then
+        // missing is either parked on a deferred bind (its eid is marked in bind_wait: a class still loading, a position
+        // wait; the wait ends on that event) or lost: no mark means nothing will make it, a FAIL at once. The host set the
+        // MRE's poisonChance to 1, so one content is poisoned, and its poison rides the FoodState that follows its spawn.
         if (now < g_cNextMs) return;
         g_cNextMs = now + kPollEveryMs;
         std::string said;
@@ -44,27 +47,30 @@ void StepAwaitContents(const Row& row, void* player, uint64_t now) {
         }
         std::unordered_set<EL::ElementId> held;
         const size_t freshMirrors = PropMirrorsNotIn(g_mirrorsBefore, &held);
-        size_t missing = 0;
+        size_t missing = 0, parked = 0;
         const size_t listAt = said.find("eids=");
         for (const char* p = listAt == std::string::npos ? "" : said.c_str() + listAt + 5; *p;) {
             char* end = nullptr;
             const EL::ElementId id = static_cast<EL::ElementId>(std::strtoul(p, &end, 10));
             if (end == p) break;
-            if (!held.count(id)) ++missing;
+            if (!held.count(id)) {
+                ++missing;
+                if (coop::element::bind_wait::IsDeferred(id)) ++parked;
+            }
             p = *end == ',' ? end + 1 : end;
         }
-        if (missing != 0 && row.foodContents) {
-            ClientFail(row, std::to_string(missing) + " of the host's " + std::to_string(sentN) +
-                                " contents have no mirror here");
+        if (missing != parked) {
+            ClientFail(row, std::to_string(missing - parked) + " of the host's " + std::to_string(sentN) +
+                                " contents have no mirror here and no bind is waiting to make one");
+            return;
+        }
+        if (missing != 0) {
+            if (CExpired(kContentsBoundMs))
+                ClientInvalid(row, std::to_string(missing) + " of the host's " + std::to_string(sentN) +
+                                       " contents stayed on a deferred bind that never ended");
             return;
         }
         if (!row.foodContents) {
-            if (missing != 0) {
-                if (CExpired(kContentsBoundMs))
-                    ClientInvalid(row, std::to_string(missing) + " of the host's " + std::to_string(sentN) +
-                                           " contents never got a mirror here");
-                return;
-            }
             if (freshMirrors != sentN) {
                 ClientFail(row, "the host rolled " + std::to_string(sentN) + " contents, " + std::to_string(freshMirrors) +
                                     " prop mirrors reached this client");
