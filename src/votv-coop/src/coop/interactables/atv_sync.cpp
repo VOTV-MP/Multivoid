@@ -398,9 +398,11 @@ void AdoptClientMirror(const std::wstring& key, void* actor) {
     e.world = ue_wrap::world_identity::WorldOf(actor);
     e.isClientSpawnedMirror = true;
     g_atvs[key] = std::move(e);
+    coop::atv_host_sync::NoteAtvIndexed(key, actor);   // a state held for it is applied
 }
 
 void EraseEntry(const std::wstring& key) {
+    coop::atv_host_sync::NoteAtvGone(key);   // its open requests can never be answered
     g_atvs.erase(key);
 }
 

@@ -11,6 +11,7 @@
 #include "atv_spawn_park.h"                    // spawn_park::kCap
 #include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 #include "coop/interactables/atv_sync.h"       // AnnounceableAtvKey, ForEachAnnounceableAtv
+#include "coop/interactables/atv_host_sync.h"  // NoteAtvGone / NoteAtvIndexed: the client's open requests and held states
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
@@ -191,6 +192,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         // world's rows still compare equal, so a destroy can reach a client still in its own world. The
         // host's re-spawn of a recurring key (a save-placed one) heals it: a flicker, not a ghost.
         if (isHost && thisWorld && row.world == thisWorld) SendAtvDestroy(it->first);
+        coop::atv_host_sync::NoteAtvGone(it->first);   // its open requests can never be answered
         it = g_atvs.erase(it);
     }
     // Update or add. A wire key can outlive its actor (a save-placed key is deterministic and a
@@ -214,6 +216,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         e.idx   = f.idx;
         e.world = W::WorldOf(f.obj);
         if (gained && isHost) AnnounceGained(f.key, e);
+        if (gained && !isHost) coop::atv_host_sync::NoteAtvIndexed(f.key, f.obj);   // a state held for it is applied
     }
     g_indexGen = worldGen;
     // The keys hash over the whole index, since on a tail pass `found` is only the new arrivals.
@@ -249,6 +252,7 @@ void AdoptNative(const std::wstring& key, void* actor) {
     e.idx   = R::InternalIndexOf(actor);
     e.world = W::WorldOf(actor);
     g_atvs[key] = std::move(e);
+    coop::atv_host_sync::NoteAtvIndexed(key, actor);   // a state held for it is applied
 }
 
 }  // namespace detail

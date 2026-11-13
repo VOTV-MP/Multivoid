@@ -125,6 +125,7 @@
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
+#include "coop/interactables/atv_gate.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/keypad_sync.h"
 #include "coop/world/fuse_tower_ops.h"
@@ -242,6 +243,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
     coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
     coop::walker_lanes::Install(session);  // the walking mannequin: a client's copy never thinks, the host claims it and answers its gaze, a client's gaze goes to the host
+    coop::atv_gate::Install(&session);  // an ATV's acts at their own functions, from the load window on
 }
 
 void Install(coop::net::Session& session) {

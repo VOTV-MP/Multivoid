@@ -106,6 +106,18 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
   and the Fly module's flag, which are put back in the same frame) and sends it to every other peer. A horn a client
   holds down is released by the host when its seat ends, its stream goes silent or the table clears.
 
+The client's side is `coop/interactables/atv_gate` and the open-request gate of `atv_host_sync`. The acts are watched at
+ATV_C's own functions through the script gate: on a client `fuelUp` (from the can's `gascanFuel`), `toolboxFix` (once per
+hold, the call that took the health to 100), `playerUsedOn` (a module added) and `upgradeTake` are asked of the host with
+what the copy's verb did; a `fuelUp` that does not come from `gascanFuel`, the fuelbox's overlap with a can lying in the
+world, is refused on a client, the host's copy being its author. On the host the same functions' ends call the publish
+point. While any request of this client's on an ATV is unanswered (4 at most; a 5th act is not sent and said once) the
+gate on that ATV is shut: a state or a block does not overwrite its vitals and modules and no sequence is recorded, so the
+syncer's blocks ack an older state and the host ignores their vitals. An answer removes its id, and the state it carries is
+applied when it closes the last; the ATV's destroy, the session's end and a world change clear the set. A take-off the
+host refused leaves the client the module its own call handed over, which is destroyed at the answer. A state for an ATV
+this client holds no copy of yet is kept, the newest of 8 ATVs, and applied at the copy's adoption.
+
 The host publishes an ATV's state at one point: when a write to its copy changed the fuel, health, modules, `empty` or
 `brokenn`, the ATV's state sequence is bumped and the state goes to every client, with no timer; a joiner is sent every
 ATV's state at its ready edge. The map is a display of the ATV's own place, and its module is a module. The padlock and

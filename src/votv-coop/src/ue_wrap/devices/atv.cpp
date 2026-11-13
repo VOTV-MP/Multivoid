@@ -54,7 +54,8 @@ int32_t g_inputAltOff = -1;
 uint8_t g_inputAltMask = 0;
 int32_t g_flyOff      = -1;
 uint8_t g_flyMask     = 0;
-int32_t g_modulesOff  = -1;       // Modules (TArray<byte>)
+int32_t g_modulesOff  = -1;       // Modules (TArray<byte>), upgradesNames (TArray<FName>)
+int32_t g_namesOff    = -1;
 
 constexpr const wchar_t* kHonkPress = L"InpActEvt_atv_honk_K2Node_InputActionEvent_14";
 constexpr const wchar_t* kHonkRelease = L"InpActEvt_atv_honk_K2Node_InputActionEvent_15";
@@ -139,7 +140,8 @@ bool EnsureResolved() {
             UE_LOGW("atv: %ls offset not found -- the host's copy of it is not carried", b.name);
         }
     g_modulesOff = R::FindPropertyOffset(cls, L"modules");
-    if (g_modulesOff < 0) UE_LOGW("atv: modules offset not found -- an ATV's modules are not carried");
+    g_namesOff = R::FindPropertyOffset(cls, L"upgradesNames");
+    if (g_modulesOff < 0 || g_namesOff < 0) UE_LOGW("atv: modules offsets not found -- an ATV's modules are not carried");
     // No fallback: a miss leaves a client's ATV explosion unrequested, since the host has no place to put it.
     g_tpOff = R::FindPropertyOffset(cls, L"tp");
     if (g_tpOff < 0) UE_LOGW("atv: tp offset not found -- a client's ATV explosion cannot be requested");
@@ -291,6 +293,21 @@ bool WriteModules(void* atv, const uint8_t* mods, int count) {
     if (buf) std::memcpy(buf, mods, static_cast<size_t>(count));
     save_record::WriteArrHeader(atv, g_modulesOff, buf, count);
     return component_calls::CallParamlessNamed(atv, L"updUpgrades");
+}
+
+bool ModuleByName(void* atv, const R::FName& name, uint8_t& value) {
+    if (!atv || g_modulesOff < 0 || g_namesOff < 0) return false;
+    const save_record::Arr names = save_record::ReadArr(atv, g_namesOff);
+    const save_record::Arr mods = save_record::ReadArr(atv, g_modulesOff);
+    if (!names.data || !mods.data) return false;
+    for (int32_t i = 0; i < names.num && i < mods.num; ++i) {
+        R::FName n{};
+        std::memcpy(&n, names.data + static_cast<size_t>(i) * sizeof(R::FName), sizeof(n));
+        if (n.ComparisonIndex != name.ComparisonIndex || n.Number != name.Number) continue;
+        value = mods.data[i];
+        return true;
+    }
+    return false;
 }
 
 bool ReplayHorn(void* atv, bool press) {

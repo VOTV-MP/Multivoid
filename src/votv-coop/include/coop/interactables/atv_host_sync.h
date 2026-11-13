@@ -5,7 +5,8 @@
 //   - the host's ONE publish point: when a write to the host copy changed its fuel, health, modules, empty or broken, the
 //     ATV's state sequence is bumped and an AtvHostState goes to every client; nothing is sent on a timer;
 //   - a joiner at its world-ready edge gets every ATV's state, that slot alone;
-//   - a client applies a state to its copy of the ATV.
+//   - a client applies a state to its copy of the ATV unless its open-request gate on that ATV is shut; a state for an ATV
+//     it holds no copy of yet is kept (the newest per ATV, 8 ATVs) and applied at the copy's adoption.
 // The seated driver's lights, brake and turbo are not here: they ride its condition block's stateBits (atv_sync.h).
 // Game thread. Overview: docs/vehicles.md.
 
@@ -86,6 +87,23 @@ public:
     ApplyScope(const ApplyScope&) = delete;
     ApplyScope& operator=(const ApplyScope&) = delete;
 };
+
+bool Applying();
+
+// CLIENT, the open-request gate (per ATV, at most 4 requests open): register a request id for `key`, then send the
+// request (atv_host_judge.h). Returns the id, or 0 when nothing was sent: the 5th act on one ATV is refused here and
+// said once, as is a session that is not a connected client's. The gate stays shut while any id is open; an answer
+// removes its id and the state it carries is applied, with its sequence recorded, when it closes the last. The other
+// exits are the ATV's destroy (NoteAtvGone), the session's end and a world change, each clearing the set and saying an
+// unanswered id once. An answer for an id not open is dropped and counted.
+uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t module);
+
+// CLIENT: the syncer's horn edge to the host. No id, no gate: a horn is no act on the ATV's state.
+void AskHorn(const std::wstring& key, bool down);
+
+// CLIENT: this ATV left the index (its destroy), or entered it (adoption: a state held for it is applied now).
+void NoteAtvGone(const std::wstring& key);
+void NoteAtvIndexed(const std::wstring& key, void* atv);
 
 // [dev] The horns this peer played for another peer's press.
 void NoteHornPlayed();
