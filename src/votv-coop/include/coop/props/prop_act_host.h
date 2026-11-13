@@ -34,7 +34,7 @@ void RunSelftest();                               // the pure decisions, once pe
 // to the sender stays WrongFamily. MTA sends a reason byte per cause (CGame.cpp:3359) because its client rolls back a
 // predicted entry; ours cancels at PRE and shows one line, so every refusal of the act is one reply reason.
 enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFailed, QueueFullUnready, BadSender,
-                             GrantUnsent, MreRollFailed, FitUnread, FitBadFamily, FitTrash, FitNotProp, FitDenied, FitNoUseRow,
+                             GrantUnsent, UnpackRollFailed, FitUnread, FitBadFamily, FitTrash, FitNotProp, FitDenied, FitNoUseRow,
                              FitCollectRefused, FitPickupRefused, FitIgnoreSave, FitChild, FitPhysics, FitCanCollect,
                              FitCanHold, FitHeavy, FitMeshRoot, FitVolume, FitSaveClass, FitEquipRow, FitNotEdible,
                              kCount };
@@ -86,7 +86,7 @@ uint32_t WaitsOf(int slot, WaitCause c);                          // served Wait
 uint32_t MaxDepthOf(int slot);                                    // the deepest the slot's queue has been this session
 uint32_t AnsweredTotal(int slot);                                 // the sum of AnsweredFor over every reason
 uint32_t CommitsOf(int slot, internal::CommitStep s);             // commits taken per step
-uint32_t MreOpens();                                              // MREs opened for a client, rolled on the host
+uint32_t UnpacksRolled();                                   // unpacks (an MRE's, a kit's) rolled on the host for a client
 
 namespace dev {   // called only from src/coop/dev/ (the act drills); compiled always, inert unless called
 // Would the judge accept `family` on `actor`? FamilyFits' path with no tally bumped. `*first` is the term that

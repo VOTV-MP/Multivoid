@@ -109,14 +109,19 @@ UseClass g_useClasses[] = {{L"prop_food_C", true, {}}, {L"prop_food_mre_C", fals
 // player. The host runs it on its copy before the destroy, so the contents are host-born and reach every peer; the
 // opener only removes its copy. Both play the MRE's opening.
 ue_wrap::CachedObjRef g_mreClass, g_kitClass;
-uint32_t g_mreOpens = 0;
+uint32_t g_unpacksRolled = 0;
 void (*g_onHeldAtDeparture)(uint8_t slot, uint32_t eid) = nullptr;   // dev seam, null by default
 
-bool IsMre(void* actor) {
+bool IsUnpackable(void* actor) {
     void* const mre = ResolveClass(g_mreClass, L"prop_food_mre_C");
     void* const kit = ResolveClass(g_kitClass, L"prop_medkit_pack_C");
     void* const cls = R::ClassOf(actor);
     return (mre && ue_wrap::prop::WalksToBase(cls, mre)) || (kit && ue_wrap::prop::WalksToBase(cls, kit));
+}
+
+bool IsKit(void* actor) {
+    void* const kit = ResolveClass(g_kitClass, L"prop_medkit_pack_C");
+    return kit && ue_wrap::prop::WalksToBase(R::ClassOf(actor), kit);
 }
 
 // An unpack's `spawn` (an MRE's, a first aid kit's) can end in lib_C::progressAchievement (the MRE's: "jackpot",
@@ -125,35 +130,35 @@ bool IsMre(void* actor) {
 // (player_damage.cpp, OnAchievementPre). Named residual: the opener earns none, since its copy no longer runs `spawn` and
 // nothing carries an award to it.
 UE_FACT_FN(kRowAchievement, "prop_act_host", L"lib_C", L"progressAchievement", Declared);
-constexpr int kMreAchievementTag = 0x4D524541;  // 'MREA'
-bool g_rollingMre = false;
-uint32_t g_mreAchievementsRefused = 0;
+constexpr int kUnpackAchievementTag = 0x4D524541;  // 'MREA'
+bool g_rollingUnpack = false;
+uint32_t g_unpackAchievementsRefused = 0;
 
-ue_wrap::script_gate::Verdict OnMreAchievementPre(const ue_wrap::script_gate::Call&) {
-    if (!g_rollingMre) return ue_wrap::script_gate::Verdict::Run;
-    if (++g_mreAchievementsRefused <= 3)
+ue_wrap::script_gate::Verdict OnUnpackAchievementPre(const ue_wrap::script_gate::Call&) {
+    if (!g_rollingUnpack) return ue_wrap::script_gate::Verdict::Run;
+    if (++g_unpackAchievementsRefused <= 3)
         UE_LOGI("prop_act: refused an achievement of an unpack's roll for a client's open (#%u) -- it is the opener's",
-                g_mreAchievementsRefused);
+                g_unpackAchievementsRefused);
     return ue_wrap::script_gate::Verdict::Cancel;
 }
 
 // True when the contents were rolled. A roll that cannot run still lets the destroy proceed, so it is tallied. Each
 // class (an MRE, a first aid kit) has its own `spawn`, which the thunk asks of the actor's class.
-bool OpenMre(void* actor, uint8_t slot, uint32_t eid) {
-    g_rollingMre = true;
+bool RollUnpack(void* actor, uint8_t slot, uint32_t eid) {
+    g_rollingUnpack = true;
     // The births of this call are named exactly: the act drill's unpack steps say their contents from them.
     coop::host_spawn_watcher::dev::CaptureBirths(true);
     const bool rolled = ue_wrap::prop_use::CallUnpackSpawn(actor);
     coop::host_spawn_watcher::dev::CaptureBirths(false);
-    g_rollingMre = false;
+    g_rollingUnpack = false;
     if (!rolled) {
-        ++g_tally[static_cast<int>(Tally::MreRollFailed)];
+        ++g_tally[static_cast<int>(Tally::UnpackRollFailed)];
         UE_LOGW("prop_act: the %ls eid %u unpacked for slot %u could not roll its contents",
                 R::ToString(R::NameOf(R::ClassOf(actor))).c_str(), static_cast<unsigned>(eid),
                 static_cast<unsigned>(slot));
         return false;
     }
-    ++g_mreOpens;
+    ++g_unpacksRolled;
     return true;
 }
 
@@ -312,6 +317,12 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
 bool ReserveFor(uint8_t slot, const coop::net::PropActRequestPayload& req, void* actor) {
     if (!coop::prop_hold::Reserve(slot, req.id, req.eid, actor)) return false;
     g_slots[slot].grantedFamily = req.family;
+    // The kit's roll is its `drop` list, whose contents a bare kit's dump cannot show: the grant says what this copy holds.
+    int32_t drops = 0;
+    if (req.family == static_cast<uint8_t>(PropActFamily::Use) && IsKit(actor))
+        UE_LOGI("prop_act: first aid kit eid %u granted to slot %u: its drop list holds %d entries (the property `drop`)",
+                static_cast<unsigned>(req.eid), static_cast<unsigned>(slot),
+                ue_wrap::prop_use::ReadUnpackDropCount(actor, drops) ? drops : -1);
     return true;
 }
 
@@ -477,7 +488,7 @@ const char* CommitName(CommitStep s) {
 
 void Install(coop::net::Session* session) {
     g_session = session;
-    if (!ue_wrap::script_gate::WatchName(kRowAchievement, kMreAchievementTag, &OnMreAchievementPre, nullptr))
+    if (!ue_wrap::script_gate::WatchName(kRowAchievement, kUnpackAchievementTag, &OnUnpackAchievementPre, nullptr))
         UE_LOGE("prop_act: the achievement watch did not register -- the host earns an unpack's achievements for a "
                 "client's unpack");
 }
@@ -567,13 +578,13 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     case internal::CommitStep::Destroy:
         break;
     }
-    // The act drill's red arm: the open is skipped, so the drill's MRE step must fail.
-    static const bool mreOpenOff = coop::config::ResolveFlag(coop::config_registry::rows::prop_act_mre_open_off);
+    // The act drill's red arm: the open is skipped, so the drill's unpack steps must fail.
+    static const bool unpackOff = coop::config::ResolveFlag(coop::config_registry::rows::prop_act_mre_open_off);
     // The roll needs the live actor, so it runs before the destroy; the opening is heard after the destroy's result.
-    ue_wrap::FVector mreAt{};
-    bool mreOpened = false;
-    if (!mreOpenOff && g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsMre(actor))
-        mreOpened = OpenMre(actor, senderSlot, p.eid) && ue_wrap::engine::TryGetActorLocation(actor, mreAt);
+    ue_wrap::FVector unpackAt{};
+    bool unpackRolled = false;
+    if (!unpackOff && g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsUnpackable(actor))
+        unpackRolled = RollUnpack(actor, senderSlot, p.eid) && ue_wrap::engine::TryGetActorLocation(actor, unpackAt);
     // The eid alone names the prop (no key), so the key fallback can never pick a sibling.
     ue_wrap::CachedObjRef before;
     before.Set(actor);
@@ -584,7 +595,7 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     if (internal::AfterDestroy(destroyed) == internal::AfterStep::FanOut) {
         coop::kerfur_entity::ReleaseKerfurForEid(p.eid);
         g_session->SendReliable(ReliableKind::PropDestroy, &dp, sizeof(dp), senderSlot);
-        if (mreOpened) coop::prop_sound::PlayMreOpenAt(coop::players::Registry::Get().Local(), mreAt);
+        if (unpackRolled) coop::prop_sound::PlayMreOpenAt(coop::players::Registry::Get().Local(), unpackAt);
     } else {
         ++g_tally[static_cast<int>(Tally::DestroyFailed)];
         UE_LOGE("prop_act: the host could not destroy eid %u for slot %u -- the client holds the item and the prop "
@@ -610,7 +621,7 @@ void OnPeerGone(uint8_t slot) {
 const char* TallyName(Tally t) {
     static const char* const kNames[] = {
         "target_gone", "bad_commit", "held_at_disconnect", "destroy_failed", "queue_full_unready", "bad_sender",
-        "grant_unsent", "mre_roll_failed", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
+        "grant_unsent", "unpack_roll_failed", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
         "fit_collect_refused", "fit_pickup_refused", "fit_ignore_save", "fit_child", "fit_physics",
         "fit_can_collect", "fit_can_hold", "fit_heavy", "fit_mesh_root", "fit_volume", "fit_save_class",
         "fit_equip_row", "fit_not_edible"};
@@ -629,7 +640,7 @@ void OnDisconnect() {
     }
     if (!fits.empty()) UE_LOGI("prop_act: fit refusals this session:%s", fits.c_str());
     std::fill(std::begin(g_tally), std::end(g_tally), 0u);
-    g_mreOpens = 0;
+    g_unpacksRolled = 0;
     g_unreadSaid.clear();
     g_refusals.Clear();
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) ReleaseFor(slot);
@@ -646,7 +657,7 @@ uint32_t AnsweredFor(int slot, PropActReason reason) {
 
 uint32_t TallyOf(Tally t) { return t < Tally::kCount ? g_tally[static_cast<int>(t)] : 0; }
 
-uint32_t MreOpens() { return g_mreOpens; }
+uint32_t UnpacksRolled() { return g_unpacksRolled; }
 
 namespace dev {
 

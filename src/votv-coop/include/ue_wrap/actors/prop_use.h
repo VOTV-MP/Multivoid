@@ -25,6 +25,10 @@ bool CallPlayerUsedOn(void* prop, void* player, void* hitComponent, const FVecto
 // it does not resolve or the prop is not live. Game thread.
 bool CallUnpackSpawn(void* prop);
 
+// prop_medkit_pack_C's `drop` (a TArray of the props its `spawn` rolls): its Num on this live instance, read through the
+// property's reflected offset. False when the prop is not live or its class has no `drop`. Game thread.
+bool ReadUnpackDropCount(void* prop, int32_t& num);
+
 // prop_food_C's `uses` (int32) and `notEdible` (a bitfield bool); false when either is unreadable. Game thread.
 bool ReadFoodUse(void* prop, int32_t& uses, bool& notEdible);
 // prop_food_soap_C's `soapAmount` (int32). Game thread.

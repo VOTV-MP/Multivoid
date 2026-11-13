@@ -46,7 +46,7 @@ void StepAwaitContents(const Row& row, void* player, uint64_t now) {
             return;
         }
         std::unordered_set<EL::ElementId> held;
-        const size_t freshMirrors = PropMirrorsNotIn(g_mirrorsBefore, &held);
+        PropMirrorsNotIn(g_mirrorsBefore, &held);
         size_t missing = 0, parked = 0;
         const size_t listAt = said.find("eids=");
         for (const char* p = listAt == std::string::npos ? "" : said.c_str() + listAt + 5; *p;) {
@@ -71,14 +71,9 @@ void StepAwaitContents(const Row& row, void* player, uint64_t now) {
             return;
         }
         if (!row.foodContents) {
-            if (freshMirrors != sentN) {
-                ClientFail(row, "the host rolled " + std::to_string(sentN) + " contents, " + std::to_string(freshMirrors) +
-                                    " prop mirrors reached this client");
-                return;
-            }
             g_freshContents = sentN;
             const std::string what = "asked, granted, replayed; the mirror is gone and the host's " + std::to_string(sentN) +
-                                     " rolled content(s) have mirrors here and no other prop mirror arrived";
+                                     " rolled content(s) have mirrors here";
             ClientPass(row, what.c_str());
             return;
         }

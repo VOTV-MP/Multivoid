@@ -183,7 +183,7 @@ void SendCommit(uint8_t committed, uint8_t flags = 0) {
 // A granted unpack (an MRE, a first aid kit): the host rolls the contents on its own copy and they reach this peer as
 // its spawns, so this copy is only removed. Opening it here too would roll a second, client-only set. Replay plays the
 // opening (the MRE's, for both) once the destroy has happened.
-bool OpenMreOnHost(void* target) { return E::DestroyActor(target); }
+bool UnpackOnHost(void* target) { return E::DestroyActor(target); }
 
 // The record's verb, as the player's press runs it, on the target. False when the verb could not run at all (a
 // function that does not resolve, a player or target that is not live), as distinct from a verb that ran and bailed.
@@ -198,7 +198,7 @@ bool RunVerb(void* target, void* local) {
         return E::CallMainPlayerHoldObject(local, target, collected);
     }
     case kUnpack:
-        return OpenMreOnHost(target);
+        return UnpackOnHost(target);
     case kFood:
     case kPills:
     case kSnack:
@@ -228,8 +228,8 @@ void Replay() {
     void* const local = coop::players::Registry::Get().Local();
     bool destroyed = false;
     bool ran = false;
-    ue_wrap::FVector mreAt{};   // an MRE's place, read while it stands: its opening is heard there after the destroy
-    const bool hearsMre = g_rec.row == kUnpack && E::TryGetActorLocation(target, mreAt);
+    ue_wrap::FVector unpackAt{};   // an unpack's place, read while it stands: its opening is heard there after the destroy
+    const bool hearsUnpack = g_rec.row == kUnpack && E::TryGetActorLocation(target, unpackAt);
     const bool snack = g_rec.row == kSnack;
     coop::snack_act::CopyState before, after;   // a snack's copy around the replay, read inside the latch
     {
@@ -259,7 +259,7 @@ void Replay() {
     if (destroyed) {
         SendCommit(1);
         coop::remote_prop::UnregisterPropMirror(g_rec.eid);
-        if (hearsMre) coop::prop_sound::PlayMreOpenAt(local, mreAt);
+        if (hearsUnpack) coop::prop_sound::PlayMreOpenAt(local, unpackAt);
     } else {
         if (!ran) UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
         SendCommit(0);

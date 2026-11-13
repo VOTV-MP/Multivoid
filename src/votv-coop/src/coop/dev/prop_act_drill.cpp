@@ -170,7 +170,7 @@ Baseline TakeBaseline(const Row& row, EL::ElementId eid, EL::ElementId eid2) {
     PRP::dev::WatchWireDestroys(kClientSlot, eid, eid2);
     Baseline b;
     b.destroys = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy);
-    b.mreOpens = PAH::MreOpens();
+    b.unpacksRolled = PAH::UnpacksRolled();
     b.aborts = PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Abort);
     b.eid2 = eid2;
     b.answered = PAH::AnsweredTotal(kClientSlot);
@@ -404,8 +404,8 @@ void HostTick(coop::net::Session* s, const Phase& ph) {
         return;
     }
     case HStep::AwaitDone: {
-        // The host's own events first: a snack's `settled` and an MRE's contents line, which the client decides on, and the
-        // MRE's commit processed with no open, which ends the phase here.
+        // The host's own events first: a snack's `settled` and an unpack's contents line, which the client decides on, and
+        // the unpack's commit processed with no unpack, which ends the phase here.
         if (row.snack) SnackHostMarker(row, g_eid, g_base);
         if (row.ends == Ends::Unpacked) {
             if (const char* why = UnpackHostWatch(row, g_eid, g_base)) {

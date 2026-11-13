@@ -529,8 +529,9 @@ CFG_FLAG(window_proc_red, "window_proc_red", "dev", false, "VOTVCOOP_WINDOW_PROC
     "native text field and the server browser selftest's INPUT TYPE phase must FAIL with \"the characters did not "
     "arrive\".")
 CFG_FLAG(prop_act_mre_open_off, "prop_act_mre_open_off", "dev", false, "VOTVCOOP_PROP_ACT_MRE_OPEN_OFF",
-    "Developer red arm: never set (HOST). 1 makes the host skip rolling the contents of an MRE a client opens, so the "
-    "act drill's honest phase must FAIL at the mre step with \"0 MRE opens on the host, 1 expected\".")
+    "Developer red arm: never set (HOST). 1 makes the host skip rolling the contents of an MRE a client opens or a first "
+    "aid kit it unpacks, so the act drill's honest phase must FAIL at the mre step with \"the host processed the commit "
+    "with no unpack: 0 unpacks on the host, 1 expected\".")
 CFG_FLAG(food_state_poison_off, "food_state_poison_off", "dev", false, "VOTVCOOP_FOOD_STATE_POISON_OFF",
     "Developer red arm: never set (HOST). 1 sends every FoodState with no poison, so the act drill's mre step must FAIL "
     "on the client with \"no poisoned content reached this client\".")

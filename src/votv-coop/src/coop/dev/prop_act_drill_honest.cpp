@@ -294,9 +294,6 @@ constexpr Row kRows[] = {
     {"eat last use", kFood,    L"prop_food_C",        Verb::Use,    Ends::Gone,      &SetLastUse},
     {"mre",          kMre,     L"prop_food_mre_C",    Verb::Use,    Ends::Unpacked,  nullptr, Target::Host, true, false,
      nullptr, nullptr, false, PAH::Tally::kCount, &PoisonMre, nullptr, true},
-    // A first aid kit's `spawn` rolls the props of its `drop` list, which may be empty on a kit spawned bare: the step says
-    // so (INVALID) instead of passing on nothing, and otherwise passes when each of the host's births has its mirror here.
-    {"first aid kit", kKit,    L"prop_medkit_pack_C", Verb::Use,    Ends::Unpacked,  nullptr},
     {"soap",         kSoap,    L"prop_food_soap_C",   Verb::Soap,   Ends::Gone,      &SetUpSoap},
     {"pills",        kPills,   L"prop_sleeppills_C",  Verb::Use,    Ends::Gone,      nullptr},
     // The plush offers no option, so its last use is asked and refused. Then the classes the judge reads by their own
@@ -312,7 +309,7 @@ constexpr Row kRows[] = {
     {"frozen heavy hold", kHeater, L"prop_heater_C",  Verb::Hold,   Ends::Taken,     &FreezeCopy, Target::Host, true, false,
      nullptr, nullptr, false, PAH::Tally::kCount, &FreezeHost},
     // The calls that are the client's own (no request), the pocket and the hold of a kerfur's prop (the pocket stays, the
-    // hold is taken), a use that also destroys a second prop inside the latch, and last the full inventory, which stays
+    // hold is taken), a use that also destroys a second prop inside the latch, and the full inventory, which stays
     // full for whatever would follow it.
     {"own spawn",       kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::Client, false, false, &MakeOwnCrowbar},
     {"native subclass", kShrimp,   L"prop_food_shrimp_C", Verb::Use,    Ends::NativeGone, &SetShrimpLastEat, Target::Host, false},
@@ -322,6 +319,11 @@ constexpr Row kRows[] = {
     {"kerfur hold",     nullptr,   L"prop_kerfurOmega_C", Verb::Hold,   Ends::Taken,     nullptr, Target::HostKerfur},
     {"second destroy",  kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Inventory, nullptr, Target::HostTwo},
     {"full",            kCrowbar,  L"prop_crowbar_C",     Verb::Pocket, Ends::Stays,     nullptr, Target::Host, true, false, nullptr, &FillStep},
+    // A first aid kit's `spawn` rolls the props of its `drop` list, and whether a kit spawned bare holds any is not measured
+    // (the host's grant line says it): the step ends INVALID when it rolled nothing, which stops the phase, so it is the
+    // last row and masks none. Otherwise it passes when each of the host's births has its mirror here. An unpack destroys
+    // the client's copy and takes no inventory slot, so the full inventory the row before it leaves does not touch it.
+    {"first aid kit", kKit,    L"prop_medkit_pack_C", Verb::Use,    Ends::Unpacked,  nullptr},
 };
 
 uint32_t Since(uint32_t now, uint32_t then) { return now - then; }
@@ -422,7 +424,7 @@ Judged JudgeTaken(const Row& row, coop::element::ElementId eid, const Baseline& 
     // anything.
     const bool unpacks = std::wcscmp(row.leaf, L"prop_food_mre_C") == 0 || std::wcscmp(row.leaf, L"prop_medkit_pack_C") == 0;
     const uint32_t wantOpens = unpacks ? 1 : 0;
-    const uint32_t opens = Since(PAH::MreOpens(), base.mreOpens);
+    const uint32_t opens = Since(PAH::UnpacksRolled(), base.unpacksRolled);
     if (opens != wantOpens) {
         *why = std::to_string(opens) + " unpacks on the host, " + std::to_string(wantOpens) + " expected";
         return Judged::Fail;
@@ -539,7 +541,7 @@ void UnpackHostReady() { g_contentsSaid = false; }
 const char* UnpackHostWatch(const Row& row, EL::ElementId eid, const Baseline& base) {
     if (Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys) == 0 || EL::LivePropActor(eid))
         return nullptr;
-    if (Since(PAH::MreOpens(), base.mreOpens) == 0)
+    if (Since(PAH::UnpacksRolled(), base.unpacksRolled) == 0)
         return "the host processed the commit with no unpack: 0 unpacks on the host, 1 expected";
     if (g_contentsSaid) return nullptr;
     size_t fresh = 0, poisoned = 0;
