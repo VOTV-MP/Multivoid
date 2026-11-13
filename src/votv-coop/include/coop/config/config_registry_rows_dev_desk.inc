@@ -120,13 +120,14 @@ CFG_FLAG(seat_ragdoll_kill, "seat_ragdoll_kill", "dev", false, "VOTVCOOP_SEAT_RA
     "the game's own Add Player Damage) instead of ragdolling, so a client that dies mid-ping must free the desk too.")
 CFG_FLAG(desk_short_off, "desk_short_off", "dev", false, "VOTVCOOP_DESK_SHORT_OFF",
     "Developer red arm of the desk short drill: never set. A short on this peer's desk is not announced: the host "
-    "tells no client, and a client asks no host, so the other desk stays sound.")
+    "tells no client, and a client's own call is not cancelled and asks no host (it sparks its desk alone), so the "
+    "other desk stays sound.")
 CFG_FLAG(desk_short_replay_off, "desk_short_replay_off", "dev", false, "VOTVCOOP_DESK_SHORT_REPLAY_OFF",
     "Developer red arm of the desk short drill: never set. The host does not tell a joiner at its ready edge that "
     "its desk is shorting, so a rejoined client's desk stays sound.")
 CFG_ENUM(desk_short_drill, "desk_short_drill", "dev", "off", "off|client|host|join", "VOTVCOOP_DESK_SHORT_DRILL",
     "Drill, the base computer's short circuit; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. client -- the client's "
-    "player steps beside the desk and shorts it as a liquid's hit does; host -- the host's does; each peer must see "
+    "player walks beside the desk with the director and shorts it as a liquid's hit does; host -- the host's does; each peer must see "
     "its desk short and both power panels read the same changed mask: the host prints 'rig: VERDICT desk-short "
     "PASS|FAIL|INVALID' and 'desk-short: DONE on host'. join -- with the rig's --rejoin: the client leaves, the host "
     "keeps its desk shorting until the client's world is up again, and the rejoined client (second life: "

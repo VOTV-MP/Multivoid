@@ -1,20 +1,20 @@
 // harness/autotest/autotest_desk_short.cpp -- TEST-ONLY: the base computer's short circuit on both peers.
 //
-// Every verdict is decided by an event; a bound passing with none is INVALID.
+// Every verdict is decided at the event that decides it; a bound passing with none is INVALID.
 // Armed by the row desk_short_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR).
-//   client / host  The named peer steps beside the desk and shorts its own the way a liquid's hit does: the desk's own
-//                  shortCircuit, as grimeProjectile_C and the sponge bucket's pour call it. Each peer waits for its
-//                  desk's `shortCircuiting` to rise, then to fall (the base goes on solar power at the end of the ten
-//                  seconds), and reads the power panel's lever mask. The host says `rig: VERDICT desk-short
-//                  PASS|FAIL|INVALID`: PASS when both desks shorted and both panels read the same mask, changed from
-//                  the mask before. Red: desk_short_off on the acting peer.
+//   client / host  The named peer shorts its own desk as a liquid's hit does (the desk's own shortCircuit); a client
+//                  first walks beside the desk with the director. Each peer waits for its desk's `shortCircuiting` to
+//                  rise and fall, and reads the power panel's lever mask. The host says `rig: VERDICT desk-short
+//                  PASS|FAIL|INVALID`: PASS when both desks shorted and both panels read the same changed mask; FAIL
+//                  at once when the actor's short was not announced (red: desk_short_off on the acting peer) or the
+//                  host refused the client's ask, and the host then runs no later leg.
 //   join           With the rig's --rejoin. The client leaves; the host keeps its desk shorting until the client's world
 //                  is ready again; the rejoined client (VOTVCOOP_DESK_SHORT_DRILL_REJOIN=1) must have had its desk
-//                  shorted at that edge. The host says `rig: VERDICT desk-short-join PASS|FAIL|INVALID`. Red:
-//                  desk_short_replay_off on the host.
+//                  shorted at that edge: `rig: VERDICT desk-short-join`. Red: desk_short_replay_off on the host.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
+#include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
 
@@ -48,11 +48,12 @@ using disc_drill::OnGameThread;
 constexpr const char* kTag = "desk-short";
 constexpr const char* kTagJoin = "desk-short-join";
 constexpr int kStepSec = 120;
-constexpr int kRiseSec = 5;     // INVALID bound: a short the lane announced, reaching the other desk
+constexpr int kRiseSec = 5;     // INVALID bound: a short the lane announced, or the host's refusal, reaching the other desk
 constexpr int kMaskSec = 10;    // INVALID bound: the power panel reading the change after the short ended
 constexpr int kEndSec = 40;     // INVALID bound: the ten seconds of sparks, and the load behind them
 constexpr int kRejoinSec = 20;  // INVALID bound: the replay the host sent, reaching the rejoined client
-constexpr float kStandCm = 1200.f;  // the host's reach for a client's short is 1500
+constexpr float kWalkCm = 250.f;   // the client's walk ends this near the desk's root; the director's stop
+constexpr float kStandCm = 600.f;  // the host reads the client's puppet this near, inside the host's judged reach
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::desk_short_drill); }
 bool HostActs() { return Arm() == "host"; }
@@ -78,29 +79,69 @@ int PowerMask() {
     return m;
 }
 
-// The actor's short, by the desk's own event, from beside the desk (a liquid is thrown from the room; the host checks
-// the sender's reach, from the pose it holds of the client).
-void Short(const char* me, bool client) {
-    bool moved = false;
+// What the lane did here: the shorts it announced (the host's sent, a client's asked), the requests the host refused,
+// and the host's "no" a client heard.
+uint32_t Announced() {
+    uint32_t n = 0;
     OnGameThread([&] {
-        void* local = coop::players::Registry::Get().Local();
-        ue_wrap::FVector at{};
-        if (local && ue_wrap::engine::TryGetActorLocation(Desk(), at))
-            moved = ue_wrap::engine::TeleportTo(local, ue_wrap::FVector{at.X + 150.f, at.Y, at.Z + 60.f}, ue_wrap::FRotator{});
+        const coop::desk_short_sync::Counts c = coop::desk_short_sync::GetCounts();
+        n = c.sent + c.asked;
     });
-    UE_LOGI("desk-short: %hs stands beside the desk (teleport=%d)", me, moved ? 1 : 0);
-    if (client) {
-        PS::Mark("stood");
-        if (!PS::Await("pose_ok", kStepSec)) return;
+    return n;
+}
+uint32_t Refused() {
+    uint32_t n = 0;
+    OnGameThread([&] { n = coop::desk_short_sync::GetCounts().refused; });
+    return n;
+}
+uint32_t Heard() {
+    uint32_t n = 0;
+    OnGameThread([&] { n = coop::desk_short_sync::GetCounts().heard; });
+    return n;
+}
+
+// The client walks beside the desk with the director (a liquid is thrown from the room; the host checks the sender's
+// reach from the pose it holds of the client). False: it could not, and has said its INVALID.
+bool WalkBesideDesk() {
+    ue_wrap::FVector at{};
+    bool read = false;
+    OnGameThread([&] { read = ue_wrap::engine::TryGetActorLocation(Desk(), at); });
+    if (!read) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the client's desk position did not read");
+        return false;
     }
+    if (!meet::WalkToPoint(kTag, at, kWalkCm, "the base computer")) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the client could not walk to the base computer");
+        return false;
+    }
+    return true;
+}
+
+enum class ActResult : uint8_t { Announced, NotAnnounced, Stopped };
+
+// The actor's short, by the desk's own event: whether the lane announced it, told to the other peer. Stopped: the run
+// ended before the short (the walk failed or the host never confirmed the pose), and a verdict was said.
+ActResult Act(const char* me, bool client) {
+    if (client) {
+        const bool walked = WalkBesideDesk();
+        PS::Mark("stood", walked ? "ok" : "fail");
+        if (!walked) return ActResult::Stopped;
+        if (!PS::Await("pose_ok", kStepSec)) return ActResult::Stopped;
+    }
+    const uint32_t n0 = Announced();
     bool ran = false;
     OnGameThread([&] { ran = ue_wrap::desk_short::CallShortCircuit(Desk()); });
-    UE_LOGI("desk-short: %hs shorted its desk as a liquid's hit does (call=%d)", me, ran ? 1 : 0);
+    const bool announced = Announced() > n0;
+    UE_LOGI("desk-short: %hs shorted its desk as a liquid's hit does (call=%d), announced=%d", me, ran ? 1 : 0,
+            announced ? 1 : 0);
+    PS::Mark("acted", announced ? "1" : "0");
+    return announced ? ActResult::Announced : ActResult::NotAnnounced;
 }
 
 // HOST, when the client acts: its puppet stands near the desk, so the reach check has the pose.
 bool AwaitClientPose() {
-    if (!PS::Await("stood", kStepSec)) return false;
+    std::string stood;
+    if (!PS::AwaitText("stood", stood, kStepSec) || stood != "ok") return false;
     const bool beside = PS::WaitFor("the client's puppet beside the desk", 30, [] {
         bool in = false;
         OnGameThread([&] {
@@ -118,57 +159,28 @@ bool AwaitClientPose() {
     return beside;
 }
 
-// What the lane did here: the shorts it announced (the host's sent, a client's asked) and the requests the host refused.
-uint32_t Announced() {
-    uint32_t n = 0;
-    OnGameThread([&] {
-        const coop::desk_short_sync::Counts c = coop::desk_short_sync::GetCounts();
-        n = c.sent + c.asked;
-    });
-    return n;
-}
-uint32_t Refused() {
-    uint32_t n = 0;
-    OnGameThread([&] { n = coop::desk_short_sync::GetCounts().refused; });
-    return n;
+// This peer's desk after a short that was announced: waits for the event that decides it, the desk rising or this peer's
+// word that it will not (a client hears the host's "no"; the host sees its own refusal). Returns 1 shorted, 0 not (the
+// event that decided it), -1 no event in the bound (INVALID).
+int AwaitRise(bool hostJudges, uint32_t refused0, uint32_t heard0) {
+    const bool event = PS::WaitFor("the desk short", kRiseSec, [hostJudges, refused0, heard0] {
+        return Shorting() == 1 || (hostJudges ? Refused() > refused0 : Heard() > heard0);
+    }, false);
+    return !event ? -1 : Shorting() == 1 ? 1 : 0;
 }
 
-// "shorted before after" on this peer. The actor says whether its short was announced; a peer that was told nothing
-// is decided at once (its desk cannot short), and so is a host that refused the request. A short that the lane did
-// announce is waited for, and a bound passing with no event is said as -1, which is INVALID: a bound decides no verdict.
-std::string Watch(const char* me, bool acts, bool client, int before) {
-    int announced = 1;
-    const uint32_t refused0 = Refused();
-    if (acts) {
-        const uint32_t n0 = Announced();
-        Short(me, client);
-        announced = Announced() > n0 ? 1 : 0;
-        UE_LOGI("desk-short: %hs announced its short=%d", me, announced);
-        PS::Mark("acted", std::to_string(announced));
-    } else {
-        std::string text;
-        if (!PS::AwaitText("acted", text, kStepSec)) return "-1 -1 -1";
-        announced = text == "1" ? 1 : 0;
-    }
-    int shorted = 0;
-    if (acts || announced) {
-        const bool hostJudges = !acts && !client;
-        const bool event = PS::WaitFor("the desk short", kRiseSec, [hostJudges, refused0] {
-            return Shorting() == 1 || (hostJudges && Refused() > refused0);
-        }, false);
-        shorted = !event ? -1 : Shorting() == 1 ? 1 : 0;
-    }
-    UE_LOGI("desk-short: %hs desk shorted=%d", me, shorted);
-    int after = -1;
-    if (shorted == 1) {
-        const bool fell = PS::WaitFor("the desk short's end", kEndSec, [] { return Shorting() == 0; }, false);
-        if (fell && PS::WaitFor("the power panel's change", kMaskSec, [before] { return PowerMask() != before; }, false))
-            after = PowerMask();
-    } else if (shorted == 0) {
-        after = PowerMask();
-    }
-    UE_LOGI("desk-short: %hs power mask before=%d after=%d", me, before, after);
-    return std::to_string(shorted) + " " + std::to_string(before) + " " + std::to_string(after);
+// A shorted desk's fall and its panel's change: the mask after, or -1 when a bound passed first.
+int AwaitMask(int before) {
+    if (!PS::WaitFor("the desk short's end", kEndSec, [] { return Shorting() == 0; }, false)) return -1;
+    return PS::WaitFor("the power panel's change", kMaskSec, [before] { return PowerMask() != before; }, false) ? PowerMask() : -1;
+}
+
+// The client's end: its result goes to the host, and it waits for the host's word that the run is done.
+void FinishClient(int shorted, int before, int after) {
+    UE_LOGI("desk-short: CLIENT desk shorted=%d, power mask before=%d after=%d", shorted, before, after);
+    PS::Mark("client_result", std::to_string(shorted) + " " + std::to_string(before) + " " + std::to_string(after));
+    PS::Await("host_done", kStepSec);
+    UE_LOGI("desk-short: DONE on client");
 }
 
 void RunClient() {
@@ -176,31 +188,79 @@ void RunClient() {
     const int before = PowerMask();
     PS::Mark("client_ready");
     if (!PS::Await("host_ready", kStepSec)) return;
-    PS::Mark("client_result", Watch("CLIENT", !HostActs(), true, before));
-    PS::Await("host_done", kStepSec);
-    UE_LOGI("desk-short: DONE on client");
+    const uint32_t heard0 = Heard();
+    bool announced = true;
+    if (!HostActs()) {
+        const ActResult r = Act("CLIENT", true);
+        if (r == ActResult::Stopped) return;
+        announced = r == ActResult::Announced;
+    } else {
+        std::string text;
+        if (!PS::AwaitText("acted", text, kStepSec)) return;
+        announced = text == "1";
+    }
+    if (!announced) {
+        // The host decides FAIL at once; this desk is read as it stands, with no wait.
+        FinishClient(Shorting(), before, PowerMask());
+        return;
+    }
+    const int shorted = AwaitRise(false, 0, heard0);
+    int after = -1;
+    if (shorted == 1) after = AwaitMask(before);
+    else if (shorted == 0) after = PowerMask();
+    FinishClient(shorted, before, after);
+}
+
+// The host ends a decided FAIL at once: it says it, releases the client and runs no later leg.
+void HostFails(const char* why) {
+    RV::Say(kTag, RV::Outcome::Fail, "%s", why);
+    PS::Mark("host_done");
+    UE_LOGI("desk-short: DONE on host");
 }
 
 void RunHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
     const int before = PowerMask();
+    const uint32_t refused0 = Refused();
     PS::Mark("host_ready");
-    if (!HostActs() && !AwaitClientPose()) return;
-    const std::string mine = Watch("HOST", HostActs(), false, before);
-    std::string theirs;
-    PS::AwaitText("client_result", theirs, kStepSec);
-    PS::Mark("host_done");
-    int hs = 0, hb = -1, ha = -1, cs = 0, cb = -1, ca = -1;
-    if (sscanf_s(mine.c_str(), "%d %d %d", &hs, &hb, &ha) != 3 || sscanf_s(theirs.c_str(), "%d %d %d", &cs, &cb, &ca) != 3 ||
-        hs < 0 || cs < 0 || ha < 0 || ca < 0) {
-        RV::Say(kTag, RV::Outcome::Invalid, "a peer's desk or power panel did not read");
+    if (HostActs()) {
+        if (Act("HOST", false) != ActResult::Announced) {
+            HostFails("the host's short was not announced: no client was told");
+            return;
+        }
+    } else {
+        if (!AwaitClientPose()) return;
+        std::string text;
+        if (!PS::AwaitText("acted", text, kStepSec)) return;
+        if (text != "1") {
+            HostFails("the client's short was not asked of the host: the host's desk was never told");
+            return;
+        }
+    }
+    const int hs = HostActs() ? Shorting() : AwaitRise(true, refused0, 0);
+    if (hs < 0 || (hs == 0 && HostActs())) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the host's desk neither shorted nor refused in time");
         return;
     }
-    const bool pass = hs && cs && ha == ca && ha != hb;
+    if (hs == 0) {
+        HostFails("the host refused the client's ask: its desk was never shorted");
+        return;
+    }
+    const int ha = AwaitMask(before);
+    UE_LOGI("desk-short: HOST desk shorted=%d, power mask before=%d after=%d", hs, before, ha);
+    std::string theirs;
+    if (!PS::AwaitText("client_result", theirs, kStepSec)) return;
+    PS::Mark("host_done");
+    int cs = 0, cb = -1, ca = -1;
+    if (ha < 0 || sscanf_s(theirs.c_str(), "%d %d %d", &cs, &cb, &ca) != 3 || cs < 0 || ca < 0) {
+        RV::Say(kTag, RV::Outcome::Invalid, "a peer's desk or power panel did not read in time ('%s')", theirs.c_str());
+        return;
+    }
+    const bool pass = cs && ha == ca && ha != before;
     RV::Say(kTag, pass ? RV::Outcome::Pass : RV::Outcome::Fail,
-            "the %s's short: the host's desk shorted=%d, the client's=%d; power mask host %d -> %d, client %d -> %d",
-            HostActs() ? "host" : "client", hs, cs, hb, ha, cb, ca);
+            "the %s's short: the host's desk shorted, the client's=%d; power mask host %d -> %d, client %d -> %d",
+            HostActs() ? "host" : "client", cs, before, ha, cb, ca);
     UE_LOGI("desk-short: DONE on host");
 }
 
