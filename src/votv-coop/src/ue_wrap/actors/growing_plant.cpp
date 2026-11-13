@@ -185,7 +185,8 @@ bool IsPlantClass(void* cls) {
 }
 
 const class_resolve::Family& PlantFamily() {
-    static const class_resolve::Family family{L"plant", nullptr, &IsPlantClass};
+    static constexpr const wchar_t* kBases[] = {L"growingPlant_C"};
+    static const class_resolve::Family family{L"plant", kBases, 1, &IsPlantClass};
     return family;
 }
 

@@ -57,7 +57,8 @@ bool IsAtvClass(void* cls) {
     void* atv = AtvClass();
     return cls && atv && R::IsDescendantOfAny(cls, &atv, 1);
 }
-const class_resolve::Family kAtvFamily{L"ATV", nullptr, &IsAtvClass};
+constexpr const wchar_t* kAtvBases[] = {L"ATV_C"};
+const class_resolve::Family kAtvFamily{L"ATV", kAtvBases, 1, &IsAtvClass};
 
 }  // namespace
 

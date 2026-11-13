@@ -335,6 +335,7 @@ set(VOTVCOOP_SOURCES
     src/coop/element/quiescence_drain_selftest.cpp
     src/coop/element/identity_create.cpp
     src/coop/element/bind_wait.cpp
+    src/coop/element/class_load_wait.cpp
     src/coop/element/identity_destroy.cpp
     src/coop/element/portable_identity.cpp
     src/ue_wrap/core/component_calls.cpp

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/class_resolve.h"  // Family (WorldActorFamily)
+
 namespace coop::net {
 class Session;
 struct WorldActorSpawnPayload;
@@ -31,6 +33,10 @@ void Install(coop::net::Session* session);
 
 // True once the install attempt completed (it stops retrying), as the NPC sync's.
 bool IsInstalled();
+
+// The family a resolver caller names for a world actor: the allowlist's class names, by the registry's tags before a
+// load and by IsAllowlistedClass on the class.
+const ue_wrap::class_resolve::Family& WorldActorFamily();
 
 // Teardown: drain the mirrors (destroy the client ones, release-only the host ones) and clear
 // the host reverse map and the bypass slot. Game thread.

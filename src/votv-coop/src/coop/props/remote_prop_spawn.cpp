@@ -13,7 +13,8 @@
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the grab guard's kerfur exemption
 #include "coop/creatures/kerfur_prop_adoption.h"  // a kerfur prop's fuzzy miss defers to the polled adoption
 #include "coop/creatures/kerfur_reconcile.h"  // the post-quiescence retry of the kerfur off-to-active retire
-#include "coop/element/bind_wait.h"      // MarkDeferred: the kerfur prop's adoption is a deferred bind
+#include "coop/element/bind_wait.h"      // MarkDeferred: the kerfur prop's adoption is a deferred bind; GiveUp: an unresolvable class
+#include "coop/element/class_load_wait.h"  // ParkSpawn: a spawn waiting on its class load
 #include "coop/element/mirror_defer.h"  // hide a fresh host mirror until the reveal
 #include "coop/element/quiescence_drain.h"  // ArmHostVacateTwin: a row whose twin at the key has the other form
 #include "coop/net/protocol.h"
@@ -265,16 +266,18 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                          host ? CR::Load::LookupOnly
                               : (outSpawned || !hasEid ? CR::Load::Immediate : CR::Load::Budgeted)).state;
     if (classState == CR::ClassState::Pending) {
+        // The spawn waits for its class (coop/element/class_load_wait, which marks the eid in bind_wait). It ends bound
+        // (a mirror row stands, or a kerfur prop's own adoption holds the eid), given up, or cancelled by the destroy.
         const coop::net::PropSpawnPayload held = payload;
-        coop::element::bind_wait::MarkDeferred(payload.elementId, "its class is loading");
-        if (!CR::Park("PropSpawn", payload.elementId, [held, senderSlot, fromConvert, deferKerfur, skipBind] {
+        const bool kerfur = classW.find(L"prop_kerfurOmega") != std::wstring::npos;
+        const uint32_t eid = payload.elementId;
+        coop::element::class_load_wait::ParkSpawn(
+            "PropSpawn", classW, eid,
+            [held, senderSlot, fromConvert, deferKerfur, skipBind] {
                 OnSpawn(held, senderSlot, coop::players::Registry::Get().Local(), fromConvert, deferKerfur, nullptr,
                         skipBind);
-            })) {
-            UE_LOGW("remote_prop::OnSpawn: class '%ls' waits on a load and the park queue is full -- dropping",
-                    classW.c_str());
-            coop::element::bind_wait::GiveUp(payload.elementId, "the park queue for a class load is full");
-        }
+            },
+            [eid, kerfur] { return kerfur || coop::element::Registry::Get().Get(eid) != nullptr; });
         return;
     }
     if (classState != CR::ClassState::Found && hasEid)

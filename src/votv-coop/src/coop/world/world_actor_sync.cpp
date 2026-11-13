@@ -750,6 +750,12 @@ unsigned int HostEnrollExSpawn(void* actor) {
 // world_actor_mirror.cpp; the shared internals are in world_actor_detail.h, implemented
 // below: this TU owns the session pointer, the resolved spawn path and the bypass slot.
 
+const ue_wrap::class_resolve::Family& WorldActorFamily() {
+    static const ue_wrap::class_resolve::Family family{L"world actor", P::name::kWorldActorAllowlist,
+                                                       P::name::kWorldActorAllowlistSize, &IsAllowlistedClass};
+    return family;
+}
+
 namespace detail {
 
 coop::net::Session* Session() { return LoadSession(); }

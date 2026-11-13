@@ -9,6 +9,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/world_identity.h"
 
 #include <windows.h>
@@ -27,13 +28,14 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
 namespace WI = ue_wrap::world_identity;
+namespace P  = ue_wrap::profile;
 
 constexpr const wchar_t* kScanRoot = L"/Game";
 constexpr const wchar_t* kLoadRoot = L"/Game/objects/";  // the only place a class is loaded from
 constexpr double kBudgetMs = 8.0;                         // load time per tick, once one load has run
-constexpr size_t kParkCap = 64;                           // parked retries per site
-constexpr size_t kNameCap = 256;                          // names kept in each of the absent and refused sets
+constexpr size_t kNameCap = 256;                          // names kept in each of the capped sets
 constexpr int kDrainRounds = 8;                           // a load's new objects reach the index through its drain
+constexpr int kAncestorHops = 16;                         // the deepest Blueprint chain the family walk follows
 
 enum class MapState { NotBuilt, Built, Unavailable };
 
@@ -57,14 +59,10 @@ private:
 };
 
 struct Asset {
-    std::wstring path;   // "<package>.<asset>"
-    std::wstring other;  // a second Blueprint of the same name under the load root: the name is ambiguous
-};
-
-struct Parked {
-    const char* site;
-    uint32_t key;  // what the caller cancels it by: an element id, or the id a message for it will carry
-    std::function<void()> retry;
+    std::wstring path;    // "<package>.<asset>"
+    std::wstring other;   // a second Blueprint of the same name under the load root: the name is ambiguous
+    std::wstring parent;  // the ParentClass tag's class name, lower case with its `_c` for a Blueprint; empty: not read
+    bool parentNative = false;  // the parent is a native class (its path starts /Script/)
 };
 
 struct State {
@@ -74,13 +72,15 @@ struct State {
     bool loaderSaid = false;
     double spentMs = 0;
     int loadsThisTick = 0;
-    std::unordered_map<std::wstring, void*> found;   // lower-cased name -> its class, re-checked against the index
+    uint64_t loadsRun = 0;
+    uint64_t loadsDuringReplay = 0;
+    bool (*inReplay)() = nullptr;
+    std::unordered_map<std::wstring, void*> found;   // "<name>|<family>" lower-cased -> its class, re-checked vs the index
     NameSet absent;
-    NameSet refused;
-    NameSet declined;  // a name a loading ask was answered Refused or Absent for: what a drill reads as the refusal
-    std::unordered_map<std::wstring, Asset> assetOf;  // lower-cased asset name -> path (Blueprints under kLoadRoot)
-    std::vector<Parked> parked;
-    std::vector<const char*> overflowSaid;
+    NameSet refused;     // "<name>|<family>": refused before or after a load of it
+    NameSet declined;    // a bare name a loading ask was answered Refused or Absent for: what a drill reads
+    NameSet refusalSaid; // a name an already-listed class was refused for, said once
+    std::unordered_map<std::wstring, Asset> assetOf;  // lower-cased asset name -> its Blueprint under kLoadRoot
 };
 State g_s;
 
@@ -101,7 +101,7 @@ std::wstring Lower(const std::wstring& s) {
 bool EndsWithC(const std::wstring& n) { return n.size() > 2 && n.compare(n.size() - 2, 2, L"_C") == 0; }
 
 // Classes and refusals belong to a world: a level change can unload a Blueprint class. The registry map does not:
-// the cooked registry is the same for the whole process.
+// the cooked registry is the same for the whole process; a scan that failed is tried again in the next world.
 void SyncWorld() {
     (void)WI::CurrentWorld();
     const uint32_t gen = WI::Generation();
@@ -111,20 +111,32 @@ void SyncWorld() {
     g_s.absent.Clear();
     g_s.refused.Clear();
     g_s.declined.Clear();
-    if (!g_s.parked.empty()) {
-        UE_LOGW("class_resolve: the world changed with %zu parked spawn(s) waiting on a class load -- dropped",
-                g_s.parked.size());
-        g_s.parked.clear();
-    }
+    g_s.refusalSaid.Clear();
+    if (g_s.map == MapState::Unavailable) g_s.map = MapState::NotBuilt;
 }
 
-// One scan of every asset under /Game, keeping the Blueprints under the load root by asset name. The registry
-// object comes from the helper library's GetAssetRegistry (a TScriptInterface, whose first word is the object);
-// the query is IAssetRegistry::GetAssetsByPath, a UFunction of the interface class.
+// "Class'/Game/objects/prop.prop_C'" or a bare path: the class name after the last dot, and whether the path is native.
+bool ParseParent(const std::wstring& text, std::wstring& name, bool& native) {
+    if (text.empty()) return false;
+    size_t from = text.find(L'\'');
+    size_t to = text.rfind(L'\'');
+    const std::wstring path = (from != std::wstring::npos && to != from) ? text.substr(from + 1, to - from - 1) : text;
+    const size_t dot = path.rfind(L'.');
+    if (dot == std::wstring::npos || dot + 1 >= path.size()) return false;
+    name = Lower(path.substr(dot + 1));
+    native = path.compare(0, 8, L"/Script/") == 0;
+    return true;
+}
+
+// One scan of every asset under /Game, keeping the Blueprints under the load root by asset name, with each one's
+// ParentClass tag (read through AssetRegistryHelpers::GetTagValue). The registry object comes from the helper
+// library's GetAssetRegistry (a TScriptInterface, whose first word is the object); the query is
+// IAssetRegistry::GetAssetsByPath, a UFunction of the interface class.
 bool BuildMap() {
     const double t0 = NowMs();
     void* helpers = R::FindClassDefaultObject(L"AssetRegistryHelpers");
     void* getRegistry = helpers ? R::FindFunction(R::ClassOf(helpers), L"GetAssetRegistry") : nullptr;
+    void* getTag = helpers ? R::FindFunction(R::ClassOf(helpers), L"GetTagValue") : nullptr;
     void* iface = R::FindClass(L"AssetRegistry");
     void* query = iface ? R::FindFunction(iface, L"GetAssetsByPath") : nullptr;
     void* assetData = R::FindObject(L"AssetData", L"ScriptStruct");
@@ -173,11 +185,27 @@ bool BuildMap() {
         return false;
     }
 
+    // GetTagValue(AssetData, TagName, out FString) -> bool: the frame is built once and its three parameters found by
+    // their shape (the struct, the 8-byte name, the 16-byte out string), so a renamed parameter does not break it.
+    std::wstring pAsset, pTag, pOut;
+    if (getTag) {
+        for (const auto& p : R::FunctionParams(getTag)) {
+            if (p.flags & P::cpf::ReturnParm) continue;
+            if (p.size == stride && pAsset.empty()) pAsset = p.name;
+            else if ((p.flags & P::cpf::OutParm) && p.size == 16 && pOut.empty()) pOut = p.name;
+            else if (p.size == 8 && pTag.empty()) pTag = p.name;
+        }
+    }
+    ParamFrame tagFrame(getTag ? getTag : query);  // a frame is built either way; canTag says whether it is the tag call
+    const bool canTag = getTag && tagFrame.valid() && !pAsset.empty() && !pTag.empty() && !pOut.empty();
+    if (canTag) tagFrame.Set<R::FName>(pTag.c_str(), fname_utils::StringToFName(L"ParentClass"));
+    const int32_t outOff = canTag ? tagFrame.ParamOffset(pOut.c_str()) : -1;
+
     // The asset class is an FName and there are a few dozen distinct ones: its text is read once per name index.
     // The package is read only for a Blueprint, and the name only for one under the load root.
     std::unordered_map<int32_t, bool> isBlueprint;
     const size_t rootLen = std::wcslen(kLoadRoot);
-    size_t kept = 0, ambiguous = 0;
+    size_t kept = 0, ambiguous = 0, tagged = 0;
     for (int32_t i = 0; i < arr.num; ++i) {
         const uint8_t* row = arr.data + static_cast<size_t>(i) * static_cast<size_t>(stride);
         R::FName cls{};
@@ -192,25 +220,73 @@ bool BuildMap() {
         if (pkgText.compare(0, rootLen, kLoadRoot) != 0) continue;
         const std::wstring name = R::ToString(asset);
         const std::wstring path = pkgText + L"." + name;
-        auto [pos, added] = g_s.assetOf.emplace(Lower(name), Asset{path, {}});
-        if (added) {
-            ++kept;
-        } else if (pos->second.other.empty()) {
-            pos->second.other = path;
-            ++ambiguous;
+        auto [pos, added] = g_s.assetOf.emplace(Lower(name), Asset{path, {}, {}, false});
+        if (!added) {
+            if (pos->second.other.empty()) {
+                pos->second.other = path;
+                ++ambiguous;
+            }
+            continue;
         }
+        ++kept;
+        if (!canTag) continue;
+        tagFrame.SetRaw(pAsset.c_str(), row, stride);
+        std::memset(static_cast<uint8_t*>(tagFrame.data()) + outOff, 0, 16);
+        if (!Call(helpers, tagFrame)) continue;
+        struct RawString { wchar_t* data; int32_t num; int32_t max; };
+        RawString out{};
+        std::memcpy(&out, static_cast<uint8_t*>(tagFrame.data()) + outOff, sizeof(out));
+        if (out.data && out.num > 1) {
+            std::wstring parent;
+            bool native = false;
+            if (ParseParent(std::wstring(out.data), parent, native)) {
+                pos->second.parent = parent;
+                pos->second.parentNative = native;
+                ++tagged;
+            }
+        }
+        if (out.data) R::EngineFree(out.data);
     }
     // The array's buffer is the engine's and goes back to the engine's allocator. Each row's tag map holds a reference
     // that is not released: the scan runs once per process, so what is left is bounded and small.
     R::EngineFree(arr.data);
-    UE_LOGI("class_resolve: asset registry scan of %ls: %d assets, %zu Blueprints under %ls (%zu ambiguous names), "
-            "%.3f ms in all", kScanRoot, arr.num, kept, kLoadRoot, ambiguous, NowMs() - t0);
+    UE_LOGI("class_resolve: asset registry scan of %ls: %d assets, %zu Blueprints under %ls (%zu ambiguous names, %zu "
+            "with a readable ParentClass tag%s), %.3f ms in all", kScanRoot, arr.num, kept, kLoadRoot, ambiguous, tagged,
+            canTag ? "" : "; GetTagValue is not usable: the family is judged after the load only", NowMs() - t0);
     return true;
 }
 
 bool EnsureMap() {
     if (g_s.map == MapState::NotBuilt) g_s.map = BuildMap() ? MapState::Built : MapState::Unavailable;
     return g_s.map == MapState::Built;
+}
+
+bool EqualsNoCase(const std::wstring& lowerA, const wchar_t* b) {
+    size_t i = 0;
+    for (; i < lowerA.size() && b[i]; ++i) {
+        wchar_t c = b[i];
+        if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+        if (lowerA[i] != c) return false;
+    }
+    return i == lowerA.size() && b[i] == L'\0';
+}
+
+// Whether the family admits the asset, from the registry's tags alone: 1 yes, 0 no, -1 the tags cannot say (an ancestor
+// the map does not hold, or a Blueprint whose tag was not read), which leaves the verdict to the class itself after the
+// load. A native parent reached without meeting a base is a no.
+int AdmitsAsset(const Family& family, const std::wstring& lowerAsset) {
+    if (!family.bases || family.nBases == 0) return 1;
+    std::wstring cur = lowerAsset + L"_c";
+    for (int hop = 0; hop < kAncestorHops; ++hop) {
+        for (size_t i = 0; i < family.nBases; ++i)
+            if (EqualsNoCase(cur, family.bases[i])) return 1;
+        const auto it = g_s.assetOf.find(cur.substr(0, cur.size() - 2));
+        if (it == g_s.assetOf.end() || it->second.parent.empty()) return -1;
+        if (it->second.parentNative) return 0;
+        cur = it->second.parent;
+        if (cur.size() < 2) return -1;
+    }
+    return -1;
 }
 
 // The generated class of `<package>.<asset>_C`, or null. The load returns the BlueprintGeneratedClass itself.
@@ -220,6 +296,9 @@ void* LoadClass(const std::wstring& className, const std::wstring& assetPath) {
     const double ms = NowMs() - t0;
     g_s.spentMs += ms;
     ++g_s.loadsThisTick;
+    ++g_s.loadsRun;
+    const bool replay = g_s.inReplay && g_s.inReplay();
+    if (replay) ++g_s.loadsDuringReplay;
     if (!obj || !R::IsLive(obj)) {
         UE_LOGW("class_resolve: loading '%ls' (%ls) returned nothing", className.c_str(), assetPath.c_str());
         return nullptr;
@@ -229,14 +308,17 @@ void* LoadClass(const std::wstring& className, const std::wstring& assetPath) {
         UE_LOGW("class_resolve: '%ls' loaded as a '%ls', not a class", className.c_str(), metaClass.c_str());
         return nullptr;
     }
-    // The object index lists the load's new objects only after a drain (measured: not at once, listed after one).
+    // The object index lists the load's new objects only after a drain (measured: not at once, listed after one). The
+    // listener buffer is not the index's backlog, so the first drain is unconditional; the rounds that follow finish a
+    // budgeted drain's remainder.
+    OI::Drain();
     for (int i = 0; i < kDrainRounds && OI::Backlog() > 0; ++i) OI::Drain();
-    UE_LOGI("class_resolve: loaded %ls in %.3f ms", className.c_str(), ms);
+    UE_LOGI("class_resolve: loaded %ls in %.3f ms%s", className.c_str(), ms, replay ? " (during the save replay)" : "");
     return obj;
 }
 
-Resolved Refuse(const std::wstring& key) {
-    g_s.refused.Add(key);
+Resolved Refuse(const std::wstring& fkey) {
+    g_s.refused.Add(fkey);
     return {ClassState::Refused, nullptr};
 }
 
@@ -249,7 +331,7 @@ Resolved Missing(const std::wstring& key, const wchar_t* name, const char* why) 
 }  // namespace
 
 const Family& AnyFamily() {
-    static const Family any{L"any", nullptr, nullptr};
+    static const Family any{L"any", nullptr, 0, nullptr};
     return any;
 }
 
@@ -263,17 +345,28 @@ static Resolved ResolveCore(const wchar_t* className, const Family& family, Load
     SyncWorld();
     const std::wstring name(className);
     const std::wstring key = Lower(name);
+    const std::wstring fkey = key + L"|" + family.label;
 
-    if (g_s.refused.Has(key)) return {ClassState::Refused, nullptr};
+    if (g_s.refused.Has(fkey)) return {ClassState::Refused, nullptr};
 
     // A class held from an earlier call is re-checked against the object index, which a collected class leaves.
     void* indexed = OI::ClassByName(className);
-    if (auto it = g_s.found.find(key); it != g_s.found.end()) {
+    if (auto it = g_s.found.find(fkey); it != g_s.found.end()) {
         if (indexed == it->second) return {ClassState::Found, indexed};
         g_s.found.erase(it);
     }
     if (indexed) {
-        g_s.found[key] = indexed;
+        // A class already in the index is judged by the family the first time it is handed out in this world. The
+        // refusal is not remembered: a family test can say no while its own base is still resolving.
+        if (family.acceptsClass && !family.acceptsClass(indexed)) {
+            if (!g_s.refusalSaid.Has(fkey)) {
+                g_s.refusalSaid.Add(fkey);
+                UE_LOGW("class_resolve: class '%ls' is listed here but is not a %ls class -- refused", className,
+                        family.label);
+            }
+            return {ClassState::Refused, nullptr};
+        }
+        g_s.found[fkey] = indexed;
         return {ClassState::Found, indexed};
     }
     // A host asking about a class a client named, or a drill's red arm: the index alone, as the receive sites
@@ -281,7 +374,7 @@ static Resolved ResolveCore(const wchar_t* className, const Family& family, Load
     if (load == Load::LookupOnly) return {ClassState::Absent, nullptr};
     if (!g_s.registryStep) {
         void* c = R::FindClass(className);
-        if (c) g_s.found[key] = c;
+        if (c) g_s.found[fkey] = c;
         return {c ? ClassState::Found : ClassState::Absent, c};
     }
     if (g_s.absent.Has(key)) return {ClassState::Absent, nullptr};
@@ -289,10 +382,11 @@ static Resolved ResolveCore(const wchar_t* className, const Family& family, Load
     // A name the registry does not hold may still be a class this process has (a native class, or one a pak
     // brought): the index can trail it, so one whole-array lookup per name per world answers before it is absent.
     const bool blueprint = EndsWithC(name) && EnsureMap();
-    const auto asset = blueprint ? g_s.assetOf.find(Lower(name.substr(0, name.size() - 2))) : g_s.assetOf.end();
+    const std::wstring assetKey = blueprint ? key.substr(0, key.size() - 2) : std::wstring();
+    const auto asset = blueprint ? g_s.assetOf.find(assetKey) : g_s.assetOf.end();
     if (asset == g_s.assetOf.end()) {
         if (void* c = R::FindClass(className)) {
-            g_s.found[key] = c;
+            g_s.found[fkey] = c;
             return {ClassState::Found, c};
         }
         return Missing(key, className, blueprint ? "it is not a Blueprint under /Game/objects/" :
@@ -302,11 +396,13 @@ static Resolved ResolveCore(const wchar_t* className, const Family& family, Load
     if (!asset->second.other.empty()) {
         UE_LOGW("class_resolve: class '%ls' names two Blueprints (%ls and %ls) -- refused", className,
                 asset->second.path.c_str(), asset->second.other.c_str());
-        return Refuse(key);
+        return Refuse(fkey);
     }
-    if (family.acceptsName && !family.acceptsName(className)) {
-        UE_LOGW("class_resolve: class '%ls' is not a %ls name -- refused", className, family.label);
-        return Refuse(key);
+    // The family, before any load, from the registry's own tags (MTA validates a model id before it builds the entity).
+    if (AdmitsAsset(family, assetKey) == 0) {
+        UE_LOGW("class_resolve: class '%ls' descends from no %ls base by the registry's tags -- refused, not loaded",
+                className, family.label);
+        return Refuse(fkey);
     }
     if (!asset_load::Available()) {
         if (!g_s.loaderSaid) {
@@ -322,9 +418,9 @@ static Resolved ResolveCore(const wchar_t* className, const Family& family, Load
     if (!cls) return Missing(key, className, "its asset did not load");
     if (family.acceptsClass && !family.acceptsClass(cls)) {
         UE_LOGW("class_resolve: loaded class '%ls' is not a %ls class -- refused", className, family.label);
-        return Refuse(key);
+        return Refuse(fkey);
     }
-    g_s.found[key] = cls;
+    g_s.found[fkey] = cls;
     return {ClassState::Found, cls};
 }
 
@@ -340,55 +436,15 @@ bool WasDeclined(const wchar_t* className) {
     return className && g_s.declined.Has(Lower(className));
 }
 
-bool Park(const char* site, uint32_t key, std::function<void()> retry) {
-    size_t here = 0;
-    for (const Parked& p : g_s.parked)
-        if (std::strcmp(p.site, site) == 0) ++here;
-    if (here >= kParkCap) {
-        if (std::find(g_s.overflowSaid.begin(), g_s.overflowSaid.end(), site) == g_s.overflowSaid.end()) {
-            g_s.overflowSaid.push_back(site);
-            UE_LOGW("class_resolve: %s holds %zu spawns waiting on a class load and takes no more -- refused until "
-                    "it drains", site, kParkCap);
-        }
-        return false;
-    }
-    g_s.parked.push_back({site, key, std::move(retry)});
-    return true;
-}
-
-size_t CancelIf(const char* site, const std::function<bool(uint32_t)>& match) {
-    size_t n = 0;
-    for (auto it = g_s.parked.begin(); it != g_s.parked.end();) {
-        if (std::strcmp(it->site, site) == 0 && match(it->key)) {
-            it = g_s.parked.erase(it);
-            ++n;
-        } else {
-            ++it;
-        }
-    }
-    return n;
-}
-
-bool Cancel(const char* site, uint32_t key) {
-    return CancelIf(site, [key](uint32_t k) { return k == key; }) > 0;
-}
-
-bool IsParked(const char* site, uint32_t key) {
-    for (const Parked& p : g_s.parked)
-        if (p.key == key && std::strcmp(p.site, site) == 0) return true;
-    return false;
-}
-
 void Tick() {
     SyncWorld();
     g_s.spentMs = 0;
     g_s.loadsThisTick = 0;
-    if (g_s.parked.empty()) return;
-    // Each retry resolves again under this tick's budget; one that answers Pending parks itself anew.
-    std::vector<Parked> batch;
-    batch.swap(g_s.parked);
-    for (Parked& p : batch) p.retry();
 }
+
+uint64_t LoadsRun() { return g_s.loadsRun; }
+uint64_t LoadsDuringReplay() { return g_s.loadsDuringReplay; }
+void SetReplayProbe(bool (*inReplay)()) { g_s.inReplay = inReplay; }
 
 std::vector<std::wstring> RegistryClassNames(const wchar_t* prefix) {
     std::vector<std::wstring> out;

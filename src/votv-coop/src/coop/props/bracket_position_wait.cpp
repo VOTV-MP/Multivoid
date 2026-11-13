@@ -7,6 +7,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/bind_wait.h"
+#include "coop/element/class_load_wait.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -109,12 +110,11 @@ bool PairBefore(const Pair& a, const Pair& b) {
     return a.objIndex < b.objIndex;
 }
 
-void ReplayPose(const Waiter& w, const std::wstring& keyW) {
-    const int slot = w.poseSlot;
+void ReplayPoseOf(int slot, const coop::net::PropPoseSnapshot& pose, const std::wstring& keyW) {
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
     // The release's own close is already in the hold gate: a pose of a closed hold starts nothing, and the kept release
     // (if it came after the pose) places the prop.
-    if (coop::remote_prop::IsHoldClosed(coop::remote_prop::g_holds[slot], w.pose.holdGen)) {
+    if (coop::remote_prop::IsHoldClosed(coop::remote_prop::g_holds[slot], pose.holdGen)) {
         UE_LOGI("bracket_position_wait: the kept pose of '%ls' belongs to a hold that closed -- not replayed", keyW.c_str());
         return;
     }
@@ -124,7 +124,38 @@ void ReplayPose(const Waiter& w, const std::wstring& keyW) {
         return;
     }
     UE_LOGI("bracket_position_wait: replaying the kept pose of '%ls' (slot %d)", keyW.c_str(), slot);
-    coop::remote_prop::ResolveAndStartDrive(slot, w.pose);
+    coop::remote_prop::ResolveAndStartDrive(slot, pose);
+}
+
+void ReplayPose(const Waiter& w, const std::wstring& keyW) { ReplayPoseOf(w.poseSlot, w.pose, keyW); }
+
+// The kept messages of a spawn that waits for its class to load are handed to bind_wait, which replays them in order when
+// the spawn binds (the eid is marked while it waits) and drops them if it never does.
+constexpr uint16_t kKeptRelease = 0x4B52;
+constexpr uint16_t kKeptPose = 0x4B50;
+constexpr uint16_t kKeptStick = 0x4B53;
+
+void ReplayKeptRelease(const uint8_t* bytes, size_t n, int slot) {
+    if (n != sizeof(coop::net::PropReleasePayload)) return;
+    coop::net::PropReleasePayload p;
+    std::memcpy(&p, bytes, n);
+    UE_LOGI("bracket_position_wait: replaying the kept release (slot %d) after its spawn's class loaded", slot);
+    coop::remote_prop::OnRelease(slot, p, coop::players::Registry::Get().Local(), /*replayed=*/true);
+}
+
+void ReplayKeptPose(const uint8_t* bytes, size_t n, int slot) {
+    if (n != sizeof(coop::net::PropPoseSnapshot)) return;
+    coop::net::PropPoseSnapshot p;
+    std::memcpy(&p, bytes, n);
+    ReplayPoseOf(slot, p, L"(its spawn waited on a class load)");
+}
+
+void ReplayKeptStick(const uint8_t* bytes, size_t n, int slot) {
+    if (n != sizeof(coop::net::PropStickStatePayload)) return;
+    coop::net::PropStickStatePayload p;
+    std::memcpy(&p, bytes, n);
+    UE_LOGI("bracket_position_wait: replaying the kept stick state (slot %d) after its spawn's class loaded", slot);
+    coop::prop_stick_sync::OnStickState(p, static_cast<uint8_t>(slot));
 }
 
 }  // namespace
@@ -237,8 +268,11 @@ void DrainAtComplete(void* localPlayer) {
     auto ordinary = [&](size_t i) {
         const coop::net::PropSpawnPayload& p = waiters[i].payload;
         coop::remote_prop_spawn::OnSpawn(p, waiters[i].slot, localPlayer);
+        // A spawn that waits for its class to load has no row yet by design and its eid stays marked: its end is the
+        // wait's (bound, given up or cancelled), not this drain's.
         if (HasEid(p.elementId) && !EL::Registry::Get().Get(p.elementId) &&
-            classes[i].find(L"prop_kerfurOmega") == std::wstring::npos)
+            classes[i].find(L"prop_kerfurOmega") == std::wstring::npos &&
+            !coop::element::class_load_wait::IsParked("PropSpawn", p.elementId))
             BW::GiveUp(p.elementId, "bracket wait: the leftover did not bind");
     };
 
@@ -301,6 +335,23 @@ void DrainAtComplete(void* localPlayer) {
     std::sort(kept.begin(), kept.end(), [](const Kept1& a, const Kept1& b) { return a.order < b.order; });
     for (const Kept1& k : kept) {
         const Waiter& w = waiters[k.waiter];
+        // A spawn that waits for its class to load: its kept messages wait for the bind with it (bind_wait), in order.
+        const uint32_t eid = w.payload.elementId;
+        if (HasEid(eid) && coop::element::class_load_wait::IsParked("PropSpawn", eid)) {
+            bool held = false;
+            switch (k.what) {
+            case What::Release:
+                held = BW::Hold(eid, kKeptRelease, w.releaseSlot, &ReplayKeptRelease, &w.release, sizeof(w.release), false);
+                break;
+            case What::Pose:
+                held = BW::Hold(eid, kKeptPose, w.poseSlot, &ReplayKeptPose, &w.pose, sizeof(w.pose), false);
+                break;
+            case What::Stick:
+                held = BW::Hold(eid, kKeptStick, w.stickSlot, &ReplayKeptStick, &w.stick, sizeof(w.stick), false);
+                break;
+            }
+            if (held) continue;
+        }
         switch (k.what) {
         case What::Release:
             UE_LOGI("bracket_position_wait: replaying the kept release of '%ls' (slot %d)", keys[k.waiter].c_str(),

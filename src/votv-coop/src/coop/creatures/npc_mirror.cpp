@@ -5,7 +5,8 @@
 #include "coop/creatures/npc_mirror.h"
 
 #include "coop/element/mirror_manager.h"
-#include "coop/element/bind_wait.h"       // MarkDeferred: a spawn parked on its class load
+#include "coop/element/bind_wait.h"       // GiveUp: a spawn cancelled while its class loads
+#include "coop/element/class_load_wait.h"  // ParkSpawn / Cancel: a spawn waiting on its class load
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
@@ -221,20 +222,12 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
     const ue_wrap::class_resolve::Resolved resolved = ue_wrap::class_resolve::ResolveClass(
         classW.c_str(), coop::npc_sync::NpcFamily(), ue_wrap::class_resolve::Load::Budgeted);
     if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
-        // The parked eid is held as BIND-WAIT holds a deferred bind (coop/element/bind_wait.h): marked now, released
-        // when the retry binds the mirror, given up when it does not, and cancelled by this eid's EntityDestroy.
-        coop::element::bind_wait::MarkDeferred(payload.elementId, "its class is loading");
-        const bool parked = ue_wrap::class_resolve::Park("EntitySpawn", payload.elementId, [payload] {
-            OnEntitySpawn(payload);
-            if (ue_wrap::class_resolve::IsParked("EntitySpawn", payload.elementId)) return;  // parked anew
-            if (NpcMirrors().Get(payload.elementId) != nullptr) coop::element::bind_wait::OnBound(payload.elementId);
-            else coop::element::bind_wait::GiveUp(payload.elementId, "its spawn did not bind once its class loaded");
-        });
-        if (!parked) {
-            UE_LOGW("npc-sync[client OnSpawn]: class '%ls' waits on a load and the park queue is full -- dropping "
-                    "(eid=%u)", classW.c_str(), payload.elementId);
-            coop::element::bind_wait::GiveUp(payload.elementId, "the park queue for a class load is full");
-        }
+        // The spawn waits for its class (coop/element/class_load_wait, which marks the eid in bind_wait): it ends bound
+        // (the mirror stands), given up, or cancelled by this eid's EntityDestroy.
+        const uint32_t eid = payload.elementId;
+        coop::element::class_load_wait::ParkSpawn(
+            "EntitySpawn", classW, eid, [payload] { OnEntitySpawn(payload); },
+            [eid] { return NpcMirrors().Get(eid) != nullptr; });
         return;
     }
     void* actorClass = resolved.cls;
@@ -489,7 +482,7 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(payload.elementId);
     // A spawn still waiting on its class's load for this eid ends here: it is never spawned.
-    if (ue_wrap::class_resolve::Cancel("EntitySpawn", payload.elementId)) {
+    if (coop::element::class_load_wait::Cancel("EntitySpawn", payload.elementId)) {
         UE_LOGI("npc-sync[client OnDestroy]: eid=%u -- its spawn was waiting on a class load and is cancelled; it "
                 "will never spawn", payload.elementId);
         coop::element::bind_wait::GiveUp(payload.elementId, "destroyed while its class was loading");

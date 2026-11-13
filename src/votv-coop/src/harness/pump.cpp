@@ -5,6 +5,8 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/dev/class_lifetime_probe.h"
+#include "coop/element/class_load_wait.h"
+#include "coop/session/world_load_episode.h"
 #include "ue_wrap/core/class_resolve.h"
 #include "coop/dev/init_seam_probe.h"
 #include "coop/dev/key_parity_probe.h"
@@ -101,8 +103,13 @@ void PostMenuTick() {
 }
 
 void TickFrameTail() {
-    // The class loads' per-tick budget starts anew, and the spawns parked on a load run again.
+    // The class loads' per-tick budget starts anew, and the spawns waiting on a load run again. A load that runs while the
+    // game replays its save is counted and said (the measurement the budgeted loader's policy waits on).
+    static const bool sReplayProbe =
+        (ue_wrap::class_resolve::SetReplayProbe(&coop::world_load_episode::InEpisode), true);
+    (void)sReplayProbe;
     ue_wrap::class_resolve::Tick();
+    coop::element::class_load_wait::Tick();
     // Self-clearing and cheap when idle: an empty nameplate snapshot hides the HUD at the menu.
     coop::nameplate::Update();
     coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();

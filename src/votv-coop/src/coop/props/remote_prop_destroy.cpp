@@ -28,7 +28,7 @@
 #include "ue_wrap/engine/engine.h"                   // ReleaseMainPlayerGrabIfHolding
 #include "ue_wrap/core/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/cached_obj_ref.h"
-#include "ue_wrap/core/class_resolve.h"            // Cancel: a parked spawn the destroy ends
+#include "coop/element/class_load_wait.h"      // Cancel: a parked spawn the destroy ends
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"                     // IsChipPile / IsGarbageClump
 #include "ue_wrap/core/reflection.h"
@@ -161,10 +161,10 @@ DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* 
                             bool allowDefer) {
     // Dispatched from the event drain on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDestroy)");
-    // A spawn still waiting on its class's load (class_resolve::Park, marked in bind_wait) for this eid ends here:
+    // A spawn still waiting on its class's load (class_load_wait::ParkSpawn, marked in bind_wait) for this eid ends here:
     // it is never spawned, and the messages held for its bind have nothing to reach.
     if (payload.elementId != 0 && payload.elementId != coop::element::kInvalidId &&
-        ue_wrap::class_resolve::Cancel("PropSpawn", payload.elementId)) {
+        coop::element::class_load_wait::Cancel("PropSpawn", payload.elementId)) {
         UE_LOGI("remote_prop::OnDestroy: eid=%u -- its spawn was waiting on a class load and is cancelled; it will "
                 "never spawn", payload.elementId);
         coop::element::bind_wait::GiveUp(payload.elementId, "destroyed while its class was loading");

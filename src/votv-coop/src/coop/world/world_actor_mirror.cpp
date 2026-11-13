@@ -11,7 +11,8 @@
 
 #include "coop/element/identity_create.h"  // the single WorldActor mirror create funnel
 #include "coop/items/coingun_sync.h"
-#include "coop/element/bind_wait.h"       // MarkDeferred: a spawn parked on its class load
+#include "coop/element/bind_wait.h"       // GiveUp: a spawn cancelled while its class loads
+#include "coop/element/class_load_wait.h"  // ParkSpawn / Cancel: a spawn waiting on its class load
 #include "coop/element/mirror_managers.h"  // WaMirrors
 #include "coop/element/registry.h"
 #include "coop/element/world_actor.h"
@@ -125,25 +126,17 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
                 payload.elementId);
         return;
     }
-    // The name allowlist above is the family: a class this client has not loaded loads from its asset inside the
-    // per-tick budget (past it the spawn is parked and runs again next tick); one that exists nowhere here drops.
+    // The allowlist's names are the family (WorldActorFamily): a class this client has not loaded loads from its asset
+    // inside the per-tick budget; one that exists nowhere here drops.
     const ue_wrap::class_resolve::Resolved resolved = ue_wrap::class_resolve::ResolveClass(
-        classW.c_str(), ue_wrap::class_resolve::AnyFamily(), ue_wrap::class_resolve::Load::Budgeted);
+        classW.c_str(), coop::world_actor_sync::WorldActorFamily(), ue_wrap::class_resolve::Load::Budgeted);
     if (resolved.state == ue_wrap::class_resolve::ClassState::Pending) {
-        // The parked eid is held as BIND-WAIT holds a deferred bind (coop/element/bind_wait.h): marked now, released
-        // when the retry binds the mirror, given up when it does not, and cancelled by this eid's destroy.
-        coop::element::bind_wait::MarkDeferred(payload.elementId, "its class is loading");
-        const bool parked = ue_wrap::class_resolve::Park("WorldActorSpawn", payload.elementId, [payload] {
-            OnWorldActorSpawn(payload);
-            if (ue_wrap::class_resolve::IsParked("WorldActorSpawn", payload.elementId)) return;  // parked anew
-            if (WaMirrors().Get(payload.elementId) != nullptr) coop::element::bind_wait::OnBound(payload.elementId);
-            else coop::element::bind_wait::GiveUp(payload.elementId, "its spawn did not bind once its class loaded");
-        });
-        if (!parked) {
-            UE_LOGW("world-actor[client OnSpawn]: class '%ls' waits on a load and the park queue is full -- "
-                    "dropping (eid=%u)", classW.c_str(), payload.elementId);
-            coop::element::bind_wait::GiveUp(payload.elementId, "the park queue for a class load is full");
-        }
+        // The spawn waits for its class (coop/element/class_load_wait, which marks the eid in bind_wait): it ends bound
+        // (the mirror stands), given up, or cancelled by this eid's destroy.
+        const uint32_t eid = payload.elementId;
+        coop::element::class_load_wait::ParkSpawn(
+            "WorldActorSpawn", classW, eid, [payload] { OnWorldActorSpawn(payload); },
+            [eid] { return WaMirrors().Get(eid) != nullptr; });
         return;
     }
     void* actorClass = resolved.cls;
@@ -300,7 +293,7 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
     }
     const coop::element::ElementId eid = static_cast<coop::element::ElementId>(payload.elementId);
     // A spawn still waiting on its class's load for this eid ends here: it is never spawned.
-    if (ue_wrap::class_resolve::Cancel("WorldActorSpawn", payload.elementId)) {
+    if (coop::element::class_load_wait::Cancel("WorldActorSpawn", payload.elementId)) {
         UE_LOGI("world-actor[client OnDestroy]: eid=%u -- its spawn was waiting on a class load and is cancelled; it "
                 "will never spawn", payload.elementId);
         coop::element::bind_wait::GiveUp(payload.elementId, "destroyed while its class was loading");

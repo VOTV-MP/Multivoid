@@ -230,7 +230,9 @@ bool IsClassKeyedInteractable(void* cls) {
 }
 
 const class_resolve::Family& PropFamily() {
-    static const class_resolve::Family family{L"keyed interactable", nullptr, &IsClassKeyedInteractable};
+    static constexpr const wchar_t* kBases[] = {L"prop_C", L"prop_garbageClump_C", L"actorChipPile_C", L"trashBitsPile_C"};
+    static const class_resolve::Family family{L"keyed interactable", kBases, sizeof(kBases) / sizeof(kBases[0]),
+                                              &IsClassKeyedInteractable};
     return family;
 }
 
