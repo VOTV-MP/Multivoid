@@ -84,6 +84,17 @@ void Fail(const RaceRow& r, const std::string& why) {
     CEnter(CStage::Say);
 }
 
+// A bound ran out with no event to decide on: INVALID, said to the host as such; the phase stops as it does on a FAIL.
+void Invalid(const RaceRow& r, const std::string& why) {
+    UE_LOGW("%s c%d race INVALID -- %s: %s", kTag, g_slot, r.act.name, why.c_str());
+    if (g_slot == kSlotC1) PAR::dev::HoldCommits(false);
+    LetGo(coop::players::Registry::Get().Local());
+    g_sayLine = DoneHead(r.act, g_slot) + "invalid " + why.substr(0, 120);
+    g_sayFailed = true;
+    g_then = Then::Stop;
+    CEnter(CStage::Say);
+}
+
 void SayThen(const std::string& line, Then then) {
     g_sayLine = line;
     g_sayFailed = false;
@@ -241,7 +252,7 @@ void Begin(const RaceRow& r, void* player) {
 void Resolve(const RaceRow& r, void* player) {
     void* const mirror = EL::LivePropActor(g_ceid);
     if (!mirror) {
-        if (CExpired(kMirrorBoundMs)) Fail(r, "the host's prop never reached this client");
+        if (CExpired(kMirrorBoundMs)) Invalid(r, "the host's prop never reached this client");
         return;
     }
     g_invBefore = InventoryCount(r.act.leaf);
@@ -315,7 +326,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (!poll) return;
         std::string rest;
         if (!HostSaid(ReadyHead(r.act), &rest)) {
-            if (CExpired(kReadyBoundMs)) Fail(r, "the host never said the step was ready");
+            if (CExpired(kReadyBoundMs)) Invalid(r, "the host never said the step was ready");
             return;
         }
         g_ceid = static_cast<EL::ElementId>(std::strtoul(rest.c_str(), nullptr, 10));
@@ -345,7 +356,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
                                                : r.act.target == Target::Client;
         if (granted && g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), r.act.verb)) {
             if (CExpired(kGatherBoundMs))
-                Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
+                Invalid(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
         Arrived(r, player);
@@ -354,7 +365,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
     case CStage::AwaitLine:
         if (!poll) return;
         if (!HostSaid(g_lineHead, nullptr)) {
-            if (CExpired(kReadyBoundMs)) Fail(r, "the host never said: " + g_lineHead);
+            if (CExpired(kReadyBoundMs)) Invalid(r, "the host never said: " + g_lineHead);
             return;
         }
         if (g_slot == kSlotC2 && r.blocker == Blocker::D1Remove) Forge(s, r, player);
@@ -362,7 +373,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         return;
     case CStage::AwaitReply:
         if (PAR::dev::PendingId() != 0) {
-            if (CExpired(kReplyBoundMs)) Fail(r, "the request was still pending");
+            if (CExpired(kReplyBoundMs)) Invalid(r, "the request was still pending");
             return;
         }
         ReadReply(r);
@@ -371,7 +382,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         // c1's held commit goes once the host has answered the others.
         if (!poll) return;
         if (!HostSaid(HostLine(r, "answered"), nullptr)) {
-            if (CExpired(kReadyBoundMs)) Fail(r, "the host never answered the other peer");
+            if (CExpired(kReadyBoundMs)) Invalid(r, "the host never answered the other peer");
             return;
         }
         PAR::dev::ReleaseHeldCommits();
@@ -384,7 +395,13 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
                                       : "refused as held; the mirror went with c1's destroy");
             return;
         }
-        if (CExpired(kDoneBoundMs)) Fail(r, "the destroy never reached this copy");
+        // The host's `fanned` line follows its destroy fan-out on one ordered lane: read, the destroy has been taken, and a
+        // copy that still stands is the failing event.
+        if (HostSaid(HostLine(r, "fanned"), nullptr)) {
+            Fail(r, "the host fanned out c1's destroy and this copy still stands");
+            return;
+        }
+        if (CExpired(kDoneBoundMs)) Invalid(r, "the host's fan-out line never came and the destroy never reached this copy");
         return;
     case CStage::Hold: {
         // c2's grab is written every tick, its hook stands, until c1's act has ended.
@@ -394,7 +411,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (!poll) return;
         bool failed = false;
         if (!C1Done(r, &failed)) {
-            if (CExpired(kDoneBoundMs)) Fail(r, "c1 never ended its act");
+            if (CExpired(kDoneBoundMs)) Invalid(r, "c1 never ended its act");
             return;
         }
         LetGo(player);
@@ -406,7 +423,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (!poll) return;
         bool failed = false;
         if (!C1Done(r, &failed)) {
-            if (CExpired(kDoneBoundMs)) Fail(r, "c1 never said it was done");
+            if (CExpired(kDoneBoundMs)) Invalid(r, "c1 never said it was done");
             return;
         }
         if (failed) CEnter(CStage::Done);

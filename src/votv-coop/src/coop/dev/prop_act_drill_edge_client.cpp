@@ -99,6 +99,16 @@ void Fail(const EdgeRow& r, const std::string& why) {
     CEnter(CStage::Say);
 }
 
+// A bound ran out with no event to decide on: INVALID, said to the host as such; the phase stops as it does on a FAIL.
+void Invalid(const EdgeRow& r, const std::string& why) {
+    UE_LOGW("%s c%d edge INVALID -- %s: %s", kTag, kSlot, r.act.name, why.c_str());
+    LetGoAll();
+    g_sayLine = DoneHead(r.act) + "invalid " + why.substr(0, 120);
+    g_sayFailed = true;
+    g_then = Then::Stop;
+    CEnter(CStage::Say);
+}
+
 void SayThen(const std::string& line, Then then) {
     g_sayLine = line;
     g_sayFailed = false;
@@ -317,7 +327,7 @@ void Resolve(const EdgeRow& r) {
     void* const mirror = EL::LivePropActor(g_ceid);
     void* const second = g_ceid2 != EL::kInvalidId ? EL::LivePropActor(g_ceid2) : nullptr;
     if (!mirror || (g_ceid2 != EL::kInvalidId && !second)) {
-        if (CExpired(kMirrorBoundMs)) Fail(r, "the host's prop never reached this client");
+        if (CExpired(kMirrorBoundMs)) Invalid(r, "the host's prop never reached this client");
         return;
     }
     g_invBefore = InventoryCount(r.act.leaf);
@@ -370,7 +380,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (!poll) return;
         std::string rest;
         if (!HostSaid(ReadyHead(r.act), &rest)) {
-            if (CExpired(kReadyBoundMs)) Fail(r, "the host never said the step was ready");
+            if (CExpired(kReadyBoundMs)) Invalid(r, "the host never said the step was ready");
             return;
         }
         g_ceid = static_cast<EL::ElementId>(std::strtoul(rest.c_str(), nullptr, 10));
@@ -407,7 +417,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if ((g_mirror.Get() && !MirrorGatherable(g_mirror.Get(), r.act.verb)) ||
             (g_mirror2.Get() && !MirrorGatherable(g_mirror2.Get(), r.act.verb))) {
             if (CExpired(kGatherBoundMs))
-                Fail(r, "the mirror never became gatherable here (the host's drive did not end)");
+                Invalid(r, "the mirror never became gatherable here (the host's drive did not end)");
             return;
         }
         Act(r, player);
@@ -416,7 +426,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
     case CStage::AwaitFirst:
         // The first take is granted and replayed with its commit held; the second is asked at once.
         if (PAR::dev::PendingId() != 0) {
-            if (CExpired(kReplyBoundMs)) Fail(r, "the first request was still pending");
+            if (CExpired(kReplyBoundMs)) Invalid(r, "the first request was still pending");
             return;
         }
         if (!FirstReplayed(r)) return;
@@ -427,7 +437,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
     case CStage::AwaitLine:
         if (!poll) return;
         if (!HostSaid(g_lineHead, nullptr)) {
-            if (CExpired(kReadyBoundMs)) Fail(r, "the host never said: " + g_lineHead);
+            if (CExpired(kReadyBoundMs)) Invalid(r, "the host never said: " + g_lineHead);
             return;
         }
         if (r.kind == Kind::Gone) {
@@ -442,7 +452,12 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
     case CStage::AwaitExpiry:
         // The second request's wait runs out on this client with the host still waiting on the first's reservation.
         if (PAR::dev::ExpiredPending() != 1) {
-            if (CExpired(kReadyBoundMs)) Fail(r, "the second request never expired on this client");
+            // The failing event: the second request closed with an answer instead of running its wait out.
+            if (PAR::dev::PendingId() == 0) {
+                Fail(r, "the second request was answered or closed before its wait ran out");
+                return;
+            }
+            if (CExpired(kReadyBoundMs)) Invalid(r, "the second request never expired on this client");
             return;
         }
         UE_LOGI("%s c%d edge %s: the second request expired; the held commit goes", kTag, kSlot, r.act.name);
@@ -451,14 +466,14 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         return;
     case CStage::AwaitLate:
         if (PAR::dev::LateGrantsAborted() == 0) {
-            if (CExpired(kDoneBoundMs)) Fail(r, "the late grant never came in");
+            if (CExpired(kDoneBoundMs)) Invalid(r, "the late grant never came in");
             return;
         }
         ReadLate(r);
         return;
     case CStage::AwaitReply:
         if (PAR::dev::PendingId() != 0) {
-            if (CExpired(kReplyBoundMs)) Fail(r, "the request was still pending");
+            if (CExpired(kReplyBoundMs)) Invalid(r, "the request was still pending");
             return;
         }
         ReadReply(r);
