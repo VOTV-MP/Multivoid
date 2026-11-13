@@ -213,7 +213,7 @@ bool CaptureRecord(void* hookActor, ue_wrap::save_record::SaveRecord& out);
 // LookupOnly, so an attacker's class name costs an index lookup and never a load. A client adopting the
 // host's HookAnchored loads a class it has not loaded (the default).
 bool AdoptRecord(void* hookActor, const ue_wrap::save_record::SaveRecord& r,
-                 ue_wrap::save_record::ClassLoad load = ue_wrap::save_record::ClassLoad::Immediate);
+                 ue_wrap::save_record::ClassLoad load);
 
 // THE RECORD DOES NOT CARRY THE PHASE. getData writes an empty bool group, and attached_a and
 // attached_b are written only inside attach_a and attach_b, neither of which processKeys calls. So

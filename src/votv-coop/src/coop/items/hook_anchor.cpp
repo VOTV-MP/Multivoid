@@ -405,7 +405,8 @@ void OnAnchoredChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     // world and re-attach, so it rides this peer's copy of whatever the original was tied to and
     // never needs a pose on the wire. The two attached flags are deliberately NOT restored here --
     // see ue_wrap/actors/hook.h.
-    H::AdoptRecord(m, rec);
+    // Immediate: the adoption builds this mirror in place and answers at once; the host named the hook's class.
+    H::AdoptRecord(m, rec, ue_wrap::save_record::ClassLoad::Immediate);
     E::SetActorEnableCollision(m, false);  // loadData re-enables both of the hook's spheres
 }
 

@@ -115,7 +115,12 @@ void ReadSaveRecord(const void* base, SaveRecord& rec);
 // the engine's later Array realloc / GC free of them is allocator-matched.
 // `load` governs how every class leaf (the record's own class and its `classes` group) resolves
 // (see ClassLoad).
-void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassLoad load = ClassLoad::Immediate);
+void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassLoad load);
+
+// Resolves every class the record names (its own class and its `classes` leaves) under `load`, the loads a write would
+// make. False when one answered Pending (the load budget of this tick is spent): a caller that can wait does so and
+// writes once this answers true, when the write finds every class loaded. Game thread.
+bool ClassesReady(const SaveRecord& r, ClassLoad load);
 
 // ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
 //
@@ -169,7 +174,7 @@ inline bool RecordName(const SaveRecord& r, std::wstring& out) {
 // is where a food keeps its temperature. Which elements those are is read off the base class at
 // runtime, never listed here. Two dispatches: the base capture and the apply.
 // `load` is forwarded to the write of the merged record (see ClassLoad).
-bool ApplyRecord(void* actor, const SaveRecord& r, ClassLoad load = ClassLoad::Immediate);
+bool ApplyRecord(void* actor, const SaveRecord& r, ClassLoad load);
 
 // True while ApplyRecord runs: what a prop's own bodies do then is a record arriving, not a change to report.
 // Game thread.
@@ -196,7 +201,7 @@ bool CaptureRecordVia(void* actor, void* recordFn, SaveRecord& out);
 // no splice here, so a caller handing this a record that came off the wire has already decided,
 // field by field, which parts it is willing to take from the sender.
 // `load` is forwarded to the record write (see ClassLoad).
-bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassLoad load = ClassLoad::Immediate);
+bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r, ClassLoad load);
 
 // Drop the cached class lookups (level change / disconnect).
 void ResetCodecCache();

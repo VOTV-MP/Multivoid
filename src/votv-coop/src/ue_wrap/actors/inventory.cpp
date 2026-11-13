@@ -6,6 +6,7 @@
 
 #include "ue_wrap/actors/inventory.h"
 
+#include "ue_wrap/actors/prop.h"            // PropFamily
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -119,7 +120,8 @@ void WriteEquipRecord(uint8_t* base, const EquipRecord& r, const EquipRecord& ga
     const EquipRecord& w = IsBlankEquip(r) ? gameBlank : r;
     SR::WriteFNameField(base + kEquip_propName, w.propName);
     SR::WriteFNameField(base + kEquip_propKey, w.propKey);
-    SR::WriteSaveRecord(base + kEquip_data, w.data);  // embedded Fstruct_save (0x100 slot)
+    // Immediate: this peer's own inventory, written from its own save data in place; no peer names the classes.
+    SR::WriteSaveRecord(base + kEquip_data, w.data, SR::ClassLoad::Immediate);  // embedded Fstruct_save (0x100 slot)
     SR::WriteFNameField(base + kEquip_tag, w.tag);
 }
 
@@ -223,7 +225,10 @@ bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf, const flo
     if (!save) return false;
     const SR::Arr hd = SR::ReadArr(save, kOff_hold);
     if (!hd.data || hd.num < 1) return false;
-    if (classLeaf && !R::FindClass(classLeaf)) return false;
+    // Immediate: a drill's own held item, written in place; the class loads if this peer has not loaded it.
+    if (classLeaf && !ue_wrap::class_resolve::ResolveClass(classLeaf, ue_wrap::prop::PropFamily(),
+                                                          ue_wrap::class_resolve::Load::Immediate).cls)
+        return false;
     auto* slot = const_cast<uint8_t*>(hd.data);
     // The record as the game's own pickup leaves it, as far as the hand reads it: the class updateHold
     // spawns, and the name the spawned actor's loadData takes, its first names entry, which
@@ -239,7 +244,8 @@ bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf, const flo
         rec.floats[1].assign(1, *fuel);
     }
     std::memset(slot + kEquip_data, 0, SR::kSaveStride);
-    SR::WriteSaveRecord(slot + kEquip_data, rec);
+    // Immediate: the held item of this peer's own hand, written in place from its own state; nothing to wait for.
+    SR::WriteSaveRecord(slot + kEquip_data, rec, SR::ClassLoad::Immediate);
     SR::WriteFNameField(slot + kEquip_propName, name);
     return true;
 }
@@ -314,8 +320,9 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
                 "from; refusing, since a zeroed blank is a slot the game never sees as free", saveSlot);
         return false;
     }
+    // Immediate: the player's own inventory, written from its own save data in place; no peer names the classes.
     BuildAndSwapArray(carried, 0, SR::kSaveStride, inv.inventory,
-                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r); });
+                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r, SR::ClassLoad::Immediate); });
     // equipment and hold are FIXED-SHAPE slot arrays: the game finds an empty slot to equip into
     // (AddEquipment: Array_Find, "Not enough space" on -1) and writes hold[0] in place, and
     // nothing in it ever grows them. A profile with fewer slots than the save object -- an empty

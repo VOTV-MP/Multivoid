@@ -226,6 +226,15 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     // sender to be this build. Written through unchanged, prop_container::loadData reads ints[0][0]
     // unguarded and the nested container would bind whatever sits in that slot on THIS machine --
     // another container's contents, or a player's inventory.
+    //
+    // A client resolves every class the records name first, inside the per-tick load budget: past it the apply waits
+    // (Park, asked again next slice), so a container of many cold classes never loads them all in one frame, and the
+    // judgement below sees a nested container's class loaded. The write then finds every class loaded, which is why it
+    // may be Immediate.
+    if (!IsHost()) {
+        for (const SR::SaveRecord& r : recs)
+            if (!SR::ClassesReady(r, SR::ClassLoad::Budgeted)) return Ingest::Park;
+    }
     size_t foreignIndices = 0;
     for (auto& r : recs) {
         if (!ci::IsContainerRecord(r)) continue;

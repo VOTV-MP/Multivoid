@@ -2,6 +2,8 @@
 
 #include "ue_wrap/actors/begin_equipment.h"
 
+#include "ue_wrap/actors/prop.h"        // PropFamily
+#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/engine/engine.h"      // SpawnActor, FVector
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -46,7 +48,9 @@ int GiveFromClassRaw(void* cls, void* gm, void* getDataFn, void* addFn, void* de
 }  // namespace
 
 bool GiveFromClass(const std::wstring& className) {
-    void* cls   = R::FindClass(className.c_str());
+    // Immediate: the starter kit equips in place and answers at once; the class loads if this peer has not loaded it.
+    void* cls   = ue_wrap::class_resolve::ResolveClass(className.c_str(), ue_wrap::prop::PropFamily(),
+                                                       ue_wrap::class_resolve::Load::Immediate).cls;
     void* gm    = world_singleton::Gamemode();
     void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     void* addFn     = gmCls ? R::FindFunction(gmCls, L"AddEquipment") : nullptr;

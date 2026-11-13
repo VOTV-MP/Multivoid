@@ -327,7 +327,8 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     // The HOST applies only a CLIENT's record here (its receive edge refuses a canonical from a
     // client): it resolves the record's class names from the classes it holds, so a client's name
     // never makes it load (LookupOnly). A CLIENT applies only the host's own record, and loads a class
-    // it has not loaded.
+    // it has not loaded. Immediate there: the record applies in place to a live actor and answers true or false at
+    // once, so the apply cannot wait for a load (a food or a disc names few classes).
     const SR::ClassLoad load = PT::SessionIsHost() ? SR::ClassLoad::LookupOnly : SR::ClassLoad::Immediate;
     if (!SR::ApplyRecord(actor, rec, load)) return false;
     ++g_appliedTotal;
