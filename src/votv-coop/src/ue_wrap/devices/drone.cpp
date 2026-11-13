@@ -219,11 +219,15 @@ CachedObjRef g_frozenDrone;
 
 bool SuppressTick(void* drone) {
     if (!drone) return false;
-    E::SetActorTickEnabled(drone, false);  // stop the flight integrator -- the client drone is a mirror
-    if (g_frozenDrone.Is(drone)) return true;
-    if (!E::IsActorRootSimulatingPhysics(drone)) return true;   // no body in the simulation: nothing to take out
-    if (!E::SetActorSimulatePhysics(drone, false)) return false;
-    g_frozenDrone.Set(drone);  // and its body: the stream alone places it
+    // The read only says what to give back: a root that does not read answers "not simulating" too, so the freeze itself
+    // (idempotent, and false for no primitive root or a call that did not run) is what says the body is out.
+    const bool wasSimulating = E::IsActorRootSimulatingPhysics(drone);
+    if (!E::SetActorSimulatePhysics(drone, false)) return false;   // nothing changed yet
+    if (!E::SetActorTickEnabled(drone, false)) {                   // the flight integrator: the client drone is a mirror
+        if (wasSimulating) E::SetActorSimulatePhysics(drone, true);
+        return false;
+    }
+    if (wasSimulating) g_frozenDrone.Set(drone);  // the stream alone places it: RestoreTick gives this body back
     return true;
 }
 

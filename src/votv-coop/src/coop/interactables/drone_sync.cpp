@@ -55,6 +55,8 @@ constexpr size_t   kLateRing = 100;
 // before it, held until one send period before it: the copy rests where it rested, then moves.
 constexpr double   kQuietGapMs = 150.0;
 constexpr size_t   kPoseCap = 16;
+// Refused freezes in a row (one per tick) before the refusal is said.
+constexpr uint32_t kSuppressWarnAfter = 60;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -82,6 +84,7 @@ struct DroneMirror {
     bool    hasPose    = false;
     bool    dirty      = false;
     ue_wrap::CachedObjRef suppressed;   // the drone whose flight tick and body we took out; a successor is frozen afresh
+    uint32_t suppressRefused = 0;       // freezes the engine refused since the last one that took
     uint8_t lastStateBits = 0;    // last applied FX bits (dust / canTakeOff) -- edge detection
     bool    haveStateBits = false;
     int8_t  hostActive = -1;      // the host's last word on Active: 1, 0, or -1 before any
@@ -244,10 +247,16 @@ void SetTarget(DroneMirror& e, const coop::net::DroneStatePayload& p, bool snap)
 }
 
 // The flight tick and the body of THIS drone are out of the way: asked whenever the drone is not the one already taken
-// out, so a drone reborn in the session is frozen too, and again while the engine has refused.
+// out, so a drone reborn in the session is frozen too, and again while the engine has refused (said once a streak).
 void EnsureSuppressed(void* drone) {
     if (g_m.suppressed.Is(drone)) return;
-    if (D::SuppressTick(drone)) g_m.suppressed.Set(drone);
+    if (D::SuppressTick(drone)) {
+        g_m.suppressed.Set(drone);
+        g_m.suppressRefused = 0;
+        return;
+    }
+    if (++g_m.suppressRefused == kSuppressWarnAfter)
+        UE_LOGW("drone: the mirror's freeze was refused %u times running -- asked again each tick", kSuppressWarnAfter);
 }
 
 void ApplyMirror(void* drone, DroneMirror& e) {
@@ -402,7 +411,7 @@ void Tick() {
         g_sentActive = r.active;
         g_sentBits = r.bits;  // the bits as read: FillPayload drops the dust bit when its anchor is unread
     } else {
-        // CLIENT: the drone is ALWAYS a mirror -- suppress its own flight tick once, take a word that
+        // CLIENT: the drone is ALWAYS a mirror -- take its flight tick and body out (per drone), take a word that
         // waited for the drone to resolve, then play the streamed poses back (no write while the
         // pose shown does not change).
         EnsureSuppressed(drone);
