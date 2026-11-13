@@ -76,6 +76,7 @@ void HoldCommits(bool on);           // while on, a commit is queued in send ord
                                      // sends the queue and the hold stays on until HoldCommits(false)
 void ReleaseHeldCommits();
 void HoldReplayUntilGone(bool on);   // a grant parks the replay; Tick aborts it once the target's mirror is gone
+void SetBeforeVerb(void (*fn)(void* target));   // called with the target right before the replay's verb runs; null by default
 uint32_t RefusedCount(coop::net::PropActReason reason);   // replies this client took as refused, per reason
 uint32_t HostCancels();              // the host's own takes and uses cancelled for a client's reservation
 uint32_t LateGrantsAborted();        // grants for an expired request, answered with an abort

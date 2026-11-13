@@ -123,6 +123,9 @@ bool ReadHoldName(void* player, R::FName* out) {
     return true;
 }
 
+float g_replayFood = 0.f;   // the eater's food the row wants at the replay: 100 for a full eater, else 0
+void FillBeforeReplay(void*) { ue_wrap::vitals::Write(ue_wrap::vitals::Field::Food, g_replayFood); }
+
 void ClientRead(const Row& row, void* player);
 
 // The step's act, once the walk has arrived: setup, the call, and the proof the call was cancelled and asked.
@@ -146,6 +149,10 @@ void ClientAct(const Row& row, void* player) {
         ClientFail(row, "the player's hunger could not be emptied before the eat");
         return;
     }
+    // The eater's food decays every tick, so a value written here is lower by the time the granted replay runs: the same
+    // value is written again right before the replay's verb, the moment the game's addFood reads it.
+    g_replayFood = fullEater ? 100.f : 0.f;
+    PAR::dev::SetBeforeVerb(row.verb == Verb::Use ? &FillBeforeReplay : nullptr);
     ClearHint();
     g_refusedBefore = PAR::dev::RefusedCount(coop::net::PropActReason::WrongFamily);
     E::MainPlayerGrabState handBefore{};

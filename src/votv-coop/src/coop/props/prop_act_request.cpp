@@ -91,6 +91,7 @@ uint32_t g_lateGrantsAborted = 0;
 ue_wrap::CachedObjRef g_destroyInReplay;   // destroyed inside the next replay, after its verb
 bool g_holdCommits = false;                // a commit is queued, not sent, until ReleaseHeldCommits
 bool g_holdReplay = false;                 // a grant parks its replay
+void (*g_beforeVerb)(void* target) = nullptr;   // called on the target right before the replay's verb
 uint32_t g_refused[coop::net::kPropActReasons] = {};   // replies taken as refused, per reason
 uint32_t g_hostCancels = 0;                // the host's own calls cancelled for a reservation
 
@@ -235,6 +236,7 @@ void Replay() {
         Latched scope(target);
         const coop::snack_act::WrapperRefusal refusal(snack ? target : nullptr);
         if (snack) before = coop::snack_act::ReadCopy(target);
+        if (g_beforeVerb) g_beforeVerb(target);   // a drill's state that must hold at the verb itself
         ran = RunVerb(target, local);
         // A drill's second destroy, inside the latch: it is not the target, so the seam treats it as any destroy.
         if (void* const extra = g_destroyInReplay.Get()) E::DestroyActor(extra);
@@ -744,6 +746,7 @@ void OnDisconnect() {
     g_destroyInReplay.Reset();
     g_holdCommits = false;
     g_holdReplay = false;
+    g_beforeVerb = nullptr;
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);
     g_hostCancels = 0;
     for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
@@ -757,6 +760,7 @@ uint16_t PendingId() { return g_rec.open ? g_rec.id : 0; }
 void HoldCommits(bool on) { g_holdCommits = on; }
 void ReleaseHeldCommits() { DrainCommits(true); }
 void HoldReplayUntilGone(bool on) { g_holdReplay = on; }
+void SetBeforeVerb(void (*fn)(void* target)) { g_beforeVerb = fn; }
 uint32_t RefusedCount(coop::net::PropActReason reason) {
     const size_t i = static_cast<size_t>(reason);
     return i < coop::net::kPropActReasons ? g_refused[i] : 0u;
