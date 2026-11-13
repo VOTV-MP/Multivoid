@@ -16,7 +16,10 @@
 
 #pragma once
 
+#include "ue_wrap/core/cached_obj_ref.h"
+
 #include <cstddef>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -65,14 +68,17 @@ void TickWatchedProps(coop::net::Session* session);
 // it: with the start-up burst gated off, a drop here is a live burst the cap could not hold.
 size_t PendingCapDrops();
 
-// How many finished spawns still wait in the pending queue for the tick that adopts and expresses them. The act drill's MRE
-// step says its contents only once this is 0, so every birth the open made has been registered. Game thread.
-size_t PendingFinishedCount();
-
 // Clear per-session state: the death-watch list, the pending queue and the session pointer. The
 // POST observer stays registered -- it self-gates on connected() and on not being inside a
 // mirror-spawn scope, which is all it needs, since every connected peer broadcasts its own
 // ambient spawns. Net disconnect.
 void OnDisconnect();
+
+namespace dev {   // the act drill's MRE step reads this
+// While on, every spawn finished on the game thread is recorded, whatever the filters after it decide; turning it on
+// clears the record. prop_act_host brackets the MRE's roll with it, so the record is exactly the actors that call made.
+void CaptureBirths(bool on);
+const std::vector<ue_wrap::CachedObjRef>& CapturedBirths();
+}  // namespace dev
 
 }  // namespace coop::host_spawn_watcher

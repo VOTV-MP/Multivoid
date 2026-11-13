@@ -513,56 +513,48 @@ void* FindKerfurProp(EL::ElementId kerfurId) {
 // ---- the MRE step's host events -----------------------------------------------------------------------------------
 
 namespace {
-std::unordered_set<EL::ElementId> g_hostFoodsBefore;   // the host's foods when the MRE step was said ready
 bool g_contentsSaid = false;
-
-// Every food of the host's own (a host-born one has no mirror row), with its eid and Key.
-template <class Fn>
-void ForEachHostFood(Fn&& fn) {
-    static std::vector<EL::Registry::ActorIdPair> pairs;
-    EL::Registry::Get().SnapshotActorsByType(EL::ElementType::Prop, pairs);
-    for (const auto& p : pairs) {
-        if (p.mirror || !p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx) || !ue_wrap::food::IsFood(p.actor)) continue;
-        fn(p.id, p.actor, ue_wrap::prop::GetInteractableKeyString(p.actor));
-    }
 }
-}  // namespace
 
 std::string ContentsHead(const Row& r) { return std::string(kTag) + " host " + r.name + " contents "; }
 
-void MreHostReady() {
-    g_contentsSaid = false;
-    g_hostFoodsBefore.clear();
-    ForEachHostFood([](EL::ElementId id, void*, const std::wstring&) { g_hostFoodsBefore.insert(id); });
-}
+void MreHostReady() { g_contentsSaid = false; }
 
 // HOST, each poll while it waits for the client on an MRE step. The host's own commit counter is the no-change point of
 // the open-off red: the commit has been processed (a destroy commit counted, the eid dead), so an open that did not
-// happen will not happen. Once the contents are rolled and their FoodStates are on the wire, it says how many there are
-// and how many it poisoned: the line follows the FoodStates on the Default lane (session_lanes.h LaneForKind, FIFO), so
-// a client that reads it has taken them, and what it shows then is final.
+// happen will not happen. The contents are the set of actors the MRE's roll made, fixed when its spawn returned:
+// prop_act_host brackets the call with host_spawn_watcher's birth capture (the Finish post-hook records every spawn
+// finished on the game thread inside it), so they are named exactly, never counted from a world scan or a queue. Once every
+// food in that set has its eid and, keyed, its FoodState on the wire, the host says how many there are and how many it
+// poisoned: the line follows the FoodStates on the Default lane (session_lanes.h LaneForKind, FIFO), so a client that reads
+// it has taken them, and what it shows then is final. A content that never registers leaves the line unsaid, and the
+// client's bound says INVALID.
 const char* MreHostWatch(const Row& row, EL::ElementId eid, const Baseline& base) {
     if (Since(PAH::CommitsOf(kClientSlot, PAH::internal::CommitStep::Destroy), base.destroys) == 0 || EL::LivePropActor(eid))
         return nullptr;
     if (Since(PAH::MreOpens(), base.mreOpens) == 0)
         return "the host processed the MRE's commit with no open: 0 MRE opens on the host, 1 expected";
     if (g_contentsSaid) return nullptr;
-    // The open is synchronous (the spawn has returned once its commit is counted), but a birth the Finish seam caught waits
-    // in the host's pending queue for the tick that adopts it: the births are all registered once that queue is empty.
-    if (coop::host_spawn_watcher::PendingFinishedCount() != 0) return nullptr;
     size_t fresh = 0, poisoned = 0;
     std::string eids;
-    bool allSent = true;
-    ForEachHostFood([&](EL::ElementId id, void* actor, const std::wstring& key) {
-        if (g_hostFoodsBefore.count(id)) return;
+    bool ready = true;
+    for (const ue_wrap::CachedObjRef& born : coop::host_spawn_watcher::dev::CapturedBirths()) {
+        void* const actor = born.Get();
+        if (!actor || !ue_wrap::food::IsFood(actor)) continue;   // the roll's other spawns (its pouring props) are no content
         ++fresh;
+        const EL::ElementId id = EL::Registry::Get().EidForActor(actor);
+        if (id == EL::kInvalidId) {
+            ready = false;
+            continue;
+        }
         eids += " " + std::to_string(static_cast<unsigned>(id));
         // A content with no Key is counted by its eid and is never sent a FoodState (the lane sends keyed foods only).
-        if (!key.empty() && key != L"None" && !coop::props::prop_food_sync::dev::StateSentFor(key)) allSent = false;
+        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
+        if (!key.empty() && key != L"None" && !coop::props::prop_food_sync::dev::StateSentFor(key)) ready = false;
         ue_wrap::food::Poison poison;
         if (ue_wrap::food::ReadPoison(actor, poison) && poison.delay > 0.f && poison.strength > 0.f) ++poisoned;
-    });
-    if (fresh == 0 || !allSent) return nullptr;
+    }
+    if (fresh == 0 || !ready) return nullptr;
     g_contentsSaid = true;
     UE_LOGI("%s host %s: contents counted, eids%s", kTag, row.name, eids.c_str());
     Say(ContentsHead(row) + "n=" + std::to_string(fresh) + " poisoned=" + std::to_string(poisoned));

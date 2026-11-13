@@ -14,6 +14,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/props/host_spawn_watcher.h"
 #include "coop/props/prop_hold.h"
 #include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop.h"
@@ -133,7 +134,10 @@ ue_wrap::script_gate::Verdict OnMreAchievementPre(const ue_wrap::script_gate::Ca
 // True when the contents were rolled. A roll that cannot run still lets the destroy proceed, so it is tallied.
 bool OpenMre(void* actor, uint8_t slot, uint32_t eid) {
     g_rollingMre = true;
+    // The births of this call are named exactly: the act drill's MRE step says its contents from them.
+    coop::host_spawn_watcher::dev::CaptureBirths(true);
     const bool rolled = ue_wrap::prop_use::CallMreSpawn(actor);
+    coop::host_spawn_watcher::dev::CaptureBirths(false);
     g_rollingMre = false;
     if (!rolled) {
         ++g_tally[static_cast<int>(Tally::MreRollFailed)];

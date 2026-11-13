@@ -20,6 +20,7 @@
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/session/host_world_settle.h"  // Settled: the host's start-up births are not live edits
 #include "coop/props/join_membership_sweep.h"  // the join claim and sweep
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
@@ -235,6 +236,10 @@ std::vector<PendingFinishedSpawn> g_pendingFinished;  // GT-only
 // so this bounds a live burst.
 constexpr size_t kMaxPendingFinished = 128;
 size_t g_capDrops = 0;  // births the cap refused, for the settle drill
+// A scope some caller opens around a call whose births it must name (CaptureBirths): every spawn finished inside it, on the
+// game thread, is recorded here before any filter. Game thread.
+bool g_captureBirths = false;
+std::vector<ue_wrap::CachedObjRef> g_capturedBirths;
 
 void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     if (!GT::IsGameThread()) return;
@@ -246,6 +251,7 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     if (!coop::host_world_settle::Settled() && !s->AnyWorldReadyPeer()) return;
     void* actor = result;
     if (!actor || !R::IsLive(actor)) return;
+    if (g_captureBirths) g_capturedBirths.emplace_back().Set(actor);
     // Wire and display mirror spawns are marked before the finish and never enqueued, since
     // expressing a mirror as a fresh world prop is the dupe.
     if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
@@ -470,7 +476,15 @@ void DrainPendingSpawns(coop::net::Session* s) {
 
 size_t PendingCapDrops() { return g_capDrops; }
 
-size_t PendingFinishedCount() { return g_pendingFinished.size(); }
+namespace dev {
+void CaptureBirths(bool on) {
+    g_captureBirths = on;
+    if (on) g_capturedBirths.clear();
+}
+
+const std::vector<ue_wrap::CachedObjRef>& CapturedBirths() { return g_capturedBirths; }
+}  // namespace dev
+
 
 void OnDisconnect() {
     g_watched.clear();
