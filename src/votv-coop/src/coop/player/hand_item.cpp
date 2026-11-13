@@ -765,6 +765,14 @@ void PayOwed(coop::net::Session& session) {
     }
 }
 
+void ApplyOwedNow(uint8_t slot) {
+    if (!g_session || g_session->role() != coop::net::Role::Host || slot == 0 || slot >= coop::players::kMaxPeers) return;
+    PendingHand& pend = g_pendingHand[slot];
+    if (!pend.pace.Owed()) return;
+    pend.pace.Withdraw();
+    ApplyHandState(*g_session, slot, pend.value);
+}
+
 bool HoldsItem(uint8_t slot) {
     return slot < coop::players::kMaxPeers && g_hands[slot].has;
 }

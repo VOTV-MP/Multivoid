@@ -9,6 +9,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"         // what the sender's hand holds
+#include "coop/player/hand_spend.h"        // an install paid by the upgrade the hand held
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
@@ -49,6 +50,8 @@ static_assert(kInputBurst >= coop::net::kPowerPuzzleFields, "a flush of every he
 
 constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
+// The class a generator's insert takes, as the hand lane announces a hand item of it (hand_item compares without case).
+constexpr const wchar_t* kUpgradeClass = L"prop_transformerUpgrade_C";
 // A slot's ops wait, in arrival order, while the generators have not resolved or their sender has no body here
 // yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig), and an install
 // while the destroy of the upgrade its insert spent has not arrived: it was sent first, on the same ordered Default
@@ -129,12 +132,6 @@ HitParams g_hitParams;
 // [dev] grid_drill=red: a client writes the rows raw, as the old lanes left each peer to its own generators.
 bool RedApply() {
     static const bool red = coop::config::ResolveString(::coop::config_registry::rows::grid_drill) == "red";
-    return red;
-}
-
-// [dev] grid_drill=upgradered: the host judges an install as if its spend were recorded, the unpaired shape.
-bool UnpairedInstalls() {
-    static const bool red = coop::config::ResolveString(::coop::config_registry::rows::grid_drill) == "upgradered";
     return red;
 }
 
@@ -250,13 +247,19 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     EL::IntentSubject reach{};
     if (read) reach = EL::IntentTarget::ForClientIntent(*s, sender, kGeneratorReachUU).Authorize(gen);
     if (reach.outcome == EL::IntentOutcome::NoBody && !waited) return Take::Wait;
-    // An install rests on the upgrade its insert spent: a world upgrade the host saw destroyed beside this generator,
-    // or the one the sender's hand held. Taken here, whatever the outcome, so one spend answers one install. None yet
-    // waits for the destroy or the hand state behind it.
+    // An install rests on the upgrade its insert spent, in this order: a world upgrade the host saw destroyed beside
+    // this generator; else the one the sender's hand held (coop/player/hand_spend), whose destroy never leaves the
+    // client; else the destroy's wait. The hold the install was sent from is applied first, before any spend is taken.
+    // Taken here, whatever the outcome, so one spend answers one install.
     bool spent = false;
     if (read && p.op == coop::net::kPowerGridOpUpgrade) {
-        spent = coop::power_upgrade::TakeSpend(sender, p.index) ||
-                coop::power_upgrade::TakeHandSpend(sender, wt.arrivedMs) || UnpairedInstalls();
+        coop::hand_item::ApplyOwedNow(sender);
+        spent = coop::power_upgrade::TakeSpend(sender, p.index);
+        if (!spent && coop::hand_spend::Spend(sender, kUpgradeClass, 1)) {
+            spent = true;
+            UE_LOGI("power_grid: slot %u's install at generator %u is paid by the upgrade its hand held", sender,
+                    p.index);
+        }
         if (!spent && !waited) return Take::Wait;
     }
     std::wstring item;
@@ -337,16 +340,16 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
 }
 
 // Every waiting op of `slot` refused with its newest, whose acknowledgement answers them all: its queue is full. An
-// install among them spent its upgrade before it came, and is refunded as its own refusal would refund it.
+// install among them whose world spend the host holds is refunded as its own refusal would refund it. A waiting entry
+// never reached the hand judge, so none was counted for it and it refunds nothing (a hand-paid install is never
+// waiting: the judge counts it as it takes the entry).
 void HostRefuseQueue(coop::net::Session* s, uint8_t slot, const Waiting& newest) {
     const uint16_t newestSeq = newest.p.seq;
     const size_t n = g_waiting[slot].size();
     g_waiting[slot].push_back(newest);
     std::vector<void*> gens;
     for (const Waiting& w : g_waiting[slot]) {
-        if (w.p.op != coop::net::kPowerGridOpUpgrade || (!coop::power_upgrade::TakeSpend(slot, w.p.index) &&
-                                                         !coop::power_upgrade::TakeHandSpend(slot, w.arrivedMs)))
-            continue;
+        if (w.p.op != coop::net::kPowerGridOpUpgrade || !coop::power_upgrade::TakeSpend(slot, w.p.index)) continue;
         if (gens.empty()) GEN::ReadGenerators(gens);
         if (w.p.index < gens.size() && gens[w.p.index]) coop::power_upgrade::Refund(slot, gens[w.p.index]);
     }

@@ -9,9 +9,9 @@
 // move, and refuses it otherwise: a refused pull's fuse is reaped from the puller's hand
 // (coop/interactables/floppybox_sync's pop), a refused insert's fuse given back where the inserter stands
 // (coop/world/power_upgrade's refund), an insert taken only against a fuse the host saw the inserter spend at that
-// tower. On the two easiest difficulties the game spends no fuse and the insert solves the puzzle, so a client's
-// insert is refused at the gate and sent like a press, with no claim, and the host runs it. A tower is named by
-// (kind, id). The host runs a sender's ops in its order, within reach, at a bounded
+// tower or the one its hand held (coop/player/hand_spend). On the two easiest difficulties the game spends no fuse and
+// the insert solves the puzzle, so a client's insert is refused at the gate and sent like a press, with no claim, and
+// the host runs it. A tower is named by (kind, id). The host runs a sender's ops in its order, within reach, at a bounded
 // rate. What differs by kind is coop/world/fuse_tower_kind's. Game thread throughout.
 
 #pragma once

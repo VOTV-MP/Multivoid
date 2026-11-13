@@ -299,8 +299,8 @@ upgrade install run on the client first and are reconciled like the panel's pres
 the host's to run, with a held item that swings. The host takes an op from a player within reach, in
 the player's order, and judges an Activate press on its own copy of the repair puzzle, branching as
 the button does: a broken generator is mended, a whole one serviced. An install rests on the upgrade
-its insert spent: a world upgrade the host saw that player destroy beside the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the upgrade the hand lane's history shows in that player's hand within three seconds of the op, one such a player a second
-(`coop/world/power_upgrade`): an install without one is refused, and one refused after it, the second
+its insert spent: a world upgrade the host saw that player destroy beside the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the upgrade the hand lane says that player's hand last held, one use a hold (`coop/player/hand_spend`), the world one recorded by
+`coop/world/power_upgrade`: an install without one is refused, and one refused after it, the second
 of two players at a generator's last free place, gets its upgrade back where the player stands. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
 the game's repair with the puzzle solved followed by the Activate route's turn-on at the generator
 and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets
@@ -383,11 +383,12 @@ the part it acts on, in the player's order, at a few a second.
 The spend is one of two things the host saw. A fuse lying in the world that the player grabbed is a
 world prop, and its destroy at the insert reaches the host, which counts it as a spend at the tower
 within reach of the player. A fuse taken out of the inventory is the hold slot's own actor, which is
-the player's expression and never a world prop, so its destroy reaches no one; for it the host asks
-the hand lane's history whether that player's hand held a good fuse within three seconds of the
-insert's arrival (`coop/player/hand_history`), and takes one such spend a player a second. The host
-cannot see the fuse leave the inventory, so a forged insert from a hand that holds a fuse is taken
-and the fuse kept: a fuse's worth, and only for a player already holding one.
+the player's expression and never a world prop, so its destroy reaches no one; for it the host asks the
+hand lane, as it does for a toolbox's use on the ATV (`coop/player/hand_spend`): the hand's last held
+class must be a fuse and the hold the lane numbers must have its one use left. The hold the insert was
+sent from is applied first when the lane's pace still owes it, since the emptied hand behind the insert
+would merge it away. The host cannot see the fuse leave the inventory, so a client that announces a
+hold and keeps its fuse is taken once per announce, at the hand lane's own rate.
 
 The radio tower is the second kind (`coop/world/fuse_tower_kind` holds what differs between the two). It
 is one actor, the gamemode's `radiotower`, and the drone's shop run reads its broken flag on the host, so
