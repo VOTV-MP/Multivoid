@@ -17,8 +17,10 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/world_identity.h"  // Generation: the class table's stamp
 #include "ue_wrap/facts/function_row.h"
 
 #include "hook_sync_detail.h"
@@ -27,11 +29,13 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 
 namespace coop::hook_retrieve {
 namespace {
 
 namespace E  = ue_wrap::engine;
+namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace H  = ue_wrap::hook;
 namespace PR = ue_wrap::prop;
@@ -67,6 +71,23 @@ uint64_t g_sent = 0, g_granted = 0, g_refused = 0, g_taken = 0;
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// The watch is on every class's actionOptionIndex, so a door, a toggle or a coin asks too. Whether a class sits under
+// hook_C is a walk of its chain, so it runs once per distinct class (the floppy census's per-class verdict). A
+// Blueprint class dies with its world: the table goes with the world's generation. Nothing is cached while hook_C is
+// unresolved, since the answer would be false for a class that is a hook.
+std::unordered_map<void*, bool> g_hookClass;
+uint32_t                        g_hookClassGen = 0;
+
+bool IsHookObject(void* obj) {
+    void* cls = R::ClassOf(obj);
+    if (!cls || !H::EnsureResolved()) return false;
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_hookClassGen) { g_hookClass.clear(); g_hookClassGen = gen; }
+    auto it = g_hookClass.find(cls);
+    if (it == g_hookClass.end()) it = g_hookClass.emplace(cls, H::IsHookFamily(obj)).first;
+    return it->second;
 }
 
 std::string Red() {
@@ -106,7 +127,7 @@ void Refuse(uint8_t slot, const std::wstring& key, const char* why) {
 
 sg::Verdict OnActionPre(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->running() || !H::IsHookFamily(c.object)) return sg::Verdict::Run;
+    if (!s || !s->running() || !IsHookObject(c.object)) return sg::Verdict::Run;
     if (c.object == g_replay) return sg::Verdict::Run;   // the host's grant, replayed
     if (OwnedHere(c.object)) return sg::Verdict::Run;
     const std::wstring key = KeyOf(c.object);
@@ -294,6 +315,7 @@ void OnDisconnect() {
     g_replay = nullptr;
     g_hostPress = nullptr;
     g_hostPressKey.clear();
+    g_hookClass.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
 
