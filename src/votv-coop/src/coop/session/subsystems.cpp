@@ -265,7 +265,6 @@ void Install(coop::net::Session& session) {
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
     coop::firefly_sync::Install(&session);  // peer-symmetric ambient firefly mirror (each peer captures+shares its own)
-    coop::event_cue_sync::Install(&session);  // cosmetic emitter cues: the host's runEvent watch sends them, the client replays
     coop::ambient_births::Install();  // the ambient actors' births and deaths, named once for the two lanes below
     coop::ambient_creature_sync::Install(&session);  // the host's deer and walking trees
     coop::ambient_fixture_sync::Install(&session);  // the host's dirt holes and beehive branches
