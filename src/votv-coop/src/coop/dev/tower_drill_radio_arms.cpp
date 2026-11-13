@@ -18,7 +18,11 @@
 
 #include "tower_drill_radio_steps.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "coop/dev/drill_hand.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/world/fuse_tower_kind.h"
@@ -33,8 +37,6 @@
 #include "ue_wrap/engine/engine.h"             // TryGetActorLocation, GetActorForwardVector
 #include "ue_wrap/engine/engine_mainplayer.h"  // what the hand holds, where the camera is
 #include "ue_wrap/world/game_rules.h"
-
-#include <windows.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -71,7 +73,7 @@ bool ResetRed() { return ArmOf() == Arm::RadioResetRed; }
 
 // ---- the fuse arm ----------------------------------------------------------------------------------------------
 
-enum class FuseStep : uint8_t { Pull, PullWait, Await, Insert, InsertWait };
+enum class FuseStep : uint8_t { Pull, PullWait, Await, Insert, InsertWait, Forge, ForgeWait };
 FuseStep g_fuse = FuseStep::Pull;
 uint64_t g_fuseMs = 0;
 uint64_t g_reapedBefore = 0;
@@ -85,12 +87,14 @@ constexpr uint8_t  kClientSlot = 1;
 
 bool FuseRed() { return ArmOf() == Arm::RadioFuseRed; }
 
-// VOTVCOOP_TOWER_FUSE_HAND (both peers): the good fuse comes from the client's own hold slot, as a player takes one
+// The row tower_fuse_hand (both peers): the good fuse comes from the client's own hold slot, as a player takes one
 // out of the inventory, instead of the host's world spawn. That fuse is the client's alone: the host never had it.
 bool HandFuse() {
-    static const bool on = ::GetEnvironmentVariableA("VOTVCOOP_TOWER_FUSE_HAND", nullptr, 0) > 0;
+    static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::tower_fuse_hand);
     return on;
 }
+
+bool Forge() { return ArmOf() == Arm::RadioFuseForge; }
 
 void FuseGo(FuseStep s) {
     g_fuse = s;
@@ -259,8 +263,8 @@ void FuseArmTick(const RadioView& v) {
         }
         if (red) {
             // The gates are open: the pull ran on this copy alone and no claim went to the host, so the host's slot
-            // stays and no fuse is handed. The host's slot is what the verdict reads, after the window.
-            if (FuseOverdue(kRadioVerdictMs)) FailHostSlot(v, slot, "pull");
+            // stays and no fuse is handed. Nothing was sent, so nothing is waited for: the host's slot is read now.
+            FailHostSlot(v, slot, "pull");
             return;
         }
         if (coop::fuse_tower_ops::Reaped() != g_reapedBefore) {
@@ -278,11 +282,14 @@ void FuseArmTick(const RadioView& v) {
             RadioAbandon(why);
             return;
         }
-        const bool taken = Answered() && coop::fuse_tower_ops::PendingClaims() == 0 && slot < v.w.fuseCount &&
-                           v.w.fuses[slot] == 0;
-        if (!taken) {
-            if (FuseOverdue(kRadioVerdictMs))
-                Answered() ? FailHostSlot(v, slot, "pull") : RadioFail("the host never answered the pull");
+        // The host's answer is the event: once it came, its slot reads what the pull made of it, or it is a FAIL. No
+        // answer by the bound is INVALID.
+        if (!Answered() || coop::fuse_tower_ops::PendingClaims() != 0) {
+            if (FuseOverdue(kRadioVerdictMs)) RadioAbandon("the host never answered the pull");
+            return;
+        }
+        if (slot >= v.w.fuseCount || v.w.fuses[slot] != 0) {
+            FailHostSlot(v, slot, "pull");
             return;
         }
         UE_LOGI("[TOWER-DRILL] radiofuse pull taken (slot %d, hand %ls)", slot,
@@ -291,9 +298,19 @@ void FuseArmTick(const RadioView& v) {
         return;
     }
     case FuseStep::Await: {
+        if (Forge()) {
+            FuseGo(FuseStep::Forge);   // no fuse is wanted: the insert is sent with none ever held
+            return;
+        }
         if (HandFuse()) {
             void* held = HeldActor(v.player);
             if (held && FK::IsFuse(held)) {
+                // The insert goes only once the client's own announce of the hold is queued: the host has the hold
+                // before the request on the one ordered lane.
+                if (!coop::hand_item::OwnAnnounced(L"prop_fuse_C")) {
+                    if (FuseOverdue(10000)) RadioAbandon("the hold never reached the host's lane");
+                    return;
+                }
                 UE_LOGI("[TOWER-DRILL] client took a good fuse into the hand from its own slot (%ls, %ls)",
                         R::ClassNameOf(held).c_str(), ue_wrap::prop::GetPropNameString(held).c_str());
                 g_handed.Set(held);
@@ -335,17 +352,47 @@ void FuseArmTick(const RadioView& v) {
     case FuseStep::InsertWait: {
         // PASS: the host's slot reads good, the handed fuse is spent on this copy, and the host answered. The
         // host's own line says its copy of the fuse went too.
-        if (Answered() && coop::fuse_tower_ops::PendingClaims() == 0 && slot < v.w.fuseCount && v.w.fuses[slot] == 1 &&
-            !g_handed.Alive()) {
-            UE_LOGI("[TOWER-DRILL] radiofuse PASS (slot %d, pull and insert taken)", slot);
-            RadioDone("PASS");
+        // The host's answer is the event. The control opens the gates and sends no claim, so none comes and none is
+        // waited for; no answer from the green arm by the bound is INVALID.
+        if (!red && (!Answered() || coop::fuse_tower_ops::PendingClaims() != 0)) {
+            if (FuseOverdue(kRadioVerdictMs)) RadioAbandon("the host never answered the insert");
             return;
         }
-        if (FuseOverdue(kRadioVerdictMs)) {
-            if (!Answered()) RadioFail("the host never answered the insert");
-            else if (slot >= v.w.fuseCount || v.w.fuses[slot] != 1) FailHostSlot(v, slot, "insert");
-            else RadioFail("the handed fuse is still here after the insert");
+        if (slot >= v.w.fuseCount || v.w.fuses[slot] != 1) FailHostSlot(v, slot, "insert");
+        else if (g_handed.Alive()) RadioFail("the handed fuse is still here after the insert");
+        else {
+            UE_LOGI("[TOWER-DRILL] radiofuse PASS (slot %d, pull and insert taken)", slot);
+            RadioDone("PASS");
         }
+        return;
+    }
+    case FuseStep::Forge: {
+        // What a forged client sends: an insert claim of the emptied slot, with no fuse ever held. The hand holds only
+        // the junk the pull put there, so no hold of a fuse was announced and nothing paid for the insert.
+        const uint64_t sent0 = coop::fuse_tower_ops::OpsSent();
+        coop::fuse_tower_ops::DevSendInsert(v.w.kind, v.w.id, slot);
+        if (coop::fuse_tower_ops::OpsSent() == sent0) {
+            RadioAbandon("the forged insert did not go");
+            return;
+        }
+        g_seq = coop::fuse_tower_ops::LastSentSeq();
+        UE_LOGI("[TOWER-DRILL] client sent an insert of slot %d with no fuse held (seq %u)", slot, g_seq);
+        FuseGo(FuseStep::ForgeWait);
+        return;
+    }
+    case FuseStep::ForgeWait: {
+        // The host's answer is the event; it waits its own bound for a spend before it refuses, so this one is longer.
+        if (!Answered() || coop::fuse_tower_ops::PendingClaims() != 0) {
+            if (FuseOverdue(kHandedMs)) RadioAbandon("the host never answered the forged insert");
+            return;
+        }
+        if (slot < v.w.fuseCount && v.w.fuses[slot] == 1) {
+            RadioFail("the host took an insert nothing was held for");
+            return;
+        }
+        UE_LOGI("[TOWER-DRILL] radiofuseforge PASS (slot %d refused, the host's slot reads %d)", slot,
+                slot < v.w.fuseCount ? v.w.fuses[slot] : -1);
+        RadioDone("PASS");
         return;
     }
     }
@@ -355,7 +402,7 @@ void FuseArmTick(const RadioView& v) {
 // tower would have one: 60 uu in front of the client's eye. The host's spawn watcher gives it to every peer.
 void FuseArmHostTick() {
     if (!IsRadioFuse(ArmOf())) return;
-    if (HandFuse()) {
+    if (HandFuse() || Forge()) {
         // No fuse is handed; the host only says what became of its slot.
         return;
     }

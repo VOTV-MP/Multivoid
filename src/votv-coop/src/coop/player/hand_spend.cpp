@@ -2,11 +2,19 @@
 
 #include "coop/player/hand_spend.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "coop/player/hand_item.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
 
 namespace coop::hand_spend {
 namespace {
+
+// The drill's red arms (config row hand_spend_drill), read here only, by the rule each turns off.
+bool Arm(const char* value) { return coop::config::ResolveEnum(::coop::config_registry::rows::hand_spend_drill) == value; }
+bool Unchecked() { static const bool on = Arm("hand_spend_unchecked"); return on; }  // the held class is not checked
+bool NoLatch() { static const bool on = Arm("hand_spend_no_latch"); return on; }     // a hold's uses are not kept
 
 // The hold generation of the last item a request spent, and the uses counted of it.
 struct Spent { uint32_t gen = 0, uses = 0; };
@@ -26,9 +34,9 @@ Spent& Current(uint8_t slot) {
 }  // namespace
 
 bool Spend(uint8_t slot, const wchar_t* cls, uint32_t uses) {
-    if (!coop::hand_item::LastHeldClassIs(slot, cls)) return false;
+    if (!Unchecked() && !coop::hand_item::LastHeldClassIs(slot, cls)) return false;
     Spent& sp = Current(slot);
-    if (sp.uses >= uses) return false;
+    if (!NoLatch() && sp.uses >= uses) return false;
     ++sp.uses;
     return true;
 }

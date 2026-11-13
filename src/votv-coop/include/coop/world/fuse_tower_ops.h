@@ -73,6 +73,8 @@ uint64_t RollsRefused();
 uint16_t LastSentSeq();
 uint16_t LastAck();
 uint64_t Reaped();
+// [dev] CLIENT: an insert claim with no insert behind it, what a forged client sends. Game thread.
+void DevSendInsert(uint8_t kind, int32_t tower, int32_t index);
 
 // [dev] tower_drill=red, joinred, radiored, radiojoinred, radioresetred or radiofusered: a client's gates stand open
 // and it applies no rows, as before the lane, so its towers roll on its own dice.

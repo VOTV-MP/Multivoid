@@ -6,9 +6,12 @@
 #include "grid_drill_solve.h"  // the solve legs the repair arms run
 #include "grid_drill_walk.h"  // the walk to the generator
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/join_progress.h"
@@ -21,8 +24,6 @@
 #include "ue_wrap/actors/prop.h"              // GetPropNameString
 #include "ue_wrap/engine/engine.h"            // TryGetActorLocation
 #include "ue_wrap/engine/engine_mainplayer.h"  // what the hand holds
-
-#include <windows.h>
 
 #include <chrono>
 #include <cstdint>
@@ -51,7 +52,7 @@ uint64_t NowMs() {
 
 // The bare install goes first: its refusal is also the host's cue to hand the first upgrade, so nothing the host
 // hands can lie beside the client before it has counted what was there.
-enum class Step : uint8_t { Walk, Arm, Bare, BareAck, Find, Ack, Refund, Solve, Settle, Done };
+enum class Step : uint8_t { Walk, Arm, Bare, BareAck, Find, Ack, Double, DoubleAck, Refund, Solve, Settle, Done };
 Step     g_step = Step::Walk;
 uint64_t g_stepMs = 0;
 int32_t  g_index = -1;      // the drill's generator's place in the rows
@@ -65,11 +66,12 @@ uint64_t g_unreadMs = 0;    // since when the drill's generator has not read, on
 // The arms that install the one upgrade and go on to the repair; the control installs nothing.
 bool Installs() { return g_flavour == UpgradeFlavour::Repair || g_flavour == UpgradeFlavour::RepairLossRed; }
 
-// VOTVCOOP_GRID_UPGRADE_HAND (client): each install uses an upgrade the client puts in its own hold slot, as a player
-// takes one out of the inventory, instead of the one the host handed over (whose arrival still paces the legs).
+// The row grid_upgrade_hand (client), and the double arm always: each install uses an upgrade the client puts in its
+// own hold slot, as a player takes one out of the inventory, instead of the one the host handed over (whose arrival
+// still paces the legs).
 bool HandUpgradeMode() {
-    static const bool on = ::GetEnvironmentVariableA("VOTVCOOP_GRID_UPGRADE_HAND", nullptr, 0) > 0;
-    return on;
+    static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::grid_upgrade_hand);
+    return on || g_flavour == UpgradeFlavour::Double;
 }
 
 // The upgrade in this client's hold slot, put there at most once a second; null until the hand holds one.
@@ -227,6 +229,12 @@ void ClientTick(void* player) {
                 if (now - g_stepMs > kRowBoundMs) Abandon("the hold slot never held an upgrade");
                 return;
             }
+            // The install goes only once this client's own announce of the hold is queued: the host has the hold
+            // before the request on the one ordered lane.
+            if (!coop::hand_item::OwnAnnounced(L"prop_transformerUpgrade_C")) {
+                if (now - g_stepMs > kRowBoundMs) Abandon("the hold never reached the host's lane");
+                return;
+            }
             UE_LOGI("[GRID-DRILL] client: installs the upgrade in its hold slot (%ls), not the host's",
                     ue_wrap::prop::GetPropNameString(inHand).c_str());
             up = inHand;
@@ -263,7 +271,34 @@ void ClientTick(void* player) {
             StartSolve();  // the one install is taken and the host's row carries it: the repair is next
             return;
         }
+        if (g_flavour == UpgradeFlavour::Double) {
+            Go(Step::Double);  // the one install is taken; a second request of its hold is next
+            return;
+        }
         Go(first ? Step::Find : Step::Refund);
+        return;
+    }
+    case Step::Double: {
+        // What a forged client sends: a second install op of the hold the first install used up.
+        const uint64_t sent0 = coop::power_grid::ClientOpsSent();
+        coop::power_grid::DevSendInstall(g_index);
+        if (coop::power_grid::ClientOpsSent() == sent0) { Abandon("the second install op did not go"); return; }
+        UE_LOGI("[GRID-DRILL] client: sent a second install op of the hold its first install used");
+        Go(Step::DoubleAck);
+        return;
+    }
+    case Step::DoubleAck: {
+        // The host's answer is the event: the upgrades read one over the start here and on the host, or the host took
+        // the second. The host waits its own bound for a spend before it refuses; no answer by ours is INVALID.
+        if (coop::power_grid::PendingOps() != 0) {
+            if (now - g_stepMs > kInstallAckBoundMs) Abandon("the host never answered the second install op");
+            return;
+        }
+        if (!AnsweredAt(1, "the host took a second install of one hold")) return;
+        if (!Say("client", "a second install of one hold refused")) { g_step = Step::Done; return; }
+        UE_LOGI("[GRID-DRILL] upgradedouble PASS (the second install of one hold refused)");
+        SayDone();
+        g_step = Step::Done;
         return;
     }
     case Step::Solve: {
@@ -303,7 +338,7 @@ void ClientTick(void* player) {
         // The refused install's upgrade comes back where this client stands: as many beside it as before it spent
         // one.
         if (GEN::UpgradesNear(me, kHandedUU, nullptr) < g_nearBefore) {
-            if (now - g_stepMs > kInstallAckBoundMs) Fail("the refused install's upgrade never came back");
+            if (now - g_stepMs > kInstallAckBoundMs) Abandon("the refused install's upgrade never came back");
             return;
         }
         if (Say("client", "the refund came back beside this client")) SayDone();
@@ -321,9 +356,10 @@ void ClientTick(void* player) {
 // first install is taken, 3 judges the refund of the second's refusal; 4 is done. The repair arms go on from the
 // install (the control, from the bare install's refusal): 5 breaks the generator once the host's copy reads the
 // install, 6 waits for the client's repair (the loss control takes the upgrades off its own generator there), 7 judges
-// the host's own generator 20 s after it.
+// the host's own generator 20 s after it. 8 (the double arm, from stage 2) judges the second request of one hold.
 int      g_hostStage = 0;
 uint64_t g_taken0 = 0, g_refused0 = 0, g_refunds0 = 0;
+uint64_t g_taken1 = 0, g_refused1 = 0;  // the double arm: the counts once the first install was taken
 int32_t  g_hostLevel0 = 0;  // the host's copy of the generator's upgrades as the legs began
 uint64_t g_hostMs = 0;      // when the repair arms' current stage began
 
@@ -358,7 +394,9 @@ void HostTick(coop::net::Session* s) {
         return;
     }
     case 1:
-        // The client's bare install: refused, and nothing refunded for it, since nothing was spent.
+        // The client's bare install: refused, and nothing refunded for it, since nothing was spent. A host that took it
+        // judged an install nothing was held for.
+        if (taken != g_taken0) { HostEnd("FAIL", "the host took an install nothing was spent for"); return; }
         if (refused == g_refused0) return;
         if (refunds != g_refunds0) { HostEnd("FAIL", "an install nothing was spent for was refunded"); return; }
         Say("host", "refused an install nothing was spent for, refunded nothing");
@@ -373,6 +411,14 @@ void HostTick(coop::net::Session* s) {
         return;
     case 2:
         if (taken == g_taken0) return;
+        if (g_flavour == UpgradeFlavour::Double) {
+            // The install is taken; the client's next request is a second of the same hold, which stays refused.
+            g_taken1 = taken;
+            g_refused1 = refused;
+            Say("host", "took the install, waits for a second request of its hold");
+            g_hostStage = 8;
+            return;
+        }
         if (Installs()) {
             Say("host", "took the install");
             g_hostMs = NowMs();
@@ -389,6 +435,13 @@ void HostTick(coop::net::Session* s) {
         if (refused < g_refused0 + 2) return;
         if (refunds != g_refunds0 + 1) { HostEnd("FAIL", "the refused install's spent upgrade was not refunded"); return; }
         Say("host", "refused the second install and refunded its upgrade");
+        g_hostStage = 4;
+        return;
+    case 8:
+        // The host's take or refusal of the second request is the event; a take is the FAIL, a refusal the PASS.
+        if (taken != g_taken1) { HostEnd("FAIL", "the host took a second install of one hold"); return; }
+        if (refused == g_refused1) return;
+        UE_LOGI("[GRID-DRILL] host upgradedouble PASS (the second install of one hold refused, nothing refunded)");
         g_hostStage = 4;
         return;
     case 5: {
@@ -474,6 +527,7 @@ void UpgradeOnDisconnect() {
     g_nearBefore = 0;
     g_hostStage = 0;
     g_taken0 = g_refused0 = g_refunds0 = 0;
+    g_taken1 = g_refused1 = 0;
     g_hostLevel0 = 0;
     g_hostMs = 0;
     g_unreadMs = 0;

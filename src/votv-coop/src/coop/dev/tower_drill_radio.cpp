@@ -159,6 +159,7 @@ const char* ArmName() {
     case Arm::RadioResetRed: return "radioresetred";
     case Arm::RadioFuse:     return "radiofuse";
     case Arm::RadioFuseRed:  return "radiofusered";
+    case Arm::RadioFuseForge: return "radiofuseforge";
     case Arm::RadioJoin:     return "radiojoin";
     case Arm::RadioJoinRed:  return "radiojoinred";
     default:                 return "radio";
@@ -168,6 +169,7 @@ const char* ArmName() {
 // The name an arm's verdict lines carry: a control prints its green arm's name, so one fail marker serves both.
 const char* VerdictName() {
     if (IsRadioReset(ArmOf())) return "radioreset";
+    if (ArmOf() == Arm::RadioFuseForge) return "radiofuseforge";
     if (IsRadioFuse(ArmOf())) return "radiofuse";
     if (IsRadioJoin(ArmOf())) return "radiojoin";
     return "radio";

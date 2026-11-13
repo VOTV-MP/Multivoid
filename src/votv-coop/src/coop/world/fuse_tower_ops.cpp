@@ -717,6 +717,11 @@ uint16_t LastSentSeq() { return g_seq; }
 uint16_t LastAck() { return g_lastAck; }
 uint64_t Reaped() { return g_reaped; }
 
+void DevSendInsert(uint8_t kind, int32_t tower, int32_t index) {
+    if (auto* s = Connected(); IsClient(s) && kind < coop::net::kFuseTowerKinds)
+        ClientSend(s, coop::net::kFuseTowerOpInsert, static_cast<FK::Kind>(kind), tower, index);
+}
+
 bool RedOpen() {
     static const bool red = [] {
         const std::string v = coop::config::ResolveString(::coop::config_registry::rows::tower_drill);
