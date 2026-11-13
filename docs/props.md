@@ -298,11 +298,14 @@ host's reached no client. The nametag is the host's
 (`coop/props/prop_nametag`). The host player's click runs the game's own, and the watch on its exit tells every
 client. A client's click is refused there and asked of the host with the prop's key and the tag; the host applies it
 when the prop is within the sender's reach and a nametag is in the sender's hand as the hand lane has applied it (the
-request waits while that hand state is still owed), at most
-one a second a client, and tells every client, the sender included, whose held item then goes as the game's use takes
-it. A request the host refuses is answered to its sender alone, and the item stays. The messages are the
-`PropNametag` kind: op 1 the client's request, op 2 the host's tag, op 3 its refusal. `[?]` the rig's proof (`coop/dev/nametag_drill`) is pending on this kind: a client's tag lands on the host's cup once
-and its item is spent; the host player's tag reaches the client's copy; a tag the host puts on between a joiner's save being
+request waits while that hand state is still owed), within the sender's budget (two at once, one a second, per
+occupant of the slot), and tells every client, the sender included, whose held item then goes as the game's use takes
+it; the item is the client's own, so it is spent there. A request the host refuses is answered to its sender alone with
+the reason, and the item stays. The messages are the `PropNametag` kind: op 1 the client's request, op 2 the host's
+tag, op 3 its refusal. A tag is the first line of a notebook page, which the game does not bound in length; one message
+carries 96 UTF-16 units, so a longer tag is refused with a reason, never cut. A tag the host cannot publish is logged
+once. `[?]` the rig's proof of this lane's final bytes (`coop/dev/nametag_drill`) is pending: a client's tag lands on
+the host's cup once and its item is spent; the host player's tag reaches the client's copy; a tag the host puts on between a joiner's save being
 cut and its world being ready is on its copy at the join's end (window mode). The reds: `nametag_client_runs` (the click asks
 the host nothing: the client says fail at once) and `nametag_no_join_replay` (window mode: the copy stays untagged).
 
@@ -539,7 +542,9 @@ the joiner; a wall-attach component's owner converges its stuck state there thro
 own unstick or force-stick, so a sign pried in the window is off its wall. A stuck prop otherwise
 reaches a joiner through the save, which carries the frozen and static state. A prop's nametag comes with the save, and a tag put on after the save's cut with the host's connect replay: each prop
 whose tag the session published is named to the joiner alone with the tag it carries then, ahead of the snapshot's
-props, so a copy the save loaded takes it at once and a prop the snapshot births takes it when it appears `[?]`.
+props, so a copy the save loaded takes it at once and a prop the snapshot births takes it when it appears: the client
+keeps the tag by key until the key index shows the prop, and drops it with its world or session. A prop the host's
+index could not answer for is asked again each tick `[?]`.
 Container slices are
 sent per live container at the ready edge. A joiner gets no held-prop or driven-prop pose until its
 world is ready, since the release and the end edge that close them are not sent to a world that is
