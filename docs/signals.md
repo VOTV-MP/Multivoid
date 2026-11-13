@@ -88,24 +88,19 @@ the drawn image not compared).
 The refiner's cap label is the cap button's tag (its hover, `Cap level [N]`, or the line asking for the Auto
 Processing module) and the screen's cap text (`[N]`, or `NaN` without the module). The game writes it only from
 the cap press and the desk's `upgraded_pcUpgrades`, so a cap level from the wire, a join adopt, or any module plug
-or unplug, the peer's own included, and the desk's `setData` (the save's restore, which writes the cap level and the
-modules back) left it showing an old level. Each of those now runs `upgraded_pcUpgrades`
+or unplug, the peer's own included, left it showing an old level. Each of those now runs `upgraded_pcUpgrades`
 (`ue_wrap/desk/console_desk` `RepaintCapLevel`), whose other writes re-derive only what the save's upgrades say;
 it is owed while the screen widget is not assigned, and the desk's own `ReceiveBeginPlay` (the one write of that
 field) runs it `[?]`, read from the Blueprint, not yet run; a repaint that still cannot run stays owed and runs at the
-desk's next watched event (its `setData`, a local cap press, another cap label repaint), all watched by
+desk's next watched event (a local cap press, another cap label repaint), all watched by
 `coop/interactables/desk_input_sync`. The label itself `[V]` (`harness/autotest/autotest_cap_label.cpp`: the join,
 then each peer plugging and pulling the module and pressing the cap with and without it, the tag and text read the
 same on both peers after every step, read once when the actor's level and module arrive; the first check that fails
-says `FAIL` and no later step runs). The reds, each dropping one repaint: `dev.cap_label_repaint_off` (all)
-and `dev.cap_label_setdata_off` (the
-restore's, in the drill's host-only `saved` arm: on a New Game the host puts the module and the third level on its
-desk, saves through the game's own save, leaves for the menu as a quit does, loads that slot through the game's own
-load, and reads its label when the desk's `setData` returns in the new world). Which of them
-FAIL is read from the rig runs of this lane, not stated here `[?]`. The join's adopt has no red of its own: a cap
-change the host makes after its world is taken reaches the joiner live, and the live apply repaints the label, so a
-joiner without the adopt's repaint would still show the right label there. The repaint owed at the desk's BeginPlay (a
-state that reaches the desk before its screen widget exists) has no red either: no run has made it owed `[?]`.
+says `FAIL` and no later step runs). The red, which drops every repaint: `dev.cap_label_repaint_off`. The join's
+adopt has no red of its own: a cap change the host makes after its world is taken reaches the joiner live, and the
+live apply repaints the label, so a joiner without the adopt's repaint would still show the right label there. The
+repaint owed at the desk's BeginPlay (a state that reaches the desk before its screen widget exists) has no red
+either: no run has made it owed `[?]`.
 
 The download simulation runs on the host only (`coop/interactables/desk_sim_sync`): the host
 rolls both random terms and streams the output vector (decoded, the needle, the rate, the

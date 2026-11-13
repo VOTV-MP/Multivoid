@@ -28,12 +28,6 @@ namespace coop::desk_input_sync {
 
 void Install(coop::net::Session* session);
 
-// True once the desk's setData, the save's restore of its cap level and modules, has returned and the cap label
-// repaint it owes has run (a post watch on the desk's own function; the same watch runs that repaint). A new desk's
-// BeginPlay, a new world's, makes it false again. Any thread; for the cap-label drill's host, which prepares the
-// desk only after its restore.
-bool DeskDataApplied();
-
 // Game thread, per pump tick (internally throttled to the 250 ms poll).
 void Tick();
 
@@ -57,8 +51,8 @@ bool RepaintRemapOrDefer();
 // The same for the refiner's cap label (console_desk::RepaintCapLevel), owed whenever the cap level or the Auto
 // Processing module changed by anything but this peer's own cap press: a wire apply, a join adopt, or any
 // module plug or unplug, this peer's own included, since the game repaints the label from neither. A desk whose
-// screen widget is not assigned yet keeps the repaint owed, and the desk's next watched event (its BeginPlay or
-// setData, a local cap press, another cap label repaint) runs it.
+// screen widget is not assigned yet keeps the repaint owed, and the desk's next watched event (its BeginPlay, a
+// local cap press, another cap label repaint) runs it.
 bool RepaintCapLevelOrDefer();
 
 // HOST: a peer left -- if it was the live ping setter, clear the attribution (the

@@ -138,15 +138,8 @@ CFG_ENUM(desk_short_drill, "desk_short_drill", "dev", "off", "off|client|host|jo
 CFG_FLAG(cap_label_repaint_off, "cap_label_repaint_off", "dev", false, "VOTVCOOP_CAP_LABEL_REPAINT_OFF",
     "Developer (BOTH peers; the cap-label drill's red): no refiner cap label repaint runs, whether from the wire, a "
     "join adopt or a module plug or unplug, as before the lane, so the drill must FAIL.")
-CFG_FLAG(cap_label_setdata_off, "cap_label_setdata_off", "dev", false, "VOTVCOOP_CAP_LABEL_SETDATA_OFF",
-    "Developer (the HOST; the cap-label drill's saved-world red): the desk's setData, the save's restore, does not "
-    "repaint the cap label, so the drill's saved arm must FAIL when the save holds a cap level or the module.")
-CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "VOTVCOOP_CAP_LABEL_DRILL",
+CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh", "VOTVCOOP_CAP_LABEL_DRILL",
     "Drill, the refiner's cap label on two peers; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. The host prepares the "
     "cap at its third level with the Auto Processing module, the client joins, then each peer plugs, pulls and presses "
     "in turn and both labels must be the actor's: 'rig: VERDICT cap-label PASS|FAIL|INVALID', the FAIL at the step "
-    "that failed. fresh -- the host's world is whatever it is (a New Game needs no restore). saved -- host only, on a "
-    "New Game (--host-fresh), no client: the host plugs the module, presses the cap to its third level, saves through "
-    "the game's own save, leaves for the menu (its session ends), loads that slot through the game's own load and "
-    "reads its label at the desk's setData: 'rig: VERDICT cap-label-saved PASS|FAIL|INVALID'. A host that loaded a "
-    "save is INVALID. Red arms: cap_label_repaint_off (every repaint), cap_label_setdata_off (saved arm).")
+    "that failed. Red arm: cap_label_repaint_off (every repaint).")

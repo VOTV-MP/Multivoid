@@ -58,7 +58,7 @@ bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
 // the precondition is the desk's field, not the widget's slate. A mode applies there and only then moves the
 // baseline (the desk's flag still holds the old mode until then, so the poll sees no local edge). An apply that
 // still cannot run (the desk's class unresolved, or its widget unassigned) stays owed and runs at the desk's next
-// event the lane watches: its setData, a local cap press, the cap label repaint of a wire apply or a module change.
+// event the lane watches: a local cap press, the cap label repaint of a wire apply or a module change.
 bool g_visPending = false;
 bool g_visPendingValue = false;
 bool g_visDeferWarned = false;
@@ -70,10 +70,6 @@ UE_FACT_FN(kRowDeskBeginPlay, "desk_input_sync", L"analogDScreenTest_C", L"Recei
 // The cap-label drill's reds, each a default-off [dev] row that drops one repaint.
 bool CapRepaintOff() {
     static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_repaint_off);
-    return s_off;
-}
-bool SetDataRepaintOff() {
-    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_setdata_off);
     return s_off;
 }
 
@@ -99,28 +95,7 @@ void RunOwed(const char* at) {
     }
 }
 
-// A desk's BeginPlay is a world's: the save's restore of it (setData) is still to come, so the latch below starts
-// over, and the owed applies run here.
-std::atomic<bool> g_deskDataApplied{false};
-
-void OnDeskBeginPlayPost(const sg::Call&) {
-    g_deskDataApplied.store(false, std::memory_order_release);
-    RunOwed("the desk's BeginPlay");
-}
-
-// The desk's setData is the save's restore: it writes the cap level and the physical modules back and repaints no
-// label, so the restore owes the cap label's repaint (run here, or at the next event while the screen widget is
-// not assigned). The latch says the restore has landed, for the cap-label drill's host, which prepares the desk
-// only after it (the gamemode's load runs it, so it can land after the session starts).
-constexpr int kTagDeskSetData = 0x44534B02;  // 'DSK' 2
-UE_FACT_FN(kRowDeskSetData, "desk_input_sync", L"analogDScreenTest_C", L"setData", Declared);
-
-void OnDeskSetDataPost(const sg::Call&) {
-    if (!CapRepaintOff() && !SetDataRepaintOff()) g_capLabelPending = true;
-    RunOwed("the desk's setData");
-    if (!g_deskDataApplied.exchange(true, std::memory_order_acq_rel))
-        UE_LOGI("desk_input: the desk's save data applied");
-}
+void OnDeskBeginPlayPost(const sg::Call&) { RunOwed("the desk's BeginPlay"); }
 
 void SendDelta(coop::net::Session* s, DeskInputField field,
                float fv, int32_t iv, bool bv) {
@@ -292,11 +267,7 @@ void Install(coop::net::Session* session) {
     if (!sg::WatchName(kRowDeskBeginPlay, kTagDeskBeginPlay, nullptr, &OnDeskBeginPlayPost))
         UE_LOGE("desk_input: the desk's BeginPlay watch did not register -- a cap label owed before its screen "
                 "widget exists stays stale");
-    if (!sg::WatchName(kRowDeskSetData, kTagDeskSetData, nullptr, &OnDeskSetDataPost))
-        UE_LOGE("desk_input: the desk's setData watch did not register -- DeskDataApplied never reads true");
 }
-
-bool DeskDataApplied() { return g_deskDataApplied.load(std::memory_order_acquire); }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -463,7 +434,6 @@ void OnDisconnect() {
     g_visDeferWarned = false;
     g_remapPending = false;
     g_capLabelPending = false;
-    g_deskDataApplied.store(false, std::memory_order_release);
     g_nextPoll = {};
 }
 
