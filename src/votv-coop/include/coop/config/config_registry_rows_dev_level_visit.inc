@@ -7,13 +7,13 @@ CFG_ENUM(level_visit_drill, "level_visit_drill", "dev", "off", "off|client|host|
     "the peers' folder VOTVCOOP_CAN_DIR. client -- the client is the visitor and the host the watcher; host -- the roles "
     "swapped. The visitor takes the trip (level_visit_start), stays until the watcher has judged its copy of the "
     "visitor hidden by the poses it applies, ends the visit (level_visit_end) and comes back; the watcher judges the "
-    "copy hidden at the first pose below the visit floor and shown at the first pose back above it, and, after a clip, "
-    "counts the trip the visitor's copy authored on its own machine, which the gate cancels. close -- the host closes "
-    "the backrooms: the client's clip is answered no, and after the host opens them again a clip takes a trip. join -- "
+    "copy hidden at the first pose below the visit floor and shown at the first pose back above it. close -- the host "
+    "closes the backrooms: the client's clip is answered no, and after the host opens them again a clip takes a trip. "
+    "join -- "
     "the host takes the trip and stays; the client, launched to join later, must find the host's copy hidden at the "
     "first pose it applies (INVALID when the host was not yet in the map). The host prints 'rig: VERDICT level-visit "
     "PASS|FAIL|INVALID' and 'level-visit: DONE <role>'; each peer prints 'level-visit: ARM <step> <role> "
-    "PASS|FAIL|INVALID'. Red arms: level_visit_hide_off, level_visit_copy_cancel_off and backrooms_close_off. It "
+    "PASS|FAIL|INVALID'. Red arms: level_visit_hide_off and backrooms_close_off. It "
     "MUTATES the world (the visit loads a map, the host's setting changes).")
 CFG_ENUM(level_visit_start, "level_visit_start", "dev", "clip", "clip|call|none", "VOTVCOOP_LEVEL_VISIT_START",
     "How the level-visit drill's visitor takes the trip: clip -- the game's own clip (lastLoc under the floor, no camera "
@@ -36,9 +36,6 @@ CFG_STRING(level_visit_dump_dir, "level_visit_dump_dir", "dev", "", "VOTVCOOP_LE
 CFG_FLAG(level_visit_hide_off, "level_visit_hide_off", "dev", false, "VOTVCOOP_LEVEL_VISIT_HIDE_OFF",
     "Developer red arm of the level-visit drill: never set. The copy of a player in a visited map is not hidden on this "
     "machine, so it stays where its pose puts it, far below the world.")
-CFG_FLAG(level_visit_copy_cancel_off, "level_visit_copy_cancel_off", "dev", false, "VOTVCOOP_LEVEL_VISIT_COPY_CANCEL_OFF",
-    "Developer red arm of the level-visit drill: never set. A trip to one of the backrooms' maps authored by a peer's "
-    "copy on this machine is let run instead of cancelled, so this machine travels with it.")
 CFG_FLAG(backrooms_close_off, "backrooms_close_off", "dev", false, "VOTVCOOP_BACKROOMS_CLOSE_OFF",
     "Developer red arm of the level-visit drill: never set. The game's own clip check is not answered by the mod on "
     "this machine, so a clip is taken while the host has the backrooms closed, and during a visit.")

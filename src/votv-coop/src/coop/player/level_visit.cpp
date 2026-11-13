@@ -165,11 +165,7 @@ void OnBackroomsRow() {
 }
 
 // [dev] The drill's counts, and its red arms (each latched once).
-std::atomic<uint32_t> g_tripsStarted{0}, g_clipsHeldClosed{0}, g_copyTripsRefused{0}, g_copyTripsLetRun{0};
-bool CopyCancelOff() {
-    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::level_visit_copy_cancel_off);
-    return off;
-}
+std::atomic<uint32_t> g_tripsStarted{0}, g_clipsHeldClosed{0};
 bool CloseOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::backrooms_close_off);
     return off;
@@ -181,7 +177,8 @@ bool CloseOff() {
 // answer gates the whole clip chain (black screen, teleport, save, then lib_C::loadLevel). It is answered no, in the out
 // parameter, for this machine's own player while the host has closed the backrooms, a visit runs, or the quiet window
 // after one is open (the view's jump into the map and back out would read as a clip); otherwise the game's own logic
-// runs. A copy's tick passes through untouched. When the out parameter cannot be written the body runs and the clip is
+// runs. A copy's tick passes through untouched (a copy's actor tick is off, and the clip trips only for the player the
+// local view follows). When the out parameter cannot be written the body runs and the clip is
 // not held: said once.
 sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
     if (!call.function || !call.callerObject || call.callerObject != Local() || !InSession() || CloseOff())
@@ -228,19 +225,8 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     const R::FName level = *reinterpret_cast<const R::FName*>(call.locals + sLevelOff);
     if (!IsVisitMap(level)) return sg::Verdict::Run;
     void* author = *reinterpret_cast<void* const*>(call.locals + sAuthorOff);
-    if (author && author != Local() && coop::players::Registry::Get().IsPuppet(author)) {
-        // [dev red] level_visit_copy_cancel_off: the copy's trip is let run, and the drill reads the count.
-        if (CopyCancelOff()) {
-            ++g_copyTripsLetRun;
-            UE_LOGW("level_visit: a trip to %ls authored by a peer's copy is LET RUN [dev red level_visit_copy_cancel_off]",
-                    R::ToString(level).c_str());
-            return sg::Verdict::Run;
-        }
-        ++g_copyTripsRefused;
-        UE_LOGW("level_visit: REFUSED a trip to %ls authored by a peer's copy -- the clip is that player's machine's",
-                R::ToString(level).c_str());
-        return sg::Verdict::Cancel;
-    }
+    // A peer's copy authors no trip: the game's clip tick trips only for the player 0's view target, which a copy never
+    // is, and a copy's actor tick is off. Only this machine's own player reaches the lines below.
     if (author != Local()) return sg::Verdict::Run;
     // The game's own clip is not taken seated or riding (mainGamemode_C::canBackrooms); a trip asked so is not one.
     void* on = nullptr;
@@ -752,7 +738,7 @@ std::wstring LastEnd() { return g_lastEnd; }
 void* CurrentLevel() { return g_phase == Phase::In ? g_level : nullptr; }
 bool ReturnPending() { return g_return != nullptr; }
 DrillStats Stats() {
-    return {g_tripsStarted.load(), g_clipsHeldClosed.load(), g_copyTripsRefused.load(), g_copyTripsLetRun.load()};
+    return {g_tripsStarted.load(), g_clipsHeldClosed.load()};
 }
 
 }  // namespace coop::level_visit

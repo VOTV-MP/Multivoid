@@ -6,8 +6,8 @@
 // through lib_C::loadLevel). A session holds one world, and the travel took the clipping peer out of it, or every
 // peer with the host. While a session runs that travel is refused at the script-body gate and the map is loaded into
 // the running world instead, far below it (ue_wrap/world/level_instance), on the clipping player's machine alone; the
-// player is moved into it and every other player stays in the world. The same travel authored by a peer's copy on
-// this machine is refused outright: the copy's clip is the other machine's to make.
+// player is moved into it and every other player stays in the world. A peer's copy authors no trip on this machine:
+// the game's clip tick trips only for the player the local view follows, and a copy's actor tick is off.
 
 #pragma once
 
@@ -75,8 +75,6 @@ bool ReturnPending();  // the visitor's dropped item is still to be given back
 struct DrillStats {
     uint32_t tripsStarted;       // trips this machine's player took (a clip's loadLevel the gate turned into a visit)
     uint32_t clipsHeldClosed;    // the game's clip check answered no because the host closed the backrooms
-    uint32_t copyTripsRefused;   // trips a peer's copy authored here, cancelled
-    uint32_t copyTripsLetRun;    // [dev red] trips a peer's copy authored here, let run
 };
 DrillStats Stats();
 

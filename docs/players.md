@@ -234,7 +234,8 @@ map is loaded into the running world instead, far below it, on the clipping play
 stays in the world, and every other machine hides the player's copy by its pose: each pose a peer
 sends carries its position, so a pose below the visit floor (`level_visit::kVisitFloorZ`) is a
 player in a visited map, read on every pose, and the copy is shown again by the first pose back
-above it. The same trip authored by another player's copy on this machine is refused outright.
+above it. A peer's copy authors no trip on this machine: the game's clip tick trips only for
+the player the local view follows, and a copy's actor tick is off.
 
 A player who joins while another is in one of the maps needs no snapshot of it: the first pose
 the joiner applies for that player is below the floor, so its copy is hidden from that pose, and a

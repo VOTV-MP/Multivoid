@@ -1,10 +1,9 @@
 // harness/autotest/autotest_level_visit.cpp -- TEST-ONLY: a clip's trip to another map is the clipping player's alone,
 // and comes back as a death does (coop/player/level_visit). The level_visit_drill row names the arm and its sibling rows
-// shape the visit; the red arms are level_visit_hide_off, level_visit_copy_cancel_off and backrooms_close_off.
+// shape the visit; the red arms are level_visit_hide_off and backrooms_close_off.
 // client / host: the visitor takes the trip, stays until the watcher has judged its copy of the visitor hidden by the
 // poses it applies, ends the visit and comes back; the watcher judges the copy hidden at the first pose below the visit
-// floor and shown at the first pose back above it, and after a clip counts the trip the visitor's copy authored on its
-// own machine, which the gate cancels. close: the host closes the backrooms, the client's clip is answered no, and after
+// floor and shown at the first pose back above it. close: the host closes the backrooms, the client's clip is answered no, and after
 // the host opens them again it takes a trip. join: the host takes the trip and stays; a client that joins later must
 // find the host's copy hidden at the first pose it applies.
 // Every step ends on the other peer's signal (peer_signal) or on the state it waits for, never a clock. A check's
@@ -103,8 +102,7 @@ bool Heard(const char* name, int seconds = kStepSec) {
 
 // Whether the other peer has left a check that did not pass: a wait on a pose or a state ends at it.
 bool OtherStopped() {
-    static const char* const kNames[] = {"arrived", "back", "hid", "shown", "copytrip", "held", "reopened_clip",
-                                         "joined_hid"};
+    static const char* const kNames[] = {"arrived", "back", "hid", "shown", "held", "reopened_clip", "joined_hid"};
     std::string t;
     for (const char* n : kNames)
         if (PS::Peek(n, t) && ResultOf(t) != Res::Pass) return true;
@@ -152,17 +150,13 @@ int CopyHidden(int slot) {
     return out;
 }
 
-// The red arm of the copy's trip: a trip the visitor's copy authored here was let run.
-bool Leaked() { return LV::Stats().copyTripsLetRun > 0; }
-
 // The copy of `slot` follows its pose: hidden == `want` once kSettlePoses more poses have been applied after the pose
 // `from` that began the state, or sooner. Decided at that event; a stream that stops first is Invalid.
 bool Follows(const char* name, int slot, int want, uint32_t from, const char* hiddenWhat, const char* shownWhat) {
     PoseRec& r = g_rec[slot];
     const bool settled = PS::WaitFor("the copy following its pose", kSettleSec, [&] {
-        return Leaked() || CopyHidden(slot) == want || r.seq.load() >= from + kSettlePoses;
+        return CopyHidden(slot) == want || r.seq.load() >= from + kSettlePoses;
     }, false);
-    if (Leaked()) return Emit(name, Res::Fail, "a trip authored by the visitor's copy was let run on this machine");
     if (!settled) return Emit(name, Res::Invalid, "the pose stream stopped before the copy could be judged");
     const int hidden = CopyHidden(slot);
     if (hidden < 0) return Emit(name, Res::Invalid, "no copy of that player stands here");
@@ -177,10 +171,8 @@ bool JudgeCopy(const char* name, int slot, bool below, int boundSec) {
     PoseRec& r = g_rec[slot];
     const bool entered = PS::WaitFor(below ? "the visitor's pose below the floor" : "the visitor's pose back above it",
                                      boundSec, [&] {
-        return Leaked() || OtherStopped() ||
-               (below ? r.below.load() : (r.sawBelow.load() && !r.below.load()));
+        return OtherStopped() || (below ? r.below.load() : (r.sawBelow.load() && !r.below.load()));
     }, false);
-    if (Leaked()) return Emit(name, Res::Fail, "a trip authored by the visitor's copy was let run on this machine");
     if (OtherStopped()) return false;
     if (!entered) return Emit(name, Res::Invalid, "no such pose reached this peer");
     return Follows(name, slot, below ? 1 : 0, r.stateSeq.load(), "the visitor is in the map and its copy is not hidden here",
@@ -552,17 +544,10 @@ bool Visit(const Plan& p) {
 }
 
 // ---- the watcher ---------------------------------------------------------------------------------------------------
-// The watcher's half: its copy of the visitor hidden at the pose below the floor, shown at the pose back above it. After
-// a clip, the trip the visitor's copy authored on this machine was cancelled by the gate (the count is read at the end
-// of the visit, past which it cannot change); none at all is no measurement of the cancel.
+// The watcher's half: its copy of the visitor hidden at the pose below the floor, shown at the pose back above it.
 bool Watch(int slot, const Plan& p) {
     if (!JudgeCopy("hid", slot, true, kStepSec)) return false;
-    if (!JudgeCopy("shown", slot, false, p.end == "wait" ? 780 : kStepSec)) return false;
-    if (p.start != "clip") return true;
-    const uint32_t refused = LV::Stats().copyTripsRefused;
-    return Emit("copytrip", refused > 0 ? Res::Pass : Res::Invalid,
-                refused > 0 ? "the trip the visitor's copy authored here was cancelled"
-                            : "no trip authored by the visitor's copy reached this machine's gate");
+    return JudgeCopy("shown", slot, false, p.end == "wait" ? 780 : kStepSec);
 }
 
 // ---- the pair, the close and the join ---------------------------------------------------------------------------------
@@ -597,7 +582,7 @@ void RunPair(const std::string& arm) {
         return;
     }
     // The host judges: what the client alone could see reaches it as its signals.
-    const bool ok = visitor ? (p.start == "none" || (Heard("shown") && (p.start != "clip" || Heard("copytrip"))))
+    const bool ok = visitor ? (p.start == "none" || Heard("shown"))
                             : ((p.start == "none" || Heard("arrived")) && Heard("back"));
     if (!ok) return;
     UE_LOGI("level-visit: DONE host");
