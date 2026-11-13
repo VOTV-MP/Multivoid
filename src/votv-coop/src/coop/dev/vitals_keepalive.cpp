@@ -47,7 +47,8 @@ constexpr uint64_t kFillRetryMs = 2000;   // until the local player's world is u
 constexpr float kFull = 100.f;
 
 // Each peer's OWN food and sleep to 100, local and off the wire. A clock and not an event: the game's ticker drains the
-// two floats in place and nothing announces the drain, so the refill is periodic.
+// two floats in place and nothing announces the drain, so the refill is periodic. No dev_gate or local_grants check: the
+// row is a dev-only config seam in the dev-only source, and it touches only this machine's own player.
 void FillOwnNeeds() {
     static uint64_t nextMs = 0;
     const uint64_t now = ::GetTickCount64();
