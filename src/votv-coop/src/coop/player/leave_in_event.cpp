@@ -89,16 +89,16 @@ bool Bind(BoundClass& b, const wchar_t* name) {
 
 // This world's menu graph and getEvent's out parameter. Steady state, with both classes bound, is two listing-id
 // hash lookups; a new world's classes bind again at the class set's move. A class that binds without its function or
-// parameter leaves the watch inert for that world, which is said once.
+// parameter leaves the watch inert for that world; each of the two misses is said once a process.
 void Refresh() {
-    static bool sMissSaid = false;
+    static bool sMenuMissSaid = false, sLibMissSaid = false;
     const uint64_t menuBefore = g_menuCls.listing;
     if (Bind(g_menuCls, L"ui_menu_C")) {
         if (g_menuCls.listing != menuBefore) {
             void* graph = R::FindFunction(g_menuCls.cls, L"ExecuteUbergraph_ui_menu");
             g_menuGraph.store(graph, std::memory_order_release);
-            if (!graph && !sMissSaid) {
-                sMissSaid = true;
+            if (!graph && !sMenuMissSaid) {
+                sMenuMissSaid = true;
                 UE_LOGW("leave_in_event: ui_menu_C has no ExecuteUbergraph_ui_menu here -- the pause menu's buttons wait for an event");
             }
         }
@@ -112,8 +112,8 @@ void Refresh() {
             void* fn = R::FindFunction(g_libCls.cls, L"getEvent");
             const int32_t off = fn ? R::FindParamOffset(fn, L"isEventActive") : -1;
             g_offIsEventActive.store(off, std::memory_order_release);
-            if (off < 0 && !sMissSaid) {
-                sMissSaid = true;
+            if (off < 0 && !sLibMissSaid) {
+                sLibMissSaid = true;
                 UE_LOGW("leave_in_event: lib_C::getEvent or its isEventActive parameter is not here -- the watch is inert");
             }
         }
