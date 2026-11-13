@@ -77,6 +77,7 @@ struct State {
     std::unordered_map<std::wstring, void*> found;   // lower-cased name -> its class, re-checked against the index
     NameSet absent;
     NameSet refused;
+    NameSet declined;  // a name a loading ask was answered Refused or Absent for: what a drill reads as the refusal
     std::unordered_map<std::wstring, Asset> assetOf;  // lower-cased asset name -> path (Blueprints under kLoadRoot)
     std::vector<Parked> parked;
     std::vector<const char*> overflowSaid;
@@ -109,6 +110,7 @@ void SyncWorld() {
     g_s.found.clear();
     g_s.absent.Clear();
     g_s.refused.Clear();
+    g_s.declined.Clear();
     if (!g_s.parked.empty()) {
         UE_LOGW("class_resolve: the world changed with %zu parked spawn(s) waiting on a class load -- dropped",
                 g_s.parked.size());
@@ -251,7 +253,7 @@ const Family& AnyFamily() {
     return any;
 }
 
-Resolved ResolveClass(const wchar_t* className, const Family& family, Load load) {
+static Resolved ResolveCore(const wchar_t* className, const Family& family, Load load) {
     if (!className || !*className) return {};
     if (game_thread::IsDefinitelyOffGameThread()) {
         UE_ASSERT_GAME_THREAD("class_resolve::ResolveClass");
@@ -324,6 +326,18 @@ Resolved ResolveClass(const wchar_t* className, const Family& family, Load load)
     }
     g_s.found[key] = cls;
     return {ClassState::Found, cls};
+}
+
+Resolved ResolveClass(const wchar_t* className, const Family& family, Load load) {
+    const Resolved r = ResolveCore(className, family, load);
+    // A refusal is the cold path, so the note costs a found class nothing.
+    if ((r.state == ClassState::Refused || r.state == ClassState::Absent) && load != Load::LookupOnly && className)
+        g_s.declined.Add(Lower(className));
+    return r;
+}
+
+bool WasDeclined(const wchar_t* className) {
+    return className && g_s.declined.Has(Lower(className));
 }
 
 bool Park(const char* site, uint32_t key, std::function<void()> retry) {

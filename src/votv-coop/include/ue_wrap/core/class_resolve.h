@@ -67,6 +67,10 @@ const Family& AnyFamily();
 // class a pak brought) gets one whole-array lookup per name per world before it is Absent.
 Resolved ResolveClass(const wchar_t* className, const Family& family, Load load);
 
+// Whether a loading ask (Budgeted or Immediate) for `className` was answered Refused or Absent in this world: the
+// refusal event a drill decides a red on. Kept for the newest 256 names, dropped when the world changes.
+bool WasDeclined(const wchar_t* className);
+
 // Parks `retry` to run on the game thread from a later tick's Tick(), for a resolve that answered Pending. `site`
 // names the caller (a string literal): each site holds at most 64 parked retries, and one that overflows says so
 // once and returns false, so the caller drops the work. Parked work is dropped when the world changes. `key` is
