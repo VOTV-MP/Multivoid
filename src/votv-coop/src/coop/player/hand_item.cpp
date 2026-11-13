@@ -139,10 +139,13 @@ int32_t PropNameOffset() {
 // name, and the family predicates compare without case too. The class resolves through class_resolve under
 // `load`: the host judging a client's hand passes LookupOnly (a client's name never makes it load), a client
 // mirroring the host's loads a class it has not loaded inside the per-tick budget (Pending: not yet, ask next
-// tick). Without the class or the prop base this peer cannot judge, and says so (Unresolved) rather than
-// refusing. `outOwn`, when asked, gets a hand item's class as the engine spells it.
-enum class HandClass { Hand, NotHand, Unresolved, Pending };
-const ue_wrap::class_resolve::Family kHandFamily{L"hand item", nullptr, &ue_wrap::prop::IsClassDescendantOfProp};
+// tick). A class this peer has not loaded, asked by lookup only, or a prop base not in the index yet, is Unresolved: it
+// cannot judge, says so rather than refusing, and the caller asks again (the game may load it). Absent is the
+// resolver's own verdict on a loading ask (it exists nowhere here): final for this world. `outOwn`, when asked, gets a
+// hand item's class as the engine spells it.
+enum class HandClass { Hand, NotHand, Unresolved, Absent, Pending };
+constexpr const wchar_t* kHandBases[] = {L"prop_C"};
+const ue_wrap::class_resolve::Family kHandFamily{L"hand item", kHandBases, 1, &ue_wrap::prop::IsClassDescendantOfProp};
 HandClass ResolveHandClass(const std::wstring& name, void** outCls, std::wstring* outOwn,
                            ue_wrap::class_resolve::Load load) {
     namespace CR = ue_wrap::class_resolve;
@@ -155,7 +158,7 @@ HandClass ResolveHandClass(const std::wstring& name, void** outCls, std::wstring
     if (found.state == CR::ClassState::Refused) return HandClass::NotHand;
     void* cls = found.cls;
     if (outCls) *outCls = cls;
-    if (!cls) return HandClass::Unresolved;
+    if (!cls) return load == CR::Load::LookupOnly ? HandClass::Unresolved : HandClass::Absent;
     void* base = CR::ResolveClass(ue_wrap::profile::name::PropClass, CR::AnyFamily(), CR::Load::LookupOnly).cls;
     if (!base) return HandClass::Unresolved;
     if (!ue_wrap::prop::WalksToBase(cls, base)) return HandClass::NotHand;
@@ -279,18 +282,20 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     const SlotHand& want = g_hands[slot];
     // The class and the prop base resolve through the class resolver. A client loads a class it has not
     // loaded, inside the per-tick budget: Pending asks again next tick, which this per-tick structure already
-    // does. The host mirroring a client's hand loads nothing (a client's name never makes it load). A class that
-    // exists nowhere here is a real absence, said once by the resolver: no mirror, and not asked again until
-    // the item or the puppet changes.
+    // does. The host mirroring a client's hand loads nothing (a client's name never makes it load): a class it has
+    // not loaded stays Unresolved and is asked again each tick, as the game may load it. A class that exists
+    // nowhere here (the resolver's verdict on a client's loading ask) is a real absence, said once by the
+    // resolver: no mirror, and not asked again until the item or the puppet changes, which a new world brings.
     const bool isHost = g_session && g_session->role() == coop::net::Role::Host;
     void* cls = nullptr;
     const HandClass kind = ResolveHandClass(want.cls, &cls, nullptr,
                                             isHost ? ue_wrap::class_resolve::Load::LookupOnly
                                                    : ue_wrap::class_resolve::Load::Budgeted);
     if (kind == HandClass::Pending) return;
-    if (kind == HandClass::Unresolved) {
-        UE_LOGW("hand_item: slot %u class '%ls' or the prop base exists nowhere on this peer -- no mirror, not tried "
-                "again until the item or the puppet changes", static_cast<unsigned>(slot), want.cls.c_str());
+    if (kind == HandClass::Unresolved) return;
+    if (kind == HandClass::Absent) {
+        UE_LOGW("hand_item: slot %u class '%ls' exists nowhere on this peer -- no mirror, not tried again until the "
+                "item or the puppet changes", static_cast<unsigned>(slot), want.cls.c_str());
         NoteSpawnFailed(slot, want, puppetActor);
         return;
     }
