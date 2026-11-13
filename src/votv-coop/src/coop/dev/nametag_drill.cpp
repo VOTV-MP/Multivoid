@@ -322,7 +322,10 @@ bool TagTick(void* player, bool host) {
             if (!WriteItemTag(held)) { Abandon("the nametag's tag did not take the drill's text"); return true; }
             g_item.Set(held);
         }
-        // A client's click is judged against the hand its owner announced: the click waits for that announce.
+        // A client's click is judged against the hand its owner announced: the click waits for that announce, so the
+        // host has the hand state ahead of the request on the one ordered lane. The product does not wait: a click
+        // before its announce, or a hand swapped within the drain the request is judged in, is refused with a reason
+        // and the item stays. The drill measures the judge, not that residual.
         if (!host && !coop::hand_item::OwnAnnounced(L"prop_nametag_C")) {
             if (Expired(kEquipBoundMs)) Abandon("the hand lane never announced the nametag in this client's hand");
             return true;

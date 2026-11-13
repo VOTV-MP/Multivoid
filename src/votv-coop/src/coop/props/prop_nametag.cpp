@@ -66,6 +66,7 @@ bool g_watchSettled = false;
 struct Pending {
     std::wstring key;
     ue_wrap::CachedObjRef item;
+    bool waitSaid = false;   // a click while it waits is said once
 };
 Pending g_pending;
 // HOST: the host player's own use, between the watch's entry and exit.
@@ -234,7 +235,14 @@ sg::Verdict OnUsePre(const sg::Call& c) {
                                                            : ReasonName(coop::net::kPropNametagBadTag));
         return sg::Verdict::Cancel;
     }
-    if (!g_pending.key.empty()) return sg::Verdict::Cancel;   // asked already: the host's answer comes
+    if (!g_pending.key.empty()) {   // asked already: the host's answer comes; said once, since a latch that stuck looks like this
+        if (!g_pending.waitSaid) {
+            g_pending.waitSaid = true;
+            UE_LOGI("prop_nametag: this client's tag on prop '%ls' still waits for the host's answer -- a click meanwhile "
+                    "is not sent", g_pending.key.c_str());
+        }
+        return sg::Verdict::Cancel;
+    }
     const PropNametagPayload p = MakePayload(coop::net::kPropNametagRequest, key, 0, tag);
     if (!s->SendReliableToSlot(0, coop::net::ReliableKind::PropNametag, &p, sizeof(p))) {
         UE_LOGW("prop_nametag: the tag for prop '%ls' was not sent -- the item stays; use it again", key.c_str());
@@ -285,7 +293,23 @@ void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, uint8_
                 key.c_str());
 }
 
+// A message this peer does not act on, at the first twenty and each fiftieth after: no honest peer sends one.
+void DropLogged(const char* why, int slot, uint8_t op) {
+    static uint64_t s_dropped = 0;
+    ++s_dropped;
+    if (s_dropped <= 20 || s_dropped % 50 == 0)
+        UE_LOGW("prop_nametag: op %u from slot %d dropped (%s); %llu so far", static_cast<unsigned>(op), slot, why,
+                static_cast<unsigned long long>(s_dropped));
+}
+
 // HOST: a request's judgement, with the sender's hand as the hand lane has applied it.
+// MTA's shape for a client changing a named property of a world element is Packet_CustomData
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2715-2796): the server resolves the element, judges the
+// sender, relays to everyone but the source and, on a refusal, sends its own value back to the source. Ours differs in
+// three ways. The publish goes to every peer, the author included, because the client cancelled its own apply where
+// MTA's source had applied it. The refusal carries a reason and no value, for the same reason. A prop that does not
+// resolve is answered (op 3) where MTA returns silently, because a client keeps one request in flight on that answer.
+// The trust gate is the sender's reach and the item in its hand, where MTA's is a per-element flag.
 void Judge(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
     if (!g_budget[slot].Take(kTagBudget, coop::net::NowMs())) { Refuse(s, slot, key, coop::net::kPropNametagTooFast); return; }
     if (!TagSane(tag)) { Refuse(s, slot, key, coop::net::kPropNametagBadTag); return; }
@@ -307,7 +331,9 @@ void Judge(coop::net::Session& s, const std::wstring& key, const std::wstring& t
 // HOST: a client's request. The hand state of the sender rode the same ordered lane ahead of it (a nametag is held
 // before it is clicked), but the host applies a client's hand states at a pace (hand_item's LatestWins), so the
 // state applied may be older than the one that arrived. While one is owed the request waits for its application,
-// the lane's own edge (OnHandApplied), and is judged against the hand then.
+// the lane's own edge (OnHandApplied), and is judged against the hand then. Two residuals, each answered by op 3 with
+// the item kept: a click made before its owner's announce (the client does not wait for OwnAnnounced; the drill does),
+// and a hand swapped away within the drain the request is posted to, which is judged against the newer hand.
 void OnRequest(coop::net::Session& s, const std::wstring& key, const std::wstring& tag, uint8_t slot) {
     Parked& waiting = g_parked[slot];
     if (waiting.valid) { Refuse(s, slot, key, coop::net::kPropNametagBusy); return; }
@@ -355,6 +381,8 @@ void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author)
                     tag.c_str(), key.c_str());
     }
     if (author != coop::players::Registry::Get().LocalPeerId() || g_pending.key != key) return;
+    // The item is this client's own, in an inventory the host cannot see, so it is spent here, by the client whose
+    // request it was; the host's judgement cannot spend it. A modified client that keeps it is bounded by the budget.
     if (void* item = g_pending.item.Get()) E::DestroyActor(item);
     UE_LOGI("prop_nametag: this client's tag on prop '%ls' applied by the host -- its nametag is spent", key.c_str());
     g_pending = Pending{};
@@ -489,16 +517,25 @@ void OnMsg(const PropNametagPayload& p, int senderPeerSlot) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     if (key.empty()) return;
     if (p.op == coop::net::kPropNametagRequest) {
-        if (s->role() != coop::net::Role::Host || senderPeerSlot == 0) return;
+        if (s->role() != coop::net::Role::Host || senderPeerSlot == 0) {
+            DropLogged("a request reaches the host from a client alone", senderPeerSlot, p.op);
+            return;
+        }
         const uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
         // Every request that names a prop is answered: a grant by the publish, anything else by the refusal.
         if (p.tagChars > kMaxTagChars) { Refuse(*s, slot, key, coop::net::kPropNametagBadTag); return; }
         OnRequest(*s, key, TagOf(p), slot);
         return;
     }
-    if (s->role() != coop::net::Role::Client || senderPeerSlot != 0) return;   // the host's word alone
+    if (s->role() != coop::net::Role::Client || senderPeerSlot != 0) {   // the host's word alone
+        DropLogged("an answer or a tag is the host's word, to a client", senderPeerSlot, p.op);
+        return;
+    }
     if (p.op == coop::net::kPropNametagRefused) { OnRefused(key, p.reason); return; }
-    if (p.op != coop::net::kPropNametagPublish || p.tagChars > kMaxTagChars) return;
+    if (p.op != coop::net::kPropNametagPublish || p.tagChars > kMaxTagChars) {
+        DropLogged("an op this build does not know, or a tag longer than the message carries", senderPeerSlot, p.op);
+        return;
+    }
     OnPublish(key, TagOf(p), p.author);
 }
 
