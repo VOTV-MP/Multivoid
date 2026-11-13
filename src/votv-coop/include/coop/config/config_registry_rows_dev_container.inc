@@ -1,7 +1,9 @@
 // coop/config/config_registry_rows_dev_container.inc -- the [dev] container rows that sat together in the dev row list,
 // moved in their order: the contents selftest, the join drill with its two red arms, the opener probe and the
-// view drill, the writer probe and the two red arms of the drone sack drill. Included by config_registry_rows_dev.inc where they stood, so each row keeps its place in every
-// expansion of the list. The entry forms are config_registry_rows.inc's.
+// view drill, the writer probe, and the drone sack drill with its prop row and its two red arms. Included by
+// config_registry_rows_dev.inc where the container rows stood, so each of them keeps its place in every expansion of
+// the list; the drone sack drill's own row came here from further down, and its place in the census listing moved
+// with it. The entry forms are config_registry_rows.inc's.
 
 CFG_FLAG(container_selftest, "container_selftest", "dev", false, "VOTVCOOP_CONTAINER_SELFTEST",
     "Autonomous selftest: container contents sync. It MUTATES the world -- it extracts an item on"
@@ -185,6 +187,24 @@ CFG_FLAG(container_overlap_no_cancel, "container_overlap_no_cancel", "dev", fals
     "shared mirror, from any caller, is skipped, so the BP body runs on the client as it did before the host "
     "judged the put: the client files the prop into its mirror and destroys it, and the host's copy is not put (arm 2: it is "
     "lost with no record, rig: VERDICT dronesack-arm2 FAIL).")
+CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_DRILL",
+    "Drill (BOTH peers, the same value): the host puts a drone sack on the floor in front of itself and the client "
+    "says its mirror of it is bound. 1 -- the host drops a loot crate onto the sack; for 15 s each peer logs the "
+    "crate's local destroy (and the caller's class), the client whether its destroy seam sent a PropDestroy, the "
+    "host whether one reached it, and the sack's record counts. 2 -- the host spawns six loose props round the "
+    "sack and the client walks to each with the director, grabs it, carries it over the sack and lets go; each "
+    "peer logs the destroys it sees and the host then calls the delivery drone and logs when its sale clears the "
+    "drone's container. 3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then "
+    "calls the drone; both peers take the container census around the sale and log the crate's "
+    "inventory index and which containers hold it afterwards. Arms 1 and 3 judge nothing; arm 2 passes when every prop that "
+    "left the floor is a record in the host's drone container once the client's puts are done and every prop is filed or at rest (dronesack_prop=drive: zip disks "
+    "instead of cups; the green and the red were run with disks), as rig: VERDICT dronesack-arm2; its red is "
+    "container_overlap_no_cancel=1 on the client. Lines tagged [SACK-DRILL] and "
+    "[SACK-CENSUS]. 4 -- arm 3, with the client walking to the sack and opening its screen before the sale; at the "
+    "host's sale marker it presses the first slot, a player's take, which is an act, so the press races the sale's "
+    "publication. Both peers judge it: the take is refused Gone and nothing comes out, and the sack stays at 0 on "
+    "the host (a publication that came first leaves nothing to press, which also passes). The client also judges its "
+    "mirror: it reads 0 within 2 s of the sale, or it fails. The mirror is logged 1, 5, 15 and 30 s after the sale.")
 CFG_ENUM(dronesack_prop, "dronesack_prop", "dev", "cup", "cup|drive", "VOTVCOOP_SACK_PROP",
     "The loose prop of the drone sack drill's arms 2 and 3 (BOTH peers, with dronesack_drill; the two must match): cup is a "
     "prop_C named cup, drive a zip disk (prop_drive_C), the item the drone sack put's fix was proven with.")

@@ -574,24 +574,6 @@ CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CAL
     "second press, and the client's DONE line says whether the drone flew on its copy; the host logs its "
     "drone's changes. "
     "Lines tagged [DRONE-CALL-DRILL].")
-CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_DRILL",
-    "Drill (BOTH peers, the same value): the host puts a drone sack on the floor in front of itself and the client "
-    "says its mirror of it is bound. 1 -- the host drops a loot crate onto the sack; for 15 s each peer logs the "
-    "crate's local destroy (and the caller's class), the client whether its destroy seam sent a PropDestroy, the "
-    "host whether one reached it, and the sack's record counts. 2 -- the host spawns six loose props round the "
-    "sack and the client walks to each with the director, grabs it, carries it over the sack and lets go; each "
-    "peer logs the destroys it sees and the host then calls the delivery drone and logs when its sale clears the "
-    "drone's container. 3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then "
-    "calls the drone; both peers take the container census around the sale and log the crate's "
-    "inventory index and which containers hold it afterwards. Arms 1 and 3 judge nothing; arm 2 passes when every prop that "
-    "left the floor is a record in the host's drone container once the client's puts are done and every prop is filed or at rest (dronesack_prop=drive: zip disks "
-    "instead of cups; the green and the red were run with disks), as rig: VERDICT dronesack-arm2; its red is "
-    "container_overlap_no_cancel=1 on the client. Lines tagged [SACK-DRILL] and "
-    "[SACK-CENSUS]. 4 -- arm 3, with the client walking to the sack and opening its screen before the sale; at the "
-    "host's sale marker it presses the first slot, a player's take, which is an act, so the press races the sale's "
-    "publication. Both peers judge it: the take is refused Gone and nothing comes out, and the sack stays at 0 on "
-    "the host (a publication that came first leaves nothing to press, which also passes). The client also judges its "
-    "mirror: it reads 0 within 2 s of the sale, or it fails. The mirror is logged 1, 5, 15 and 30 s after the sale.")
 CFG_STRING(sat_console_drill, "sat_console_drill", "dev", "", "VOTVCOOP_SAT_CONSOLE_DRILL", false,
     "Drill (BOTH peers): run -- a client types sd.cal, sauce.get and sv.hash at its SAT console; the host runs "
     "them on the terminal it keeps for that client and sends the lines back. rejoin -- the client leaves in the "
