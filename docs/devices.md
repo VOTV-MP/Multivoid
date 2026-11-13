@@ -388,8 +388,10 @@ hand lane, as it does for a toolbox's use on the ATV (`coop/player/hand_spend`):
 class must be a fuse and the hold the lane numbers must have its one use left. The hold the insert was
 sent from is applied first when the lane's pace still owes it, since the emptied hand behind the insert
 would merge it away. The host cannot see the fuse leave the inventory, so a client that announces a
-hold and keeps its fuse is taken once per announce, at the hand lane's own rate. An insert a world spend paid
-also uses up the current hold, so one fuse is one credit.
+hold and keeps its fuse is taken once per announce, at the hand lane's own rate. The judgement is made as the
+request arrives and goes with it through the queue, so a request that waits behind an earlier one is not
+judged against a hand that has moved on; an insert the hand paid for also burns the world spend beside it,
+so one fuse is one credit.
 
 The radio tower is the second kind (`coop/world/fuse_tower_kind` holds what differs between the two). It
 is one actor, the gamemode's `radiotower`, and the drone's shop run reads its broken flag on the host, so

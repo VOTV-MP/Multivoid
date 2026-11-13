@@ -41,10 +41,4 @@ bool Spend(uint8_t slot, const wchar_t* cls, uint32_t uses) {
     return true;
 }
 
-void Burn(uint8_t slot, const wchar_t* cls, uint32_t uses) {
-    if (!coop::hand_item::LastHeldClassIs(slot, cls)) return;
-    Spent& sp = Current(slot);
-    if (sp.uses < uses) sp.uses = uses;
-}
-
 }  // namespace coop::hand_spend

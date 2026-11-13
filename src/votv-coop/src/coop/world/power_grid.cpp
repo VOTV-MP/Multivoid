@@ -89,7 +89,9 @@ PowerGridPayload g_lastSent{};
 bool g_haveSent = false;
 coop::roster_ledger::PerSlotState<uint16_t> g_ack;
 bool g_ackDirty = false;
-struct Waiting { PowerGridPayload p; uint64_t arrivedMs; };
+// An install the sender's hand paid for is judged as it arrives (PaidByHand) and carried with the entry, so the drain
+// never reads the hand again.
+struct Waiting { PowerGridPayload p; uint64_t arrivedMs; bool handPaid = false; };
 std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
 coop::net::IntentBucket g_rate[coop::net::kMaxPeers];       // a sender's acts
 coop::net::IntentBucket g_inputRate[coop::net::kMaxPeers];  // a sender's puzzle inputs
@@ -223,6 +225,17 @@ bool HitSwings(uint8_t slot, std::wstring& item) {
     return ue_wrap::weapon_catalog::Ready() && ue_wrap::weapon_catalog::Lookup(item, swing) && swing.canSwing;
 }
 
+// Whether the upgrade in the sender's hand paid for this install, judged as the request arrives: the hold it was sent
+// from, if the hand lane still owes it, is applied first, then hand_spend counts the use. The result goes with the
+// entry, so a request that waits in the queue behind an earlier one is not judged against a hand that has moved on.
+bool PaidByHand(uint8_t sender, const PowerGridPayload& p) {
+    if (p.op != coop::net::kPowerGridOpUpgrade) return false;
+    coop::hand_item::ApplyOwedNow(sender);
+    if (!coop::hand_spend::Spend(sender, kUpgradeClass, 1)) return false;
+    UE_LOGI("power_grid: slot %u's install at generator %u is paid by the upgrade its hand held", sender, p.index);
+    return true;
+}
+
 enum class Take : uint8_t { Done, Wait };
 
 Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
@@ -247,21 +260,15 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     EL::IntentSubject reach{};
     if (read) reach = EL::IntentTarget::ForClientIntent(*s, sender, kGeneratorReachUU).Authorize(gen);
     if (reach.outcome == EL::IntentOutcome::NoBody && !waited) return Take::Wait;
-    // An install rests on the upgrade its insert spent, in this order: a world upgrade the host saw destroyed beside
-    // this generator; else the one the sender's hand held (coop/player/hand_spend), whose destroy never leaves the
-    // client; else the destroy's wait. The hold the install was sent from is applied first, before any spend is taken.
-    // Taken here, whatever the outcome, so one spend answers one install.
-    bool spent = false;
+    // An install rests on the upgrade its insert spent: the one its sender's hand held, judged as the request arrived
+    // (wt.handPaid, coop/player/hand_spend; its destroy never leaves the client), or a world upgrade the host saw
+    // destroyed beside this generator, else the destroy's wait. Taken here, whatever the outcome, so one spend answers
+    // one install.
+    bool spent = read && p.op == coop::net::kPowerGridOpUpgrade && wt.handPaid;
     if (read && p.op == coop::net::kPowerGridOpUpgrade) {
-        coop::hand_item::ApplyOwedNow(sender);
-        spent = coop::power_upgrade::TakeSpend(sender, p.index);
-        if (spent) {
-            coop::hand_spend::Burn(sender, kUpgradeClass, 1);  // one upgrade, one credit
-        } else if (coop::hand_spend::Spend(sender, kUpgradeClass, 1)) {
-            spent = true;
-            UE_LOGI("power_grid: slot %u's install at generator %u is paid by the upgrade its hand held", sender,
-                    p.index);
-        }
+        // A hand-paid install burns the world spend beside it too: one upgrade, one credit.
+        const bool world = coop::power_upgrade::TakeSpend(sender, p.index);
+        spent = spent || world;
         if (!spent && !waited) return Take::Wait;
     }
     std::wstring item;
@@ -351,7 +358,10 @@ void HostRefuseQueue(coop::net::Session* s, uint8_t slot, const Waiting& newest)
     g_waiting[slot].push_back(newest);
     std::vector<void*> gens;
     for (const Waiting& w : g_waiting[slot]) {
-        if (w.p.op != coop::net::kPowerGridOpUpgrade || !coop::power_upgrade::TakeSpend(slot, w.p.index)) continue;
+        if (w.p.op != coop::net::kPowerGridOpUpgrade) continue;
+        // Paid by the hand as it arrived, or by a world spend: the item is given back either way.
+        const bool world = coop::power_upgrade::TakeSpend(slot, w.p.index);
+        if (!w.handPaid && !world) continue;
         if (gens.empty()) GEN::ReadGenerators(gens);
         if (w.p.index < gens.size() && gens[w.p.index]) coop::power_upgrade::Refund(slot, gens[w.p.index]);
     }
@@ -382,7 +392,7 @@ void Refund(uint8_t slot, uint8_t op) {
 void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender) {
     if (sender == 0 || sender >= coop::net::kMaxPeers || p.op == coop::net::kPowerGridOpRows) return;
     auto& q = g_waiting[sender];
-    const Waiting w{p, NowMs()};
+    const Waiting w{p, NowMs(), PaidByHand(sender, p)};
     if (q.empty() && Spend(sender, p.op)) {
         if (HostTakeOp(s, w, sender) == Take::Done) return;
         Refund(sender, p.op);

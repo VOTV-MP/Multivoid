@@ -22,9 +22,4 @@ namespace coop::hand_spend {
 // whatever the verdict after it.
 bool Spend(uint8_t slot, const wchar_t* cls, uint32_t uses);
 
-// One item, one credit: a verb a world spend has paid also uses up the current hold's `uses`, when the sender's last
-// held class is `cls`, so the same item cannot pay again through the hand. A lane calls it when its world path takes
-// a request; nothing is counted when the hand never held `cls`.
-void Burn(uint8_t slot, const wchar_t* cls, uint32_t uses);
-
 }  // namespace coop::hand_spend
