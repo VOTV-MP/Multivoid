@@ -79,7 +79,10 @@ uint32_t g_tally[static_cast<int>(Tally::kCount)] = {};
 coop::net::RefusalTally g_refusals{"prop_act"};
 
 bool InRoster(int slot) { return slot >= 1 && slot < coop::net::kMaxPeers; }
-bool IsHost() { return g_session && g_session->running() && g_session->role() == coop::net::Role::Host; }
+// Role only for the departure: a stopped session (a teardown) still owes its reservations their release and their tally, as
+// container_act_host's departure does; IsHost also needs the session running.
+bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }
+bool IsHost() { return IsHostRole() && g_session->running(); }
 coop::net::RefusalTally::Clock::time_point Now() { return coop::net::RefusalTally::Clock::now(); }
 
 // A class by name, re-resolved when the cached one is no longer alive: a world reload can re-create a class.
@@ -582,7 +585,7 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
 // MTA releases a departed ped's vehicle in the element's destructor (CPed.cpp:92-127); the roster's departure is the
 // destructor here.
 void OnPeerGone(uint8_t slot) {
-    if (!IsHost() || !InRoster(slot)) return;
+    if (!IsHostRole() || !InRoster(slot)) return;
     if (!coop::prop_hold::ReservationCount(slot)) return;
     const uint32_t eid = coop::prop_hold::ReservedEid(slot);
     ++g_tally[static_cast<int>(Tally::HeldAtDisconnect)];

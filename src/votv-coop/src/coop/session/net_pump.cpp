@@ -84,6 +84,27 @@ ue_wrap::CachedObjRef g_netLocalController;
 // one peer's puppet go without wiping every subsystem while another stays.
 bool g_wasConnected = false;
 std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
+// Which pieces of a slot's departure have already run for its last occupant, ahead of the roster's own transition: the
+// host's all-peers-gone branch departs every occupied slot BEFORE the session-wide reset (so each lane's OnPeerGone still
+// finds its state), and TearDownSession's loop departs every slot before the ledger clear. The ledger callback skips the
+// pieces named here and runs every other piece it owns (OnRosterOrigin always). Cleared in the callback when the slot is
+// occupied again. Game thread.
+constexpr uint8_t kPuppetGone = 1, kSubsystemsGone = 2;
+std::array<uint8_t, coop::players::kMaxPeers> g_departed{};
+
+// A slot's occupant leaves, in the order of every ordinary departure: its puppet (with the line that says so), then the
+// per-slot subsystem fan-out; each piece is skipped when `done` says it ran, and is recorded in it as it runs.
+void DepartSlot_(coop::net::Session& s, int slot, uint16_t playerNo, uint8_t& done) {
+    if (!(done & kPuppetGone)) {
+        if (coop::puppet_drive::DestroySlot(slot))
+            UE_LOGI("net: peer slot %d (#%u) left -- puppet destroyed", slot, static_cast<unsigned>(playerNo));
+        done |= kPuppetGone;
+    }
+    if (!(done & kSubsystemsGone)) {
+        coop::subsystems::DisconnectSlot(s, slot);
+        done |= kSubsystemsGone;
+    }
+}
 
 // The Session being ticked, set at Tick entry and cleared at exit. The ledger's teardown subscriber
 // carries only rows, and every site that can fire a transition runs inside a tick; a transition
@@ -176,13 +197,17 @@ void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = 
 
 }  // namespace
 
-// The per-person world teardown, driven by the ledger row transition: the departed peer's puppet,
-// then the per-slot subsystem fan-out. It fires on a replacement and on a client too, where a
-// connection edge never could; every DisconnectSlot body is safe there (the host-authoritative ones
-// self-gate).
+// The per-person world teardown, driven by the ledger row transition: the departed peer's puppet, then the per-slot
+// subsystem fan-out. It fires on a replacement and on a client too, where a connection edge never could; every
+// DisconnectSlot body is safe there (the host-authoritative ones self-gate). The departure may already have run: the
+// host's all-peers-gone branch and TearDownSession depart a slot ahead of this transition and record it in g_departed,
+// and the callback then skips only the pieces recorded and still runs the rest (OnRosterOrigin always).
 void OnSlotReplaced_TearDownWorld(int slot, const coop::roster_ledger::Row& outgoing,
                                   const coop::roster_ledger::Row& incoming) {
-    if (slot <= 0) return;  // slot 0 is the host; its departure ends the session, not a slot
+    if (slot <= 0 || slot >= coop::players::kMaxPeers) return;  // slot 0 is the host; its departure ends the session, not a slot
+    // The pieces already run for the occupant leaving; an occupant arriving here starts the slot afresh.
+    uint8_t done = g_departed[slot];
+    if (incoming.occupied()) g_departed[slot] = 0;
     auto* s = g_tickSession;
     if (!s) return;         // no session context (nothing to tear down against)
     // The slot's relayed streams follow its occupancy: the departed one's late packets are refused,
@@ -190,10 +215,7 @@ void OnSlotReplaced_TearDownWorld(int slot, const coop::roster_ledger::Row& outg
     s->OnRosterOrigin(slot, outgoing.occupied(), outgoing.originContext, incoming.occupied(),
                       incoming.originContext);
     if (!outgoing.occupied()) return;
-    if (coop::puppet_drive::DestroySlot(slot))
-        UE_LOGI("net: peer slot %d (#%u) left -- puppet destroyed", slot,
-                static_cast<unsigned>(outgoing.playerNo));
-    coop::subsystems::DisconnectSlot(*s, slot);
+    DepartSlot_(*s, slot, outgoing.playerNo, done);
 }
 
 void OnSessionStart() {
@@ -251,6 +273,8 @@ void TearDownSession(coop::net::Session& session, const char* why) {
         // is composed here only.
         coop::puppet_drive::DestroySlot(slot);
         coop::subsystems::DisconnectSlot(session, slot);
+        // The ledger clear below fires each row's callback, which must not run either piece a second time.
+        g_departed[slot] = kPuppetGone | kSubsystemsGone;
     }
     coop::subsystems::DisconnectAll();
     // The next session's `rig: READY hosting` is owed; the world's settle latch stays. Here and not in
@@ -461,6 +485,15 @@ void Tick(coop::net::Session& session) {
             // The host's last client left: the session lives on, so only what the peers' presence
             // held goes. A client's session ends instead, below or through the join's abort drain,
             // and TearDownSession takes all of it then.
+            // The last clients' own departure comes first. This edge means no peer is connected, so every row still
+            // occupied is leaving: the roster departs it from a reconcile that can run after this branch. Each departs
+            // here in the order of any other departure (puppet, then the per-slot fan-out), while the session-wide
+            // state those handlers read is still whole; the ledger's callback later runs the rest of its pieces and
+            // skips these (g_departed).
+            for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
+                if (coop::roster_ledger::Occupied(slot))
+                    DepartSlot_(session, slot, coop::roster_ledger::Get(slot).playerNo, g_departed[slot]);
+            }
             const auto stats = coop::subsystems::DisconnectAll();
             UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries",
                     stats.snapPending, stats.initProcessedDropped);
