@@ -115,4 +115,8 @@ void NoteAtvIndexed(const std::wstring& key, void* atv);
 void HoldNextStateForDrill(const std::wstring& key);
 void NoteBlockBuilt(const std::wstring& key);
 
+// [dev] CLIENT, the ATV drill's fixture on the park's hand-back (atv_spawn_park): whether the host's state for `key`, an ATV
+// with no copy here, has been decided on: kept for the copy's adoption, or dropped by the red atv_joiner_rows_off. Game thread.
+bool UnadoptedDecidedForDrill(const std::wstring& key);
+
 }  // namespace coop::atv_host_sync

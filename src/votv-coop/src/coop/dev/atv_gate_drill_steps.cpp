@@ -3,7 +3,8 @@
 // the actor's act and a decision on every peer; see atv_gate_drill_detail.h. The step ids are the drill's own: 1 refuel, 2
 // repair, 3 fit, 4 take-off, 5 the seated controls, 6 the horn tapped (6h held, 6r its release), 7a the host's refuel with
 // the client not driving, 7 with the seated client streaming, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a
-// forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel.
+// forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel, then 10 (atv_gate_drill_joiner.cpp)
+// a joiner's mirror adopted after the host's state for it.
 
 #include "atv_gate_drill_detail.h"
 
@@ -398,6 +399,7 @@ const Step kSteps[] = {
     {"11", kClient, "a forged refuel with an empty hand", nullptr, nullptr, &ActForgeRefuel, &D11, nullptr},
     {"12", kClient, "a forged duplicate fit", &HostFitsModule, &SetupModuleInHand, &ActForgeFit, &D12, nullptr},
     {"15", kClient, "a host state crossing a client's open refuel", &Seed30, &SetupHoldRequests, &ActPour, &D15, nullptr},
+    {"10", kHost, "a joiner's mirror adopted after the host's state for it", &SpawnSecondAtv, nullptr, &ActNone, &D10, nullptr},
 };
 const int kStepCount = static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]));
 

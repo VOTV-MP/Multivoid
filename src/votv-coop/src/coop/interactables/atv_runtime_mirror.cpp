@@ -9,6 +9,7 @@
 
 #include "coop/interactables/atv_sync.h"
 #include "atv_spawn_park.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/interactables/atv_index_internal.h"
@@ -207,6 +208,7 @@ void ResolveSpawn(const std::wstring& key, const coop::net::AtvSpawnPayload& pay
         g_parkedFirst = true;
         ++g_deliberateParks;
         spawn_park::Park(key, payload, "the drill parks the first spawn", /*say*/ true);
+        if (coop::atv_drill_events::On()) spawn_park::HoldForDrill(key);   // the ATV gate drill's joiner step
         return;
     }
     const FVector loc{ payload.x, payload.y, payload.z };

@@ -146,7 +146,12 @@ struct Step {
     void (*teardown)(Ctx&);                // every peer, after its decision
 };
 
-// The client leaves and rejoins (atv_gate_drill_forged.cpp): steps 10 and 16 run on the rejoined client.
+// Step 10, a joiner's mirror adopted after the host's state (atv_gate_drill_joiner.cpp).
+bool SpawnSecondAtv(Ctx& c, std::string& why);   // HOST prelude: a second ATV spawned, seeded and published; its key a fact
+bool ActNone(Ctx& c, std::string& why);          // the step has no act
+Result D10(Ctx& c);                              // CLIENT: decided on the adoption and the state kept before it
+
+// The client leaves and rejoins (atv_gate_drill_forged.cpp): step 16 runs with the rejoined client.
 bool IsRejoinedLife();
 void LeaveForRejoin();             // CLIENT, first life: leave the session for the rig's restart
 bool HostRejoin(const std::wstring& key);               // HOST: the rejoined client's steps

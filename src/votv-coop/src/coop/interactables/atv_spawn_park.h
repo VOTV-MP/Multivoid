@@ -26,6 +26,9 @@ void Park(const std::wstring& key, const coop::net::AtvSpawnPayload& payload, co
 // Hold a destroy for this key until the world is ready: the host's last word, so a spawn parked for the key is
 // dropped for it.
 void ParkDestroy(const std::wstring& key, const char* why);
+// [dev] The spawn parked for `key` is not handed back until atv_host_sync has decided the host's state for that key (kept for
+// the copy's adoption, or dropped by a red), so the copy is adopted after the state. Only while the ATV drill's row is on.
+void HoldForDrill(const std::wstring& key);
 // An arrival that landed, was malformed, or was overtaken: nothing for this key waits any longer.
 void Discard(const std::wstring& key);
 // Tick, inside a gameplay world: apply the host's pending set when its world is ready, then hand each parked

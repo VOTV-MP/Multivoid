@@ -144,6 +144,7 @@ void ClearGate(const char* why) {
 // applied at the copy's adoption (NoteAtvIndexed) and dropped at the session's end.
 constexpr size_t kMaxUnadopted = 8;
 std::vector<Payload> g_unadopted;
+std::wstring g_droppedForDrill;   // [dev] the key whose state the red atv_joiner_rows_off dropped (UnadoptedDecidedForDrill)
 
 void KeepUnadopted(const std::wstring& key, const Payload& p) {
     for (Payload& row : g_unadopted)
@@ -264,6 +265,7 @@ void OnState(const Payload& p) {
         // Red atv_joiner_rows_off: a state for an ATV with no copy is dropped, not kept for the copy's adoption.
         static const bool s_rowsOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_joiner_rows_off";
         if (!s_rowsOff) KeepUnadopted(key, p);
+        else g_droppedForDrill = key;
         DE::Note(DE::kUnadopted, static_cast<int32_t>(p.stateSeq), s_rowsOff ? 0 : 1, DE::KeyTag(key));
         return;
     }
@@ -281,6 +283,13 @@ void OnState(const Payload& p) {
         return;
     }
     ApplyState(key, atv, p, 0);
+}
+
+bool UnadoptedDecidedForDrill(const std::wstring& key) {
+    if (key == g_droppedForDrill) return true;
+    for (const Payload& row : g_unadopted)
+        if (coop::net::StringFromWireKey(row.key) == key) return true;
+    return false;
 }
 
 void HoldNextStateForDrill(const std::wstring& key) {
@@ -405,6 +414,7 @@ void OnDisconnect() {
                 g_n.kept, g_n.dropped, g_n.asked, g_n.answered, g_n.refusedAsks, g_n.stray, g_n.unanswered);
     g_n = Counts{};
     g_unadopted.clear();
+    g_droppedForDrill.clear();
     g_nextReq = 0;
     coop::atv_gate::OnDisconnect();
     g_stateSeq.clear();
