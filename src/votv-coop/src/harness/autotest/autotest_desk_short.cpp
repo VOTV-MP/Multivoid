@@ -184,7 +184,7 @@ void FinishClient(int shorted, int before, int after) {
 }
 
 void RunClient() {
-    if (!disc_drill::HostPuppetUp()) return;
+    if (!disc_drill::HostPuppetUp() || !disc_drill::ClientJoined()) return;
     const int before = PowerMask();
     PS::Mark("client_ready");
     if (!PS::Await("host_ready", kStepSec)) return;
@@ -221,6 +221,13 @@ void HostFails(const char* why) {
 void RunHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
+    // A short begun while the slot is not world-ready reaches it by no send: the host acts only once the client's world is up.
+    if (!PS::WaitFor("the client's slot world-ready", 120, [] {
+            bool ready = false;
+            OnGameThread([&] { ready = harness::session_runtime::Session().IsSlotWorldReady(1); });
+            return ready;
+        }))
+        return;
     const int before = PowerMask();
     const uint32_t refused0 = Refused();
     PS::Mark("host_ready");
