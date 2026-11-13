@@ -26,7 +26,8 @@ namespace coop::prop_sound {
 void PlayUseClick(void* propActor);
 
 // A faucet's click (door0_open, natively PlaySound2D on its presser alone), spatialized at the faucet for the other peers.
-void PlayFaucetClick(void* faucet);
+// True when the play call was made; false when the faucet, the asset or the faucet's place did not resolve (said).
+bool PlayFaucetClick(void* faucet);
 
 // The grabbed prop's per-material pickup cue at the prop's location.
 // prop_C reads its cached physSoundData; plain-Actor grabs (the clump)

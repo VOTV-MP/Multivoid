@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_sound.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
@@ -9,6 +10,9 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/world_identity.h"
+
+#include <chrono>
+#include <cstdint>
 
 namespace coop::prop_sound {
 namespace {
@@ -145,38 +149,42 @@ void PlayUseClick(void* propActor) {
 }
 
 namespace {
-// The faucet's click asset, found once per world: a search of the object array is a hitch a human press must not pay, so
-// a world that has not got it in three asks has none and the press says so each time.
+// The faucet's click asset, held as a cached ref and found by a press: a search of the object array is a hitch, so a
+// press asks at most once per five seconds while the ref is dead, and a new world forgets the old one's asset.
 void* FaucetClickSound() {
-    constexpr int kAsks = 3;
-    static void* sSound = nullptr;
+    constexpr std::chrono::seconds kAskGap{5};
+    static ue_wrap::CachedObjRef sSound;
     static uint32_t sWorld = 0;
-    static int sAsks = 0;
+    static std::chrono::steady_clock::time_point sNextAsk{};
     const uint32_t world = ue_wrap::world_identity::Generation();
     if (world != sWorld) {
         sWorld = world;
-        sSound = nullptr;
-        sAsks = 0;
+        sSound.Reset();
+        sNextAsk = {};
     }
-    if (!sSound && sAsks < kAsks) {
-        ++sAsks;
-        sSound = R::FindObject(L"door0_open", P::name::SoundWaveClass);
+    if (!sSound.Alive()) {
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        if (now >= sNextAsk) {
+            sNextAsk = now + kAskGap;
+            sSound.Set(R::FindObject(L"door0_open", P::name::SoundWaveClass));
+        }
     }
-    return sSound;
+    return sSound.Get();
 }
 }  // namespace
 
-void PlayFaucetClick(void* faucet) {
-    if (!faucet || !R::IsLive(faucet)) return;
+bool PlayFaucetClick(void* faucet) {
+    if (!faucet || !R::IsLive(faucet)) return false;
     void* const sound = FaucetClickSound();
     if (!sound) {
         UE_LOGW("prop_sound: 'door0_open' sound asset not resolved yet -- no faucet click");
-        return;
+        return false;
     }
     ue_wrap::FVector loc{};
-    if (!ue_wrap::engine::TryGetActorLocation(faucet, loc)) return;
+    if (!ue_wrap::engine::TryGetActorLocation(faucet, loc)) return false;
     // The native 0.25 is in-ear, as the use click's is.
     ue_wrap::engine::PlaySoundAtLocation(faucet, sound, loc, ResolveAttenuation(), 0.5f, 1.0f);
+    return true;
 }
 
 void PlayThrowWhoosh(void* propActor) {

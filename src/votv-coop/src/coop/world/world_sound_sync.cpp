@@ -11,6 +11,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -19,6 +20,7 @@
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -34,8 +36,11 @@ UE_FACT_FN(kRowPlaySound2D, "world_sound_sync", L"GameplayStatics", L"PlaySound2
 // As the sky's own calls play them.
 constexpr float kEarthVolume = 1.5f;
 constexpr float kEarthPitch = 0.f;
-constexpr int kResolveTries = 3;   // the sounds load with the sky's class; a world that has not got them in three asks has none
+// The sounds load with the sky's class, so a world is asked every few seconds at first; a world that lacks them is asked at
+// a growing gap up to a minute (each ask is a search of the object array), and its third miss is said once.
+constexpr int kResolveSaidAt = 3;
 constexpr int kResolveGapSec = 5;
+constexpr int kResolveGapMaxSec = 60;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -43,9 +48,10 @@ H::PreNativeCallback g_cb = nullptr;
 void* g_fn = nullptr;       // PlaySound2D, once the hook is on
 int32_t g_offSound = -1;
 bool g_armed = false;
-// The two sounds' objects, found once per world: the hook compares the Sound argument's pointer and never reads it.
-void* g_soundIn = nullptr;
-void* g_soundOut = nullptr;
+// The two sounds' objects, found per world: the hook compares the Sound argument's pointer and never reads it, a client
+// hands one to the engine to play.
+ue_wrap::CachedObjRef g_soundIn;
+ue_wrap::CachedObjRef g_soundOut;
 uint32_t g_soundsWorld = 0;
 int g_tries = 0;
 Clock::time_point g_nextTry{};
@@ -65,13 +71,13 @@ bool FaucetOff() {
 // machine whose scheduler ran tp hears them. The Sound argument is the identity; the caller is the sky's own Blueprint.
 ue_wrap::script_gate::Verdict OnPlaySound2DPre(void* /*context*/, void* source, const uint8_t* parms) {
     void* const sound = *reinterpret_cast<void* const*>(parms + g_offSound);
-    if (!sound || (sound != g_soundIn && sound != g_soundOut)) return ue_wrap::script_gate::Verdict::Run;
+    if (!sound || (!g_soundIn.Is(sound) && !g_soundOut.Is(sound))) return ue_wrap::script_gate::Verdict::Run;
     if (!source || !R::IsLive(source) || R::ClassNameOf(source) != L"newsky_C") return ue_wrap::script_gate::Verdict::Run;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return ue_wrap::script_gate::Verdict::Run;
     ++g_c.matched;
     if (EarthOff()) return ue_wrap::script_gate::Verdict::Run;
-    const bool in = sound == g_soundIn;
+    const bool in = g_soundIn.Is(sound);
     coop::net::EventCuePayload p{};
     p.cueId = in ? kCueEarthIn : kCueEarthOut;
     if (s->SendReliable(coop::net::ReliableKind::EventCue, &p, sizeof(p))) ++g_c.sent;
@@ -113,24 +119,38 @@ void InstallHook() {
     g_fn = fn.Fn();
 }
 
-// Once per world: the two sounds' objects. A search of the object array, tried a few times while the world's sky loads.
-void ResolveSounds() {
+// A new world forgets the assets of the one before and its asking schedule.
+void ForgetOtherWorld() {
     const uint32_t world = ue_wrap::world_identity::Generation();
-    if (world != g_soundsWorld) {
-        g_soundsWorld = world;
-        g_soundIn = g_soundOut = nullptr;
-        g_tries = 0;
-    }
-    if ((g_soundIn && g_soundOut) || g_tries >= kResolveTries) return;
+    if (world == g_soundsWorld) return;
+    g_soundsWorld = world;
+    g_soundIn.Reset();
+    g_soundOut.Reset();
+    g_tries = 0;
+    g_nextTry = {};
+}
+
+bool HaveSounds() { return g_soundIn.Alive() && g_soundOut.Alive(); }
+
+// One search of the object array for whichever of the two is not held. True when both are.
+bool FindSounds() {
+    if (!g_soundIn.Alive()) g_soundIn.Set(R::FindObject(L"earthTP_in", L"SoundWave"));
+    if (!g_soundOut.Alive()) g_soundOut.Set(R::FindObject(L"earthTP_out", L"SoundWave"));
+    return HaveSounds();
+}
+
+// The two sounds' objects, asked at a gap that grows while the world's sky has not loaded them.
+void ResolveSounds() {
+    ForgetOtherWorld();
+    if (HaveSounds()) return;
     const Clock::time_point now = Clock::now();
     if (now < g_nextTry) return;
-    g_nextTry = now + std::chrono::seconds(kResolveGapSec);
+    const int gapSec = std::min(kResolveGapMaxSec, kResolveGapSec << std::min(g_tries, 4));
+    g_nextTry = now + std::chrono::seconds(gapSec);
     ++g_tries;
-    g_soundIn = R::FindObject(L"earthTP_in", L"SoundWave");
-    g_soundOut = R::FindObject(L"earthTP_out", L"SoundWave");
-    if (g_tries == kResolveTries && !(g_soundIn && g_soundOut))
-        UE_LOGW("world_sound: earthTP_in or earthTP_out is not in this world (in=%p out=%p) -- the sky's sounds stay the host's",
-                g_soundIn, g_soundOut);
+    if (!FindSounds() && g_tries == kResolveSaidAt)
+        UE_LOGW("world_sound: earthTP_in or earthTP_out is not in this world yet (in=%p out=%p) -- asked again at a growing gap",
+                g_soundIn.Raw(), g_soundOut.Raw());
 }
 
 }  // namespace
@@ -142,7 +162,7 @@ void Install(coop::net::Session* session) {
     // The two sounds are found on either role: the host compares them in its hook, a client plays them for a cue.
     if (connected) ResolveSounds();
     if (!g_fn) return;
-    const bool want = connected && session->role() == coop::net::Role::Host && g_soundIn && g_soundOut;
+    const bool want = connected && session->role() == coop::net::Role::Host && HaveSounds();
     if (want != g_armed && H::SetArmed(g_fn, g_cb, want)) g_armed = want;
 }
 
@@ -153,7 +173,16 @@ bool OnCue(const coop::net::EventCuePayload& p) {
     ++g_c.received;
     const bool in = p.cueId == kCueEarthIn;
     const wchar_t* const name = in ? L"earthTP_in" : L"earthTP_out";
-    const bool played = Play2D(name, in ? g_soundIn : g_soundOut);
+    // A cue is an event: a world that is up gets one search now when an asset is not held, and the asset it plays is
+    // this world's.
+    const bool worldUp = ue_wrap::world_identity::CurrentWorldKind() == ue_wrap::world_identity::WorldKind::Gameplay;
+    if (worldUp) {
+        ForgetOtherWorld();
+        if (!HaveSounds()) FindSounds();
+    } else {
+        UE_LOGW("world_sound: the cue came while no gameplay world is up -- not played");
+    }
+    const bool played = worldUp && Play2D(name, (in ? g_soundIn : g_soundOut).Get());
     if (played) ++g_c.played;
     UE_LOGI("world_sound: %ls %hs (#%u)", name, played ? "played" : "NOT played", g_c.played);
     return true;
@@ -168,7 +197,7 @@ void OnFaucetChanged(void* faucet) {
     if (s->role() == coop::net::Role::Client &&
         (!coop::net_pump::HasAnnouncedWorldReady() || coop::join_progress::Active()))
         return;
-    coop::prop_sound::PlayFaucetClick(faucet);
+    if (!coop::prop_sound::PlayFaucetClick(faucet)) return;   // the said refusal; no click is counted for it
     ++g_c.clicks;
     UE_LOGI("world_sound: faucet click played (#%u)", g_c.clicks);
 }

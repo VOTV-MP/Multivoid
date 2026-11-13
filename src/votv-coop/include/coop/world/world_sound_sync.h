@@ -1,7 +1,7 @@
 // coop/world/world_sound_sync.h -- world sounds the game plays in 2D on the machine that ran them alone.
 //
 // The earth teleport's two sounds come from the sky's tp, an event only the host's scheduler fires: a pre hook on the
-// host's PlaySound2D reads the Sound argument and, for earthTP_in or earthTP_out (their objects found once per world),
+// host's PlaySound2D reads the Sound argument and, for earthTP_in or earthTP_out (their objects held per world as cached refs, asked again while a world lacks them),
 // sends EventCue ids above the emitter cues, which each client plays. A faucet's click is its presser's alone, while its
 // state already crosses, so a peer that takes a faucet's change plays the click at the faucet. The shape follows Watchers
 // of the Void's lane.
