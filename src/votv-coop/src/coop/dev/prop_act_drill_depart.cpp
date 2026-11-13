@@ -2,7 +2,7 @@
 // commit and is killed by the rig (--rejoin), so the host holds a reservation for a slot that left; the newcomer in
 // that slot forges the dead life's commit and then takes the prop honestly. See coop/dev/prop_act_drill.h.
 //
-//   HOST -- spawns a crowbar, sees c1 reserve it, sees the departure release the reservation and tally it, says the
+//   HOST -- spawns a crowbar, sees c1 reserve it, sees the departure release the reservation (its own event), says the
 //           newcomer line once slot 1 is world-ready again, tallies the forged commit as bad with the crowbar
 //           standing, and judges the honest take as one destroy commit.
 //   c1   -- life 1 pockets the crowbar with its commit held and prints the rig's marker. Life 2 forges the commit,
@@ -48,7 +48,7 @@ constexpr int kSlot = kClientSlot;   // the one client, in both lives
 // ---- host (judge) ------------------------------------------------------------------------------------------------
 
 struct HBase {
-    uint32_t heldAtDisconnect = 0, badCommit = 0, destroys = 0;
+    uint32_t badCommit = 0, destroys = 0;
 };
 
 enum class HStage : uint8_t { Arm, Spawn, Announce, AwaitReserved, AwaitGone, AwaitNewcomer, AwaitBad, AwaitDone,
@@ -58,6 +58,22 @@ uint64_t g_hsMs = 0, g_hNextMs = 0;
 ue_wrap::CachedObjRef g_target;
 EL::ElementId g_eid = EL::kInvalidId;
 HBase g_base;
+
+// The departure, as the host's OnPeerGone said it (the seam of prop_act_host): how many reservations a leaving slot held
+// and the eid of the last. Not the session-wide tally, which the same tick's DisconnectAll clears.
+struct Departure {
+    uint32_t count = 0;
+    uint32_t eid = 0;
+};
+Departure g_departure;
+// The host's session, kept from its ticks: the reset tells the last client's departure (the session lives on) from its end.
+const coop::net::Session* g_hostSession = nullptr;
+
+void OnHeldDeparture(uint8_t slot, uint32_t eid) {
+    if (slot != kSlot) return;
+    ++g_departure.count;
+    g_departure.eid = eid;
+}
 
 void HEnter(HStage s) {
     g_hs = s;
@@ -135,7 +151,8 @@ void HostStep(coop::net::Session* s) {
             if (HExpired(kAnnounceBoundMs)) HostInvalid("the spawned prop was never announced");
             return;
         }
-        g_base.heldAtDisconnect = PAH::TallyOf(Tally::HeldAtDisconnect);
+        g_departure = Departure{};
+        PAH::dev::SetOnHeldAtDeparture(&OnHeldDeparture);
         Say(ReadyHead(kDepartRow) + std::to_string(static_cast<unsigned>(g_eid)));
         UE_LOGI("%s host depart said ready: eid %u", kTag, static_cast<unsigned>(g_eid));
         HEnter(HStage::AwaitReserved);
@@ -151,19 +168,22 @@ void HostStep(coop::net::Session* s) {
         HEnter(HStage::AwaitGone);
         return;
     case HStage::AwaitGone: {
-        // The rig kills c1 on its marker; the host sees the slot go, tally it and release the reservation.
-        const uint32_t left = PAH::TallyOf(Tally::HeldAtDisconnect) - g_base.heldAtDisconnect;
+        // The rig kills c1 on its marker; the host's OnPeerGone releases the reservation and says so through the seam.
+        const uint32_t left = g_departure.count;
         if (left == 0) {
-            if (HExpired(kDoneBoundMs)) HostInvalid("the departure never tallied a reservation held at disconnect");
+            if (HExpired(kDoneBoundMs)) HostInvalid("the departure never released a reservation held at disconnect");
             return;
         }
-        if (left != 1 || coop::prop_hold::ReservationCount(kSlot) != 0 || !TargetStands()) {
-            HostFail("the departure tallied " + std::to_string(left) + " reservations, left " +
-                     std::to_string(coop::prop_hold::ReservationCount(kSlot)) + " standing, or the target is gone");
+        if (left != 1 || g_departure.eid != static_cast<uint32_t>(g_eid) || coop::prop_hold::ReservationCount(kSlot) != 0 ||
+            !TargetStands()) {
+            HostFail("the departure released " + std::to_string(left) + " reservations (the last of eid " +
+                     std::to_string(g_departure.eid) + "), left " +
+                     std::to_string(coop::prop_hold::ReservationCount(kSlot)) +
+                     " standing, or it was not the target's, or the target is gone");
             return;
         }
-        UE_LOGI("%s host depart: the departure released the reservation (held_at_disconnect +1), the target stands",
-                kTag);
+        UE_LOGI("%s host depart: the departure released the reservation of eid %u, the target stands", kTag,
+                static_cast<unsigned>(g_departure.eid));
         HEnter(HStage::AwaitNewcomer);
         return;
     }
@@ -402,7 +422,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
         if (st == 0) return;
         g_walk.reset();
         if (st == 2) {
-            Fail("the walk to the mirror did not arrive");
+            Invalid("the walk to the mirror did not arrive");
             return;
         }
         CEnter(CStage::AwaitGather);
@@ -440,6 +460,7 @@ void ClientStep(coop::net::Session* s, void* player, uint64_t now) {
 }  // namespace
 
 void DepartHostTick(coop::net::Session* s) {
+    g_hostSession = s;
     if (g_hs == HStage::Done) return;
     const uint64_t now = NowMs();
     if (now < g_hNextMs) return;
@@ -460,6 +481,12 @@ void DepartClientTick(coop::net::Session* s) {
 }
 
 void DepartReset() {
+    // The host's last client leaving runs the session-wide reset while the session lives on: the departure this phase is
+    // measuring, and the host's stage and baseline outlive it. Only a session that has stopped ends the phase's state.
+    if (g_hostSession && g_hostSession->running()) return;
+    g_hostSession = nullptr;
+    PAH::dev::SetOnHeldAtDeparture(nullptr);
+    g_departure = Departure{};
     g_hs = HStage::Arm;
     g_hsMs = g_hNextMs = 0;
     g_target.Reset();

@@ -92,6 +92,9 @@ namespace dev {   // called only from src/coop/dev/ (the act drills); compiled a
 // Would the judge accept `family` on `actor`? FamilyFits' path with no tally bumped. `*first` is the term that
 // refuses, Tally::kCount when the act fits. Game thread.
 bool CensusFits(void* actor, uint8_t family, Tally* first);
+// Called from OnPeerGone with the leaver's slot and the eid it held, after its reservation is released; null by default. The
+// departure's own event: the session-wide tally the same tick's DisconnectAll clears is not a place to read it from.
+void SetOnHeldAtDeparture(void (*fn)(uint8_t slot, uint32_t eid));
 }  // namespace dev
 
 }  // namespace coop::prop_act_host

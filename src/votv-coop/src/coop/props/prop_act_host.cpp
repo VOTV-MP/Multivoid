@@ -108,6 +108,7 @@ UseClass g_useClasses[] = {{L"prop_food_C", true, {}}, {L"prop_food_mre_C", fals
 // its copy before the destroy, so the contents are host-born and reach every peer; the opener only removes its copy.
 ue_wrap::CachedObjRef g_mreClass;
 uint32_t g_mreOpens = 0;
+void (*g_onHeldAtDeparture)(uint8_t slot, uint32_t eid) = nullptr;   // dev seam, null by default
 
 bool IsMre(void* actor) {
     void* const c = ResolveClass(g_mreClass, L"prop_food_mre_C");
@@ -596,6 +597,7 @@ void OnPeerGone(uint8_t slot) {
     UE_LOGI("prop_act: slot %u left holding a reservation (eid %u) -- released", static_cast<unsigned>(slot),
             static_cast<unsigned>(eid));
     ReleaseFor(slot);
+    if (g_onHeldAtDeparture) g_onHeldAtDeparture(slot, eid);
 }
 
 const char* TallyName(Tally t) {
@@ -640,6 +642,8 @@ uint32_t TallyOf(Tally t) { return t < Tally::kCount ? g_tally[static_cast<int>(
 uint32_t MreOpens() { return g_mreOpens; }
 
 namespace dev {
+
+void SetOnHeldAtDeparture(void (*fn)(uint8_t slot, uint32_t eid)) { g_onHeldAtDeparture = fn; }
 
 bool CensusFits(void* actor, uint8_t family, Tally* first) {
     std::optional<Tally> why;
