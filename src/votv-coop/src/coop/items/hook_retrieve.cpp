@@ -104,11 +104,14 @@ std::string Red() {
     return r;
 }
 
-// A hook this peer still owns -- its own, before the second end anchored -- is the game's to take back here: the owner
-// lane announces the destroy.
+// A hook this peer owns and the host has not adopted -- its own, before the second end anchored -- is the game's to take
+// back here: the owner lane announces the destroy. Once its commit is sent (hook_sync's `committed`) the host adopts it
+// as the last chunk lands, and a request sent after the commit rides the same ordered channel, so the host holds the key
+// by the time it judges: from then on the pickup goes through the host like any anchored hook, or the game's body would
+// run here and leave the host's adopted copy standing beside the item.
 bool OwnedHere(void* hook) {
     for (const auto& o : D::OwnedHooks())
-        if (o.ref.Raw() == hook) return true;
+        if (o.ref.Raw() == hook) return !o.committed;
     return false;
 }
 
@@ -193,11 +196,26 @@ void OnActionPost(const sg::Call& c) {
     UE_LOGI("hook_retrieve: the host player took hook '%ls' -- the clients are told", key.c_str());
 }
 
-// HOST: a client's pickup.
+// HOST: a client's pickup. MTA's server alone decides a pickup: CPickup::CanUse and Use (CPickup.cpp:379-405) and
+// Callback_OnCollision (:483), Source's server traces the use on its own copy: CBasePlayer::PlayerUse
+// (baseplayer_shared.cpp:1274). Here the look is a Blueprint trace on the client's copy that the host cannot replay, so
+// the client names the hook by its key and the host judges identity, reach and existence: it is still the only one
+// that destroys the shared hook.
+// A request is judged and answered inside this one call, so a slot has no second request in flight to refuse.
 void OnRequest(coop::net::Session& s, const std::wstring& key, uint8_t slot) {
     void* hook = D::FindHookByKey(key);
-    // No hook is the ordinary end of a second press, or of two players taking one hook.
-    if (!hook) { Refuse(s, slot, key, "no hook of that key here -- already taken"); return; }
+    // The host holds no hook of that key: the second press of a taken hook, two players taking one, or a copy the
+    // client keeps that the host no longer has. The host's absence is authoritative, so the sender's copy goes with the
+    // word that frees its latch; no taker is named, so no item is made.
+    if (!hook) {
+        ++g_refused;
+        UE_LOGI("hook_retrieve: slot %u asked for hook '%ls', which the host does not hold -- its copy is told gone",
+                static_cast<unsigned>(slot), key.c_str());
+        SendGone(s, key, coop::net::kHookRetrieveNoTaker, slot);
+        return;
+    }
+    // A hook the host is still flying is its own player's, not an anchored one a client may take.
+    if (OwnedHere(hook)) { Refuse(s, slot, key, "the hook is the host's own, not yet anchored"); return; }
     ue_wrap::FVector a{}, b{};
     if (!H::EndLocations(hook, a, b)) {
         if (!E::TryGetActorLocation(hook, a)) { Refuse(s, slot, key, "the hook's ends do not read"); return; }
