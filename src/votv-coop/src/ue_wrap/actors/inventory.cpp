@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
 
 namespace ue_wrap::inventory {
 namespace {
@@ -57,15 +58,18 @@ int32_t g_offInvIndex         = -2;  // propInventory_C.Index           -> the G
 int32_t g_offGObjStack        = -2;  // saveSlot_C.GObjStack
 
 // A miss is remembered only for the world it was made in (a class may not be loaded yet, as at the menu): the next world
-// looks again, and says so again.
-uint32_t g_missWorld = 0;
+// looks again, and says so again. The world is stamped per offset, so one slot's miss in a world does not hide another's.
+uint32_t& MissWorldOf(const int32_t& slot) {
+    static std::unordered_map<const int32_t*, uint32_t> sMiss;
+    return sMiss[&slot];
+}
 
 int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
-    if (slot == -1 && g_missWorld != world_identity::Generation()) slot = -2;
+    if (slot == -1 && MissWorldOf(slot) != world_identity::Generation()) slot = -2;
     if (slot == -2) {
         slot = cls ? R::FindPropertyOffset(cls, name) : -1;
         if (slot < 0) {
-            g_missWorld = world_identity::Generation();
+            MissWorldOf(slot) = world_identity::Generation();
             UE_LOGW("inventory: could not resolve %ls -- what reads it stays off until the next world", name);
         }
     }

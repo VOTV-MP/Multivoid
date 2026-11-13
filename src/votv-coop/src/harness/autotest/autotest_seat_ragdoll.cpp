@@ -134,11 +134,18 @@ bool PassesAfter(uint32_t seen, int passes) {
 // events are the hold dropping (FAIL) and the run ending (PASS); the run is long, so its bound is a step's.
 bool HoldsToPingEnd(bool& freed) {
     bool dropped = false;
+    // The hold and the ping are read in one game-thread step, the hold first: a hold already free while the ping still runs
+    // is a premature drop. Inside the one poll that sees the run end the legitimate release (a reliable message a moment
+    // after the ping's end) cannot be told from a drop, so that poll reads PASS; a drop earlier is read at its own poll.
     const bool ended = PS::WaitFor("the ping run's end", kStepSec, [&dropped] {
         uint8_t ping = 0xFF;
-        OnGameThread([&] { ping = coop::desk_input_sync::PingActiveSlot(); });
+        bool free = false;
+        OnGameThread([&] {
+            free = coop::device_occupancy::HolderOf(Key()) == 0xFF;
+            ping = coop::desk_input_sync::PingActiveSlot();
+        });
         if (ping == 0xFF) return true;
-        if (Holder() == 0xFF) dropped = true;
+        if (free) dropped = true;
         return dropped;
     });
     freed = dropped;
