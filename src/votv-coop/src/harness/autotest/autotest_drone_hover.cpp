@@ -9,7 +9,9 @@
 // client's copy sits off its path at most twice as far as the host's drone, plus 2 cm and 0.05 degrees, and, flying,
 // its playback held past the newest pose in at most 1 frame in 100. The row drone_hover_kick bumps the client's
 // hovering copy twice, as a touch would; with the row drone_hover_body_red the client first puts the copy's root
-// back into the physics simulation, and the bumped copy must make the verdict FAIL. Gated by
+// back into the physics simulation, and the bumped copy must make the verdict FAIL. The row
+// drone_playback_delay_red_ms pins the playback delay; with the host's net.fakelag_ms and net.fakejitter_ms set,
+// the playback then runs past the newest pose and the verdict must be FAIL. Gated by
 // VOTVCOOP_RUN_DRONE_HOVER; the peers' folder is VOTVCOOP_CAN_DIR.
 
 #include "harness/autotest.h"

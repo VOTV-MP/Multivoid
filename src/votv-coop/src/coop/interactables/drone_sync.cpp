@@ -10,6 +10,8 @@
 
 #include "coop/interactables/drone_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -146,6 +148,10 @@ float LerpAngle(float a, float b, float t) { return a + ue_wrap::NormalizeAxis(b
 
 // The delay 95 of the last poses' lateness kept within, plus the margin.
 double TargetDelay(const DroneMirror& e) {
+    // Drill red (drone_playback_delay_red_ms, off at 0): a delay that ignores the link, so the drill's fake lag and
+    // jitter run the playback past the newest pose and its verdict must be FAIL.
+    static const long kRedDelayMs = coop::config::ResolveInt(coop::config_registry::rows::drone_playback_delay_red_ms);
+    if (kRedDelayMs > 0) return static_cast<double>(kRedDelayMs);
     const size_t n = std::min(e.lateN, kLateRing);
     if (n < 10) return kMinDelayMs;
     double v[kLateRing];
