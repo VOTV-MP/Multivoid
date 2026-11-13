@@ -2,7 +2,7 @@
 // host path (coop/interactables/atv_drill_events.h), never on a clock. A step is a prelude on the host, a setup on every peer,
 // the actor's act and a decision on every peer; see atv_gate_drill_detail.h. The step ids are the drill's own: 1 refuel, 2
 // repair, 3 fit, 4 take-off, 5 the seated controls, 6 the horn tapped (6h held, 6r its release), 7a the host's refuel with
-// the client not driving, 7 with the client driving, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a
+// the client not driving, 7 with the seated client streaming, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a
 // forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel.
 
 #include "atv_gate_drill_detail.h"
@@ -101,16 +101,16 @@ bool ActForgeFit(Ctx& c, std::string& why) {
     return Forge(c, op::kFit, 0.f, static_cast<uint8_t>(m), why);
 }
 
-bool SetupHold(Ctx& c, std::string& why) {
-    if (c.me != kClient) return true;
-    OnGt([&] { H::HoldNextStateForDrill(c.key); });
-    return DriveOn(c.key, why);
+// The client stays seated from step 5 and does not drive: a seated client syncer streams its blocks at the drive rate
+// whether it drives or not (atv_sync's tick), which is all the ack needs, and the ATV stays where the host can aim its
+// pour (a moving ATV took no aim: f2-green step 7 INVALID).
+bool SetupHold(Ctx& c, std::string&) {
+    if (c.me == kClient) OnGt([&] { H::HoldNextStateForDrill(c.key); });
+    return true;
 }
 bool SetupModuleInHand(Ctx& c, std::string& why) { return c.me != kClient || ModuleToHand(c.key, why); }
-void TearDownDrive(Ctx& c) {
-    if (c.me != kClient) return;
-    DriveOff(c.key);
-    OnGt([&] { H::HoldNextStateForDrill(std::wstring()); });
+void TearDownHold(Ctx& c) {
+    if (c.me == kClient) OnGt([&] { H::HoldNextStateForDrill(std::wstring()); });
 }
 void TearDownHostDrive(Ctx& c) {
     if (c.me != kHost) return;
@@ -259,7 +259,7 @@ Result D7a(Ctx& c) {
     return Pass("the host's refuel reached this copy before the answer");
 }
 
-// 7: the same refuel while the client drives, its state held until its next block is built: that block carries the ack of the
+// 7: the same refuel while the seated client streams, its state held until its next block is built: that block carries the ack of the
 // state before. Decided on the host at the first block of the client's admitted after the refuel.
 Result D7(Ctx& c) {
     DE::Rec r;
@@ -379,7 +379,7 @@ const Step kSteps[] = {
     {"6h", kClient, "the syncer's horn held", nullptr, nullptr, &ActHold, &D6h, nullptr},
     {"6r", kClient, "the held horn released", nullptr, nullptr, &ActRelease, &D6r, nullptr},
     {"7a", kHost, "the host's refuel, the client not driving", &Seed30, nullptr, &ActPour, &D7a, nullptr},
-    {"7", kHost, "the host's refuel while the client drives", &Seed30, &SetupHold, &ActPour, &D7, &TearDownDrive},
+    {"7", kHost, "the host's refuel while the seated client streams", &Seed30, &SetupHold, &ActPour, &D7, &TearDownHold},
     {"8", kClient, "the client's burn reaches the host", nullptr, nullptr, &ActDrive, &D8, &TearDownClientDrive},
     {"5b", kClient, "the client dismounts with the brake set", nullptr, nullptr, &ActBrakeAndLeave, &D5b, nullptr},
     {"9", kHost, "the host's burn reaches the clients", nullptr, nullptr, &ActHostDrives, &D9, &TearDownHostDrive},
