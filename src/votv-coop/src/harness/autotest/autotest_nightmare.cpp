@@ -222,6 +222,13 @@ bool WorldEventsGone() {
     return n == 0;
 }
 
+// Whether an event is running now (an unreadable count is not "running"): the sample a wake is attributed by.
+bool WorldEventRunning() {
+    int32_t n = -1;
+    OnGameThread([&n] { ue_wrap::active_events::ReadCount(n); });
+    return n > 0;
+}
+
 // The roll point of this client's rest, or a dream, or the end of the rest: the events after which no dream can come
 // (or one has). RollPoints counts the point whether the roll was made or held back by the red arm. A rest that ends
 // before its roll point was ended by something else (the game wakes every sleeper for an event), which is no verdict on
@@ -264,18 +271,26 @@ void RunHost() {
     }
     // The state is an event (the client's report reaching this host); a bound that runs out first is Invalid. The hide
     // is applied inside the call that takes the state, so it is read once, at once.
-    if (!PS::WaitFor("the client's state dreaming here", kStateSec, [] { HoldNeed(); return Dreams(1); }, false)) {
+    // An event running at any sample while the host rests is latched: the game wakes every sleeper for one, and it may
+    // have ended again by the time the verdict is read.
+    bool eventSeen = false;
+    if (!PS::WaitFor("the client's state dreaming here", kStateSec, [&eventSeen] {
+            HoldNeed();
+            eventSeen = eventSeen || WorldEventRunning();
+            return Dreams(1);
+        }, false)) {
         Mark("A_seen", "0");
         return HostInvalid("the client's rest state dreaming did not reach the host");
     }
     const bool hidden = CopyHidden(1) == 1;
     const Now n = Read();
+    eventSeen = eventSeen || WorldEventRunning();
     Log("A", n);
     const std::string why = !hidden     ? "the client's copy is not hidden here while the client dreams"
                             : !n.asleep ? "the host woke while the client dreamt"
                                         : "";
-    // A host that woke while an event runs was woken by it (the game wakes every sleeper for one): no verdict on the lane.
-    if (hidden && !n.asleep && !WorldEventsGone()) {
+    // A host that woke while an event ran was woken by it (the game wakes every sleeper for one): no verdict on the lane.
+    if (hidden && !n.asleep && eventSeen) {
         UE_LOGW("nightmare: ARM A host INVALID the host was woken by a world event while the client dreamt");
         Mark("A_seen", "0");
         return HostInvalid("the host was woken by a world event while the client dreamt");
