@@ -159,7 +159,9 @@ void Refund(void* atv, uint8_t module) {
 }
 
 // A verb that consumes the held item (a toolbox use, a module): the sender's last held class must be `cls`, and the hold,
-// as hand_item numbers it (one number per announced item), must have a use left. The item is spent on its copy by then, so
+// as hand_item numbers it, must have a use left. The number moves on each hold the client's own hand lane announces, so it
+// is a rate bound on that announce (kHandBudget), not the identity of an item: a client that empties its hand and
+// announces a hold again starts a new one. The item is spent on its copy by then, so
 // a use is counted whatever the verdict after it. A hold announced after the last spend starts over; one that never was
 // (a forged request with an old item) finds none left. A gas can is not spent: its fuel comes out of the tank's room.
 bool SpendHold(uint8_t slot, const wchar_t* cls, uint32_t uses) {

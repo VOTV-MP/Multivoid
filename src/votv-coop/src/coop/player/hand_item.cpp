@@ -670,6 +670,7 @@ bool HandleHandItem(coop::net::Session& session,
         PendingHand& pend = g_pendingHand[describedSlot];
         if (SameHeld(in, g_hands[describedSlot])) {
             pend.pace.Withdraw();
+            for (HandAppliedFn fn : g_appliedSubs) if (fn) fn(describedSlot);   // an owed state that settles is an edge too
             return true;
         }
         std::wstring own;

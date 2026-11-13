@@ -118,7 +118,8 @@ bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
 uint32_t HoldGeneration(uint8_t slot);
 
 // Host: a consumer of the hand states the lane applied. Called on the game thread, after the state is applied and re-sent,
-// with the slot it was for; it calls nothing of this lane back. The table is fixed (kMaxHandSubscribers); a subscriber is
+// or when a state owed for the slot is withdrawn because it equals the one applied (HandStateOwed then reads false), with
+// the slot it was for; it calls nothing of this lane back. The table is fixed (kMaxHandSubscribers); a subscriber is
 // added once at install and never removed, and a second Subscribe of the same function is a no-op. False when it is full.
 using HandAppliedFn = void (*)(uint8_t slot);
 constexpr size_t kMaxHandSubscribers = 4;
