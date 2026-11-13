@@ -9,7 +9,7 @@
 // The first failed check says `rig: VERDICT cap-label FAIL` and no later step runs; a wait that ends on its bound
 // says INVALID. The receiver waits for the actor's level and module, which its apply writes in one game-thread task
 // with the repaint, and reads its label once. Armed by the row cap_label_drill on both peers (VOTVCOOP_CAN_DIR).
-// Reds: cap_label_repaint_off, cap_label_join_repaint_off, cap_label_beginplay_off, and in the saved arm (a loaded
+// Reds: cap_label_repaint_off, cap_label_join_repaint_off, and in the saved arm (a loaded
 // host world, its label read at the desk's setData, INVALID after 120 s) cap_label_setdata_off. The driver launches
 // the client once the host logs `STATE 0-before-join`.
 

@@ -76,17 +76,13 @@ bool JoinRepaintOff() {
     static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_join_repaint_off);
     return s_off;
 }
-bool BeginPlayRepaintOff() {
-    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_beginplay_off);
-    return s_off;
-}
 bool SetDataRepaintOff() {
     static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_setdata_off);
     return s_off;
 }
 
 // Runs the applies the screen widget's absence left owed; one that cannot run yet stays owed. Game thread.
-void RunOwed(bool atBeginPlay, const char* at) {
+void RunOwed(const char* at) {
     if (!g_visPending && !g_remapPending && !g_capLabelPending) return;
     if (!CD::EnsureResolved()) return;
     if (g_visPending) {
@@ -101,7 +97,7 @@ void RunOwed(bool atBeginPlay, const char* at) {
         g_remapPending = false;
         UE_LOGI("desk_input: deferred remap repaint done (at %s)", at);
     }
-    if (g_capLabelPending && !(atBeginPlay && BeginPlayRepaintOff()) && CD::RepaintCapLevel()) {
+    if (g_capLabelPending && CD::RepaintCapLevel()) {
         g_capLabelPending = false;
         UE_LOGI("desk_input: deferred cap label repaint done (at %s)", at);
     }
@@ -113,7 +109,7 @@ std::atomic<bool> g_deskDataApplied{false};
 
 void OnDeskBeginPlayPost(const sg::Call&) {
     g_deskDataApplied.store(false, std::memory_order_release);
-    RunOwed(true, "the desk's BeginPlay");
+    RunOwed("the desk's BeginPlay");
 }
 
 // The desk's setData is the save's restore: it writes the cap level and the physical modules back and repaints no
@@ -125,7 +121,7 @@ UE_FACT_FN(kRowDeskSetData, "desk_input_sync", L"analogDScreenTest_C", L"setData
 
 void OnDeskSetDataPost(const sg::Call&) {
     if (!CapRepaintOff() && !SetDataRepaintOff()) g_capLabelPending = true;
-    RunOwed(false, "the desk's setData");
+    RunOwed("the desk's setData");
     if (!g_deskDataApplied.exchange(true, std::memory_order_acq_rel))
         UE_LOGI("desk_input: the desk's save data applied");
 }
@@ -244,7 +240,7 @@ void PollOnce(coop::net::Session* s) {
         SendDelta(s, DeskInputField::PlaySelectIndex, 0, cur.playSelectIndex, false);
     if (cur.compMaxLevel != g_baseline.compMaxLevel) {
         SendDelta(s, DeskInputField::CompMaxLevel, 0, cur.compMaxLevel, false);
-        RunOwed(false, "a local cap press");
+        RunOwed("a local cap press");
     }
     if (cur.remapMin != g_baseline.remapMin && std::isfinite(cur.remapMin))
         SendDelta(s, DeskInputField::RemapMin, cur.remapMin, 0, false);
@@ -393,7 +389,7 @@ bool RepaintCapLevelOrDefer() {
     if (CapRepaintOff()) return false;
     const bool ran = CD::RepaintCapLevel();
     g_capLabelPending = !ran;
-    if (ran) RunOwed(false, "a cap label repaint");  // the widget stands: what else was owed can run
+    if (ran) RunOwed("a cap label repaint");  // the widget stands: what else was owed can run
     return ran;
 }
 

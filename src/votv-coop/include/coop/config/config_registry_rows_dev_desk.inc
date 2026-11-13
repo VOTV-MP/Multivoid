@@ -141,9 +141,6 @@ CFG_FLAG(cap_label_repaint_off, "cap_label_repaint_off", "dev", false, "VOTVCOOP
 CFG_FLAG(cap_label_join_repaint_off, "cap_label_join_repaint_off", "dev", false, "VOTVCOOP_CAP_LABEL_JOIN_REPAINT_OFF",
     "Developer (the JOINING peer; the cap-label drill's join red): the join adopt writes the host's cap level and does "
     "not repaint the label, so the joiner's first step must FAIL.")
-CFG_FLAG(cap_label_beginplay_off, "cap_label_beginplay_off", "dev", false, "VOTVCOOP_CAP_LABEL_BEGINPLAY_OFF",
-    "Developer (the cap-label drill's red): a cap label repaint owed because the desk's screen widget was not assigned "
-    "is not run at the desk's BeginPlay.")
 CFG_FLAG(cap_label_setdata_off, "cap_label_setdata_off", "dev", false, "VOTVCOOP_CAP_LABEL_SETDATA_OFF",
     "Developer (the HOST; the cap-label drill's saved-world red): the desk's setData, the save's restore, does not "
     "repaint the cap label, so the drill's saved arm must FAIL when the save holds a cap level or the module.")
