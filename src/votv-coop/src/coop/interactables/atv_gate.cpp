@@ -71,15 +71,17 @@ struct Pend {
 };
 Pend g_pend[kRowCount];
 uint32_t g_overlapRefused = 0;
+uint32_t g_capCancelled = 0;
 
 // Each row's UFunction as its PRE last saw it, for sg::IsBodyActive: the gate's own scope says whether another of these verbs
 // is running around the one that ended (playerUsedOn calls fuelUp and toolboxFix), which a counter of PREs and POSTs cannot say
 // once a fault or a cancel skips a POST.
 void* g_rowFn[kRowCount] = {};
 
-// The acts a PRE could not read what its POST needs of, so nothing was asked or published for them: counted, each reason said once.
+// The acts a PRE could not read what its POST needs of, or whose POST could not read the ATV's vitals, so nothing was asked or
+// published for them: counted, each reason said once.
 uint32_t g_unread = 0;
-bool g_unreadSaid[3] = {};
+bool g_unreadSaid[4] = {};
 
 sg::Verdict Unread(int why, const char* what) {
     ++g_unread;
@@ -149,6 +151,14 @@ sg::Verdict OnPre(const sg::Call& call) {
         if (off >= 0 && !coop::players::Registry::Get().IsLocal(*reinterpret_cast<void* const*>(call.locals + off)))
             return sg::Verdict::Run;
     }
+    // A client at its cap of open requests (per ATV, and over all) cancels the verb: its act would be answered by nothing, and
+    // nothing irreversible may happen unanswered (the same cancel as the fuelbox overlap's). Said once, every one counted.
+    if (client && H::RequestCapReached(call.object)) {
+        if (++g_capCancelled == 1)
+            UE_LOGI("atv_gate: this client's requests are at their cap -- its act on %p is cancelled (counted; said once)",
+                    call.object);
+        return sg::Verdict::Cancel;
+    }
     if (row == kTake) {
         static R::ParamOffset sItem{L"item"};
         const int32_t off = sItem.Of(call.function);
@@ -190,7 +200,12 @@ void OnPost(const sg::Call& call) {
     const Who role = RoleNow();
     // A call that changed nothing (the toolbox's repeat once the health is 100) asks and publishes nothing, and builds no key.
     H::Vitals now;
-    if (role == Who::None || !H::ReadVitals(call.object, now) || now == pd.before) return;
+    if (role == Who::None) return;
+    if (!H::ReadVitals(call.object, now)) {
+        Unread(3, "a verb whose ATV's vitals are not readable after it");
+        return;
+    }
+    if (now == pd.before) return;
     const std::wstring key = A::GetKeyString(call.object);
     if (!coop::atv_sync::AnnounceableAtvKey(key)) return;
     if (role == Who::Host) {
@@ -326,8 +341,10 @@ void OnAnswer(uint32_t reqId, uint8_t reason) {
 
 void OnDisconnect() {
     if (g_unread) UE_LOGI("atv_gate: session end -- %u act(s) on an ATV were not carried: their PRE could not read them", g_unread);
+    if (g_capCancelled) UE_LOGI("atv_gate: session end -- %u act(s) on an ATV were cancelled at the request cap", g_capCancelled);
     g_unread = 0;
     g_overlapRefused = 0;
+    g_capCancelled = 0;
     g_takeoffs.clear();
     for (Pend& p : g_pend) p = Pend{};
 }

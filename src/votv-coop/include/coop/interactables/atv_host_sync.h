@@ -96,9 +96,15 @@ public:
 
 bool Applying();
 
+// CLIENT: whether this client's open requests are at their cap, 4 on `atv` or 8 over all ATVs (the host's queue per sender).
+// atv_gate's PRE reads it and cancels the verb, so nothing irreversible happens on a copy for an act no request answers. False
+// on a host, and while no request is open (no key is built then). Game thread.
+bool RequestCapReached(void* atv);
+
 // CLIENT, the open-request gate (per ATV, at most 4 requests open, 8 over all ATVs: the host's queue per sender): register
-// a request id for `key`, then send the request (atv_host_judge.h). Returns the id, or 0 when nothing was sent: the 5th
-// act on one ATV and the 9th overall are refused here and said once, as is a session that is not a connected client's. The gate stays shut while any id is open; an answer
+// a request id for `key`, then send the request (atv_host_judge.h). Returns the id, or 0 when nothing was sent: a 5th
+// request on one ATV and a 9th overall are refused here and said once (the cap is the PRE's, above, so this is the backstop
+// for a verb nested in another), the adoption's sync (kSync) being exempt from the total, as is a session that is not a connected client's. The gate stays shut while any id is open; an answer
 // removes its id and the state it carries is applied, with its sequence recorded, when it closes the last. The other
 // exits are the ATV's destroy (NoteAtvGone), the session's end and a world change, each clearing the set and saying an
 // unanswered id once. An answer for an id not open is dropped and counted.

@@ -340,14 +340,23 @@ void NoteBlockBuilt(const std::wstring& key) {
     if (g_haveHeld && key == g_holdKey) ReleaseHeld();
 }
 
+bool RequestCapReached(void* atv) {
+    coop::net::Session* s = Live();
+    if (!s || s->role() != coop::net::Role::Client || g_gate.empty()) return false;   // nothing open: no key is built
+    if (OpenTotal() >= kMaxOpenTotal) return true;
+    const auto it = g_gate.find(A::GetKeyString(atv));
+    return it != g_gate.end() && it->second.open.size() >= kMaxOpen;
+}
+
 uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
     coop::net::Session* s = Live();
     if (!s || s->role() != coop::net::Role::Client) return 0;
-    if (OpenTotal() >= kMaxOpenTotal) {
+    // The adoption's sync is exempt from the total: one per ATV, asked only while its gate is open for nothing else.
+    if (opcode != op::kSync && OpenTotal() >= kMaxOpenTotal) {
         ++g_n.refusedAsks;
         if (!g_totalFullSaid) {
             g_totalFullSaid = true;
-            UE_LOGI("atv_host: %zu requests are open over all ATVs -- this player's next act is not sent (said once)",
+            UE_LOGI("atv_host: %zu requests are open over all ATVs -- this request is not sent (said once)",
                     kMaxOpenTotal);
         }
         return 0;
@@ -357,7 +366,7 @@ uint32_t Ask(const std::wstring& key, uint8_t opcode, float amount, uint8_t modu
         ++g_n.refusedAsks;
         if (!g.fullSaid) {
             g.fullSaid = true;
-            UE_LOGI("atv_host: '%ls' already has %zu requests open -- this player's next act on it is not sent (said once)",
+            UE_LOGI("atv_host: '%ls' already has %zu requests open -- this request is not sent (said once)",
                     key.c_str(), kMaxOpen);
         }
         return 0;
@@ -424,10 +433,12 @@ void NoteAtvIndexed(const std::wstring& key, void* atv) {
         A::ReplayHorn(atv, true);
         DE::Note(DE::kHornPlayed, 1);
     }
-    // A copy that took no state of the host's asks for it (MTA binds the state to the entity's add packet, CEntityAddPacket.cpp:
-    // 208, :454, :531-552): the host's replay may have been lost to the unadopted rows' cap, and the copy's ack would stay
-    // behind the host's sequence for good, so a syncer's vitals would never be taken. A request of this client's already open on
-    // the ATV holds the gate, and its answer carries the state.
+    // A copy that took no state of the host's asks for it. MTA binds a vehicle's state to the entity's add packet
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CEntityAddPacket.cpp:208, :454, :531-552), so a joiner never
+    // lacks it. Here the copy comes from this client's own save, adopted by its key, and no host entity-add exists to carry
+    // the state: the pull at adoption is our add-time. The host's replay may also have been lost to the unadopted rows' cap,
+    // and the copy's ack would stay behind the host's sequence for good, so a syncer's vitals would never be taken. A request
+    // of this client's already open on the ATV holds the gate, and its answer carries the state.
     if (!applied && !VitalsGated(key)) Ask(key, op::kSync, 0.f, 0);
 }
 
