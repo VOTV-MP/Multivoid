@@ -16,6 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
+#include "coop/session/host_world_settle.h"  // Settled: the host's world has finished starting up
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 #include "coop/session/rig_verdict.h"
@@ -60,18 +61,14 @@ constexpr float    kAheadCm       = 120.f;   // before the player: inside the in
 constexpr float    kApartCm       = 45.f;    // each cup this far to one side of the line ahead
 constexpr float    kHeadUpCm      = 35.f;    // the head above its cup, so the trace meets the hook before the cup
 constexpr uint16_t kSeq           = 0xFF01;  // the drill's hook in the host's own owner space, clear of a player's
-constexpr uint64_t kSettleMs      = 3000;    // HOST: the cups' spawn to the tie (they fall to the floor first)
-constexpr uint64_t kJoinArmMs     = 10000;   // HOST, join modes: its own world up to the cups
-constexpr uint64_t kHostTakeMs    = 15000;   // HOST, host modes: the client's world ready to the host's walk
 constexpr uint64_t kTakeBoundMs   = 120000;  // the tie (or the client's ready edge) to the hook gone
 constexpr uint64_t kDoneBoundMs   = 120000;  // HOST: its half held to the client's report
+constexpr uint64_t kRestBoundMs   = 30000;   // HOST: the cups' spawn to both at rest
 constexpr uint64_t kFindBoundMs   = 60000;   // CLIENT: world-ready to the anchored copy
 constexpr uint64_t kReadyBoundMs  = 3000;    // the aim to the player's look settling on the hook
 constexpr uint64_t kSeenBoundMs   = 15000;   // the press to the hook gone and the item in the inventory
 constexpr uint64_t kCheckEveryMs  = 250;
 constexpr float    kNearCm        = 3000.f;  // the cups roll where the floor slopes; the taker walks to them
-constexpr float    kTeleportCm    = 1500.f;  // CLIENT, join modes: farther than this, it is put beside the hook
-constexpr uint64_t kLandMs        = 8000;    // ...and waits this long, so the host has its puppet's new place
 constexpr float    kWalkReachCm   = 120.f;
 constexpr int      kWalkDeadlineS = 60;
 constexpr int      kReaimMax      = 5;
@@ -93,12 +90,10 @@ Mode TheMode() {
 bool JoinMode() { return TheMode() == Mode::Join || TheMode() == Mode::JoinHost; }
 bool HostTakes() { return TheMode() == Mode::Host || TheMode() == Mode::JoinHost; }
 
-enum class Step : uint8_t { Arm, Settle, Tie, Wait, Find, Land, Walk, Aim, Ready, Press, Seen, Watch, Await, Done };
+enum class Step : uint8_t { Arm, Settle, Tie, Wait, Find, Walk, Aim, Ready, Press, Seen, Watch, Await, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
-uint64_t g_armMs = 0;
-uint64_t g_readyMs = 0;   // HOST, host modes: when the client's world came up
 int      g_session = 1;
 ue_wrap::CachedObjRef g_cupA, g_cupB, g_hook;
 std::wstring g_key;
@@ -108,6 +103,8 @@ int      g_items0 = 0;
 coop::director::AimFan g_fan;
 int      g_reaims = 0;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
+ue_wrap::FVector g_restA{}, g_restB{};   // HOST: the cups' places at the last rest check
+bool     g_restKnown = false;
 
 const char* Role(bool host) { return host ? "host" : "client"; }
 void Next(Step s) { g_step = s; g_stepMs = ::GetTickCount64(); }
@@ -197,6 +194,25 @@ int HookItems() {
     for (const auto& r : store.records)
         if (r.className == L"prop_hook_C") ++n;
     return n;
+}
+
+// HOST: both cups are at rest: no body moving (linear under 5 cm/s, angular under 20 deg/s) and neither one has moved
+// since the previous check. A cup that does not read is not at rest.
+bool CupsAtRest() {
+    constexpr float kLinCms = 5.f, kAngDegS = 20.f, kMovedCm = 0.5f;
+    auto still = [](const ue_wrap::FVector& v, float lim) { return v.X * v.X + v.Y * v.Y + v.Z * v.Z < lim * lim; };
+    void* a = g_cupA.Get();
+    void* b = g_cupB.Get();
+    ue_wrap::FVector linA{}, angA{}, linB{}, angB{}, atA{}, atB{};
+    if (!a || !b || !E::GetActorRootPhysicsVelocity(a, linA, angA) || !E::GetActorRootPhysicsVelocity(b, linB, angB) ||
+        !E::TryGetActorLocation(a, atA) || !E::TryGetActorLocation(b, atB))
+        return false;
+    const bool steady = g_restKnown && still({atA.X - g_restA.X, atA.Y - g_restA.Y, atA.Z - g_restA.Z}, kMovedCm) &&
+                        still({atB.X - g_restB.X, atB.Y - g_restB.Y, atB.Z - g_restB.Z}, kMovedCm);
+    g_restA = atA;
+    g_restB = atB;
+    g_restKnown = true;
+    return steady && still(linA, kLinCms) && still(angA, kAngDegS) && still(linB, kLinCms) && still(angB, kAngDegS);
 }
 
 void StartWalk(void* hook) {
@@ -343,8 +359,7 @@ void HostTick(coop::net::Session* s) {
         // Before whom the cups stand: the client's puppet, or in the join modes the host itself, before anyone joined.
         void* before = nullptr;
         if (JoinMode()) {
-            if (!g_armMs) g_armMs = now;
-            if (now - g_armMs < kJoinArmMs) return;
+            if (!coop::host_world_settle::Settled()) return;   // the world's own start-up is over (rig: READY hosting)
             before = player;
         } else {
             if (!s->IsSlotWorldReady(1)) return;
@@ -362,8 +377,9 @@ void HostTick(coop::net::Session* s) {
         Next(Step::Settle);
         return;
     }
-    case Step::Settle:
-        if (now - g_stepMs >= kSettleMs) Next(Step::Tie);
+    case Step::Settle:   // the cups fall to the floor first: they are at rest when neither moved since the last check
+        if (CupsAtRest()) Next(Step::Tie);
+        else if (Expired(kRestBoundMs)) Abandon("the cups did not come to rest in 30 s");
         return;
     case Step::Tie: {
         void* a = g_cupA.Get();
@@ -389,15 +405,12 @@ void HostTick(coop::net::Session* s) {
         Next(HostTakes() ? Step::Wait : Step::Watch);
         return;
     }
-    case Step::Wait:   // HOST takes: once the client has had its copy a while, the host walks to the hook
-        if (!s->IsSlotWorldReady(1)) {
-            g_readyMs = 0;
-            if (Expired(kTakeBoundMs)) Abandon("the client's world never came up");
+    case Step::Wait:   // HOST takes: once the client says it holds its copy, the host walks to the hook
+        if (!ClientSaid(ClientHead("found"), nullptr)) {
+            if (Expired(kTakeBoundMs)) Abandon("the client never said it held its copy of the hook");
             return;
         }
-        if (!g_readyMs) g_readyMs = now;
-        if (now - g_readyMs < kHostTakeMs) return;
-        UE_LOGI("[HOOK-RETRIEVE-DRILL] host: walking to its hook to take it");
+        UE_LOGI("[HOOK-RETRIEVE-DRILL] host: the client holds its copy -- walking to its hook to take it");
         StartWalk(g_hook.Get());
         return;
     case Step::Watch: {   // the CLIENT takes: the host's hook goes by one granted pickup
@@ -472,21 +485,16 @@ void ClientTick() {
         }
         g_hook.Set(hook);
         g_key = PR::GetActorSaveKeyString(hook);
-        ue_wrap::FVector a{}, b{}, me{};
-        bool moved = false;
-        if (JoinMode() && H::EndLocations(hook, a, b) && E::TryGetActorLocation(player, me) &&
-            std::hypot(a.X - me.X, a.Y - me.Y) > kTeleportCm)
-            moved = E::TeleportTo(player, {a.X + 150.f, a.Y, a.Z + 80.f}, ue_wrap::FRotator{});
         UE_LOGI("[HOOK-RETRIEVE-DRILL] client: the anchored copy of hook '%ls' is here (%s); %d hook item(s) carried",
                 g_key.c_str(), SkipSave(hook) ? "a mirror" : "loaded by the save", g_items0);
-        if (HostTakes()) { Next(Step::Watch); return; }
-        if (moved) { Next(Step::Land); return; }
-        StartWalk(hook);
+        if (HostTakes()) {
+            coop::chat_sync::QueueSend(ClientHead("found"));   // the host waits on it before it walks to its hook
+            Next(Step::Watch);
+            return;
+        }
+        StartWalk(hook);   // the director stages a far walk at a known-good anchor; nobody is teleported by the drill
         return;
     }
-    case Step::Land:
-        if (Expired(kLandMs)) StartWalk(g_hook.Get());
-        return;
     case Step::Watch: {   // the HOST takes: this client's copy goes, and no item reaches this inventory
         if (g_hook.Alive()) {
             if (Expired(kTakeBoundMs)) Abandon("this client's copy still stands 120 s on -- the host's pickup never reached it");
@@ -521,7 +529,8 @@ void OnDisconnect() {
     if (TheMode() == Mode::Off) return;
     ++g_session;
     g_step = Step::Arm;
-    g_stepMs = g_nextCheckMs = g_armMs = g_readyMs = 0;
+    g_stepMs = g_nextCheckMs = 0;
+    g_restKnown = false;
     g_cupA.Reset();
     g_cupB.Reset();
     g_hook.Reset();
