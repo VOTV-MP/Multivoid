@@ -16,6 +16,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
@@ -74,7 +75,12 @@ uint64_t g_noItem = 0;
 // HOST: per joiner slot, the keys of the anchored hooks the world held when its save was cut (CaptureJoinHooks).
 std::vector<std::wstring> g_cut[coop::players::kMaxPeers];
 
+// The latch is per world: an answer owed by a world that has since changed is never coming.
+uint32_t g_inFlightGen = 0;
+
 bool InFlight(const std::wstring& key) {
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_inFlightGen) { g_inFlight.clear(); g_inFlightGen = gen; }
     return std::find(g_inFlight.begin(), g_inFlight.end(), key) != g_inFlight.end();
 }
 
@@ -83,19 +89,29 @@ void Release(const std::wstring& key) {
 }
 
 // The watch is on every class's actionOptionIndex, so a door, a toggle or a coin asks too. Whether a class sits under
-// hook_C is a walk of its chain, so it runs once per distinct class (the floppy census's per-class verdict). A
-// Blueprint class dies with its world: the table goes with the world's generation. Nothing is cached while hook_C is
-// unresolved, since the answer would be false for a class that is a hook.
+// hook_C is a walk of its chain, so it runs once per distinct class (the floppy census's per-class verdict). hook_C is
+// held as a CachedObjRef and found again by name when it is no longer alive, as prop_act_host does for its classes: a
+// world reload can re-create a Blueprint class. The table is dropped when the world's generation or hook_C itself
+// changes, and nothing is cached while hook_C is not loaded.
+ue_wrap::CachedObjRef           g_hookBase;
+void*                           g_hookBaseSeen = nullptr;
 std::unordered_map<void*, bool> g_hookClass;
 uint32_t                        g_hookClassGen = 0;
 
 bool IsHookObject(void* obj) {
     void* cls = R::ClassOf(obj);
-    if (!cls || !H::EnsureResolved()) return false;
+    if (!cls) return false;
+    if (!g_hookBase.Alive()) g_hookBase.Set(ue_wrap::object_index::ClassByName(L"hook_C"));
+    void* base = g_hookBase.Alive() ? g_hookBase.Raw() : nullptr;
+    if (!base) return false;
     const uint32_t gen = ue_wrap::world_identity::Generation();
-    if (gen != g_hookClassGen) { g_hookClass.clear(); g_hookClassGen = gen; }
+    if (gen != g_hookClassGen || base != g_hookBaseSeen) {
+        g_hookClass.clear();
+        g_hookClassGen = gen;
+        g_hookBaseSeen = base;
+    }
     auto it = g_hookClass.find(cls);
-    if (it == g_hookClass.end()) it = g_hookClass.emplace(cls, H::IsHookFamily(obj)).first;
+    if (it == g_hookClass.end()) it = g_hookClass.emplace(cls, PR::WalksToBase(cls, base)).first;
     return it->second;
 }
 
@@ -149,7 +165,7 @@ void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, const 
     r.taker = coop::net::kHookRetrieveNoTaker;
     if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::HookRetrieve, &r, sizeof(r)))
         UE_LOGW("hook_retrieve: the refusal of slot %u's pickup of hook '%ls' did not send -- its client holds the "
-                "request until the session ends", static_cast<unsigned>(slot), key.c_str());
+                "request until its world changes or the session ends", static_cast<unsigned>(slot), key.c_str());
 }
 
 sg::Verdict OnActionPre(const sg::Call& c) {
@@ -401,6 +417,8 @@ void OnDisconnect() {
     g_hostPress = nullptr;
     g_hostPressKey.clear();
     g_hookClass.clear();
+    g_hookBase.Reset();
+    g_hookBaseSeen = nullptr;
     g_session.store(nullptr, std::memory_order_release);
 }
 
