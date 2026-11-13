@@ -10,13 +10,7 @@
 // apply writes in one game-thread task with the repaint, and reads its label once. Armed by the row cap_label_drill
 // on both peers (VOTVCOOP_CAN_DIR). Red: cap_label_repaint_off. The join's own adopt has no red: a change the host
 // makes after its world is taken reaches the joiner live and repaints it. The driver launches the client once the
-// host logs `STATE 0-before-join`.
-//
-// The saved arm (cap_label_drill=saved) is a host-only run on a New Game (--host-fresh), the desk's setData repaint
-// and its red cap_label_setdata_off. The host plugs the module and presses the cap to its third level, saves through
-// the game's own save, leaves for the menu as a quit does (the session ends first), loads that slot through the
-// game's own load and waits for the desk's setData in the new world. Its label, read at that event, must be its saved
-// level's and module's: `rig: VERDICT cap-label-saved PASS|FAIL|INVALID`. A host that loaded a save is INVALID.
+// host logs `STATE 0-before-join`. The saved arm is host-only and described at "the saved arm" below.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -340,6 +334,11 @@ bool PrepareCap(const char* stateName, Label& prepared) {
 }
 
 // ---- the saved arm ----
+// cap_label_drill=saved is a host-only run on a New Game (--host-fresh) for the desk's setData repaint, whose red is
+// cap_label_setdata_off. The host plugs the module and presses the cap to its third level, saves through the game's
+// own save, leaves for the menu as a quit does (the session ends first), loads that slot through the game's own load
+// and waits for the desk's setData in the new world. Its label, read at that event, must be its saved level's and
+// module's: `rig: VERDICT cap-label-saved PASS|FAIL|INVALID`. A host that loaded a save is INVALID.
 
 // The slot the game's own save wrote, told by the engine's save seam on the game thread: the world's live save
 // object under a slot of the game's own. The slot is left before the flag, so a reader that sees the flag sees it.
