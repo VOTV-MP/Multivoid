@@ -18,8 +18,8 @@ namespace coop::net { struct PoseSnapshot; }
 
 namespace coop::puppet_events {
 
-// A slot's alive state changed. The first pose a slot sends after its puppet came up sets the state and raises nothing
-// (there is no "from" to change).
+// A slot's alive state changed. The first pose a slot sends after its puppet came up has no "from": an alive one sets the
+// state and raises nothing, a dead one is raised as a death (a peer dead when its puppet appears reaches every listener).
 using LifeFn = void (*)(uint8_t slot, bool alive);
 // One fresh pose of a slot, after its life edge (if any) was raised.
 using PoseFn = void (*)(uint8_t slot, const coop::net::PoseSnapshot& pose);
@@ -32,8 +32,8 @@ bool AddPoseListener(PoseFn fn);
 // the pose listeners.
 void Announce(uint8_t slot, const coop::net::PoseSnapshot& pose);
 
-// The slot's puppet is gone (a leave, a session end): its alive state is forgotten, so the next puppet's first pose is
-// silent again.
+// The slot's puppet is gone (a leave, a session end): its alive state is forgotten, so the next puppet's first pose
+// has no "from" again.
 void ForgetSlot(uint8_t slot);
 
 }  // namespace coop::puppet_events
