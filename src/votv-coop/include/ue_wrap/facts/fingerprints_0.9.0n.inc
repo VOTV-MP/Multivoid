@@ -210,6 +210,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"generator_c", L"break", L"generator_c.break", 0x6a2d5d90ab51fa2dull, 0x9033fb02c9c36c5aull},
     {L"generator_c", L"damage", L"generator_c.damage", 0x6a2d5d90ab51fa2dull, 0x6c1a1c82cee09c9eull},
     {L"generator_c", L"fullfix", L"generator_c.fullfix", 0x6a2d5d90ab51fa2dull, 0xb49fc7a24d76c972ull},
+    {L"generator_c", L"playerusedon", L"generator_c.playerusedon", 0x2c4f0c15ebdccee4ull, 0xf2002f67026d9738ull},
     {L"generator_c", L"upd", L"generator_c.upd", 0x6a2d5d90ab51fa2dull, 0x40711ea73c75f738ull},
     {L"generator_c", L"updupgrades", L"generator_c.updupgrades", 0x6a2d5d90ab51fa2dull, 0xb0cf4625c8a84aa6ull},
     {L"generatorfuckuper_c", L"timer_transformers", L"generatorfuckuper_c.timer_transformers", 0x6a2d5d90ab51fa2dull, 0x3879c0deef259be6ull},
