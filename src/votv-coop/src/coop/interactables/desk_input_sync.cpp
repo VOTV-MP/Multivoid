@@ -87,6 +87,19 @@ void OnDeskBeginPlayPost(const sg::Call&) {
     }
 }
 
+// The desk's setData is the save's restore: it writes the cap level and the physical modules back and repaints no
+// label. The post watch latches that the desk's save data has been applied this session, for the cap-label drill's
+// host, which must prepare the desk only after the restore (the gamemode's load runs it, so it can land after the
+// session starts).
+constexpr int kTagDeskSetData = 0x44534B02;  // 'DSK' 2
+UE_FACT_FN(kRowDeskSetData, "desk_input_sync", L"analogDScreenTest_C", L"setData", Declared);
+std::atomic<bool> g_deskDataApplied{false};
+
+void OnDeskSetDataPost(const sg::Call&) {
+    if (!g_deskDataApplied.exchange(true, std::memory_order_acq_rel))
+        UE_LOGI("desk_input: the desk's save data applied (setData returned)");
+}
+
 void SendDelta(coop::net::Session* s, DeskInputField field,
                float fv, int32_t iv, bool bv) {
     coop::net::DeskInputPayload p{};
@@ -255,7 +268,11 @@ void Install(coop::net::Session* session) {
     if (!sg::WatchName(kRowDeskBeginPlay, kTagDeskBeginPlay, nullptr, &OnDeskBeginPlayPost))
         UE_LOGE("desk_input: the desk's BeginPlay watch did not register -- a cap label owed before its screen "
                 "widget exists stays stale");
+    if (!sg::WatchName(kRowDeskSetData, kTagDeskSetData, nullptr, &OnDeskSetDataPost))
+        UE_LOGE("desk_input: the desk's setData watch did not register -- DeskDataApplied never reads true");
 }
+
+bool DeskDataApplied() { return g_deskDataApplied.load(std::memory_order_acquire); }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -425,6 +442,7 @@ void OnDisconnect() {
     g_visDeferWarned = false;
     g_remapPending = false;
     g_capLabelPending = false;
+    g_deskDataApplied.store(false, std::memory_order_release);
     g_nextPoll = {};
 }
 

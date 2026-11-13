@@ -28,6 +28,10 @@ namespace coop::desk_input_sync {
 
 void Install(coop::net::Session* session);
 
+// True once the desk's setData, the save's restore of its cap level and modules, has returned since the session
+// began (a post watch on the desk's own function). Any thread; for the cap-label drill's host.
+bool DeskDataApplied();
+
 // Game thread, per pump tick (internally throttled to the 250 ms poll).
 void Tick();
 

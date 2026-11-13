@@ -10,14 +10,16 @@
 // the host then says `rig: VERDICT cap-label PASS|FAIL` over both peers' fails (a client with fails says FAIL itself). The red:
 // dev.cap_label_repaint_off on both peers drops every repaint, so the drill must FAIL. Gated by VOTVCOOP_RUN_CAP_LABEL;
 // the folder is VOTVCOOP_CAN_DIR. The host prepares only
-// once the driver writes `host_loaded` there, after the host's log shows the desk's save restored: the save's setData
-// writes the cap and the modules back after the session starts, and it repaints no label. The driver launches the
-// client once the host logs `STATE 0-before-join`, and the host sends its label when the client's drill has begun.
+// once the desk's own setData has returned (coop::desk_input_sync::DeskDataApplied, a post watch on that function):
+// the save's setData writes the cap and the modules back after the session starts, and it repaints no label; a host
+// that never sees it says INVALID after 240 s. The driver launches the client once the host logs
+// `STATE 0-before-join`, and the host sends its label when the client's drill has begun.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
 #include "harness/autotest/peer_signal.h"
 
+#include "coop/interactables/desk_input_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/game_thread.h"
@@ -262,7 +264,9 @@ bool RunSteps(bool host) {
 }
 
 void RunHost() {
-    if (!Await("host_loaded")) return;
+    if (!WaitFor("the desk's save data applied (setData returned)", 240,
+                 [] { return coop::desk_input_sync::DeskDataApplied(); }))
+        return;
     if (!WaitFor("the desk and its label readable", 120, [&] { return Read().ok; })) return;
     LogState("0-host-loaded");
     // Before the join: the module plugged and the cap at its third level, so the join has a label to carry.
