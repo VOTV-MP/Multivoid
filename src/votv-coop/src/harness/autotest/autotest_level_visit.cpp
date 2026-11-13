@@ -3,7 +3,7 @@
 // shape the visit; the red arms are level_visit_hide_off and backrooms_close_off.
 // client / host: the visitor takes the trip, stays until the watcher has judged its copy of the visitor hidden by the
 // poses it applies, ends the visit and comes back; the watcher judges the copy hidden at the first pose below the visit
-// floor and shown at the first pose back above it. close: the host closes the backrooms, the client's clip is answered no, and after
+// floor and shown at the first pose back above it. close: the host closes the backrooms, the client's clip check is answered no, and after
 // the host opens them again it takes a trip. join: the host takes the trip and stays; a client that joins later must
 // find the host's copy hidden at the first pose it applies.
 // Every step ends on the other peer's signal (peer_signal) or on the state it waits for, never a clock. A check's
@@ -187,6 +187,7 @@ struct Now {
     std::wstring heldName = L"none";  // read on the game thread: the pointer may be gone by the time it is logged
     int inventory = -1, hold = -1;
     bool visiting = false, inMap = false;
+    uint32_t trips = 0;      // visits begun, counted on the game thread beside `visiting` (one moment, one answer)
     bool possessed = false;  // the controller holds this player
     float camZ = 0.f;
     int black = 0;           // black screens on the viewport
@@ -213,6 +214,7 @@ Now Read() {
         n.inventory = ArrayNum(L"inventoryData");
         n.hold = ArrayNum(L"hold");
         n.visiting = LV::Visiting();
+        n.trips = LV::Stats().tripsStarted;
         n.inMap = LV::CurrentLevel() != nullptr;
         n.possessed = Me() && E::GetController(Me()) != nullptr;
         n.camZ = E::GetCameraLocation().Z;
@@ -344,12 +346,17 @@ void WriteLastLoc(bool say) {
 
 // The clip driven until its event: the game's tick overwrites lastLoc with the camera on every frame its condition
 // fails (the check, the trace, the view target), so one write survives only when the very next tick passes it. lastLoc is
-// written again at each poll, on the game thread, until `done` or the bound; false when the bound ran out.
+// written again at each poll, on the game thread, until `done` or the bound; false when the bound ran out. One chain at a
+// time: the chain's black screen is its first visible event and its trip comes a second later, so once a black screen
+// beyond the one already up is seen no more is written (a write would start a second chain).
 template <class Pred>
 bool ClipUntil(const char* what, int boundSec, Pred done) {
-    bool first = true;
+    bool first = true, underway = false;
+    const int blackBefore = Read().black;
     return PS::WaitFor(what, boundSec, [&] {
         if (done()) return true;
+        underway = underway || Read().black > blackBefore;
+        if (underway) return false;
         WriteLastLoc(first);
         first = false;
         return false;
@@ -506,14 +513,18 @@ bool Arrive(const Plan& p) {
     }
     const bool reached = PS::WaitFor("the visitor in the map", kLoadSec, [&] {
         const Now n = Read();
-        return n.inMap || (LV::Stats().tripsStarted > trips && !n.visiting) || OtherStopped();
+        return n.inMap || (n.trips > trips && !n.visiting) || OtherStopped();
     }, false);
     if (OtherStopped()) return false;
     const Now n = Read();
     Log("arrived", n);
     if (!n.inMap) {
-        if (LV::Stats().tripsStarted > trips) return Emit("arrived", Res::Fail, "the visit ended before the player arrived in the map");
-        return Emit("arrived", Res::Invalid, reached ? "no trip started" : "no trip reached the map");
+        // The bound running out says INVALID, also while the map is still loading: the visit has not ended.
+        if (!reached)
+            return Emit("arrived", Res::Invalid, n.visiting ? "the map was still loading when the bound ran out"
+                                                              : "no trip reached the map");
+        if (n.trips > trips) return Emit("arrived", Res::Fail, "the visit ended before the player arrived in the map");
+        return Emit("arrived", Res::Invalid, "no trip started");
     }
     if (!PS::WaitFor("the view in the map", kSettleSec, [] { return Read().camZ < kFloorZ; }, false))
         return Emit("arrived", Res::Invalid, "the view did not follow the player into the map");
@@ -653,7 +664,8 @@ void RunCloseClient() {
     if (!PS::WaitFor("the host's closed setting", kSettleSec, [] { return !BackroomsAllowed(); }, false))
         { Emit("held", Res::Invalid, "the host's closed setting never reached this client"); return; }
     // The clip's event: the game asks its check in the tick that traces, and the check is answered no (a count) or the
-    // trip starts. Whichever comes first decides; neither is Invalid.
+    // trip starts. Whichever comes first decides; neither is Invalid. The green is the first answer of no (the game asks
+    // every tick, so it is decided at a clip's answer and not at a trace hit); the red's FAIL is the trip.
     const LV::DrillStats before = LV::Stats();
     const bool decided = ClipUntil("the clip check answered or a trip taken", kSettleSec, [&before] {
         const LV::DrillStats s = LV::Stats();
