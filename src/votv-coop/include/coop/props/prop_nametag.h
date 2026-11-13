@@ -41,6 +41,15 @@ void SendJoinTags(int slot);
 // HOST: the tags applied from a client's request since the process started (the drill reads it).
 uint64_t AppliedForClients();
 
+// The events the nametag drill judges on, each since the session began. HOST: the host player's own tags told to the
+// clients. CLIENT: the requests asked of the host, the host's refusals of them, the host's tags for them (each spends
+// its item), and the host's tags of any author.
+uint64_t HostPublishedCount();
+uint64_t AskedCount();
+uint64_t RefusedAnswerCount();
+uint64_t SpentCount();
+uint64_t PublishedCount();
+
 void OnDisconnect();
 
 }  // namespace coop::prop_nametag

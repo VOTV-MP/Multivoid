@@ -81,6 +81,11 @@ struct Parked {
 };
 coop::roster_ledger::PerSlotState<Parked> g_parked;
 uint64_t g_applied = 0, g_refused = 0;
+// The events the drill judges on, each counted where it happens. HOST: the host player's own tags told to the clients.
+// CLIENT, this session: the requests asked, the host's refusals of them, the host's tags for them (each spends its
+// item), and the host's tags of any author.
+uint64_t g_hostPublished = 0;
+uint64_t g_asked = 0, g_refusedAnswers = 0, g_spent = 0, g_publishedSeen = 0;
 // HOST: the keys of the props whose tag this session published, which a joiner's connect replay names to it. A joiner's
 // save is cut at one instant and the host plays on while it loads; a publish is not sent to a slot before its
 // world-ready (session.cpp's pre-world gate), and a prop's spawn row and record carry no nametag (prop_save_data.h). A
@@ -145,7 +150,8 @@ void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, con
                 kMaxTagged);
     }
     const PropNametagPayload p = MakePayload(coop::net::kPropNametagPublish, key, author, tag);
-    if (!s.SendReliable(coop::net::ReliableKind::PropNametag, &p, sizeof(p)))
+    // A host with no client that has a world has no one to tell; the joiner's connect replay names the tag.
+    if (!s.SendReliable(coop::net::ReliableKind::PropNametag, &p, sizeof(p)) && s.AnyWorldReadyPeer())
         UE_LOGW("prop_nametag: the tag of prop '%ls' did not send -- the clients keep the one they show",
                 key.c_str());
 }
@@ -199,6 +205,7 @@ sg::Verdict OnUsePre(const sg::Call& c) {
     }
     g_pending.key = key;
     g_pending.item.Set(c.object);
+    ++g_asked;
     UE_LOGI("prop_nametag: this client tagged prop '%ls' '%ls' -- asked of the host", key.c_str(), tag.c_str());
     return sg::Verdict::Cancel;
 }
@@ -216,6 +223,7 @@ void OnUsePost(const sg::Call& c) {
     const std::wstring key = KeyOf(prop);
     if (key.empty() || key.size() > kMaxKeyChars) return;
     Publish(*s, key, kAuthorHost, tag);
+    ++g_hostPublished;
     UE_LOGI("prop_nametag: the host player tagged prop '%ls' '%ls' -- the clients are told", key.c_str(), tag.c_str());
 }
 
@@ -283,6 +291,7 @@ void OnHandApplied(uint8_t slot) {
 
 // CLIENT: the host's tag. The author's held item goes, as the game's own use takes it.
 void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author) {
+    ++g_publishedSeen;
     void* prop = coop::prop_key_index::Find(key);
     if (!prop) {
         if (g_unbound.size() < kMaxUnbound || g_unbound.count(key)) {
@@ -304,11 +313,13 @@ void OnPublish(const std::wstring& key, const std::wstring& tag, uint8_t author)
     if (void* item = g_pending.item.Get()) E::DestroyActor(item);
     UE_LOGI("prop_nametag: this client's tag on prop '%ls' applied by the host -- its nametag is spent", key.c_str());
     g_pending = Pending{};
+    ++g_spent;
 }
 
 // CLIENT: the host refused this client's request: the item stays and the client may use it again.
 void OnRefused(const std::wstring& key) {
     if (g_pending.key != key) return;
+    ++g_refusedAnswers;
     UE_LOGI("prop_nametag: the host refused this client's tag on prop '%ls' -- the item stays", key.c_str());
     g_pending = Pending{};
 }
@@ -412,12 +423,18 @@ void SendJoinTags(int slot) {
 }
 
 uint64_t AppliedForClients() { return g_applied; }
+uint64_t HostPublishedCount() { return g_hostPublished; }
+uint64_t AskedCount() { return g_asked; }
+uint64_t RefusedAnswerCount() { return g_refusedAnswers; }
+uint64_t SpentCount() { return g_spent; }
+uint64_t PublishedCount() { return g_publishedSeen; }
 
 void OnDisconnect() {
     if (g_applied || g_refused)
         UE_LOGI("prop_nametag: session end -- applied for clients=%llu refused=%llu",
                 static_cast<unsigned long long>(g_applied), static_cast<unsigned long long>(g_refused));
     g_refused = 0;
+    g_hostPublished = g_asked = g_refusedAnswers = g_spent = g_publishedSeen = 0;
     g_pending = Pending{};
     g_hostItem = g_hostProp = nullptr;
     g_hostTag.clear();

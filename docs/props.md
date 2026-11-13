@@ -302,8 +302,9 @@ request waits while that hand state is still owed), at most
 one a second a client, and tells every client, the sender included, whose held item then goes as the game's use takes
 it. A request the host refuses is answered to its sender alone, and the item stays. The messages are the
 `PropNametag` kind: op 1 the client's request, op 2 the host's tag, op 3 its refusal. `[?]` the rig's proof (`coop/dev/nametag_drill`) is pending on this kind: a client's tag lands on the host's cup once
-and its item is spent; the host player's tag reaches the client's copy; with `nametag_client_runs` the tag stays on
-the client's copy and the host FAILs.
+and its item is spent; the host player's tag reaches the client's copy; a tag the host puts on between a joiner's save being
+cut and its world being ready is on its copy at the join's end (window mode). The reds: `nametag_client_runs` (the click asks
+the host nothing: the client says fail at once) and `nametag_no_join_replay` (window mode: the copy stays untagged).
 
 ### Containers
 
