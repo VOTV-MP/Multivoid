@@ -155,7 +155,8 @@ std::string Measure(const char* me, bool host) {
     size_t hoverStart = 0;   // index of the first hover sample, once the hover is latched
     bool hovering = false;
     const bool kick = coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_kick);
-    if (!host && coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_body_red)) {
+    const bool redArm = !host && coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_body_red);
+    if (redArm) {
         bool ok = false;
         OnGameThread([&] {
             if (void* d = DR::Find()) ok = ue_wrap::engine::SetActorSimulatePhysics(d, true);
@@ -218,9 +219,11 @@ std::string Measure(const char* me, bool host) {
             "mirror played=%u starved=%u delay=%.0fms",
             me, static_cast<int>(pts.size()), r.fly, r.hover, r.flyCm, r.flyDeg, r.hoverCm, r.hoverDeg, phys, ms.played,
             ms.starved, ms.delayMs);
+    // The body red puts the copy back in the simulation: a window in which no sample read it simulating never had the red.
+    const int redUnapplied = redArm && phys == 0 ? 1 : 0;
     char buf[192];
-    std::snprintf(buf, sizeof(buf), "%d %d %.4f %.4f %.4f %.4f %d %u %u %d %d", r.fly, r.hover, r.flyCm, r.flyDeg, r.hoverCm,
-                  r.hoverDeg, phys, ms.played, ms.starved, kicks, complete ? 1 : 0);
+    std::snprintf(buf, sizeof(buf), "%d %d %.4f %.4f %.4f %.4f %d %u %u %d %d %d", r.fly, r.hover, r.flyCm, r.flyDeg,
+                  r.hoverCm, r.hoverDeg, phys, ms.played, ms.starved, kicks, complete ? 1 : 0, redUnapplied);
     return buf;
 }
 
@@ -249,16 +252,21 @@ void RunHost() {
     std::string theirs;
     PS::AwaitText("client_result", theirs, kStepSec);
     PS::Mark("host_done");
-    int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0, hk = 0, ck = 0, hDone = 0, cDone = 0;
+    int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0, hk = 0, ck = 0, hDone = 0, cDone = 0, hRed = 0, cRed = 0;
     unsigned hpl = 0, hst = 0, played = 0, starved = 0;
     double h[4] = {}, c[4] = {};
-    if (sscanf_s(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl, &hst,
-                 &hk, &hDone) != 11 ||
-        sscanf_s(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp, &played,
-                 &starved, &ck, &cDone) != 11 ||
+    if (sscanf_s(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d %d", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl,
+                 &hst, &hk, &hDone, &hRed) != 12 ||
+        sscanf_s(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d %d", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp,
+                 &played, &starved, &ck, &cDone, &cRed) != 12 ||
         hh < 100 || ch < 100 || played < 500) {
         coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
                                "too few samples (host hover %d, client hover %d, client frames played %u)", hh, ch, played);
+        return;
+    }
+    if (cRed) {
+        coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
+                               "the body red was not applied: no sample of the client's copy read it simulating");
         return;
     }
     // The measurement is complete on a peer when its hover window ran out (the last bump landed and kAfterLastBump
