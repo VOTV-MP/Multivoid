@@ -10,7 +10,9 @@
 //         world_sound_faucet_off on the receiving peer.
 //   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; at the
 //         rejoined client's ready edge the host counts the noisers it has out, and the rejoined client
-//         (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must have exactly that many of its own, as the replay delivers what is out.
+//         (VOTVCOOP_WORLD_SOUND_DRILL_REJOIN=1) must hear every one of them: at least that many of its own, at most the
+//         event's three. The replay re-runs the event, so a noiser the host's copy has already ended starts afresh on
+//         the joiner (measured 2026-11-13: host 2 at the edge, joiner 3).
 //         The host says `rig: VERDICT world-sound-join PASS|FAIL|INVALID`; INVALID when the host has none out at the edge
 //         (nothing to replay). Red: alien_join_off on the host.
 
@@ -489,7 +491,7 @@ void RunJoinHost() {
                 theirs.c_str());
         return;
     }
-    RV::Say(kTagJoin, most == atEdge ? RV::Outcome::Pass : RV::Outcome::Fail,
+    RV::Say(kTagJoin, (most >= atEdge && most <= kNoisers) ? RV::Outcome::Pass : RV::Outcome::Fail,
             "the host had %zu noisers out at the client's ready edge and sent %u snapshot(s); the rejoined client had %zu around it",
             atEdge, snapshots, most);
     UE_LOGI("world-sound: JOIN DONE on host");
