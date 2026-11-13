@@ -5,12 +5,12 @@
 //   1 -- the host drops a prop_container_C crate 150 cm above the sack; for 15 s each peer logs the crate's local
 //        destroy with the caller's class, the client whether its seam sent a PropDestroy, the host whether one reached it.
 //   2 -- the host spawns six loose prop_C props (named "cup") on a ring round the sack; the client walks to each with
-//        the director, grabs it, carries it over the sack and lets go; "client put" says whether its mirror died
-//        here, by which caller, and whether the seam sent a PropDestroy. The host then calls the drone through the
-//        console's keyboard verb and logs when the sale clears the drone's container. Both peers read a census of
-//        every world container ([SACK-CENSUS]) at the call, at the sale and 5 s later, and name what changed.
-//   3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then the same call, sale and
-//        census; the crate's GObjStack index is logged before the sale and the containers holding it after.
+//        the director, carries it over the sack and lets go, and names the props it let go of. Once each is filed,
+//        destroyed or at rest the host compares the records filed with the props gone and says PASS, FAIL or INVALID
+//        (fewer than three props gone is too few to judge); the run ends there.
+//   3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then calls the drone and logs
+//        when the sale clears the drone's container; both peers read a census of every world container ([SACK-CENSUS])
+//        at the call, at the sale and 5 s later, and name what changed; the crate's GObjStack index is logged.
 //   4 -- arm 3, the client opening the sack's screen before the sale and pressing its first slot (an act) at the sale
 //        marker: refused Gone, nothing comes out, the sack stays 0, and its mirror reads 0 within 2 s of the sale.
 

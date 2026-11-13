@@ -48,6 +48,7 @@ inline constexpr float    kAimStepDeg = 1.f;       // ... by at most this much o
 inline constexpr float    kAimGain = 0.5f;         // ... and half of the measured angle between the prop and its target
 inline constexpr int      kGrabTries = 2;
 inline constexpr int      kWalkDeadlineS = 300;    // the director's own bound on one walk
+inline constexpr int      kRestandDeadlineS = 30;  // ... and the second walk to the planned stand, which the put goes on without
 
 // ---- failure bounds of the instrument, never a wait for a milestone ----
 
@@ -60,10 +61,13 @@ inline constexpr uint64_t kPutBoundMs = 15000;     // a prop let go over the sac
 inline constexpr uint64_t kFillItemBoundMs = 10000; // arm 3: a dropped item is absorbed within this, else it is logged as missed
 inline constexpr uint64_t kTakeBoundMs = 180000;    // arm 4: the client says whether it took from the sold sack
 inline constexpr uint64_t kClientBoundMs = 1800000; // the client's whole route
-inline constexpr uint64_t kPutsSettleMs = 20000;   // backstop: a prop neither filed nor at rest this long after the client's puts ends arm 2 INVALID
+inline constexpr uint64_t kPutsSettleMs = 20000;   // backstop: a prop the client let go of neither filed nor at rest this long after its puts ends arm 2 INVALID
+inline constexpr int      kRestSamples = 3;        // a let-go prop is at rest after this many consecutive host samples under kSettledCmS
+inline constexpr int      kMinPutsToJudge = 3;     // fewer props than this off the floor is too few to say PASS on
+inline constexpr uint64_t kWatchBoundMs = 1800000; // the client waits this long for the host's done line, then ends INVALID
 inline constexpr uint64_t kParkBoundMs = 240000;   // a drone in flight at the call lands within minutes
 inline constexpr uint64_t kSaleBoundMs = 600000;   // the drone flies out, sells and the container is cleared
-inline constexpr uint64_t kCensusLaterMs = 5000;  // arm 2: the census after the sale is read again this long after it
+inline constexpr uint64_t kCensusLaterMs = 5000;  // arms 3 and 4: the census after the sale is read again this long after it
 
 // ---- the chat lines ("rest" is the text after the prefix) ----
 
@@ -77,9 +81,9 @@ inline constexpr const char* kTookPrefix = "sack client took ";   // client: arm
 // else the refusal reason of the press (0 when it was granted). `took` is 1 when an item came out of the sold sack.
 inline constexpr int kReplyNothing = -1;
 inline constexpr int kReplyFailed = -2;
-inline constexpr const char* kPutsDoneLine = "sack client puts done"; // client: arm 2: every prop was tried
-inline constexpr const char* kCallLine = "sack host call";        // host: arm 2: the census before is taken, the drone is called
-inline constexpr const char* kSoldLine = "sack host sold";        // host: arm 2: the drone container is cleared
+inline constexpr const char* kPutsPrefix = "sack client puts ";     // client: arm 2: every prop was tried; the element ids it let go of, comma-separated ("none" for none)
+inline constexpr const char* kCallLine = "sack host call";        // host: arms 3 and 4: the census before is taken, the drone is called
+inline constexpr const char* kSoldLine = "sack host sold";        // host: arms 3 and 4: the drone container is cleared
 inline constexpr const char* kDoneLine = "sack host done";        // host: the run is over
 
 // ---- shared state (dronesack_drill.cpp) ----
@@ -110,6 +114,8 @@ uint64_t NowMs();
 void Say(const std::string& line);
 bool Rest(const std::string& prefix, std::string* rest);
 bool Heard(const std::string& line);
+uint32_t ParseEid(const std::string& s);
+std::vector<uint32_t> ParseEids(const std::string& csv);   // "3142,3147" -> the element ids; a token that is no id is dropped
 
 // 1 or 2: the run's arm (the dronesack_drill row's value).
 int Mode();
@@ -162,6 +168,7 @@ struct Client {
     float                 bestSpeed = 1e9f;   // ... and the slowest it moved while inside it (cm/s)
     float                 standCm = 0.f, planPitch = 0.f;   // ... and the carry's derived stand (flat, from the sack) and pitch
     bool                  aimed = false, restood = false;   // ... the Over leg checked the stand on arrival; it walked to the planned stand again
+    std::vector<uint32_t> released;   // the element ids this client let go of (a release, or a prop dropped by a skip), named in its puts line
     bool                  letGo = false;                // the Settle leg: the drop was called, not yet checked
     int                   census = 0;   // 0 none yet, 1 before taken, 2 after taken, 3 after+5s taken and compared
     uint64_t              soldSeenMs = 0;     // arm 4: when this peer first saw the host's sold line

@@ -84,8 +84,8 @@ std::vector<Received>  g_recv;
 std::map<std::string, std::string> g_rests;
 std::set<std::string>              g_heard;
 
-const char* const kRestPrefixes[] = {kSackPrefix, kBoundPrefix, kCratePrefix, kPropsPrefix, kIndexPrefix, kTookPrefix};
-const char* const kHeardLines[] = {kDoneLine, kPutsDoneLine, kCallLine, kSoldLine};
+const char* const kRestPrefixes[] = {kSackPrefix, kBoundPrefix, kCratePrefix, kPropsPrefix, kIndexPrefix, kTookPrefix, kPutsPrefix};
+const char* const kHeardLines[] = {kDoneLine, kCallLine, kSoldLine};
 
 void PollChat() {
     if (!DC::PollDue()) return;
@@ -118,6 +118,16 @@ void Abandon(const char* why) {
     g_c.ph = ClientPh::Done;
 }
 
+}  // namespace
+
+namespace detail {
+
+Client g_c;
+
+uint64_t NowMs() { return ::GetTickCount64(); }
+
+void Say(const std::string& line) { DC::Say(line); }
+
 uint32_t ParseEid(const std::string& s) {
     return static_cast<uint32_t>(std::strtoul(s.c_str(), nullptr, 10));
 }
@@ -130,16 +140,6 @@ std::vector<uint32_t> ParseEids(const std::string& csv) {
         if (const uint32_t e = ParseEid(tok)) out.push_back(e);
     return out;
 }
-
-}  // namespace
-
-namespace detail {
-
-Client g_c;
-
-uint64_t NowMs() { return ::GetTickCount64(); }
-
-void Say(const std::string& line) { DC::Say(line); }
 
 bool Rest(const std::string& prefix, std::string* rest) {
     const auto it = g_rests.find(prefix);
@@ -237,15 +237,15 @@ float WrapDeg(float a) {
 }
 
 // Walks the carrier, still holding the prop, to the planned stand: g_c.standCm from the sack's origin on the side it is on,
-// ending within `reachCm` of it. False when the player's place does not read.
-bool StartStandWalk(void* player, const ue_wrap::FVector& at, float reachCm) {
+// ending within `reachCm` of it or at `deadlineS`. False when the player's place does not read.
+bool StartStandWalk(void* player, const ue_wrap::FVector& at, float reachCm, int deadlineS) {
     ue_wrap::FVector me{};
     if (!E::TryGetActorLocation(player, me)) return false;
     float ux = me.X - at.X, uy = me.Y - at.Y;
     const float len = std::hypot(ux, uy);
     if (len < 1.f) { ux = 1.f; uy = 0.f; } else { ux /= len; uy /= len; }
     const ue_wrap::FVector stand{at.X + ux * g_c.standCm, at.Y + uy * g_c.standCm, me.Z};
-    g_c.walk = D::StartBackgroundWalk(stand, reachCm, kWalkDeadlineS, true);
+    g_c.walk = D::StartBackgroundWalk(stand, reachCm, deadlineS, true);
     return true;
 }
 
@@ -263,6 +263,13 @@ void PutLine(uint32_t eid) {
     UE_LOGI("[SACK-DRILL] client put eid=%u: absorbed locally=0 by '-', broadcast=0 (the mirror %s)", eid,
             EL::LivePropActor(eid) ? "still lives here" : "is gone with no destroy seen");
 }
+// The put props this client let go of are named in its puts line: the host waits on each of them, not on a clock.
+void NoteLetGo(uint32_t eid) {
+    for (const uint32_t e : g_c.released)
+        if (e == eid) return;
+    g_c.released.push_back(eid);
+}
+
 
 // A prop this client could not put: said, and the route goes on to the next.
 void Skip(const char* why) {
@@ -271,7 +278,7 @@ void Skip(const char* why) {
     // over it changes the hold with no release, and the host's copy stays where the hand last held it.
     if (void* const player = coop::players::Registry::Get().Local()) {
         void* const p = g_c.prop.Get();
-        if (p && D::Grabbing(player) == p) D::CallOnPlayer(player, L"dropGrabObject");
+        if (p && D::Grabbing(player) == p && D::CallOnPlayer(player, L"dropGrabObject")) NoteLetGo(g_c.eids[g_c.i]);
     }
     CancelWalk();
     g_c.grab.reset();
@@ -291,8 +298,11 @@ void RouteTick(void* player) {
     switch (g_c.st) {
     case Put::Pick:
         if (g_c.i >= g_c.eids.size()) {
-            Say(kPutsDoneLine);
-            UE_LOGI("[SACK-DRILL] client puts done: %zu props tried", g_c.eids.size());
+            std::string csv;
+            for (const uint32_t e : g_c.released) csv += (csv.empty() ? "" : ",") + std::to_string(e);
+            Say(std::string(kPutsPrefix) + (csv.empty() ? "none" : csv));
+            UE_LOGI("[SACK-DRILL] client puts done: %zu props tried, let go of: %s", g_c.eids.size(), csv.empty() ? "none" : csv.c_str());
+            g_c.phaseMs = NowMs();   // the Watch leg's bound counts from here
             g_c.ph = ClientPh::Watch;
             return;
         }
@@ -359,7 +369,7 @@ void RouteTick(void* player) {
         UE_LOGI("[SACK-DRILL] client put eid=%u: grabbed; carrying it to %.0f cm from the sack (hold %.0f cm, camera %.0f cm "
                 "above the window's middle, planned pitch %.1f)", eid, g_c.standCm, hold, drop, g_c.planPitch);
         g_c.restood = false;
-        if (!StartStandWalk(player, at, kStandReachCm)) return Skip("the player's place is unread");
+        if (!StartStandWalk(player, at, kStandReachCm, kWalkDeadlineS)) return Skip("the player's place is unread");
         GoPut(Put::Carry);
         return;
     }
@@ -369,7 +379,8 @@ void RouteTick(void* player) {
         const int w = WalkState();
         if (w == 0) return;
         g_c.walk.reset();
-        if (w == 2) return Skip("the carry to the sack failed or ran out its deadline");
+        if (w == 2 && !g_c.restood) return Skip("the carry to the sack failed or ran out its deadline");
+        if (w == 2) UE_LOGI("[SACK-DRILL] client put eid=%u: the second walk did not reach the stand; putting from where it stands", eid);
         g_c.aimTicks = 0;
         g_c.aimed = false;
         g_c.bestMiss = 1e9f;
@@ -402,7 +413,7 @@ void RouteTick(void* player) {
             g_c.aimed = true;
             UE_LOGI("[SACK-DRILL] client put eid=%u: stands %.0f cm out (planned %.0f)%s", eid, stood, g_c.standCm,
                     g_c.restood ? ", after walking to it again" : "");
-            if (std::fabs(stood - g_c.standCm) > kStandTolCm && !g_c.restood && StartStandWalk(player, sa, kStandTolCm)) {
+            if (std::fabs(stood - g_c.standCm) > kStandTolCm && !g_c.restood && StartStandWalk(player, sa, kStandTolCm, kRestandDeadlineS)) {
                 g_c.restood = true;
                 GoPut(Put::Carry);
                 return;
@@ -427,6 +438,7 @@ void RouteTick(void* player) {
                     "stood %.0f cm out (planned %.0f)", eid, flat, above, speed, E::GetControlRotation(ctrl).Pitch, g_c.planPitch,
                     std::hypot(me.X - sa.X, me.Y - sa.Y), g_c.standCm);
             g_c.letGo = true;
+            NoteLetGo(eid);
             GoPut(Put::Settle);
             return;
         }
@@ -576,7 +588,8 @@ void ClientTickImpl() {
         if (void* const player = coop::players::Registry::Get().Local()) RouteTick(player);
         return;
     case ClientPh::Watch: {
-        if (Mode() >= 2) CensusStep(now);
+        if (Mode() >= 3) CensusStep(now);   // arms 3 and 4 read the container census round the sale; arm 2 ends at its verdict
+        if (!Heard(kDoneLine) && now - g_c.phaseMs > kWatchBoundMs) { Abandon("the host never said it is done"); return; }
         // The census after the sale is compared before the run ends; a host that ended with no sale has none to wait for.
         if (!Heard(kDoneLine) || g_c.census == 2) return;
         if (Mode() == 4 && g_c.soldSeenMs && g_c.took < 0) return;   // the take is made before the host can end
