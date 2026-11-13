@@ -506,12 +506,6 @@ CFG_STRING(sack_drill, "sack_drill", "dev", "", "VOTVCOOP_SACK_DRILL", false,
     "client's puppet once its world is ready; the client aims and presses it; the host's DONE line ends it.")
 CFG_FLAG(point_sack_client_runs, "point_sack_client_runs", "dev", false, "VOTVCOOP_POINT_SACK_CLIENT_RUNS",
     "Developer: a client's point sack runs the game's own body there instead of asking the host (the sack drill's red).")
-CFG_STRING(equip_drill, "equip_drill", "dev", "", "VOTVCOOP_EQUIP_DRILL", false,
-    "Drill (BOTH peers): every empty equipment slot takes an item. run -- once this peer's world is settled it counts its "
-    "empty slots and equips a list of wearables through the game's own AddEquipment; each peer says `rig: VERDICT "
-    "equip-host|equip-client`, PASS when every slot that was empty took an item, FAIL when one stays empty.")
-CFG_FLAG(equip_blank_zeroed, "equip_blank_zeroed", "dev", false, "VOTVCOOP_EQUIP_BLANK_ZEROED",
-    "Developer: a joiner's blank equipment slots are written zeroed, not as the game's own empty (the equip drill's red).")
 CFG_ENUM(prop_syncer_drill, "prop_syncer_drill", "dev", "off", "off|kick|forge", "VOTVCOOP_PROP_SYNCER_DRILL",
     "Drill (host and BOTH clients, the same value; three peers): a client syncs a prop its own interaction moves. "
     "kick: the client in slot 1 walks to a keyed prop with the director, claims it, kicks it with the game's own "
@@ -777,3 +771,5 @@ CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_C
 #include "coop/config/config_registry_rows_dev_prop_props.inc"
 // The disc drills' rows: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_disc.inc"
+// The equipment drill's rows: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_equip.inc"

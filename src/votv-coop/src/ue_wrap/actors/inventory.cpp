@@ -9,6 +9,7 @@
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
@@ -45,7 +46,7 @@ constexpr int32_t kPersonalSlot    = 0;
 
 int32_t g_offSave = -1;
 
-// ---- live personal store: reflected offsets (resolved once; -1 = looked and failed) ----------
+// ---- live personal store: reflected offsets (resolved once per world; -1 = looked and failed) ----------
 // -2 = not looked at yet. Never guessed: an unresolvable offset makes the reader inert, it does
 // not fall back to a hardcoded number.
 int32_t g_offPlayerContainer  = -2;  // mainGamemode_C.playerContainer  -> Aprop_inventoryContainer_player_C*
@@ -54,11 +55,18 @@ int32_t g_offInvPlayer        = -2;  // propInventory_C.Player          -> the p
 int32_t g_offInvIndex         = -2;  // propInventory_C.Index           -> the GObjStack slot
 int32_t g_offGObjStack        = -2;  // saveSlot_C.GObjStack
 
+// A miss is remembered only for the world it was made in (a class may not be loaded yet, as at the menu): the next world
+// looks again, and says so again.
+uint32_t g_missWorld = 0;
+
 int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
+    if (slot == -1 && g_missWorld != world_identity::Generation()) slot = -2;
     if (slot == -2) {
         slot = cls ? R::FindPropertyOffset(cls, name) : -1;
-        if (slot < 0)
-            UE_LOGW("inventory: could not resolve %ls -- the live-store reader is inert", name);
+        if (slot < 0) {
+            g_missWorld = world_identity::Generation();
+            UE_LOGW("inventory: could not resolve %ls -- what reads it stays off until the next world", name);
+        }
     }
     return slot;
 }
@@ -284,7 +292,7 @@ bool ReadLivePersonalStore(LivePersonalStore& out) {
     return true;
 }
 
-bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv, bool zeroedBlanks) {
+bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
     if (!saveSlot || !R::IsLive(saveSlot)) return false;
     if (void* probe = R::EngineAlloc(16)) {  // GMalloc probe: a failure -> we'd silently write
         R::EngineFree(probe);                // empty arrays over a real inventory; refuse instead
@@ -299,10 +307,9 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv, bool zeroedBl
                 "write a partial inventory", saveSlot, kPersonalSlot);
         return false;
     }
-    // A default record is the zeroed blank: the red keeps it where the game's own empty slot belongs.
     EquipRecord equipBlank, holdBlank;
-    if (!zeroedBlanks && (!ReadGameBlank(saveSlot, g_offEquipmentDef, L"equipment_def", equipBlank) ||
-                          !ReadGameBlank(saveSlot, g_offHoldDef, L"hold_def", holdBlank))) {
+    if (!ReadGameBlank(saveSlot, g_offEquipmentDef, L"equipment_def", equipBlank) ||
+        !ReadGameBlank(saveSlot, g_offHoldDef, L"hold_def", holdBlank)) {
         UE_LOGE("inventory: ApplyToSaveObject -- save object %p has no equipment_def / hold_def to take the empty slot "
                 "from; refusing, since a zeroed blank is a slot the game never sees as free", saveSlot);
         return false;
@@ -325,6 +332,25 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv, bool zeroedBl
                       [&holdBlank](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r, holdBlank); });
     UE_LOGI("inventory: ApplyToSaveObject(%p) wrote carried=%zu equipment=%zu hold=%zu",
             saveSlot, inv.inventory.size(), inv.equipment.size(), inv.hold.size());
+    return true;
+}
+
+bool ZeroEmptyEquipment(void* saveSlot) {
+    if (!saveSlot || !R::IsLive(saveSlot)) return false;
+    void* probe = R::EngineAlloc(16);  // as the apply: no allocator, no rewrite of arrays that would come back empty
+    if (!probe) return false;
+    R::EngineFree(probe);
+    const EquipRecord zeroed;  // a blank C++ record: the transform zeroed, not the game's identity
+    for (const int32_t off : {kOff_equipment, kOff_hold}) {
+        const SR::Arr arr = SR::ReadArr(saveSlot, off);
+        std::vector<EquipRecord> recs;
+        for (int32_t i = 0; i < arr.num; ++i) {
+            recs.emplace_back();
+            ReadEquipRecord(arr.data + static_cast<size_t>(i) * kEquipStride, recs.back());
+        }
+        BuildAndSwapArray(saveSlot, off, kEquipStride, recs,
+                          [&zeroed](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r, zeroed); });
+    }
     return true;
 }
 

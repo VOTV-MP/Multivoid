@@ -205,9 +205,10 @@ fills to the save object's count, and the game equips only into a slot that is b
 default record, with an identity transform), so every blank the hand-back writes is that empty, read from the save
 object's own `equipment_def` and `hold_def` (the defaults the game's reset copies back), never typed: a blank written with a
 zeroed transform was never free, and a joiner could wear only as many new items as slots it had emptied itself. A
-profile that stored such blanks is healed at its next join (`ue_wrap/actors/inventory`). `[V]` on the rig
-(`coop/dev/equip_drill`): every empty slot of a fresh joiner and of a returning one takes an item, as the host's do; without
-the empty blank, none of the client's five did. The
+profile that stored such blanks is healed at its next join (`ue_wrap/actors/inventory`). `[?]` on the rig
+(`coop/dev/equip_drill`): measured on the first version of the fix, which typed the identity transform, every empty slot
+of a fresh joiner and of a returning one took an item, as the host's do, and without the empty blank none of the client's
+five did; the version that reads the game's own blank is not yet re-proved. The
 same profile carries the player's vitals (health, food, sleep, the flashlight charge, the food
 tolerances and the buffs), which the game keeps in place on that same save object, and where
 the player stood: a first join starts from the game's own defaults at the start point (the KPP gate in a fresh game, day 0 to 2; beside the

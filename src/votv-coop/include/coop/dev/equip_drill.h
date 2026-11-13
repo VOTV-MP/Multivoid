@@ -1,11 +1,12 @@
 // coop/dev/equip_drill.h -- [dev] every empty equipment slot takes an item, on the host and on a client alike.
 // equip_drill=run on both peers: once this peer's world is settled (the host's `rig: READY hosting`, a client's streams
-// running), counts the empty slots of saveSlot.equipment, then equips a list of wearables (two fanny packs among them, and
-// items the game refuses as a second of their type) through the game's own AddEquipment until the list ends.
-// `rig: VERDICT equip-host|equip-client PASS` when every slot that was empty took an item; FAIL when a slot is still
-// empty after the list, which is the game finding no free slot where one stands empty; INVALID when no slot was empty.
-// Each peer says its own verdict. A client joined with a fresh profile is the case that padded its slots on the join; the
-// red is equip_blank_zeroed=1 on the client, which writes those slots as the old zeroed blank.
+// running) and the addHint watch is live, offers a list of wearables (two fanny packs among them, and items the game
+// refuses as a second of their type) through the game's own AddEquipment while a slot stands empty. `rig: VERDICT
+// equip-host|equip-client PASS` when every empty slot took an item; FAIL only when the game answers "Not enough space"
+// (its hint, read at the script gate) while a slot is empty; INVALID when no slot was empty, when the list ran out of
+// wearables the game accepts (a type or item already worn), or when a 5 minute bound on the settling passes. Each peer
+// says its own verdict. A client joined with a fresh profile is the case that padded its slots on the join; the red is
+// equip_blank_zeroed=1 on the client, which writes those slots as the old zeroed blank.
 
 #pragma once
 
