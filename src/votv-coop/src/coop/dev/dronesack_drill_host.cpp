@@ -188,6 +188,43 @@ std::string OutsideList() {
     return out.empty() ? "none" : out;
 }
 
+// Whether every loose prop is accounted for: gone from the host's floor (filed, or taken with its client mirror) or at rest
+// on it (never put, or let go and landed), by the speed the release reads. A prop mid-flight is neither.
+bool PropsAccounted() {
+    for (const uint32_t eid : g_h.propEids) {
+        void* const p = EL::LivePropActor(eid);
+        if (!p) continue;
+        const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(p, /*linearOnly=*/true);
+        if (!v.ok) return false;
+        const float speed = std::sqrt(v.linearCmS.X * v.linearCmS.X + v.linearCmS.Y * v.linearCmS.Y +
+                                      v.linearCmS.Z * v.linearCmS.Z);
+        if (speed > kSettledCmS) return false;
+    }
+    return true;
+}
+
+// Arm 2's verdict, the moment the puts are settled: every loose prop that left the floor is a record in the host's drone
+// container. A prop a client's own copy of the container filed is gone from the floor with no record here. Said in the
+// family's own line (arm 4's form) and as the rig's one contract line, which a run ends on. True on PASS.
+bool Arm2Verdict() {
+    const int gone = static_cast<int>(g_h.propEids.size()) - PropsOutside();
+    const int filed = SackRecords(g_h.sack.Get()) - g_h.recordsAtDrop;
+    namespace RV = coop::rig_verdict;
+    if (gone == 0) {
+        UE_LOGW("[SACK-DRILL] host arm 2 INVALID: no prop reached the sack");
+        RV::Say("dronesack-arm2", RV::Outcome::Invalid, "no prop reached the sack");
+        return false;
+    }
+    if (filed == gone) {
+        UE_LOGI("[SACK-DRILL] host arm 2 PASS: %d prop(s) left the floor, %d record(s) filed", gone, filed);
+        RV::Say("dronesack-arm2", RV::Outcome::Pass, "%d prop(s) left the floor, %d record(s) filed", gone, filed);
+        return true;
+    }
+    UE_LOGW("[SACK-DRILL] host arm 2 FAIL: %d prop(s) left the floor, %d record(s) filed", gone, filed);
+    RV::Say("dronesack-arm2", RV::Outcome::Fail, "%d prop(s) left the floor, %d record(s) filed", gone, filed);
+    return false;
+}
+
 void SaleDone() {
     if (Mode() >= 3) {
         UE_LOGI("[SACK-DRILL] host DONE arm %d items absorbed=%d of %d, drone container records at call=%d, now=%d",
@@ -199,22 +236,6 @@ void SaleDone() {
     UE_LOGI("[SACK-DRILL] host DONE arm 2 props in sack=%d of %zu, drone container records at call=%d, now=%d",
             static_cast<int>(g_h.propEids.size()) - PropsOutside(), g_h.propEids.size(), g_h.recordsAtCall,
             SackRecords(g_h.sack.Get()));
-    // Arm 2's verdict: every loose prop that left the floor is a record in the host's drone container at the call. A
-    // prop a client's own copy of the container filed is gone from the floor with no record here.
-    const int gone = static_cast<int>(g_h.propEids.size()) - PropsOutside();
-    const int filed = g_h.recordsAtCall - g_h.recordsAtDrop;
-    // Said in the family's own line (arm 4's form) and as the rig's one contract line, which a run ends on.
-    namespace RV = coop::rig_verdict;
-    if (gone == 0) {
-        UE_LOGW("[SACK-DRILL] host arm 2 INVALID: no prop reached the sack");
-        RV::Say("dronesack-arm2", RV::Outcome::Invalid, "no prop reached the sack");
-    } else if (filed == gone) {
-        UE_LOGI("[SACK-DRILL] host arm 2 PASS: %d prop(s) left the floor, %d record(s) filed", gone, filed);
-        RV::Say("dronesack-arm2", RV::Outcome::Pass, "%d prop(s) left the floor, %d record(s) filed", gone, filed);
-    } else {
-        UE_LOGW("[SACK-DRILL] host arm 2 FAIL: %d prop(s) left the floor, %d record(s) filed", gone, filed);
-        RV::Say("dronesack-arm2", RV::Outcome::Fail, "%d prop(s) left the floor, %d record(s) filed", gone, filed);
-    }
     Say(kDoneLine);
     g_h.ph = Ph::Done;
 }
@@ -255,6 +276,7 @@ void Sale() {
         if (Mode() >= 3) CensusIndexHolders("host", Moment::After, g_h.crateIndex);
         Say(kSoldLine);
         g_h.soldMs = NowMs();
+        if (Mode() == 2) { SaleDone(); return; }   // the verdict was said at the puts; the sale's own event ends the run
         Go(Ph::Tail);
         return;
     }
@@ -498,15 +520,29 @@ void HostTick(coop::net::Session* s) {
         if (Heard(kPutsDoneLine)) { Go(Ph::Settle); return; }
         if (now - g_h.phaseMs > kClientBoundMs) Abandon("the client never finished its puts");
         return;
-    case Ph::Settle:
+    case Ph::Settle: {
         PrintNew();
-        if (PropsOutside() == 0 || now - g_h.phaseMs > kPutsSettleMs) {
+        // The client's puts are done: the verdict is decided the moment every prop is filed or at rest, with no wait on a
+        // clock. The drone's sale is only for a run that passed; a failed or invalid one ends here. kPutsSettleMs is the
+        // backstop for a prop that never comes to rest.
+        const bool accounted = PropsAccounted();
+        if (accounted || now - g_h.phaseMs > kPutsSettleMs) {
             UE_LOGI("[SACK-DRILL] host puts: %d of %zu props are in the sack; still outside (eids): %s",
                     static_cast<int>(g_h.propEids.size()) - PropsOutside(), g_h.propEids.size(),
                     OutsideList().c_str());
-            Go(Ph::Call);
+            if (!accounted) {
+                coop::rig_verdict::Say("dronesack-arm2", coop::rig_verdict::Outcome::Invalid,
+                                       "a prop was neither filed nor at rest within %llu s: %s",
+                                       static_cast<unsigned long long>(kPutsSettleMs / 1000), OutsideList().c_str());
+                SaleDone();
+            } else if (Arm2Verdict()) {
+                Go(Ph::Call);
+            } else {
+                SaleDone();
+            }
         }
         return;
+    }
     case Ph::Call:
         PrintNew();
         CallDrone();

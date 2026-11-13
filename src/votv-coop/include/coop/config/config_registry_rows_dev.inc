@@ -584,7 +584,7 @@ CFG_INT(dronesack_drill, "dronesack_drill", "dev", 0, 0, 4, "VOTVCOOP_DRONESACK_
     "drone's container. 3 -- the host itself drops six cups and one fresh crate onto the sack, one at a time, then "
     "calls the drone; both peers take the container census around the sale and log the crate's "
     "inventory index and which containers hold it afterwards. Arms 1 and 3 judge nothing; arm 2 passes when every prop that "
-    "left the floor is a record in the host's drone container at the call (dronesack_prop=drive: zip disks "
+    "left the floor is a record in the host's drone container once the client's puts are done and every prop is filed or at rest (dronesack_prop=drive: zip disks "
     "instead of cups; the green and the red were run with disks), as rig: VERDICT dronesack-arm2; its red is "
     "container_overlap_no_cancel=1 on the client. Lines tagged [SACK-DRILL] and "
     "[SACK-CENSUS]. 4 -- arm 3, with the client walking to the sack and opening its screen before the sale; at the "
