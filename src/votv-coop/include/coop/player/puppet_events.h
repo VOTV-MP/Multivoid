@@ -29,8 +29,11 @@ bool AddLifeListener(LifeFn fn);
 bool AddPoseListener(PoseFn fn);
 
 // The puppet drive calls it once per fresh pose of `slot`, after the pose reached the puppet: the life edge first, then
-// the pose listeners.
-void Announce(uint8_t slot, const coop::net::PoseSnapshot& pose);
+// the pose listeners. `worldReady` is whether the peer has a world to be alive or dead in (the host's view of a slot:
+// Session::IsSlotWorldReady; a client's puppets spawn only after its own world-ready): a pose before it carries no life
+// state, so its health is held as unknown, raises nothing and changes nothing; the first pose at or after it is the
+// first one. The pose listeners still hear every pose.
+void Announce(uint8_t slot, const coop::net::PoseSnapshot& pose, bool worldReady);
 
 // The slot's puppet is gone (a leave, a session end): its alive state is forgotten, so the next puppet's first pose
 // has no "from" again.

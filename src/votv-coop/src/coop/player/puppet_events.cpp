@@ -46,18 +46,20 @@ bool AddPoseListener(PoseFn fn) {
     return fn != nullptr && g_pose.Add(fn);
 }
 
-void Announce(uint8_t slot, const coop::net::PoseSnapshot& pose) {
+void Announce(uint8_t slot, const coop::net::PoseSnapshot& pose, bool worldReady) {
     UE_ASSERT_GAME_THREAD("puppet_events::Announce");
     if (slot >= coop::players::kMaxPeers) return;
-    // Alive is the test the registry's LifeOf applies to the same stream: any positive health.
-    const bool alive = pose.healthFrac > 0;
-    const Seen now = alive ? Seen::Alive : Seen::Dead;
-    const Seen was = g_seen[slot];
-    g_seen[slot] = now;
-    // The first pose after a puppet came up has no "from": a death in it is still raised (a peer who is dead when its
-    // puppet appears, a join mid-death, must reach the listeners), an alive first pose raises nothing.
-    if (was != now && (was != Seen::Nothing || !alive))
-        for (int i = 0; i < g_life.count; ++i) g_life.fn[i](slot, alive);
+    if (worldReady) {
+        // Alive is the test the registry's LifeOf applies to the same stream: any positive health.
+        const bool alive = pose.healthFrac > 0;
+        const Seen now = alive ? Seen::Alive : Seen::Dead;
+        const Seen was = g_seen[slot];
+        g_seen[slot] = now;
+        // The first pose of a ready slot has no "from": a death in it is still raised (a peer dead when its puppet
+        // appears, a join mid-death, must reach the listeners), an alive first pose raises nothing.
+        if (was != now && (was != Seen::Nothing || !alive))
+            for (int i = 0; i < g_life.count; ++i) g_life.fn[i](slot, alive);
+    }
     for (int i = 0; i < g_pose.count; ++i) g_pose.fn[i](slot, pose);
 }
 
