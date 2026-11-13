@@ -132,27 +132,32 @@ bool PassesAfter(uint32_t seen, int passes) {
 
 // The exit with a ping: the pinger's machine keeps the desk, so the hold must stay held to the ping run's own end. The
 // events are the hold dropping (FAIL) and the run ending (PASS); the run is long, so its bound is a step's.
-bool HoldsToPingEnd(bool& freed) {
+bool HoldsToPingEnd(char& freed) {
     bool dropped = false;
     // The hold and the ping are read in one game-thread step, the hold first: a hold already free while the ping still runs
-    // is a premature drop. Inside the one poll that sees the run end the legitimate release (a reliable message a moment
-    // after the ping's end) cannot be told from a drop, so that poll reads PASS; a drop earlier is read at its own poll.
-    const bool ended = PS::WaitFor("the ping run's end", kStepSec, [&dropped] {
+    // is a premature drop (FAIL). Inside the one poll that sees the run end, a free hold is the legitimate release (a
+    // reliable message a moment after the ping's end) or a drop in the same window: that cannot be decided, so it is '?'
+    // and the verdict is INVALID. A drop earlier is read at its own poll.
+    bool endedFree = false;
+    const bool ended = PS::WaitFor("the ping run's end", kStepSec, [&dropped, &endedFree] {
         uint8_t ping = 0xFF;
         bool free = false;
         OnGameThread([&] {
             free = coop::device_occupancy::HolderOf(Key()) == 0xFF;
             ping = coop::desk_input_sync::PingActiveSlot();
         });
-        if (ping == 0xFF) return true;
+        if (ping == 0xFF) {
+            endedFree = free;
+            return true;
+        }
         if (free) dropped = true;
         return dropped;
     });
-    freed = dropped;
+    freed = dropped ? '1' : endedFree ? '?' : '0';
     return ended;
 }
 
-bool MeasureHold(unsigned actorSlot, bool& freed) {
+bool MeasureHold(unsigned actorSlot, char& freed) {
     if (!ExitOnly() &&
         !PS::WaitFor("the actor's knock-down seen by the host", kBackstopSec, [actorSlot] {
             bool down = false;
@@ -166,7 +171,7 @@ bool MeasureHold(unsigned actorSlot, bool& freed) {
     UE_LOGI("seat-ragdoll: the reconcile ran twice after the departure (from pass %u); the hold reads holder=%u", seen,
             Holder());
     if (ExitOnly() && Ping()) return HoldsToPingEnd(freed);
-    freed = Holder() == 0xFF;
+    freed = Holder() == 0xFF ? '1' : '0';
     return true;
 }
 
@@ -234,10 +239,10 @@ std::string Act(const char* me) {
         return "";
     }
     // The host is the actor: it measures its own table, the client having said what it saw of the claim.
-    bool freed = false;
+    char freed = '0';
     const bool ok = MeasureHold(0, freed);
     LogState(me, 1);
-    return ok ? std::string(saw == "1" ? "1" : "0") + " " + (freed ? "1" : "0") : std::string();
+    return ok ? std::string(saw == "1" ? "1" : "0") + " " + freed : std::string();
 }
 
 // The watcher's prelude: the actor's claim seen here, and the client's ping attributed when the host watches it. It says
@@ -257,11 +262,19 @@ bool WatchClaim(const char* me, unsigned actorSlot) {
     return true;
 }
 
-// "claimed freed", each 0 or 1: the claim the watcher saw, and the hold the actor left.
+// "claimed freed": the claim the watcher saw (0 or 1), and the hold the actor left (0, 1, or ? when the hold was free in the
+// poll that saw the ping run end, which cannot be decided).
 void Judge(const std::string& r) {
     // Empty: a wait that never saw its event said INVALID itself (peer_signal), so no second line.
     if (r.size() != 3 || r[1] != ' ') return;
-    const int claimed = r[0] == '1', freed = r[2] == '1';
+    const int claimed = r[0] == '1';
+    if (r[2] == '?') {
+        coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
+                               "the hold was free in the same poll that saw the ping run end: a release after the run "
+                               "and a drop in that window cannot be told apart");
+        return;
+    }
+    const int freed = r[2] == '1';
     // The exit arm mid-ping: the pinger's machine keeps the desk, so nothing frees it.
     const bool pass = ExitOnly() && Ping() ? claimed && !freed : claimed && freed;
     coop::rig_verdict::Say(kTag, pass ? coop::rig_verdict::Outcome::Pass : coop::rig_verdict::Outcome::Fail,
@@ -296,8 +309,8 @@ void RunHost() {
     if (HostActs()) {
         r = Act("HOST");
     } else if (WatchClaim("HOST", 1) && PS::Await("actor_ragdolled", kStepSec)) {
-        bool freed = false;
-        if (MeasureHold(1, freed)) r = std::string("1 ") + (freed ? "1" : "0");
+        char freed = '0';
+        if (MeasureHold(1, freed)) r = std::string("1 ") + freed;
         PS::Mark("observer_done");
     }
     PS::Mark("host_done");
