@@ -2,6 +2,7 @@
 // coop/dev/prop_act_drill.h; the core (prop_act_drill.cpp) routes the phase and runs the host half.
 
 #include "coop/dev/prop_act_drill.h"
+#include "prop_act_drill_client_steps.h"
 
 #include "coop/comms/chat_feed.h"
 #include "coop/dev/director/aimed_grab.h"
@@ -51,11 +52,10 @@ constexpr uint8_t kEatAction = 4;   // actionOptionIndex's eat, as the watch rea
 constexpr const char* kSecondTag = " eid2=";   // after the first eid in a pair's ready line
 constexpr int kFillMax = 400;            // CLIENT: own spawns pocketed before the inventory is called never full
 
+}  // namespace
+
 // ---- client (taker) ----------------------------------------------------------------------------------------------
 
-enum class CStep : uint8_t { Arm, AwaitReady, Resolve, Fill, Walk, AwaitGather, ClearHand, Grab, AwaitDriven,
-                             AwaitReply, AwaitContents, AwaitPoison, AwaitCopy, Say, Done };
-constexpr uint64_t kCopyBoundMs = 30000;   // a snack arm: the act's end to this client's copies showing the host's state
 constexpr uint64_t kStandBoundMs = 60000;  // a step's end to the player standing again (a bound only says INVALID)
 bool g_ragdollSaid = false;                // the ragdoll after this step was logged once
 std::string g_readyRest;                   // the text after the host's ready line's eid: a snack arm's uses and open
@@ -115,6 +115,8 @@ void ClientPass(const Row& row, const char* what) {
     g_sayFailed = false;
     CEnter(CStep::Say);
 }
+
+namespace {
 
 // The player's hand item name, as the game passes it to a use (holding_name).
 bool ReadHoldName(void* player, R::FName* out) {
@@ -628,85 +630,15 @@ void ClientTick(coop::net::Session* s, const Phase& ph) {
         }
         ClientRead(row, player);
         return;
-    case CStep::AwaitContents: {
-        // The host rolled the contents on its copy and says, behind their births and FoodStates on the same ordered
-        // lane, how many there are and how many it poisoned: the line is the event this step decides on, and what this
-        // client holds when it reads it is final. The host set the MRE's poisonChance to 1, so one content is poisoned, and
-        // its poison rides the FoodState that follows its spawn.
-        if (now < g_cNextMs) return;
-        g_cNextMs = now + kPollEveryMs;
-        std::string said;
-        if (!HostSaid(ContentsHead(row), &said)) {
-            if (CExpired(kContentsBoundMs)) ClientInvalid(row, "the host never said the contents were sent");
-            return;
-        }
-        const size_t sentN = static_cast<size_t>(std::strtoul(said.c_str() + (said.find("n=") == std::string::npos ? 0 : said.find("n=") + 2), nullptr, 10));
-        const size_t hostPoisoned = static_cast<size_t>(std::strtoul(said.c_str() + (said.find("poisoned=") == std::string::npos ? 0 : said.find("poisoned=") + 9), nullptr, 10));
-        void* poisoned = nullptr;
-        bool waiting = false;
-        g_freshContents = FoodMirrorsNotIn(g_foodsBefore, nullptr, &poisoned, &waiting);
-        // A FoodState that still waits for its copy has not been applied: what the contents show is not final until it has.
-        if (waiting) {
-            if (CExpired(kContentsBoundMs)) ClientInvalid(row, "a FoodState for a content never drained from the pending set");
-            return;
-        }
-        if (g_freshContents != sentN) {
-            ClientFail(row, "the host rolled " + std::to_string(sentN) + " contents, " + std::to_string(g_freshContents) +
-                                " reached this client");
-            return;
-        }
-        if (!poisoned) {
-            ClientFail(row, hostPoisoned ? "no poisoned content reached this client: the host poisoned " +
-                                               std::to_string(hostPoisoned) + " and its FoodStates carried none"
-                                         : "no poisoned content reached this client: the host rolled none");
-            return;
-        }
-        // Its bite: the game's own `bitten` adds the foodPoison effect when both fields read above 0, as a press on it does.
-        std::vector<ue_wrap::effects::Entry> list;
-        g_poisonBefore = ue_wrap::effects::List(&list) ? FoodPoisonLive(list) : 0;
-        if (!CallBitten(poisoned, player)) {
-            ClientFail(row, "the poisoned content's bite could not run here");
-            return;
-        }
-        CEnter(CStep::AwaitPoison);
+    case CStep::AwaitContents:
+        StepAwaitContents(row, player, now);
         return;
-    }
-    case CStep::AwaitPoison: {
-        // The bite call has returned: the effect it adds is there at this poll, or the bite added none. Decided at this
-        // poll, with no wait.
-        if (now < g_cNextMs) return;
-        g_cNextMs = now + kPollEveryMs;
-        std::vector<ue_wrap::effects::Entry> list;
-        if (!ue_wrap::effects::List(&list) || FoodPoisonLive(list) <= g_poisonBefore) {
-            ClientFail(row, "the bite of a poisoned content added no foodPoison here");
-            return;
-        }
-        ue_wrap::effects::Remove(L"foodPoison");   // the drill's next rows eat: leave the player as it was
-        const std::string what = "asked, granted, replayed; the mirror is gone, " + std::to_string(g_freshContents) +
-                                 " host-born food mirror(s) arrived and a bite of the poisoned one added foodPoison";
-        ClientPass(row, what.c_str());
+    case CStep::AwaitPoison:
+        StepAwaitPoison(row, player, now);
         return;
-    }
-    case CStep::AwaitCopy: {
-        if (now < g_cNextMs) return;
-        g_cNextMs = now + kPollEveryMs;
-        std::string why;
-        // The host's `settled` line is the event: it follows every birth, record and destroy the host sent for the act on
-        // one ordered lane, so once it is read what this client shows is final, a mismatch is a FAIL and no wait remains.
-        // A bound that runs out before it, with the copies still short, only says INVALID.
-        switch (SnackClientCopy(row, g_mirror, g_ceid, g_readyRest, HostSaid(SnackSettledHead(row), nullptr), &why)) {
-        case Judged::Wait:
-            if (CExpired(kCopyBoundMs)) ClientInvalid(row, "the host's settled line never came: " + why);
-            return;
-        case Judged::Fail:
-            ClientFail(row, why);
-            return;
-        case Judged::Pass:
-            ClientPass(row, why.c_str());
-            return;
-        }
+    case CStep::AwaitCopy:
+        StepAwaitCopy(row, player, now);
         return;
-    }
     case CStep::Say: {
         // A client's chat passes the host's rate limit only at the drills' spacing; a refused line is lost for good.
         if (now < g_nextSayMs) return;
