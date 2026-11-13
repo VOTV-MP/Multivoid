@@ -33,21 +33,22 @@ namespace coop::net { class Session; }
 // controller as its level begins play: the controller goes back to the visitor, and the placed player and the black
 // screen it put up are removed. The world's sky, which reaches that far down without bound (its height fog, sun, sky
 // light, atmosphere, clouds and post process), is hidden on this machine for the visit, so the map is as dark as the
-// game leaves it. The game mode's backroomsEnabled is off for the visit and 5 s after it, so the view's jump into the
-// map and back out is not a clip, and a trip asked while seated or riding is refused, as the game's clip check
-// refuses one. What a map's script spawns lands in the world's own level, far below it, and counts as the map's.
+// game leaves it. A trip asked while seated or riding is refused, as the game's clip check refuses one. What a map's
+// script spawns lands in the world's own level, far below it, and counts as the map's.
 // untitled_untitled's hook check ends the map for a grappling hook in the map only, not for one in the world.
-// The host can close the backrooms (world.backrooms, F1's Administration > Server settings): every peer then holds
-// backroomsEnabled off, so the game's clip takes no clip, and refuses a trip to the three maps; a visit already
-// running ends as usual.
+// The game's own clip check (mainGamemode_C::canBackrooms, which the player's tick asks before every clip trip) is
+// answered no for this machine's player while a visit runs and for 5 s after it, so the view's jump into the map and
+// back out is not a clip, and while the host has closed the backrooms (world.backrooms, F1's Administration > Server
+// settings): no clip is taken and no trip is sent. Open, the game's own logic answers. A visit already running ends as
+// usual.
 
 namespace coop::level_visit {
 
 // A pose below this height is a player in a visited map: its copy is hidden while its pose stays below it.
 inline constexpr float kVisitFloorZ = -30000.f;
 
-// Cache the session, register the watches (lib_C::loadLevel and lib_C::End), the QuitGame hook and the pose listener.
-// Idempotent; safe every tick. Game thread.
+// Cache the session, register the watches (lib_C::loadLevel, lib_C::End and canBackrooms), the QuitGame hook, the
+// world.backrooms follower and the pose listener. Idempotent; safe every tick. Game thread.
 void Install(coop::net::Session* session);
 
 // Per pump tick: the visit's load, arrival and return, and the visit reason of each copy's hidden flag, from what its
@@ -70,5 +71,13 @@ bool Visiting();
 std::wstring CurrentMap();
 std::wstring LastEnd();
 void* CurrentLevel();  // the visited ULevel once the player is in it, else null
+bool ReturnPending();  // the visitor's dropped item is still to be given back
+struct DrillStats {
+    uint32_t tripsStarted;       // trips this machine's player took (a clip's loadLevel the gate turned into a visit)
+    uint32_t clipsHeldClosed;    // the game's clip check answered no because the host closed the backrooms
+    uint32_t copyTripsRefused;   // trips a peer's copy authored here, cancelled
+    uint32_t copyTripsLetRun;    // [dev red] trips a peer's copy authored here, let run
+};
+DrillStats Stats();
 
 }  // namespace coop::level_visit

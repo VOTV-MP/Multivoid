@@ -53,6 +53,9 @@ UE_FACT_FN(kRowEnd, "level_visit", L"lib_C", L"End", Declared);
 UE_FACT_FN(kRowQuitGame, "level_visit", L"KismetSystemLibrary", L"QuitGame", Declared);
 constexpr int kTagLoadLevel = 0x4C564C56;  // 'LVLV'
 constexpr int kTagEnd = 0x4C56454E;        // 'LVEN'
+// The game's own clip check, a Blueprint function on the game mode: a name watch on the class that owns it.
+UE_FACT_FN(kRowCanBackrooms, "level_visit", L"mainGamemode_C", L"canBackrooms", Declared);
+constexpr int kTagCanBackrooms = 0x4C564342;  // 'LVCB'
 
 // The maps the clip picks (mainPlayer_C's ReceiveTick); the tutorial's own pick is not a session's.
 constexpr const wchar_t* kMaps[] = {L"sl_backroomsObsolete", L"untitled_untitled", L"untitled_219"};
@@ -89,15 +92,11 @@ std::wstring g_slotName;   // the game instance's slot name before the map's scr
 std::wstring g_pass;       // and its NewVar_6, which the clip writes for untitled_219
 uint8_t g_gameMode = 0;    // and its game mode byte
 bool g_haveGameMode = false;
-// The game mode's backroomsEnabled, which the clip check reads: off while a visit runs and kQuietMs after, so the
-// view's jump into the map and back out of it is not a clip, and off while the host's world.backrooms is. The value it
-// had before; -1 when nothing is held.
-int g_backroomsWas = -1;
 // Raised by a script callback, run by the next tick: the visit's end, and whether a revive is owed.
 std::atomic<bool> g_endAsked{false};
 std::atomic<bool> g_endIsDeath{false};
 std::wstring g_endBy;  // which calls asked for the end, for its log line
-// Until when a trip to a visit map is the view's jump back out of the visit, not a clip.
+// Until when the game's clip check is answered no after a visit: the view's jump back out of it is not a clip.
 std::atomic<ULONGLONG> g_quietUntilMs{0};
 constexpr ULONGLONG kQuietMs = 5000;
 
@@ -155,44 +154,68 @@ void* HeldActor(void* me) {
     return h && R::IsLive(h) ? h : nullptr;
 }
 
-// The game mode's backroomsEnabled: read (-1 when unreadable) and written.
-int BackroomsEnabled(int set = -1) {
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    int32_t off = -1;
-    uint8_t mask = 0;
-    if (!gm || !R::FindBoolProperty(R::ClassOf(gm), L"backroomsEnabled", off, mask)) return -1;
-    uint8_t* b = static_cast<uint8_t*>(gm) + off;
-    if (set == 0) *b = static_cast<uint8_t>(*b & ~mask);
-    if (set == 1) *b = static_cast<uint8_t>(*b | mask);
-    return (*b & mask) ? 1 : 0;
-}
-
-// The host's world.backrooms, the session's value on every peer: off, no clip is taken and no trip is sent.
-bool Closed() { return !coop::config::ResolveFlag(coop::config_registry::rows::world_backrooms); }
-
-// backroomsEnabled held off while a visit runs, kQuietMs after it, and while the host closes the backrooms; given its
-// own value back once none of them holds. Each tick: the game's own writes to it are undone while it is held.
-void HoldClipSwitch() {
-    static int s_closed = -1;
-    const bool closed = Closed();
-    if (s_closed != (closed ? 1 : 0)) {
-        if (s_closed >= 0 || closed)
-            UE_LOGI("level_visit: the host %hs the backrooms", closed ? "closed" : "opened");
-        s_closed = closed ? 1 : 0;
-    }
-    const bool hold = closed || g_phase != Phase::None || ::GetTickCount64() < g_quietUntilMs.load();
-    if (hold) {
-        if (g_backroomsWas < 0) g_backroomsWas = BackroomsEnabled();
-        if (g_backroomsWas >= 0 && BackroomsEnabled() != 0) BackroomsEnabled(0);
-    } else if (g_backroomsWas >= 0) {
-        BackroomsEnabled(g_backroomsWas);
-        g_backroomsWas = -1;
-    }
-}
-
 bool InVisitedLevel(void* obj) { return obj && g_level && R::IsLive(obj) && R::OuterOf(obj) == g_level; }
 
+// The host's world.backrooms, the session's value on every peer, kept as it changes (config::Subscribe): the clip check
+// below asks for it on every tick, and a layered resolve reads the environment each time.
+std::atomic<bool> g_closed{false};
+void OnBackroomsRow() {
+    const bool closed = !coop::config::ResolveFlag(coop::config_registry::rows::world_backrooms);
+    if (g_closed.exchange(closed) != closed) UE_LOGI("level_visit: the host %hs the backrooms", closed ? "closed" : "opened");
+}
+
+// [dev] The drill's counts, and its red arms (each latched once).
+std::atomic<uint32_t> g_tripsStarted{0}, g_clipsHeldClosed{0}, g_copyTripsRefused{0}, g_copyTripsLetRun{0};
+bool CopyCancelOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::level_visit_copy_cancel_off);
+    return off;
+}
+bool CloseOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::backrooms_close_off);
+    return off;
+}
+
 // ---- the watches (game thread, inside the VM's body loop: decisions only, the work is the tick's) ----------------
+
+// The game's own clip check, mainGamemode_C::canBackrooms(out return): mainPlayer_C's tick asks it every tick, and its
+// answer gates the whole clip chain (black screen, teleport, save, then lib_C::loadLevel). It is answered no, in the out
+// parameter, for this machine's own player while the host has closed the backrooms, a visit runs, or the quiet window
+// after one is open (the view's jump into the map and back out would read as a clip); otherwise the game's own logic
+// runs. A copy's tick passes through untouched. When the out parameter cannot be written the body runs and the clip is
+// not held: said once.
+sg::Verdict OnCanBackroomsPre(const sg::Call& call) {
+    if (!call.function || !call.callerObject || call.callerObject != Local() || !InSession() || CloseOff())
+        return sg::Verdict::Run;
+    const bool closed = g_closed.load();
+    const bool visiting = g_phase != Phase::None;
+    const int why = closed ? 1 : visiting ? 2 : ::GetTickCount64() < g_quietUntilMs.load() ? 3 : 0;
+    static int s_said = 0;
+    if (why != s_said) {
+        s_said = why;
+        if (why)
+            UE_LOGI("level_visit: the game's clip check is answered no -- %hs",
+                    why == 1 ? "the host has closed the backrooms" : why == 2 ? "a visit runs" : "a visit just ended");
+    }
+    if (!why) return sg::Verdict::Run;
+    static void* sFn = nullptr;
+    static int32_t sOff = -1;
+    if (call.function != sFn) {
+        sFn = call.function;
+        sOff = R::FindParamOffset(call.function, L"return");
+    }
+    uint8_t* out = sOff >= 0 ? sg::OutParamPtr(call, sOff) : nullptr;
+    if (!out) {
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("level_visit: canBackrooms's result cannot be written -- the clip is NOT held (said once)");
+        }
+        return sg::Verdict::Run;
+    }
+    *out = 0;
+    if (closed) ++g_clipsHeldClosed;
+    return sg::Verdict::Cancel;
+}
 
 sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     if (!call.locals || !call.function || !InSession()) return sg::Verdict::Run;
@@ -206,22 +229,19 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
     if (!IsVisitMap(level)) return sg::Verdict::Run;
     void* author = *reinterpret_cast<void* const*>(call.locals + sAuthorOff);
     if (author && author != Local() && coop::players::Registry::Get().IsPuppet(author)) {
+        // [dev red] level_visit_copy_cancel_off: the copy's trip is let run, and the drill reads the count.
+        if (CopyCancelOff()) {
+            ++g_copyTripsLetRun;
+            UE_LOGW("level_visit: a trip to %ls authored by a peer's copy is LET RUN [dev red level_visit_copy_cancel_off]",
+                    R::ToString(level).c_str());
+            return sg::Verdict::Run;
+        }
+        ++g_copyTripsRefused;
         UE_LOGW("level_visit: REFUSED a trip to %ls authored by a peer's copy -- the clip is that player's machine's",
                 R::ToString(level).c_str());
         return sg::Verdict::Cancel;
     }
     if (author != Local()) return sg::Verdict::Run;
-    if (Closed()) {
-        UE_LOGI("level_visit: a trip to %ls is refused -- the host has closed the backrooms", R::ToString(level).c_str());
-        return sg::Verdict::Cancel;
-    }
-    // The player's own clip check sees the view jump into the map and back out of it: a trip asked while a visit runs,
-    // or within kQuietMs of its end, is that jump, not a clip.
-    if (g_phase != Phase::None || ::GetTickCount64() < g_quietUntilMs.load()) {
-        UE_LOGI("level_visit: a trip to %ls while a visit %hs is refused -- the view's jump, not a clip",
-                R::ToString(level).c_str(), g_phase != Phase::None ? "runs" : "just ended");
-        return sg::Verdict::Cancel;
-    }
     // The game's own clip is not taken seated or riding (mainGamemode_C::canBackrooms); a trip asked so is not one.
     void* on = nullptr;
     void* parent = nullptr;
@@ -231,6 +251,7 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
         return sg::Verdict::Cancel;
     }
     const std::wstring map = R::ToString(level);
+    ++g_tripsStarted;
     UE_LOGI("level_visit: the clip's trip to %ls is this player's alone -- the map is loaded below the world",
             map.c_str());
     ue_wrap::game_thread::Post([map] {
@@ -253,8 +274,6 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
                                                                  ? L"$TPzHL8tj^f@6DJ!JmqkMmhHQUPG*5rTfxWR"
                                                                  : L"");
         }
-        if (g_backroomsWas < 0) g_backroomsWas = BackroomsEnabled();
-        BackroomsEnabled(0);
         coop::death_revive::ClearBlackScreenNow();
         g_worldActors.clear();
         for (void* a : WorldLevelActors()) g_worldActors.insert(a);
@@ -625,11 +644,18 @@ void GiveBack() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    static bool s_following = false;
+    if (!s_following) {
+        s_following = true;
+        coop::config::Subscribe(coop::config_registry::rows::world_backrooms, &OnBackroomsRow);
+        OnBackroomsRow();
+    }
     if (!g_watching && sg::IsInstalled() && sg::WatchName(kRowLoadLevel, kTagLoadLevel, &OnLoadLevelPre, nullptr) &&
-        sg::WatchName(kRowEnd, kTagEnd, &OnEndPre, nullptr)) {
+        sg::WatchName(kRowEnd, kTagEnd, &OnEndPre, nullptr) &&
+        sg::WatchName(kRowCanBackrooms, kTagCanBackrooms, &OnCanBackroomsPre, nullptr)) {
         g_watching = true;
-        UE_LOGI("level_visit: watching lib_C::loadLevel and lib_C::End -- a clip's trip is the clipping player's "
-                "alone");
+        UE_LOGI("level_visit: watching lib_C::loadLevel, lib_C::End and the clip check -- a clip's trip is the clipping "
+                "player's alone");
     }
     if (!g_quitHooked) {
         const ue_wrap::facts::Resolved quit = ue_wrap::facts::Resolve(kRowQuitGame);
@@ -652,7 +678,6 @@ void Tick() {
     if (!InSession()) return;
     if (!g_watching || !g_quitHooked) Install(g_session.load(std::memory_order_acquire));
     ApplyVisitHide();
-    HoldClipSwitch();
     if (g_phase == Phase::None) {
         GiveBack();
         return;
@@ -704,8 +729,6 @@ void OnDisconnect() {
         Finish(false, L"the session ended");
         if (me) Teleport(me, g_home);
     }
-    if (g_backroomsWas >= 0) BackroomsEnabled(g_backroomsWas);
-    g_backroomsWas = -1;
     for (bool& b : g_below) b = false;
 }
 
@@ -723,5 +746,9 @@ bool Visiting() { return g_phase != Phase::None; }
 std::wstring CurrentMap() { return g_phase != Phase::None ? g_map : std::wstring(); }
 std::wstring LastEnd() { return g_lastEnd; }
 void* CurrentLevel() { return g_phase == Phase::In ? g_level : nullptr; }
+bool ReturnPending() { return g_return != nullptr; }
+DrillStats Stats() {
+    return {g_tripsStarted.load(), g_clipsHeldClosed.load(), g_copyTripsRefused.load(), g_copyTripsLetRun.load()};
+}
 
 }  // namespace coop::level_visit
