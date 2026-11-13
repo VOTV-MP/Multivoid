@@ -99,7 +99,9 @@ then each peer plugging and pulling the module and pressing the cap with and wit
 same on both peers after every step, read once when the actor's level and module arrive; the first check that fails
 says `FAIL` and no later step runs). The reds, each dropping one repaint: `dev.cap_label_repaint_off` (all)
 and `dev.cap_label_setdata_off` (the
-restore's, in the drill's `saved` arm, which runs on a loaded save holding a cap level or the module). Which of them
+restore's, in the drill's host-only `saved` arm: on a New Game the host puts the module and the third level on its
+desk, saves through the game's own save, leaves for the menu as a quit does, loads that slot through the game's own
+load, and reads its label when the desk's `setData` returns in the new world). Which of them
 FAIL is read from the rig runs of this lane, not stated here `[?]`. The join's adopt has no red of its own: a cap
 change the host makes after its world is taken reaches the joiner live, and the live apply repaints the label, so a
 joiner without the adopt's repaint would still show the right label there. The repaint owed at the desk's BeginPlay (a

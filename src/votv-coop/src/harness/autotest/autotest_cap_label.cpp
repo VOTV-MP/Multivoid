@@ -10,8 +10,13 @@
 // apply writes in one game-thread task with the repaint, and reads its label once. Armed by the row cap_label_drill
 // on both peers (VOTVCOOP_CAN_DIR). Red: cap_label_repaint_off. The join's own adopt has no red: a change the host
 // makes after its world is taken reaches the joiner live and repaints it. The driver launches the client once the
-// host logs `STATE 0-before-join`. In the saved arm (a loaded host world, its label read at the desk's setData,
-// INVALID after 120 s) the red is cap_label_setdata_off.
+// host logs `STATE 0-before-join`.
+//
+// The saved arm (cap_label_drill=saved) is a host-only run on a New Game (--host-fresh), the desk's setData repaint
+// and its red cap_label_setdata_off. The host plugs the module and presses the cap to its third level, saves through
+// the game's own save, leaves for the menu as a quit does (the session ends first), loads that slot through the
+// game's own load and waits for the desk's setData in the new world. Its label, read at that event, must be its saved
+// level's and module's: `rig: VERDICT cap-label-saved PASS|FAIL|INVALID`. A host that loaded a save is INVALID.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -20,9 +25,16 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/interactables/desk_input_sync.h"
+#include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/save/save_transfer.h"
+#include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
+#include "harness/session_runtime.h"
+#include "harness/world_boot.h"
+#include "ue_wrap/actors/inventory.h"
+#include "ue_wrap/actors/puppet.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -31,6 +43,11 @@
 #include "ue_wrap/desk/phys_mods.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
+#include "ue_wrap/engine/engine_save.h"
+#include "ue_wrap/engine/save_to_slot_hook.h"
+#include "ue_wrap/engine/world_identity.h"
+#include "ue_wrap/world/game_mode.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
@@ -38,6 +55,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 #include <string>
 
 namespace harness::autotest {
@@ -58,6 +76,9 @@ void OnGameThread(Fn&& fn) {
     ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
 }
 
+// The verdict tag of this run's arm: `cap-label`, or `cap-label-saved` for the host-only saved arm.
+const char* g_tag = "cap-label";
+
 // A failed check is the verdict, and the caller returns without a later step. A pass says what matched; a fail says
 // what was expected and what was read.
 bool Check(bool ok, const std::string& matched, const std::string& expectedVsGot) {
@@ -66,7 +87,7 @@ bool Check(bool ok, const std::string& matched, const std::string& expectedVsGot
         return true;
     }
     UE_LOGW("cap-label: FAIL %hs", expectedVsGot.c_str());
-    coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Fail, "%s", expectedVsGot.c_str());
+    coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Fail, "%s", expectedVsGot.c_str());
     return false;
 }
 
@@ -303,15 +324,146 @@ bool RunSteps(bool host) {
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::cap_label_drill); }
 
+// The module plugged and the cap at its third level, through the desk's own verbs; `prepared` is the label then.
+bool PrepareCap(const char* stateName, Label& prepared) {
+    if (!Read().module && !Check(PlugModule(), "0: the host's module plugged")) return false;
+    for (int i = 0; i < 3 && Read().level != 2; ++i) {
+        const int32_t was = Read().level;
+        PressCap();
+        if (!WaitFor("the host's cap press", 10, [&] { return Read().level != was; })) return false;
+    }
+    prepared = Read();
+    LogState(stateName);
+    return Check(prepared.module && prepared.level == 2 && prepared.text == "[3]",
+                 "0: the host shows the third level (" + Describe(prepared) + ")",
+                 "0: expected the third level with the module and text '[3]', got " + Describe(prepared));
+}
+
+// ---- the saved arm ----
+
+// The slot the game's own save wrote, told by the engine's save seam on the game thread: the world's live save
+// object under a slot of the game's own. The slot is left before the flag, so a reader that sees the flag sees it.
+std::atomic<bool> g_saveWritten{false};
+std::wstring g_savedSlot;
+
+void OnWorldSaveWritten(void* saveObject, const wchar_t* slotName) {
+    if (saveObject != ue_wrap::inventory::ResolveSaveSlot()) return;
+    if (std::wcsncmp(slotName, L"zcoop_", 6) == 0) return;
+    g_savedSlot = slotName;
+    g_saveWritten.store(true, std::memory_order_release);
+}
+
+// The game's own save, as its save button runs it, and the wait for the engine to report the slot written.
+bool SaveWorld() {
+    if (!ue_wrap::save_to_slot_hook::AddWritten(&OnWorldSaveWritten)) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the save seam has no free subscriber slot");
+        return false;
+    }
+    if (!WaitFor("the player on its feet (the game's save refuses one in mid air)", 60, [] {
+            bool walking = false;
+            OnGameThread([&] {
+                ue_wrap::puppet::ReadCharacterIsWalking(coop::players::Registry::Get().Local(), walking);
+            });
+            return walking;
+        }))
+        return false;
+    bool ran = false;
+    OnGameThread([&] {
+        void* const gm = ue_wrap::world_singleton::Gamemode();
+        void* const fn = gm ? R::FindFunction(R::ClassOf(gm), L"save") : nullptr;
+        if (!fn) return;
+        ue_wrap::ParamFrame f(fn);
+        f.Set<bool>(L"quicksave", false);
+        f.Set<bool>(L"bypassEvent", false);
+        f.Set<bool>(L"overwriteSubsave", false);
+        ran = f.valid() && ue_wrap::Call(gm, f);
+    });
+    UE_LOGI("cap-label: the game's save ran (ok=%d)", ran ? 1 : 0);
+    if (!ran) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the game's save did not dispatch");
+        return false;
+    }
+    return WaitFor("the game's save written to a slot", 30, [] { return g_saveWritten.load(std::memory_order_acquire); });
+}
+
+// The host leaves for the menu as its player's quit does: the session ends first (its stop and teardown), then the
+// game's own transition travels.
+bool LeaveForMenu() {
+    bool dispatched = false;
+    OnGameThread([&] {
+        auto& s = harness::session_runtime::Session();
+        if (s.running()) coop::net_pump::FleeAfterNativeMenuTravel(s, "cap-label drill: the host leaves to load its save");
+        dispatched = E::ReturnToMainMenu();
+    });
+    if (!dispatched)
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the game's travel to the menu did not dispatch");
+    return dispatched && WaitFor("the menu", 90, [] {
+               return ue_wrap::world_identity::CurrentWorldKind() == ue_wrap::world_identity::WorldKind::Other;
+           });
+}
+
+// The desk this peer reads stands in the world now current: the world just left may still hold a desk of its own.
+bool DeskInCurrentWorld() {
+    bool in = false;
+    OnGameThread([&] {
+        void* const desk = CD::Instance();
+        in = desk && ue_wrap::world_identity::WorldOf(desk) == ue_wrap::world_identity::CurrentWorld();
+    });
+    return in;
+}
+
+void RunSavedArm(bool newGame) {
+    if (!newGame) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid,
+                               "the saved arm saves a New Game of its own; this host loaded a save (use --host-fresh)");
+        return;
+    }
+    if (!WaitFor("the desk and its label readable", 120, [] { return Read().ok; })) return;
+    LogState("0-host-new-game");
+    Label saved;
+    if (!PrepareCap("0-before-save", saved)) return;
+    int mode = -1;
+    OnGameThread([&] { mode = ue_wrap::game_mode::ReadLocal(); });
+    if (mode < 0) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the game mode could not be read");
+        return;
+    }
+    if (!SaveWorld()) return;
+    const std::wstring slot = g_savedSlot;
+    UE_LOGI("cap-label: SAVED slot '%ls' (%hs)", slot.c_str(), Describe(saved).c_str());
+    if (!LeaveForMenu()) return;
+    UE_LOGI("cap-label: at the menu -- loading the slot through the game's own load");
+    OnGameThread([] { E::ResetCachedSave(); });
+    if (!harness::world_boot::BootStorySaveBlocking(false, slot.c_str(), mode)) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid, "the saved slot did not load to gameplay");
+        return;
+    }
+    // The load's own setData writes the cap level and the modules back and owes the label's repaint; the label is
+    // read at that event, in the world the load built.
+    if (!WaitFor("the loaded world's desk and its save data applied", 120,
+                 [] { return coop::desk_input_sync::DeskDataApplied() && DeskInCurrentWorld() && Read().ok; }))
+        return;
+    LogState("1-host-loaded-save");
+    const Label loaded = Read();
+    if (loaded.level != saved.level || loaded.module != saved.module) {
+        coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Invalid,
+                               "the load did not bring back what the save held: saved %s, loaded %s",
+                               Describe(saved).c_str(), Describe(loaded).c_str());
+        return;
+    }
+    if (!CheckOwn(loaded, "1 (the loaded desk)")) return;
+    coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Pass, "the loaded desk's label is its saved level's and "
+                           "module's: %s", Describe(loaded).c_str());
+    UE_LOGI("cap-label: DONE");
+}
+
 void RunHost() {
     // A world restored from a save settles at the desk's setData; a New Game has no slot and nothing to restore (the
     // game's loadObjects reaches the desk's setData only past a saved player transform, which a blank save lacks).
     bool newGame = false;
     OnGameThread([&] { newGame = coop::save_transfer::HostSlot().empty(); });
-    const bool saved = Arm() == "saved";
-    if (saved && newGame) {
-        coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Invalid,
-                               "the saved arm needs the host's world loaded from a save; this one is a New Game");
+    if (Arm() == "saved") {
+        RunSavedArm(newGame);
         return;
     }
     if (newGame) {
@@ -324,37 +476,15 @@ void RunHost() {
     }
     if (!WaitFor("the desk and its label readable", 120, [&] { return Read().ok; })) return;
     LogState("0-host-loaded");
-    if (saved) {
-        // The restore wrote the saved level and module and owed the label's repaint: the label is read at that event.
-        const Label loaded = Read();
-        if (loaded.level == 0 && !loaded.module) {
-            coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Invalid,
-                                   "the save holds the defaults (level 0, no Auto Processing): a restore that "
-                                   "repaints nothing could not be told from one that does");
-            return;
-        }
-        if (!CheckOwn(loaded, "0 (the restored desk)")) return;
-    }
-    // Before the join: the module plugged and the cap at its third level.
-    if (!Read().module && !Check(PlugModule(), "0: the host's module plugged before the join")) return;
-    for (int i = 0; i < 3 && Read().level != 2; ++i) {
-        const int32_t was = Read().level;
-        PressCap();
-        if (!WaitFor("the host's cap press", 10, [&] { return Read().level != was; })) return;
-    }
-    const Label prepared = Read();
-    LogState("0-before-join");
-    if (!Check(prepared.module && prepared.level == 2 && prepared.text == "[3]",
-               "0: the host shows the third level (" + Describe(prepared) + ")",
-               "0: expected the third level with the module and text '[3]', got " + Describe(prepared)))
-        return;
+    Label prepared;
+    if (!PrepareCap("0-before-join", prepared)) return;
     if (!Await("client_begun")) return;
     Mark("host_prepared", Format(prepared));
     if (!Await("client_joined")) return;
     if (!RunSteps(true)) return;
     UE_LOGI("cap-label: DONE");
     // Every step was confirmed by the peer that did not act before the next ran: a client's failure said FAIL itself.
-    coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Pass,
+    coop::rig_verdict::Say(g_tag, coop::rig_verdict::Outcome::Pass,
                            "the cap label read the level and module's own on both peers after every step");
 }
 
@@ -381,7 +511,8 @@ void RunClient() {
 }  // namespace
 
 DWORD WINAPI CapLabelThread(LPVOID /*arg*/) {
-    if (!PS::Begin("cap-label")) return 0;
+    if (Arm() == "saved") g_tag = "cap-label-saved";
+    if (!PS::Begin(g_tag)) return 0;
     if (IsClientRole()) RunClient();
     else                RunHost();
     return 0;

@@ -145,7 +145,8 @@ CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "V
     "Drill, the refiner's cap label on two peers; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. The host prepares the "
     "cap at its third level with the Auto Processing module, the client joins, then each peer plugs, pulls and presses "
     "in turn and both labels must be the actor's: 'rig: VERDICT cap-label PASS|FAIL|INVALID', the FAIL at the step "
-    "that failed. fresh -- the host's world is whatever it is (a New Game needs no restore). saved -- the host's world "
-    "is the rig's own save, no --host-fresh: its label is checked at once after the desk's setData, and a save holding "
-    "the defaults (level 0, no module) is INVALID. Red arms: cap_label_repaint_off (every repaint), "
-    "cap_label_setdata_off (saved arm, the host).")
+    "that failed. fresh -- the host's world is whatever it is (a New Game needs no restore). saved -- host only, on a "
+    "New Game (--host-fresh), no client: the host plugs the module, presses the cap to its third level, saves through "
+    "the game's own save, leaves for the menu (its session ends), loads that slot through the game's own load and "
+    "reads its label at the desk's setData: 'rig: VERDICT cap-label-saved PASS|FAIL|INVALID'. A host that loaded a "
+    "save is INVALID. Red arms: cap_label_repaint_off (every repaint), cap_label_setdata_off (saved arm).")
