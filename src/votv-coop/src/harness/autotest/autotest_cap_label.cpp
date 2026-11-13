@@ -324,10 +324,10 @@ void RunSavedHost() {
     LogState("0-before-join");
     if (!Await("client_begun")) return;
     const Label held = Read();
-    if (held.level == 0 && !held.module) {
+    if (!held.module) {  // without the module the right label is the default one at every level
         coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Invalid,
-                               "the save holds the defaults (level 0, no Auto Processing): a stale label could not be "
-                               "told from a right one");
+                               "the save holds no Auto Processing: the right label is the default one, so a stale "
+                               "label could not be told from it");
         return;
     }
     if (!CheckOwn(held, "0 (the host's loaded desk)")) return;
