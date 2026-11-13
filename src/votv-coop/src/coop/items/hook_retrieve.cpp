@@ -16,7 +16,6 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
@@ -70,6 +69,8 @@ std::wstring g_hostPressKey;
 uint64_t g_sent = 0, g_granted = 0, g_refused = 0, g_taken = 0, g_refusedAnswers = 0;
 // CLIENT: the copies the host's Gone took away from this client without its own pickup (the join's drill reads it).
 uint64_t g_goneCopies = 0;
+// CLIENT: grants that left no item: the taker's copy was missing, or the pickup did not dispatch on it.
+uint64_t g_noItem = 0;
 // HOST: per joiner slot, the keys of the anchored hooks the world held when its save was cut (CaptureJoinHooks).
 std::vector<std::wstring> g_cut[coop::players::kMaxPeers];
 
@@ -124,7 +125,11 @@ void SendGone(coop::net::Session& s, const std::wstring& key, uint8_t taker, int
     g.taker = taker;
     const bool sent = slot < 0 ? s.SendReliable(coop::net::ReliableKind::HookRetrieve, &g, sizeof(g))
                                : s.SendReliableToSlot(slot, coop::net::ReliableKind::HookRetrieve, &g, sizeof(g));
-    if (!sent)
+    // A send with nobody to send to is no failure: a host alone picks its hook up with no word owed. A joiner not yet
+    // world-ready is told at its connect replay (SendJoinGone).
+    bool anyReady = slot >= 0 ? s.IsSlotWorldReady(slot) : false;
+    for (int i = 1; slot < 0 && i < coop::players::kMaxPeers && !anyReady; ++i) anyReady = s.IsSlotWorldReady(i);
+    if (!sent && anyReady)
         UE_LOGW("hook_retrieve: the word that hook '%ls' is gone did not send -- the clients keep their copies",
                 key.c_str());
 }
@@ -232,39 +237,31 @@ void OnGone(const std::wstring& key, uint8_t taker) {
         if (copy) E::DestroyActor(copy);
         return;
     }
-    if (copy) {
-        // hook_C::actionOptionIndex reads only the player: drophook spawns the item at them, putObjectInventory2
-        // pockets it (or leaves it on the floor when the inventory is full, as the game does), and the hook destroys
-        // itself.
-        ue_wrap::CachedObjRef ref;
-        ref.Set(copy);
-        g_replay = copy;
-        const bool ran = ue_wrap::prop_use::CallActionOptionIndex(copy, player, nullptr, ue_wrap::FVector{}, 4, nullptr);
-        g_replay = nullptr;
-        if (ref.Alive()) E::DestroyActor(copy);
-        if (ran) {
-            ++g_taken;
-            UE_LOGI("hook_retrieve: this client's pickup of hook '%ls' granted -- the game's own pickup ran on its copy",
-                    key.c_str());
-            return;
-        }
-        UE_LOGW("hook_retrieve: the pickup of hook '%ls' did not dispatch on this client's copy -- the item is "
-                "made by hand", key.c_str());
+    // The item is the game's own pickup's, run on the copy and nowhere else: with no copy here (none is known to occur:
+    // the request was made through it) nothing is made by hand, and a copy the table missed would be left a ghost.
+    if (!copy) {
+        ++g_noItem;
+        UE_LOGW("hook_retrieve: the host granted this client hook '%ls' but no copy of it stands here -- no item "
+                "(%llu such grants)", key.c_str(), static_cast<unsigned long long>(g_noItem));
+        return;
     }
-    // No copy to run it on: the item the game's pickup would have made, made here.
-    void* cls = ue_wrap::object_index::ClassByName(L"prop_hook_C");
-    ue_wrap::FVector at{};
-    void* item = (cls && E::TryGetActorLocation(player, at)) ? E::SpawnActor(cls, at) : nullptr;
-    bool pocketed = false;
-    if (item) {
-        ue_wrap::CachedObjRef ref;
-        ref.Set(item);
-        E::CallPutObjectInventory2(player, item, false, pocketed);
-        if (pocketed && ref.Alive()) E::DestroyActor(item);   // the store holds its record now, as the game's pickup leaves it
+    // hook_C::actionOptionIndex reads only the player: drophook spawns the item at them, putObjectInventory2 pockets it
+    // (or leaves it on the floor when the inventory is full, as the game does), and the hook destroys itself.
+    ue_wrap::CachedObjRef ref;
+    ref.Set(copy);
+    g_replay = copy;
+    const bool ran = ue_wrap::prop_use::CallActionOptionIndex(copy, player, nullptr, ue_wrap::FVector{}, 4, nullptr);
+    g_replay = nullptr;
+    if (ref.Alive()) E::DestroyActor(copy);
+    if (ran) {
+        ++g_taken;
+        UE_LOGI("hook_retrieve: this client's pickup of hook '%ls' granted -- the game's own pickup ran on its copy",
+                key.c_str());
+        return;
     }
-    ++g_taken;
-    UE_LOGW("hook_retrieve: hook '%ls' was granted to this client with no copy here -- its item %s", key.c_str(),
-            !item ? "could not be made" : pocketed ? "was put in the inventory" : "lies at the player");
+    ++g_noItem;
+    UE_LOGW("hook_retrieve: the pickup of hook '%ls' did not dispatch on this client's copy -- no item (%llu such "
+            "grants)", key.c_str(), static_cast<unsigned long long>(g_noItem));
 }
 
 }  // namespace
@@ -374,11 +371,12 @@ uint64_t TakenCount() { return g_taken; }
 uint64_t RefusedAnswerCount() { return g_refusedAnswers; }
 
 void OnDisconnect() {
-    if (g_sent || g_granted || g_refused || g_taken)
-        UE_LOGI("hook_retrieve: session end -- asked=%llu granted=%llu refused=%llu taken=%llu",
+    if (g_sent || g_granted || g_refused || g_taken || g_noItem)
+        UE_LOGI("hook_retrieve: session end -- asked=%llu granted=%llu refused=%llu taken=%llu no-item=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_granted),
-                static_cast<unsigned long long>(g_refused), static_cast<unsigned long long>(g_taken));
-    g_sent = g_refused = g_taken = g_refusedAnswers = g_goneCopies = 0;
+                static_cast<unsigned long long>(g_refused), static_cast<unsigned long long>(g_taken),
+                static_cast<unsigned long long>(g_noItem));
+    g_sent = g_refused = g_taken = g_refusedAnswers = g_goneCopies = g_noItem = 0;
     for (auto& cut : g_cut) cut.clear();
     g_inFlight.clear();
     g_replay = nullptr;
