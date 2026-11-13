@@ -62,7 +62,7 @@ bool g_actionSaid = false;
 void* g_applying = nullptr;
 
 uint64_t g_sent = 0, g_cancelled = 0, g_reversed = 0, g_ran = 0, g_already = 0, g_moving = 0, g_refused = 0, g_dead = 0;
-uint64_t g_applied = 0, g_turned = 0;
+uint64_t g_applied = 0, g_turned = 0, g_heldAgainst = 0;
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -183,9 +183,26 @@ void OnPressPost(const sg::Call& call) {
     if (call.object && L::IsCargoLift(call.object)) coop::interactable_sync::OnCargoLiftVerb(call.object);
 }
 
-// After the lift's own obstruction reversal, on the host. The move loop of the Blueprint (ubergraph offset 791) flips
-// `dir` and calls `ignore()` (offset 839) when the platform lags its attach point, with no call to the press, so the
-// press's watch never sees it: the direction it left goes to every client, whose moving copies turn with it.
+// The lift's own obstruction reversal. The Blueprint's move loop (ubergraph offsets 565-839) flips `dir` (offset 826)
+// and then calls `ignore()` (offset 839) when the platform lags its attach point by 10 uu, with no call to the press, so
+// the press's watch never sees it; `ignore` restarts the speed timeline, plays the click and sets `ignoreCheck` for a
+// second (offsets 1698-1719), so the loop does not flip again at once. Only the host's reversal exists: after its body
+// the host sends the direction it left, and every client's moving copy turns with it.
+//
+// A client's copy refuses `ignore`. The flip before the call has already happened, so the gate undoes it: the copy keeps
+// its direction. With `ignoreCheck` never set the loop meets the same lag the next frame, flips, and is undone again, and
+// the lag also keeps `alpha` from advancing (the flip branch skips offset 617), so an obstructed copy holds in place
+// against the obstruction until the lag clears, going on in the direction it has, or until the host's state turns it.
+sg::Verdict OnIgnorePre(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
+    if (!call.object || !L::IsCargoLift(call.object)) return sg::Verdict::Run;
+    bool flipped = false;
+    if (!L::ReadDir(call.object, flipped) || !L::WriteDir(call.object, !flipped)) return sg::Verdict::Run;
+    ++g_heldAgainst;
+    return sg::Verdict::Cancel;
+}
+
 void OnIgnorePost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || s->role() != coop::net::Role::Host) return;
@@ -198,7 +215,7 @@ void OnIgnorePost(const sg::Call& call) {
 void RegisterWatch() {
     if (g_reg != Reg::Pending) return;
     if (sg::WatchName(kRowPress, kTagPress, &OnPressPre, &OnPressPost) &&
-        sg::WatchName(kRowIgnore, kTagIgnore, nullptr, &OnIgnorePost)) {
+        sg::WatchName(kRowIgnore, kTagIgnore, &OnIgnorePre, &OnIgnorePost)) {
         g_reg = Reg::Registered;
         return;
     }
@@ -271,16 +288,18 @@ uint64_t PressesCancelled() { return g_cancelled; }
 
 void OnDisconnect() {
     if (g_sent || g_cancelled || g_reversed || g_ran || g_already || g_moving || g_refused || g_dead || g_applied ||
-        g_turned)
+        g_turned || g_heldAgainst)
         UE_LOGI("[CARGO-LIFT] session end -- client presses sent=%llu, cancelled unsent=%llu; host presses run=%llu, "
                 "already so=%llu, lift moving=%llu, refused=%llu, sender dead=%llu; client applies pressed=%llu, "
-                "turned while moving=%llu; host reversals sent=%llu",
+                "turned while moving=%llu, own reversals refused=%llu; host reversals sent=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_cancelled),
                 static_cast<unsigned long long>(g_ran), static_cast<unsigned long long>(g_already),
                 static_cast<unsigned long long>(g_moving), static_cast<unsigned long long>(g_refused),
                 static_cast<unsigned long long>(g_dead), static_cast<unsigned long long>(g_applied),
-                static_cast<unsigned long long>(g_turned), static_cast<unsigned long long>(g_reversed));
-    g_sent = g_cancelled = g_reversed = g_ran = g_already = g_moving = g_refused = g_dead = g_applied = g_turned = 0;
+                static_cast<unsigned long long>(g_turned), static_cast<unsigned long long>(g_heldAgainst),
+                static_cast<unsigned long long>(g_reversed));
+    g_sent = g_cancelled = g_reversed = g_ran = g_already = g_moving = g_refused = g_dead = 0;
+    g_applied = g_turned = g_heldAgainst = 0;
     g_actionSaid = false;
 }
 
