@@ -43,6 +43,7 @@ constexpr const char* kRejoinEnv = "VOTVCOOP_ATV_DRILL_REJOIN";
 
 bool SameKey(const DE::Rec& r, int32_t tag) { return r.i1 == tag; }
 bool UnadoptedOf(const DE::Rec& r, int32_t tag) { return r.i2 == tag; }
+bool UnadoptedKept(const DE::Rec& r, int32_t tag) { return r.i2 == tag && r.i1 != 0; }
 
 std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }
 
@@ -137,15 +138,27 @@ void RunRejoinedClient() {
         End('I', "step 10: the joiner's mirror was adopted before the host's state arrived");
         return;
     }
-    if (!r.i0) {
-        UE_LOGI("atv-drill: step 10 FAIL: the copy was adopted holding no state of the host's");
+    // The state that arrived before the copy must have been kept (a state dropped for want of a copy is the red's mechanism).
+    if (!DE::AnyBefore(DE::kUnadopted, 0, r.ord, &UnadoptedKept, tag)) {
+        UE_LOGI("atv-drill: step 10 FAIL: the state that arrived before the copy was not kept for it");
         End('F', "step 10 (a joiner's state before its mirror is adopted) on the client: the state that arrived before the copy was lost");
         return;
     }
-    if (std::fabs(r.f0 - fuel) > 0.5f || std::fabs(r.f1 - health) > 0.5f || static_cast<int>(r.f2) != modules) {
-        UE_LOGI("atv-drill: step 10 FAIL: the adopted copy shows fuel %.1f health %.1f modules %d, the host's %.1f %.1f %d", r.f0, r.f1,
-                static_cast<int>(r.f2), fuel, health, modules);
-        End('F', "step 10 on the client: the adopted copy does not hold the host's state");
+    // The first application of the host's state on this copy: the kept row at the adoption, or, when step 16's request holds
+    // the open-request gate shut, the carried state of the answer that closes it.
+    float gotFuel = r.f0, gotHealth = r.f1;
+    int gotModules = static_cast<int>(r.f2);
+    if (!r.i0) {
+        DE::Rec a;
+        if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& e) { return e.ord > r.ord; }, a) != 1) return;
+        gotFuel = a.f0;
+        gotHealth = a.f1;
+        gotModules = a.i2;
+    }
+    if (std::fabs(gotFuel - fuel) > 0.5f || std::fabs(gotHealth - health) > 0.5f || gotModules != modules) {
+        UE_LOGI("atv-drill: step 10 FAIL: the copy first showed fuel %.1f health %.1f modules %d, the host's %.1f %.1f %d", gotFuel,
+                gotHealth, gotModules, fuel, health, modules);
+        End('F', "step 10 on the client: the copy's first applied state is not the host's");
         return;
     }
     UE_LOGI("atv-drill: step 10 PASS: the copy was adopted with the host's state");

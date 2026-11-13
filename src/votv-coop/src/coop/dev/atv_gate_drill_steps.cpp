@@ -185,13 +185,15 @@ Result D2(Ctx& c) { return DecideRequest(c, op::kRepair); }
 Result D3(Ctx& c) { return DecideRequest(c, op::kFit); }
 Result D4(Ctx& c) { return DecideRequest(c, op::kTakeoff); }
 
-// The control bits `expect` reach this copy through the blocks: decided on each block's own event.
+// The control bits `expect` reach this copy through the blocks: decided on each block's own event. A bit counts as taken
+// when a block made the copy change it (i2) and the copy then shows what the block says (i1): a block the copy already
+// agreed with, such as the first of a parked ATV, proves nothing and is no credit.
 Result DecideControls(Ctx& c, uint8_t expect) {
     if (c.me == kClient) return Pass("the keys were pressed");
     uint8_t ok = 0, bad = 0;
     DE::Rec r;
     if (WaitRec(c, DE::kControls, [&](const DE::Rec& e) {
-            ok |= static_cast<uint8_t>(e.i1);
+            ok |= static_cast<uint8_t>(e.i1 & e.i2);
             bad |= static_cast<uint8_t>(e.i0 & ~e.i1);
             return (bad & expect) != 0 || (ok & expect) == expect;
         }, r) != 1)
@@ -220,6 +222,7 @@ Result D6r(Ctx& c) { return DecideHorn(c, 0, 1); }
 // 7a: the host refuels with the client not driving. No event comes of a publish that never happened, so the client sends a
 // forged request after it: the reliable lane is in order, so the host's state, if it was sent, is applied before the answer.
 bool NewerState(const DE::Rec& r, int32_t seq0) { return r.i1 == 0 && Ge(static_cast<uint32_t>(r.i0), static_cast<uint32_t>(seq0) + 1u); }
+bool NewerGated(const DE::Rec& r, int32_t seq0) { return Ge(static_cast<uint32_t>(r.i0), static_cast<uint32_t>(seq0) + 1u); }
 
 Result D7a(Ctx& c) {
     DE::Rec r;
@@ -241,8 +244,10 @@ Result D7a(Ctx& c) {
     if (!Forge(c, op::kRefuel, 1.f, 0, why)) return Invalid(why);
     const uint32_t id = c.reqId;
     if (WaitRec(c, DE::kAnswer, [&](const DE::Rec& a) { return static_cast<uint32_t>(a.i0) == id; }, r) != 1) return Stopped();
-    if (!DE::AnyBefore(DE::kStateApplied, c.cur[DE::kStateApplied], r.ord, &NewerState, static_cast<int32_t>(c.seq0)))
-        return Fail("the host's refuel was never published: no state newer than the step's start was applied before the answer");
+    // A state that reached this copy gated (the forged request opened the gate first) is as much a publish as an applied one.
+    if (!DE::AnyBefore(DE::kStateApplied, c.cur[DE::kStateApplied], r.ord, &NewerState, static_cast<int32_t>(c.seq0)) &&
+        !DE::AnyBefore(DE::kStateGated, c.cur[DE::kStateGated], r.ord, &NewerGated, static_cast<int32_t>(c.seq0)))
+        return Fail("the host's refuel was never published: no state newer than the step's start reached this copy before the answer");
     return Pass("the host's refuel reached this copy before the answer");
 }
 
@@ -288,8 +293,12 @@ Result D11(Ctx& c) {
     DE::Rec r;
     const uint32_t id = c.reqId;
     if (WaitRec(c, DE::kAnswer, [&](const DE::Rec& a) { return static_cast<uint32_t>(a.i0) == id; }, r) != 1) return Stopped();
-    if (r.i1 == reason::kNoItem) return Pass("refused: no_item");
-    return Fail(r.i1 == reason::kOk ? "the host accepted a refuel from an empty hand" : "refused for reason " + std::to_string(r.i1) + ", not no_item");
+    if (r.i1 != reason::kNoItem)
+        return Fail(r.i1 == reason::kOk ? "the host accepted a refuel from an empty hand" : "refused for reason " + std::to_string(r.i1) + ", not no_item");
+    // The answer's own state: the refused request, a pour of 10, left the host's fuel where this copy had it at the barrier.
+    if (std::fabs(r.f0 - c.fuel0) > 0.5f)
+        return Fail("the refused refuel moved the host's fuel from " + std::to_string(c.fuel0) + " to " + std::to_string(r.f0));
+    return Pass("refused: no_item, the host's fuel unchanged");
 }
 
 // 12: a forged duplicate fit is refused as a duplicate; the host refunds the module.
@@ -298,12 +307,19 @@ Result D12(Ctx& c) {
     if (c.me == kClient) {
         const uint32_t id = c.reqId;
         if (WaitRec(c, DE::kAnswer, [&](const DE::Rec& a) { return static_cast<uint32_t>(a.i0) == id; }, r) != 1) return Stopped();
-        if (r.i1 == reason::kDuplicate) return Pass("refused: duplicate");
-        return Fail(r.i1 == reason::kOk ? "the host fitted a second module" : "refused for reason " + std::to_string(r.i1) + ", not duplicate");
+        if (r.i1 != reason::kDuplicate)
+            return Fail(r.i1 == reason::kOk ? "the host fitted a second module" : "refused for reason " + std::to_string(r.i1) + ", not duplicate");
+        // The answer's own state: one of that module on the host, as before the forged fit.
+        if (static_cast<int>(r.f2) != c.modules0)
+            return Fail("the answer shows " + std::to_string(static_cast<int>(r.f2)) + " modules, not the " + std::to_string(c.modules0) + " the host fitted");
+        return Pass("refused: duplicate, one module on the host");
     }
     if (c.me != kHost) return Pass("nothing to decide here");
     if (WaitRec(c, DE::kRefund, [](const DE::Rec&) { return true; }, r) != 1) return Stopped();
-    return r.i0 ? Pass("the refused fit's module was refunded") : Fail("the refused fit's module was not refunded");
+    if (!r.i0) return Fail("the refused fit's module was not refunded");
+    if (ReadVitals(c.key).modules != c.modules0)
+        return Fail("the host's copy holds " + std::to_string(ReadVitals(c.key).modules) + " modules, not the " + std::to_string(c.modules0) + " it had");
+    return Pass("the refused fit's module was refunded and the host holds one module");
 }
 
 // 13: a horn press from a client that does not sync the ATV is refused on the host.
