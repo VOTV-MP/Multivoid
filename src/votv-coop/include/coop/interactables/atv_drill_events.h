@@ -27,7 +27,7 @@ enum Event : int {
     kAnswer,       // CLIENT: the host's answer. i0 reqId, i1 reason, i2 closed the last open id, f0 fuel, f1 health, f2 module count
     kStateApplied, // CLIENT: a host state written onto the copy. i0 stateSeq, i1 source (0 state, 1 answer, 2 adoption), i2 module count, f0 fuel, f1 health
     kBlock,        // a condition block's vitals rule. i0 from the host, i1 ack matched, f0 copy fuel before, f1 after, f2 the block's own
-    kControls,     // a block's brake, lights and turbo bits taken. i0 mask changed, i1 mask now equal to the block's
+    kControls,     // a block's brake, lights and turbo bits taken. i0 mask changed, i1 mask now equal to the block's, i2 mask this block made the copy change
     kHornPlayed,   // a horn edge sounded on this copy for another peer. i0 down
     kHornHandled,  // HOST: a horn press from a slot that is not the syncer. i0 slot, i1 refused
     kAccepted,     // HOST: a request applied. i0 op, i1 slot, i2 stateSeq after, f0 fuel, f1 health, f2 module count
@@ -39,6 +39,10 @@ enum Event : int {
     kPark,         // HOST: a request's turn. i0 slot, i1 phase (0 parked for the slot's world, 1 answered after a park, 2 answered with the slot not ready)
     kEventCount
 };
+
+// Whether the drill row is on, resolved once: every emit point asks, so a run without the drill costs one compare. An emit
+// point whose arguments cost a read or a hash asks it first.
+bool On();
 
 // A number that names an ATV key in a record (kUnadopted, kAdopted), the same on every peer.
 int32_t KeyTag(const std::wstring& key);

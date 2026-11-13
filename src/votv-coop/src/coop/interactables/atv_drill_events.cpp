@@ -21,13 +21,12 @@ std::mutex g_lock;
 Ring g_ring[kEventCount];
 uint32_t g_ord = 0;
 
-// Whether the drill row is on, resolved once: every emit point asks, so a run without the drill costs one compare.
+}  // namespace
+
 bool On() {
     static const bool on = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) != "off";
     return on;
 }
-
-}  // namespace
 
 int32_t KeyTag(const std::wstring& key) {
     return static_cast<int32_t>(std::hash<std::wstring>{}(key) & 0x7fffffff);

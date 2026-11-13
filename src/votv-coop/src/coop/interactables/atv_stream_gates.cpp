@@ -73,19 +73,29 @@ void TakeControls(AtvEntry& e, uint8_t stateBits) {
     // Red atv_bits_off: the block's control bits are ignored.
     static const bool s_bitsOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_bits_off";
     if (s_bitsOff) {
-        if (changed) coop::atv_drill_events::Note(coop::atv_drill_events::kControls, changed, 0);
+        if (changed) coop::atv_drill_events::Note(coop::atv_drill_events::kControls, changed, 0, 0);
         return;
     }
-    if ((changed & coop::net::kAtvLights) && lights != A::GetLights(e.actor)) A::SetLights(e.actor, lights);
-    if ((changed & coop::net::kAtvBrake) && brake != A::GetBrake(e.actor)) A::SetBrake(e.actor, brake);
-    if ((changed & coop::net::kAtvTurbo) && turbo != A::GetTurbo(e.actor)) A::SetTurbo(e.actor, turbo);
+    uint8_t written = 0;   // the bits this block made the copy change: a block the copy already agreed with writes none
+    if ((changed & coop::net::kAtvLights) && lights != A::GetLights(e.actor)) {
+        A::SetLights(e.actor, lights);
+        written |= coop::net::kAtvLights;
+    }
+    if ((changed & coop::net::kAtvBrake) && brake != A::GetBrake(e.actor)) {
+        A::SetBrake(e.actor, brake);
+        written |= coop::net::kAtvBrake;
+    }
+    if ((changed & coop::net::kAtvTurbo) && turbo != A::GetTurbo(e.actor)) {
+        A::SetTurbo(e.actor, turbo);
+        written |= coop::net::kAtvTurbo;
+    }
     if (changed) {
-        // [dev] the drill's event: which of the changed bits the copy now shows as the block says.
+        // [dev] the drill's event: which of the changed bits the copy now shows as the block says, and which it was written.
         uint8_t equal = 0;
         if (lights == A::GetLights(e.actor)) equal |= coop::net::kAtvLights;
         if (brake == A::GetBrake(e.actor)) equal |= coop::net::kAtvBrake;
         if (turbo == A::GetTurbo(e.actor)) equal |= coop::net::kAtvTurbo;
-        coop::atv_drill_events::Note(coop::atv_drill_events::kControls, changed, changed & equal);
+        coop::atv_drill_events::Note(coop::atv_drill_events::kControls, changed, changed & equal, written);
     }
 }
 
