@@ -192,6 +192,7 @@ void OnAnswer(const coop::net::AtvAnswerPayload& a) {
     if (!R::IsLiveByIndex(e.actor, e.idx)) return;
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     e.occupantSlot = a.occupantSlot;
+    if (e.syncerSlot != a.syncerSlot) coop::atv_sync::ForgetHorn(e);   // the horn's last level was the previous syncer's
     e.syncerSlot   = a.syncerSlot;
     UE_LOGI("atv: host %s '%ls' seq %u (reason %u) -- seat %u, syncer %u", a.admitted ? "granted" : "refused",
             key.c_str(), static_cast<unsigned>(a.seq), static_cast<unsigned>(a.reason),

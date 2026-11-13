@@ -617,7 +617,11 @@ void Tick() {
                             coop::atv_hit_guard::kMaxOwned, kv.first.c_str()); }
             }
         }
-        if (!syncs) { e.hornLatch = false; continue; }   // a mirror is corrected at packet arrival; only a syncer's block carries a press
+        if (!syncs) {   // a mirror is corrected at packet arrival; only a syncer's block carries a press
+            e.hornLatch = false;
+            if (!e.localSeated) e.hornHeld = false;   // a key held as the seat was lost would ride a later grant forever
+            continue;
+        }
 
         const bool driving = e.localSeated || e.localCarrying;
         if (!isHost || driving) {
