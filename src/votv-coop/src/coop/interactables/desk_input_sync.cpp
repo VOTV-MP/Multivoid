@@ -97,7 +97,7 @@ std::atomic<bool> g_deskDataApplied{false};
 
 void OnDeskSetDataPost(const sg::Call&) {
     if (!g_deskDataApplied.exchange(true, std::memory_order_acq_rel))
-        UE_LOGI("desk_input: the desk's save data applied (setData returned)");
+        UE_LOGI("desk_input: the desk's save data applied");
 }
 
 void SendDelta(coop::net::Session* s, DeskInputField field,

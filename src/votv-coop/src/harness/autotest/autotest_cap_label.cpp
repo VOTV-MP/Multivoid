@@ -9,10 +9,10 @@
 // step logs `cap-label: STATE <step> level= module= tag= text=` on both peers and `cap-label: DONE fails=N` when its steps end;
 // the host then says `rig: VERDICT cap-label PASS|FAIL` over both peers' fails (a client with fails says FAIL itself). The red:
 // dev.cap_label_repaint_off on both peers drops every repaint, so the drill must FAIL. Gated by VOTVCOOP_RUN_CAP_LABEL;
-// the folder is VOTVCOOP_CAN_DIR. The host prepares only once the desk's setData has returned
-// (desk_input_sync::DeskDataApplied; INVALID after 240 s): it writes the cap and the modules back after the session
-// starts and repaints no label. The driver launches the client once the host logs `STATE 0-before-join`, and the host
-// sends its label when the client's drill has begun.
+// the folder is VOTVCOOP_CAN_DIR. The host prepares only once its desk is settled: a world loaded from a save, at the
+// desk's setData (desk_input_sync::DeskDataApplied; INVALID after 120 s), which writes the cap and the modules back
+// after the session starts and repaints no label; a New Game (no host slot), at once. The driver launches the client
+// once the host logs `STATE 0-before-join`, and the host sends its label when the client's drill has begun.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -20,6 +20,7 @@
 
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/player/players_registry.h"
+#include "coop/save/save_transfer.h"
 #include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -263,9 +264,18 @@ bool RunSteps(bool host) {
 }
 
 void RunHost() {
-    if (!WaitFor("the desk's save data applied (setData returned)", 240,
-                 [] { return coop::desk_input_sync::DeskDataApplied(); }))
-        return;
+    // A world restored from a save settles at the desk's setData; a New Game has no slot and nothing to restore (the
+    // game's loadObjects reaches the desk's setData only past a saved player transform, which a blank save lacks).
+    bool newGame = false;
+    OnGameThread([&] { newGame = coop::save_transfer::HostSlot().empty(); });
+    if (newGame) {
+        UE_LOGI("cap-label: HOST world is a New Game -- nothing to restore, the desk is settled");
+    } else {
+        UE_LOGI("cap-label: HOST waiting for the desk's save data (setData returned)");
+        if (!WaitFor("the desk's save data applied (setData returned)", 120,
+                     [] { return coop::desk_input_sync::DeskDataApplied(); }))
+            return;
+    }
     if (!WaitFor("the desk and its label readable", 120, [&] { return Read().ok; })) return;
     LogState("0-host-loaded");
     // Before the join: the module plugged and the cap at its third level, so the join has a label to carry.
