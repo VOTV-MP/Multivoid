@@ -7,6 +7,8 @@
 
 #include "coop/player/leave_in_event.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/class_reask.h"
@@ -49,6 +51,9 @@ bool g_watching = false;
 uint32_t g_let = 0;                           // game thread: presses let through, for the log
 
 sg::Verdict OnGetEventPre(const sg::Call& c) {
+    // Drill red (leave_in_event_red, off by default): the game's answer stands, as before this watch.
+    static const bool kRed = coop::config::ResolveFlag(coop::config_registry::rows::leave_in_event_red);
+    if (kRed) return sg::Verdict::Run;
     void* graph = g_menuGraph.load(std::memory_order_acquire);
     if (!graph || c.callerFunction != graph) return sg::Verdict::Run;
     coop::net::Session* s = g_session.load(std::memory_order_acquire);

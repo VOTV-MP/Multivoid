@@ -41,6 +41,16 @@ CFG_ENUM(pause_quit_drill, "pause_quit_drill", "dev", "off", "off|client|host",
 CFG_FLAG(quit_decision_red, "quit_decision_red", "dev", false, "VOTVCOOP_QUIT_DECISION_RED",
     "Developer: the quit decision does NOT end the session (the pause-quit drill's red: the menu "
     "world's destroys go out).")
+CFG_FLAG(pause_quit_event, "pause_quit_event", "dev", false, "VOTVCOOP_PAUSE_QUIT_EVENT",
+    "Developer (with pause_quit_drill): before it opens the pause menu the peer starts an event the way the game "
+    "counts one (lib_C::setEvent) and waits until the game says an event runs, so the Main menu press is made "
+    "during an event. The peer says `rig: VERDICT pause-quit PASS` when the press reached the menu travel and "
+    "`FAIL` when it did not.")
+CFG_FLAG(leave_in_event_red, "leave_in_event_red", "dev", false, "VOTVCOOP_LEAVE_IN_EVENT_RED",
+    "Drill red (with pause_quit_drill and pause_quit_event): the pause menu keeps the game's answer to "
+    "lib_C::getEvent, the gate of coop/player/leave_in_event switched off, so the Main menu press during the event "
+    "does nothing and the drill must say FAIL. Off = the menu's question is answered no event in a session, as "
+    "designed.")
 CFG_FLAG(save_wait_probe, "save_wait_probe", "dev", false, "VOTVCOOP_SAVE_WAIT_PROBE",
     "Probe: the host holds each save request as if its world were still loading, for a second after it is in.")
 CFG_FLAG(join_window_pos_trace, "join_window_pos_trace", "dev", false, nullptr,

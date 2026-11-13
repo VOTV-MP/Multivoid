@@ -179,7 +179,9 @@ dropped camera keeps recording ([ui.md](ui.md), the camera's hint). In a running
 question those two buttons ask is answered "no event" at the script-body gate, so they act; Save,
 the blur and the pause keep the game's answer, and solo nothing changes
 (`coop/player/leave_in_event`). `[V]` for a client's Main Menu press during a recording (a
-two-peer run: the press reached the travel and the session ended).
+two-peer run: the press reached the travel and the session ended). The rig drill presses it during
+an event the drill starts itself (`pause_quit_drill` with `pause_quit_event`, `rig: VERDICT
+pause-quit`; its red `leave_in_event_red` switches the answer off and must FAIL) `[?]` until run.
 
 A refused run-ending is answered with a revive in its place: a floor point beside the base's bed (the base gate when no bed or NavMesh point is found, which is open sky `[?]`),
 health, the dead flag, the ragdoll, the pause an ending set, and the screen artifacts the travel
