@@ -1,5 +1,6 @@
 // harness/autotest/autotest_desk_short.cpp -- TEST-ONLY: the base computer's short circuit on both peers.
 //
+// Every verdict is decided by an event; a bound passing with none is INVALID.
 // Armed by the row desk_short_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR).
 //   client / host  The named peer steps beside the desk and shorts its own the way a liquid's hit does: the desk's own
 //                  shortCircuit, as grimeProjectile_C and the sponge bucket's pour call it. Each peer waits for its
@@ -47,8 +48,10 @@ using disc_drill::OnGameThread;
 constexpr const char* kTag = "desk-short";
 constexpr const char* kTagJoin = "desk-short-join";
 constexpr int kStepSec = 120;
-constexpr int kRiseSec = 5;     // a short on the other desk after the one that made it
-constexpr int kEndSec = 40;     // the ten seconds of sparks, and the load behind them
+constexpr int kRiseSec = 5;     // INVALID bound: a short the lane announced, reaching the other desk
+constexpr int kMaskSec = 10;    // INVALID bound: the power panel reading the change after the short ended
+constexpr int kEndSec = 40;     // INVALID bound: the ten seconds of sparks, and the load behind them
+constexpr int kRejoinSec = 20;  // INVALID bound: the replay the host sent, reaching the rejoined client
 constexpr float kStandCm = 1200.f;  // the host's reach for a client's short is 1500
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::desk_short_drill); }
@@ -115,18 +118,57 @@ bool AwaitClientPose() {
     return beside;
 }
 
-// "shorted before after" on this peer: whether the desk shorted, and the power mask before and after the short ended.
+// What the lane did here: the shorts it announced (the host's sent, a client's asked) and the requests the host refused.
+uint32_t Announced() {
+    uint32_t n = 0;
+    OnGameThread([&] {
+        const coop::desk_short_sync::Counts c = coop::desk_short_sync::GetCounts();
+        n = c.sent + c.asked;
+    });
+    return n;
+}
+uint32_t Refused() {
+    uint32_t n = 0;
+    OnGameThread([&] { n = coop::desk_short_sync::GetCounts().refused; });
+    return n;
+}
+
+// "shorted before after" on this peer. The actor says whether its short was announced; a peer that was told nothing
+// is decided at once (its desk cannot short), and so is a host that refused the request. A short that the lane did
+// announce is waited for, and a bound passing with no event is said as -1, which is INVALID: a bound decides no verdict.
 std::string Watch(const char* me, bool acts, bool client, int before) {
-    if (acts) Short(me, client);
-    else if (!PS::Await("acted", kStepSec)) return "0 -1 -1";
-    if (acts) PS::Mark("acted");
-    const bool rose = PS::WaitFor("the desk short", kRiseSec, [] { return Shorting() == 1; }, false);
-    UE_LOGI("desk-short: %hs desk shorted=%d", me, rose ? 1 : 0);
-    if (rose) PS::WaitFor("the desk short's end", kEndSec, [] { return Shorting() == 0; }, false);
-    PS::WaitFor("the power panel's change", 10, [before] { return PowerMask() != before; }, false);
-    const int after = PowerMask();
+    int announced = 1;
+    const uint32_t refused0 = Refused();
+    if (acts) {
+        const uint32_t n0 = Announced();
+        Short(me, client);
+        announced = Announced() > n0 ? 1 : 0;
+        UE_LOGI("desk-short: %hs announced its short=%d", me, announced);
+        PS::Mark("acted", std::to_string(announced));
+    } else {
+        std::string text;
+        if (!PS::AwaitText("acted", text, kStepSec)) return "-1 -1 -1";
+        announced = text == "1" ? 1 : 0;
+    }
+    int shorted = 0;
+    if (acts || announced) {
+        const bool hostJudges = !acts && !client;
+        const bool event = PS::WaitFor("the desk short", kRiseSec, [hostJudges, refused0] {
+            return Shorting() == 1 || (hostJudges && Refused() > refused0);
+        }, false);
+        shorted = !event ? -1 : Shorting() == 1 ? 1 : 0;
+    }
+    UE_LOGI("desk-short: %hs desk shorted=%d", me, shorted);
+    int after = -1;
+    if (shorted == 1) {
+        const bool fell = PS::WaitFor("the desk short's end", kEndSec, [] { return Shorting() == 0; }, false);
+        if (fell && PS::WaitFor("the power panel's change", kMaskSec, [before] { return PowerMask() != before; }, false))
+            after = PowerMask();
+    } else if (shorted == 0) {
+        after = PowerMask();
+    }
     UE_LOGI("desk-short: %hs power mask before=%d after=%d", me, before, after);
-    return std::to_string(rose ? 1 : 0) + " " + std::to_string(before) + " " + std::to_string(after);
+    return std::to_string(shorted) + " " + std::to_string(before) + " " + std::to_string(after);
 }
 
 void RunClient() {
@@ -151,7 +193,7 @@ void RunHost() {
     PS::Mark("host_done");
     int hs = 0, hb = -1, ha = -1, cs = 0, cb = -1, ca = -1;
     if (sscanf_s(mine.c_str(), "%d %d %d", &hs, &hb, &ha) != 3 || sscanf_s(theirs.c_str(), "%d %d %d", &cs, &cb, &ca) != 3 ||
-        ha < 0 || ca < 0) {
+        hs < 0 || cs < 0 || ha < 0 || ca < 0) {
         RV::Say(kTag, RV::Outcome::Invalid, "a peer's desk or power panel did not read");
         return;
     }
@@ -177,7 +219,8 @@ void RunJoinHost() {
     // The desk shorts again as each ten seconds end, until the rejoined client's world is up: the host's connect
     // replay then finds it shorting. A short begun while the slot is not world-ready reaches it by no send.
     int atEdge = -1;
-    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, &atEdge] {
+    uint32_t replayed = 0;
+    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, &atEdge, &replayed] {
             bool ready = false;
             OnGameThread([&] {
                 auto& s = harness::session_runtime::Session();
@@ -185,27 +228,36 @@ void RunJoinHost() {
                 bool on = false;
                 void* desk = Desk();
                 if (!ue_wrap::desk_short::ReadShortCircuiting(desk, on)) return;
-                if (ready) atEdge = on ? 1 : 0;
-                else if (!on) ue_wrap::desk_short::CallShortCircuit(desk);
+                if (ready) {
+                    atEdge = on ? 1 : 0;
+                    replayed = coop::desk_short_sync::GetCounts().replayed;   // the connect replay ran in the edge's own task
+                } else if (!on) ue_wrap::desk_short::CallShortCircuit(desk);
             });
             return ready;
         }))
         return;
-    UE_LOGI("desk-short: HOST the rejoined client's world is up; the host's desk shorts=%d", atEdge);
-    std::string theirs;
-    if (!PS::AwaitText("rejoin_done", theirs, 120)) return;
-    int applied = 0, shorting = 0;
+    UE_LOGI("desk-short: HOST the rejoined client's world is up; the host's desk shorts=%d, replays sent=%u", atEdge, replayed);
+    PS::Mark("replay_decision", std::to_string(replayed));
     if (atEdge != 1) {
         RV::Say(kTagJoin, RV::Outcome::Invalid, "the host's desk did not short at the client's ready edge");
         return;
     }
-    if (sscanf_s(theirs.c_str(), "applied=%d shorting=%d", &applied, &shorting) != 2) {
-        RV::Say(kTagJoin, RV::Outcome::Invalid, "the rejoined client's reading was not understood: '%s'", theirs.c_str());
+    // The host's decision is made at the edge: a desk shorting with nothing sent cannot be told to the joiner later.
+    if (replayed == 0) {
+        RV::Say(kTagJoin, RV::Outcome::Fail,
+                "the host's desk shorted at the client's ready edge and the host sent the joiner no short");
+        return;
+    }
+    std::string theirs;
+    if (!PS::AwaitText("rejoin_done", theirs, 120)) return;
+    int applied = 0, timedOut = 0;
+    if (sscanf_s(theirs.c_str(), "applied=%d timeout=%d", &applied, &timedOut) != 2 || timedOut) {
+        RV::Say(kTagJoin, RV::Outcome::Invalid, "the host's replay did not reach the rejoined client in time ('%s')", theirs.c_str());
         return;
     }
     RV::Say(kTagJoin, applied >= 1 ? RV::Outcome::Pass : RV::Outcome::Fail,
-            "the host's desk shorted at the client's ready edge; the rejoined client's desk was shorted by the host %d "
-            "time(s), shorting now=%d", applied, shorting);
+            "the host's desk shorted at the client's ready edge and sent %u replay(s); the rejoined client's desk was shorted by "
+            "the host %d time(s)", replayed, applied);
     UE_LOGI("desk-short: JOIN DONE on host");
 }
 
@@ -223,14 +275,20 @@ void RunJoinClient() {
 
 void RunRejoin() {
     if (!disc_drill::HostPuppetUp()) return;
+    // The host says at the edge whether it sent a short: when it sent none, nothing can arrive and the answer is read
+    // at once; when it sent one, its arrival is the event, and a bound passing without it is INVALID (timeout=1).
+    std::string decision;
+    if (!PS::AwaitText("replay_decision", decision, 120)) return;
     int applied = 0;
-    PS::WaitFor("the host's short applied", 10, [&applied] {
+    auto read = [&applied] {
         OnGameThread([&] { applied = static_cast<int>(coop::desk_short_sync::GetCounts().applied); });
         return applied >= 1;
-    }, false);
-    const int shorting = Shorting();
-    UE_LOGI("desk-short: REJOIN the host's short applied %d time(s), the desk shorts=%d", applied, shorting);
-    PS::Mark("rejoin_done", "applied=" + std::to_string(applied) + " shorting=" + std::to_string(shorting));
+    };
+    const bool sent = decision != "0";
+    const bool arrived = !sent || PS::WaitFor("the host's short applied", kRejoinSec, read, false);
+    read();
+    UE_LOGI("desk-short: REJOIN the host's short applied %d time(s) (the host sent %s)", applied, sent ? "one" : "none");
+    PS::Mark("rejoin_done", "applied=" + std::to_string(applied) + " timeout=" + std::to_string(arrived ? 0 : 1));
     UE_LOGI("desk-short: REJOIN DONE");
 }
 
