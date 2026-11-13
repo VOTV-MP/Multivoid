@@ -33,10 +33,10 @@ void OnFaucetChanged(void* faucet);
 
 void OnDisconnect();
 
-// What this session did, for the drill: the host's cues sent, a client's cues received and played, the faucet clicks
+// What this session did, for the drill: the host's sky sounds seen and its cues sent, a client's cues received and played, the faucet clicks
 // played here. Game thread.
 struct Counts {
-    uint32_t sent = 0, received = 0, played = 0, clicks = 0;
+    uint32_t matched = 0, sent = 0, received = 0, played = 0, clicks = 0;
 };
 Counts GetCounts();
 

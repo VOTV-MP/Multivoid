@@ -65,10 +65,11 @@ bool FaucetOff() {
 ue_wrap::script_gate::Verdict OnPlaySound2DPre(void* /*context*/, void* source, const uint8_t* parms) {
     void* const sound = *reinterpret_cast<void* const*>(parms + g_offSound);
     if (!sound || (sound != g_soundIn && sound != g_soundOut)) return ue_wrap::script_gate::Verdict::Run;
-    if (EarthOff() || !source || !R::IsLive(source) || R::ClassNameOf(source) != L"newsky_C")
-        return ue_wrap::script_gate::Verdict::Run;
+    if (!source || !R::IsLive(source) || R::ClassNameOf(source) != L"newsky_C") return ue_wrap::script_gate::Verdict::Run;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return ue_wrap::script_gate::Verdict::Run;
+    ++g_c.matched;
+    if (EarthOff()) return ue_wrap::script_gate::Verdict::Run;
     const bool in = sound == g_soundIn;
     coop::net::EventCuePayload p{};
     p.cueId = in ? kCueEarthIn : kCueEarthOut;

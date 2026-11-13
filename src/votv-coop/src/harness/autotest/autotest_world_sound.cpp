@@ -1,11 +1,12 @@
 // harness/autotest/autotest_world_sound.cpp -- TEST-ONLY: the earth teleport's sounds, a faucet's click and the alien
 // noises across two peers.
+// Every verdict is decided by an event (a flip, a count, the host's decision at an edge); a bound passing with none is INVALID.
 //
 // Armed by the row world_sound_drill on both peers (the peers' folder is VOTVCOOP_CAN_DIR). What a peer hears cannot be
 // read back, so each term is the OTHER peer's receipt and its play call, from the lane's own counts:
 //   1     A faucet each peer spawns under one key is pressed by the client, then by the host: the other peer's copy must
-//         flip and its click count rise. The host runs the sky's tp: the client must receive both cues and play both.
-//         The host fires the alien sounds: each peer must have three noisers around it and see them make a noise.
+//         flip and its click count rise. The host fires the alien sounds: each peer must have three noisers around it and
+//         see them make a noise. Last, the host runs the sky's tp: the client must receive both cues and play both.
 //         The host says `rig: VERDICT world-sound PASS|FAIL|INVALID`. Reds: world_sound_earth_off on the host,
 //         world_sound_faucet_off on the receiving peer.
 //   join  With the rig's --rejoin. The host fires the alien sounds and, once its noisers are out, the client leaves; the
@@ -24,6 +25,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
+#include "coop/world/event_active_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/world_sound_sync.h"
 #include "ue_wrap/actors/prop.h"
@@ -41,6 +43,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cwchar>
 #include <string>
@@ -62,9 +65,11 @@ constexpr const char* kTagJoin = "world-sound-join";
 constexpr uint8_t kActionFaucet = 5;   // the faucet's use action, which its click follows
 constexpr size_t kNoisers = 3;         // the alien sounds' count
 constexpr int kStepSec = 120;
-constexpr int kCrossSec = 15;          // a faucet's state, and its click, reaching the other peer
-constexpr int kEarthSec = 150;         // the sky's tp plays its second sound over a minute after its first
-constexpr int kAlienSec = 60;          // three noisers out, and one of them making a noise
+constexpr int kCrossSec = 15;          // INVALID bound: a faucet's state reaching the other peer
+constexpr int kFirstSoundSec = 30;     // INVALID bound: the sky playing its first sound after tp
+constexpr int kEarthSec = 150;         // INVALID bound: the sky playing its second sound, over a minute after its first
+constexpr int kCueSec = 15;            // INVALID bound: a cue the host sent, played here
+constexpr int kAlienSec = 60;          // INVALID bound: three noisers out, and one of them making a noise
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::world_sound_drill); }
 
@@ -168,15 +173,16 @@ void PressFaucet() {
     });
 }
 
-// This peer's copy takes the other peer's press: the state flips to `want`, and the click is played for it. "1" when both.
+// This peer's copy takes the other peer's press: "<flip> <click>". The flip is the event (a bound passing without it is
+// -1, which is INVALID); the click is played in the same task that applies the flip, so its count is final when the flip
+// is seen and the answer is read at once.
 std::string Crossed(bool want, uint32_t clicksBefore) {
     const bool flipped = PS::WaitFor("the faucet at the other peer's state", kCrossSec, [want] {
         bool on = !want;
         return FaucetOn(on) && on == want;
     }, false);
-    const bool clicked = flipped && PS::WaitFor("the faucet's click played here", kCrossSec,
-                                                [clicksBefore] { return Clicks() > clicksBefore; }, false);
-    return std::to_string(flipped ? 1 : 0) + " " + std::to_string(clicked ? 1 : 0);
+    if (!flipped) return "-1 0";
+    return std::string("1 ") + (Clicks() > clicksBefore ? "1" : "0");
 }
 
 // The save holds no faucet and a spawned one does not cross, so each peer spawns one under the same Key, as a saved faucet
@@ -230,46 +236,62 @@ void RunHost() {
     int f2Flip = 0, f2Click = 0;
     Parse2(f2, f2Flip, f2Click);
 
-    // The sky's tp: two cues to the client.
+    // The alien sounds: each peer's own noisers. Three noisers and a noise are the event; a bound passing without them is
+    // INVALID.
+    const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
+    UE_LOGI("world-sound: the alien sounds fired=%d", fired ? 1 : 0);
+    PS::Mark("alien_go");
+    const Noisers mine = WatchNoisers(true);
+    const bool mineOk = mine.most >= kNoisers && !mine.noises.empty();
+    std::string theirs;
+    if (!PS::AwaitText("alien_result", theirs, kAlienSec + 60)) return;
+    size_t cMost = 0, cNoises = 0;
+    sscanf_s(theirs.c_str(), "most=%zu noises=%zu", &cMost, &cNoises);
+    const bool theirsOk = cMost >= kNoisers && cNoises > 0;
+
+    // The sky's tp, last: two cues to the client. The host's hook sees each sound the sky plays (`matched`) and sends a
+    // cue for it (`sent`), so a cue not sent is decided when its sound is played, and the client is told at once.
     PS::Mark("earth_go");
     OnGameThread([&] {
         void* sky = R::FindObjectByClass(L"newsky_C");
         const bool ran = sky && ue_wrap::component_calls::CallParamlessNamed(sky, L"tp");
         UE_LOGI("world-sound: the sky's tp ran=%d", ran ? 1 : 0);
     });
-    std::string earth;
-    if (!PS::AwaitText("earth_result", earth, kEarthSec + 60)) return;
-    int received = 0, played = 0;
-    Parse2(earth, received, played);
-    uint32_t sent = 0;
-    OnGameThread([&] { sent = WS::GetCounts().sent; });
-
-    // The alien sounds: each peer's own noisers.
-    const bool fired = coop::event_fire_sync::HostFire(coop::event_fire_sync::FireKind::SpecialEvent, L"alienSounds", L"None");
-    UE_LOGI("world-sound: the alien sounds fired=%d", fired ? 1 : 0);
-    PS::Mark("alien_go");
-    const Noisers mine = WatchNoisers(true);
-    std::string theirs;
-    if (!PS::AwaitText("alien_result", theirs, kAlienSec + 60)) return;
-    size_t cMost = 0, cNoises = 0;
-    sscanf_s(theirs.c_str(), "most=%zu noises=%zu", &cMost, &cNoises);
+    auto counts = [] {
+        WS::Counts c;
+        OnGameThread([&] { c = WS::GetCounts(); });
+        return c;
+    };
+    const bool first = PS::WaitFor("the sky's first sound", kFirstSoundSec, [&] { return counts().matched >= 1; }, false);
+    WS::Counts c = counts();
+    bool secondPlayed = true;
+    if (first && c.sent >= c.matched)
+        secondPlayed = PS::WaitFor("the sky's second sound", kEarthSec, [&] { return counts().matched >= 2; }, false);
+    c = counts();
+    const bool cueNotSent = first && c.sent < c.matched;   // decided: a sound was played here and no cue was sent for it
+    PS::Mark("earth_final", std::to_string(c.sent));
+    int received = 0, played = 0, earthTimeout = 0;
+    if (!cueNotSent && first && secondPlayed) {
+        std::string earth;
+        if (!PS::AwaitText("earth_result", earth, kStepSec)) return;
+        sscanf_s(earth.c_str(), "%d %d %d", &received, &played, &earthTimeout);
+    }
     PS::Mark("host_done");
 
-    if (!fired) {
-        RV::Say(kTag, RV::Outcome::Invalid, "the alien sounds did not fire");
+    if (!fired || !mineOk || !theirsOk || !first || !secondPlayed || f1Flip != 1 || f2Flip != 1 || earthTimeout) {
+        RV::Say(kTag, RV::Outcome::Invalid,
+                "an event did not come inside its bound: alien fired=%d, the host's noisers ok=%d, the client's ok=%d, the sky's "
+                "sounds played here (first=%d, second=%d), the faucet's state crossed (client's press=%d, host's press=%d), "
+                "the client's cues played in time=%d", fired ? 1 : 0, mineOk ? 1 : 0, theirsOk ? 1 : 0, first ? 1 : 0,
+                secondPlayed ? 1 : 0, f1Flip, f2Flip, earthTimeout ? 0 : 1);
         return;
     }
-    if (!f1Flip || !f2Flip) {
-        RV::Say(kTag, RV::Outcome::Invalid, "a faucet's state did not cross (client's press=%d, host's press=%d): its lane had not listed it", f1Flip, f2Flip);
-        return;
-    }
-    const bool pass = f1Flip && f1Click && f2Flip && f2Click && sent == 2 && received == 2 && played == 2 &&
-                      mine.most >= kNoisers && !mine.noises.empty() && cMost >= kNoisers && cNoises > 0;
+    const bool pass = f1Click && f2Click && !cueNotSent && c.sent == 2 && received == 2 && played == 2;
     RV::Say(kTag, pass ? RV::Outcome::Pass : RV::Outcome::Fail,
-            "faucet: the client's press flipped the host's copy=%d and clicked there=%d, the host's press flipped the client's=%d "
-            "and clicked there=%d; earth: the host sent %u cues, the client received %d and played %d; alien: the host %s, the "
-            "client most=%zu noises=%zu",
-            f1Flip, f1Click, f2Flip, f2Click, sent, received, played, Text(mine).c_str(), cMost, cNoises);
+            "faucet: the client's press flipped the host's copy and clicked there=%d, the host's press flipped the client's and "
+            "clicked there=%d; earth: the sky played %u sounds here, the host sent %u cues, the client received %d and played "
+            "%d; alien: the host %s, the client most=%zu noises=%zu",
+            f1Click, f2Click, c.matched, c.sent, received, played, Text(mine).c_str(), cMost, cNoises);
     UE_LOGI("world-sound: DONE on host");
 }
 
@@ -292,20 +314,27 @@ void RunClient() {
     if (!PS::Await("f2_pressed", kStepSec)) return;
     PS::Mark("f2_result", Crossed(on, clicks0));
 
-    // The sky's tp: both cues received and played here.
-    if (!PS::Await("earth_go", kStepSec)) return;
-    PS::WaitFor("both of the sky's sounds played here", kEarthSec, [] {
-        uint32_t played = 0;
-        OnGameThread([&] { played = WS::GetCounts().played; });
-        return played >= 2;
-    }, false);
-    WS::Counts c;
-    OnGameThread([&] { c = WS::GetCounts(); });
-    UE_LOGI("world-sound: CLIENT the sky's sounds: received=%u played=%u", c.received, c.played);
-    PS::Mark("earth_result", std::to_string(c.received) + " " + std::to_string(c.played));
-
+    // The alien sounds: three noisers and a noise here.
     if (!PS::Await("alien_go", kStepSec)) return;
     PS::Mark("alien_result", Text(WatchNoisers(true)));
+
+    // The sky's tp: the host says how many cues it sent once its sounds are played (none, in the red, and then nothing can
+    // arrive); each cue sent is received and played here, and a bound passing without it is INVALID (timeout=1).
+    if (!PS::Await("earth_go", kStepSec)) return;
+    std::string fin;
+    if (!PS::AwaitText("earth_final", fin, kEarthSec + 60)) return;
+    const uint32_t sent = static_cast<uint32_t>(std::atoi(fin.c_str()));
+    bool arrived = true;
+    if (sent > 0)
+        arrived = PS::WaitFor("the host's cues played here", kCueSec, [sent] {
+            uint32_t played = 0;
+            OnGameThread([&] { played = WS::GetCounts().played; });
+            return played >= sent;
+        }, false);
+    WS::Counts c;
+    OnGameThread([&] { c = WS::GetCounts(); });
+    UE_LOGI("world-sound: CLIENT the sky's sounds: the host sent %u, received=%u played=%u", sent, c.received, c.played);
+    PS::Mark("earth_result", std::to_string(c.received) + " " + std::to_string(c.played) + " " + std::to_string(arrived ? 0 : 1));
     PS::Await("host_done", kStepSec);
     UE_LOGI("world-sound: DONE on client");
 }
@@ -331,27 +360,43 @@ void RunJoinHost() {
         }))
         return;
     size_t atEdge = 0;
-    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, &atEdge] {
+    uint32_t snapshots = 0;
+    if (!PS::WaitFor("the rejoined client's world ready", 400, [life1Gen, &atEdge, &snapshots] {
             bool ready = false;
             OnGameThread([&] {
                 auto& s = harness::session_runtime::Session();
                 ready = s.IsSlotWorldReady(1) && s.peerGenerationForSlot(1) != life1Gen;
+                if (ready) snapshots = coop::event_active_sync::JoinSnapshotsSent();   // the connect replay ran in the edge's task
             });
             if (ready) atEdge = NoisersNow();
             return ready;
         }))
         return;
-    UE_LOGI("world-sound: HOST the rejoined client's world is up; the host has %zu noisers out", atEdge);
-    std::string theirs;
-    if (!PS::AwaitText("rejoin_done", theirs, kAlienSec + 60)) return;
-    size_t most = 0;
-    sscanf_s(theirs.c_str(), "most=%zu", &most);
+    UE_LOGI("world-sound: HOST the rejoined client's world is up; the host has %zu noisers out and sent %u snapshot(s)", atEdge,
+            snapshots);
+    PS::Mark("replay_decision", std::to_string(snapshots));
     if (atEdge < kNoisers) {
         RV::Say(kTagJoin, RV::Outcome::Invalid, "the host had %zu noisers out at the client's ready edge", atEdge);
         return;
     }
+    // The host's decision is made at the edge: noisers out and no event told to the joiner cannot change later.
+    if (snapshots == 0) {
+        RV::Say(kTagJoin, RV::Outcome::Fail, "the host had %zu noisers out at the client's ready edge and sent the joiner no event",
+                atEdge);
+        return;
+    }
+    std::string theirs;
+    if (!PS::AwaitText("rejoin_done", theirs, kAlienSec + 60)) return;
+    size_t most = 0;
+    int timedOut = 0;
+    if (sscanf_s(theirs.c_str(), "most=%zu timeout=%d", &most, &timedOut) != 2 || timedOut) {
+        RV::Say(kTagJoin, RV::Outcome::Invalid, "the host's event did not bring three noisers to the rejoined client in time ('%s')",
+                theirs.c_str());
+        return;
+    }
     RV::Say(kTagJoin, most >= kNoisers ? RV::Outcome::Pass : RV::Outcome::Fail,
-            "the host had %zu noisers out at the client's ready edge; the rejoined client had %zu around it", atEdge, most);
+            "the host had %zu noisers out at the client's ready edge and sent %u snapshot(s); the rejoined client had %zu around it",
+            atEdge, snapshots, most);
     UE_LOGI("world-sound: JOIN DONE on host");
 }
 
@@ -371,9 +416,21 @@ void RunJoinClient() {
 
 void RunRejoin() {
     if (!disc_drill::HostPuppetUp()) return;
-    const Noisers n = WatchNoisers(false);
-    UE_LOGI("world-sound: REJOIN the noisers around this player: %zu", n.most);
-    PS::Mark("rejoin_done", "most=" + std::to_string(n.most));
+    // The host says at the edge how many events it sent: none, and nothing can arrive, so the count is read at once; some,
+    // and three noisers are the event, a bound passing without them INVALID (timeout=1).
+    std::string decision;
+    if (!PS::AwaitText("replay_decision", decision, kStepSec)) return;
+    Noisers n;
+    const bool sent = decision != "0";
+    const bool arrived = !sent || [&] {
+        return PS::WaitFor("three noisers around this player", kAlienSec, [&] {
+            Sample(n);
+            return n.most >= kNoisers;
+        }, false);
+    }();
+    Sample(n);
+    UE_LOGI("world-sound: REJOIN the noisers around this player: %zu (the host sent %s)", n.most, sent ? "an event" : "none");
+    PS::Mark("rejoin_done", "most=" + std::to_string(n.most) + " timeout=" + std::to_string(arrived ? 0 : 1));
     UE_LOGI("world-sound: REJOIN DONE");
 }
 
