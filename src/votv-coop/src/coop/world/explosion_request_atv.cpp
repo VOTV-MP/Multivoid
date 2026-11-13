@@ -114,6 +114,7 @@ void OnAtvRequestReceived(int senderSlot, const uint8_t* bytes, uint16_t len) {
     // own copy must not fire it again.
     e->blown = true;
     e->blownBy = slot;
+    ++detail::MutCounters().atvBlownMarked;
     if (p.trapFired) A::WriteTrap(e->actor, false);
 }
 

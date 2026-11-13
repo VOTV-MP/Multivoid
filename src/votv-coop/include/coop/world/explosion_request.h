@@ -46,11 +46,12 @@ struct Counters {
     // The host: refusals by reason, shots and requests accepted (the shots also by launcher, indexed by the
     // Launcher's value), shots evicted from the table by the cap, shots that
     // aged out unrequested, the ticks a judge returned Wait for a hand state still owed (a head that waits again
-    // counts again; the wait on a shot still queued is not counted), and ATV requests accepted from the syncer a
-    // hand-back had just replaced.
+    // counts again; the wait on a shot still queued is not counted), ATV requests accepted from the syncer a
+    // hand-back had just replaced, and ATVs marked blown (the mark itself can clear within a frame: a trap death at
+    // health 0 re-arms on the killer's next report, so a reader counts marks instead of polling the mark).
     uint64_t refused[static_cast<int>(Refusal::Count)];
     uint64_t shotsAccepted, shotsAcceptedBy[coop::explosion_recipe::kLauncherSlots], requestsAccepted[4], evicted,
-        expired, waited, lateAccepted;
+        expired, waited, lateAccepted, atvBlownMarked;
     // The client: shots and requests sent, pending births pushed out by the cap, pending births whose projectile
     // died inside the fire body, pending births left by a body that ended without its post, messages dropped unsent
     // (a location that did not read, a send that failed, the outbox's cap), projectiles other than a host's copy that

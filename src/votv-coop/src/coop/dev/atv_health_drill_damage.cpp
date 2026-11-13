@@ -83,7 +83,7 @@ struct DHost {
     coop::atv_damage_gate::Counters gate0{};   // the gate's counters at the seated edge
     ER::Counters                    req0{};    // and the request lane's
     bool readySeen = false, carChecked = false, sawAwait = false;
-    bool sawBlown = false, sawTrapClear = false;   // latched while the judge polls: the mark can be re-armed by a report
+    bool sawTrapClear = false;   // latched while the judge polls
 };
 DHost g_dh;
 
@@ -104,6 +104,12 @@ void HostPhase(HPh p, const char* name) { Enter(g_dh.run, static_cast<int>(p), n
 
 uint64_t Accepted() {
     return ER::GetCounters().requestsAccepted[kAtvKind] - g_dh.req0.requestsAccepted[kAtvKind];
+}
+
+// The blown marks the request lane made since the arm's start: counted, since a trap death at health 0 re-arms the mark on
+// the killer's next report, within a frame, before a poll of the table can see it (f7-h-trap).
+uint64_t BlownMarked() {
+    return ER::GetCounters().atvBlownMarked - g_dh.req0.atvBlownMarked;
 }
 
 uint64_t RefusedSinceSeated() {
@@ -195,16 +201,16 @@ void HostJudgeGate(Arm a) {
 }
 
 // owner and trap: one request accepted, the ATV marked blown by the client and, for the trap, the host's own trap
-// cleared. The mark and the clear are latched as seen: the client's next health report can re-arm the mark.
+// cleared. The mark is counted where the lane makes it (it can re-arm within a frame); the clear is latched as seen.
 void HostJudge(Arm a, const TableView* t) {
     DHost& h = g_dh;
     if (!t) return HostFail(a, "the ATV is gone before the judgement", "no ATV", "the ATV the arm acts on");
     if (a == Arm::Gate) return HostJudgeGate(a);
-    if (t->blown && t->blownBy == kSlot) h.sawBlown = true;
     if (!t->trap) h.sawTrapClear = true;
     const uint64_t acc = Accepted();
+    const uint64_t marked = BlownMarked();
     if (acc > 1) return HostFail(a, "the kill was accepted more than once", "accepted " + Plus(acc), "accepted +1");
-    if (acc == 1 && h.sawBlown && (a != Arm::Trap || h.sawTrapClear)) {
+    if (acc == 1 && marked >= 1 && (a != Arm::Trap || h.sawTrapClear)) {
         DC::Say(PhaseLine("blown"));
         return HostPhase(HPh::Await, "await");
     }
@@ -213,8 +219,8 @@ void HostJudge(Arm a, const TableView* t) {
     const bool judgedRefused = acc == 0 && refused > 0;
     if (!judgedRefused && !Past(h.run, kFailBound)) return;
     char got[128];
-    std::snprintf(got, sizeof(got), "accepted +%llu, refused +%llu, blown seen %d, trap clear seen %d", U(acc), U(refused),
-                  h.sawBlown ? 1 : 0, h.sawTrapClear ? 1 : 0);
+    std::snprintf(got, sizeof(got), "accepted +%llu, refused +%llu, blown marked +%llu, trap clear seen %d", U(acc),
+                  U(refused), U(marked), h.sawTrapClear ? 1 : 0);
     const char* const want = a == Arm::Trap ? "accepted +1, blown by 1, trap clear" : "accepted +1, blown by 1";
     if (judgedRefused) return HostFail(a, "the client's kill was refused by the host", got, want);
     HostInvalid(a, "the client's kill was not accepted and marked in time to decide", got, want);
