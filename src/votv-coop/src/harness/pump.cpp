@@ -115,7 +115,7 @@ void TickFrameTail() {
     coop::element::class_load_wait::Tick();
     // Self-clearing and cheap when idle: an empty nameplate snapshot hides the HUD at the menu.
     coop::nameplate::Update();
-    coop::vidcam_hint::Update();  // the video camera overlay's state, for the HUD's hint line
+    coop::vidcam_hint::Install();  // the watch on the video camera overlay's state, for the HUD's hint line
     coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
     coop::chat_feed::Tick();
     // The prop key index's watches' names, driven to resolve (the install itself is harness::Start's first

@@ -296,9 +296,6 @@ bool IsActive() {
            coop::vidcam_hint::Current() != ue_wrap::video_camera::View::None;
 }
 
-// The local voice indicator: a compact bottom-left icon (talking, whispering, muted,
-// disconnected; push-to-talk idle shows nothing). Reads the published snapshot, since this
-// runs on the render thread and the live chain walks game-thread state.
 // The video camera's hint, centred low on the screen while its overlay shows: how the overlay goes away, which the
 // game never says (coop/player/vidcam_hint.h).
 void DrawVidcamHint() {
@@ -326,6 +323,9 @@ void DrawVidcamHint() {
     }
 }
 
+// The local voice indicator: a compact bottom-left icon (talking, whispering, muted,
+// disconnected; push-to-talk idle shows nothing). Reads the published snapshot, since this
+// runs on the render thread and the live chain walks game-thread state.
 void DrawLocalVoiceIcon() {
     coop::voice_chat::UiSnapshot vs;
     coop::voice_chat::GetUiSnapshot(vs);

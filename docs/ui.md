@@ -148,9 +148,10 @@ counts as a running event, so the pause menu's Save stays off until it stops; on
 use with Alt held stops it (a click or a plain use pauses it), or its 720 s limit, or a flat
 battery. While the overlay shows, a line low on the screen says so: with a camera in hand, drop it
 or put it away; while recording, look at the camera and press Alt+E. The overlay's state is read
-from the game's one camera manager four times a second (`ue_wrap/devices/video_camera`,
-`coop/player/vidcam_hint`). `[V]` by hand on a client: in hand, recording, dropped, and gone once
-stopped.
+from the game's one camera manager when the manager rewrites it: a watch on its `updUI`, the one
+function that sets the overlay's visibility, publishes the state (`ue_wrap/devices/video_camera`,
+`coop/player/vidcam_hint`). `[V]` by hand on a client, with the earlier four-times-a-second read: in
+hand, recording, dropped, and gone once stopped; `[?]` with the watch, until it is run again.
 
 ### The game's notifications
 
