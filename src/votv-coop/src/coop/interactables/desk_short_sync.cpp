@@ -17,6 +17,7 @@
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/desk_short.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -48,7 +49,8 @@ constexpr float kReachUU = 400.0f;
 constexpr N::IntentBudget kBudget{2.0f, 0.2f};
 constexpr size_t kMaxPending = 4;
 
-// An ask the host never answered is dropped after the ten seconds its short would have run.
+// An ask the host never answered, a client's held state and an ask the host has not yet served are dropped after the ten
+// seconds the short they stand for would have run.
 constexpr uint64_t kAskAgeMs = 10000;
 
 std::atomic<N::Session*> g_session{nullptr};
@@ -61,11 +63,13 @@ uint64_t g_askAtMs = 0;    // CLIENT: when its cancelled short was asked; 0 when
 bool g_askUnsent = false;  // CLIENT: the ask has not left yet
 bool g_held = false;       // CLIENT: the host's short waits for this copy's desk to resolve
 uint64_t g_heldAtMs = 0;
+uint32_t g_heldWorld = 0;         // CLIENT: the world generation the held state arrived in
+bool g_unannouncedSaid = false;   // CLIENT: a short of a world not yet announced was cancelled, said once a session
 Counts g_c;
 
-// An ask carries nothing but its sender: the queue holds one byte per ask.
+// An ask carries nothing but its sender: the queue holds the time each ask arrived.
 struct Slot {
-    N::IntentQueue<uint8_t> queue;
+    N::IntentQueue<uint64_t> queue;
     bool waitSaid = false;   // a wait for the sender's body, said once a streak
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
@@ -119,15 +123,23 @@ bool HostShorts() {
 // effect run because the engine fired it before the server heard; here the gate refuses first, as MTA's client-to-server
 // events do (CGame.cpp:2663-2711: the client asks, the server decides). Divergences: the host judges reach, which MTA
 // does not for explosions, and the state goes to every peer, since the base's power is global where MTA's goes to
-// the cameras near the blast (CGame.cpp:85, 2943).
+// the cameras near the blast (CGame.cpp:85, 2943). A refusal is answered to its sender, which MTA's veto is not: the
+// cancelled call has no result, so a silent drop would leave the client's liquid with no word.
 sg::Verdict OnShortPre(const sg::Call& call) {
     bool on = false;
     g_preKnown = DSh::ReadShortCircuiting(call.object, on);
     g_preShorting = on;
     N::Session* s = Live();
     if (!s || s->role() != N::Role::Client || g_applying || Off()) return sg::Verdict::Run;
-    // A world this client loads itself is the host's save: its own calls run natively.
-    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) return sg::Verdict::Run;
+    // A world not yet announced is the host's save loading here: the desk shorts only by DeskShortState, which reaches
+    // this copy at its ready edge when the host's desk is shorting.
+    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) {
+        if (!g_unannouncedSaid) {
+            g_unannouncedSaid = true;
+            UE_LOGI("desk_short: a liquid reached the desk before this world was announced -- cancelled, nothing asked");
+        }
+        return sg::Verdict::Cancel;
+    }
     if (g_preKnown && on) return sg::Verdict::Run;   // the event's own guard: the call would do nothing
     if (g_askAtMs == 0) {
         g_askAtMs = NowMs();
@@ -149,8 +161,12 @@ void OnShortPost(const sg::Call& call) {
     if (!DSh::ReadShortCircuiting(call.object, on) || !on) return;
     Payload p{};
     p.on = 1;
-    if (s->SendReliable(N::ReliableKind::DeskShortState, &p, sizeof(p))) ++g_c.sent;
-    UE_LOGI("desk_short: the host's desk shorts -- sent to every client (#%u)", g_c.sent);
+    if (s->SendReliable(N::ReliableKind::DeskShortState, &p, sizeof(p))) {
+        ++g_c.sent;
+        UE_LOGI("desk_short: the host's desk shorts -- sent to every client (#%u)", g_c.sent);
+    } else {
+        UE_LOGI("desk_short: the host's desk shorts -- no client was told (none connected, or the send failed)");
+    }
 }
 
 // The host's state, to one sender alone: its desk's flag as it is, so a refused ask's copy hears what is true.
@@ -168,7 +184,16 @@ void Refuse(N::Session& s, uint8_t slot, const char* why) {
 
 // A sender's head ask: the host judges it in the order its siblings do (the sender's world, that it lives, its reach),
 // then runs the desk's own short. Wait keeps the ask queued while the host has no body to measure the reach from.
-N::Served Execute(N::Session& s, uint8_t slot) {
+N::Served Execute(N::Session& s, uint8_t slot, uint64_t askedAtMs) {
+    // An ask older than the short it stands for is dead: its client dropped it already, and a short started for it
+    // would be one no liquid asked for.
+    if (NowMs() - askedAtMs > kAskAgeMs) {
+        ++g_c.stale;
+        g_slots[slot].waitSaid = false;
+        UE_LOGW("desk_short: slot %u's ask is older than %llu s -- dropped unserved (#%u)", static_cast<unsigned>(slot),
+                static_cast<unsigned long long>(kAskAgeMs / 1000), g_c.stale);
+        return N::Served::Done;
+    }
     void* desk = Desk();
     if (!s.IsSlotWorldReady(slot) || !desk) {
         Refuse(s, slot, "its world is not up here, or this host has no desk");
@@ -247,7 +272,7 @@ void Tick() {
     if (!s) return;
     if (s->role() == N::Role::Host) {
         for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot)
-            g_slots[slot].queue.Serve(kBudget, NowMs, [&](const uint8_t&) { return Execute(*s, slot); });
+            g_slots[slot].queue.Serve(kBudget, NowMs, [&](const uint64_t& at) { return Execute(*s, slot, at); });
         return;
     }
     if (g_askAtMs != 0) {
@@ -264,7 +289,13 @@ void Tick() {
             g_askUnsent = false;
         }
     }
-    // Nothing announces the desk's arrival, so a held state is retried each tick, and only while one is held.
+    // Nothing announces the desk's arrival, so a held state is retried each tick, and only while one is held. A held
+    // short ends with the host's ten seconds and with the world it arrived in.
+    if (g_held && (g_heldWorld != ue_wrap::world_identity::Generation() || NowMs() - g_heldAtMs > kAskAgeMs)) {
+        g_held = false;
+        ++g_c.lapsed;
+        UE_LOGW("desk_short: the held short of the host lapsed before this desk resolved -- dropped (#%u)", g_c.lapsed);
+    }
     if (g_held && ApplyHostShort()) {
         g_held = false;
         UE_LOGI("desk_short: the desk resolved -- the held short of the host runs (%llu ms after it arrived)",
@@ -287,6 +318,7 @@ void OnState(const Payload& p) {
     if (!g_held) {
         g_held = true;
         g_heldAtMs = NowMs();
+        g_heldWorld = ue_wrap::world_identity::Generation();
         ++g_c.held;
         UE_LOGI("desk_short: the host's desk shorts but this copy's desk is not found or not readable -- held (#%u)",
                 g_c.held);
@@ -295,7 +327,7 @@ void OnState(const Payload& p) {
 
 void OnRequest(uint8_t senderSlot) {
     if (senderSlot < 1 || senderSlot >= N::kMaxPeers) return;
-    uint8_t ask = 1;
+    uint64_t ask = NowMs();
     if (!g_slots[senderSlot].queue.Push(std::move(ask), kMaxPending)) ++g_c.dropped;  // a flood: not answered, so no amplifier
 }
 
@@ -316,14 +348,15 @@ Counts GetCounts() { return g_c; }
 
 void OnDisconnect() {
     if (g_c.sent || g_c.asked || g_c.served || g_c.refused || g_c.answered || g_c.dropped || g_c.applied || g_c.heard ||
-        g_c.aged || g_c.held || g_c.replayed)
-        UE_LOGI("desk_short: session end -- host sent=%u served=%u refused=%u answered=%u dropped=%u replayed=%u; client "
-                "asked=%u applied=%u heard=%u aged=%u held=%u",
-                g_c.sent, g_c.served, g_c.refused, g_c.answered, g_c.dropped, g_c.replayed, g_c.asked, g_c.applied, g_c.heard,
-                g_c.aged, g_c.held);
+        g_c.aged || g_c.held || g_c.lapsed || g_c.stale || g_c.replayed)
+        UE_LOGI("desk_short: session end -- host sent=%u served=%u refused=%u answered=%u dropped=%u stale=%u replayed=%u; "
+                "client asked=%u applied=%u heard=%u aged=%u held=%u lapsed=%u",
+                g_c.sent, g_c.served, g_c.refused, g_c.answered, g_c.dropped, g_c.stale, g_c.replayed, g_c.asked,
+                g_c.applied, g_c.heard, g_c.aged, g_c.held, g_c.lapsed);
     g_c = Counts{};
-    g_preKnown = g_preShorting = g_applying = g_askUnsent = g_held = false;
+    g_preKnown = g_preShorting = g_applying = g_askUnsent = g_held = g_unannouncedSaid = false;
     g_askAtMs = g_heldAtMs = 0;
+    g_heldWorld = 0;
     g_session.store(nullptr);
 }
 

@@ -8,7 +8,8 @@
 // (DeskShortState), the asker included, so a client's desk sparks only by the host's word. A request the host refuses
 // is answered to its sender alone with the host's state (DeskShortState, `on` 0 or 1); an ask nothing answers ages out.
 // A client that hears the host's short runs its own copy's; a peer whose desk already shorts is left alone, as the
-// event's own guard leaves it, and a state that finds no desk here is held until it resolves. A joiner that arrives while
+// event's own guard leaves it, and a state that finds no desk here is held until it resolves, its ten seconds pass or its
+// world ends. A client whose world is not yet announced cancels its own short and asks nothing. A joiner that arrives while
 // the host's desk shorts is sent the state at its ready edge. Game thread.
 
 #pragma once
@@ -54,6 +55,8 @@ struct Counts {
     uint32_t heard = 0;     // CLIENT: the host's answer that its desk does not short
     uint32_t aged = 0;      // CLIENT: an ask nothing answered in time
     uint32_t held = 0;      // CLIENT: a state that waited for the desk to resolve
+    uint32_t lapsed = 0;    // CLIENT: a held state dropped: its ten seconds passed, or its world changed
+    uint32_t stale = 0;     // HOST: an ask served past its ten seconds, dropped unserved
     uint32_t replayed = 0;  // HOST: the state sent to a joiner at its ready edge
 };
 Counts GetCounts();
