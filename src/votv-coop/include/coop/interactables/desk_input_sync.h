@@ -61,10 +61,6 @@ bool RepaintRemapOrDefer();
 // setData, a local cap press, another cap label repaint) runs it.
 bool RepaintCapLevelOrDefer();
 
-// The same repaint for a join adopt (the host's scalars or canonical module array written over a joiner's desk).
-// Its own entry, so the cap-label drill's join red can drop exactly this one.
-bool RepaintCapLevelForJoinAdopt();
-
 // HOST: a peer left -- if it was the live ping setter, clear the attribution (the
 // desk-claim deny would otherwise outlive the leaver). No machine write: no peer's
 // machine carries a wire-applied ping flag.

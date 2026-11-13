@@ -67,13 +67,9 @@ bool g_capLabelPending = false;
 constexpr int kTagDeskBeginPlay = 0x44534B01;  // 'DSK' 1
 UE_FACT_FN(kRowDeskBeginPlay, "desk_input_sync", L"analogDScreenTest_C", L"ReceiveBeginPlay", Declared);
 
-// The cap-label drill's reds, each a default-off [dev] row that drops ONE mechanism's repaint.
+// The cap-label drill's reds, each a default-off [dev] row that drops one repaint.
 bool CapRepaintOff() {
     static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_repaint_off);
-    return s_off;
-}
-bool JoinRepaintOff() {
-    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::cap_label_join_repaint_off);
     return s_off;
 }
 bool SetDataRepaintOff() {
@@ -391,12 +387,6 @@ bool RepaintCapLevelOrDefer() {
     g_capLabelPending = !ran;
     if (ran) RunOwed("a cap label repaint");  // the widget stands: what else was owed can run
     return ran;
-}
-
-bool RepaintCapLevelForJoinAdopt() {
-    // The cap-label drill's join red: the joiner's adopt repaint is dropped.
-    if (JoinRepaintOff()) return false;
-    return RepaintCapLevelOrDefer();
 }
 
 void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot) {

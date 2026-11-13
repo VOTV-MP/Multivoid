@@ -3,15 +3,15 @@
 //
 // The label is the cap button's tag ("Cap level [N]", or the line asking for the module) and the screen's cap text
 // ("[N]", or "NaN"); only the cap press and the desk's upgraded_pcUpgrades write them. The host plugs the module and
-// presses the cap to its third level before the client joins, then once more after its world was taken for the
-// joiner, so only the join's adopt carries the final level. Then each peer in turn plugs, pulls or presses, through
-// the desk's own verbs, and both peers must show the actor's label. Each step logs `cap-label: STATE <step> ...`.
-// The first failed check says `rig: VERDICT cap-label FAIL` and no later step runs; a wait that ends on its bound
-// says INVALID. The receiver waits for the actor's level and module, which its apply writes in one game-thread task
-// with the repaint, and reads its label once. Armed by the row cap_label_drill on both peers (VOTVCOOP_CAN_DIR).
-// Reds: cap_label_repaint_off, cap_label_join_repaint_off, and in the saved arm (a loaded
-// host world, its label read at the desk's setData, INVALID after 120 s) cap_label_setdata_off. The driver launches
-// the client once the host logs `STATE 0-before-join`.
+// presses the cap to its third level before the client joins; the joiner must show that label. Then each peer in
+// turn plugs, pulls or presses, through the desk's own verbs, and both peers must show the actor's label. Each step
+// logs `cap-label: STATE <step> ...`. The first failed check says `rig: VERDICT cap-label FAIL` and no later step
+// runs; a wait that ends on its bound says INVALID. The receiver waits for the actor's level and module, which its
+// apply writes in one game-thread task with the repaint, and reads its label once. Armed by the row cap_label_drill
+// on both peers (VOTVCOOP_CAN_DIR). Red: cap_label_repaint_off. The join's own adopt has no red: a change the host
+// makes after its world is taken reaches the joiner live and repaints it. The driver launches the client once the
+// host logs `STATE 0-before-join`. In the saved arm (a loaded host world, its label read at the desk's setData,
+// INVALID after 120 s) the red is cap_label_setdata_off.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -52,8 +52,6 @@ using PS::Await;
 using PS::AwaitText;
 using PS::Mark;
 using PS::WaitFor;
-
-constexpr int kJoinerSlot = 1;  // the one client of a two-peer run
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
@@ -287,14 +285,6 @@ bool RunSteps(bool host) {
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::cap_label_drill); }
 
-// The host's world is taken for the joiner (its save is the joiner's world from then on): what the host changes after
-// it reaches the joiner only through the join's own adopts.
-bool WorldTaken() {
-    bool taken = false;
-    OnGameThread([&] { taken = coop::save_transfer::WorldTakenFor(kJoinerSlot); });
-    return taken;
-}
-
 void RunHost() {
     // A world restored from a save settles at the desk's setData; a New Game has no slot and nothing to restore (the
     // game's loadObjects reaches the desk's setData only past a saved player transform, which a blank save lacks).
@@ -339,15 +329,7 @@ void RunHost() {
     if (!Check(prepared.module && prepared.level == 2 && prepared.text == "[3]", "0: the host shows the third level"))
         return;
     if (!Await("client_begun")) return;
-    // The joiner's world holds the third level; the host's cap goes on past it once the world is taken, so only the
-    // join's own adopt can bring the joiner to the host's final level and label.
-    if (!WaitFor("the host's world taken for the joiner", 240, [] { return WorldTaken(); })) return;
-    PressCap();
-    if (!WaitFor("the host's cap press after the capture", 10, [&] { return Read().level != prepared.level; })) return;
-    const Label handed = Read();
-    LogState("0-after-capture");
-    if (!Check(LabelIsOwn(handed), "0: the host's label after the capture is its level's and module's")) return;
-    Mark("host_prepared", Format(handed));
+    Mark("host_prepared", Format(prepared));
     if (!Await("client_joined")) return;
     if (!RunSteps(true)) return;
     UE_LOGI("cap-label: DONE");

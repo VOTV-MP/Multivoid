@@ -97,12 +97,13 @@ desk's next watched event (its `setData`, a local cap press, another cap label r
 `coop/interactables/desk_input_sync`. The label itself `[V]` (`harness/autotest/autotest_cap_label.cpp`: the join,
 then each peer plugging and pulling the module and pressing the cap with and without it, the tag and text read the
 same on both peers after every step, read once when the actor's level and module arrive; the first check that fails
-says `FAIL` and no later step runs). The reds, each dropping one repaint: `dev.cap_label_repaint_off` (all),
-`dev.cap_label_join_repaint_off` (the joiner's adopt, after the host's cap moves once its world was taken),
+says `FAIL` and no later step runs). The reds, each dropping one repaint: `dev.cap_label_repaint_off` (all)
 and `dev.cap_label_setdata_off` (the
 restore's, in the drill's `saved` arm, which runs on a loaded save holding a cap level or the module). Which of them
-FAIL is read from the rig runs of this lane, not stated here `[?]`. The repaint owed at the desk's BeginPlay (a
-state that reaches the desk before its screen widget exists) has no red: no run has made it owed `[?]`.
+FAIL is read from the rig runs of this lane, not stated here `[?]`. The join's adopt has no red of its own: a cap
+change the host makes after its world is taken reaches the joiner live, and the live apply repaints the label, so a
+joiner without the adopt's repaint would still show the right label there. The repaint owed at the desk's BeginPlay (a
+state that reaches the desk before its screen widget exists) has no red either: no run has made it owed `[?]`.
 
 The download simulation runs on the host only (`coop/interactables/desk_sim_sync`): the host
 rolls both random terms and streams the output vector (decoded, the needle, the rate, the
