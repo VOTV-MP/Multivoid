@@ -64,6 +64,11 @@ void PayloadToSnapshot(const coop::net::AtvStatePayload& p, AC::Snapshot& s) {
 // applied the host's last state cannot undo it; any other block leaves both as the host's copy has them. CLIENT taking a
 // host block: the block's values unless the open-request gate of the ATV is shut, and the block's sequence is then the
 // newest this client applied. Returns whether the host's copy lost fuel or health to the block.
+// The gate is MTA's sync time context (CElement.cpp:1281-1305, bumped on a server-side write as in FixVehicle,
+// CStaticFunctionDefinitions.cpp:5585-5589, a stale report dropped as in CUnoccupiedVehicleSync.cpp:285). It differs on two
+// counts: MTA's driver owns the vehicle's health (CVehiclePuresyncPacket.cpp:151-171) where here the host owns the absolute,
+// since a fuel can or a toolbox is an act on an item judged by the host; and the context here is a u32 in serial arithmetic
+// that drops only the vitals of a block, not the whole packet.
 bool ApplyVitalsRule(void* actor, const std::wstring& key, bool fromHost, const coop::net::AtvStatePayload& p,
                      AC::Snapshot& in) {
     namespace H = coop::atv_host_sync;
@@ -92,6 +97,19 @@ bool ApplyVitalsRule(void* actor, const std::wstring& key, bool fromHost, const 
     }
     DE::Note(DE::kBlock, 0, acked ? 1 : 0, 0, curFuel, in.fuel, blockFuel);
     return in.fuel < curFuel || in.health < curHealth;
+}
+
+// HOST, after a client's block lowered the copy's fuel or health: the game's own tick calls checkIfRunout for a copy that
+// burns, and a copy nobody drives burns nothing. Only a fuel or health at 0 can change `empty` or `brokenn`, so the call runs
+// only there, and those marks, which are the host's state and which no block carries, are published at that edge, and then
+// only: a state goes out when the marks changed, not for every burn.
+void RunoutEdge(void* actor, const std::wstring& key) {
+    namespace H = coop::atv_host_sync;
+    if (ue_wrap::atv::GetFuel(actor) > 0.f && ue_wrap::atv::GetHealth(actor) > 0.f) return;
+    H::Vitals before;
+    const bool read = H::ReadVitals(actor, before);
+    ue_wrap::atv::CheckIfRunout(actor);
+    if (read) H::PublishIfChanged(key, actor, before);
 }
 
 bool DirtGroupChanged(const AC::Snapshot& in, const AC::Snapshot& expressed) {
@@ -147,6 +165,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     if (!AC::Resolved() && !AC::Resolve()) return;  // fill already warned once
     void* actor = e.actor;
     if (!actor) return;
+    const std::wstring key = coop::net::StringFromWireKey(p.key);
 
     // Seed the last-expressed baseline FROM THE ACTOR: first apply for this
     // entry, or the entry repointed to a new actor after an index rebuild. A save-loaded
@@ -164,9 +183,9 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
                         "applies until it reads (no verbs will fire)"); }
             AC::Snapshot in;
             PayloadToSnapshot(p, in);
-            const bool fell = ApplyVitalsRule(actor, coop::net::StringFromWireKey(p.key), fromHost, p, in);
+            const bool fell = ApplyVitalsRule(actor, key, fromHost, p, in);
             AC::WriteAccumulators(actor, in);
-            if (fell) ue_wrap::atv::CheckIfRunout(actor);
+            if (fell) RunoutEdge(actor, key);
             g_applied.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -210,7 +229,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
         c01(in.bodyDirt); c100(in.spareDur); c01(in.spareDirt); c100(in.fuel);
         if (in.health < -1.f) in.health = -1.f; else if (in.health > 100.f) in.health = 100.f;
     }
-    const bool vitalFell = ApplyVitalsRule(actor, coop::net::StringFromWireKey(p.key), fromHost, p, in);
+    const bool vitalFell = ApplyVitalsRule(actor, key, fromHost, p, in);
 
     const AC::Snapshot& ex = e.condExpressed;
     // Presence is consumed from the host's own copy only (a connect snapshot's block included).
@@ -245,9 +264,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     AC::WriteAccumulators(actor, in);
     if (applyPresence && presenceDiffers)
         AC::WritePresence(actor, in.mask, in.hasSpare);
-    // The guard around `runout` after the host's copy lost fuel or health to a client's block: the game's own tick calls
-    // it for a copy that burns, and a copy nobody drives burns nothing.
-    if (vitalFell) ue_wrap::atv::CheckIfRunout(actor);
+    if (vitalFell) RunoutEdge(actor, key);   // the host's copy lost fuel or health to a client's block
     g_applied.fetch_add(1, std::memory_order_relaxed);
 
     if (!(groupTires || groupDirt || groupSpare || groupHealth)) return;
