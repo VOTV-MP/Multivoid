@@ -48,7 +48,6 @@ constexpr const wchar_t* kWine  = L"/Game/objects/prop_snack_wine.prop_snack_win
 constexpr float kWrapperRadiusCm = 300.f;      // a snack's wrapper is born at its place
 constexpr uint64_t kSpillBoundMs = 60000;      // HOST: the tilted beer to a spilled use
 constexpr float kTiltPitch = 100.f;            // past upside-down by 10 deg, where the spill's weight is sin(10 deg) a frame
-constexpr float kLeftPlaceCm = 50.f;          // a tilted beer this far under its start has left its place
 constexpr uint16_t kReserveId = 0xFFF0;        // the host's own reservation for the client's slot (the cancel arm)
 constexpr uint8_t kEatAction = 4;
 
@@ -175,40 +174,58 @@ const char* CancelHostUse(void* actor) {
     return nullptr;
 }
 
-// The spill arm: the beer is tilted past upside-down, where its own tick spends a use a few frames in, and set upright
-// once its uses have fallen. The spill's own mark publishes it. The tilt is made with physics OFF and the place pinned: a
-// bottle lying on the floor, turned about its origin by a teleport with physics on, has a corner in the floor and the
-// solver pushes it through the world (measured: z 6317 down to -11509). With physics off nothing moves the bottle, the
-// turn back upright restores exactly the pose it had, and only then does physics run again.
-float g_tiltZ = 0.f;
+// The spill arm: the beer is tilted to where its own tick spills a use, and put back exactly as it was once its uses have
+// fallen. The beer's tick (prop_snack_beer's ReceiveTick, its spill branch)
+// returns unless `open`, then spends a use with the chance RandomBoolWithWeight(up . (0,0,-1)):
+// a pitch of 100 degrees with no roll points its up vector 10 degrees past horizontal, a weight of about 0.17 a tick,
+// whatever roll the bottle settled at. The tilt is made with physics OFF and the place pinned: a bottle lying on the floor
+// turned about its origin by a teleport with physics on has a corner in the floor and the solver pushes it through the
+// world (measured: z 6317 down to -11509). The spill's own mark publishes it. The pose before the tilt is recorded, and
+// RestoreTilt puts back exactly that rotation and physics: it runs on the spill, on every INVALID or FAIL return after the
+// pin, and when the host's phase ends (SnackRestoreTilt).
+struct Tilt {
+    ue_wrap::CachedObjRef actor;
+    FRotator rot{};
+    bool on = false;
+};
+Tilt g_tilt;
+
+void RestoreTilt() {
+    if (!g_tilt.on) return;
+    g_tilt.on = false;
+    void* const beer = g_tilt.actor.Get();
+    if (!beer) return;
+    if (!E::SetActorRotation(beer, g_tilt.rot) || !E::SetActorSimulatePhysics(beer, true))
+        UE_LOGW("%s host snack: the tilted beer could not be put back as it was", kTag);
+}
+
+const char* TiltFailed(const char* why) {
+    RestoreTilt();
+    return why;
+}
 
 const char* TiltUntilSpilled(void* actor, uint64_t sinceMs, bool* done) {
     int32_t uses = 0;
     bool open = false;
-    FRotator rot{};
-    FVector at{};
-    if (!SN::ReadSnackState(actor, uses, open) || !E::TryGetActorRotation(actor, rot) || !E::TryGetActorLocation(actor, at))
-        return "the beer's state could not be read";
     if (sinceMs == 0) {
-        g_tiltZ = at.Z;
-        FRotator tilt = rot;
-        tilt.Pitch = kTiltPitch;
-        if (!E::SetActorSimulatePhysics(actor, false)) return "the beer's physics could not be stopped for the tilt";
-        return E::SetActorRotation(actor, tilt) ? nullptr : "the beer could not be tilted";
+        FRotator rot{};
+        if (!SN::ReadSnackState(actor, uses, open) || !E::TryGetActorRotation(actor, rot)) return "the beer's state could not be read";
+        g_tilt.actor.Set(actor);
+        g_tilt.rot = rot;
+        g_tilt.on = true;
+        FRotator tilt{kTiltPitch, rot.Yaw, 0.f};
+        if (!E::SetActorSimulatePhysics(actor, false)) return TiltFailed("the beer's physics could not be stopped for the tilt");
+        return E::SetActorRotation(actor, tilt) ? nullptr : TiltFailed("the beer could not be tilted");
     }
-    if (at.Z < g_tiltZ - kLeftPlaceCm) return "INVALID: the beer left its place while tilted";
+    if (!SN::ReadSnackState(actor, uses, open)) return TiltFailed("the beer's state could not be read");
     if (uses < g_spillStart) {
-        FRotator up = rot;
-        up.Pitch = 0.f;
-        up.Roll = 0.f;
-        if (!E::SetActorRotation(actor, up)) return "the beer could not be set upright";
-        if (!E::SetActorSimulatePhysics(actor, true)) return "the beer's physics could not be restored upright";
-        UE_LOGI("%s host snack: the tilted beer spilled %d use(s) by its own tick, set upright, physics restored", kTag,
+        RestoreTilt();
+        UE_LOGI("%s host snack: the tilted beer spilled %d use(s) by its own tick, put back as it was", kTag,
                 g_spillStart - uses);
         *done = true;
         return nullptr;
     }
-    return sinceMs > kSpillBoundMs ? "INVALID: the tilted beer spilled no use in the bound" : nullptr;
+    return sinceMs > kSpillBoundMs ? TiltFailed("INVALID: the tilted beer spilled no use in the bound") : nullptr;
 }
 
 // HOST, after the target is announced: the copy's capture and writes on the first call, then the arm's own work.
@@ -349,7 +366,12 @@ namespace {
 bool g_settledSaid = false;
 }
 
-void SnackStepReset() { g_settledSaid = false; }
+void SnackStepReset() {
+    g_settledSaid = false;
+    RestoreTilt();
+}
+
+void SnackRestoreTilt() { RestoreTilt(); }
 
 // HOST, each poll while it waits for the client: once the host has processed the act (its commit counted, its copy
 // applied, published or ended, its wrapper expressed) it says `settled`, once. The line rides the lobby chat, which is
