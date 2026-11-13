@@ -60,7 +60,7 @@ copy stays; a client asks once per hook until the host's word for it comes, then
 copy then stands (`[?]`, the word is not sent to a slot before its world-ready). `[V]` on the rig (`coop/dev/hook_retrieve_drill`): a client takes
 a mirror and a save-loaded copy, and the host takes its hook while the client holds each kind of copy; the reds fail,
 `nocollision` with no pose of the aim fan putting the client's look on its copy, the reported symptom, and
-`clientruns` with the host's hook still standing.
+`clientruns` in the press's own tick, with nothing asked of the host while the copy and an item are already there.
 
 ## Who owns what
 

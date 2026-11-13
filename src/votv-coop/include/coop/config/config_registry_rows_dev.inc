@@ -510,15 +510,15 @@ CFG_STRING(hook_retrieve_drill, "hook_retrieve_drill", "dev", "", "VOTVCOOP_HOOK
     "Drill (BOTH peers): a client takes back an anchored hook, through the host, once. run -- the host ties a hook "
     "between two cups before the client's puppet once its world is ready and hands it to the hook lane, which adopts "
     "it and sends it to the client; the client aims at its copy until its look takes the hook and presses the use "
-    "key. The host's DONE line ends it: its hook gone by one granted pickup. The client says when its copy went and a "
-    "hook item reached its inventory. join -- the hook is tied before the host player before the client joins, so the "
+    "key. The host's DONE line says its hook went by one granted pickup; the client's `rig: VERDICT hook-retrieve PASS` says "
+    "its copy went and a hook item reached its inventory. join -- the hook is tied before the host player before the client joins, so the "
     "client's copy is the one its save loaded; the client is put beside it and takes it. host / joinhost -- the same "
-    "two copies, and the host player walks to its hook and takes it: both peers' DONE lines, the host's item in its "
-    "inventory with no grant, the client's copy gone with no item.")
+    "two copies, and the host player walks to its hook and takes it: the host's DONE line, its item in its "
+    "inventory with no grant, and the client's PASS with its copy gone and no item.")
 CFG_ENUM(hook_retrieve_red, "hook_retrieve_red", "dev", "off", "off|nocollision|clientruns", "VOTVCOOP_HOOK_RETRIEVE_RED",
     "Developer (client): the hook retrieve drill's reds. nocollision -- an anchored mirror's collision stays off, as "
-    "before the lane, so the player's look never takes it; clientruns -- the game's own pickup runs on the client's "
-    "copy instead of asking the host, so the host's hook stays.")
+    "before the lane, so the player's look never takes it (FAIL when the aim fan held every pose); clientruns -- the game's own pickup runs on the client's "
+    "copy instead of asking the host (FAIL in the press's tick: nothing was asked, the copy and an item are here).")
 CFG_ENUM(prop_syncer_drill, "prop_syncer_drill", "dev", "off", "off|kick|forge", "VOTVCOOP_PROP_SYNCER_DRILL",
     "Drill (host and BOTH clients, the same value; three peers): a client syncs a prop its own interaction moves. "
     "kick: the client in slot 1 walks to a keyed prop with the director, claims it, kicks it with the game's own "

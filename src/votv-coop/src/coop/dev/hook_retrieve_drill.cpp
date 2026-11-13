@@ -16,6 +16,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/hook.h"
 #include "ue_wrap/actors/inventory.h"
@@ -42,6 +43,13 @@ namespace H  = ue_wrap::hook;
 namespace PR = ue_wrap::prop;
 namespace R  = ue_wrap::reflection;
 namespace CD = coop::dev::coffee_drill::detail;
+namespace RV = coop::rig_verdict;
+
+// The one verdict tag, said by whichever peer decides. A bound below only ever says INVALID: a verdict is an event (a
+// request answered, a copy gone, an item come) or the point after which nothing changes (the game's pickup body is
+// synchronous, so the press's own effect is read in the tick that pressed). The client says PASS when the taker is
+// a client (its item is the last event) or the copy goes with the host's pickup; either peer says FAIL.
+constexpr const char* kVerdict = "hook-retrieve";
 
 constexpr float    kAheadCm       = 120.f;   // before the player: inside the interaction reach
 constexpr float    kApartCm       = 45.f;    // each cup this far to one side of the line ahead
@@ -89,6 +97,7 @@ int      g_session = 1;
 ue_wrap::CachedObjRef g_cupA, g_cupB, g_hook;
 std::wstring g_key;
 uint64_t g_granted0 = 0;
+uint64_t g_asked0 = 0, g_taken0 = 0, g_refusedAns0 = 0;   // CLIENT: the lane's counters at the press
 int      g_items0 = 0;
 coop::director::AimFan g_fan;
 int      g_reaims = 0;
@@ -103,11 +112,19 @@ void Cleanup() {
 }
 void Fail(const char* what) {
     UE_LOGW("[HOOK-RETRIEVE-DRILL] FAIL in session %d: %s", g_session, what);
+    RV::Say(kVerdict, RV::Outcome::Fail, "%s", what);
     Cleanup();
     g_step = Step::Done;
 }
-void Abandon(const char* why) {
+void Abandon(const char* why) {   // the drill could not measure: a walk, a setup or a bound that did not come to pass
     UE_LOGW("[HOOK-RETRIEVE-DRILL] ABANDONED in session %d: %s", g_session, why);
+    RV::Say(kVerdict, RV::Outcome::Invalid, "%s", why);
+    Cleanup();
+    g_step = Step::Done;
+}
+void Pass(const char* what) {
+    UE_LOGI("[HOOK-RETRIEVE-DRILL] client DONE in session %d: %s", g_session, what);
+    RV::Say(kVerdict, RV::Outcome::Pass, "%s", what);
     Cleanup();
     g_step = Step::Done;
 }
@@ -133,6 +150,57 @@ void Reaim() {
     if (++g_reaims > kReaimMax) { Abandon("the trace kept leaving the hook after the aim took it"); return; }
     g_fan = coop::director::AimFan();
     Next(Step::Aim);
+}
+
+// What the press did, read from the lane's counters and the world. True when the drill's end was said.
+// HOST (its own pickup, the game's): the hook is gone with one item in the inventory and no grant counted; the client
+// says PASS when its copy goes. CLIENT: a press that asked the host nothing is the lane failing at its seat (the game's
+// pickup ran on the copy, or the press was dropped) -- the clientruns red ends here; then the host's refusal is a FAIL
+// and its grant, which runs the pickup here, is the last event: the copy gone and one more item, PASS.
+bool JudgePress(bool host) {
+    if (host) {
+        if (g_hook.Alive()) return false;
+        const int items = HookItems();
+        if (coop::hook_retrieve::GrantedCount() != g_granted0) {
+            Fail("the host player's own pickup was counted as a client's grant");
+        } else if (items != g_items0 + 1) {
+            char why[120];
+            std::snprintf(why, sizeof(why), "the hook went with the host's pickup but its inventory holds %d hook item(s), "
+                          "was %d", items, g_items0);
+            Fail(why);
+        } else {
+            UE_LOGI("[HOOK-RETRIEVE-DRILL] host DONE in session %d: the hook went with the host player's pickup and its "
+                    "item reached the inventory (%d -> %d), no grant", g_session, g_items0, items);
+            Cleanup();
+            g_step = Step::Done;
+        }
+        return true;
+    }
+    if (coop::hook_retrieve::AskedCount() == g_asked0) {
+        char why[200];
+        std::snprintf(why, sizeof(why), "the press asked the host nothing: the hook %s here and the inventory holds %d "
+                      "hook item(s), was %d", g_hook.Alive() ? "still stands" : "went", HookItems(), g_items0);
+        Fail(why);
+        return true;
+    }
+    if (coop::hook_retrieve::RefusedAnswerCount() != g_refusedAns0) {
+        Fail("the host refused a pickup the client made within reach of its hook");
+        return true;
+    }
+    if (coop::hook_retrieve::TakenCount() == g_taken0) return false;
+    const int items = HookItems();
+    if (g_hook.Alive() || items != g_items0 + 1) {
+        char why[140];
+        std::snprintf(why, sizeof(why), "the host's grant ran here but the copy %s and the inventory holds %d hook "
+                      "item(s), was %d", g_hook.Alive() ? "still stands" : "went", items, g_items0);
+        Fail(why);
+        return true;
+    }
+    char what[120];
+    std::snprintf(what, sizeof(what), "the host granted the pickup once, the copy went and the item reached the "
+                  "inventory (%d -> %d)", g_items0, items);
+    Pass(what);
+    return true;
 }
 
 // The taker's steps, either peer: walk to the head, turn the trace onto the hook, wait for the look to offer it (the
@@ -170,7 +238,7 @@ bool TakeTick(void* player, bool host) {
             Next(Step::Press);
             return true;
         }
-        if (Expired(kReadyBoundMs)) Fail("the trace took the hook but the player's look never offered it");
+        if (Expired(kReadyBoundMs)) Abandon("the trace took the hook but the player's look had not offered it in 3 s");
         return true;
     }
     case Step::Press: {
@@ -179,29 +247,21 @@ bool TakeTick(void* player, bool host) {
         if (E::ReadMainPlayerHitActor(player) != hook) { Reaim(); return true; }
         g_items0 = HookItems();
         g_granted0 = coop::hook_retrieve::GrantedCount();
+        g_asked0 = coop::hook_retrieve::AskedCount();
+        g_taken0 = coop::hook_retrieve::TakenCount();
+        g_refusedAns0 = coop::hook_retrieve::RefusedAnswerCount();
         if (!E::CallMainPlayerUseSelectedAction(player)) { Abandon("useSelectedAction did not dispatch"); return true; }
         UE_LOGI("[HOOK-RETRIEVE-DRILL] %s pressed the hook (%d hook item(s) carried)", Role(host), g_items0);
         Next(Step::Seen);
+        JudgePress(host);   // the press's own effect is already here: the game's pickup body is synchronous
         return true;
     }
-    case Step::Seen: {
-        const int items = HookItems();
-        const bool grantFree = !host || coop::hook_retrieve::GrantedCount() == g_granted0;
-        if (!g_hook.Alive() && items == g_items0 + 1 && grantFree) {
-            UE_LOGI("[HOOK-RETRIEVE-DRILL] %s DONE in session %d: the hook went with this player's pickup and its "
-                    "item reached the inventory (%d -> %d)", Role(host), g_session, g_items0, items);
-            Cleanup();
-            g_step = Step::Done;
-            return true;
-        }
-        if (Expired(kSeenBoundMs)) {
-            char why[160];
-            std::snprintf(why, sizeof(why), "15 s after the press the hook %s and the inventory holds %d hook item(s), "
-                          "was %d", g_hook.Alive() ? "still stands" : "went", items, g_items0);
-            Fail(why);
-        }
+    case Step::Seen:
+        if (JudgePress(host)) return true;
+        if (Expired(kSeenBoundMs))
+            Abandon(host ? "15 s after the press the host's hook still stands"
+                         : "15 s after the press neither the host's grant nor its refusal had come");
         return true;
-    }
     default:
         return false;
     }
@@ -281,7 +341,7 @@ void HostTick(coop::net::Session* s) {
     case Step::Watch: {   // the CLIENT takes: the host's hook goes by one granted pickup
         const uint64_t granted = coop::hook_retrieve::GrantedCount() - g_granted0;
         if (g_hook.Alive()) {
-            if (Expired(kTakeBoundMs)) Fail("the hook still stands on the host 120 s after the tie");
+            if (Expired(kTakeBoundMs)) Abandon("the hook still stands on the host 120 s after the tie");
             return;
         }
         if (granted != 1) {
@@ -291,6 +351,7 @@ void HostTick(coop::net::Session* s) {
             Fail(why);
             return;
         }
+        // The client says PASS, when its item arrives; the host's own word is this line, and a FAIL above.
         UE_LOGI("[HOOK-RETRIEVE-DRILL] host DONE in session %d: hook '%ls' taken by the client's pickup, granted once",
                 g_session, g_key.c_str());
         Cleanup();
@@ -367,7 +428,7 @@ void ClientTick() {
         return;
     case Step::Watch: {   // the HOST takes: this client's copy goes, and no item reaches this inventory
         if (g_hook.Alive()) {
-            if (Expired(kTakeBoundMs)) Fail("this client's copy still stands 120 s on -- the host's pickup never reached it");
+            if (Expired(kTakeBoundMs)) Abandon("this client's copy still stands 120 s on -- the host's pickup never reached it");
             return;
         }
         const int items = HookItems();
@@ -378,9 +439,7 @@ void ClientTick() {
             Fail(why);
             return;
         }
-        UE_LOGI("[HOOK-RETRIEVE-DRILL] client DONE in session %d: this copy of hook '%ls' went with the host's pickup",
-                g_session, g_key.c_str());
-        g_step = Step::Done;
+        Pass("this copy of the hook went with the host's pickup and no item reached this inventory");
         return;
     }
     default:
@@ -405,7 +464,7 @@ void OnDisconnect() {
     g_cupB.Reset();
     g_hook.Reset();
     g_key.clear();
-    g_granted0 = 0;
+    g_granted0 = g_asked0 = g_taken0 = g_refusedAns0 = 0;
     g_items0 = 0;
     g_reaims = 0;
     if (g_walk) coop::director::CancelBackgroundWalk(*g_walk);
