@@ -354,7 +354,9 @@ void RunPass(uint64_t nowMs) {
         const uint8_t syncer = e.syncerSlot;
         // 1. silent: the host takes the ATV, and the seat with it when that client held it. MTA's syncer sends only
         // on change (CUnoccupiedVehicleSync.cpp:459), so silence is normal there; here a syncer streams.
-        if (!s_redSilence && nowMs - e.lastBlockMs >= kSyncerSilenceMs) {
+        const bool silent = nowMs - e.lastBlockMs >= kSyncerSilenceMs;
+        if (silent) ++g_counters.silentSeen;
+        if (!s_redSilence && silent) {
             if (e.occupantSlot == syncer) e.occupantSlot = kNoSeat;
             HandToHost(e, syncer, nowMs);
             coop::atv_host_judge::ReleaseHorn(e.actor);   // the silent syncer's press will never be released

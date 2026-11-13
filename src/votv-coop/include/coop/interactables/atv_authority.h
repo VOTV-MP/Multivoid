@@ -78,6 +78,8 @@ struct Counters {
     unsigned long long streamPaced = 0;    // a block past the syncer's stream bucket
     unsigned long long handedBack = 0;     // the host took an ATV from a client syncer (range or rest)
     unsigned long long silenced   = 0;     // the host took an ATV from a silent syncer
+    unsigned long long silentSeen = 0;     // the once-a-second pass found a syncer silent past the rule's bound (it takes
+                                           // the ATV back at the first, so a second with none taken is a rule that did not act)
     unsigned long long idleStreamBlocks = 0;  // blocks admitted from a client syncer with the seat free and no carry
                                               // (the release stream before a hand-back)
     unsigned long long carriedStillBlocks = 0;  // blocks admitted with the grabbed bit whose speed and moved distance
