@@ -2415,7 +2415,7 @@ inline constexpr uint8_t kPropNametagPublish  = 2;   // HOST->ALL: this prop car
 inline constexpr uint8_t kPropNametagRefused  = 3;   // HOST->the requester: its request was refused
 inline constexpr int     kPropNametagMaxChars = 1023;
 // Why a request was refused (op 3's `reason`).
-inline constexpr uint8_t kPropNametagBadTag     = 1;   // the tag is empty, over kPropNametagMaxChars, holds a control unit, or the body is malformed
+inline constexpr uint8_t kPropNametagBadTag     = 1;   // the tag is empty, over kPropNametagMaxChars, holds a control unit or invalid UTF-16, or the body is malformed
 inline constexpr uint8_t kPropNametagNoProp     = 2;   // the host holds no prop of that key
 inline constexpr uint8_t kPropNametagNoItem     = 3;   // no nametag in the sender's hand, as the hand lane has it
 inline constexpr uint8_t kPropNametagTooFast    = 4;   // the sender is past its budget

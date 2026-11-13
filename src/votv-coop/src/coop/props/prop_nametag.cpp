@@ -19,6 +19,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -114,12 +115,27 @@ bool                                                         g_joinRetryOwed = f
 // HOST: g_tagged is walked when the key index's table moves, which a prop's destroy does.
 uint64_t g_taggedVersion = 0;
 
-// A tag is the first line of a notebook page, so a tab can stand in it; the other control units cannot be typed there.
+// Valid UTF-16 as the engine's string takes it: no NUL, no unpaired or reversed surrogate, no U+FFFE or U+FFFF.
+bool ValidUtf16(const std::wstring& t) {
+    for (size_t i = 0; i < t.size(); ++i) {
+        const wchar_t c = t[i];
+        if (c == 0 || c == 0xFFFE || c == 0xFFFF) return false;
+        if (c >= 0xDC00 && c <= 0xDFFF) return false;   // a low surrogate with no high one before it
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            if (i + 1 >= t.size() || t[i + 1] < 0xDC00 || t[i + 1] > 0xDFFF) return false;
+            ++i;
+        }
+    }
+    return true;
+}
+
+// A tag is the first line of a notebook page, so a tab can stand in it; the other control units cannot be typed there,
+// and a typed string is valid UTF-16.
 bool TagSane(const std::wstring& t) {
     if (t.empty() || t.size() > kMaxTagChars) return false;
     for (wchar_t c : t)
         if ((c < 0x20 && c != L'\t') || c == 0x7F) return false;
-    return true;
+    return ValidUtf16(t);
 }
 
 // The message body, little-endian: [op][reason][author][key length][key][tag length u16][tag, UTF-16]. Its longest is a key
@@ -175,12 +191,13 @@ bool Unpack(const std::vector<uint8_t>& b, Body& out, const char** why) {
     if (o + tagLen * 2 != b.size()) { *why = "a tag length that does not add up to the body"; return false; }
     for (size_t i = 0; i < tagLen; ++i, o += 2)
         out.tag.push_back(static_cast<wchar_t>(b[o] | (b[o + 1] << 8)));
+    if (!ValidUtf16(out.tag)) { *why = "a tag that is not valid UTF-16"; return false; }
     return true;
 }
 
 const char* ReasonName(uint8_t reason) {
     switch (reason) {
-    case coop::net::kPropNametagBadTag:     return "the tag is empty, over 1023 units, holds a control character, or the message is malformed";
+    case coop::net::kPropNametagBadTag:     return "the tag is empty, over 1023 units, holds a control character or invalid UTF-16, or the message is malformed";
     case coop::net::kPropNametagNoProp:     return "the host holds no prop of that key";
     case coop::net::kPropNametagNoItem:     return "no nametag in the sender's hand";
     case coop::net::kPropNametagTooFast:    return "the sender is past its budget";
@@ -222,14 +239,15 @@ bool SendBody(coop::net::Session& s, int slot, const Body& b) {
 
 // HOST: the prop of `key` carries `tag` now; every client is told.
 void Publish(coop::net::Session& s, const std::wstring& key, uint8_t author, const std::wstring& tag) {
-    if (tag.size() > kMaxTagChars) {
-        // The host player's own tag, put on by the game, that one message cannot carry: said once, since a player who
-        // wrote it will write another.
+    if (tag.size() > kMaxTagChars || !ValidUtf16(tag)) {
+        // The host player's own tag, put on by the game, that an FName cannot hold or that is not valid UTF-16: said once,
+        // since a player who wrote it will write another.
         static bool s_said = false;
         if (!s_said) {
             s_said = true;
-            UE_LOGW("prop_nametag: the host player's tag on prop '%ls' is %zu characters, over the %zu a name holds "
-                    "-- the clients keep the one they show (said once)", key.c_str(), tag.size(), kMaxTagChars);
+            UE_LOGW("prop_nametag: the host player's tag on prop '%ls' (%zu characters) is over the %zu a name holds or is "
+                    "not valid UTF-16 -- the clients keep the one they show (said once)", key.c_str(), tag.size(),
+                    kMaxTagChars);
         }
         return;
     }
@@ -346,11 +364,17 @@ void Refuse(coop::net::Session& s, uint8_t slot, const std::wstring& key, uint8_
                 key.c_str());
 }
 
-// A message this peer does not act on, at the first twenty and each fiftieth after: no honest peer sends one.
-void DropLogged(const char* why, int slot, uint8_t op) {
+// A message this peer does not act on, at the first twenty and each fiftieth after: no honest peer sends one. `op` is -1
+// (kNoOp) when the drop came before any op was read.
+constexpr int kNoOp = -1;
+void DropLogged(const char* why, int slot, int op) {
     static uint64_t s_dropped = 0;
     ++s_dropped;
-    if (s_dropped <= 20 || s_dropped % 50 == 0)
+    if (s_dropped > 20 && s_dropped % 50 != 0) return;
+    if (op < 0)
+        UE_LOGW("prop_nametag: a message from slot %d dropped before its op was read (%s); %llu so far", slot, why,
+                static_cast<unsigned long long>(s_dropped));
+    else
         UE_LOGW("prop_nametag: op %u from slot %d dropped (%s); %llu so far", static_cast<unsigned>(op), slot, why,
                 static_cast<unsigned long long>(s_dropped));
 }
@@ -515,7 +539,7 @@ void RetryUnbound() {
     }
 }
 
-// HOST: one tagged prop named to one joiner, with the tag it carries now.
+// HOST: one tagged prop named to one joiner, with the tag it carries now. Later: not yet answerable or not yet accepted.
 enum class Named { Sent, Gone, Later, Failed };
 Named NameTo(coop::net::Session& s, int slot, const std::wstring& key) {
     void*      prop = nullptr;
@@ -523,17 +547,18 @@ Named NameTo(coop::net::Session& s, int slot, const std::wstring& key) {
     if (read == coop::prop_key_index::Read::Miss) return Named::Gone;    // the prop is gone, and its tag with it
     if (read == coop::prop_key_index::Read::Pending) return Named::Later;   // the index cannot answer yet
     std::wstring tag;
-    if (!NT::ReadPropNametag(prop, tag) || tag.size() > kMaxTagChars) {
+    if (!NT::ReadPropNametag(prop, tag) || tag.size() > kMaxTagChars || !ValidUtf16(tag)) {
         UE_LOGW("prop_nametag: prop '%ls' could not be read at slot %d's connect replay -- its tag is not named",
                 key.c_str(), slot);
         return Named::Failed;
     }
     if (SendBody(s, slot, Body{coop::net::kPropNametagPublish, 0, kAuthorHost, key, tag})) return Named::Sent;
-    UE_LOGW("prop_nametag: the tag of prop '%ls' did not send to slot %d at its connect replay", key.c_str(), slot);
-    return Named::Failed;
+    // The transport refused it (the send backlog is full): asked again next tick, as a Pending answer is. A slot that
+    // leaves clears its list, and a session's end clears them all.
+    return Named::Later;
 }
 
-// HOST: the replay's props the index could not answer for, asked again each tick until it does.
+// HOST: the replay's props the index could not answer for, or the transport did not accept, asked again each tick.
 void RetryJoinTags() {
     if (!g_joinRetryOwed) return;
     auto* s = g_session.load(std::memory_order_acquire);
@@ -602,19 +627,19 @@ void Tick() {
 }
 
 void OnChunk(coop::net::Session& session, const coop::net::BlobChunkPayload& chunk, int senderPeerSlot) {
-    if (!GT::IsGameThread()) return;
+    UE_ASSERT_GAME_THREAD("prop_nametag::OnChunk");
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s != &session || !s->connected()) return;
     if (senderPeerSlot < 0 || senderPeerSlot >= coop::players::kMaxPeers) return;
     // A request reaches the host from a client alone, and the host's word reaches a client from the host alone.
     if ((s->role() == coop::net::Role::Host) == (senderPeerSlot == 0)) {
-        DropLogged("a message from the wrong side of the link", senderPeerSlot, 0);
+        DropLogged("a message from the wrong side of the link", senderPeerSlot, kNoOp);
         return;
     }
     // A header that declares more chunks than a nametag needs is refused before the assembler reserves for it, as MTA's
     // latent receiver refuses a declared size at the first part (CLatentReceiver.cpp:128-129).
     if (chunk.chunks > kMaxChunks) {
-        DropLogged("a header that declares more chunks than a nametag needs", senderPeerSlot, 0);
+        DropLogged("a header that declares more chunks than a nametag needs", senderPeerSlot, kNoOp);
         return;
     }
     std::vector<uint8_t> blob;
