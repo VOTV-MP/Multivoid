@@ -142,7 +142,8 @@ Residual Score(const std::vector<Point>& d) {
 std::string Measure(const char* me, bool host) {
     std::vector<Point> pts;
     pts.reserve(kMaxSamples);
-    int phys = 0, idle = 0;
+    int phys = 0, idle = 0, kicks = 0;
+    bool ended = false;  // the flight ran to its end (the drone idle for 50 samples), not to the sample cap
     const bool kick = coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_kick);
     if (!host && coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_body_red)) {
         bool ok = false;
@@ -161,7 +162,7 @@ std::string Measure(const char* me, bool host) {
             active = ha == 1;
         }
         if (!c.ok || !active) {
-            if (!pts.empty() && ++idle > 50) break;  // the flight is over
+            if (!pts.empty() && ++idle > 50) { ended = true; break; }  // the flight is over
             continue;
         }
         idle = 0;
@@ -175,6 +176,7 @@ std::string Measure(const char* me, bool host) {
                     ok = ue_wrap::engine::SetActorRootPhysicsVelocity(d, ue_wrap::FVector{300.f, 0.f, 0.f},
                                                                      ue_wrap::FVector{0.f, 0.f, 720.f});
             });
+            if (ok) ++kicks;
             UE_LOGI("drone-hover: CLIENT bumped its hovering copy (call=%d)", ok ? 1 : 0);
         }
         pts.push_back({c.ms, c.loc, c.yaw});
@@ -195,9 +197,9 @@ std::string Measure(const char* me, bool host) {
             "mirror played=%u starved=%u delay=%.0fms",
             me, static_cast<int>(pts.size()), r.fly, r.hover, r.flyCm, r.flyDeg, r.hoverCm, r.hoverDeg, phys, ms.played,
             ms.starved, ms.delayMs);
-    char buf[160];
-    std::snprintf(buf, sizeof(buf), "%d %d %.4f %.4f %.4f %.4f %d %u %u", r.fly, r.hover, r.flyCm, r.flyDeg, r.hoverCm,
-                  r.hoverDeg, phys, ms.played, ms.starved);
+    char buf[192];
+    std::snprintf(buf, sizeof(buf), "%d %d %.4f %.4f %.4f %.4f %d %u %u %d %d", r.fly, r.hover, r.flyCm, r.flyDeg, r.hoverCm,
+                  r.hoverDeg, phys, ms.played, ms.starved, kicks, ended ? 1 : 0);
     return buf;
 }
 
@@ -226,15 +228,25 @@ void RunHost() {
     std::string theirs;
     PS::AwaitText("client_result", theirs, kStepSec);
     PS::Mark("host_done");
-    int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0;
+    int hf = 0, hh = 0, hp = 0, cf = 0, ch = 0, cp = 0, hk = 0, ck = 0, hEnded = 0, cEnded = 0;
     unsigned hpl = 0, hst = 0, played = 0, starved = 0;
     double h[4] = {}, c[4] = {};
-    if (sscanf_s(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl, &hst) != 9 ||
-        sscanf_s(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp, &played,
-                    &starved) != 9 ||
+    if (sscanf_s(mine.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d", &hf, &hh, &h[0], &h[1], &h[2], &h[3], &hp, &hpl, &hst,
+                 &hk, &hEnded) != 11 ||
+        sscanf_s(theirs.c_str(), "%d %d %lf %lf %lf %lf %d %u %u %d %d", &cf, &ch, &c[0], &c[1], &c[2], &c[3], &cp, &played,
+                 &starved, &ck, &cEnded) != 11 ||
         hh < 100 || ch < 100 || played < 500) {
         coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
                                "too few samples (host hover %d, client hover %d, client frames played %u)", hh, ch, played);
+        return;
+    }
+    // A verdict is decided by the flight having ended on both peers, and, with the bump armed, by both bumps having
+    // landed; otherwise the measurement was cut short and nothing was judged.
+    if (!hEnded || !cEnded ||
+        (coop::config::ResolveFlag(coop::config_registry::rows::drone_hover_kick) && ck < 2)) {
+        coop::rig_verdict::Say(kTag, coop::rig_verdict::Outcome::Invalid,
+                               "the measurement was cut short (flight ended: host %d, client %d; bumps landed %d)", hEnded,
+                               cEnded, ck);
         return;
     }
     // Hovering, the client's copy sits off its path at most twice as far as the host's drone, plus 2 cm and 0.05
