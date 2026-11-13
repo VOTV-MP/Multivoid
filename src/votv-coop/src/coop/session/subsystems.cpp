@@ -120,6 +120,7 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/commands/command_sync.h"
 #include "coop/moderation/cremate.h"  // the /cremate trips: listeners, the pump, a leaver, the session end
+#include "coop/player/puppet_events.h"  // RunSelftest
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
@@ -288,6 +289,7 @@ void Install(coop::net::Session& session) {
     coop::chat_sync::Install(&session);  // T-chat (the ui/chat_input send path)
     coop::command_sync::Install(&session);  // the chat input's `/` route: the host's own line, a client's request
     coop::moderation::cremate::Install(&session);  // /cremate: the session its order goes through, the pose, burn-volume and lever listeners
+    coop::puppet_events::RunSelftest();  // the life edges' truth table on pinned poses (un-gated, pure)
     coop::stat_orders::Install(&session);  // an admin's orders and queries of a player's stats: the session they are sent through
     coop::local_body::Install(&session);  // skins: local first-person body + SkinChange announce
     coop::local_body::Tick();  // applies the persisted skin to the local pawn + 1 Hz convergence

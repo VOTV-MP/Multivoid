@@ -39,4 +39,18 @@ void Announce(uint8_t slot, const coop::net::PoseSnapshot& pose, bool worldReady
 // has no "from" again.
 void ForgetSlot(uint8_t slot);
 
+// What a slot's pose says of its life, and what that does: the state to hold, whether a life edge is raised, and the
+// edge's value. Pure (no listener, no slot state), so its truth table is checked on pinned poses by RunSelftest.
+enum class Seen : uint8_t { Nothing, Alive, Dead };
+struct LifeStep {
+    Seen now;
+    bool raise;
+    bool alive;
+};
+LifeStep StepLife(Seen was, uint8_t healthFrac, bool worldReady);
+
+// The un-gated truth table of StepLife on pinned poses (coop/player/puppet_events_selftest.cpp), once per session start.
+// Pure, any thread; true when every check passed.
+bool RunSelftest();
+
 }  // namespace coop::puppet_events
