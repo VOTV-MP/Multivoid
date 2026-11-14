@@ -55,7 +55,7 @@ CFG_STRING(tower_drill, "tower_drill", "dev", "", "VOTVCOOP_TOWER_DRILL", false,
     "difficulty 2 or more), and the host's slot must read good; with the row tower_fuse_hand set on both peers "
     "the host hands none and the client takes a good fuse into its own hold slot, as a player takes one out of the "
     "inventory, and inserts that; radiofusered -- radiofuse with the gates open, which fails "
-    "naming the host's slot left unchanged; radiofuseforge -- the client pulls the blown fuse, then sends an insert of that slot with no fuse ever held (a forged request), which the host must refuse (the host row hand_spend_drill turns its judge off and the arm must FAIL). The repair arms want the game rule enableLightsOut on, or the tower "
+    "naming the host's slot left unchanged; radiofusesametick -- the client pulls the blown fuse, takes a good one into its hand and inserts it in the same tick, which the host must take (the client row hand_announce_off turns the announce off and the arm must FAIL); radiofuseforge -- the client pulls the blown fuse, then sends an insert of that slot with no fuse ever held (a forged request), which the host must refuse (the host row hand_spend_drill turns its judge off and the arm must FAIL). The repair arms want the game rule enableLightsOut on, or the tower "
     "has no puzzle to press (radio then prints lightsout=0). Lines tagged [TOWER-DRILL]; the client's DONE line "
     "ends it.")
 CFG_STRING(desk_ping_drill, "desk_ping_drill", "dev", "", "VOTVCOOP_DESK_PING_DRILL", false,
@@ -95,7 +95,7 @@ CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "once, which the host must take within its rate for inputs, its rows coalesced. upgrade: from there an "
     "install op with no "
     "insert behind it is refused, nothing refunded, the client's install is taken, and a refused one is refunded; with "
-    "the row grid_upgrade_hand set on the client, each install uses an upgrade in its own hold slot; upgradedouble: that, then a second install op of the same hold, which the host must refuse. "
+    "the row grid_upgrade_hand set on the client, each install uses an upgrade in its own hold slot; upgradedouble: that, then a second install op of the same hold, which the host must refuse; upgradesametick: an upgrade taken into the hand and installed in the same tick, which the host must take. "
     "upgraderepair: the client installs one upgrade, the host breaks the generator, the client solves its puzzle and "
     "presses Activate, and 20 s after the repair both peers must still read the upgrade and its mesh; upgraderepairred "
     "installs nothing and must fail on level 0; upgraderepairlossred has the host take the upgrade off its own "
@@ -117,6 +117,10 @@ CFG_ENUM(hand_spend_drill, "hand_spend_drill", "dev", "off", "off|hand_spend_unc
     "hand_spend_unchecked -- the hand's last held class is not checked, so tower_drill=radiofuseforge and "
     "grid_drill=upgrade must FAIL on a forged request taken with no item held; hand_spend_no_latch -- the use count of "
     "a hold is not kept, so grid_drill=upgradedouble must FAIL on the second request of one hold taken.")
+CFG_FLAG(hand_announce_off, "hand_announce_off", "dev", false, "VOTVCOOP_HAND_ANNOUNCE_OFF",
+    "Developer red arm (the CLIENT): the hooks on a fuse tower's and a generator's insert do not announce the held item "
+    "ahead of the claim, as before they existed, so tower_drill=radiofusesametick and grid_drill=upgradesametick (an item "
+    "taken up and inserted in one tick) must FAIL on the host's refusal. The host never reads it.")
 CFG_ENUM(seat_ragdoll_device, "seat_ragdoll_device", "dev", "laptop", "laptop|desk|sat", "VOTVCOOP_SEAT_RAGDOLL_DEVICE",
     "Drill (BOTH peers, VOTVCOOP_RUN_SEAT_RAGDOLL): the device the acting peer enters before it is knocked down or "
     "leaves -- the laptop, the desk's coordinates screen or the SAT console.")

@@ -95,6 +95,7 @@ bool HandFuse() {
 }
 
 bool Forge() { return ArmOf() == Arm::RadioFuseForge; }
+bool SameTick() { return ArmOf() == Arm::RadioFuseSameTick; }
 
 void FuseGo(FuseStep s) {
     g_fuse = s;
@@ -147,6 +148,22 @@ void FailHostSlot(const RadioView& v, int slot, const char* act) {
     std::snprintf(why, sizeof why, "the host's slot %d stayed %d after this client's %s", slot,
                   slot >= 0 && slot < v.w.fuseCount ? v.w.fuses[slot] : -1, act);
     RadioFail(why);
+}
+
+// The handed fuse inserted into the emptied slot, as a player's use of the held fuse runs.
+void InsertHanded(const RadioView& v, int slot) {
+    void* fuse = g_handed.Get();
+    if (!fuse || slot >= v.l.fuseCount || v.l.fuses[slot] != 0) {
+        RadioAbandon(!fuse ? "the handed fuse is gone before the insert" : "the emptied slot is not empty here");
+        return;
+    }
+    if (!RT::InsertFuse(v.tower, v.player, slot, fuse)) {
+        RadioAbandon("the insert did not run on this copy");
+        return;
+    }
+    g_seq = coop::fuse_tower_ops::LastSentSeq();
+    UE_LOGI("[TOWER-DRILL] client inserted the handed fuse into slot %d (seq %u)", slot, g_seq);
+    FuseGo(FuseStep::InsertWait);
 }
 
 }  // namespace
@@ -302,6 +319,25 @@ void FuseArmTick(const RadioView& v) {
             FuseGo(FuseStep::Forge);   // no fuse is wanted: the insert is sent with none ever held
             return;
         }
+        if (SameTick()) {
+            // The fuse is taken into the hand and inserted in this one call, so the owner tick cannot announce the hold
+            // between them: the hook on the insert is what puts the hold on the wire ahead of the claim.
+            static uint64_t lastSameMs = 0;
+            if (NowMs() - lastSameMs > 1000) {
+                lastSameMs = NowMs();
+                coop::dev::drill_hand::TakeIntoHandNow(L"fuse", L"prop_fuse_C");
+                void* held = HeldActor(v.player);
+                if (held && FK::IsFuse(held)) {
+                    UE_LOGI("[TOWER-DRILL] client took a good fuse into the hand and inserts it in the same tick (%ls)",
+                            R::ClassNameOf(held).c_str());
+                    g_handed.Set(held);
+                    InsertHanded(v, slot);
+                    return;
+                }
+            }
+            if (FuseOverdue(10000)) RadioAbandon("the hand never held a good fuse from the slot");
+            return;
+        }
         if (HandFuse()) {
             void* held = HeldActor(v.player);
             if (held && FK::IsFuse(held)) {
@@ -335,18 +371,7 @@ void FuseArmTick(const RadioView& v) {
         return;
     }
     case FuseStep::Insert: {
-        void* fuse = g_handed.Get();
-        if (!fuse || slot >= v.l.fuseCount || v.l.fuses[slot] != 0) {
-            RadioAbandon(!fuse ? "the handed fuse is gone before the insert" : "the emptied slot is not empty here");
-            return;
-        }
-        if (!RT::InsertFuse(v.tower, v.player, slot, fuse)) {
-            RadioAbandon("the insert did not run on this copy");
-            return;
-        }
-        g_seq = coop::fuse_tower_ops::LastSentSeq();
-        UE_LOGI("[TOWER-DRILL] client inserted the handed fuse into slot %d (seq %u)", slot, g_seq);
-        FuseGo(FuseStep::InsertWait);
+        InsertHanded(v, slot);
         return;
     }
     case FuseStep::InsertWait: {
@@ -361,7 +386,7 @@ void FuseArmTick(const RadioView& v) {
         if (slot >= v.w.fuseCount || v.w.fuses[slot] != 1) FailHostSlot(v, slot, "insert");
         else if (g_handed.Alive()) RadioFail("the handed fuse is still here after the insert");
         else {
-            UE_LOGI("[TOWER-DRILL] radiofuse PASS (slot %d, pull and insert taken)", slot);
+            UE_LOGI("[TOWER-DRILL] %s PASS (slot %d, pull and insert taken)", SameTick() ? "radiofusesametick" : "radiofuse", slot);
             RadioDone("PASS");
         }
         return;
@@ -402,7 +427,7 @@ void FuseArmTick(const RadioView& v) {
 // tower would have one: 60 uu in front of the client's eye. The host's spawn watcher gives it to every peer.
 void FuseArmHostTick() {
     if (!IsRadioFuse(ArmOf())) return;
-    if (HandFuse() || Forge()) {
+    if (HandFuse() || Forge() || SameTick()) {
         // No fuse is handed; the host only says what became of its slot.
         return;
     }

@@ -71,11 +71,12 @@ bool Installs() { return g_flavour == UpgradeFlavour::Repair || g_flavour == Upg
 // still paces the legs).
 bool HandUpgradeMode() {
     static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::grid_upgrade_hand);
-    return on || g_flavour == UpgradeFlavour::Double;
+    return on || g_flavour == UpgradeFlavour::Double || g_flavour == UpgradeFlavour::SameTick;
 }
 
-// The upgrade in this client's hold slot, put there at most once a second; null until the hand holds one.
-void* HandHeldUpgrade(void* player) {
+// The upgrade in this client's hold slot, put there at most once a second; null until the hand holds one. `sameTick`
+// reads the hand right after the take, in the same call, so the caller can use it before any tick announces it.
+void* HandHeldUpgrade(void* player, bool sameTick) {
     static uint64_t lastMs = 0;
     ue_wrap::engine::MainPlayerGrabState gs{};
     void* held = ue_wrap::engine::ReadMainPlayerGrabState(player, gs) ? gs.holdingActor : nullptr;
@@ -83,6 +84,9 @@ void* HandHeldUpgrade(void* player) {
     if (NowMs() - lastMs > 1000) {
         lastMs = NowMs();
         coop::dev::drill_hand::TakeIntoHandNow(L"transformerUpgrade", L"prop_transformerUpgrade_C");
+        if (sameTick && ue_wrap::engine::ReadMainPlayerGrabState(player, gs) && gs.holdingActor &&
+            GEN::IsUpgrade(gs.holdingActor))
+            return gs.holdingActor;
     }
     return nullptr;
 }
@@ -224,14 +228,15 @@ void ClientTick(void* player) {
         }
         g_nearBefore = nearby;
         if (HandUpgradeMode()) {
-            void* inHand = HandHeldUpgrade(player);
+            const bool sameTick = g_flavour == UpgradeFlavour::SameTick;
+            void* inHand = HandHeldUpgrade(player, sameTick);
             if (!inHand) {
                 if (now - g_stepMs > kRowBoundMs) Abandon("the hold slot never held an upgrade");
                 return;
             }
             // The install goes only once this client's own announce of the hold is queued: the host has the hold
             // before the request on the one ordered lane.
-            if (!coop::hand_item::OwnAnnounced(L"prop_transformerUpgrade_C")) {
+            if (!sameTick && !coop::hand_item::OwnAnnounced(L"prop_transformerUpgrade_C")) {
                 if (now - g_stepMs > kRowBoundMs) Abandon("the hold never reached the host's lane");
                 return;
             }
@@ -273,6 +278,12 @@ void ClientTick(void* player) {
         }
         if (g_flavour == UpgradeFlavour::Double) {
             Go(Step::Double);  // the one install is taken; a second request of its hold is next
+            return;
+        }
+        if (g_flavour == UpgradeFlavour::SameTick) {
+            UE_LOGI("[GRID-DRILL] upgradesametick PASS (an upgrade taken up and installed in one tick was taken)");
+            SayDone();
+            g_step = Step::Done;
             return;
         }
         Go(first ? Step::Find : Step::Refund);
@@ -359,7 +370,7 @@ void ClientTick(void* player) {
 // the host's own generator 20 s after it. 8 (the double arm, from stage 2) judges the second request of one hold.
 int      g_hostStage = 0;
 uint64_t g_taken0 = 0, g_refused0 = 0, g_refunds0 = 0;
-uint64_t g_taken1 = 0, g_refused1 = 0;  // the double arm: the counts once the first install was taken
+uint64_t g_taken1 = 0, g_refused1 = 0, g_refunds1 = 0;  // the double arm: the counts once the first install was taken
 int32_t  g_hostLevel0 = 0;  // the host's copy of the generator's upgrades as the legs began
 uint64_t g_hostMs = 0;      // when the repair arms' current stage began
 
@@ -410,11 +421,23 @@ void HostTick(coop::net::Session* s) {
         g_hostStage = 2;
         return;
     case 2:
+        // An upgrade taken up and installed in one tick that the host refuses is the FAIL (its bare install was the
+        // first refusal).
+        if (g_flavour == UpgradeFlavour::SameTick && taken == g_taken0 && refused >= g_refused0 + 2) {
+            HostEnd("FAIL", "the host refused an install whose upgrade was taken up and used in one tick");
+            return;
+        }
         if (taken == g_taken0) return;
+        if (g_flavour == UpgradeFlavour::SameTick) {
+            UE_LOGI("[GRID-DRILL] host upgradesametick PASS (the install of an upgrade taken up and used in one tick taken)");
+            g_hostStage = 4;
+            return;
+        }
         if (g_flavour == UpgradeFlavour::Double) {
             // The install is taken; the client's next request is a second of the same hold, which stays refused.
             g_taken1 = taken;
             g_refused1 = refused;
+            g_refunds1 = refunds;
             Say("host", "took the install, waits for a second request of its hold");
             g_hostStage = 8;
             return;
@@ -438,9 +461,12 @@ void HostTick(coop::net::Session* s) {
         g_hostStage = 4;
         return;
     case 8:
-        // The host's take or refusal of the second request is the event; a take is the FAIL, a refusal the PASS.
+        // The host's take or refusal of the second request is the event; a take is the FAIL, a refusal the PASS, and a
+        // refusal gives nothing back, since the request was never counted. The counts are those of the first take (the
+        // refusal comes a full wait after the request, so the host has seen the take by then).
         if (taken != g_taken1) { HostEnd("FAIL", "the host took a second install of one hold"); return; }
         if (refused == g_refused1) return;
+        if (refunds != g_refunds1) { HostEnd("FAIL", "the refused second install of one hold was refunded"); return; }
         UE_LOGI("[GRID-DRILL] host upgradedouble PASS (the second install of one hold refused, nothing refunded)");
         g_hostStage = 4;
         return;
@@ -527,7 +553,7 @@ void UpgradeOnDisconnect() {
     g_nearBefore = 0;
     g_hostStage = 0;
     g_taken0 = g_refused0 = g_refunds0 = 0;
-    g_taken1 = g_refused1 = 0;
+    g_taken1 = g_refused1 = g_refunds1 = 0;
     g_hostLevel0 = 0;
     g_hostMs = 0;
     g_unreadMs = 0;

@@ -160,6 +160,7 @@ const char* ArmName() {
     case Arm::RadioFuse:     return "radiofuse";
     case Arm::RadioFuseRed:  return "radiofusered";
     case Arm::RadioFuseForge: return "radiofuseforge";
+    case Arm::RadioFuseSameTick: return "radiofusesametick";
     case Arm::RadioJoin:     return "radiojoin";
     case Arm::RadioJoinRed:  return "radiojoinred";
     default:                 return "radio";
@@ -170,6 +171,7 @@ const char* ArmName() {
 const char* VerdictName() {
     if (IsRadioReset(ArmOf())) return "radioreset";
     if (ArmOf() == Arm::RadioFuseForge) return "radiofuseforge";
+    if (ArmOf() == Arm::RadioFuseSameTick) return "radiofusesametick";
     if (IsRadioFuse(ArmOf())) return "radiofuse";
     if (IsRadioJoin(ArmOf())) return "radiojoin";
     return "radio";

@@ -4,6 +4,9 @@
 
 #include "hand_item_applied.h"  // src-local: the slot's state and the seams shared with hand_item_applied.cpp
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "coop/net/protocol.h"
 #include "coop/player/hand_history.h"
 #include "coop/player/hand_item_pose.h"  // where the mirror sits: the owner's measure, the per-tick drive
@@ -373,7 +376,9 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
 }
 
 void AnnounceHeldNow(coop::net::Session& session, void* local, void* holdingProp) {
-    if (holdingProp) AnnounceOwn(session, local, holdingProp, false);
+    // [dev] the client's red arm (config row hand_announce_off): the hooks on the inserts announce nothing.
+    static const bool off = coop::config::ResolveFlag(::coop::config_registry::rows::hand_announce_off);
+    if (holdingProp && !off) AnnounceOwn(session, local, holdingProp, false);
 }
 
 void* LocalHandActor() {

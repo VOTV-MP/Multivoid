@@ -53,14 +53,14 @@ constexpr int      kWalkDeadlineS = 240;
 constexpr uint64_t kLockBoundMs   = 90000;   // the desk virus's lockout lasts 60 s on the host
 
 enum class Arm : uint8_t { Off, Run, Red, Join, Lockout, LockJoin, Puzzle, PuzzleRed, PuzzleSolve, PuzzleFlood,
-                          Upgrade, UpgradeRepair, UpgradeRepairRed, UpgradeRepairLossRed, UpgradeDouble };
+                          Upgrade, UpgradeRepair, UpgradeRepairRed, UpgradeRepairLossRed, UpgradeDouble, UpgradeSameTick };
 Arm Mode() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveString(::coop::config_registry::rows::grid_drill);
         return v == "run" ? Arm::Run : v == "red" ? Arm::Red : v == "join" ? Arm::Join : v == "lockout" ? Arm::Lockout
              : v == "lockjoin" ? Arm::LockJoin : v == "puzzle" ? Arm::Puzzle : v == "puzzlered" ? Arm::PuzzleRed
              : v == "puzzlesolve" ? Arm::PuzzleSolve : v == "puzzleflood" ? Arm::PuzzleFlood
-             : v == "upgrade" ? Arm::Upgrade : v == "upgradedouble" ? Arm::UpgradeDouble
+             : v == "upgrade" ? Arm::Upgrade : v == "upgradedouble" ? Arm::UpgradeDouble : v == "upgradesametick" ? Arm::UpgradeSameTick
              : v == "upgraderepair" ? Arm::UpgradeRepair : v == "upgraderepairred" ? Arm::UpgradeRepairRed
              : v == "upgraderepairlossred" ? Arm::UpgradeRepairLossRed
              : Arm::Off;
@@ -606,11 +606,12 @@ void Tick(coop::net::Session* session) {
     if (Mode() == Arm::Off || !session || !session->connected()) return;
     if (!PC::EnsureResolved() || !GEN::EnsureResolved()) return;
     if (Mode() == Arm::Upgrade || Mode() == Arm::UpgradeRepair || Mode() == Arm::UpgradeRepairRed ||
-        Mode() == Arm::UpgradeRepairLossRed || Mode() == Arm::UpgradeDouble) {
+        Mode() == Arm::UpgradeRepairLossRed || Mode() == Arm::UpgradeDouble || Mode() == Arm::UpgradeSameTick) {
         UpgradeTick(session, Mode() == Arm::UpgradeRepair          ? UpgradeFlavour::Repair
                              : Mode() == Arm::UpgradeRepairRed     ? UpgradeFlavour::RepairRed
                              : Mode() == Arm::UpgradeRepairLossRed ? UpgradeFlavour::RepairLossRed
                              : Mode() == Arm::UpgradeDouble        ? UpgradeFlavour::Double
+                             : Mode() == Arm::UpgradeSameTick      ? UpgradeFlavour::SameTick
                                                                    : UpgradeFlavour::Plain);
         return;
     }

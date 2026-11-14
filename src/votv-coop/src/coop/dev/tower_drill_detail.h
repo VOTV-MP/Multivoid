@@ -20,10 +20,11 @@ namespace coop::dev::tower_drill::detail {
 // (radioreach), the repair (radio) and its control (radiored), the reset lever (radioreset), and the repair of a
 // tower the host broke before the client joined (radiojoin) with its control (radiojoinred), the reset lever's control
 // (radioresetred), a fuse pulled from the host's tower and a good one inserted (radiofuse) with its control
-// (radiofusered), and an insert nothing was held for (radiofuseforge).
+// (radiofusered), an insert nothing was held for (radiofuseforge), and a fuse taken up and inserted in one tick
+// (radiofusesametick).
 enum class Arm : uint8_t {
     Off, Run, Red, Join, JoinRed, RadioReach, Radio, RadioRed, RadioReset, RadioJoin, RadioJoinRed, RadioResetRed,
-    RadioFuse, RadioFuseRed, RadioFuseForge
+    RadioFuse, RadioFuseRed, RadioFuseForge, RadioFuseSameTick
 };
 
 // The arm the row names, read once.
@@ -37,7 +38,8 @@ inline bool IsJoin(Arm a) { return a == Arm::Join || a == Arm::JoinRed; }
 inline bool IsRadioJoin(Arm a) { return a == Arm::RadioJoin || a == Arm::RadioJoinRed; }
 // The reset lever's arm and the fuse arm, each with its control.
 inline bool IsRadioReset(Arm a) { return a == Arm::RadioReset || a == Arm::RadioResetRed; }
-inline bool IsRadioFuse(Arm a) { return a == Arm::RadioFuse || a == Arm::RadioFuseRed || a == Arm::RadioFuseForge; }
+inline bool IsRadioFuse(Arm a) { return a == Arm::RadioFuse || a == Arm::RadioFuseRed || a == Arm::RadioFuseForge ||
+                                                                       a == Arm::RadioFuseSameTick; }
 
 uint64_t NowMs();
 float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
