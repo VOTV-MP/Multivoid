@@ -25,6 +25,7 @@
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
+#include "coop/props/miner_sync.h"   // a GPU mining rig's counts and points, the host's
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
@@ -232,6 +233,26 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::MinerState:
+    case net::ReliableKind::MinerIntent: {
+        // MinerState HOST->ALL (op 1 to one asker), MinerIntent CLIENT->HOST (coop/props/miner_sync). Exact length.
+        const bool intent = msg.kind == net::ReliableKind::MinerIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::MinerPayload)) {
+            UE_LOGW("event_feed: a mining rig message the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        net::MinerPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (!std::isfinite(p.overheat) || p.gpus < 0 || p.gpus > 16 || p.slots < 0 || p.slots > 16 || p.fans < 0 ||
+            p.fans > 6 || p.points < 0) {
+            UE_LOGW("event_feed: a mining rig message malformed -- dropping");
+            break;
+        }
+        if (intent) ::coop::miner_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::miner_sync::OnState(p);
         break;
     }
     case net::ReliableKind::PlantState:
