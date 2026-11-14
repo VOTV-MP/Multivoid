@@ -14,7 +14,10 @@
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"            // SetActorEnableCollision
+#include "ue_wrap/engine/engine_attach.h"     // SetComponentCollisionEnabled
 #include "ue_wrap/engine/engine_component.h"  // GetComponentLocation, PlayAudioComponent
+#include "ue_wrap/core/sdk_profile.h"          // a scene component's hidden-in-game bit
 #include "ue_wrap/engine/engine_timeline.h"
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -349,6 +352,36 @@ bool InsertFuse(void* tower, void* player, int32_t slot, void* fuse) {
                     f.Set<void*>(L"lookAtComponent", part) && f.Set<void*>(L"holdObject", fuse) && Call(tower, f);
     if (R::IsLive(tower)) RestoreLook(tower, saved);
     return ok;
+}
+
+namespace {
+// A member of the tower read by name: the event names its parts, and they stay the class's.
+void* Member(void* tower, const wchar_t* name) {
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(tower), name);
+    return off >= 0 ? LiveObjectAt(tower, off) : nullptr;
+}
+}  // namespace
+
+bool ReadStolen(void* tower, bool& stolen) {
+    void* segm = Usable(tower) ? Member(tower, L"segm_r") : nullptr;
+    if (!segm) return false;
+    stolen = (static_cast<const uint8_t*>(segm)[profile::off::USceneComponent_HiddenFlagsByte] & 0x04) != 0;
+    return true;
+}
+
+bool ApplyStolen(void* tower, bool stolen) {
+    if (!Usable(tower)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(tower), L"setHidden");
+    ParamFrame f(fn);
+    if (!fn || !f.valid() || !f.Set<bool>(L"newHidden", stolen) || !Call(tower, f)) return false;
+    engine::SetActorEnableCollision(tower, !stolen);
+    if (void* ladder = Member(tower, L"ladder")) {
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(ladder), L"ChildActor");
+        if (void* child = off >= 0 ? LiveObjectAt(ladder, off) : nullptr) engine::SetActorEnableCollision(child, !stolen);
+    }
+    for (const wchar_t* segm : {L"segm_w", L"segm_r"})
+        if (void* c = Member(tower, segm)) engine::SetComponentCollisionEnabled(c, stolen ? 0 : 3);
+    return true;
 }
 
 }  // namespace ue_wrap::radio_tower

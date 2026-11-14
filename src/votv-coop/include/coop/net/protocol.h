@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 291;
+inline constexpr uint16_t kProtocolVersion = 292;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -960,7 +960,8 @@ enum class ReliableKind : uint16_t {
     // it refused, to its presser alone. Never relayed. EraserPressIntentPayload.
     EraserPressIntent = 161,
     // The fuse towers, of two kinds: the three coordinate towers (by their id) and the radio tower (one, id 0).
-    // Host to all: every tower's row (broken, fuses, puzzle, the panel and the levers) whenever one changes, and at a
+    // Host to all: every tower's row (broken, fuses, puzzle, the panel and the levers, and the radio tower's stolen-tower
+    // hiding) whenever one changes, and at a
     // joiner's world-ready; a client never rolls a tower and shows the rows through the tower's own painters and
     // verbs. Client to host: my player's press of a puzzle button, a lever or the panel's retract, which the host
     // runs, and a fuse my player pulled or inserted, which the host takes or refuses. Never relayed.
@@ -3270,6 +3271,7 @@ inline constexpr uint8_t kFuseTowerAnim = 0x04;         // the panel moves; its 
 inline constexpr uint8_t kFuseTowerLeverMoving = 0x08;  // the confirm lever's timeline runs
 inline constexpr uint8_t kFuseTowerLeverUp = 0x10;      // the lever stands up or heads up (the radio's: plays forward)
 inline constexpr uint8_t kFuseTowerResetMoving = 0x20;  // the radio tower's reset lever runs; it plays one way
+inline constexpr uint8_t kFuseTowerStolen = 0x40;       // the radio tower is hidden by its stolen-tower event
 inline constexpr uint8_t kFuseTowerAnimating = 0x80;    // the radio tower's own `animation`: every use is ignored
 struct FuseTowerRow {
     int32_t  id;          // 4

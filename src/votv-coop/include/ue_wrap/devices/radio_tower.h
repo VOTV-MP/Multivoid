@@ -45,6 +45,13 @@ bool IsTower(void* obj);
 
 bool Read(void* tower, State& out);
 
+// The stolen tower (radiotowerPoof_C, the gamemode's hourly ticker_radiotowerPoof): the event hides the tower through
+// its own setHidden, which hides each of its parts in game, and takes the collision of the tower, its ladder's child
+// actor and its two segments away, then gives them back. ReadStolen reads one part, `segm_r`; ApplyStolen makes the
+// same calls the event makes. False while the tower or a part does not resolve. Game thread.
+bool ReadStolen(void* tower, bool& stolen);
+bool ApplyStolen(void* tower, bool stolen);
+
 // Raw writes: nothing repaints. WriteCells takes the tower's own count of cells and no other.
 bool WriteAnimation(void* tower, bool animation);
 bool WriteFuse(void* tower, int32_t slot, uint8_t value);

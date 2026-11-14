@@ -217,6 +217,8 @@ bool RadioReadRow(void* tower, FuseTowerRow& w) {
                                    (st.leverPlaying && st.leverForward ? coop::net::kFuseTowerLeverUp : 0) |
                                    (st.resetPlaying ? coop::net::kFuseTowerResetMoving : 0) |
                                    (st.animation ? coop::net::kFuseTowerAnimating : 0));
+    bool stolen = false;
+    if (RT::ReadStolen(tower, stolen) && stolen) w.flags |= coop::net::kFuseTowerStolen;
     w.fuseCount = st.fuseCount;
     for (int i = 0; i < st.fuseCount; ++i) w.fuses[i] = st.fuses[i];
     w.lightCount = st.cellCount;
@@ -314,6 +316,11 @@ void RadioApply(void* tower, const FuseTowerRow& c, const ApplyCtx& x) {
         ++edges.levers;
     }
     RT::WriteAnimation(tower, (c.flags & coop::net::kFuseTowerAnimating) != 0);
+    // The stolen tower: the host's event hid it or gave it back, which this copy shows the way the event does.
+    const bool stolen = (c.flags & coop::net::kFuseTowerStolen) != 0;
+    bool shown = false;
+    if (RT::ReadStolen(tower, shown) && shown != stolen && RT::ApplyStolen(tower, stolen))
+        UE_LOGI("fuse_tower: the radio tower %s as the host's", stolen ? "vanished" : "came back");
 }
 
 Look RadioReadUse(void* tower, uint8_t& op, int32_t& index) {

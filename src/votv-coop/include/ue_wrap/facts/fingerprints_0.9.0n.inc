@@ -280,6 +280,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"maingamemode_c", L"spawn bad sun", L"maingamemode_c.spawn bad sun", 0x6a2d5d90ab51fa2dull, 0xe34cd9c013105a5bull},
     {L"maingamemode_c", L"spawnpropthroughgamemode", L"maingamemode_c.spawnpropthroughgamemode", 0x81c7f044842fbf06ull, 0x7259b28b02fc0c32ull},
     {L"maingamemode_c", L"spawnredsky", L"maingamemode_c.spawnredsky", 0x6a2d5d90ab51fa2dull, 0xde7d3630ddc779f8ull},
+    {L"maingamemode_c", L"ticker_radiotowerpoof", L"maingamemode_c.ticker_radiotowerpoof", 0x6a2d5d90ab51fa2dull, 0x2ff6fe0a5c0cdbd9ull},
     {L"maingamemode_c", L"wakeup", L"maingamemode_c.wakeup", 0x6a2d5d90ab51fa2dull, 0xb876852794cf4a1full},
     {L"mainplayer_c", L"adddamage", L"mainplayer_c.adddamage", 0xe50b54b843ee9d53ull, 0x907fde98864c031aull},
     {L"mainplayer_c", L"attack", L"mainplayer_c.attack", 0xfca17530188fe47eull, 0x85f1a4e9464951c2ull},
