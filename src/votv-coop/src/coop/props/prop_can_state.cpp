@@ -8,6 +8,7 @@
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/save_record.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -39,7 +40,13 @@ struct CanState {
     int32_t foods = 0;
     bool operator==(const CanState& o) const { return opened == o.opened && foods == o.foods; }
 };
-std::unordered_map<std::wstring, CanState> g_known;    // by the can's Key
+// What this peer knows of each can, by its Key, and the actor it was read on. A Key outlives its actor: a hand's drop
+// spawns the can anew under the same Key, born with its class's defaults until its record lands.
+struct Known {
+    CanState state;
+    ue_wrap::CachedObjRef actor;
+};
+std::unordered_map<std::wstring, Known> g_known;
 
 // Where `opened` lives on a class: its byte and its bit among the class's packed bools (off < 0: not declared).
 struct BoolSlot { int32_t off = -1; uint8_t mask = 0; };
@@ -132,18 +139,35 @@ void OnInitPost(const sg::Call& c) {
     CanState now{};
     if (!ReadState(c.object, now)) return;
     auto it = g_known.find(key);
-    const CanState before = it != g_known.end() ? it->second : DefaultsOf(c.object);
+    // A new actor under a known Key is the can born again -- a hand's drop, a place, a respawn -- and its state is the
+    // birth's: a copy of a peer's birth is born with its class's defaults, and the birth's own record follows it
+    // (coop/props/prop_save_data). It is adopted here, never published as this peer's change, which put a dropped
+    // can back to full and shut on every peer.
+    if (it != g_known.end() && !it->second.actor.Is(c.object)) {
+        if (!(it->second.state == now))
+            UE_LOGI("prop_can_state: '%ls' born again here as opened=%d foods=%d -- adopted, its birth's record carries it",
+                    key.c_str(), now.opened ? 1 : 0, now.foods);
+        it->second.state = now;
+        it->second.actor.Set(c.object);
+        return;
+    }
+    const CanState before = it != g_known.end() ? it->second.state : DefaultsOf(c.object);
     // What this peer knows moves with what it sent or saw: a publish that was declined leaves the old value, so the
     // next init compares again and offers the change again.
+    auto know = [&] {
+        Known& k = g_known[key];
+        k.state = now;
+        k.actor.Set(c.object);
+    };
     if (now == before) {
-        g_known[key] = now;
+        know();
         return;
     }
     // A record landing here is the far side's change arriving, not a new one. Not `fromOurCode` as in
     // prop_record_refresh: the drill runs a can's own verbs through our CallFunction, so that flag would be true for the
     // change under test too; IsApplying is true only inside ApplyRecord.
     if (ue_wrap::save_record::IsApplying()) {
-        g_known[key] = now;
+        know();
         ++g_landed;
         UE_LOGI("prop_can_state: a record landed on '%ls' -> opened=%d foods=%d", key.c_str(), now.opened ? 1 : 0,
                 now.foods);
@@ -151,17 +175,17 @@ void OnInitPost(const sg::Call& c) {
     }
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) {   // nothing to tell anyone; a join's snapshot carries the can
-        g_known[key] = now;
+        know();
         return;
     }
     // A joining client's load churn is the host's state arriving through the save, as in prop_record_refresh.
     if (s->role() == coop::net::Role::Client && !coop::join_membership_sweep::HasLoadTailQuiesced()) {
-        g_known[key] = now;
+        know();
         return;
     }
     const bool sent = coop::prop_save_data::Publish(s, c.object, key);
     if (sent) {
-        g_known[key] = now;
+        know();
         ++g_published;
     }
     UE_LOGI("prop_can_state: '%ls' changed here: opened %d->%d foods %d->%d -- record %s (#%u)", key.c_str(),
