@@ -9,10 +9,10 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"         // what the sender's hand holds
-#include "coop/player/hand_spend.h"        // an install paid by the upgrade the hand held
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
+#include "coop/world/power_grid_install.h"  // the hand's half of an upgrade install
 #include "coop/world/power_decay.h"  // the wear dice, which only the host rolls
 #include "coop/world/power_panel.h"  // the canonical a client's own generator verbs rewrote
 #include "coop/world/power_puzzle.h"  // the rows' second half: each generator's repair puzzle
@@ -50,8 +50,6 @@ static_assert(kInputBurst >= coop::net::kPowerPuzzleFields, "a flush of every he
 
 constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
-// The class a generator's insert takes, as the hand lane announces a hand item of it (hand_item compares without case).
-constexpr const wchar_t* kUpgradeClass = L"prop_transformerUpgrade_C";
 // A slot's ops wait, in arrival order, while the generators have not resolved or their sender has no body here
 // yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig), and an install
 // while the destroy of the upgrade its insert spent has not arrived: it was sent first, on the same ordered Default
@@ -225,20 +223,6 @@ bool HitSwings(uint8_t slot, std::wstring& item) {
     return ue_wrap::weapon_catalog::Ready() && ue_wrap::weapon_catalog::Lookup(item, swing) && swing.canSwing;
 }
 
-// Whether the upgrade in the sender's hand paid for this install, judged as the request arrives: the hold it was sent
-// from, if the hand lane still owes it, is applied first, then hand_spend counts the use. The result goes with the
-// entry, so a request that waits in the queue behind an earlier one is not judged against a hand that has moved on.
-// A request Spend never counted is the client's loss: the host cannot see its inventory, so it refunds only what it
-// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation) or by
-// an install at a generator unreadable at the take, which refunds nothing.
-bool PaidByHand(uint8_t sender, const PowerGridPayload& p) {
-    if (p.op != coop::net::kPowerGridOpUpgrade) return false;
-    coop::hand_item::ApplyOwedNow(sender);
-    if (!coop::hand_spend::Spend(sender, kUpgradeClass, 1)) return false;
-    UE_LOGI("power_grid: slot %u's install at generator %u is paid by the upgrade its hand held", sender, p.index);
-    return true;
-}
-
 enum class Take : uint8_t { Done, Wait };
 
 Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
@@ -395,7 +379,7 @@ void Refund(uint8_t slot, uint8_t op) {
 void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender) {
     if (sender == 0 || sender >= coop::net::kMaxPeers || p.op == coop::net::kPowerGridOpRows) return;
     auto& q = g_waiting[sender];
-    const Waiting w{p, NowMs(), PaidByHand(sender, p)};
+    const Waiting w{p, NowMs(), coop::power_grid::install::PaidByHand(sender, p)};
     if (q.empty() && Spend(sender, p.op)) {
         if (HostTakeOp(s, w, sender) == Take::Done) return;
         Refund(sender, p.op);
@@ -586,23 +570,11 @@ sg::Verdict OnUpdUpgradesPre(const sg::Call& call) {
 }
 
 // A client's insert of a held upgrade, as it begins: the generator's playerUsedOn spends the upgrade it is handed, and
-// updUpgrades (watched above) runs after that, with no held actor left to announce. An upgrade from the hold slot is
-// announced to the host here, before the spend, so the hold is on the one ordered lane ahead of the install op, even
-// when it was picked up and used within one tick. A hold already announced makes none.
+// updUpgrades (watched above) runs after that, with no held actor left to announce; the hold is announced here.
 sg::Verdict OnInsertPre(const sg::Call& call) {
     auto* s = Connected();
-    if (!IsClient(s) || g_applying || !call.object || !coop::net_pump::IsInAnnouncedWorld(call.object))
-        return sg::Verdict::Run;
-    static void* s_fn = nullptr;
-    static int32_t s_off = -1;
-    if (call.function != s_fn) {
-        s_fn = call.function;
-        s_off = R::FindParamOffset(call.function, L"holdObject");
-    }
-    if (s_off < 0) return sg::Verdict::Run;
-    void* held = *reinterpret_cast<void* const*>(call.locals + s_off);
-    if (held && GEN::IsUpgrade(held) && coop::hand_item::IsLocalHandViewActor(held))
-        coop::hand_item::AnnounceHeldNow(*s, coop::players::Registry::Get().Local(), held);
+    if (IsClient(s) && !g_applying && call.object && coop::net_pump::IsInAnnouncedWorld(call.object))
+        coop::power_grid::install::AnnounceHeldUpgrade(*s, call.function, call.locals);
     return sg::Verdict::Run;
 }
 
