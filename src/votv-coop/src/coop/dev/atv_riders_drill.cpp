@@ -26,7 +26,9 @@
 #include "ue_wrap/core/log.h"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 namespace coop::dev::atv_riders_drill {
@@ -40,11 +42,12 @@ std::atomic<bool> g_ended{false};
 Role g_me = kHost;
 const char kEndMark[] = "riders_end";
 
-// The run's end, said once by the peer that decided it and marked for the others.
+// The run's end, said once by the peer that decided it and marked for the others: 'F' FAIL, 'I' INVALID, 'P' PASS.
 void End(char kind, const std::string& text) {
     if (g_ended.exchange(true)) return;
     PS::Mark(kEndMark, std::string(1, kind) + " " + text);
-    RV::Say(kTag, kind == 'F' ? RV::Outcome::Fail : RV::Outcome::Invalid, "%s", text.c_str());
+    RV::Say(kTag, kind == 'F' ? RV::Outcome::Fail : kind == 'P' ? RV::Outcome::Pass : RV::Outcome::Invalid, "%s",
+            text.c_str());
 }
 
 }  // namespace
@@ -81,6 +84,19 @@ void Fail(int step, const char* red, const std::string& why) {
 void Invalid(const std::string& why) {
     UE_LOGI("atv-riders: INVALID on the %s: %s", RoleName(g_me), why.c_str());
     End('I', std::string("on the ") + RoleName(g_me) + ": " + why);
+}
+
+// A peer's number mark, read without an exception: a malformed one ends the run INVALID.
+bool ParseMark(const std::string& text, const char* what, uint32_t& out) {
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long v = std::strtoul(text.c_str(), &end, 10);
+    if (text.empty() || end == text.c_str() || *end != '\0' || errno == ERANGE || v > 0xFFFFFFFFul) {
+        Invalid(std::string("the signal '") + what + "' carries '" + text + "', not a number");
+        return false;
+    }
+    out = static_cast<uint32_t>(v);
+    return true;
 }
 
 void StepPass(int step, const std::string& what) {
@@ -140,7 +156,8 @@ bool ClientArrive(Role me) {
     g_key.assign(t.begin(), t.end());
     if (!coop::dev::atv_gate_drill::detail::CopyResolves(g_key)) return false;
     if (!AwaitMark("kerfur-eid", t, kSignalS)) return false;
-    const uint32_t eid = static_cast<uint32_t>(std::stoul(t));
+    uint32_t eid = 0;
+    if (!ParseMark(t, "kerfur-eid", eid)) return false;
     if (!PollFn("the host's kerfur mirror", kSignalS, [&] { return KerfurMirrorUp(eid) ? 1 : 0; })) return false;
     PS::Mark(me == kObserver ? "o_has" : "c_has");
     return true;
@@ -175,7 +192,7 @@ bool RunHost() {
     cur = Snap();
     if (!Barrier("arm9") || !HostDestroys()) return false;
     if (!AwaitMark("c_done", t, kSignalS) || !AwaitMark("o_done", t, kSignalS)) return false;
-    RV::Say(kTag, RV::Outcome::Pass, "every step decided on its events");
+    End('P', "every step decided on its events");
     return true;
 }
 
@@ -191,8 +208,7 @@ bool RunDriver() {
 
     Cur cur = Snap();
     if (!Barrier("arm1") || !DriverSit(cur)) return false;
-    if (!AwaitMark("rider-sat", t, kRideS)) return false;
-    g_eid = static_cast<uint32_t>(std::stoul(t));
+    if (!AwaitMark("rider-sat", t, kRideS) || !ParseMark(t, "rider-sat", g_eid)) return false;
     if (!ClientRide(kDriver, cur) || !DriverDrive()) return false;
     cur = Snap();
     if (!Barrier("arm6", kRejoinS + kSignalS) || !DriverLeave() || !LeaveWatch(kDriver, cur)) return false;
@@ -226,8 +242,7 @@ bool RunObserver() {
     if (!ClientArrive(kObserver) || !AwaitMark("h_at_atv", t, kWalkS)) return false;
     Cur cur = Snap();
     if (!Barrier("arm1") || !ObserverSeat(cur)) return false;
-    if (!AwaitMark("rider-sat", t, kRideS)) return false;
-    g_eid = static_cast<uint32_t>(std::stoul(t));
+    if (!AwaitMark("rider-sat", t, kRideS) || !ParseMark(t, "rider-sat", g_eid)) return false;
     if (!ClientRide(kObserver, cur)) return false;
     PS::Mark("o_drive_ready");
     if (!WatchDrive()) return false;

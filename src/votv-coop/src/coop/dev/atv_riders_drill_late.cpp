@@ -5,6 +5,7 @@
 
 #include "atv_riders_drill_detail.h"
 
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 
@@ -68,7 +69,7 @@ bool LeaveHost(const Cur& cur) {
 bool LeaveWatch(Role me, const Cur& cur) {
     const int32_t tag = Tag();
     const uint32_t eid = g_eid;
-    bool off = false, body = me != kObserver;
+    bool off = false, body = me != kObserver, placed = false;
     return PollFn("the driver's leaving on a client", kEventS, [&]() -> int {
         const auto seats = Recs(cur, DE::kSeatChange);
         if (SeatSilent(seats)) return -1;
@@ -100,6 +101,22 @@ bool LeaveWatch(Role me, const Cur& cur) {
                 }
                 off = true;
             }
+        // After the unseat the stream's next pose puts the mirror at the host's kerfur: the unseat must leave it free to be placed.
+        if (off && !placed)
+            if (const DE::Rec* r = Find(rides, [&](const DE::Rec& x) {
+                    return static_cast<uint32_t>(x.i0) == eid && x.i1 == 6;
+                })) {
+                if (r->f2 < 0.f) {
+                    Invalid("the mirror's location did not read after its first pose following the unseat");
+                    return -1;
+                }
+                if (r->f2 > kPlacedCm) {
+                    Fail(6, "", "after its unseat the kerfur mirror's next pose placed it " + Num("%.0f", r->f2) +
+                                    " cm from the host's streamed position");
+                    return -1;
+                }
+                placed = true;
+            }
         if (!body)
             for (const DE::Rec& r : Recs(cur, DE::kBodySeat))
                 if (r.i0 == kSlotC && r.i1 == 0) {
@@ -109,9 +126,10 @@ bool LeaveWatch(Role me, const Cur& cur) {
                     }
                     body = true;
                 }
-        if (off && body) {
-            StepPass(6, me == kObserver ? "the kerfur mirror got off and the driver's body was released"
-                                        : "the kerfur mirror got off by the host's word, after the game's own getOffCar was cancelled");
+        if (off && body && placed) {
+            StepPass(6, me == kObserver ? "the kerfur mirror got off, was placed by the stream and the driver's body was released"
+                                        : "the kerfur mirror got off by the host's word, after the game's own getOffCar was cancelled, "
+                                          "and was placed by the stream");
             return 1;
         }
         return 0;
@@ -161,6 +179,7 @@ bool RagdollWatch(Role me, const Cur& cur) {
     PS::Mark((who + "_s8seat").c_str());
 
     bool endFirst = false;
+    const bool redRestore = coop::dev::atv_riders_arm::Is("ragdoll_restore_off");
     if (!PollFn("the driver's flop", kEventS * 2, [&]() -> int {
             if (!ReadBody(kSlotC).ragdoll) return 0;
             endFirst = Find(Recs(c8, DE::kSeatChange), [&](const DE::Rec& r) {
@@ -180,6 +199,12 @@ bool RagdollWatch(Role me, const Cur& cur) {
                 return r.i3 == tag && OccBefore(r) == kSlotC && OccAfter(r) != kSlotC;
             }))
             return 0;
+        // The red's mechanism only leaves the body seated when the seat end arrives during the flop; after it the seat's own
+        // end has released the body, so a PASS would prove nothing about the stop.
+        if (redRestore && endFirst) {
+            Invalid("ragdoll_restore_off route not reached (the seat ended before the flop)");
+            return -1;
+        }
         const bool released = Find(Recs(c8, DE::kBodySeat), [&](const DE::Rec& r) { return ReleasedRec(r, kSlotC); }) != nullptr;
         if (!released || b.parentIsAtv || b.onAtv || !b.collision) {
             Fail(8, "ragdoll_restore_off", std::string("the flop stopped with the body not restored (the seat end came ") +
@@ -235,8 +260,7 @@ bool WatchHostSeat(Role me, const Cur& cur) {
         }))
         return false;
     std::string t;
-    if (!AwaitMark("rider-sat3", t, kRideS)) return false;
-    g_eid = static_cast<uint32_t>(std::stoul(t));
+    if (!AwaitMark("rider-sat3", t, kRideS) || !ParseMark(t, "rider-sat3", g_eid)) return false;
     const uint32_t eid = g_eid;
     return PollFn("the kerfur's ride on the host's seat", kRideS, [&]() -> int {
         return Find(Recs(cur, DE::kRide), [&](const DE::Rec& r) { return static_cast<uint32_t>(r.i0) == eid && r.i1 == 1; }) ? 1 : 0;

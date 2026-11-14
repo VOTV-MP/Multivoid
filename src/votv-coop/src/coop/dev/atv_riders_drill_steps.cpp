@@ -493,8 +493,7 @@ bool RejoinedObserver() {
     coop::dev::atv_riders_join_hold::ReleaseBind();
     if (!AwaitMark("atv-key2", t, kSignalS)) return false;
     g_key.assign(t.begin(), t.end());
-    if (!AwaitMark("rider-sat2", t, kSignalS)) return false;
-    g_eid = static_cast<uint32_t>(std::stoul(t));
+    if (!AwaitMark("rider-sat2", t, kSignalS) || !ParseMark(t, "rider-sat2", g_eid)) return false;
     const int32_t tag = Tag();
     const uint32_t eid = g_eid;
 
@@ -524,7 +523,8 @@ bool RejoinedObserver() {
     const auto rideOf = [&](int code) {
         return [eid, code](const DE::Rec& r) { return static_cast<uint32_t>(r.i0) == eid && r.i1 == code; };
     };
-    const char* route = k.hidden ? "reveal" : "bind";
+    const bool hiddenAtBind = k.hidden;   // hidden at its bind: the ride waits for the reveal
+    const char* route = hiddenAtBind ? "reveal" : "bind";
     if (k.hidden && !PollFn("the kerfur mirror's reveal", kRejoinS, [&] {
             k = ReadKerfur(eid);
             return !k.hidden ? 1 : 0;
@@ -532,8 +532,20 @@ bool RejoinedObserver() {
         return false;
     const auto rides = Recs(zero, DE::kRide);
     const bool wasHidden = Find(rides, rideOf(3)) != nullptr;
+    // A red proves something only on the route it disables: the reveal's needs a mirror held hidden, the bind's one shown at its
+    // bind. On the other route the ride is seated anyway and the step would pass with the red armed.
+    const bool redReveal = coop::dev::atv_riders_arm::Is("reveal_ride_off");
+    const bool redBind = coop::dev::atv_riders_arm::Is("bind_ride_off");
+    if (redReveal && !wasHidden) {
+        Invalid("reveal_ride_off route not reached (the mirror was not held hidden: it was seated at its bind)");
+        return false;
+    }
+    if (redBind && hiddenAtBind) {
+        Invalid("bind_ride_off route not reached (the mirror was hidden at its bind: the ride is the reveal's)");
+        return false;
+    }
     if (!Find(rides, rideOf(1))) {
-        Fail(5, wasHidden ? "reveal_ride_off" : "bind_ride_off",
+        Fail(5, redReveal ? "reveal_ride_off" : redBind ? "bind_ride_off" : "",
              std::string("the stamp named the kerfur and its mirror, shown after the ") + route + ", was not seated");
         return false;
     }

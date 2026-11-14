@@ -25,6 +25,7 @@ inline constexpr const char* kTag = "atv-riders";
 inline constexpr uint8_t kSlotH = 0, kSlotO = 1, kSlotC = 2;   // the host, the observer that rejoins, the driver
 inline constexpr float kRigidCm = 5.f;                         // a body's or a kerfur's drift from its seat, at most
 inline constexpr float kDriveCm = 600.f;                       // the host's ATV has moved this far from where the drive began
+inline constexpr float kPlacedCm = 50.f;                       // an unseated mirror's next pose puts it this near the streamed position
 
 inline constexpr int kJoinS = 480;     // a peer's boot, join and world load
 inline constexpr int kSignalS = 240;   // a step of another peer
@@ -50,6 +51,7 @@ bool Aborted();
 void Fail(int step, const char* red, const std::string& why);   // FAIL: `red` names the red it is, "" for none
 void Invalid(const std::string& why);
 void StepPass(int step, const std::string& what);
+bool ParseMark(const std::string& text, const char* what, uint32_t& out);   // a peer's number mark; malformed: INVALID, false
 bool AwaitMark(const std::string& name, std::string& out, int boundS);
 bool Barrier(const char* name, int boundS = kSignalS);   // this peer marks `name`; waits for the other two
 
