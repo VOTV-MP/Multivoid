@@ -224,6 +224,15 @@ void* ReadTargetActor(void* actor) {
     return (t && R::IsLive(t)) ? t : nullptr;
 }
 
+void* GetOccupyCar(void* kerfur) {
+    if (!IsKerfurActor(kerfur)) return nullptr;
+    static int32_t sOff = -2;
+    if (sOff == -2) sOff = R::FindPropertyOffset(ResolveKerfurClass(), L"occupyCar");
+    if (sOff < 0) return nullptr;
+    void* const c = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(kerfur) + sOff);
+    return (c && R::IsLive(c)) ? c : nullptr;
+}
+
 std::vector<void*> AllKerfurs() {
     std::vector<void*> classes, out;
     object_index::ForEachClass([](void* c, void* cls, void* anyInstance) {

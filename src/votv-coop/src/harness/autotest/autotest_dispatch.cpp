@@ -11,6 +11,7 @@
 #include "coop/session/join_seed.h"  // the inline seed selftest
 #include "coop/config/config.h"
 #include "coop/dev/atv_gate_drill.h"
+#include "coop/dev/atv_riders_probe.h"
 #include "coop/dev/cremator_drill.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_walker_drill.h"
@@ -303,6 +304,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     }
     // The ATV drill: each act a player does at an ATV, decided on the events of the host path, green and eleven reds.
     SpawnIfEnum(coop::config_registry::rows::atv_gate_drill, "ATV drill", &coop::dev::atv_gate_drill::Thread, role);
+    // The ATV riders probe: four measurements of a remote ATV rider, on three peers (the host, the driving client, the observer).
+    SpawnIfEnum(coop::config_registry::rows::atv_riders_probe, "ATV riders probe", &coop::dev::atv_riders_probe::Thread, role);
 }
 
 }  // namespace harness::autotest

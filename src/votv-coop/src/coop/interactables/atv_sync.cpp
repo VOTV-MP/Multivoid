@@ -20,6 +20,7 @@
 #include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/interactables/atv_damage_gate.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_hit_guard.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/atv_index_internal.h"
@@ -328,6 +329,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
         // (bit 4).
         if (!AU::AdmitBlock(e, payload, senderPeerSlot, NowMs())) return;
         coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ false);
+        coop::atv_drill_events::NotePoseApplied(key, e.actor, true);
         coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ false);
         TakeControls(e, payload.stateBits);
         NoteSyncerHealth(e, senderPeerSlot, A::GetHealth(e.actor));
@@ -373,6 +375,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     if ((payload.stateBits & coop::net::kAtvFromSyncer) != 0) ++g_appliedFromSyncer;
     if (payload.adopt != 0) { ++g_snapshotReached; e.snapshotReached = true; }
     coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ payload.adopt != 0);
+    coop::atv_drill_events::NotePoseApplied(key, e.actor, false);
     // The condition block applies after the pose, behind the same gates; every block a client receives is the
     // host's, and its presence is consumed only for the host's own copy (atv_condition_sync.h).
     coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ true);

@@ -5,6 +5,8 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 
+#include "ue_wrap/core/reflection.h"
+
 #include <mutex>
 #include <string>
 
@@ -24,7 +26,8 @@ uint32_t g_ord = 0;
 }  // namespace
 
 bool On() {
-    static const bool on = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) != "off";
+    static const bool on = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) != "off" ||
+                           coop::config::ResolveEnum(::coop::config_registry::rows::atv_riders_probe) == "on";
     return on;
 }
 
@@ -39,6 +42,11 @@ void Note(Event e, int32_t i0, int32_t i1, int32_t i2, float f0, float f1, float
     Rec& rec = r.recs[r.count % kRing];
     rec = Rec{++g_ord, i0, i1, i2, f0, f1, f2};
     ++r.count;
+}
+
+void NotePoseApplied(const std::wstring& key, void* actor, bool host) {
+    if (!On()) return;
+    Note(kPoseApplied, KeyTag(key), host ? 0 : 1, ue_wrap::reflection::InternalIndexOf(actor));
 }
 
 uint32_t Count(Event e) {

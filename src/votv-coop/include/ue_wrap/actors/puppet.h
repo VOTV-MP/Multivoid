@@ -57,6 +57,10 @@ void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget);
 // Class-gated like the head look; false when neither body's AnimInstance takes it. Game thread.
 bool SetOnAtv(void* puppetActor, bool on);
 
+// The same flag read back: `out` is true when every rendered body's AnimInstance that took the read holds `isOnAtv`.
+// False, `out` untouched, when neither body's AnimInstance reads. Game thread.
+bool GetOnAtv(void* puppetActor, bool& out);
+
 // A read-only probe of the puppet's head-look state: the LookAt clamps and alphas, the AnimBP
 // gate flags, and the world rotation of the head and neck bones. The LookAt nodes live inside
 // the AnimBP state `lookAtPlayer`, exited when lookingAtPlayer flips false, so with the

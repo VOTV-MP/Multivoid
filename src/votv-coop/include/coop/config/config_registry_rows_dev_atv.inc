@@ -1,6 +1,6 @@
 // coop/config/config_registry_rows_dev_atv.inc -- the [dev] rows of the ATV lane: its rig probe, the corrector's
 // control arm, the spawn drill and its park, the health drill and its red arm, the eject drill and its red arm, the gate
-// probe and its drill.
+// probe and its drill, and the riders probe.
 // Included by config_registry_rows_dev.inc after the fire rows, before the PI and NB rows, which stay the last ones,
 // so each row keeps its place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 // The drill's arms: sit, grab, occupied, synced, silent, gate, owner, trap; the red arm's values: back, occupied,
@@ -86,3 +86,10 @@ CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "published), atv_joiner_rows_off (a state for an unadopted ATV dropped), atv_bits_off (a block's control bits "
     "ignored, horn included), atv_gate_hold_off (a state applies while the "
     "open-request gate is shut), atv_park_off (a request is judged before its sender's world is ready). MUTATES the ATV.")
+CFG_ENUM(atv_riders_probe, "atv_riders_probe", "dev", "off", "off|on", "VOTVCOOP_ATV_RIDERS_PROBE",
+    "Diagnostic probe (BOTH peers, plus a third client as observer, on a fresh host world): measures how a remote ATV "
+    "rider shows, as `atv-probe:` lines, and ends each peer on `atv-probe: DONE` (or `atv-probe: INVALID <why>`). "
+    "A kerfur is spawned beside the ATV, the client walks to it with the director and sits; the kerfur's own sitOnCar "
+    "and getOffCar and a client's tryToOccupyCar are logged, the client's body is attached to the ATV in place of the "
+    "per-frame seat writes and followed through a 6 m drive, and its AnimBP's seat pose is read across a re-skin. "
+    "Observe only except for that body attach. Off, no watch is registered and the seat is the per-frame one. MUTATES the ATV.")

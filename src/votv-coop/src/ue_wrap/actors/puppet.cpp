@@ -281,21 +281,46 @@ void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget) {
     }
 }
 
-bool SetOnAtv(void* puppetActor, bool on) {
-    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
-    if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;
+namespace {
+
+// The AnimInstances of the puppet's two rendered bodies (null where one does not resolve).
+void OnAtvAnims(void* puppetActor, void* (&anims)[2]) {
+    anims[0] = anims[1] = nullptr;
     void* comp = GetSkeletalMeshComponent(puppetActor);
-    void* anims[2] = {nullptr, nullptr};
     if (comp && R::IsLive(comp)) anims[0] = LiveAnimInstance(comp);
     void* meshSlot = ReadPtr(puppetActor, P::off::ACharacter_Mesh);
     if (meshSlot && meshSlot != comp && R::IsLive(meshSlot)) anims[1] = LiveAnimInstance(meshSlot);
     if (anims[1] == anims[0]) anims[1] = nullptr;
+}
+
+}  // namespace
+
+bool SetOnAtv(void* puppetActor, bool on) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;
+    void* anims[2];
+    OnAtvAnims(puppetActor, anims);
     bool any = false;
     for (void* anim : anims) {
         if (!anim || !IsKerfurAnimBP(anim)) continue;
         *reinterpret_cast<bool*>(static_cast<uint8_t*>(anim) + off) = on;
         any = true;
     }
+    return any;
+}
+
+bool GetOnAtv(void* puppetActor, bool& out) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;
+    void* anims[2];
+    OnAtvAnims(puppetActor, anims);
+    bool any = false, all = true;
+    for (void* anim : anims) {
+        if (!anim || !IsKerfurAnimBP(anim)) continue;
+        all = all && *reinterpret_cast<const bool*>(static_cast<const uint8_t*>(anim) + off);
+        any = true;
+    }
+    if (any) out = all;
     return any;
 }
 

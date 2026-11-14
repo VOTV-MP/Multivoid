@@ -3,7 +3,7 @@
 // Each ATV mechanism that a drill judges says, at the point where its outcome is decided, one record: a request opened or
 // not, an answer arriving, a state applied, a block admitted, a request judged, a module refunded. The drill reads the
 // records and decides on them, never on a clock; a time bound in the drill can only call a run INVALID. The records are
-// kept only while the `atv_gate_drill` row is on (a static compare at each emit point), 256 per event, newest over oldest.
+// kept only while the `atv_gate_drill` row or the `atv_riders_probe` row is on (a static compare at each emit point), 256 per event, newest over oldest.
 // Written on the game thread, read from the drill's thread under one lock.
 //
 // The fields of a record by event are the comments on `Event`.
@@ -35,12 +35,17 @@ enum Event : int {
     kUnadopted,    // CLIENT: a state arrived for an ATV with no copy. i0 stateSeq, i1 kept, i2 KeyTag
     kAdopted,      // CLIENT: a copy entered the index. i0 a kept state applied, i1 KeyTag, i2 stateSeq, f0 fuel, f1 health, f2 module count
     kPark,         // HOST: a request's turn. i0 slot, i1 phase (0 parked for the slot's world, 1 answered after a park, 2 answered with the slot not ready)
+    kPoseApplied,  // a pose block corrected the copy. i0 KeyTag, i1 role (0 the host, applying the syncing client's block; 1 a client, taking a placed block), i2 the actor's object slot
     kEventCount
 };
 
-// Whether the drill row is on, resolved once: every emit point asks, so a run without the drill costs one compare. An emit
-// point whose arguments cost a read or a hash asks it first.
+// Whether the drill row or the riders probe row (coop/dev/atv_riders_probe) is on, resolved once: every emit point asks, so a
+// run without either costs one compare. An emit point whose arguments cost a read or a hash asks it first.
 bool On();
+
+// A pose block of the ATV under `key` was applied to `actor`'s copy (kPoseApplied), on the host or on a client. A no-op while
+// the module is off; the key's hash and the actor's slot are read only when it is on.
+void NotePoseApplied(const std::wstring& key, void* actor, bool host);
 
 // A number that names an ATV key in a record (kUnadopted, kAdopted), the same on every peer.
 int32_t KeyTag(const std::wstring& key);

@@ -101,4 +101,8 @@ bool SitOnCar(void* kerfur, void* atv);
 bool GetOffCar(void* kerfur);
 bool FailCar(void* kerfur);
 
+// The Omega's `occupyCar`, the ATV its own tryToOccupyCar and sitOnCar assigned. Null when it is not an Omega, the field
+// did not resolve, it is unset or it is not a live object. Game thread.
+void* GetOccupyCar(void* kerfur);
+
 }  // namespace ue_wrap::kerfur
