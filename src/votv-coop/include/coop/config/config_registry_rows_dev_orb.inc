@@ -7,7 +7,7 @@ CFG_FLAG(orb_begin_send_off, "orb_begin_send_off", "dev", false, "VOTVCOOP_ORB_B
     "client's copy runs none and the drill must FAIL when the host's destroy of that copy arrives.")
 CFG_ENUM(orb_drill, "orb_drill", "dev", "off", "off|1", "VOTVCOOP_ORB_DRILL",
     "Drill, the black orb's encounter; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. 1 -- the host mints an orb on "
-    "the client's puppet twice, nobody is moved: with the client's view away from it the host's verdict must be spared "
+    "the client's puppet twice, after the client has walked 30 m from the host (the director): with the view away from it the host's verdict must be spared "
     "and the client's copy must have run the host's Begin by the time the host's destroy reaches it; with the view "
     "toward it the verdict must be caught and the client must answer the host's Death: 'rig: VERDICT orb "
     "PASS|FAIL|INVALID' and 'orb-drill: DONE on host'. Red arm: orb_begin_send_off on the host. It MUTATES the world "

@@ -50,6 +50,7 @@ bool DevMintOrbAt(const ue_wrap::FVector& at);
 struct Counters {
     uint32_t beginsSent = 0, deathsSent = 0, caught = 0, spared = 0;
     uint32_t beginsRan = 0, beginsDropped = 0, deathsAnswered = 0;
+    uint8_t  lastToucher = 255;  // the slot the last verdict judged (255: none)
 };
 Counters Read();
 

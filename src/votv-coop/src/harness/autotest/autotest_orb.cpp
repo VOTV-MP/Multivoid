@@ -1,8 +1,9 @@
 // harness/autotest/autotest_orb.cpp -- TEST-ONLY: the black orb's encounter is the host's, and a client's copy takes
 // its part. A verdict is decided by an event; a bound passing with none is INVALID. Armed by the row orb_drill on both
-// peers (VOTVCOOP_CAN_DIR). Nobody is moved: the host mints each orb on the client's puppet, whose body touches it
+// peers (VOTVCOOP_CAN_DIR). The host mints each orb on the client's puppet, whose body touches it
 // where it stands, and the client holds its view with the control rotation, which streams to the host as its aim.
-//   1     Round 1, the client's view away from the orb: the host's verdict must be spared and no Death sent. The
+//   1     The client first walks 30 m from the host (both start at one spot, and the host's own body would touch the orb).
+//         Round 1, the client's view away from the orb: the host's verdict must be spared and no Death sent. The
 //         client's copy must have run the host's Begin by the time the host's destroy reaches it (the destroy follows
 //         the Begin on the same ordered lane: the fence), else FAIL there. Round 2, the view toward the orb: the
 //         host's verdict must be caught, a Death sent, and the client must answer it.
@@ -12,6 +13,7 @@
 #include "harness/autotest.h"
 #include "disc_drills.h"      // co-located private headers (src tree, not include/)
 #include "gt_wait.h"
+#include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
 
@@ -26,11 +28,13 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_nav.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 namespace harness::autotest {
@@ -47,6 +51,7 @@ using disc_drill::OnGameThread;
 constexpr const char* kTag = "orb";
 constexpr int kStepSec = 120;
 constexpr int kEncounterSec = 60;   // INVALID bound: the encounter's ~5 s and its verdict reach the peers
+constexpr float kAwayCm = 3000.f;   // the client's distance from the host: past the orb's overlap sphere
 
 // The live orb copy this machine holds, a host-minted one with an element id.
 void* FindOrb() {
@@ -110,6 +115,11 @@ bool HostRound(int n, bool toward) {
     if (!WaitGT("the host's verdict on the orb", kEncounterSec, [&] { return OA::Read().caught + OA::Read().spared > before.caught + before.spared; }))
         return false;
     const OA::Counters after = Counts();
+    if (after.lastToucher != 1) {
+        RV::Say(kTag, RV::Outcome::Invalid, "round %d: the orb's encounter was begun by slot %u, not by the client (slot 1)", n,
+                static_cast<unsigned>(after.lastToucher));
+        return false;
+    }
     UE_LOGI("orb-drill: HOST round %d (view %hs): caught +%u, spared +%u, deaths sent +%u", n, toward ? "toward" : "away",
             after.caught - before.caught, after.spared - before.spared, after.deathsSent - before.deathsSent);
     const bool right = toward ? (after.caught == before.caught + 1 && after.deathsSent == before.deathsSent + 1)
@@ -133,6 +143,13 @@ void RunHost() {
             return rp && rp->valid();
         }))
         return;
+    // Both players start at one spot, and the host's own body would touch an orb minted there: the client walks away first.
+    ue_wrap::FVector hostAt{};
+    OnGameThread([&] { E::TryGetActorLocation(coop::players::Registry::Get().Local(), hostAt); });
+    char at[96];
+    std::snprintf(at, sizeof(at), "%.1f %.1f %.1f", hostAt.X, hostAt.Y, hostAt.Z);
+    PS::Mark("host_at", at);
+    if (!PS::Await("client_away", 480)) return;
     if (!HostRound(1, false) || !HostRound(2, true)) return;
     std::string done;
     if (!PS::AwaitText("client_done", done, kStepSec)) return;
@@ -157,6 +174,31 @@ bool HoldUntil(const char* what, bool toward, Done done) {
 bool ClientBody() {
     if (!disc_drill::HostPuppetUp() || !disc_drill::ClientJoined()) return false;
     PS::Mark("client_ready");
+
+    // Both players start at one spot: this client walks 30 m from the host, so the host's own body never touches an orb
+    // minted on this client's puppet. The route is the director's, to a navmesh point.
+    std::string hostText;
+    if (!PS::AwaitText("host_at", hostText, kStepSec)) return false;
+    ue_wrap::FVector host{};
+    if (sscanf_s(hostText.c_str(), "%f %f %f", &host.X, &host.Y, &host.Z) != 3) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the host's place '%s' does not parse", hostText.c_str());
+        return false;
+    }
+    ue_wrap::FVector goal{};
+    bool found = false;
+    OnGameThread([&] {
+        void* const me = coop::players::Registry::Get().Local();
+        const float dir[4][2] = {{1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f}};
+        for (const auto& d : dir)
+            if (!found && E::ProjectToNav(me, {host.X + d[0] * kAwayCm, host.Y + d[1] * kAwayCm, host.Z}, {1000.f, 1000.f, 20000.f}, &goal))
+                found = true;
+    });
+    if (!found) {
+        RV::Say(kTag, RV::Outcome::Invalid, "no navmesh point %.0f cm from the host to walk this client to", kAwayCm);
+        return false;
+    }
+    if (!meet::WalkToPoint(kTag, goal, 300.f, "away from the host")) return false;
+    PS::Mark("client_away");
 
     // Round 1: the view away. The copy must be seen, and its begin must have run when the host's destroy takes it.
     std::string view;

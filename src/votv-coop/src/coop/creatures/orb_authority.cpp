@@ -102,6 +102,7 @@ bool BeginSendOff() {
 
 std::atomic<uint32_t> g_beginsSent{0}, g_deathsSent{0}, g_caught{0}, g_spared{0};
 std::atomic<uint32_t> g_beginsRan{0}, g_beginsDropped{0}, g_deathsAnswered{0};
+std::atomic<uint8_t> g_lastToucher{255};  // HOST: the slot the last verdict judged
 
 void Send(void* orb, uint8_t op, int slot) {
     if (!g_session) return;
@@ -350,6 +351,7 @@ sg::Verdict OnFinishedPre(const sg::Call& c) {
     UE_LOGI("orb_authority: HOST orb's verdict for slot %u -- %hs%hs", static_cast<unsigned>(slot),
             survives ? "spared (the orb is behind its view)" : "caught (the orb is in its view)",
             read ? "" : ", its view did not read");
+    g_lastToucher.store(slot);
     (survives ? g_spared : g_caught).fetch_add(1);
     if (!survives) {
         if (slot == 0) AnswerCaught();
@@ -392,11 +394,12 @@ void OnDisconnect() {
     g_saidNoRevive = false;
     g_beginsSent = g_deathsSent = g_caught = g_spared = 0;
     g_beginsRan = g_beginsDropped = g_deathsAnswered = 0;
+    g_lastToucher = 255;
 }
 
 Counters Read() {
     return {g_beginsSent.load(), g_deathsSent.load(), g_caught.load(), g_spared.load(),
-            g_beginsRan.load(), g_beginsDropped.load(), g_deathsAnswered.load()};
+            g_beginsRan.load(), g_beginsDropped.load(), g_deathsAnswered.load(), g_lastToucher.load()};
 }
 
 bool DevMintOrbAt(const ue_wrap::FVector& at) { return IsHost() && MintOrb(at) != nullptr; }
