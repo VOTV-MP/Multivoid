@@ -492,16 +492,6 @@ its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use 
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
 answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
 
-The robot cleaner (`prop_roomba_C`) drives itself by physics: its tick turns its wheels, a random roll and its bumper's
-hits pick its turns, and its overlap takes items from the trash piles it passes into its own container. Each peer ran
-that on its own copy, so the copies drove apart. It is the host's: a client refuses the cleaner's tick and its pickup at
-the script-body gate, and while the host's cleaner runs the host claims its drive, so every copy follows the host's pose
-on the drive stream and a client turns the brushes of the copies it has bound itself. A client's press of the switch (action 5) is refused and
-asked of the host (`RoombaIntent`), which judges the reach and presses its own cleaner. The host watches the cleaner's `use`, which the
-press and the save's load both end in, and sends each change of its `active` (`RoombaState`), to a joiner too, and a cleaner is
-announced when its id is minted; a copy takes the state through the cleaner's own `use` (light, sound, box), or at its bind when
-the state came first (`coop/props/roomba_sync`) `[?]` (`harness/autotest/autotest_roomba.cpp`, `roomba_drill`: first rig run pending).
-
 ## Who owns what
 
 | State | Owner | Shape |
@@ -515,7 +505,6 @@ the state came first (`coop/props/roomba_sync`) `[?]` (`harness/autotest/autotes
 | a prop's nametag | the host | a client's tag is a request by the prop's key; the host applies it and tells every client |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
-| the robot cleaner | the host | its drive on the drive stream; its switch a request; a client's tick and pickup refused |
 | notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
 | notebook page text | the editing peer; the host takes it from the claim's holder, or from anyone while it is free | the notebook's own save record on the record lane, at the editor's commit and at the close |
 | a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
@@ -532,7 +521,6 @@ the state came first (`coop/props/roomba_sync`) `[?]` (`harness/autotest/autotes
 | `PropPropsIntent`, `PropPropsState` | a client to the host; the host to all, or to the sender alone for a refusal | a client's press of the prop-properties tool with the tool's four values; a prop's static, frozen and sleep read back from the host's copy, or the reason the press was refused `[?]` |
 | `PropDrivePose` (stream) | the host to all; a syncing client to the host | the poses of the props under a hook's drive or a broom's push that moved since their last one, with the claim generation; a client's rows of the prop its own interaction moves, which the host judges before it relays one `[?]` |
 | `PropDriveEnd` | the host to all; a syncing client to the host | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation; a client's End is admitted when it is the row's syncer `[?]` |
-| `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
 | `PropSyncClaim`, `PropSyncAnswer` | a client to the host; the host to that client | a client's request to sync a prop its interaction moves, and the host's grant, refusal (with the reason) or revoke (with the generation); the host also grants a thrown prop to its thrower unasked, `seq` being the throw sequence `[?]` |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, a throw or an unavoidable birth, for the host to author, with the placed root's velocity and the throw sequence |
 | `PropNametag` | a client to the host (op 1); the host to all (op 2), or to the requester alone (op 3) | a prop's nametag: the prop's key and the tag; the slot whose item it was; a refusal |
@@ -600,7 +588,7 @@ prop resolves.
 | the stick | `coop/props/prop_stick_sync` |
 | a prop's nametag | `coop/props/prop_nametag`, `ue_wrap/actors/nametag` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
-| the robot cleaner | `coop/props/roomba_sync`; `harness/autotest/autotest_roomba.cpp` (`roomba_drill`) |
+| the robot cleaner | [devices.md](devices.md#the-robot-cleaner) (`coop/props/roomba_sync`) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |

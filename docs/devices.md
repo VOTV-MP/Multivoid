@@ -518,6 +518,18 @@ a refused install is refunded by an upgrade the host spawns at the box, a refuse
 removed from its author's hand -- and a joiner gets every box's count at its world-ready
 (`coop/interactables/server_upgrade_sync`).
 
+### The robot cleaner
+
+The robot cleaner (`prop_roomba_C`) drives itself by physics: its tick turns its wheels, a random roll and its bumper's
+hits pick its turns, and its overlap takes items from the trash piles it passes into its own container. Each peer ran
+that on its own copy, so the copies drove apart. It is the host's: a client refuses the cleaner's tick and its pickup at
+the script-body gate, and while the host's cleaner runs the host claims its drive, so every copy follows the host's pose
+on the drive stream and a client turns the brushes of the copies it has bound itself. A client's press of the switch (action 5) is refused and
+asked of the host (`RoombaIntent`), which judges the reach and presses its own cleaner. The host watches the cleaner's `use`, which the
+press and the save's load both end in, and sends each change of its `active` (`RoombaState`), to a joiner too, and a cleaner is
+announced when its id is minted; a copy takes the state through the cleaner's own `use` (light, sound, box), or at its bind when
+the state came first (`coop/props/roomba_sync`) `[?]` (`harness/autotest/autotest_roomba.cpp`, `roomba_drill`: first rig run pending).
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -534,6 +546,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
 | the drone | the host | a timed transform stream; the client's tick and physics off |
 | a woodchipper's fuel and on/off | the host | a client's pour and press are intents the host judges; the host's state when it changes and every second while its fuel moves |
+| the robot cleaner | the host | its drive on the drive stream; its switch a request; a client's tick and pickup refused |
 
 ## Wire messages
 
@@ -558,6 +571,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard or the leave timer; the host finds the console by the sender's reach |
 | `WoodchipperState`, `WoodchipperIntent` | the host to all; a client to the host | a chipper's key, its fuel and on/off, or to a joiner which are on; a client's pour (the fuel its copy gained) or press (the state it wanted) |
+| `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
 
 ## Late join
 
