@@ -41,6 +41,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::FoodHand:
     case ReliableKind::PlantEdit:
     case ReliableKind::DeskShortRequest:
+    case ReliableKind::MinerIntent:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:
@@ -254,6 +255,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::FoodState:
     case ReliableKind::PlantState:
     case ReliableKind::DeskShortState:
+    case ReliableKind::MinerState:
     case ReliableKind::SwingerRestPose:
     case ReliableKind::GeomOctaEvent:
     case ReliableKind::DevLoadFiller:
