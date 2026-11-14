@@ -26,7 +26,15 @@ void SetEnabled(bool on);
 bool IsEnabled();
 
 // One-shot: open the prop-spawn menu RIGHT NOW (the F1 menu "open now" button).
-// Refused on a client. Posts the engine call to the game thread.
+// Refused on a client. Posts the engine call to the game thread. From then until the
+// menu closes the Q key dismisses it, with the Q toggle on or off.
 void OpenNow();
+
+// Close the menu and hand the mouse back to the game (the F1 button's other state). Never
+// refused: a way out is owed to whoever has the menu up. Posts to the game thread.
+void CloseNow();
+
+// A menu this module opened is still up. Any thread; what the F1 button reads for its label.
+bool IsMenuOpen();
 
 }  // namespace coop::dev::spawn_menu_unlock
