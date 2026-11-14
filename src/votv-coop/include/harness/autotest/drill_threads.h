@@ -238,4 +238,6 @@ DWORD WINAPI WorldSoundThread(LPVOID arg);
 DWORD WINAPI NightmareThread(LPVOID arg);
 // level_visit_drill, both peers -- harness/autotest/autotest_level_visit.cpp
 DWORD WINAPI LevelVisitThread(LPVOID arg);
+// ufo_drill, both peers -- harness/autotest/autotest_ufo.cpp
+DWORD WINAPI UfoDrillThread(LPVOID arg);
 }  // namespace harness::autotest

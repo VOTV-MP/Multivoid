@@ -187,12 +187,13 @@ stands at its top, checked every 5 to 10 minutes) and Midas (the level's own UFO
 outputs of the gamemode's source on the world-actor lane, so each client gets a copy, which runs the UFO's own
 animation. The ball and the boo roll their path on each machine at birth: the ball the turn and the two ends its
 lights fly between, kept from its construction script because the engine refuses to move those parts afterwards,
-and the boo the wobble of each point of its flight spline. So the host sends what its copy rolled (`UfoEvent`) and
-the client writes it over its own before the copy flies. The host relays the Midas take-off, and each client runs
+and the boo the wobble of each point of its flight spline. So the host sends what its copy rolled (`UfoEvent`),
+right after the spawn it follows on the same ordered lane (a joiner gets the path of each UFO still flying at its ready
+edge), and the client writes it over its own before the copy flies; a path the receive boundary refuses is logged with
+the UFO's id, and that copy flies its own roll (a boo) or stays parked (a ball). The host relays the Midas take-off, and each client runs
 its own. A copy the host ends first gives back the event entry its script would have given back on its own way out
-(`coop/world/ufo_sync`) `[V]` (`coop/dev/ufo_probe`, `VOTVCOOP_UFO_PROBE=1`: the client's five timers were refused, and
-its ball, boo, pill and Joel flew on the host's paths, the ball's ends equal to the centimetre; a client that joined
-mid-flight ran the Midas UFO).
+(`coop/world/ufo_sync`) `[?]` (`harness/autotest/autotest_ufo.cpp`, `ufo_drill`: the host's ball and boo paths reach a client's copies, and a
+joiner's at its ready edge; its first rig run is pending).
 
 ### The base alarm
 
@@ -308,6 +309,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/world/vent_crawler_sync`, `coop/dev/event_trigger` |
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
-| the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `coop/dev/ufo_probe` |
+| the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

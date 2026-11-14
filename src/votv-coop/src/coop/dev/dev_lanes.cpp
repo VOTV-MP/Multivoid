@@ -128,7 +128,6 @@
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here, and the client orb question
-#include "coop/dev/ufo_probe.h"  // [dev] the ambient UFOs fired on the host, refused on the client, placed on both
 #include "coop/dev/sky_tp_probe.h"  // [dev] the earth teleport fired on the host, refused on a client, its sky on both
 #include "coop/dev/roomba_probe.h"  // [dev] a robot cleaner run by the host, pressed by a client, placed on both
 #include "coop/dev/order_probe.h"  // who writes the order queue, and what the drone delivers, per peer
@@ -449,7 +448,6 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
     coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
     coop::dev::native_spawn_probe::Tick(&session);  // [dev] the client orb drive (a latched read when off)
-    coop::dev::ufo_probe::Tick(&session);  // [dev] the ambient UFOs fired and placed on both peers (a latched read when off)
     coop::dev::sky_tp_probe::Tick(&session);  // [dev] the earth teleport's sky on both peers (a latched read when off)
     coop::dev::roomba_probe::Tick(&session);  // [dev] a robot cleaner on both peers (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)

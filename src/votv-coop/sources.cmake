@@ -723,6 +723,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_prop_props.cpp
     src/harness/autotest/autotest_nightmare.cpp
     src/harness/autotest/autotest_level_visit.cpp
+    src/harness/autotest/autotest_ufo.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
