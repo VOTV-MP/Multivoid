@@ -26,8 +26,7 @@ uint32_t g_ord = 0;
 }  // namespace
 
 bool On() {
-    static const bool on = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) != "off" ||
-                           coop::config::ResolveEnum(::coop::config_registry::rows::atv_riders_probe) == "on";
+    static const bool on = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) != "off";
     return on;
 }
 

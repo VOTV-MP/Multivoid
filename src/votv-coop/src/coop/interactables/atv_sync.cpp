@@ -260,6 +260,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
         out.ackSeq = coop::atv_host_sync::CurrentStateSeq(key);
         out.syncerSlot = e.seatSyncer;
         out.occupantSlot = e.seatOccupant;
+        out.riderEid = e.seatRider;
         out.stateBits =
             static_cast<uint8_t>((payload.stateBits & coop::net::kAtvControlBits) | coop::net::kAtvFromSyncer);
         StampHostTrap(e, out);
@@ -271,6 +272,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     // A client takes the host's table FIRST, before any return: the stamp is what the host decided.
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     coop::atv_seat_table::SetSeat(e, payload.occupantSlot, payload.syncerSlot, "stamp", /*forgetHorn*/false);
+    coop::atv_seat_table::SetRider(e, payload.riderEid, nullptr, "stamp");
     // The trap rides every block the host sends, so it is taken before the authority return like the rest of the stamp.
     // The blocks that carry it are counted first, as the host sent them (the drill's event that the bit arrived).
     if ((payload.stateBits & coop::net::kAtvTrap) != 0) ++g_trapStampsSeen;
@@ -314,6 +316,20 @@ const AtvEntry* FindEntry(const std::wstring& key) {
 AtvEntry* FindEntryMutable(const std::wstring& key) {
     auto it = g_atvs.find(key);
     return it == g_atvs.end() ? nullptr : &it->second;
+}
+
+AtvEntry* FindEntryByActor(void* actor) {
+    if (!actor) return nullptr;
+    for (auto& kv : g_atvs)
+        if (kv.second.actor == actor) return &kv.second;
+    return nullptr;
+}
+
+AtvEntry* FindEntryByRider(uint32_t eid) {
+    if (eid == 0) return nullptr;
+    for (auto& kv : g_atvs)
+        if (kv.second.seatRider == eid) return &kv.second;
+    return nullptr;
 }
 
 void AdoptClientMirror(const std::wstring& key, void* actor) {

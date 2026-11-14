@@ -167,6 +167,10 @@ coop::net::Session* LaneSession();
 bool IndexCurrent();
 const AtvEntry* FindEntry(const std::wstring& key);
 AtvEntry* FindEntryMutable(const std::wstring& key);
+// The entry whose actor is `actor`, compared by pointer and never dereferenced; null for null. And the entry whose
+// seatRider is `eid`; null for 0, so an empty entry never matches. Game thread.
+AtvEntry* FindEntryByActor(void* actor);
+AtvEntry* FindEntryByRider(uint32_t eid);
 void AdoptClientMirror(const std::wstring& key, void* actor);
 void EraseEntry(const std::wstring& key);
 

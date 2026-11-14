@@ -71,6 +71,20 @@ using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_ma
 std::mutex g_actorToNpcIdMutex;
 std::unordered_map<void*, coop::element::ElementId> g_actorToNpcId;
 
+// The listeners told of a host NPC retire. The retire bodies run on parallel-anim workers, so each slot is an atomic
+// written once by compare-exchange and read with acquire; no count exists to race.
+using RetireFn = void (*)(uint32_t);
+constexpr int kMaxRetireListeners = 2;
+std::atomic<RetireFn> g_retireListeners[kMaxRetireListeners] = {};
+
+void NotifyHostNpcRetired(coop::element::ElementId eid) {
+    for (std::atomic<RetireFn>& slot : g_retireListeners) {
+        const RetireFn fn = slot.load(std::memory_order_acquire);
+        if (!fn) return;
+        fn(static_cast<uint32_t>(eid));
+    }
+}
+
 // The thread-local pending-spawn slot: the PRE writes the allocated ElementId and the
 // params-frame pointer, and the POST consumes only when its own params pointer matches. PRE and
 // POST run on one thread for one call, and the engine allocates a fresh frame per call, so the
@@ -182,6 +196,7 @@ void NpcDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     // nest with it. Take returns null on an already drained eid (a double destroy, or a disconnect
     // race).
     coop::element::RetireMirror(eid);
+    NotifyHostNpcRetired(eid);
     // A kerfur reaching this seam died for good: a conversion destroys its old form from inside
     // the blueprint, where the PRE cannot see it, and the converge at the verb's return releases
     // that form itself. A no-op for any other NPC.
@@ -440,6 +455,7 @@ void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey) {
         if (it != g_actorToNpcId.end() && it->second == eid) g_actorToNpcId.erase(it);
     }
     coop::element::RetireMirror(eid);  // Take + deferred ~Npc/FreeId; no-op if already drained
+    NotifyHostNpcRetired(eid);
     // A kerfur dead outside a conversion, as at the destroy PRE; a no-op for any other NPC.
     coop::kerfur_entity::ReleaseKerfurForEid(eid);
     UE_LOGI("npc-sync[pose dead-retire]: Npc eid=%u actor=%p released (PE-invisible destroy)",
@@ -449,6 +465,20 @@ void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey) {
     if (!s->SendEntityDestroy(static_cast<uint32_t>(eid))) {
         UE_LOGW("npc-sync[pose dead-retire]: SendEntityDestroy failed for eid=%u", eid);
     }
+}
+
+bool OnHostNpcRetired(void (*fn)(uint32_t eid)) {
+    if (!fn) return false;
+    for (std::atomic<RetireFn>& slot : g_retireListeners) {
+        RetireFn expected = nullptr;
+        if (slot.compare_exchange_strong(expected, fn, std::memory_order_acq_rel)) return true;
+        if (expected == fn) return true;
+    }
+    static std::atomic<bool> sSaid{false};
+    if (!sSaid.exchange(true))
+        UE_LOGW("npc-sync: the host retire listener list is full (%d) -- a listener was refused (said once)",
+                kMaxRetireListeners);
+    return false;
 }
 
 coop::element::ElementId RegisterHostNpcSilent(void* actor, const std::wstring& className) {
@@ -497,6 +527,7 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid) {
     // Defer the destruction to the game-thread flush; a null drained (already released) makes
     // Enqueue a no-op.
     coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
+    NotifyHostNpcRetired(eid);
     // A silent release is safe only if a KerfurConvert carrying this eid as oldEid follows; without
     // one the client's mirror orphans invisibly. Each caller binds the new form right after it, and a
     // converge that cannot bind retires the NPC as a plain death (SyncDestroyedNpcByEid) instead.

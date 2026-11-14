@@ -2,8 +2,7 @@
 // ATV and hidden while it drives, and its stream carries a standing pose that trails the ATV. While the host's seat
 // table puts the peer on an ATV, the puppet is placed in that ATV's driver seat (ue_wrap::atv::GetSeatTransform) every
 // frame, in the AnimBP's ATV seat pose (`isOnAtv`, the pose a kerfur rides in), with its
-// collision off so it cannot push the ATV it sits on. [dev] With `atv_riders_probe=on` the body is placed once and attached to
-// the ATV instead, and nothing is written per frame. Let go, the pose and collision come back and the stream places
+// collision off so it cannot push the ATV it sits on. Let go, the pose and collision come back and the stream places
 // the body again. Game thread.
 
 #pragma once

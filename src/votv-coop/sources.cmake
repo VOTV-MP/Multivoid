@@ -271,6 +271,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/cargo_lift.cpp
     src/coop/world/plant_edit_gate.cpp
     src/coop/interactables/atv_riders.cpp
+    src/coop/interactables/atv_rider_watch.cpp
     src/ue_wrap/actors/growing_plant.cpp
     src/coop/world/world_sound_sync.cpp
     src/coop/props/prop_record_refresh.cpp

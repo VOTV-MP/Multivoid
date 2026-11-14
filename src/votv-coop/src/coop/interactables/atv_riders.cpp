@@ -2,12 +2,17 @@
 
 #include "coop/interactables/atv_riders.h"
 
+#include "coop/creatures/npc_sync.h"
+#include "coop/interactables/atv_rider_watch.h"
+#include "coop/interactables/atv_seat_table.h"
 #include "coop/interactables/atv_sync.h"
+#include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 
 #include "ue_wrap/actors/kerfur.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv.h"
@@ -71,9 +76,25 @@ void CallKerfurs(const uint8_t self) {
         it = R::IsLiveByIndex(it->first, it->second) ? std::next(it) : g_called.erase(it);
 }
 
+// The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted,
+// and the task finds the ATV that names that eid and ends its ride. The eid's free is deferred to the element flush, so it is
+// not re-issued before the task runs.
+void OnNpcRetired(uint32_t eid) {
+    ue_wrap::game_thread::Post([eid] {
+        coop::net::Session* s = g_session.load(std::memory_order_acquire);
+        if (!s || s->role() != coop::net::Role::Host) return;
+        if (coop::atv_sync::AtvEntry* e = coop::atv_sync::FindEntryByRider(eid))
+            coop::atv_seat_table::SetRider(*e, 0, nullptr, "retired");
+    });
+}
+
 }  // namespace
 
-void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
+void Install(coop::net::Session* session) {
+    g_session.store(session, std::memory_order_release);
+    coop::npc_sync::OnHostNpcRetired(&OnNpcRetired);
+    coop::atv_rider_watch::Install(session);
+}
 
 void Tick() {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
@@ -90,6 +111,7 @@ void OnDisconnect() {
         UE_LOGI("atv_riders: session end -- kerfur calls=%u releases=%u", g_calls, g_releases);
     g_called.clear();
     g_calls = g_releases = 0;
+    coop::atv_rider_watch::OnDisconnect();
 }
 
 }  // namespace coop::atv_riders

@@ -85,6 +85,13 @@ void SyncDestroyedNpcActor(void* actor);
 // thread.
 void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey);
 
+// Registers a function told the eid of every NPC element the host retires: the destroy PRE, the pose walk's dead-actor
+// retire and the turn-off converge's silent release (not the prop-form paths that release a kerfur's id). Called right
+// after the element is drained, before any session check, so a host with no client is told too. Capacity 2; the same
+// function twice is ignored (true); a full list returns false and says so once. The bodies may run on a worker thread, so
+// a listener runs on whichever thread retired the NPC and only posts; registration may come from any thread.
+bool OnHostNpcRetired(void (*fn)(uint32_t eid));
+
 // The host kerfur conversion: register a blueprint-internally spawned NPC (the turn-on output,
 // spawned through a math call, so no spawn POST fires for it) as a host Npc Element without
 // broadcasting a spawn; the sole wire signal for a conversion is KerfurConvert. Allocates,

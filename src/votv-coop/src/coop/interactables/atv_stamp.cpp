@@ -57,6 +57,8 @@ bool ReadPayload(AtvEntry& e, const std::wstring& key, uint8_t occupantSlot, uin
     if (grabbed)            sb |= 0x4;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
+    // The riding kerfur is the host's word: every block it sends names it, a client's carries 0.
+    p.riderEid = host ? e.seatRider : 0;
     // The condition block (tires, spare, dirt, fuel, health), filled at this one site so the
     // syncer, the idle syncer and the adopt seed cannot fork; a failed read leaves it zeroed
     // with tiresValid 0, and receivers touch nothing.

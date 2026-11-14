@@ -3350,6 +3350,11 @@ struct AtvStatePayload {
     uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=kAtvBrake, bit2=grabbed (the sender's grav hand holds it),
                            //      bit3=kAtvFromSyncer, bit4=kAtvTrap, bit5=kAtvLights, bit6=kAtvTurbo, bit7=kAtvHorn
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (warp as is), 0 = live stream
+    // The riding kerfur's element id, 0 = none; the host's, on every block it sends (a client's carry 0 and the host never
+    // reads them). MTA carries an occupant's vehicle on the ped's add
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CEntityAddPacket.cpp:874-884); ours rides the ATV's
+    // stamp, since an ATV has one rider and the stamp already reaches the driver and every joiner.
+    uint32_t riderEid;     // 4
     // The condition block: the tires' and dirt's accumulators travel from the syncer (fuel and health are the host
     // copy's absolute, a client syncer's burn taken only under its ack, see ackSeq); a mirror's own accrual is held at
     // zero, so overwriting never races an irreversible act. Presence (tiresMask, hasSpare) is consumed
@@ -3376,7 +3381,8 @@ struct AtvStatePayload {
                                   //      of a syncer's block and on every block of its own copy. The host takes a client
                                   //      syncer's fuel and health only from a block whose ackSeq is its current stateSeq.
 };
-static_assert(sizeof(AtvStatePayload) == 152, "AtvStatePayload must be 152 bytes");
+static_assert(offsetof(AtvStatePayload, riderEid) == 84, "riderEid must follow adopt at offset 84");
+static_assert(sizeof(AtvStatePayload) == 156, "AtvStatePayload must be 156 bytes");
 
 // stateBits bit 3: the block is the syncer's, re-sent by the host (a client syncer's pose and condition), not the
 // host's own copy. A receiver applies the pose and condition of such a block to an ATV it does not sync; the host's

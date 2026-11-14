@@ -3,7 +3,7 @@
 // Each ATV mechanism that a drill judges says, at the point where its outcome is decided, one record: a request opened or
 // not, an answer arriving, a state applied, a block admitted, a request judged, a module refunded. The drill reads the
 // records and decides on them, never on a clock; a time bound in the drill can only call a run INVALID. The records are
-// kept only while the `atv_gate_drill` row or the `atv_riders_probe` row is on (a static compare at each emit point), 256 per event, newest over oldest.
+// kept only while the `atv_gate_drill` row is on (a static compare at each emit point), 256 per event, newest over oldest.
 // Written on the game thread, read from the drill's thread under one lock.
 //
 // The fields of a record by event are the comments on `Event`.
@@ -39,8 +39,8 @@ enum Event : int {
     kEventCount
 };
 
-// Whether the drill row or the riders probe row (coop/dev/atv_riders_probe) is on, resolved once: every emit point asks, so a
-// run without either costs one compare. An emit point whose arguments cost a read or a hash asks it first.
+// Whether the drill row is on, resolved once: every emit point asks, so a run without the drill costs one compare. An emit
+// point whose arguments cost a read or a hash asks it first.
 bool On();
 
 // A pose block of the ATV under `key` was applied to `actor`'s copy (kPoseApplied), on the host or on a client. A no-op while

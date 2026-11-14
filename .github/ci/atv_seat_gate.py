@@ -4,7 +4,7 @@
 `AtvEntry::seatOccupant`, `seatSyncer`, `seatRider` and `seatRiderActor` are written only by
 `coop/interactables/atv_seat_table.cpp` (SetSeat, SetRider), which tells the subscribers of every
 change. A write from anywhere else would change the seat without announcing it. Over `src/votv-coop/src`
-and `src/votv-coop/include` (comments and string literals set aside) this gate refuses an assignment to
+and `src/votv-coop/include` (comments and string literals set aside) this gate refuses an assignment (plain or compound) to
 one of the four names outside the owner, except the default member initializers of `AtvEntry` in
 `atv_sync_internal.h`.
 
@@ -21,7 +21,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 OWNER = "src/coop/interactables/atv_seat_table.cpp"
 DECLARING_HEADER = "include/coop/interactables/atv_sync_internal.h"
 
-WRITE = re.compile(r"\b(seatOccupant|seatSyncer|seatRider|seatRiderActor)\s*=[^=]")
+# A plain or compound assignment (=, |=, &=, ^=, +=, -=, *=, /=, %=); never == (an equality test).
+WRITE = re.compile(r"\b(seatOccupant|seatSyncer|seatRider|seatRiderActor)\s*[|&^+\-*/%]?=[^=]")
 DECLARATION_PREFIX = re.compile(r"^\s*(?:uint8_t|uint32_t|void\s*\*)\s*$")
 SUFFIXES = (".cpp", ".h", ".hpp", ".inc")
 HEX_DIGITS = frozenset("0123456789abcdefABCDEF")  # a set: the empty string at a text edge is not a member
@@ -110,6 +111,7 @@ def drill():
         "a write after a digit separator": {
             "src/coop/x/a.cpp": "constexpr long k = 1'700'000'000;\ne.seatOccupant = 1;\n// it's\n"},
         "a write over two lines": {"src/coop/x/a.cpp": "e.seatRider\n    = 7;\n"},
+        "a compound write": {"src/coop/x/a.cpp": "e->seatRider += 1;\n"},
         "a write in the declaring header that is no initializer": {
             DECLARING_HEADER: "uint8_t seatOccupant = 0xFF;\ninline void F(E& e) { e.seatOccupant = 1; }\n"},
         "a local named like the field": {"src/coop/x/a.cpp": "uint32_t seatRider = 5;\n"},

@@ -331,9 +331,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/atv_gate_drill_acts.cpp
     src/coop/dev/atv_gate_drill_steps.cpp
     src/coop/dev/atv_probe.cpp
-    src/coop/dev/atv_riders_probe.cpp
-    src/coop/dev/atv_riders_probe_acts.cpp
-    src/coop/dev/atv_riders_probe_rows.cpp
     src/coop/dev/atv_seat.cpp
     src/coop/dev/atv_tire_probe.cpp
     src/coop/dev/pinecone_probe.cpp
