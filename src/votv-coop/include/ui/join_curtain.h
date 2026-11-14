@@ -11,6 +11,8 @@
 // panel stays legible above it. Ours, not the engine's ClientSetCameraFade, whose coop semantics
 // are unpredictable. Every writer is one lock-free atomic store, so any thread may raise it;
 // Render runs per frame on the DX Present hook. Lifecycle and measurements: docs/join.md.
+// Show, BeginDismiss and Reset touch no ImGui state (a window that never presented has no context);
+// Render, inside a frame, owns the transitions that read the fade's ImGui clock.
 
 #pragma once
 
@@ -21,19 +23,22 @@ namespace coop::join_curtain {
 // `mirror_defer::Arm()`). A plain store, so the second call is free.
 void Show();
 
-// Start the alpha-fade 1->0 (~0.4s) -- at "primary world assembled" (SnapshotComplete + drain,
-// alongside mirror_defer::RevealConfirmedAtLift() so the confirmed world fades IN as the cover
-// fades OUT). Idempotent (a second call while already fading is ignored).
+// Record that the cover is to fade 1->0 (~0.4s) -- at "primary world assembled" (SnapshotComplete +
+// drain, alongside mirror_defer::RevealConfirmedAtLift() so the confirmed world fades IN as the cover
+// fades OUT). Only records: the fade starts at the next frame Render draws, which stamps its start.
+// Idempotent (a second call while already requested or fading is ignored). Game thread; no ImGui call.
 void BeginDismiss();
 
 // Drop the cover immediately (session teardown / cancel). No fade.
 void Reset();
 
-// True while the cover is still drawing (alpha > 0). After the fade completes it returns false.
+// True while the cover is up, has a dismissal recorded that no frame has taken yet, or is still fading
+// (alpha > 0). False once Render has finished the fade. The overlay's render gate reads it, so a recorded
+// dismissal keeps frames coming until Render takes it.
 bool IsActive();
 
-// Draw the full-viewport cover at the current alpha. Call every frame from the imgui overlay;
-// no-op when inactive. Uses ImGui::GetTime() for the fade clock.
+// Draw the full-viewport cover at the current alpha. Call every frame from the imgui overlay, inside the
+// frame; no-op when inactive. Uses ImGui::GetTime() for the fade clock.
 void Render();
 
 }  // namespace coop::join_curtain
