@@ -16,9 +16,8 @@ namespace coop::power_grid::install {
 // sent from, if the hand lane still owes it, is applied first, then hand_spend counts the use. The result goes with the
 // queue entry, so a request that waits in the queue behind an earlier one is not judged against a hand that has moved on.
 // A request Spend never counted is the client's loss: the host cannot see its inventory, so it refunds only what it
-// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation), by
-// outrunning the hand lane's budget and its debt (ApplyOwedNow), or by
-// an install at a generator unreadable at the take, which refunds nothing.
+// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation) or by
+// outrunning the hand lane's budget and its debt (ApplyOwedNow).
 bool PaidByHand(coop::net::Session& session, uint8_t sender, const coop::net::PowerGridPayload& p);
 
 // CLIENT: the body of generator_C::playerUsedOn is about to run with `locals` (its frame), and spends the upgrade it is

@@ -252,7 +252,7 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     // (wt.handPaid, coop/player/hand_spend; its destroy never leaves the client), or a world upgrade the host saw
     // destroyed beside this generator, else the destroy's wait. Taken here, whatever the outcome, so one spend answers
     // one install.
-    bool spent = read && p.op == coop::net::kPowerGridOpUpgrade && wt.handPaid;
+    bool spent = p.op == coop::net::kPowerGridOpUpgrade && wt.handPaid;
     if (read && p.op == coop::net::kPowerGridOpUpgrade) {
         // A hand-paid install burns the world spend beside it too: one upgrade, one credit.
         const bool world = coop::power_upgrade::TakeSpend(sender, p.index);
@@ -336,23 +336,23 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     return Take::Done;
 }
 
-// Every waiting op of `slot` refused with its newest, whose acknowledgement answers them all: its queue is full. An
-// install among them whose world spend the host holds is refunded as its own refusal would refund it. A waiting entry
-// never reached the hand judge, so none was counted for it and it refunds nothing (a hand-paid install is never
-// waiting: the judge counts it as it takes the entry).
+// A counted install that did not run is given back: the hand paid for it as it arrived (handPaid) or a world spend did,
+// whether its queue is refused or its sender left. An entry refused before it took a place was never counted.
+void RefundCounted(uint8_t slot, const Waiting& w, std::vector<void*>& gens) {
+    if (w.p.op != coop::net::kPowerGridOpUpgrade) return;
+    // Paid by the hand as it arrived, or by a world spend: the item is given back either way.
+    const bool world = coop::power_upgrade::TakeSpend(slot, w.p.index);
+    if (!w.handPaid && !world) return;
+    if (gens.empty()) GEN::ReadGenerators(gens);
+    coop::power_upgrade::Refund(slot, w.p.index < gens.size() ? gens[w.p.index] : nullptr);
+}
+
 void HostRefuseQueue(coop::net::Session* s, uint8_t slot, const Waiting& newest) {
     const uint16_t newestSeq = newest.p.seq;
     const size_t n = g_waiting[slot].size();
     g_waiting[slot].push_back(newest);
     std::vector<void*> gens;
-    for (const Waiting& w : g_waiting[slot]) {
-        if (w.p.op != coop::net::kPowerGridOpUpgrade) continue;
-        // Paid by the hand as it arrived, or by a world spend: the item is given back either way.
-        const bool world = coop::power_upgrade::TakeSpend(slot, w.p.index);
-        if (!w.handPaid && !world) continue;
-        if (gens.empty()) GEN::ReadGenerators(gens);
-        if (w.p.index < gens.size() && gens[w.p.index]) coop::power_upgrade::Refund(slot, gens[w.p.index]);
-    }
+    for (const Waiting& w : g_waiting[slot]) RefundCounted(slot, w, gens);
     g_waiting[slot].clear();
     if (SeqAfter(newestSeq, g_ack[slot])) g_ack[slot] = newestSeq;
     g_ackDirty = true;
@@ -737,6 +737,10 @@ void HostPuzzleChanged() { g_puzzleDirty = true; }
 
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
+    // The sender's waiting ops go with it, answered to no one; an install the hand or a world spend paid for is given
+    // back where its sender stood (the tower's upgrade slot when the body is gone).
+    std::vector<void*> gens;
+    for (const Waiting& w : g_waiting[slot]) RefundCounted(slot, w, gens);
     g_waiting[slot].clear();
     g_rate[slot].Reset();
     g_inputRate[slot].Reset();

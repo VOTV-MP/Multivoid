@@ -175,6 +175,15 @@ void Refund(uint8_t slot, FK::Kind kind, void* tower) {
             fuse ? "a fuse spawned where it stands" : "NOT spawned (the fuse is lost)");
 }
 
+// A counted insert that did not run is given back: the hand paid for it as it arrived (handPaid) or a world spend did,
+// whether its queue is refused or its sender left. An entry refused before it took a place was never counted.
+void RefundCounted(uint8_t slot, const Waiting& w) {
+    if (w.p.op != coop::net::kFuseTowerOpInsert) return;
+    const bool world = TakeSpend(slot, KindOf(w.p), w.p.tower);
+    if (!w.handPaid && !world) return;
+    if (void* tower = FK::Find(KindOf(w.p), w.p.tower)) Refund(slot, KindOf(w.p), tower);
+}
+
 // The kinds of fault in an op the host drops or refuses: each is warned once per slot, however many ops carry it
 // (the totals are in the session-end line). The first five are the receive boundary's and no client sends them.
 enum class Fault : uint8_t { Op, Kind, OpKind, Stale, Dead, NoTower, Button, Fuse, NoPart, Reach, Unread, Rule, NoUse,
@@ -378,12 +387,7 @@ void HostOffer(coop::net::Session* s, const FuseTowerPayload& p, uint8_t sender)
             if (SeqAfter(r.p.seq, g_ack[sender])) g_ack[sender] = r.p.seq;
             if (!IsClaim(r.p.op)) continue;
             PushRefused(sender, r.p.seq);
-            if (r.p.op != coop::net::kFuseTowerOpInsert) continue;
-            // Paid by the hand as it arrived, or by a world spend: the item is given back either way.
-            const bool world = TakeSpend(sender, KindOf(r.p), r.p.tower);
-            if (r.handPaid || world)
-                if (void* tower = FK::Find(KindOf(r.p), r.p.tower))
-                    Refund(sender, KindOf(r.p), tower);
+            RefundCounted(sender, r);
         }
         q.clear();
         g_refusedCount += n + 1;
@@ -730,6 +734,9 @@ void Overlay(coop::net::FuseTowerRow& row) {
 
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
+    // The sender's waiting ops go with it, answered to no one; an insert the hand or a world spend paid for is given
+    // back where its sender stood (above the tower's fuses when the body is gone).
+    for (const Waiting& w : g_waiting[slot]) RefundCounted(slot, w);
     g_waiting[slot].clear();
     g_rate[slot].Reset();
 }
