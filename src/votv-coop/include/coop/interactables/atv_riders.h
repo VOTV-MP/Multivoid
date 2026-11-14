@@ -2,8 +2,8 @@
 // host's table gives it (coop/player/puppet_seat.h). The kerfurs answer a client driver as they answer the host's: the
 // ATV's own sit asks every kerfur to come and the dismount sends the rider off, and on the host that runs only for the
 // host's own player, so the host runs the same steps on its copy (ue_wrap::atv::InviteKerfurs, ReleaseKerfurs) when
-// a client's seat begins and ends. A kerfur riding on the host rides every client's copy (the NPC pose stream's
-// kEntityPoseBitKerfurOnAtv, coop/element/npc). Game thread. Overview: docs/vehicles.md.
+// a client's seat begins and ends. A kerfur riding on the host rides every client's copy: the ATV's stamp names it
+// (riderEid) and coop/creatures/npc_ride seats the mirror. Game thread. Overview: docs/vehicles.md.
 
 #pragma once
 

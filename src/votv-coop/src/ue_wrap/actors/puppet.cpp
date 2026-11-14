@@ -309,6 +309,14 @@ bool SetOnAtv(void* puppetActor, bool on) {
     return any;
 }
 
+bool SetNpcOnAtv(void* npcActor, bool on) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    void* const anim = NpcBodyAnimInstance(npcActor);
+    if (off < 0 || !anim || !IsKerfurAnimBP(anim)) return false;
+    *reinterpret_cast<bool*>(static_cast<uint8_t*>(anim) + off) = on;
+    return true;
+}
+
 bool GetOnAtv(void* puppetActor, bool& out) {
     const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
     if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;

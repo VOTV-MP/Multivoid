@@ -2,11 +2,13 @@
 
 #include "coop/interactables/atv_riders.h"
 
+#include "coop/creatures/npc_ride.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/interactables/atv_rider_watch.h"
 #include "coop/interactables/atv_seat_table.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/atv_sync_internal.h"
+#include "coop/element/mirror_defer.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_seat.h"
@@ -41,6 +43,11 @@ void OnSeatChange(const coop::atv_seat_table::Change& c) {
     if (another(c.occupantAfter)) coop::puppet_seat::Set(c.occupantAfter, *c.key, 0);
     if (another(c.occupantBefore) && c.occupantBefore != c.occupantAfter)
         coop::puppet_seat::Clear(c.occupantBefore, *c.key);
+    // The rider subscriber, on a client: the host's kerfur rides the ATV its stamp names, on this copy too.
+    const coop::net::Session* const s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Client || c.riderBefore == c.riderAfter) return;
+    if (c.riderBefore != 0) coop::npc_ride::Clear(c.riderBefore, *c.key);
+    if (c.riderAfter != 0) coop::npc_ride::Set(c.riderAfter, *c.key);
 }
 
 void CallKerfurs(const uint8_t self) {
@@ -95,6 +102,8 @@ void Install(coop::net::Session* session) {
     coop::atv_rider_watch::Install(session);
     coop::atv_seat_table::OnChange(&OnSeatChange);
     coop::puppet_seat::SetResolver(&coop::atv_seat_table::ResolveSeat);
+    coop::npc_ride::SetResolver(&coop::atv_seat_table::ResolveAtv);
+    coop::mirror_defer::OnReveal(&coop::npc_ride::OnRevealed);
 }
 
 void Tick() {

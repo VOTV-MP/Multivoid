@@ -15,6 +15,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"
+#include "coop/creatures/npc_ride.h"  // a stored ride is applied to the new mirror
 #include "coop/creatures/kerfur_prop_adoption.h"  // the deferred prop-form kerfur adoption
 #include "coop/creatures/kerfur_reconcile.h"  // ArmPendingRetireByEid
 #include "coop/creatures/npc_mirror_brain.h"  // PrepareBirth / SetUpPresentation: a parked family's mirror has its brain off
@@ -465,6 +466,8 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
     // props or block the player.
     coop::mirror_defer::OnMirrorSpawned(elementId, spawned, coop::mirror_defer::HideCollision::Off,
                                         /*holdUntilQuiescence=*/false);
+    // After the hide, so a ride applied to a hidden mirror waits for the reveal instead of being undone by it.
+    coop::npc_ride::OnMirrorBound(elementId);
 
     UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             elementId, classW.c_str(), spawned, locX, locY, locZ);

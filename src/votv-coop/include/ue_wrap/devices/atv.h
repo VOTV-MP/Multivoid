@@ -176,9 +176,6 @@ bool Dismount(void* atv);
 // component, or an unreadable transform. Game thread.
 bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot);
 
-// The ATV whose root is nearest `at` within `reachCm`, or nullptr. Game thread.
-void* NearestAtv(const FVector& at, float reachCm);
-
 // The ATV's rider (`sittingKerfuro`) cleared when it is `kerfur`: a kerfur's own getOffCar leaves it set, and the ATV's
 // dismount is what clears it. Game thread.
 void ForgetSittingKerfur(void* atv, void* kerfur);

@@ -11,13 +11,12 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/creatures/npc_ride.h"
 #include "coop/element/npc.h"
 
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/character_floor.h"  // Refresh -- the floor a floor mirror's own tick reads
-#include "ue_wrap/engine/engine_attach.h"  // GetAttachParentActor: still on its ATV
-#include "ue_wrap/devices/atv.h"           // NearestAtv: the ATV a riding kerfur is on
 #include "ue_wrap/actors/fossilhound.h"  // DriveBodyYaw -- the hound's body facing
 #include "ue_wrap/actors/kerfur.h"   // DriveKerfurState -- host-authoritative command and spooky flag
 #include "ue_wrap/actors/puppet.h"
@@ -55,7 +54,6 @@ constexpr float kSnapPerSpeedSec = 0.5f;
 // A floor mirror's floor is asked for again once it has moved this far from where it was last asked: a sweep per 25 cm of
 // travel while it walks, none while it stands.
 constexpr float kFloorRefreshCm  = 25.f;
-constexpr float kRideReachCm     = 400.f;  // a riding kerfur's streamed place from its ATV's root
 
 }  // namespace
 
@@ -193,24 +191,9 @@ void Npc::RefreshFloor(void* actor) {
 bool Npc::ApplyToEngine() {
     void* actor = GetActor();
     if (!actor) return false;
-    // A kerfur riding an ATV on the host rides this copy's: the mirror sits on the ATV nearest its streamed place
-    // through its own sitOnCar, which attaches it there, and the stream's pose waits while it rides; when the host's
-    // gets off, its own getOffCar, unless this copy's dismount already sent it off.
-    const bool onAtv = (curStateBits_ & coop::net::kEntityPoseBitKerfurOnAtv) != 0;
-    if (atvRide_ && !R::IsLiveByIndex(atvRide_, atvRideIdx_)) atvRide_ = nullptr;
-    if (onAtv && !atvRide_) {
-        void* atv = ue_wrap::atv::NearestAtv(curPos_, kRideReachCm);
-        if (atv && ue_wrap::kerfur::SitOnCar(actor, atv)) {
-            atvRide_ = atv;
-            atvRideIdx_ = R::InternalIndexOf(atv);
-        }
-    } else if (!onAtv && atvRide_) {
-        void* parent = nullptr;
-        if (E::GetAttachParentActor(actor, parent) && parent == atvRide_) ue_wrap::kerfur::GetOffCar(actor);
-        ue_wrap::atv::ForgetSittingKerfur(atvRide_, actor);
-        atvRide_ = nullptr;
-    }
-    if (atvRide_) {
+    // A kerfur the host rides on an ATV is seated on this copy by coop::npc_ride, through its own sitOnCar: the stream
+    // waits (no location, rotation, floor, CMC or Mesh yaw write) and only the head and the command state are driven.
+    if (coop::npc_ride::HoldsPose(GetId())) {
         if (hasLookAt_) Pup::DriveKerfurLookAt(actor, curLookAt_);
         if (hasKerfState_) ue_wrap::kerfur::DriveKerfurState(actor, kerfState_, kerfSpooky_);
         return true;

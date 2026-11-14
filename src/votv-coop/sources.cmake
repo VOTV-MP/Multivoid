@@ -235,6 +235,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/hit_target_creature.cpp
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
+    src/coop/creatures/npc_ride.cpp
     src/coop/creatures/npc_sync.cpp
     src/coop/creatures/npc_sync_install.cpp
     src/coop/creatures/npc_world_enum.cpp

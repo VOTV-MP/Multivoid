@@ -57,6 +57,10 @@ void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget);
 // Class-gated like the head look; false when neither body's AnimInstance takes it. Game thread.
 bool SetOnAtv(void* puppetActor, bool on);
 
+// The same flag on an NPC kerfur's own body: the AnimInstance of its native ACharacter::Mesh slot, where the kerfur's
+// Blueprint writes it. Class-gated; false when that AnimInstance is not a kerfur AnimBP or does not resolve. Game thread.
+bool SetNpcOnAtv(void* npcActor, bool on);
+
 // The same flag read back: `out` is true when every rendered body's AnimInstance that took the read holds `isOnAtv`.
 // False, `out` untouched, when neither body's AnimInstance reads. Game thread.
 bool GetOnAtv(void* puppetActor, bool& out);

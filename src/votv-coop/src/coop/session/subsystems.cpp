@@ -178,6 +178,7 @@
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"
 #include "coop/creatures/npc_mirror.h"
+#include "coop/creatures/npc_ride.h"  // the ATV rides it holds end with the session
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/world_actor_sync.h"  // non-Character event-actor transform mirror (sibling of npc_sync)
 #include "coop/creatures/piramid_sync.h"  // piramid event choreography lane (mirror brain suppression + PyramidGather)
@@ -462,6 +463,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
 }
 
 DisconnectStats DisconnectAll() {
+    // First: the teardown's reveals (mirror_defer::Reset, below) then find no row to apply.
+    coop::npc_ride::OnDisconnect();
     // The trash mirrors first, before ForceRelease, which can consume a carried one without
     // releasing its GC pin -- and a rooted pending-kill actor anchors its world's whole Outer
     // chain. Retiring them here un-roots, destroys and evicts each drive, so ForceRelease sees no

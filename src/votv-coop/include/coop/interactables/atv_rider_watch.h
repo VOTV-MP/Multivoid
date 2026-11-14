@@ -1,8 +1,9 @@
 // coop/interactables/atv_rider_watch.h -- the host's watch of a kerfur's seat calls. A kerfur sits on an ATV through its own
 // `sitOnCar` and leaves through `getOffCar`, both Blueprint-internal local calls a ProcessEvent hook never sees, so the
 // script gate watches them by name. On the host each one writes the riding kerfur's element id into that ATV's table entry
-// (atv_seat_table::SetRider), which every block the host sends then carries (AtvStatePayload::riderEid). A client's calls
-// are not its own to publish: the callbacks return at once there. Game thread.
+// (atv_seat_table::SetRider), which every block the host sends then carries (AtvStatePayload::riderEid). A client does not
+// publish: its own game's `getOffCar` and `tryToOccupyCar` on a kerfur that is the host's mirror are cancelled (the mirror's
+// seat is the host's, coop/creatures/npc_ride), and every other call there runs. Game thread.
 
 #pragma once
 

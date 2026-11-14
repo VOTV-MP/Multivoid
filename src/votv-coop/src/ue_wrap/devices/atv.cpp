@@ -561,19 +561,6 @@ bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot) {
     return true;
 }
 
-void* NearestAtv(const FVector& at, float reachCm) {
-    struct Best { FVector at; float d2; void* atv; } best{at, reachCm * reachCm, nullptr};
-    ForEachAtv([](void* ctx, void* actor, int32_t) {
-        auto* b = static_cast<Best*>(ctx);
-        FVector loc{};
-        if (!engine::TryGetActorLocation(actor, loc)) return;
-        const float dx = loc.X - b->at.X, dy = loc.Y - b->at.Y, dz = loc.Z - b->at.Z;
-        const float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 <= b->d2) { b->d2 = d2; b->atv = actor; }
-    }, &best);
-    return best.atv;
-}
-
 void ForgetSittingKerfur(void* atv, void* kerfur) {
     const int32_t off = g_sittingKerfuro.Get();
     if (!atv || !kerfur || !R::IsLive(atv) || off < 0) return;

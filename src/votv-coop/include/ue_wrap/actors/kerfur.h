@@ -101,6 +101,12 @@ bool SitOnCar(void* kerfur, void* atv);
 bool GetOffCar(void* kerfur);
 bool FailCar(void* kerfur);
 
+// A MIRROR kerfur's unseat, getOffCar's own steps in its order without the car read, the teleport, the kill tail, the
+// movement mode and move(false): detach, collision on, `state` 0, `occupyCar` null, the AnimBP's `isOnAtv` false, the
+// Mesh's `bAbsoluteRotation` true. The mirror stays where it is; its pose and state are the host's stream's. A step
+// that does not read or write is said once and the rest still run. False when not a kerfur or any step failed. Game thread.
+bool UnseatWithoutCar(void* kerfur);
+
 // The Omega's `occupyCar`, the ATV its own tryToOccupyCar and sitOnCar assigned. Null when it is not an Omega, the field
 // did not resolve, it is unset or it is not a live object. Game thread.
 void* GetOccupyCar(void* kerfur);

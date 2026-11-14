@@ -10,6 +10,7 @@
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_mirror_brain.h"  // PrepareBirth / SetUpPresentation: a parked family's twin has its brain off
+#include "coop/creatures/npc_ride.h"  // a stored ride is applied to the adopted twin
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
 #include "coop/props/remote_prop_spawn.h"  // HasLoadTailQuiesced -- shared save-load-tail quiescence signal
@@ -93,6 +94,8 @@ bool BindAsMirror(uint32_t eid, void* obj, const std::wstring& classW) {
     // (timer_face/timer_kerf/checkDoor survive a tick-disable). Now host-driven, zero local AI.
     ue_wrap::puppet::DisableCharacterTicks(obj);
     ue_wrap::kerfur::NeutralizeAiTimers(obj);
+    // An adopted twin is never hidden: a ride the stamp stored before this bind is applied now.
+    coop::npc_ride::OnMirrorBound(static_cast<coop::element::ElementId>(eid));
     return true;
 }
 

@@ -1672,7 +1672,7 @@ struct EntityPoseSnapshot {
                                          // NPCs carry it; the rest leave it zero with the bit clear.
     float    bodyYaw;     // 4  -- a kerfur's or a fossil hound's visible body yaw, apart from the actor
                           //       root; valid iff kEntityPoseBitHasBodyYaw
-    uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky, bit5=kerfurOnAtv
+    uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky
     uint8_t  kerfState;   // 1  -- the kerfur's command state; valid iff bit 3. Drives the parked mirror's state machine.
     uint8_t  kerfFace;    // 1  -- the kerfur's face material index; valid iff bit 3.
     uint8_t  _pad;        // 1  -- 4-byte alignment
@@ -1684,7 +1684,6 @@ inline constexpr uint8_t kEntityPoseBitHasLookAt = 0x02;  // lookAt{X,Y,Z} carri
 inline constexpr uint8_t kEntityPoseBitHasBodyYaw = 0x04;  // bodyYaw carries a valid visible-body world yaw
 inline constexpr uint8_t kEntityPoseBitHasKerfurState = 0x08;  // kerfState + kerfFace carry valid kerfur command/face
 inline constexpr uint8_t kEntityPoseBitKerfurSpooky   = 0x10;  // the kerfur is in its spooky/kill state
-inline constexpr uint8_t kEntityPoseBitKerfurOnAtv    = 0x20;  // the kerfur rides an ATV (attached to one on the host)
 
 // The header of a pose batch datagram; N entries follow.
 struct EntityPoseBatchHeader {
