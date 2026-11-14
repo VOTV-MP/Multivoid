@@ -480,6 +480,9 @@ msgstr "[[Drop the camera or put it away to close this view.]]"
 msgid "Duplicate settings with different values"
 msgstr "[[Duplicate settings with different values]]"
 
+msgid "Each player gets hungry slower the more players are in the game (about three quarters of the normal rate for two players, just over half for four), so a larger group does not need a matching mountain of food. Stamina and sleep are unchanged. Off by default."
+msgstr "[[Each player gets hungry slower the more players are in the game (about three quarters of the normal rate for two players, just over half for four), so a larger group does not need a matching mountain of food. Stamina and sleep are unchanged. Off by default.]]"
+
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr "[[Each surface picks its own family; applies on the next frame.]]"
 
@@ -983,6 +986,9 @@ msgstr "[[Skins]]"
 
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr "[[Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak.]]"
+
+msgid "Slower hunger in larger groups"
+msgstr "[[Slower hunger in larger groups]]"
 
 msgid "Someone else has that item."
 msgstr "[[Someone else has that item.]]"

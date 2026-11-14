@@ -50,6 +50,7 @@
 #include "coop/props/roomba_sync.h"           // the robot cleaner: the host drives it and owns its switch
 #include "coop/player/puppet_identity.h"  // a puppet's touch never runs this machine's player's effects
 #include "coop/player/sleep_rest.h"
+#include "coop/player/hunger_share.h"  // the host's shared-hunger rule on this peer's own player
 #include "coop/player/nightmare_roll.h"
 #include "coop/player/level_visit.h"
 #include "coop/player/puppet_hide.h"
@@ -580,6 +581,7 @@ DisconnectStats DisconnectAll() {
     coop::level_visit::OnDisconnect();
     coop::puppet_hide::OnDisconnect();  // every copy hidden for a dream or a visit is shown
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
+    coop::hunger_share::OnDisconnect();  // this player's hunger rate is the game's again
     coop::prop_throw::OnDisconnect();  // the thrower's records of its own throws
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
     coop::wisp_tear_mirror::OnDisconnect();  // clear any armed victim-death deadline
@@ -744,6 +746,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameToSlot disk hook stays as the belt
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); coop::nightmare_roll::Tick(); coop::level_visit::Tick(); }  // the local rest-state poll + its send + the client's dream hold and its own roll; a visit to another map
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep_rest"}; coop::sleep_rest::Tick(); }  // a client's rest: the sleep watch until live, then the effects' factor and food and coffee while it lasts
+    coop::hunger_share::Tick(&session);  // the host's hunger rule on this peer's own player, once a second
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // the client's profile stream / the host's on-join push (+ the inventory_selftest=1 read-verify)
