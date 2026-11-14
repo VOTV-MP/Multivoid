@@ -7,7 +7,7 @@
 
 #include "coop/creatures/wisp_grab_hold.h"
 #include "coop/dev/atv_riders_arm.h"
-#include "coop/dev/join_hold.h"
+#include "coop/dev/atv_riders_join_hold.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -130,7 +130,7 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                 // after a failure (RULE 1: don't crutch the engine, just wait).
                 if (now < sNextSpawnAttempt[slot]) continue;
                 // The ATV riders drill's hold: the rejoined observer's driver is born after its first applied ATV stamp.
-                if (coop::dev::join_hold::BirthHeld(static_cast<uint8_t>(slot))) continue;
+                if (coop::dev::atv_riders_join_hold::BirthHeld(static_cast<uint8_t>(slot))) continue;
                 UE_LOGI("net: first remote pose on slot %d -> auto-spawning puppet", slot);
                 // The puppet wears the skin this peer announced (the Join field
                 // or a later SkinChange), any slot incl. the

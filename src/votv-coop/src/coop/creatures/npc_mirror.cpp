@@ -264,6 +264,7 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                                         payload.rotPitch, payload.rotYaw, payload.rotRoll);
         return;
     }
+    if (coop::npc_adoption::HoldFreshSpawn(payload)) return;   // parked, replayed when the drill's hold lets go
     SpawnFreshNpcMirror(classW, actorClass, payload.elementId,
                         payload.locX, payload.locY, payload.locZ,
                         payload.rotPitch, payload.rotYaw, payload.rotRoll,
@@ -490,6 +491,12 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
         UE_LOGI("npc-sync[client OnDestroy]: eid=%u -- its spawn was waiting on a class load and is cancelled; it "
                 "will never spawn", payload.elementId);
         coop::element::bind_wait::GiveUp(payload.elementId, "destroyed while its class was loading");
+        return;
+    }
+    // A spawn parked by the riders drill's bind hold ends here: it is never spawned.
+    if (coop::npc_adoption::DropHeldSpawn(payload.elementId)) {
+        UE_LOGI("npc-sync[client OnDestroy]: eid=%u -- its spawn was held and is dropped; it will never spawn",
+                payload.elementId);
         return;
     }
     // The mirror is drained from the table under the manager's mutex (released before Take

@@ -8,7 +8,7 @@
 #include "atv_seat.h"   // co-located private header: the game's own seat verb
 
 #include "coop/dev/atv_riders_arm.h"
-#include "coop/dev/join_hold.h"
+#include "coop/dev/atv_riders_join_hold.h"
 #include "coop/dev/spawn_npc.h"
 #include "coop/element/mirror_defer.h"
 #include "coop/element/mirror_managers.h"
@@ -478,7 +478,7 @@ bool HostRejoin() {
     return AwaitMark("o2_s5", t, kRejoinS);
 }
 
-// The observer's second life. Its birth and bind holds (coop/dev/join_hold) are on from the start; they are released by its
+// The observer's second life. Its birth and bind holds (coop/dev/atv_riders_join_hold) are on from the start; they are released by its
 // first applied ATV stamp, so the stamp is applied first and the owners' birth and bind are what take it.
 bool RejoinedObserver() {
     std::string t;
@@ -489,8 +489,8 @@ bool RejoinedObserver() {
             return Find(Recs(zero, DE::kSeatChange), [](const DE::Rec& r) { return OccAfter(r) == kSlotC; }) ? 1 : 0;
         }))
         return false;
-    coop::dev::join_hold::ReleaseBirth();
-    coop::dev::join_hold::ReleaseBind();
+    coop::dev::atv_riders_join_hold::ReleaseBirth();
+    coop::dev::atv_riders_join_hold::ReleaseBind();
     if (!AwaitMark("atv-key2", t, kSignalS)) return false;
     g_key.assign(t.begin(), t.end());
     if (!AwaitMark("rider-sat2", t, kSignalS)) return false;

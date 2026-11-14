@@ -17,7 +17,7 @@
 #include "atv_riders_drill_detail.h"
 
 #include "coop/dev/atv_riders_arm.h"
-#include "coop/dev/join_hold.h"
+#include "coop/dev/atv_riders_join_hold.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/rig_verdict.h"
 
@@ -222,7 +222,7 @@ bool ObserverLateSteps() {
 
 bool RunObserver() {
     std::string t;
-    if (coop::dev::join_hold::RejoinedLife()) return RejoinedObserver() && ObserverLateSteps();
+    if (coop::dev::atv_riders_join_hold::RejoinedLife()) return RejoinedObserver() && ObserverLateSteps();
     if (!ClientArrive(kObserver) || !AwaitMark("h_at_atv", t, kWalkS)) return false;
     Cur cur = Snap();
     if (!Barrier("arm1") || !ObserverSeat(cur)) return false;

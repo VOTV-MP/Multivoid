@@ -1,13 +1,13 @@
-// coop/dev/join_hold.cpp -- see coop/dev/join_hold.h.
+// coop/dev/atv_riders_join_hold.cpp -- see coop/dev/atv_riders_join_hold.h.
 
-#include "coop/dev/join_hold.h"
+#include "coop/dev/atv_riders_join_hold.h"
 
 #include "coop/config/config.h"
 #include "coop/dev/atv_riders_arm.h"
 
 #include <atomic>
 
-namespace coop::dev::join_hold {
+namespace coop::dev::atv_riders_join_hold {
 namespace {
 
 // Resolved on the first ask: both holds start held in the drill's rejoined life, free everywhere else.
@@ -41,4 +41,4 @@ void ReleaseBirth() { H().birth.store(false, std::memory_order_release); }
 
 void ReleaseBind() { H().bind.store(false, std::memory_order_release); }
 
-}  // namespace coop::dev::join_hold
+}  // namespace coop::dev::atv_riders_join_hold
