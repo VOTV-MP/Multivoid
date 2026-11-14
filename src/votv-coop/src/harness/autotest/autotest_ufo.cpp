@@ -8,7 +8,7 @@
 //         came. Past the fence it waits for the path to be applied and compares the copy's with the host's:
 //         `rig: VERDICT ufo PASS|FAIL|INVALID`. Red: ufo_path_send_off (host). The boo is not driven: the gamemode's
 //         ufo_boo needs day 21 and a night hour (mainGamemode ufo_boo, timeZ), which a fresh game never has and the
-//         gamemode has no setter for; its path sync is [?].
+//         gamemode has no setter for; its path sync is unmeasured.
 //   join  With the rig's --rejoin. The host holds a ball (its tick off, so it still flies at the joiner's ready edge),
 //         the client leaves and comes back; at the ready edge the host must have sent the joiner a path, and the
 //         rejoined client (VOTVCOOP_UFO_DRILL_REJOIN=1) must apply it and read the host's path off its copy:
