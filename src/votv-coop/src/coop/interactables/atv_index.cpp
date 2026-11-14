@@ -6,6 +6,7 @@
 
 #include "coop/interactables/atv_index_internal.h"
 #include "coop/interactables/atv_authority.h"   // ClearTable / ResetRequests: a successor actor starts from the empty table
+#include "coop/interactables/atv_rider_watch.h"  // SeedRider: a ride already under way when an entry is created
 #include "coop/interactables/atv_seat_table.h"   // Exit: an entry that ends or is replaced
 #include "coop/interactables/atv_sync_internal.h"
 
@@ -209,6 +210,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         if (gained && isHost && !KeyNamesAnAtv(f.key, "host")) continue;
         AtvEntry& e = gained ? g_atvs[f.key] : row->second;
         if (gained) e.key = f.key;
+        const bool actorChanged = gained || e.actor != f.obj;
         if (e.actor && e.actor != f.obj) {
             coop::atv_seat_table::Exit(e, "successor actor");
             coop::atv_authority::ClearTable(e);
@@ -219,6 +221,8 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         e.actor = f.obj;
         e.idx   = f.idx;
         e.world = W::WorldOf(f.obj);
+        // A kerfur already riding this ATV is the entry's rider from the start (a ride begun before the entry existed).
+        if (isHost && actorChanged) coop::atv_rider_watch::SeedRider(e);
         if (gained && isHost) AnnounceGained(f.key, e);
         if (gained && !isHost) coop::atv_host_sync::NoteAtvIndexed(f.key, f.obj);   // a state held for it is applied
     }

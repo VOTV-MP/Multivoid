@@ -180,6 +180,10 @@ bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot);
 // an unreadable component. Game thread.
 bool GetSitArrowLocation(void* atv, FVector& loc);
 
+// The ATV's rider: the kerfur its own `sittingKerfuro` names, or null when the field is empty, names a dead object, or does
+// not resolve. Game thread.
+void* GetSittingKerfur(void* atv);
+
 // The ATV's rider (`sittingKerfuro`) cleared when it is `kerfur`: a kerfur's own getOffCar leaves it set, and the ATV's
 // dismount is what clears it. Game thread.
 void ForgetSittingKerfur(void* atv, void* kerfur);

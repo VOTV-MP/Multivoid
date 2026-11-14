@@ -14,6 +14,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -164,6 +165,17 @@ void InstallWatch(Watch& w) {
 }
 
 }  // namespace
+
+void SeedRider(coop::atv_sync::AtvEntry& e) {
+    if (!IsHost() || !e.actor) return;
+    void* const kerfur = ue_wrap::atv::GetSittingKerfur(e.actor);
+    if (!kerfur) return;
+    void* parent = nullptr;
+    if (!ue_wrap::engine::GetAttachParentActor(kerfur, parent) || parent != e.actor) return;
+    const uint32_t eid = coop::element::Registry::Get().EidForActor(kerfur);
+    if (eid == coop::element::kInvalidId) return;
+    coop::atv_seat_table::SetRider(e, eid, kerfur, "seeded");
+}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);

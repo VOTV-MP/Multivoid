@@ -564,6 +564,11 @@ bool GetSitArrowLocation(void* atv, FVector& loc) {
     return sit && engine::TryGetComponentLocation(sit, loc);
 }
 
+void* GetSittingKerfur(void* atv) {
+    if (!atv || !R::IsLive(atv)) return nullptr;
+    return ReadObj(atv, g_sittingKerfuro.Get());
+}
+
 void ForgetSittingKerfur(void* atv, void* kerfur) {
     const int32_t off = g_sittingKerfuro.Get();
     if (!atv || !kerfur || !R::IsLive(atv) || off < 0) return;
