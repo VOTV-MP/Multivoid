@@ -116,7 +116,7 @@ that answer cannot run (its verbs, the dead flag's offset or the session missing
 log names the missing piece once, since the game's own end quits the whole process
 (`coop/creatures/orb_authority`). A joiner during an encounter is owed nothing: the encounter is about five seconds,
 the copy born inside it stands where the host's pose puts it, and the host's destroy takes it, as MTA replays no
-one-shot event to a joiner `[?]`. `[V]` on the rig: a client that walked into the host's orb with
+one-shot event to a joiner `[?]`. `[V]` on the rig (the probe `orb_drill` replaces): a client that walked into the host's orb with
 its view away from it was spared, and with its view toward it was caught and revived; the orb was
 gone on both peers either way.
 
@@ -229,7 +229,7 @@ wisp in flight is transient and owes nothing.
 | the engine wrappers | `ue_wrap/actors/kerfur`, `ue_wrap/actors/wisp` |
 | per-peer creatures | `coop/creatures/owner_entity_sync` |
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
-| the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `coop/dev/native_spawn_probe` (`native_spawn_probe=orbhost`, `VOTVCOOP_ORB_TOUCH`) |
+| the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `harness/autotest/autotest_orb.cpp` (`orb_drill`) |
 | roaches | `coop/creatures/roach_sync` |
 | the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |

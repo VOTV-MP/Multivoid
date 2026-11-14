@@ -797,3 +797,5 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_cargo_lift.inc"
 // The ambient UFOs' drill and red arm: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_ufo.inc"
+// The black orb's drill and red arm: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_orb.inc"

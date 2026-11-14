@@ -9,6 +9,8 @@
 
 #include "coop/creatures/orb_authority.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/npc_sync.h"
 #include "ue_wrap/actors/spawner_stamp.h"
 #include "ue_wrap/core/call.h"
@@ -31,6 +33,7 @@
 #include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <atomic>
 #include <cmath>
 #include <random>
 #include <vector>
@@ -91,8 +94,21 @@ bool CallBegin(void* orb) {
     return fn && R::CallFunction(orb, fn, nullptr);
 }
 
+// [dev red] orb_begin_send_off: the host never sends a Begin, so a client's copy runs no encounter.
+bool BeginSendOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::orb_begin_send_off);
+    return off;
+}
+
+std::atomic<uint32_t> g_beginsSent{0}, g_deathsSent{0}, g_caught{0}, g_spared{0};
+std::atomic<uint32_t> g_beginsRan{0}, g_beginsDropped{0}, g_deathsAnswered{0};
+
 void Send(void* orb, uint8_t op, int slot) {
     if (!g_session) return;
+    if (op == N::kOrbEventBegin && BeginSendOff()) {
+        UE_LOGW("orb_authority: [dev red] orb_begin_send_off -- the orb's begin is NOT sent");
+        return;
+    }
     N::OrbEventPayload p{};
     p.eid = static_cast<uint32_t>(EL::Registry::Get().EidForActor(orb));
     p.op = op;
@@ -104,6 +120,7 @@ void Send(void* orb, uint8_t op, int slot) {
     const bool ok = slot >= 0 ? g_session->SendReliableToSlot(static_cast<uint8_t>(slot), N::ReliableKind::OrbEvent, &p,
                                                               sizeof(p))
                               : g_session->SendReliable(N::ReliableKind::OrbEvent, &p, sizeof(p));
+    if (ok) (op == N::kOrbEventBegin ? g_beginsSent : g_deathsSent).fetch_add(1);
     UE_LOGI("orb_authority: HOST sent orb eid %u %hs to %hs (ok=%d)", p.eid,
             op == N::kOrbEventBegin ? "begin" : "death", slot >= 0 ? "its toucher" : "every client", ok ? 1 : 0);
 }
@@ -162,7 +179,6 @@ struct Laps {
     int32_t laps = 0;
 };
 std::vector<Laps> g_laps;
-int g_devLaps = -1;
 std::mt19937 g_rng{std::random_device{}()};
 
 Laps& LapsOf(void* spawner, uint8_t slot, float now) {
@@ -173,7 +189,7 @@ Laps& LapsOf(void* spawner, uint8_t slot, float now) {
     l.spawner.Set(spawner);
     l.slot = slot;
     l.angle = now;  // a client met mid-lap starts its count where it stands
-    l.laps = g_devLaps >= 0 ? g_devLaps : 0;
+    l.laps = 0;
     return l;
 }
 
@@ -334,6 +350,7 @@ sg::Verdict OnFinishedPre(const sg::Call& c) {
     UE_LOGI("orb_authority: HOST orb's verdict for slot %u -- %hs%hs", static_cast<unsigned>(slot),
             survives ? "spared (the orb is behind its view)" : "caught (the orb is in its view)",
             read ? "" : ", its view did not read");
+    (survives ? g_spared : g_caught).fetch_add(1);
     if (!survives) {
         if (slot == 0) AnswerCaught();
         else Send(orb, N::kOrbEventDeath, slot);
@@ -373,13 +390,16 @@ void OnDisconnect() {
     g_spawnerCls = nullptr;
     g_spawnerSet = ~0ull;
     g_saidNoRevive = false;
+    g_beginsSent = g_deathsSent = g_caught = g_spared = 0;
+    g_beginsRan = g_beginsDropped = g_deathsAnswered = 0;
 }
 
-void DevSetClientLaps(int laps) {
-    g_devLaps = laps;
-    for (Laps& l : g_laps) l.laps = laps >= 0 ? laps : l.laps;
-    UE_LOGI("orb_authority: [dev] every client's orb-spawner laps start at %d", laps);
+Counters Read() {
+    return {g_beginsSent.load(), g_deathsSent.load(), g_caught.load(), g_spared.load(),
+            g_beginsRan.load(), g_beginsDropped.load(), g_deathsAnswered.load()};
 }
+
+bool DevMintOrbAt(const ue_wrap::FVector& at) { return IsHost() && MintOrb(at) != nullptr; }
 
 sg::Verdict OnTouchPre(void* orb, void* toucher) {
     if (!orb || !toucher) return sg::Verdict::Run;
@@ -408,12 +428,14 @@ void OnEvent(const coop::net::OrbEventPayload& p) {
     if (p.op == N::kOrbEventDeath) {
         UE_LOGI("orb_authority: CLIENT the host's orb eid %u caught this player -- the run's end is answered as a death",
                 p.eid);
+        g_deathsAnswered.fetch_add(1);
         AnswerCaught();
         return;
     }
     if (p.op != N::kOrbEventBegin) return;
     void* orb = EL::LiveActorOfType(static_cast<EL::ElementId>(p.eid), EL::ElementType::Npc);
     const bool ran = orb && CallBegin(orb);
+    (ran ? g_beginsRan : g_beginsDropped).fetch_add(1);
     UE_LOGI("orb_authority: CLIENT orb eid %u's encounter began on the host -- this copy's begin ran=%d", p.eid,
             ran ? 1 : 0);
 }

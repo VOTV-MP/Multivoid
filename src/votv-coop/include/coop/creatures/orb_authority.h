@@ -12,6 +12,8 @@
 // the client's streamed eye, by the spawner's own rule, minting that client's orb as the spawner would. Game thread.
 #pragma once
 
+#include "ue_wrap/core/types.h"  // FVector
+
 #include <cstdint>
 
 namespace coop::net {
@@ -39,7 +41,16 @@ ue_wrap::script_gate::Verdict OnTouchPre(void* orb, void* toucher);
 // CLIENT: the host's OrbEvent, its length checked by the dispatcher.
 void OnEvent(const coop::net::OrbEventPayload& p);
 
-// [dev] HOST: start every client's lap count at `laps` (a drill's way to the spawn without 241 laps). -1 stops it.
-void DevSetClientLaps(int laps);
+// [dev] HOST: mint an orb at `at` the way the spawner would, enrolled and sent to every client; the touch of a body
+// standing there begins its encounter. False when it was not minted or this is not the host. Game thread.
+bool DevMintOrbAt(const ue_wrap::FVector& at);
+
+// [dev] What the lane has done, for the orb drill. HOST: Begins and Deaths sent, verdicts caught and spared. CLIENT:
+// Begins whose copy ran, Begins dropped for a copy not yet made, Deaths answered.
+struct Counters {
+    uint32_t beginsSent = 0, deathsSent = 0, caught = 0, spared = 0;
+    uint32_t beginsRan = 0, beginsDropped = 0, deathsAnswered = 0;
+};
+Counters Read();
 
 }  // namespace coop::orb_authority

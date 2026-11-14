@@ -3,25 +3,16 @@
 #include "coop/dev/native_spawn_probe.h"
 
 #include "coop/config/config.h"
-#include "coop/creatures/orb_authority.h"
-#include "coop/element/registry.h"
-#include "coop/player/players_registry.h"
-#include "coop/session/teleport_client.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/reflection_props.h"  // PropertyOffsetAndClass
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/core/ufunction_hook.h"
-#include "ue_wrap/engine/engine.h"       // TryGetActorLocation
-#include "ue_wrap/engine/engine_pawn.h"  // DestroyActor
 #include "ue_wrap/facts/function_row.h"
 
 #include <windows.h>
@@ -29,7 +20,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
-#include <vector>
 
 namespace coop::dev::native_spawn_probe {
 
@@ -39,13 +29,8 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace UH = ue_wrap::ufunction_hook;
-namespace OI = ue_wrap::object_index;
 namespace P  = ue_wrap::profile;
 namespace GT = ue_wrap::game_thread;
-
-enum class Mode : unsigned char { Off, Record, Orb, OrbHost };
-// Verify: the recorded orbs were destroyed and the spawners restored; the next Tick checks the destroy held.
-enum class Orb : unsigned char { Wait, Drive, Verify, Done };
 
 // One source seen: the names are FNames (an index compare per call, no render), rendered when a line prints.
 // A client's key carries whether the ghost sweep had run, so a source seen on both sides of it has a line for each.
@@ -59,26 +44,11 @@ constexpr int kMaxKeys = 64;
 
 constexpr uint64_t kRetryMs = 500;
 constexpr int      kTries = 10;
-constexpr uint64_t kOrbBoundMs = 60000;  // the failure bound: a spawn needs a nav point near the camera
-constexpr int32_t  kOrbLaps = 241;       // blackballSpawner_C::maxlaps; the next wrap passes it
-constexpr float    kOrbAngle = 540.f;    // past 360, so the next tick's wrap test is true
 
-Mode ModeOf() {
-    static const Mode mode = [] {
-        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::native_spawn_probe);
-        return v == "record"  ? Mode::Record
-               : v == "orb"     ? Mode::Orb
-               : v == "orbhost" ? Mode::OrbHost
-                                : Mode::Off;
-    }();
-    return mode;
+bool On() {
+    static const bool on = coop::config::ResolveEnum(::coop::config_registry::rows::native_spawn_probe) == "record";
+    return on;
 }
-
-// A spawner the drive wrote to, with the angle it held before the first write.
-struct Spawner {
-    ue_wrap::CachedObjRef ref;
-    float                 angle;
-};
 
 coop::net::Session* g_session = nullptr;
 bool     g_hookDone = false;
@@ -89,13 +59,6 @@ void*    g_gsCdo = nullptr;  // an engine CDO: lives for the process
 Key      g_keys[kMaxKeys] = {};
 int      g_nKeys = 0;
 bool     g_fullSaid = false;
-
-Orb      g_orb = Orb::Wait;
-std::vector<ue_wrap::CachedObjRef> g_orbs;  // every npc_orborb_C the record saw from a blackballSpawner_C
-std::vector<Spawner> g_spawners;
-uint64_t g_orbStartAt = 0;  // the first post-sweep Tick; 0 until then
-int32_t  g_lapsOff = -1, g_angleOff = -1;
-int      g_orbInstances = 0;
 
 uint64_t Now() { return ::GetTickCount64(); }
 
@@ -118,8 +81,7 @@ void SayKey(const char* verb, const Key& k, bool counted) {
             Render(k.src).c_str(), Render(k.fn).c_str(), k.offset, tail);
 }
 
-// The post hook: game thread, deep inside the engine spawn, so allocation-free until a new key prints or an
-// orb is held.
+// The post hook: game thread, deep inside the engine spawn, so allocation-free until a new key prints.
 // The game-thread guard is the one host_spawn_watcher's OnSpawnPost carries (coop/props/host_spawn_watcher.cpp):
 // spawning is game-thread-only, so it never misses a spawn, and it keeps the plain statics below one
 // thread's.
@@ -135,9 +97,6 @@ void OnSpawnPost(void*, void* source, void* result) {
     const bool sweep = !IsHost() && coop::npc_adoption::GhostSweepDone();
     const Key probe{R::NameOf(srcCls), R::NameOf(cls), fn, frame.codeOffset, 0, sweep};
 
-    if ((g_orb == Orb::Drive || g_orb == Orb::Verify) && R::NameEquals(probe.src, L"blackballSpawner_C") &&
-        R::NameEquals(probe.out, L"npc_orborb_C"))
-        g_orbs.emplace_back().Set(result);
     for (int i = 0; i < g_nKeys; ++i) {
         Key& k = g_keys[i];
         if (k.offset == probe.offset && k.afterSweep == probe.afterSweep && SameName(k.fn, probe.fn) &&
@@ -168,312 +127,26 @@ void TryHook() {
     const ue_wrap::facts::Resolved r = ue_wrap::facts::Resolve(kRowNb0Spawn);
     if (g_gsCdo && r && UH::InstallPostHook(r, &OnSpawnPost)) {
         g_hookDone = true;
-        UE_LOGI("[NB-0] record live mode=%s", ModeOf() == Mode::Orb       ? "orb"
-                                              : ModeOf() == Mode::OrbHost ? "orbhost"
-                                                                          : "record");
+        UE_LOGI("[NB-0] record live");
     } else if (final) {
         g_hookFailed = true;
         UE_LOGI("[NB-0] BROKEN hook BeginDeferredActorSpawnFromClass");
     }
 }
 
-// ---- the orb drive ----
-
-// Every blackballSpawner_C gets the drive's values; the angle each held before its first write is kept.
-void DriveInstance(void*, void* obj, int32_t) {
-    auto* base = static_cast<uint8_t*>(obj);
-    bool  known = false;
-    for (const Spawner& s : g_spawners) known = known || s.ref.Is(obj);
-    if (!known) {
-        g_spawners.push_back(Spawner{{}, *reinterpret_cast<float*>(base + g_angleOff)});
-        g_spawners.back().ref.Set(obj);
-    }
-    *reinterpret_cast<int32_t*>(base + g_lapsOff) = kOrbLaps;
-    *reinterpret_cast<float*>(base + g_angleOff) = kOrbAngle;
-}
-
-// The count of spawners driven.
-int DriveSpawners(void* cls) { return static_cast<int>(OI::ForEachInstance(cls, &DriveInstance, nullptr)); }
-
-// Every spawner the drive wrote to goes back: laps 0, the angle it held; one that is gone is skipped.
-void RestoreSpawners() {
-    for (const Spawner& s : g_spawners) {
-        auto* const base = static_cast<uint8_t*>(s.ref.Get());
-        if (!base) continue;
-        *reinterpret_cast<int32_t*>(base + g_lapsOff) = 0;
-        *reinterpret_cast<float*>(base + g_angleOff) = s.angle;
-    }
-    g_spawners.clear();
-}
-
-// Every orb the record held is destroyed; whether that held is read on the next Tick.
-void DestroyOrbs() {
-    for (const ue_wrap::CachedObjRef& o : g_orbs)
-        if (o.Alive()) ue_wrap::engine::DestroyActor(o.Raw());
-}
-
-// laps is an int and angle a float, by their reflected types; false (said) when the dump no longer holds.
-bool ResolveOrbOffsets(void* cls) {
-    std::wstring lapsType, angleType;
-    const bool found = R::PropertyOffsetAndClass(cls, L"laps", g_lapsOff, lapsType) &&
-                       R::PropertyOffsetAndClass(cls, L"angle", g_angleOff, angleType);
-    if (found && g_lapsOff >= 0 && g_angleOff >= 0 && lapsType == L"IntProperty" && angleType == L"FloatProperty")
-        return true;
-    UE_LOGI("[NB-0] orb BROKEN blackballSpawner_C laps=%ls@%d angle=%ls@%d", lapsType.c_str(), g_lapsOff,
-            angleType.c_str(), g_angleOff);
-    return false;
-}
-
-// The run's end: the answer when there is one (a broken instrument has none), then the done line.
-void FinishOrb(const char* answer) {
-    if (answer) UE_LOGI("[NB-0] orb native %s instances=%d", answer, g_orbInstances);
-    UE_LOGI("[NB-0] orb DONE");
-    g_orb = Orb::Done;
-    g_orbs.clear();
-}
-
-// An orb the destroy did not take is said, then the run ends on the answer.
-void ConcludeSpawned() {
-    for (const ue_wrap::CachedObjRef& o : g_orbs) {
-        if (!o.Alive()) continue;
-        UE_LOGE("[NB-0] orb NOT-CONTAINED");
-        break;
-    }
-    FinishOrb("spawned");
-}
-
-void TickOrb() {
-    if (g_orb == Orb::Done || IsHost() || !coop::npc_adoption::GhostSweepDone()) return;
-    if (g_orb == Orb::Verify) {
-        ConcludeSpawned();
-        return;
-    }
-    if (!g_orbStartAt) g_orbStartAt = Now();
-    void* const cls = OI::ClassByName(L"blackballSpawner_C");
-    if (cls && g_orb == Orb::Wait) {
-        if (!ResolveOrbOffsets(cls)) {
-            FinishOrb(nullptr);
-            return;
-        }
-        g_orb = Orb::Drive;
-        UE_LOGI("[NB-0] orb drive start");
-    }
-    if (!g_orbs.empty()) {
-        // The record fired inside the spawn call, before the Blueprint finished the actor; this Tick is after the
-        // whole graph run, so each orb is finished and its 1 s delay has not begun to run out.
-        DestroyOrbs();
-        RestoreSpawners();
-        g_orb = Orb::Verify;
-        return;
-    }
-    if (Now() - g_orbStartAt >= kOrbBoundMs) {
-        RestoreSpawners();
-        FinishOrb("not-spawned");
-        return;
-    }
-    if (cls) g_orbInstances = DriveSpawners(cls);
-}
-
-// orbhost: the HOST drives its spawners once a client has had time to join, keeps the orbs born kOrbHostKeepMs so the
-// clients' copies can arrive (each client logs its own: "npc-sync[client OnSpawn]: materialized mirror ...
-// class='npc_orborb_C'"), then destroys them before the event's own end.
-constexpr uint64_t kOrbHostStartMs = 150000;
-constexpr uint64_t kOrbHostKeepMs = 30000;
-// VOTVCOOP_ORB_TOUCH=away|toward: a client walks into the host's orb and holds its view away from it or toward it
-// until the encounter ends; the host then waits for the orb's own verdict (its destroy) instead of destroying it.
-constexpr uint64_t kOrbTouchKeepMs = 90000;
-uint64_t g_orbHostBornAt = 0;
-
-const std::string& TouchMode() {
-    static const std::string m = coop::config::ReadEnv("VOTVCOOP_ORB_TOUCH");
-    return m;
-}
-
-const bool& CircleMode() {
-    static const bool on = coop::config::ReadEnv("VOTVCOOP_ORB_CIRCLE") == "1";
-    return on;
-}
-
-void TickOrbHost() {
-    if (g_orb == Orb::Done || !IsHost() || CircleMode()) return;
-    if (!g_orbStartAt) g_orbStartAt = Now();
-    if (Now() - g_orbStartAt < kOrbHostStartMs) return;
-    if (g_orb == Orb::Verify) {
-        if (!TouchMode().empty()) {
-            bool alive = false;
-            for (const ue_wrap::CachedObjRef& o : g_orbs) alive = alive || o.Alive();
-            if (!alive) {
-                UE_LOGI("[NB-0] orbhost the orb is gone %llu ms after its birth -- its encounter ended",
-                        static_cast<unsigned long long>(Now() - g_orbHostBornAt));
-                FinishOrb("judged");
-                return;
-            }
-            if (Now() - g_orbHostBornAt < kOrbTouchKeepMs) return;
-            UE_LOGI("[NB-0] orbhost the orb outlived the touch window -- destroyed now");
-            DestroyOrbs();
-            FinishOrb("unjudged");
-            return;
-        }
-        if (Now() - g_orbHostBornAt < kOrbHostKeepMs) return;
-        int alive = 0;
-        for (const ue_wrap::CachedObjRef& o : g_orbs) alive += o.Alive() ? 1 : 0;
-        UE_LOGI("[NB-0] orbhost kept %zu orb(s) %llu ms, %d alive -- destroyed now", g_orbs.size(),
-                static_cast<unsigned long long>(Now() - g_orbHostBornAt), alive);
-        DestroyOrbs();
-        FinishOrb("host-spawned");
-        return;
-    }
-    void* const cls = OI::ClassByName(L"blackballSpawner_C");
-    if (cls && g_orb == Orb::Wait) {
-        if (!ResolveOrbOffsets(cls)) {
-            FinishOrb(nullptr);
-            return;
-        }
-        g_orb = Orb::Drive;
-        UE_LOGI("[NB-0] orbhost drive start");
-    }
-    if (!g_orbs.empty()) {
-        RestoreSpawners();
-        g_orbHostBornAt = Now();
-        ue_wrap::FVector at{};
-        if (void* o = g_orbs.front().Get()) ue_wrap::engine::TryGetActorLocation(o, at);
-        UE_LOGI("[NB-0] orbhost an orb was born at (%.0f,%.0f,%.0f); kept %llu ms for the clients", at.X, at.Y, at.Z,
-                static_cast<unsigned long long>(kOrbHostKeepMs));
-        g_orb = Orb::Verify;
-        return;
-    }
-    if (Now() - g_orbStartAt >= kOrbHostStartMs + kOrbBoundMs) {
-        RestoreSpawners();
-        FinishOrb("not-spawned");
-        return;
-    }
-    if (cls) g_orbInstances = DriveSpawners(cls);
-}
-
-// CLIENT, VOTVCOOP_ORB_TOUCH: once a copy of the host's orb exists, walk into it and hold the view.
-ue_wrap::CachedObjRef g_touchOrb;
-bool g_touchPlaced = false;
-uint64_t g_touchSaidAt = 0;
-
-void FindOrbCopy(void*, void* obj, int32_t) {
-    if (g_touchOrb.Alive() || !obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-    if (coop::element::Registry::Get().EidForActor(obj) == coop::element::kInvalidId) return;  // the host's copy only
-    g_touchOrb.Set(obj);
-}
-
-void TickOrbTouchClient() {
-    if (TouchMode().empty() || IsHost()) return;
-    if (!g_touchOrb.Alive()) {
-        if (g_touchPlaced) {
-            g_touchPlaced = false;
-            UE_LOGI("[NB-0] orbtouch the orb's copy is gone");
-        }
-        if (void* cls = OI::ClassByName(L"npc_orborb_C")) OI::ForEachInstance(cls, &FindOrbCopy, nullptr);
-        return;
-    }
-    void* const orb = g_touchOrb.Get();
-    void* const me = coop::players::Registry::Get().Local();
-    ue_wrap::FVector at{}, mine{};
-    if (!me || !ue_wrap::engine::TryGetActorLocation(orb, at) || !ue_wrap::engine::TryGetActorLocation(me, mine)) return;
-    const bool toward = TouchMode() == "toward";
-    if (!g_touchPlaced) {
-        g_touchPlaced = true;
-        coop::teleport_client::ApplyLocally({at.X, at.Y, at.Z + 20.f, 0.f, 0.f, 0.f});
-        UE_LOGI("[NB-0] orbtouch walked into the orb's copy at (%.0f,%.0f,%.0f), view %hs", at.X, at.Y, at.Z,
-                toward ? "toward it" : "away from it");
-        return;
-    }
-    // Face it from 3 m off its centre so the view is defined, toward or away.
-    const ue_wrap::FVector cam = ue_wrap::engine::GetCameraLocation();
-    const float dx = at.X - cam.X, dy = at.Y - cam.Y, dz = at.Z - cam.Z;
-    const float yaw = std::atan2(dy, dx) * 57.2958f + (toward ? 0.f : 180.f);
-    const float pitch = (toward ? 1.f : -1.f) * std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * 57.2958f;
-    ue_wrap::engine::SetControlRotation(ue_wrap::engine::GetController(me), {pitch, yaw, 0.f});
-    if (Now() - g_touchSaidAt > 2000) {
-        g_touchSaidAt = Now();
-        UE_LOGI("[NB-0] orbtouch holding the view %hs (yaw %.0f)", toward ? "toward the orb" : "away from the orb", yaw);
-    }
-}
-
-// VOTVCOOP_ORB_CIRCLE=1 with native_spawn_probe=orbhost: the HOST starts every client's lap count at the spawner's
-// maxlaps (coop/creatures/orb_authority's dev knob), and a CLIENT circles its copy of the first blackball spawner
-// 6 m out, 10 degrees each 100 ms, the way the spawner counts a lap, for two turns after its world is ready. The host
-// then mints that client's orb, which every peer logs as it would any orb.
-bool     g_circlePreset = false;
-uint64_t g_circleStartAt = 0;
-uint64_t g_circleStepAt = 0;
-int      g_circleSteps = 0;
-ue_wrap::CachedObjRef g_circleSpawner;
-
-void FindSpawnerCopy(void*, void* obj, int32_t) {
-    if (!g_circleSpawner.Alive() && obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
-        g_circleSpawner.Set(obj);
-}
-
-void TickCircle() {
-    if (!CircleMode()) return;
-    if (IsHost()) {
-        if (!g_circlePreset) {
-            g_circlePreset = true;
-            coop::orb_authority::DevSetClientLaps(240);
-        }
-        return;
-    }
-    if (!coop::npc_adoption::GhostSweepDone() || g_circleSteps >= 72) return;
-    if (!g_circleStartAt) g_circleStartAt = Now();
-    if (Now() - g_circleStartAt < 20000 || Now() - g_circleStepAt < 100) return;
-    g_circleStepAt = Now();
-    if (!g_circleSpawner.Alive())
-        if (void* cls = OI::ClassByName(L"blackballSpawner_C")) OI::ForEachInstance(cls, &FindSpawnerCopy, nullptr);
-    void* const sp = g_circleSpawner.Get();
-    ue_wrap::FVector at{};
-    if (!sp || !ue_wrap::engine::TryGetActorLocation(sp, at)) return;
-    const float b = static_cast<float>(g_circleSteps) * 10.f * 3.14159265f / 180.f;
-    coop::teleport_client::ApplyLocally({at.X + 600.f * std::cos(b), at.Y + 600.f * std::sin(b), at.Z + 100.f, 0.f,
-                                         static_cast<float>(g_circleSteps) * 10.f + 90.f, 0.f});
-    if (g_circleSteps % 9 == 0)
-        UE_LOGI("[NB-0] orbcircle step %d of 72 round the spawner at (%.0f,%.0f,%.0f)", g_circleSteps, at.X, at.Y, at.Z);
-    ++g_circleSteps;
-}
-
 }  // namespace
 
 void Install(coop::net::Session* session) {
-    if (ModeOf() == Mode::Off) return;
+    if (!On()) return;
     g_session = session;
     TryHook();
 }
 
-void Tick(coop::net::Session* session) {
-    if ((ModeOf() != Mode::Orb && ModeOf() != Mode::OrbHost) || !g_hookDone) return;
-    g_session = session;
-    if (ModeOf() == Mode::OrbHost) {
-        TickOrbHost();
-        TickOrbTouchClient();
-        TickCircle();
-    }
-    else TickOrb();
-}
-
 void OnDisconnect() {
-    if (ModeOf() == Mode::Off) return;
+    if (!On()) return;
     for (int i = 0; i < g_nKeys; ++i) SayKey("total", g_keys[i], /*counted=*/true);
     g_nKeys = 0;
     g_fullSaid = false;
-    if (g_orb == Orb::Drive) {
-        // An abandoned drive leaves nothing: the spawners are restored and the orbs it recorded destroyed.
-        DestroyOrbs();
-        RestoreSpawners();
-        g_orbs.clear();
-        UE_LOGI("[NB-0] orb ABANDONED");
-        g_orb = Orb::Wait;
-    } else if (g_orb == Orb::Verify) {
-        ConcludeSpawned();
-    }
-    if (g_orb == Orb::Wait) {  // a session that ended before or during the drive starts the next one's clock afresh
-        g_orbStartAt = 0;
-        g_orbInstances = 0;
-    }
     // Cleared until the next session's Install sets it; the record also returns while no session runs.
     g_session = nullptr;
 }
