@@ -119,6 +119,10 @@ bool ReadCharacterIsFalling(void* actor);
 // save test names "not in mid air". False, `walking` untouched, on a null or dead actor or CMC.
 bool ReadCharacterIsWalking(void* actor, bool& walking);
 
+// `actor`'s CharacterMovement as it stands: MovementMode (MOVE_None 0, Walking 1, NavWalking 2, Falling 3, ...) and
+// Velocity (world, cm/s). False, outs untouched, on a null or dead actor or CMC.
+bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity);
+
 // ---- kerfur head-look ----
 // The kerfur AnimBP (shared by the NPCs and the player puppets) aims the head and neck at its
 // `lookAt` member (a world FVector), which its update recomputes from the local camera

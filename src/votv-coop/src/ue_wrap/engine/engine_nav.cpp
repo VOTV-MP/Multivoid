@@ -53,6 +53,17 @@ void EnsurePawn() {
 
 }  // namespace
 
+bool ReadMoveStatus(void* pawn, uint8_t* out) {
+    void* controller = GetController(pawn);
+    if (!controller || !out || !R::IsLive(controller)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(controller), L"GetMoveStatus");
+    if (!fn) return false;
+    ParamFrame pf(fn);
+    if (!pf.valid() || !Call(controller, pf)) return false;
+    *out = pf.Get<uint8_t>(L"ReturnValue");
+    return true;
+}
+
 bool ProjectToNav(void* worldContext, const FVector& point, const FVector& extent, FVector* out) {
     EnsureNav();
     if (!g_navCdo || !g_project || !worldContext || !out) return false;

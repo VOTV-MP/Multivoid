@@ -201,7 +201,8 @@ bool RunHost() {
     cur = Snap();
     if (!Barrier("arm9") || !HostDestroys()) return false;
     if (!AwaitMark("c_done", t, kSignalS) || !AwaitMark("o_done", t, kSignalS)) return false;
-    End('P', "every step decided on its events");
+    End('P', Control() ? "control: every step decided on its events, the host's drive with its kerfur idle and off the ATV"
+                       : "every step decided on its events");
     return true;
 }
 

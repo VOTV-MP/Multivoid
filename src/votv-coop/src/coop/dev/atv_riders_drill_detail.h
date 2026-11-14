@@ -5,6 +5,7 @@
 #pragma once
 
 #include "coop/dev/atv_drive.h"
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/interactables/atv_drill_events.h"
 
 #include "harness/autotest/peer_signal.h"
@@ -119,6 +120,11 @@ bool HostRejoin();                   // waits the observer's leaving and return;
 bool LeaveHost(const Cur& cur);      // step 6
 bool HostSits(const Cur& cur);       // step 7: the host sits (its kerfur came off a client's ride first), then the two reads
 bool HostDriveSeated();              // step 7's second leg on the host: its own 600 cm drive, then the read at its end
+// The control run (`drive_control`): step 7 is the green until the host sits, but the host's kerfur takes no seat, so leg B
+// measures the host driving the same ATV with no kerfur on it. The ATV's own sit invites every kerfur whose state is 0
+// (follow), so the control sets the host's kerfur idle through the game's own radial verb before the host sits.
+inline bool Control() { return coop::dev::atv_riders_arm::Is("drive_control"); }
+bool HostKerfurIdle();               // the control's act: the host's kerfur takes the game's 'idle' verb; false when it ended
 // Step 7's read on this peer: the kerfur of g_eid stands within kRigidCm of the ATV's sitarrow. `leg` 'a' is the host's next block
 // after the kerfur's seat, 'b' the end of the host's drive. Says the reading, leaves it as a mark for the others, and FAILs
 // `host_kerfur_off_seat` naming this peer, the offsets, and the readings the other peers have already left. False when it ended.

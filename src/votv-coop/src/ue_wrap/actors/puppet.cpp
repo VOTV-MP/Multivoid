@@ -391,16 +391,16 @@ void DriveKerfurBodyYaw(void* npcActor, float yaw) {
     ue_wrap::engine::SetComponentWorldRotation(mesh, ue_wrap::FRotator{0.f, yaw, 0.f});
 }
 
+// UMovementComponent::Velocity. The offset is hardcoded here rather than promoted into sdk_profile.h so that every raw
+// memory access stays inside ue_wrap; coop/ callers see only the typed API.
+static constexpr size_t kUMovementComponent_Velocity = 0xC4;
+
 void DriveCharacterMovement(void* puppetActor,
                             const FVector& worldVelocity,
                             bool inAir) {
     if (!puppetActor || !R::IsLive(puppetActor)) return;
     void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
     if (!cmc || !R::IsLive(cmc)) return;
-    // UMovementComponent::Velocity. The offset is hardcoded here rather than promoted into
-    // sdk_profile.h so that every raw memory write stays inside ue_wrap; coop/ callers see only
-    // this typed API.
-    constexpr size_t kUMovementComponent_Velocity = 0xC4;
     WriteAt<FVector>(cmc, kUMovementComponent_Velocity, worldVelocity);
     const uint8_t mm = inAir ? P::off::kMOVE_Falling : uint8_t{1};  // MOVE_Walking
     WriteAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode, mm);
@@ -442,6 +442,15 @@ bool ReadCharacterIsWalking(void* actor, bool& walking) {
     void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
     if (!cmc || !R::IsLive(cmc)) return false;
     walking = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode) == P::off::kMOVE_Walking;
+    return true;
+}
+
+bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity) {
+    if (!actor || !R::IsLive(actor)) return false;
+    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
+    if (!cmc || !R::IsLive(cmc)) return false;
+    mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
+    velocity = ReadAt<FVector>(cmc, kUMovementComponent_Velocity);
     return true;
 }
 

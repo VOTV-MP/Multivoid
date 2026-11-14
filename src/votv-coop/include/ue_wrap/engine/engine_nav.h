@@ -8,6 +8,7 @@
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/hit_result.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace ue_wrap::engine {
@@ -24,6 +25,11 @@ bool ProjectToNav(void* worldContext, const FVector& point, const FVector& exten
 // APawn::AddMovementInput (resolved on Pawn): accumulates ControlInputVector, which the CMC
 // consumes each tick, so re-issue it every frame.
 void AddMovementInput(void* pawn, const FVector& worldDir, float scale, bool force);
+
+// The path-following status of the AI controller that drives `pawn` (AAIController::GetMoveStatus), the engine's
+// EPathFollowingStatus byte: Idle 0, Waiting 1, Paused 2, Moving 3. False when the pawn has no controller or the
+// function does not resolve or dispatch. Game thread.
+bool ReadMoveStatus(void* pawn, uint8_t* out);
 
 // The limits a walking character moves under, from its CharacterMovement: the lowest floor normal
 // Z it stands on (WalkableFloorZ) and the highest step it climbs. False when a read fails.

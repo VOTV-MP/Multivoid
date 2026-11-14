@@ -268,11 +268,15 @@ bool HostSits(const Cur& cur) {
             return k.exists && !k.parentIsAtv ? 1 : 0;
         }))
         return false;
+    const bool control = Control();
+    if (control && !HostKerfurIdle()) return false;
     int invited = -1;
     if (!SitLocal(invited)) {
         Invalid("the host's seat verb did not seat the host");
         return false;
     }
+    // The control's kerfur takes no seat: the host's drive is read with no kerfur on the ATV.
+    if (control) return HostDriveSeated();
     const int32_t tag = Tag();
     uint32_t factOrd = 0;
     if (!PollFn("the host's kerfur's seat", kRideS, [&]() -> int {
@@ -316,6 +320,8 @@ bool WatchHostSeat(Role me, const Cur& cur) {
         }))
         return false;
     std::string t;
+    // The control's host kerfur takes no seat: the clients wait for the end of the host's drive and read no kerfur.
+    if (Control()) return AwaitMark("drive7-done", t, kDriveS + kSignalS);
     if (!AwaitMark("rider-sat3", t, kRideS) || !ParseMark(t, "rider-sat3", g_eid)) return false;
     const uint32_t eid = g_eid;
     if (!PollFn("the kerfur's ride on the host's seat", kRideS, [&]() -> int {
@@ -352,14 +358,15 @@ bool WatchExit(Role me, const Cur& cur) {
     if (!AwaitMark("h_destroyed", t, kSignalS)) return false;
     const int32_t tag = Tag();
     const uint32_t eid = g_eid;
+    const bool control = Control();   // no kerfur rides the host's ATV in the control, so no ride ends with it
     return PollFn("the ATV's exit", kEventS, [&]() -> int {
         const bool gone = EntryGone();
         const auto seats = Recs(cur, DE::kSeatChange);
         const bool exit = Find(seats, [&](const DE::Rec& r) { return r.i3 == tag && OccAfter(r) == 0xFF; }) != nullptr;
         const bool body = Find(Recs(cur, DE::kBodySeat), [&](const DE::Rec& r) { return ReleasedRec(r, kSlotH); }) != nullptr;
-        const bool ride = Find(Recs(cur, DE::kRide), [&](const DE::Rec& r) {
-                              return static_cast<uint32_t>(r.i0) == eid && r.i1 == 0;
-                          }) != nullptr;
+        const bool ride = control || Find(Recs(cur, DE::kRide), [&](const DE::Rec& r) {
+                                         return static_cast<uint32_t>(r.i0) == eid && r.i1 == 0;
+                                     }) != nullptr;
         if (exit && body && ride) {
             StepPass(9, std::string("the ATV's exit released the host's body and ended the kerfur's ride (") + RoleName(me) + ")");
             return 1;

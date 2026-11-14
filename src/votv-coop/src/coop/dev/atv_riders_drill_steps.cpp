@@ -76,6 +76,18 @@ bool ReadRoot(FVector& out) {
     return ok;
 }
 
+constexpr uint8_t kStateIdle = 1;   // enum_kerfurCommand: idle (0 follows the player, 6 goes to an ATV)
+
+// The host's kerfur, as the drive line reads it: its distance to the ATV's sitarrow (cm, -1 unread), its CharacterMovement's
+// mode and speed (-1 unread), its command state (-1 unread), what its last move() went for, and the path-following status
+// of its AI controller (EPathFollowingStatus, -1 unread).
+enum class Target { Unread, None, Host, Other };
+struct KerfurDrive {
+    float sitarrowCm = -1.f, speed = -1.f;
+    int mode = -1, state = -1, path = -1;
+    Target target = Target::Unread;
+};
+
 // What step 7's drive leg reads of the host's ATV in one game-thread hop, and the kerfur's seat beside it. `ok` is false when the
 // root or the up vector does not read; `speed` is the root body's linear speed (cm/s), -1 when unread; `occupant` and `syncer`
 // are the table's slots, -1 when the table does not read.
@@ -85,7 +97,33 @@ struct DriveRead {
     float upZ = 0.f, speed = -1.f, fuel = 0.f;
     bool brake = false, turbo = false, kerfurOn = false;
     int occupant = -1, syncer = -1;
+    KerfurDrive kerfur;
 };
+
+// The kerfur of g_eid on this peer (the host's own, on the host), or null. Game thread.
+void* KerfurActor() {
+    coop::element::Npc* npc = coop::element::NpcMirrors().Get(g_eid);
+    void* actor = npc ? npc->LiveActor() : nullptr;
+    return actor && K::IsKerfurActor(actor) ? actor : nullptr;
+}
+
+void ReadKerfurDrive(KerfurDrive& k) {
+    OnGt([&] {
+        void* actor = KerfurActor();
+        if (!actor) return;
+        uint8_t mode = 0, state = 0, face = 0, status = 0;
+        bool spooky = false;
+        FVector vel{};
+        if (ue_wrap::puppet::ReadCharacterMovement(actor, mode, vel)) {
+            k.mode = mode;
+            k.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y + vel.Z * vel.Z);
+        }
+        if (K::ReadKerfurState(actor, state, spooky, face)) k.state = state;
+        void* target = K::ReadTargetActor(actor);
+        k.target = !target ? Target::None : target == AD::Me() ? Target::Host : Target::Other;
+        if (E::ReadMoveStatus(actor, &status)) k.path = status;
+    });
+}
 
 DriveRead ReadDrive() {
     DriveRead d;
@@ -107,16 +145,31 @@ DriveRead ReadDrive() {
             d.syncer = tv.syncerSlot;
         }
     });
-    d.kerfurOn = ReadKerfur(g_eid).parentIsAtv;
+    const KerfurRead kerfur = ReadKerfur(g_eid);
+    d.kerfurOn = kerfur.parentIsAtv;
+    d.kerfur.sitarrowCm = kerfur.sitarrowCm;
+    ReadKerfurDrive(d.kerfur);
     return d;
 }
 
+// The status of the path following as the line says it: Idle and Moving by name, anything else (waiting for a path, paused)
+// or unread as `?`.
+const char* PathName(int status) { return status == 0 ? "idle" : status == 3 ? "moving" : "?"; }
+
+const char* TargetName(Target t) {
+    return t == Target::None ? "none" : t == Target::Host ? "host" : t == Target::Other ? "other" : "?";
+}
+
 std::string DriveText(const DriveRead& d) {
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "root=(%.0f,%.0f,%.0f) upZ=%.2f v=%.0f fuel=%.1f brake=%d turbo=%d seat=%d/%d kerfur=%s",
+    char buf[384];
+    std::snprintf(buf, sizeof(buf),
+                  "root=(%.0f,%.0f,%.0f) upZ=%.2f v=%.0f fuel=%.1f brake=%d turbo=%d seat=%d/%d kerfur=%s kd=%.0f kmode=%d kv=%.0f "
+                  "kstate=%d ktarget=%s kpath=%s",
                   static_cast<double>(d.root.X), static_cast<double>(d.root.Y), static_cast<double>(d.root.Z),
                   static_cast<double>(d.upZ), static_cast<double>(d.speed), static_cast<double>(d.fuel), d.brake ? 1 : 0,
-                  d.turbo ? 1 : 0, d.occupant, d.syncer, d.kerfurOn ? "on" : "off");
+                  d.turbo ? 1 : 0, d.occupant, d.syncer, d.kerfurOn ? "on" : "off", static_cast<double>(d.kerfur.sitarrowCm),
+                  d.kerfur.mode, static_cast<double>(d.kerfur.speed), d.kerfur.state, TargetName(d.kerfur.target),
+                  PathName(d.kerfur.path));
     return buf;
 }
 
@@ -528,7 +581,8 @@ bool DriverDrive() {
 }
 
 // Step 7's second leg on the host: it drives its own ATV kDriveCm with its kerfur riding, lets the throttle go, reads where its
-// kerfur stands (JudgeKerfurSeat) and says `drive7-done` for the clients' reads.
+// kerfur stands (JudgeKerfurSeat) and says `drive7-done` for the clients' reads. In the control the kerfur is idle and off the
+// ATV, and the leg ends on the 600 cm alone.
 bool HostDriveSeated() {
     const DriveRead first = ReadDrive();
     if (!first.ok) {
@@ -570,8 +624,41 @@ bool HostDriveSeated() {
     }, [] { return "at the bound: " + SayDrive(); });
     if (arrived) SayDrive();
     AD::DriveOff(g_key);
-    if (!arrived || !JudgeKerfurSeat('b', "at the end of its own 600 cm drive")) return false;
+    if (!arrived) return false;
+    if (Control()) {
+        // The control measures the drive with no kerfur on the ATV: a kerfur that rode anyway says nothing about it.
+        if (ReadKerfur(g_eid).parentIsAtv) {
+            Invalid("control: the host's kerfur rode the ATV although it was idle");
+            return false;
+        }
+        StepPass(7, "control: the host drove " + Num("%.0f", kDriveCm) + " cm with its kerfur idle and off the ATV");
+    } else if (!JudgeKerfurSeat('b', "at the end of its own 600 cm drive")) {
+        return false;
+    }
     PS::Mark("drive7-done");
+    return true;
+}
+
+bool HostKerfurIdle() {
+    bool ran = false;
+    OnGt([&] {
+        void* kerfur = KerfurActor();
+        void* me = AD::Me();
+        ran = kerfur && me && K::RunActionName(kerfur, me, L"idle");
+    });
+    if (!ran) {
+        Invalid("control: the game's 'idle' verb did not run on the host's kerfur");
+        return false;
+    }
+    // The verb is recorded by the radial's watch and run on the next net-pump tick (coop/creatures/kerfur_command), so the
+    // state is read until it shows.
+    if (!PollFn("the host's kerfur idle after the 'idle' verb", kEventS, [&]() -> int {
+            KerfurDrive k;
+            ReadKerfurDrive(k);
+            return k.state == kStateIdle ? 1 : 0;
+        }))
+        return false;
+    UE_LOGI("atv-riders: step 7 control: the host's kerfur eid %u took the game's 'idle' verb before the host sat", g_eid);
     return true;
 }
 
