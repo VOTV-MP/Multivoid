@@ -16,7 +16,7 @@
 ; sentence is the legend, so write titles the way they read in it. Every other line is one
 ; name, shown as written. A line starting with `;` is a comment.
 
-revision = 13
+revision = 14
 title = Multivoid would like to thank
 
 [testers] #9EEAB3
@@ -35,33 +35,24 @@ Rains
 Raxy0
 Violet
 
-[bug reporters] #7FD4FF
-AEDONIA
-BitorBit
-chocelite
-Clark The 1st
-decodinatorX
-dimas9999555522227777
-elijah
-Extra5
-FockuManTV
-Kawaii neko Frans
-MarchMotts
-Matus
-RealBocik
-SeaTurtleMan
-Shina
-SirWilliam
-skishel
-Slingwolf
-SmugCat
-Sprocket
-Tentoni.
-thewittyrobin
-Uncle Death
-ZachThePillow
-Zelkova
-zvanie Z
+[bug reporters of b208] #7FD4FF
+Masanori-Light
+how2Bboss
+BingusSS13
+AwazonDotCom
+SEXER-7
+MusyaV2
+mega-maks2011
+noisey47
+GenericGamer16
+KingMapache
+Coffeelosopher
+Dman1213
+DecaffPrince
+Exquizity
+MisterKott
+Guardian023
+darevaliu
 
 [contributors] #C9A0FF
 AquaFishhh
