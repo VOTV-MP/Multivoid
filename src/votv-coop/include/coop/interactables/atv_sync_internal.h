@@ -1,5 +1,5 @@
 // coop/interactables/atv_sync_internal.h -- the per-ATV record, shared by the ATV lane's
-// translation units. atv_sync.cpp owns the map of these and every structural change to it;
+// translation units. atv_sync.cpp owns the map of these and every structural change to it, atv_stamp.cpp the stamp half;
 // atv_authority.cpp judges over it (the host's table: the seat and the syncer) and writes those
 // fields; atv_corrector.cpp mutates the fields of ONE entry when a packet arrives, and
 // atv_runtime_mirror.cpp asks for its two changes through the calls at the end, and atv_index.cpp
@@ -179,6 +179,17 @@ void ResolveSpawn(const std::wstring& key, const coop::net::AtvSpawnPayload& pay
 // spawns, never a world ATV): the one carry read the lane's Tick and the host's takeover test share. False for a null
 // player or actor. Game thread.
 bool IsLocalGrabber(void* actor, void* localPlayer);
+
+// atv_stamp.cpp's surface for atv_sync.cpp's Tick and OnReliable: ReadPayload fills an AtvStatePayload from a live
+// read of the entry's actor (false if the transform read fails; `occupantSlot` and `syncerSlot` are the stamp the block
+// carries, `grabbed` marks the sender's grav hand as holding it); ReadHostTraps is the host's read of each entry's own
+// trap, a change owing a stamp; SendToReadyClients sends one block to every world-ready client but `skipSlot`;
+// SendStamps is the host's stamped block for each entry whose table changed. Game thread.
+bool ReadPayload(AtvEntry& e, const std::wstring& key, uint8_t occupantSlot, uint8_t syncerSlot,
+                 bool adopt, coop::net::AtvStatePayload& p, bool grabbed = false);
+void ReadHostTraps();
+void SendToReadyClients(coop::net::Session& s, const coop::net::AtvStatePayload& p, int skipSlot);
+void SendStamps(coop::net::Session& s, uint64_t nowMs);
 
 // atv_stream_gates.cpp: the stream's per-block gates, each a function of one entry and its actor and none touching the
 // lane's map. StampHostTrap sets a block's trap bit from the host's own copy; TakeStampTrap is the client's take of

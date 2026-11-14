@@ -155,63 +155,6 @@ bool IsLocalSyncer(const AtvEntry& e, uint8_t localSlot) {
     return e.pendingSeq != 0 && e.pendingAction != AU::AtvRequest::Leave;
 }
 
-// An AtvStatePayload from a live read; false if the transform read fails. `grabbed` marks the
-// sender's grav hand as holding it (bit 2); `occupantSlot` and `syncerSlot` are the table's values,
-// the stamp a host block carries. The control bits are the entry's (BlockControlBits): the host's block of an ATV a client
-// syncs carries that client's last horn level.
-bool ReadPayload(AtvEntry& e, const std::wstring& key, uint8_t occupantSlot, uint8_t syncerSlot,
-                 bool adopt, coop::net::AtvStatePayload& p, bool grabbed = false) {
-    void* const actor = e.actor;
-    const auto* session = g_session.load(std::memory_order_acquire);
-    const bool host = session && session->role() == coop::net::Role::Host;
-    FVector loc; FRotator rot;
-    if (!A::GetRootTransform(actor, loc, rot)) return false;
-    FVector lin{}, ang{};
-    // Best effort: a failed read leaves zeros, the honest value and also a body at rest.
-    ue_wrap::engine::GetActorRootPhysicsVelocity(actor, lin, ang);
-    std::memset(&p, 0, sizeof(p));
-    WireKeyFromString(key, p.key);
-    p.x = loc.X; p.y = loc.Y; p.z = loc.Z;
-    p.pitch = rot.Pitch; p.yaw = rot.Yaw; p.roll = rot.Roll;
-    p.linVelX = lin.X; p.linVelY = lin.Y; p.linVelZ = lin.Z;
-    p.angVelX = ang.X; p.angVelY = ang.Y; p.angVelZ = ang.Z;
-    p.occupantSlot = occupantSlot;
-    p.syncerSlot   = syncerSlot;
-    uint8_t sb = BlockControlBits(e, host && syncerSlot != 0);
-    if (A::IsDriven(actor)) sb |= 0x1;
-    if (grabbed)            sb |= 0x4;
-    p.stateBits = sb;
-    p.adopt = adopt ? 1 : 0;
-    // The condition block (tires, spare, dirt, fuel, health), filled at this one site so the
-    // syncer, the idle syncer and the adopt seed cannot fork; a failed read leaves it zeroed
-    // with tiresValid 0, and receivers touch nothing.
-    coop::atv_condition_sync::FillPayload(actor, p);
-    // Its vitals ack: the host's own blocks carry its copy's current state sequence, a client's the newest state whose
-    // vitals it applied (atv_host_sync.h).
-    p.ackSeq = host ? coop::atv_host_sync::CurrentStateSeq(key) : coop::atv_host_sync::AppliedStateSeq(key);
-    coop::atv_host_sync::NoteBlockBuilt(key);   // [dev] the drill's held state is applied after this block's ack was read
-    return true;
-}
-
-// HOST: each live entry's own `trap` against the last one seen; a change owes a stamp (bit 4 sits outside the condition's
-// change gate, so an idle ATV would otherwise carry it only at the keepalive).
-void ReadHostTraps() {
-    for (auto& kv : g_atvs) {
-        AtvEntry& e = kv.second;
-        bool trap = false;
-        if (!R::IsLiveByIndex(e.actor, e.idx) || !A::ReadTrap(e.actor, trap) || trap == e.hostTrap) continue;
-        e.hostTrap = trap;
-        e.stampDue = true;
-    }
-}
-
-// gets the connect snapshot instead, and none of the stream.
-void SendToReadyClients(coop::net::Session& s, const coop::net::AtvStatePayload& p, int skipSlot) {
-    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        if (slot != skipSlot && s.IsSlotWorldReady(slot))
-            s.SendReliableToSlot(slot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
-}
-
 // A peer whose seat or syncership we hold has left or been replaced (slots recycle lowest-free,
 // so a slot can change occupant with no absence between, which is why this hangs off the
 // ledger's row transition). Every ATV it sat in or synced goes back to the host's table: a seat or
@@ -239,31 +182,6 @@ void SubscribeDepartures() {
     if (sDone) return;
     sDone = true;
     coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced);
-}
-
-// HOST: one stamped block to every world-ready client for each entry whose table changed. A payload that does not
-// read leaves the stamp due and is tried again once a second per entry, said once. The stamp goes to every client; MTA
-// sends StartSync / StopSync to the syncer alone
-// (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:194-222).
-void SendStamps(coop::net::Session& s, uint64_t nowMs) {
-    for (auto& kv : g_atvs) {
-        AtvEntry& e = kv.second;
-        if (!e.stampDue || nowMs < e.stampRetryMs || !R::IsLiveByIndex(e.actor, e.idx)) continue;
-        coop::net::AtvStatePayload p{};
-        if (!ReadPayload(e, kv.first, e.occupantSlot, e.syncerSlot, /*adopt*/false, p)) {
-            e.stampRetryMs = nowMs + kRetryMs;
-            static bool sSaid = false;
-            if (!sSaid) { sSaid = true;
-                UE_LOGW("atv: the stamp of '%ls' did not read its transform -- tried again each second (said once)",
-                        kv.first.c_str()); }
-            continue;
-        }
-        e.stampRetryMs = 0;
-        StampHostTrap(e, p);
-        SendToReadyClients(s, p, -1);
-        coop::atv_condition_sync::NoteSent(e, p);
-        e.stampDue = false;
-    }
 }
 
 // HOST: a stall of this Tick is not a client's silence. The blocks that arrived during it are still queued in the
