@@ -48,7 +48,8 @@ namespace N  = coop::net;
 UE_FACT_FN(kRowTick, "miner_sync", L"prop_miner_C", L"ReceiveTick", Declared);
 UE_FACT_FN(kRowUse, "miner_sync", L"prop_miner_C", L"playerUsedOn", Declared);
 UE_FACT_FN(kRowAction, "miner_sync", L"prop_miner_C", L"actionOptionIndex", Declared);
-constexpr int kTagTick = 0x4D4E5201, kTagUse = 0x4D4E5202, kTagAction = 0x4D4E5203;  // 'MNR' 1..3
+UE_FACT_FN(kRowFire, "miner_sync", L"prop_miner_C", L"fireDamage", Declared);
+constexpr int kTagTick = 0x4D4E5201, kTagUse = 0x4D4E5202, kTagAction = 0x4D4E5203, kTagFire = 0x4D4E5204;  // 'MNR' 1..4
 
 constexpr uint8_t  kActionClaim = 4;       // EInteractionActions: the rig's claim
 constexpr float    kReachCm = 600.f;       // a client's ask, from its eye to the rig's root
@@ -313,7 +314,8 @@ bool Paced() {
     return true;
 }
 
-// The tick: a client's copy mines no points of its own and cools by the host's word.
+// The tick and the fire: a client's copy mines no points of its own and cools by the host's word, and its fire spawns
+// no debris or loose GPUs of its own (`fireDamage`): the host's rig burns, and what it spawns reaches every peer.
 sg::Verdict OnTickPre(const sg::Call&) { return IsClient() && !g_applying ? sg::Verdict::Cancel : sg::Verdict::Run; }
 
 // The use: a client's held scrap metal, GPU or cooler is asked of the host, and nothing else of the body runs here.
@@ -361,7 +363,9 @@ void Install(coop::net::Session* session) {
     const bool t = sg::WatchName(kRowTick, kTagTick, &OnTickPre, nullptr);
     const bool u = sg::WatchName(kRowUse, kTagUse, &OnUsePre, nullptr);
     const bool a = sg::WatchName(kRowAction, kTagAction, &OnActionPre, nullptr);
-    if (!t || !u || !a) UE_LOGE("miner_sync: a watch was refused (tick=%d use=%d action=%d)", t ? 1 : 0, u ? 1 : 0, a ? 1 : 0);
+    const bool f = sg::WatchName(kRowFire, kTagFire, &OnTickPre, nullptr);
+    if (!t || !u || !a || !f)
+        UE_LOGE("miner_sync: a watch was refused (tick=%d use=%d action=%d fire=%d)", t ? 1 : 0, u ? 1 : 0, a ? 1 : 0, f ? 1 : 0);
 }
 
 void Tick() {
@@ -370,14 +374,14 @@ void Tick() {
     if (!g_watched || g_settled) return;
     sg::ResolvePendingNames();
     if (!sg::NameWatchSettled(kRowTick, kTagTick) || !sg::NameWatchSettled(kRowUse, kTagUse) ||
-        !sg::NameWatchSettled(kRowAction, kTagAction))
+        !sg::NameWatchSettled(kRowAction, kTagAction) || !sg::NameWatchSettled(kRowFire, kTagFire))
         return;
     g_settled = true;
     const bool t = sg::NameWatchLive(kRowTick, kTagTick), u = sg::NameWatchLive(kRowUse, kTagUse),
-               a = sg::NameWatchLive(kRowAction, kTagAction);
-    if (t && u && a) UE_LOGI("miner_sync: the watches on prop_miner_C's tick, use and actions are live");
-    else UE_LOGE("miner_sync: a watch is dead (tick=%d use=%d action=%d) -- a client's rig runs its own", t ? 1 : 0,
-                 u ? 1 : 0, a ? 1 : 0);
+               a = sg::NameWatchLive(kRowAction, kTagAction), f = sg::NameWatchLive(kRowFire, kTagFire);
+    if (t && u && a && f) UE_LOGI("miner_sync: the watches on prop_miner_C's tick, use, actions and fire are live");
+    else UE_LOGE("miner_sync: a watch is dead (tick=%d use=%d action=%d fire=%d) -- a client's rig runs its own", t ? 1 : 0,
+                 u ? 1 : 0, a ? 1 : 0, f ? 1 : 0);
 }
 
 void SendJoinSnapshotForSlot(int slot) {
