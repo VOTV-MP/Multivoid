@@ -338,8 +338,7 @@ binding, or the container changing (the last two for at most 2 s, then it is ref
 held container waits too. A prop still in the box by then with no driver is pre-checked the same way and the game's body
 runs on it, since it fires no second overlap, and the game's own body may still refuse it. A refusal stands while the
 same drive does, until the container changes. A client's own copy of the call on a shared mirror is cancelled whoever
-calls it (the container's own overlap graph, a drone sack's trigger), since the mirror is display only; only a roomba's own
-graph runs, on the host, because its put files a prop that graph just spawned. A joiner needs no replay: the put is one host step, so a joiner seeded
+calls it (the container's own overlap graph, a drone sack's trigger, a cleaner's own graph, which a client never runs), since the mirror is display only. A joiner needs no replay: the put is one host step, so a joiner seeded
 before it receives the prop's destroy and the container's publication, and one seeded after receives the container with
 the record `[?]`. The open and closed state is a keyed-device channel like a
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
@@ -497,11 +496,11 @@ The robot cleaner (`prop_roomba_C`) drives itself by physics: its tick turns its
 hits pick its turns, and its overlap takes items from the trash piles it passes into its own container. Each peer ran
 that on its own copy, so the copies drove apart. It is the host's: a client refuses the cleaner's tick and its pickup at
 the script-body gate, and while the host's cleaner runs the host claims its drive, so every copy follows the host's pose
-on the drive stream and a client turns the brushes itself. A client's press of the switch (action 5) is refused and
-asked of the host (`RoombaIntent`), which judges the reach and presses its own cleaner; every change of its `active`
-goes out (`RoombaState`), to a joiner too, and a copy takes it through the cleaner's own `use`, which sets its light,
-sound and box (`coop/props/roomba_sync`) `[V]` (`coop/dev/roomba_probe`: the host's cleaner switched on, the client's
-copy within 10 cm of it each second and resting 1 cm from it; the client's press switched the host's off and its own).
+on the drive stream and a client turns the brushes of the copies it has bound itself. A client's press of the switch (action 5) is refused and
+asked of the host (`RoombaIntent`), which judges the reach and presses its own cleaner. The host watches the cleaner's `use`, which the
+press and the save's load both end in, and sends each change of its `active` (`RoombaState`), to a joiner too, and a cleaner is
+announced when its id is minted; a copy takes the state through the cleaner's own `use` (light, sound, box), or at its bind when
+the state came first (`coop/props/roomba_sync`) `[?]` (`harness/autotest/autotest_roomba.cpp`, `roomba_drill`: first rig run pending).
 
 ## Who owns what
 
@@ -601,7 +600,7 @@ prop resolves.
 | the stick | `coop/props/prop_stick_sync` |
 | a prop's nametag | `coop/props/prop_nametag`, `ue_wrap/actors/nametag` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
-| the robot cleaner | `coop/props/roomba_sync`; `coop/dev/roomba_probe` |
+| the robot cleaner | `coop/props/roomba_sync`; `harness/autotest/autotest_roomba.cpp` (`roomba_drill`) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
