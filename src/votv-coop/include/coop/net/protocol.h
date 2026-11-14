@@ -1433,8 +1433,11 @@ enum class ReliableKind : uint16_t {
     // HOST->CLIENT: the black orb's encounter (npc_orborb_C), which the host judges (coop/creatures/orb_authority).
     // Begin, to every client: the host's orb began its encounter, and each client's copy runs its own begin. Death, to
     // the toucher alone: the orb caught that player, whose machine answers the run's end as a death. Never relayed; not
-    // pre-world (a Begin for a copy not yet made is dropped). Late join: none, an encounter is ten seconds. Host-
-    // authored: a client's copy is refused at the host's receive edge. OrbEventPayload.
+    // pre-world (a Begin for a copy not yet made is dropped). Late join: none is owed. The encounter is about 5.1 s (the
+    // timeline's last key is at 5.0 s, then the end's own 0.1 s delay) and a copy born inside it stands still with no
+    // fade until the host's destroy takes it; MTA replays no one-shot event to a joiner (CGame.cpp Packet_ExplosionSync,
+    // the join stream carries elements only). Host-authored: a client's copy is refused at the host's receive edge.
+    // OrbEventPayload.
     OrbEvent = 258,
     // HOST->CLIENT: the gamemode's ambient UFOs (coop/world/ufo_sync). A path, to every client after the UFO's
     // WorldActorSpawn: what the host's copy rolled at its birth (a ball's turn and two ends, a boo's flight spline in

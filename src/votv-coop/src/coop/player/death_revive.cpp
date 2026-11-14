@@ -540,11 +540,15 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
-bool ReviveAvailable() {
+const char* ReviveMissing() {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    return g_verbsResolved.load(std::memory_order_acquire) &&
-           g_deadByte.load(std::memory_order_relaxed) >= 0 && s && s->running();
+    if (!g_verbsResolved.load(std::memory_order_acquire)) return "the revive's verbs are not resolved";
+    if (g_deadByte.load(std::memory_order_relaxed) < 0) return "the dead flag's offset is not known yet";
+    if (!s || !s->running()) return "no session is running";
+    return nullptr;
 }
+
+bool ReviveAvailable() { return ReviveMissing() == nullptr; }
 
 void NoteRunEndSeamReady(bool ready) { g_seamReady.store(ready, std::memory_order_release); }
 

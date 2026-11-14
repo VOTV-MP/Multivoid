@@ -211,12 +211,40 @@ void* MintOrb(const ue_wrap::FVector& at) {
     return orb;
 }
 
+// The spawner's class and its `maxlaps` offset, looked up when the class set or the unlisted classes move (a world
+// change moves both), never per tick.
+void*    g_spawnerCls = nullptr;
+int32_t  g_maxLapsOff = -1;
+uint64_t g_spawnerSet = ~0ull;
+uint64_t g_spawnerUnlist = ~0ull;
+
+void* SpawnerClass() {
+    const uint64_t unlist = ue_wrap::object_index::ClassUnlistVersion();
+    if (unlist != g_spawnerUnlist) {
+        g_spawnerUnlist = unlist;
+        g_spawnerCls = nullptr;
+        g_spawnerSet = ~0ull;
+    }
+    const uint64_t set = ue_wrap::object_index::ClassSetVersion();
+    if (!g_spawnerCls && set != g_spawnerSet) {
+        g_spawnerSet = set;
+        g_spawnerCls = ue_wrap::object_index::ClassByName(L"blackballSpawner_C");
+        g_maxLapsOff = g_spawnerCls ? R::FindPropertyOffset(g_spawnerCls, L"maxlaps") : -1;
+    }
+    return g_spawnerCls;
+}
+
+bool AnyClientPuppet() {
+    for (uint8_t slot = 1; slot < coop::players::kMaxPeers; ++slot)
+        if (coop::puppet_drive::Puppet(slot).valid()) return true;
+    return false;
+}
+
 void CountSpawner(void* spawner) {
     ue_wrap::FVector at{};
     ue_wrap::FRotator rot{};
     if (!E::TryGetActorLocation(spawner, at) || !E::TryGetActorRotation(spawner, rot)) return;
-    const int32_t maxOff = R::FindPropertyOffset(R::ClassOf(spawner), L"maxlaps");
-    const int32_t maxLaps = maxOff >= 0 ? *reinterpret_cast<int32_t*>(static_cast<char*>(spawner) + maxOff) : 240;
+    const int32_t maxLaps = g_maxLapsOff >= 0 ? *reinterpret_cast<int32_t*>(static_cast<char*>(spawner) + g_maxLapsOff) : 240;
     constexpr float kDeg = 3.14159265f / 180.f;
     const float cy = std::cos(-rot.Yaw * kDeg), sy = std::sin(-rot.Yaw * kDeg);
     for (uint8_t slot = 1; slot < coop::players::kMaxPeers; ++slot) {
@@ -258,15 +286,38 @@ void CountSpawnerVisit(void*, void* obj, int32_t) {
     if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) CountSpawner(obj);
 }
 
+// A client's streamed eye is read every frame because nothing announces its change (the pose stream writes it with no
+// seam); with no client puppet there is nothing to read and no count to keep.
 void TickLaps() {
     if (!IsHost()) return;
-    void* const cls = ue_wrap::object_index::ClassByName(L"blackballSpawner_C");
+    if (!AnyClientPuppet()) {
+        g_laps.clear();
+        return;
+    }
+    void* const cls = SpawnerClass();
     if (cls) ue_wrap::object_index::ForEachInstance(cls, &CountSpawnerVisit, nullptr);
     for (size_t i = 0; i < g_laps.size();) {  // a spawner gone, or a slot whose player left, drops its count
         const bool gone = !g_laps[i].spawner.Alive() || !coop::puppet_drive::Puppet(g_laps[i].slot).valid();
         if (gone) g_laps.erase(g_laps.begin() + static_cast<std::ptrdiff_t>(i));
         else ++i;
     }
+}
+
+// A caught player's death is answered by death_revive. When that cannot run, the game's own answer is QuitGame, which
+// ends this whole process (a host's quit ends every client's session with it), so the player is spared and the lane
+// says what is missing, once per session. The same on the host and on a client.
+bool g_saidNoRevive = false;
+
+void AnswerCaught() {
+    if (const char* missing = coop::death_revive::ReviveMissing()) {
+        if (!g_saidNoRevive) {
+            g_saidNoRevive = true;
+            UE_LOGW("orb_authority: a caught player is SPARED -- the revive cannot run (%hs), and the game's own end is a "
+                    "quit of the whole process (said once)", missing);
+        }
+        return;
+    }
+    coop::death_revive::NoteRunEndCancelled(nullptr, L"the black orb", false);
 }
 
 // The timeline's end. A client's copy runs nothing; the host judges the toucher and destroys the orb.
@@ -284,12 +335,8 @@ sg::Verdict OnFinishedPre(const sg::Call& c) {
             survives ? "spared (the orb is behind its view)" : "caught (the orb is in its view)",
             read ? "" : ", its view did not read");
     if (!survives) {
-        if (slot == 0) {
-            if (coop::death_revive::ReviveAvailable())
-                coop::death_revive::NoteRunEndCancelled(nullptr, L"the black orb", false);
-        } else {
-            Send(orb, N::kOrbEventDeath, slot);
-        }
+        if (slot == 0) AnswerCaught();
+        else Send(orb, N::kOrbEventDeath, slot);
     }
     for (auto it = g_encounters.begin(); it != g_encounters.end(); ++it)
         if (it->orb.Is(orb)) { g_encounters.erase(it); break; }
@@ -323,6 +370,9 @@ void Tick() {
 void OnDisconnect() {
     g_encounters.clear();
     g_laps.clear();
+    g_spawnerCls = nullptr;
+    g_spawnerSet = ~0ull;
+    g_saidNoRevive = false;
 }
 
 void DevSetClientLaps(int laps) {
@@ -358,8 +408,7 @@ void OnEvent(const coop::net::OrbEventPayload& p) {
     if (p.op == N::kOrbEventDeath) {
         UE_LOGI("orb_authority: CLIENT the host's orb eid %u caught this player -- the run's end is answered as a death",
                 p.eid);
-        if (coop::death_revive::ReviveAvailable())
-            coop::death_revive::NoteRunEndCancelled(nullptr, L"the black orb", false);
+        AnswerCaught();
         return;
     }
     if (p.op != N::kOrbEventBegin) return;

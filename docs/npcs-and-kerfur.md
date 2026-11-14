@@ -101,7 +101,7 @@ the wisp (`coop/creatures/wisp_grab_hold`). The tear plays on every peer's wisp 
 ### The black orb
 
 The orb event's orb (`npc_orborb_C`, minted by `blackballSpawner_C`) is the host's, and so is its
-encounter. In the game a player's touch stops the orb and plays its four-second timeline, whose
+encounter. In the game a player's touch stops the orb and plays its timeline (about 5.1 s with the end's own delay), whose
 end reads the player's camera: the orb behind the view destroys itself, the orb in it ends the run
 with a quit. Here a client's copy never reacts to a touch and its timeline end runs nothing. The
 host lets its own player's touch run as the game runs it, and begins the encounter itself when a
@@ -111,8 +111,12 @@ toucher's view (its own camera, or a client's streamed eye and aim) with the orb
 destroys the orb whatever the verdict. A client's own spawner is refused (the table above), so every orb a
 client sees is the host's; the host counts every player's laps round the spawner, a client's from
 its streamed eye, and mints a client's orb 200 m from that client as the spawner would. A caught player is revived through the run end's usual
-answer, on the host directly or on the client by `OrbEvent` Death, and nobody's game closes
-(`coop/creatures/orb_authority`). `[V]` on the rig: a client that walked into the host's orb with
+answer, on the host directly or on the client by `OrbEvent` Death, and nobody's game closes; when
+that answer cannot run (its verbs, the dead flag's offset or the session missing) the player is spared and the
+log names the missing piece once, since the game's own end quits the whole process
+(`coop/creatures/orb_authority`). A joiner during an encounter is owed nothing: the encounter is about five seconds,
+the copy born inside it stands where the host's pose puts it, and the host's destroy takes it, as MTA replays no
+one-shot event to a joiner `[?]`. `[V]` on the rig: a client that walked into the host's orb with
 its view away from it was spared, and with its view toward it was caught and revived; the orb was
 gone on both peers either way.
 

@@ -6,7 +6,8 @@
 // encounter itself for a client's body, and sends every client the begin (OrbEvent Begin) so each copy runs its own.
 // At the timeline's end the host reads the toucher's view (its camera, or a client's streamed eye and aim) with the
 // orb's test and destroys the orb either way; a caught toucher is revived through coop/player/death_revive, on the host
-// directly or on the client by OrbEvent Death, instead of the game's quit. The orb's spawner counts player 0's laps
+// directly or on the client by OrbEvent Death, instead of the game's quit; when the revive cannot run the toucher is
+// spared and the lane says what is missing, since the game's own end quits the whole process. The orb's spawner counts player 0's laps
 // around it; a client refuses its tick (coop/world/spawn_authority), and the host counts each client's laps too, from
 // the client's streamed eye, by the spawner's own rule, minting that client's orb as the spawner would. Game thread.
 #pragma once
