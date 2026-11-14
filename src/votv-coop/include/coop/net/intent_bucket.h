@@ -20,14 +20,17 @@ class IntentBucket {
 public:
     // One intent at `nowMs`, a steady clock's milliseconds: true when the bucket holds a token, which it spends.
     bool Take(const IntentBudget& budget, uint64_t nowMs) {
-        if (lastMs_ == 0) {
-            tokens_ = budget.burst;
-        } else if (nowMs > lastMs_) {
-            tokens_ += budget.perSecond * static_cast<float>(nowMs - lastMs_) / 1000.0f;
-            if (tokens_ > budget.burst) tokens_ = budget.burst;
-        }
-        lastMs_ = nowMs;
+        Refill(budget, nowMs);
         if (tokens_ < 1.0f) return false;
+        tokens_ -= 1.0f;
+        return true;
+    }
+
+    // One intent paid into debt: a token is spent even when the bucket holds none, down to `maxDebt` tokens below
+    // zero, which the refills then pay before any Take succeeds. False, nothing spent, past that.
+    bool Charge(const IntentBudget& budget, uint64_t nowMs, float maxDebt) {
+        Refill(budget, nowMs);
+        if (tokens_ - 1.0f < -maxDebt) return false;
         tokens_ -= 1.0f;
         return true;
     }
@@ -44,6 +47,16 @@ public:
     }
 
 private:
+    void Refill(const IntentBudget& budget, uint64_t nowMs) {
+        if (lastMs_ == 0) {
+            tokens_ = budget.burst;
+        } else if (nowMs > lastMs_) {
+            tokens_ += budget.perSecond * static_cast<float>(nowMs - lastMs_) / 1000.0f;
+            if (tokens_ > budget.burst) tokens_ = budget.burst;
+        }
+        lastMs_ = nowMs;
+    }
+
     float    tokens_ = 0.0f;
     uint64_t lastMs_ = 0;
 };

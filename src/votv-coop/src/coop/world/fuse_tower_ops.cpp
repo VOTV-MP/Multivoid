@@ -231,11 +231,12 @@ void Refused(uint8_t sender, const FuseTowerPayload& p, const char* refusal, Fau
 // if the hand lane still owes it, is applied first, then hand_spend counts the use. The result goes with the entry, so
 // a request that waits in the queue behind an earlier one is not judged against a hand that has emptied or moved on.
 // A request Spend never counted is the client's loss: the host cannot see its inventory, so it refunds only what it
-// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation).
+// counted. An honest client reaches that only by a same-tick swap of two identical items (no new hold generation) or by
+// outrunning the hand lane's budget and its debt (ApplyOwedNow).
 // The two easiest difficulties spend no fuse.
-bool PaidByHand(uint8_t sender, const FuseTowerPayload& p) {
+bool PaidByHand(coop::net::Session& session, uint8_t sender, const FuseTowerPayload& p) {
     if (p.op != coop::net::kFuseTowerOpInsert || FK::EasyInsert()) return false;
-    coop::hand_item::ApplyOwedNow(sender);
+    coop::hand_item::ApplyOwedNow(session, sender);
     if (!coop::hand_spend::Spend(sender, kFuseClass, 1)) return false;
     UE_LOGI("fuse_tower: slot %u's insert of tower %d is paid by the fuse its hand held", sender, p.tower);
     return true;
@@ -248,6 +249,8 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     const bool waited = NowMs() - wt.arrivedMs >= kWaitMs;
     const FK::Kind kind = KindOf(p);
     if (!FK::Resolved(kind) && !waited) return Take::Wait;
+    // A stale seq never comes from an honest client: the ordered reliable lane delivers each once. PaidByHand has counted
+    // one for a forged duplicate, whose use is its sender's own.
     if (!SeqAfter(p.seq, g_ack[sender])) {
         ++g_staleSeqs;
         if (FirstOfFault(Fault::Stale, sender))
@@ -357,8 +360,12 @@ void HostOffer(coop::net::Session* s, const FuseTowerPayload& p, uint8_t sender)
         return;
     }
     auto& q = g_waiting[sender];
-    const Waiting w{p, NowMs(), PaidByHand(sender, p)};
+    Waiting w{p, NowMs()};
+    // The hand is read once, after the lane's own limit: when the op took a rate token, or a place in the queue below.
+    bool judged = false;
     if (q.empty() && g_rate[sender].Take(kOpBudget, NowMs())) {
+        w.handPaid = PaidByHand(*s, sender, p);
+        judged = true;
         if (HostTakeOp(s, w, sender) == Take::Done) return;
         g_rate[sender].Refund(kOpBudget);  // a wait runs nothing
     }
@@ -386,6 +393,7 @@ void HostOffer(coop::net::Session* s, const FuseTowerPayload& p, uint8_t sender)
         coop::fuse_tower_rows::HostAnswerOwed(sender);
         return;
     }
+    if (!judged) w.handPaid = PaidByHand(*s, sender, p);
     q.push_back(w);
 }
 

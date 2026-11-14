@@ -46,6 +46,15 @@ public:
         return true;
     }
 
+    // The owed value paid now, ahead of its token, for a request that rests on it: the token goes into debt of at most a
+    // burst, which the refills pay before a later value is applied, so the lane's average rate is still its budget.
+    // False, the value still owed, when nothing is owed or the debt is at its limit.
+    bool DueIntoDebt(const IntentBudget& budget, uint64_t nowMs) {
+        if (!owed_ || !bucket_.Charge(budget, nowMs, budget.burst)) return false;
+        owed_ = false;
+        return true;
+    }
+
     // The newest value equals the applied one: nothing is owed.
     void Withdraw() { owed_ = false; }
 

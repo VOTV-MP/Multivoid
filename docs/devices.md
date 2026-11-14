@@ -389,9 +389,9 @@ must have its one use left. The judgement is made as the request arrives, after 
 applied if the lane's pace still owes it, and goes with the request through the queue; an insert the hand paid
 for also burns the world spend beside it, so one fuse is one credit. The client announces a fuse from the hold
 slot before its claim leaves, even when it was picked up and used within one tick. The host cannot see the
-inventory: a client that announces a hold and keeps its fuse is taken once per announce, at the hand lane's own
-rate, and a request the lane never counted is the client's loss, reached by an honest client only through a
-same-tick swap of two identical items, or for an upgrade an install at a generator unreadable at the take.
+inventory: a client that announces a hold and keeps its fuse is taken once per announce, at the hand lane's own rate, and a request the
+lane never counted is the client's loss, reached by an honest client only through a same-tick swap of two identical items, a hand that
+outruns the lane's budget and its debt, or for an upgrade an install at a generator unreadable at the take.
 
 The radio tower is the second kind (`coop/world/fuse_tower_kind` holds what differs between the two). It
 is one actor, the gamemode's `radiotower`, and the drone's shop run reads its broken flag on the host, so

@@ -21,9 +21,9 @@ constexpr const wchar_t* kUpgradeClass = L"prop_transformerUpgrade_C";
 
 }  // namespace
 
-bool PaidByHand(uint8_t sender, const coop::net::PowerGridPayload& p) {
+bool PaidByHand(coop::net::Session& session, uint8_t sender, const coop::net::PowerGridPayload& p) {
     if (p.op != coop::net::kPowerGridOpUpgrade) return false;
-    coop::hand_item::ApplyOwedNow(sender);
+    coop::hand_item::ApplyOwedNow(session, sender);
     if (!coop::hand_spend::Spend(sender, kUpgradeClass, 1)) return false;
     UE_LOGI("power_grid: slot %u's install at generator %u is paid by the upgrade its hand held", sender, p.index);
     return true;

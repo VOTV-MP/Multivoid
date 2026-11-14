@@ -142,11 +142,11 @@ std::wstring HeldItem(uint8_t slot);
 // that arrived past its budget is applied once the budget allows it. Game thread only.
 void PayOwed(coop::net::Session& session);
 
-// Host: the state owed for `slot`, if any, applied now without its pacing token, as PayOwed would apply it when one
-// came. A request that rests on the hand it was sent from asks for it, since the owed state is the hold announced
-// ahead of the request on the one ordered lane, and the emptied hand behind the request would merge it away. Game
-// thread only.
-void ApplyOwedNow(uint8_t slot);
+// Host: the state owed for `slot`, if any, applied now, ahead of its pacing token, which is charged as debt of at most a
+// burst (coop/net/latest_wins.h) so the lane's average rate stays its budget. A request that rests on the hand it was
+// sent from asks for it, since the owed state is the hold announced ahead of the request on the one ordered lane, and the
+// emptied hand behind the request would merge it away. Past the debt nothing is applied. Game thread only.
+void ApplyOwedNow(coop::net::Session& session, uint8_t slot);
 
 // Whether `slot`'s hand holds anything, as the lane holds it. Game thread only.
 bool HoldsItem(uint8_t slot);

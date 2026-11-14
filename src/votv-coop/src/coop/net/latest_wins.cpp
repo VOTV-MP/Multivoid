@@ -49,6 +49,20 @@ bool LatestWins::RunSelftest() {
         w = LatestWins{};
         check(!w.Owed() && w.Offer(budget, 1000), "a value-initialised instance owes nothing and holds its burst");
     }
+    {
+        LatestWins w;
+        w.Offer(budget, 1000);
+        w.Offer(budget, 1000);
+        w.Offer(budget, 1000);
+        check(w.DueIntoDebt(budget, 1000) && !w.Owed(), "an owed value is paid into debt, ahead of its token");
+        check(!w.Offer(budget, 1000) && w.Owed(), "the debt keeps the next value owed");
+        check(w.DueIntoDebt(budget, 1000) && !w.Owed(), "a second payment into debt, within the burst");
+        check(!w.Offer(budget, 1000) && w.Owed() && !w.DueIntoDebt(budget, 1000) && w.Owed(),
+              "past a burst of debt nothing is paid and the value stays owed");
+        check(w.Offer(budget, 9000) && !w.Owed(), "the refills pay the debt and a later value is applied");
+        LatestWins none;
+        check(!none.DueIntoDebt(budget, 1000), "with nothing owed there is nothing to pay");
+    }
     if (pass == total) {
         UE_LOGI("latest_wins selftest: ALL PASS (%d checks)", total);
         return true;

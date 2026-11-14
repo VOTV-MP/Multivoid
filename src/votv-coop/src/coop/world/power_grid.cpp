@@ -233,7 +233,8 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     const bool predicted = Predicted(p.op);
     if (!predicted && p.op != coop::net::kPowerGridOpHit) return Take::Done;
     if (predicted && !SeqAfter(p.seq, g_ack[sender])) {
-        // Already taken: its sender still shows it only if no rows have answered it yet.
+        // Already taken: its sender still shows it only if no rows have answered it yet. The ordered reliable lane
+        // delivers each seq once, so this is a forged duplicate, whose use PaidByHand counted is its sender's own.
         UE_LOGW("power_grid: host dropped slot %u's %s seq %u (last taken %u)", sender, OpName(p.op), p.seq,
                 g_ack[sender]);
         HostSendRows(s, sender);
@@ -379,8 +380,12 @@ void Refund(uint8_t slot, uint8_t op) {
 void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender) {
     if (sender == 0 || sender >= coop::net::kMaxPeers || p.op == coop::net::kPowerGridOpRows) return;
     auto& q = g_waiting[sender];
-    const Waiting w{p, NowMs(), coop::power_grid::install::PaidByHand(sender, p)};
+    Waiting w{p, NowMs()};
+    // The hand is read once, after the lane's own limit: when the op took a rate token, or a place in the queue below.
+    bool judged = false;
     if (q.empty() && Spend(sender, p.op)) {
+        w.handPaid = coop::power_grid::install::PaidByHand(*s, sender, p);
+        judged = true;
         if (HostTakeOp(s, w, sender) == Take::Done) return;
         Refund(sender, p.op);
     }
@@ -388,6 +393,7 @@ void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender)
         HostRefuseQueue(s, sender, w);
         return;
     }
+    if (!judged) w.handPaid = coop::power_grid::install::PaidByHand(*s, sender, p);
     q.push_back(w);
 }
 
