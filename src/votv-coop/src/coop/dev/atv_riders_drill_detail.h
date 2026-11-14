@@ -38,6 +38,7 @@ inline constexpr int kBarrierS = 60;   // a barrier between peers that are up an
 
 enum Role : int { kHost = 0, kObserver = 1, kDriver = 2, kRoles = 3 };
 const char* RoleName(Role r);
+Role MyRole();   // the role this peer plays
 
 // The run's shared facts: the ATV's key, the riding kerfur's eid and the driver's body's distance from the ATV root at its attach.
 extern std::wstring g_key;
@@ -85,11 +86,14 @@ struct BodyRead {
 };
 BodyRead ReadBody(uint8_t slot);   // the puppet of `slot` against the ATV under g_key
 
+// The kerfur's distance to the ATV's sitarrow, its offset from the ATV's root, and the sitarrow component's own offset from the
+// root (cm, world axes). The reads are the copy's own: on the host the kerfur is the game's, on a client the mirror.
 struct KerfurRead {
     bool exists = false, parentIsAtv = false, hidden = false;
     float sitarrowCm = -1.f;
+    float off[3] = {0.f, 0.f, 0.f}, sitOff[3] = {0.f, 0.f, 0.f};
 };
-KerfurRead ReadKerfur(uint32_t eid);   // the NPC mirror of `eid`, a kerfur
+KerfurRead ReadKerfur(uint32_t eid);   // the NPC element of `eid` on this peer (the mirror on a client), a kerfur
 bool KerfurMirrorUp(uint32_t eid);     // eid 0: any kerfur mirror
 bool PuppetUp(uint8_t slot);
 bool WorldUp();                        // the announced world and the host's puppet exist here
@@ -113,7 +117,12 @@ bool HostRide(const Cur& cur);       // steps 1, 2 and 4 on the host
 bool HostDrive();                    // step 3 on the host
 bool HostRejoin();                   // waits the observer's leaving and return; names the key and the rider again
 bool LeaveHost(const Cur& cur);      // step 6
-bool HostSits(const Cur& cur);       // step 7
+bool HostSits(const Cur& cur);       // step 7: the host sits (its kerfur came off a client's ride first), then the two reads
+bool HostDriveSeated();              // step 7's second leg on the host: its own 600 cm drive, then the read at its end
+// Step 7's read on this peer: the kerfur of g_eid stands within kRigidCm of the ATV's sitarrow. `leg` 'a' is the host's next block
+// after the kerfur's seat, 'b' the end of the host's drive. Says the reading, leaves it as a mark for the others, and FAILs
+// `host_kerfur_off_seat` naming this peer, the offsets, and the readings the other peers have already left. False when it ended.
+bool JudgeKerfurSeat(char leg, const char* when);
 bool HostDestroys();                 // step 9
 
 // Observer and driver

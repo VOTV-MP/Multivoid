@@ -14,11 +14,14 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/core/types.h"
 #include "ue_wrap/devices/atv.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -77,6 +80,23 @@ sg::Verdict RefuseOnMirror(const sg::Call& c, const char* what, int kind, std::a
     return sg::Verdict::Cancel;
 }
 
+// Where the kerfur stands once its own sit has run, said once per sit: its distance to the ATV's `sitarrow` (the point its sit
+// places it at) and its offset from the ATV's root. Returns the distance, -1 when a location did not read.
+float SaidSeating(uint32_t eid, void* kerfur, void* car, const std::wstring& key) {
+    ue_wrap::FVector at{}, seat{}, root{};
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(kerfur, at) || !ue_wrap::atv::GetSitArrowLocation(car, seat) ||
+        !ue_wrap::atv::GetRootTransform(car, root, rot)) {
+        UE_LOGI("atv_rider_watch: the host's kerfur eid %u sat on %ls: its position or the ATV's did not read", eid, key.c_str());
+        return -1.f;
+    }
+    const float dx = at.X - seat.X, dy = at.Y - seat.Y, dz = at.Z - seat.Z;
+    const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
+    UE_LOGI("atv_rider_watch: the host's kerfur eid %u sat on %ls: %.0f cm from sitarrow, offset from the ATV root (%.0f, %.0f, %.0f)",
+            eid, key.c_str(), cm, at.X - root.X, at.Y - root.Y, at.Z - root.Z);
+    return cm;
+}
+
 // POST of sitOnCar: the kerfur's own sit, run by its Blueprint after its walk to the ATV. The body also returns through its
 // failCar branch, so the kerfur counts as seated only when its attach parent is the ATV its occupyCar names.
 void OnSitOnCarPost(const sg::Call& c) {
@@ -94,7 +114,8 @@ void OnSitOnCarPost(const sg::Call& c) {
                     R::ClassNameOf(c.object).c_str(), car);
         return;
     }
-    if (DE::On()) DE::Note(DE::kRiderFact, DE::KeyTag(e->key), static_cast<int32_t>(eid), 1);
+    const float seatCm = SaidSeating(eid, c.object, car, e->key);
+    if (DE::On()) DE::Note(DE::kRiderFact, DE::KeyTag(e->key), static_cast<int32_t>(eid), 1, seatCm);
     coop::atv_seat_table::SetRider(*e, eid, c.object, "sitOnCar");
 }
 

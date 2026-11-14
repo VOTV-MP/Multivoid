@@ -15,6 +15,7 @@
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -219,22 +220,77 @@ bool RagdollWatch(Role me, const Cur& cur) {
 
 // ---- step 7: the host sits ----
 
+// The reading of one peer's kerfur, as the text a mark and a FAIL line carry.
+static std::string Reading(const KerfurRead& k, bool withSitarrow) {
+    char buf[320];
+    int n = std::snprintf(buf, sizeof(buf), "%.1f cm from sitarrow, offset from the ATV root (%.0f, %.0f, %.0f)",
+                          static_cast<double>(k.sitarrowCm), static_cast<double>(k.off[0]), static_cast<double>(k.off[1]),
+                          static_cast<double>(k.off[2]));
+    if (withSitarrow && n > 0 && static_cast<size_t>(n) < sizeof(buf))
+        std::snprintf(buf + n, sizeof(buf) - static_cast<size_t>(n),
+                      ", the sitarrow component's own offset from the root (%.0f, %.0f, %.0f)", static_cast<double>(k.sitOff[0]),
+                      static_cast<double>(k.sitOff[1]), static_cast<double>(k.sitOff[2]));
+    return buf;
+}
+
+bool JudgeKerfurSeat(char leg, const char* when) {
+    const uint32_t eid = g_eid;
+    const KerfurRead k = ReadKerfur(eid);
+    if (!k.exists || k.sitarrowCm < 0.f) {
+        Invalid(std::string("step 7: the kerfur eid ") + std::to_string(eid) + " does not read on this peer (" + when + ")");
+        return false;
+    }
+    const std::string reading = Reading(k, MyRole() == kHost);
+    UE_LOGI("atv-riders: step 7 (%s) on the %s: the kerfur eid %u is %s", when, RoleName(MyRole()), eid, reading.c_str());
+    const std::string tag = std::string("s7") + leg + "_";
+    PS::Mark((tag + RoleName(MyRole())).c_str(), reading);
+    if (k.sitarrowCm <= kRigidCm) {
+        StepPass(7, std::string("the kerfur is within ") + Num("%.0f", kRigidCm) + " cm of sitarrow " + when + ": " + reading);
+        return true;
+    }
+    // The readings the other peers have already left (no waiting: a FAIL known is said at once).
+    std::string others;
+    for (int r = 0; r < kRoles; ++r) {
+        std::string t;
+        if (r != MyRole() && PS::Peek((tag + RoleName(static_cast<Role>(r))).c_str(), t))
+            others += std::string("; the ") + RoleName(static_cast<Role>(r)) + " read " + t;
+    }
+    Fail(7, "host_kerfur_off_seat", std::string(when) + ": the kerfur eid " + std::to_string(eid) + " is " + reading + others);
+    return false;
+}
+
+// The host sits. The kerfur it seats is one that came off a client's ride (step 6's release, and the driver's second seat of step
+// 8), so the host first reads that the kerfur no longer rides; then its own game seats it, and the kerfur's place is read at the
+// host's next block for the key and at the end of a 600 cm drive of the host's own.
 bool HostSits(const Cur& cur) {
+    if (!PollFn("the host's kerfur, off the ATV", kEventS, [&]() -> int {
+            const KerfurRead k = ReadKerfur(g_eid);
+            return k.exists && !k.parentIsAtv ? 1 : 0;
+        }))
+        return false;
     int invited = -1;
     if (!SitLocal(invited)) {
         Invalid("the host's seat verb did not seat the host");
         return false;
     }
     const int32_t tag = Tag();
-    return PollFn("the host's kerfur's seat", kRideS, [&]() -> int {
-        const auto facts = Recs(cur, DE::kRiderFact);
-        const DE::Rec* f = Find(facts, [&](const DE::Rec& r) { return r.i0 == tag && r.i2 == 1; });
-        if (!f) return 0;
-        g_eid = static_cast<uint32_t>(f->i1);
-        PS::Mark("rider-sat3", std::to_string(g_eid));
-        UE_LOGI("atv-riders: the host's kerfur eid %u sat on the host's seat", g_eid);
-        return 1;
-    });
+    uint32_t factOrd = 0;
+    if (!PollFn("the host's kerfur's seat", kRideS, [&]() -> int {
+            const auto facts = Recs(cur, DE::kRiderFact);
+            const DE::Rec* f = Find(facts, [&](const DE::Rec& r) { return r.i0 == tag && r.i2 == 1; });
+            if (!f) return 0;
+            factOrd = f->ord;
+            g_eid = static_cast<uint32_t>(f->i1);
+            PS::Mark("rider-sat3", std::to_string(g_eid));
+            UE_LOGI("atv-riders: the host's kerfur eid %u sat on the host's seat", g_eid);
+            return 1;
+        }))
+        return false;
+    if (!PollFn("the host's next block after its kerfur's seat", kEventS, [&]() -> int {
+            return Find(Recs(cur, DE::kStampBuilt), [&](const DE::Rec& r) { return r.i0 == tag && r.ord > factOrd; }) ? 1 : 0;
+        }))
+        return false;
+    return JudgeKerfurSeat('a', "at the host's next block after its kerfur's seat") && HostDriveSeated();
 }
 
 // A client: the host's body is seated on this peer, and the kerfur rides again.
@@ -262,9 +318,14 @@ bool WatchHostSeat(Role me, const Cur& cur) {
     std::string t;
     if (!AwaitMark("rider-sat3", t, kRideS) || !ParseMark(t, "rider-sat3", g_eid)) return false;
     const uint32_t eid = g_eid;
-    return PollFn("the kerfur's ride on the host's seat", kRideS, [&]() -> int {
-        return Find(Recs(cur, DE::kRide), [&](const DE::Rec& r) { return static_cast<uint32_t>(r.i0) == eid && r.i1 == 1; }) ? 1 : 0;
-    });
+    if (!PollFn("the kerfur's ride on the host's seat", kRideS, [&]() -> int {
+            return Find(Recs(cur, DE::kRide), [&](const DE::Rec& r) { return static_cast<uint32_t>(r.i0) == eid && r.i1 == 1; }) ? 1 : 0;
+        }))
+        return false;
+    // The mirror stands on the seat where the host's kerfur does: read when the ride was applied, and again at the end of the
+    // host's drive.
+    return JudgeKerfurSeat('a', "where the ride reached this peer") && AwaitMark("drive7-done", t, kDriveS + kSignalS) &&
+           JudgeKerfurSeat('b', "at the end of the host's 600 cm drive");
 }
 
 // ---- step 9: the ATV is destroyed ----

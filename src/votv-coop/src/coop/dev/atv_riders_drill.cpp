@@ -57,6 +57,7 @@ uint32_t g_eid = 0;
 float g_attachCm = 0.f;
 
 const char* RoleName(Role r) { return r == kHost ? "host" : r == kObserver ? "observer" : "driver"; }
+Role MyRole() { return g_me; }
 int32_t Tag() { return DE::KeyTag(g_key); }
 
 std::string Narrow(const std::wstring& w) {

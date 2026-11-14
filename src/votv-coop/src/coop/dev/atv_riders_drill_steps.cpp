@@ -160,8 +160,13 @@ KerfurRead ReadKerfur(uint32_t eid) {
         void* atv = AD::Atv(g_key);
         void* parent = nullptr;
         k.parentIsAtv = atv && E::GetAttachParentActor(actor, parent) && parent == atv;
-        FVector at{}, seat{};
+        FVector at{}, seat{}, root{};
+        FRotator rot{};
         if (atv && E::TryGetActorLocation(actor, at) && ue_wrap::atv::GetSitArrowLocation(atv, seat)) k.sitarrowCm = Dist(at, seat);
+        if (atv && k.sitarrowCm >= 0.f && ue_wrap::atv::GetRootTransform(atv, root, rot)) {
+            k.off[0] = at.X - root.X, k.off[1] = at.Y - root.Y, k.off[2] = at.Z - root.Z;
+            k.sitOff[0] = seat.X - root.X, k.sitOff[1] = seat.Y - root.Y, k.sitOff[2] = seat.Z - root.Z;
+        }
     });
     return k;
 }
@@ -465,6 +470,31 @@ bool DriverDrive() {
     AD::DriveOff(g_key);
     PS::Mark("drive-off");
     return arrived;
+}
+
+// Step 7's second leg on the host: it drives its own ATV kDriveCm with its kerfur riding, lets the throttle go, reads where its
+// kerfur stands (JudgeKerfurSeat) and says `drive7-done` for the clients' reads.
+bool HostDriveSeated() {
+    FVector start{};
+    if (!ReadRoot(start)) {
+        Invalid("the ATV's root does not read");
+        return false;
+    }
+    std::string why;
+    if (!AD::DriveOn(g_key, why)) {
+        Invalid(why);
+        return false;
+    }
+    float movedCm = 0.f;
+    const bool arrived = PollFn("the host's own 600 cm drive", kDriveS, [&]() -> int {
+        FVector now{};
+        if (ReadRoot(now)) movedCm = std::sqrt((now.X - start.X) * (now.X - start.X) + (now.Y - start.Y) * (now.Y - start.Y));
+        return movedCm >= kDriveCm ? 1 : 0;
+    });
+    AD::DriveOff(g_key);
+    if (!arrived || !JudgeKerfurSeat('b', "at the end of its own 600 cm drive")) return false;
+    PS::Mark("drive7-done");
+    return true;
 }
 
 // ---- step 5: the observer's second life ----

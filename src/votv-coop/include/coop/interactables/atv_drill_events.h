@@ -43,7 +43,7 @@ enum Event : int {
     kStampBuilt,   // HOST: a block was built. i0 KeyTag, i1 riderEid, i2 1 = the re-send of a syncer's block
     kInvite,       // HOST: the kerfur steps of a client's seat edge. i0 KeyTag, i1 (1 invited, 0 released, 2 turned back), i2 kerfur count
     kMirrorCancel, // CLIENT: the game's own call on a kerfur mirror was cancelled. i0 (0 getOffCar, 1 tryToOccupyCar), i1 eid
-    kRiderFact,    // HOST: the kerfur's own seat. i0 KeyTag, i1 eid (0 at the getOffCar PRE), i2 1 at the sitOnCar POST
+    kRiderFact,    // HOST: the kerfur's own seat. i0 KeyTag, i1 eid (0 at the getOffCar PRE), i2 1 at the sitOnCar POST, f0 at that POST the kerfur's distance to sitarrow (cm, -1 when unread)
     kEventCount
 };
 
