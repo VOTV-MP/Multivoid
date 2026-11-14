@@ -96,7 +96,7 @@ void SendStamps(coop::net::Session& s, uint64_t nowMs) {
         AtvEntry& e = kv.second;
         if (!e.stampDue || nowMs < e.stampRetryMs || !R::IsLiveByIndex(e.actor, e.idx)) continue;
         coop::net::AtvStatePayload p{};
-        if (!ReadPayload(e, kv.first, e.occupantSlot, e.syncerSlot, /*adopt*/false, p)) {
+        if (!ReadPayload(e, kv.first, e.seatOccupant, e.seatSyncer, /*adopt*/false, p)) {
             e.stampRetryMs = nowMs + kRetryMs;
             static bool sSaid = false;
             if (!sSaid) { sSaid = true;

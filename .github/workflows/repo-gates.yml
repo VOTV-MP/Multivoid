@@ -174,6 +174,12 @@ jobs:
       - name: Data paths gate (the mod's own data is built from its own folder; ExeDir and the null-module path stay in their files)
         run: python3 .github/ci/data_paths_gate.py
 
+      - name: ATV seat gate drill
+        run: python3 .github/ci/atv_seat_gate.py --drill
+
+      - name: ATV seat gate (an ATV's seat, syncer and rider are written only by atv_seat_table.cpp)
+        run: python3 .github/ci/atv_seat_gate.py
+
       - name: Plural vectors gate (the l10n selftest's expected forms are the independent evaluator's)
         run: python3 .github/ci/l10n_vectors.py --check
 

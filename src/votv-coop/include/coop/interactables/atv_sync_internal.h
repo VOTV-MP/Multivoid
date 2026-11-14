@@ -1,7 +1,7 @@
 // coop/interactables/atv_sync_internal.h -- the per-ATV record, shared by the ATV lane's
 // translation units. atv_sync.cpp owns the map of these and every structural change to it, atv_stamp.cpp the stamp half;
-// atv_authority.cpp judges over it (the host's table: the seat and the syncer) and writes those
-// fields; atv_corrector.cpp mutates the fields of ONE entry when a packet arrives, and
+// atv_authority.cpp judges over it (the host's table: the seat and the syncer), which atv_seat_table.cpp alone
+// writes; atv_corrector.cpp mutates the fields of ONE entry when a packet arrives, and
 // atv_runtime_mirror.cpp asks for its two changes through the calls at the end, and atv_index.cpp
 // fills the map through the two globals under detail. Nothing outside coop/interactables/ includes this but the
 // explosion request lane's ATV family (coop/world/explosion_request_atv.cpp), which judges over an entry's syncer and
@@ -33,11 +33,15 @@ struct AtvEntry {
     // ---- the host's table: what the host decided, on every peer (the host writes it by its judgement,
     // a client by the host's stamp and answers). Three concepts, never aliased: the seat, the syncer, the
     // local body's own sit and carry below. ----
-    uint8_t  occupantSlot = 0xFF;  // the SEATED driver's peer slot (0xFF = seat free). THE SEAT --
+    // The three seat fields are written only by atv_seat_table.cpp (SetSeat, SetRider; CI refuses any other writer).
+    uint8_t  seatOccupant = 0xFF;  // the SEATED driver's peer slot (0xFF = seat free). THE SEAT --
                                    // device_occupancy::IsOccupiedByOther reads this and denies an
                                    // E-press from it, so a grabber must never appear here.
-    uint8_t  syncerSlot   = 0;     // who WRITES it (0 = the host, k = client slot k): the one whose blocks
+    uint8_t  seatSyncer   = 0;     // who WRITES it (0 = the host, k = client slot k): the one whose blocks
                                    // the host applies and re-sends, whose copy owns the tick
+    uint32_t seatRider    = 0;     // the riding kerfur's element id (0 = none)
+    void*    seatRiderActor = nullptr;  // host only: the riding kerfur's actor, compared and never dereferenced
+    std::wstring key;              // the game Key this entry is filed under (set where the entry is created)
     // Host only: the judgement's clocks. A block, a grant or a pass moves them (atv_authority.cpp).
     uint8_t  prevSyncerSlot = 0xFF; // the client a hand-back just replaced, for the late-block count
     uint64_t lastBlockMs  = 0;     // when the syncer's last block was applied (a grant counts as one)

@@ -6,6 +6,7 @@
 
 #include "coop/interactables/atv_index_internal.h"
 #include "coop/interactables/atv_authority.h"   // ClearTable / ResetRequests: a successor actor starts from the empty table
+#include "coop/interactables/atv_seat_table.h"   // Exit: an entry that ends or is replaced
 #include "coop/interactables/atv_sync_internal.h"
 
 #include "atv_spawn_park.h"                    // spawn_park::kCap
@@ -193,6 +194,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         // host's re-spawn of a recurring key (a save-placed one) heals it: a flicker, not a ghost.
         if (isHost && thisWorld && row.world == thisWorld) SendAtvDestroy(it->first);
         coop::atv_host_sync::NoteAtvGone(it->first);   // its open requests can never be answered
+        coop::atv_seat_table::Exit(it->second, "index prune");
         it = g_atvs.erase(it);
     }
     // Update or add. A wire key can outlive its actor (a save-placed key is deterministic and a
@@ -206,7 +208,9 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         // unaddressable key on the wire, and an ATV with no key is skipped the same way (HubMatch).
         if (gained && isHost && !KeyNamesAnAtv(f.key, "host")) continue;
         AtvEntry& e = gained ? g_atvs[f.key] : row->second;
+        if (gained) e.key = f.key;
         if (e.actor && e.actor != f.obj) {
+            coop::atv_seat_table::Exit(e, "successor actor");
             coop::atv_authority::ClearTable(e);
             coop::atv_authority::ResetRequests(e);
             e.haveLastSync = false; e.lastIdleSendMs = 0; e.lastPktMs = 0;
@@ -251,6 +255,7 @@ void AdoptNative(const std::wstring& key, void* actor) {
     e.actor = actor;
     e.idx   = R::InternalIndexOf(actor);
     e.world = W::WorldOf(actor);
+    e.key = key;
     g_atvs[key] = std::move(e);
     coop::atv_host_sync::NoteAtvIndexed(key, actor);   // a state held for it is applied
 }

@@ -137,6 +137,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/fuse_tower_kind.cpp
     src/coop/interactables/atv_sync.cpp
     src/coop/interactables/atv_stamp.cpp
+    src/coop/interactables/atv_seat_table.cpp
     src/coop/interactables/atv_stream_gates.cpp
     src/coop/interactables/atv_authority.cpp
     src/coop/interactables/atv_body.cpp

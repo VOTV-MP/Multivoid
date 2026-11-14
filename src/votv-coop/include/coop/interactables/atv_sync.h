@@ -101,8 +101,8 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // all (a simulating body corrected at packet arrival). Refuses to run if the collision guard did not arm. Call
 // every net-pump tick on the game thread.
 //
-// The two questions are separate on purpose. THE SEAT (`occupantSlot`) is the host's judged claim that
-// device_occupancy's E-press deny reads; THE SYNCER (`syncerSlot`) decides who STREAMS and whose machine runs
+// The two questions are separate on purpose. THE SEAT (the entry's `seatOccupant`) is the host's judged claim that
+// device_occupancy's E-press deny reads; THE SYNCER (`seatSyncer`) decides who STREAMS and whose machine runs
 // the brain: the accumulators, the wheel torque, and the collision-authored damage. A peer merely grabbing an
 // ATV must not deny a seat nobody is in.
 void Tick();

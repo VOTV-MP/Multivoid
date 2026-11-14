@@ -102,14 +102,14 @@ void OnAtvRequestReceived(int senderSlot, const uint8_t* bytes, uint16_t len) {
     // (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientExplosionManager.cpp:152-157); here the host judges
     // the syncer at its receive boundary. The syncer a hand-back just replaced is admitted inside AdmitBlock's late
     // window: its copy owned the tick when the ATV died, so its report is honest.
-    if (e->syncerSlot != slot && !coop::atv_authority::IsLateSyncer(*e, slot, coop::atv_sync::NowMs()))
+    if (e->seatSyncer != slot && !coop::atv_authority::IsLateSyncer(*e, slot, coop::atv_sync::NowMs()))
         return detail::Refuse(slot, Refusal::NotSyncer);
     // MTA blows a vehicle once (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2870-2904); here the
     // game's own re-arm applies: the mark clears when the slot that blew it reports health at 0 or above (atv_sync).
     if (e->blown) return detail::Refuse(slot, Refusal::Blown);
     if (!detail::SlotOf(slot).atvBlast.Push(detail::AtvItem{key}, detail::kAtvBlastCap))
         return detail::Refuse(slot, Refusal::QueueFull);
-    if (e->syncerSlot != slot) ++detail::MutCounters().lateAccepted;
+    if (e->seatSyncer != slot) ++detail::MutCounters().lateAccepted;
     // Marked only now the request is queued; a trap that fired on the client has fired for everyone, so the host's
     // own copy must not fire it again.
     e->blown = true;
