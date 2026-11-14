@@ -29,6 +29,7 @@
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
+#include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -250,6 +251,21 @@ bool HandlePropDriveEvent(net::Session& session,
         net::BlobChunkPayload c{};
         std::memcpy(&c, msg.payload, sizeof(c));
         ::coop::hand_record_sync::OnChunk(c, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::CoverState:
+    case net::ReliableKind::CoverIntent: {
+        // CoverState HOST->ALL (op 5 to one asker), CoverIntent CLIENT->HOST (coop/world/cover_sync). Exact length.
+        const bool intent = msg.kind == net::ReliableKind::CoverIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::CoverPayload)) {
+            UE_LOGW("event_feed: a cover message the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        net::CoverPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (intent) ::coop::cover_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::cover_sync::OnState(p);
         break;
     }
     case net::ReliableKind::PlantState:

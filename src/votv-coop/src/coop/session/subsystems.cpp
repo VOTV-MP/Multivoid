@@ -104,6 +104,7 @@
 #include "coop/props/hacksaw_cut.h"
 #include "coop/props/prop_food_sync.h"
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
+#include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors are the host's
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/interactables/woodchipper_gate.h"  // the chipper bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
@@ -310,6 +311,7 @@ void Install(coop::net::Session& session) {
     coop::props::hacksaw_cut::Install();  // a client's saw asks the host before its cut completes
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::hand_record_sync::Install(&session);  // a held item's record: its owner sends it, each mirror takes it
+    coop::cover_sync::Install(&session);  // the desk's plates and the stations' doors: a client's changes are asked of the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::subsystems::desk::Install(session);
@@ -501,6 +503,7 @@ DisconnectStats DisconnectAll() {
     coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
     coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
     coop::hand_record_sync::OnDisconnect();  // the hands' records and half-assemblies
+    coop::cover_sync::OnDisconnect();  // the covers sent, the asks and states queued
     coop::desk_short_sync::OnDisconnect();
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
@@ -685,6 +688,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hand_record"}; coop::hand_record_sync::Tick(); }  // the owner's hand read and sent, the host's parked records judged, the mirrors written
+    coop::cover_sync::Tick();  // the host's poll and its asks, the client's states
     coop::plant_sync::Tick();  // the plants' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
