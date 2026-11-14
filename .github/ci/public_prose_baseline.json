@@ -1,5 +1,5 @@
 {
-  "as_of": "2f14937a6",
+  "as_of": "ca8537cb9",
   "note": "measured on the working tree; as_of is HEAD at that moment",
   "counters": {
     "md.files": 56,
@@ -25,7 +25,7 @@
     "other.verbatim": 11,
     "other.qf": 0,
     "other.agent": 4,
-    "other.dated": 105,
+    "other.dated": 106,
     "other.ptr_memory": 6,
     "other.ptr_research": 11,
     "other.ptr_claude": 1,
