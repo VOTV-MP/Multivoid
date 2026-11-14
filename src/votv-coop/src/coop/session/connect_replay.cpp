@@ -71,6 +71,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/prop_nametag.h"  // the tags put on this session, again
+#include "coop/player/hand_record_sync.h"  // every held item's own record
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
@@ -187,6 +188,8 @@ void ConnectReplayForSlot(int slot) {
     coop::event_active_sync::SendJoinSnapshotForSlot(slot);
     // Each creature's count, after its NPC spawn (the queue above, same lane): the joiner applies a count at the bind.
     coop::creature_event_relay::SendJoinSnapshotForSlot(slot);
+    // Every held item's own record, for its hand mirrors.
+    coop::hand_record_sync::SendJoinSnapshotForSlot(slot);
     // The rolled path of each ambient UFO still flying, after its world-actor spawn; the Midas run while it flies.
     coop::ufo_sync::SendJoinSnapshotForSlot(slot);
     // Every robot cleaner's switch; one that runs is followed through the drive stream.
