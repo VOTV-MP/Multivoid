@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 294;
+inline constexpr uint16_t kProtocolVersion = 295;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -697,6 +697,11 @@ enum class ReliableKind : uint16_t {
     // stood at its cut, and its connect replay sends it, alone, an op 2 for each prop whose tag this session published,
     // ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by key.
     PropNametag = 261,
+    // A wall builder's aiming preview (coop/items/wall_preview_sync): its holder's, when it changes (at most ten a
+    // second) and once as it ends, a client's to the host, which checks its mirror of that hand is a wall builder and
+    // sends it on, the host's own to everyone. Each peer shows it on its mirror of that hand. Not pre-world.
+    // WallPreviewPayload.
+    WallPreview = 269,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game
@@ -4853,6 +4858,20 @@ struct VentCrawlStatePayload {
 static_assert(sizeof(VentCrawlStatePayload) == 32, "VentCrawlStatePayload must be 32 bytes");
 static_assert(sizeof(VentCrawlStatePayload) <= 256 - 20 - 8,
               "VentCrawlStatePayload must fit in one reliable datagram");
+
+// A wall builder's aiming preview (WallPreview): the tool's own components, in world space.
+struct WallPreviewPayload {
+    uint8_t slot;          // the holder
+    uint8_t held;          // 0: the preview ended (the hand let the tool go)
+    uint8_t editing;       // 1: the left button is held, the cube and the far corner shown
+    uint8_t pad;           // zero
+    float   cubeLoc[3];    // the cube: the wall to be placed
+    float   cubeRot[3];    // pitch, yaw, roll
+    float   cubeScale[3];
+    float   pivotA[3];     // where the aim lands
+    float   pivotB[3];     // the far corner, while editing
+};
+static_assert(sizeof(WallPreviewPayload) == 64, "WallPreviewPayload must be 64 bytes");
 
 #pragma pack(pop)
 

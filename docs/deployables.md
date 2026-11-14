@@ -63,6 +63,16 @@ a mirror and a save-loaded copy, and the host takes its hook while the client ho
 `nocollision` with no pose of the aim fan putting the client's look on its copy, the reported symptom, and
 `clientruns` in the press's own tick, with nothing asked of the host while the copy and an item are already there.
 
+The wall builder's aiming preview -- `pivot_a` where its holder aims, and while the left button is held the `cube` that
+is the wall to be placed and `pivot_b`, its far corner -- is moved by the tool's own tick on the holder's machine alone.
+The holder sends `editing` and the three components' world transforms when they change, at most ten times a second, and
+once as the preview ends (`WallPreview`): a client's to the host, which checks its mirror of that hand is a wall
+builder and sends it on. Each peer shows it on its mirror of that hand every frame while it holds
+(`coop/items/wall_preview_sync`) `[V]` (`coop/dev/wall_preview_probe`, `VOTVCOOP_WALL_PREVIEW_PROBE=1`, the Custom
+Content rule set on in the process: the host's mirror of a client's tool showed its aim point, the cube at the
+client's location and scale from the press, followed its stretch as the client turned, and hid at the cancel). The
+wall it places is not this lane's.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -81,6 +91,7 @@ a mirror and a save-loaded copy, and the host takes its hook while the client ho
 | `HookAnchorCommit` | a client to the host | the anchored hook's own save record, chunked |
 | `HookAnchored` | the host to all | an anchored hook exists, as the same record |
 | `HookRetrieve` | a client to the host (op 0); the host to all (op 1) | an anchored hook's save key: a client's pickup of it; or that it is gone, and whose pickup it was |
+| `WallPreview` | a holder to the host; the host to all | a wall builder's aiming preview: editing, the cube's world transform, the two pivots |
 
 ## Late join
 
@@ -93,7 +104,7 @@ built reach a joiner only through the save.
 
 | Limit | Evidence |
 |---|---|
-| The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
+| The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced, the wall builder's aiming preview aside; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
 | A hook whose save key the wire cannot carry (over 31 characters), or that has none, is not taken on a client: the press is refused there. The lane's hooks carry 23; the game's own keys and the level's hook were not measured | `[?]` `coop/items/hook_retrieve` |
 | A client's hook into the ATV ties the host's ATV against the client's puppet; whether the ATV lane's corrector carries that pull back to the client's copy is not measured | `[?]` `coop/items/hook_constraint` ties any keyed actor the bite resolves; `coop/interactables/atv_sync` corrects rather than parks |
 
@@ -106,3 +117,4 @@ built reach a joiner only through the save.
 | the tie, host-only | `coop/items/hook_constraint` |
 | the props a tie claims for the driven-prop channel | `coop/items/hook_prop_claim` |
 | an anchored hook taken back with the use key | `coop/items/hook_retrieve` |
+| the wall builder's aiming preview | `coop/items/wall_preview_sync`; `coop/dev/wall_preview_probe` |

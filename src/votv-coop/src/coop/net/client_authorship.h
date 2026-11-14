@@ -40,6 +40,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::FoodRelease:
     case ReliableKind::FoodHand:
     case ReliableKind::PlantEdit:
+    case ReliableKind::WallPreview:
     case ReliableKind::RoombaIntent:
     case ReliableKind::DeskShortRequest:
     case ReliableKind::PropSpawn:
