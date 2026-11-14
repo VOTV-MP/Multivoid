@@ -1,5 +1,5 @@
-# release-key-probe -- a one-off diagnosis, removed after use: does a job in the release environment see
-# the MULTIVOID_RELEASE_KEY secret? It prints only whether it is set and its length, never the value.
+# release-key-probe -- a one-off diagnosis, removed after use: does the release environment's key reach a
+# job called through workflow_call, without and with `secrets: inherit`? Prints only set/empty and length.
 name: release-key-probe
 
 on:
@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 jobs:
-  probe:
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - name: Is the release key visible here
-        env:
-          KEY: ${{ secrets.MULTIVOID_RELEASE_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then echo "PROBE: MULTIVOID_RELEASE_KEY is EMPTY in this job"; else echo "PROBE: MULTIVOID_RELEASE_KEY is set, length ${#KEY}"; fi
+  plain:
+    uses: VOTV-MP/Multivoid/.github/workflows/release-key-probe-core.yml@main
+    with:
+      form: plain
+  inherit:
+    uses: VOTV-MP/Multivoid/.github/workflows/release-key-probe-core.yml@main
+    with:
+      form: inherit
+    secrets: inherit

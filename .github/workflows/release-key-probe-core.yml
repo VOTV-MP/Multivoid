@@ -1,0 +1,25 @@
+# release-key-probe-core -- the called half of a one-off diagnosis, removed after use: a job in the
+# release environment, reached through workflow_call, prints whether it sees MULTIVOID_RELEASE_KEY.
+name: release-key-probe-core
+
+on:
+  workflow_call:
+    inputs:
+      form:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Is the release key visible through workflow_call
+        env:
+          KEY: ${{ secrets.MULTIVOID_RELEASE_KEY }}
+          FORM: ${{ inputs.form }}
+        run: |
+          if [ -z "$KEY" ]; then echo "PROBE2 $FORM: EMPTY"; else echo "PROBE2 $FORM: set, length ${#KEY}"; fi
