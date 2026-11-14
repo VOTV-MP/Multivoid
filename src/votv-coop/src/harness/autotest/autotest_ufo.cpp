@@ -154,17 +154,19 @@ bool RunMidas() {
     return ran;
 }
 
-// This peer's copy of the UFO `eid`: its path summary, once the copy reads one.
+// This peer's copy of the UFO `eid`: its path summary, once the copy reads one. Game thread.
+bool ReadCopySum(uint32_t eid, Sum& out) {
+    void* copy = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor);
+    std::vector<ue_wrap::FVector> pts;
+    if (!copy || !US::DevReadPath(copy, pts)) return false;
+    out = SumOf(pts);
+    return true;
+}
+
+// The same, from the drill's thread.
 bool CopySum(uint32_t eid, Sum& out) {
     bool ok = false;
-    OnGameThread([&] {
-        void* copy = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor);
-        std::vector<ue_wrap::FVector> pts;
-        if (copy && US::DevReadPath(copy, pts)) {
-            out = SumOf(pts);
-            ok = true;
-        }
-    });
+    OnGameThread([&] { ok = ReadCopySum(eid, out); });
     return ok;
 }
 
@@ -174,8 +176,9 @@ void OnWorldActorEnd(const coop::element::death_seam::Death& d) {
             d.streamedOut ? 1 : 0);
 }
 
-// The copy of the UFO `eid` here. The first time it reads not live after it was, or after the lane applied a path to it, its
-// registry row, its actor and the actor's liveness are said once, so a copy that died names how.
+// The copy of the UFO `eid` here, by the registry's own index liveness (LiveActorOfType): no object is read through a
+// pointer the engine may have freed. The first time it reads not live after it was, the registry row and the pointer are
+// said once, the pointer only printed and its slot asked by index.
 bool CopyLive(uint32_t eid) {
     static bool s_wasLive = false, s_said = false;
     bool live = false;
@@ -183,12 +186,12 @@ bool CopyLive(uint32_t eid) {
         live = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor) != nullptr;
         if (live) {
             s_wasLive = true;
-        } else if (!s_said && (s_wasLive || US::Read().pathsApplied >= 1)) {
+        } else if (s_wasLive && !s_said) {
             s_said = true;
             EL::Element* row = EL::Registry::Get().Get(static_cast<EL::ElementId>(eid));
             void* act = row ? row->GetActor() : nullptr;
-            UE_LOGI("ufo-drill: copy eid %u is not live (was live=%d): registry row=%d, actor=%p, actor live=%d, paths applied=%u",
-                    eid, s_wasLive ? 1 : 0, row ? 1 : 0, act, act && R::IsLive(act) ? 1 : 0, US::Read().pathsApplied);
+            UE_LOGI("ufo-drill: copy eid %u is not live any more: registry row=%d, actor=%p, its slot live=%d", eid, row ? 1 : 0, act,
+                    row && act && R::IsLiveByIndex(act, row->GetInternalIdx()) ? 1 : 0);
         }
     });
     return live;
@@ -235,19 +238,20 @@ void RunClient() {
     }
     if (!WaitGT("the host's ball copy", 60, [&] { return CopyLive(ballEid); })) return;
     PS::Mark("copies");
-    // The fence: the host's Midas run, sent after the path.
-    US::Counters c;
-    if (!WaitGT("the host's Midas run received", kStepSec, [&] { return US::Read().midasRuns >= 1; })) return;
-    OnGameThread([&] { c = US::Read(); });
-    if (c.pathsReceived < 1) {
+    // The check latches at the event: the moment the lane has applied the path to the copy, the copy's path is read, there
+    // and then (the ball destroys itself about 31 s after it, so a later read would find nothing). The fence is the host's
+    // Midas run, sent after the path on the same ordered lane: it arriving with no path received is the FAIL.
+    bool have = false;
+    Sum mine;
+    if (!WaitGT("the ball's path applied to its copy", kStepSec, [&] {
+            const US::Counters c = US::Read();
+            if (!have && c.pathsApplied >= 1) have = ReadCopySum(ballEid, mine);
+            return have || (c.midasRuns >= 1 && c.pathsReceived < 1);
+        }))
+        return;
+    if (!have) {
         RV::Say(kTag, RV::Outcome::Fail, "the host's Midas run arrived and the ball's path, sent before it, had not");
         PS::Mark("client_done", "F");
-        return;
-    }
-    if (!WaitGT("the path applied to the copy", 30, [] { return US::Read().pathsApplied >= 1; })) return;
-    Sum mine;
-    if (!CopySum(ballEid, mine)) {
-        RV::Say(kTag, RV::Outcome::Invalid, "the copy's path could not be read");
         return;
     }
     if (!Same(ball, mine)) {
@@ -271,8 +275,14 @@ void RunJoinHost() {
     void* actor = nullptr;
     OnGameThread([] { coop::element::death_seam::Subscribe(EL::ElementType::WorldActor, &OnWorldActorEnd); });
     if (!Summon(L"ufo_ball", {L"ufo_ballfo_C"}, eid, ball, &actor)) return;
-    // Held where it is: its tick off, so it has not flown to its end when the next life's ready edge comes.
-    OnGameThread([&] { E::SetActorTickEnabled(actor, false); });
+    // Held where it is: its tick off, and its lifespan cleared too (the ball carries InitialLifeSpan 60, an engine timer the
+    // tick does not stop; zero is no expiry), so it is still flying when the next life's ready edge comes.
+    bool lifeCleared = false;
+    OnGameThread([&] {
+        E::SetActorTickEnabled(actor, false);
+        lifeCleared = E::SetActorLifeSpan(actor, 0.f);
+    });
+    UE_LOGI("ufo-drill: HOST the held ball's lifespan cleared=%d", lifeCleared ? 1 : 0);
     UE_LOGI("ufo-drill: HOST holds ball eid %u, path %hs", eid, Text(eid, ball).c_str());
     PS::Mark("held");
     if (!PS::Await("client_done", kStepSec)) return;
@@ -328,14 +338,18 @@ void RunRejoin() {
         PS::Mark("rejoin_done", "F bad text");
         return;
     }
+    // Latched at the event, as in the first arm: the path is read the moment the lane has applied it to the copy.
+    bool have = false;
+    Sum mine;
     if (!WaitGT("the joiner's ball copy", 60, [&] { return CopyLive(eid); }) ||
-        !WaitGT("the host's path received and applied here", kStepSec, [] { return US::Read().pathsApplied >= 1; })) {
+        !WaitGT("the host's path applied to the copy", kStepSec, [&] {
+            if (!have && US::Read().pathsApplied >= 1) have = ReadCopySum(eid, mine);
+            return have;
+        })) {
         PS::Mark("rejoin_done", "I");
         return;
     }
-    Sum mine;
-    const bool read = CopySum(eid, mine);
-    const bool same = read && Same(host, mine);
+    const bool same = Same(host, mine);
     UE_LOGI("ufo-drill: REJOIN the copy reads %hs, the host's %hs", Text(eid, mine).c_str(), Text(eid, host).c_str());
     if (!same) RV::Say(kTagJoin, RV::Outcome::Fail, "the joiner's ball copy flies another path than the host's (%s vs %s)", Text(eid, mine).c_str(), Text(eid, host).c_str());
     PS::Mark("rejoin_done", same ? "P" : "F");
