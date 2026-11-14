@@ -16,10 +16,11 @@ namespace coop::atv_riders {
 // Store the session. Idempotent; called every load tick.
 void Install(coop::net::Session* session);
 
-// The seats onto the remote bodies, and on the host, a client seat's start and end onto its kerfurs. Game thread.
+// On the host, a client seat's start and end onto its kerfurs. The remote bodies' seats are the seat table's subscriber,
+// not a tick. Game thread.
 void Tick();
 
-// The session ended: every seat is let go and the kerfur calls are forgotten.
+// The session ended: the body seats are dropped and the kerfur calls are forgotten.
 void OnDisconnect();
 
 }  // namespace coop::atv_riders

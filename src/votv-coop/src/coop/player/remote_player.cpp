@@ -12,6 +12,7 @@
 #include "coop/player/local_body.h"
 #include "coop/player/skin_effects.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/puppet_seat.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_hurt_flash.h"
@@ -70,6 +71,7 @@ void RemotePlayer::OnBeforeFinish(void* ctx, void* actor) {
 }
 
 bool RemotePlayer::Spawn(const std::string& skinName, uint8_t peerSlot) {
+    slot_ = players::kPeerIdUnknown;
     if (peerSlot != players::kPeerIdUnknown && peerSlot >= players::kMaxPeers) {
         UE_LOGW("RemotePlayer::Spawn: peer slot %u is out of range", static_cast<unsigned>(peerSlot));
         return false;
@@ -225,6 +227,7 @@ bool RemotePlayer::Spawn(const std::string& skinName, uint8_t peerSlot) {
 
     UE_LOGI("RemotePlayer::Spawn: puppet=%p at (%.0f,%.0f,%.0f) yaw=%.0f nick='%ls'",
             actor_, loc.X, loc.Y, loc.Z, yaw, nickname_.c_str());
+    slot_ = peerSlot;
     return true;
 }
 
@@ -279,6 +282,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (ragdoll_.OnWireBit((snap.stateBits & coop::net::kStateBitRagdoll) != 0,
                            actor_, internalIdx_)) {
         bodyYaw_.Reset(curYaw_);
+        coop::puppet_seat::OnBodyChanged(slot_);  // the display's attachment is gone: a stored seat is applied
     }
 
     ShowBurning((snap.stateBits & coop::net::kStateBitBurning) != 0);
@@ -400,9 +404,6 @@ void RemotePlayer::Tick() {
         bodyYaw_.Update(NowMs(), curSpeed_, curYaw_, curHeadYawDelta_)) {
         dirty_ = true;
     }
-    // Seated, the body follows its ATV every frame, between the stream's packets too.
-    if (seat_.Active()) dirty_ = true;
-
     // Skip the engine write when nothing changed since the last push: the puppet runs no physics
     // integration (its movement and actor ticks are parked), so a frozen pose stays where it is,
     // and re-writing the same transform dozens of times a second is wasted dispatch.
@@ -490,7 +491,6 @@ void RemotePlayer::Destroy() {
     // IsLiveByIndex: if the puppet was GC-freed and its address recycled, plain IsLive would pass
     // and DestroyActor would destroy the foreign object at that address.
     if (R::IsLiveByIndex(actor_, internalIdx_)) E::DestroyActor(actor_);
-    seat_.Forget();
     actor_ = nullptr;
     internalIdx_ = -1;
     hasPose_ = false;
@@ -518,10 +518,8 @@ void RemotePlayer::ApplySkin(const std::string& skinName) {
         appliedSkin_ = skinName;
 }
 
-void RemotePlayer::SetSeat(void* atv) {
-    if (!valid()) return;
-    if (!seat_.Set(actor_, atv)) return;
-    if (!atv) bodyYaw_.Reset(curYaw_);
+void RemotePlayer::OnSeatReleased() {
+    bodyYaw_.Reset(curYaw_);
     dirty_ = true;
 }
 
@@ -536,22 +534,30 @@ void RemotePlayer::ApplyToEngine() {
         return;
     case RagdollDisplay::Drive::StoppedNow:
         bodyYaw_.Reset(curYaw_);
+        coop::puppet_seat::OnBodyChanged(slot_);
         break;
     case RagdollDisplay::Drive::Inactive:
         break;
     }
 
-    // Seated on an ATV, the seat places the body (coop/player/puppet_seat.h); curPos_ keeps tracking the wire, so the
-    // first apply after the seat lets go resumes from the owner's pose.
-    if (seat_.Drive(actor_)) return;
-
-    // The wire carries the source's actor Z (the capsule centre, MTA's vPos shape, unaffected by BP
-    // init transients), and the puppet's actor is the wire pose unchanged: both ends are
-    // mainPlayer_C, so no actor-level Z or yaw offset exists.
-    E::SetActorLocation(actor_, curPos_);
-    // bodyYaw_ (the presentation), not curYaw_ (the wire truth): standing, the body holds so the
-    // head can lead.
-    E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, bodyYaw_.Yaw(), 0.f});
+    // Seated, the body is attached to its ATV (coop/player/puppet_seat.h) and the engine carries it: no location, rotation,
+    // movement drive or footstep is written. curPos_ keeps tracking the wire, so the first apply after the seat lets go
+    // resumes from the owner's pose. The cone and the head look below still run.
+    const bool seated = coop::puppet_seat::HoldsBody(slot_);
+    float shownYaw = bodyYaw_.Yaw();
+    if (seated) {
+        // The cone's yaw is measured against the body's actual world yaw, which the ATV turns.
+        ue_wrap::FRotator world{};
+        if (E::TryGetActorRotation(actor_, world)) shownYaw = world.Yaw;
+    } else {
+        // The wire carries the source's actor Z (the capsule centre, MTA's vPos shape, unaffected by BP
+        // init transients), and the puppet's actor is the wire pose unchanged: both ends are
+        // mainPlayer_C, so no actor-level Z or yaw offset exists.
+        E::SetActorLocation(actor_, curPos_);
+        // bodyYaw_ (the presentation), not curYaw_ (the wire truth): standing, the body holds so the
+        // head can lead.
+        E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, shownYaw, 0.f});
+    }
 
     // The flashlight cone: drive the puppet's lag_fl spring arm pitch so the cone points where the
     // source looks. On a real player the actor's tick updates it from the camera; the puppet's
@@ -571,7 +577,7 @@ void RemotePlayer::ApplyToEngine() {
                 // (curYaw_ + curHeadYawDelta_) while the parent shows bodyYaw_, so the difference
                 // is shortest-arced.
                 const float flRelYaw = OffsetDegrees(
-                    bodyYaw_.Yaw(), curYaw_ + curHeadYawDelta_);
+                    shownYaw, curYaw_ + curHeadYawDelta_);
                 if (sSetRelRotFn) {
                     ue_wrap::FRotator rot{curPitch_, flRelYaw, 0.f};
                     ue_wrap::ParamFrame f(sSetRelRotFn);
@@ -597,8 +603,8 @@ void RemotePlayer::ApplyToEngine() {
     // are ours. The source streams its actor yaw and a speed magnitude, so the planar velocity is
     // rebuilt along the body forward; the mode mirrors the in-air bit (MOVE_Falling or
     // MOVE_Walking), which the AnimBP reads for the foot-IK alpha. Through ue_wrap::puppet, so the
-    // CMC offsets stay in the wrapper.
-    {
+    // CMC offsets stay in the wrapper. Not while seated: the attach is the pose.
+    if (!seated) {
         const float yawRad = curYaw_ * 0.01745329252f;  // PI/180
         const ue_wrap::FVector vel{
             std::cos(yawRad) * curSpeed_,

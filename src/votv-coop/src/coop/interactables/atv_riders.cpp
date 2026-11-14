@@ -9,7 +9,7 @@
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
+#include "coop/player/puppet_seat.h"
 
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/game_thread.h"
@@ -33,15 +33,14 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 std::unordered_map<void*, int32_t> g_called;
 uint32_t g_calls = 0, g_releases = 0;
 
-void SeatBodies() {
-    auto& reg = coop::players::Registry::Get();
-    const uint8_t self = reg.LocalPeerId();
-    for (uint8_t slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        if (slot == self) continue;
-        coop::RemotePlayer* p = reg.Puppet(slot);
-        if (!p || !p->valid()) continue;
-        p->SetSeat(coop::atv_sync::ActorSeatedBy(slot));
-    }
+// The body subscriber, on every peer: a slot other than this peer's own that takes the seat is seated, and one that leaves it
+// is let go. The host's own seat appears on a client as slot 0, so a client seats the host's body by the same rule.
+void OnSeatChange(const coop::atv_seat_table::Change& c) {
+    const uint8_t self = coop::players::Registry::Get().LocalPeerId();
+    const auto another = [self](uint8_t slot) { return slot != coop::players::kPeerIdUnknown && slot != self; };
+    if (another(c.occupantAfter)) coop::puppet_seat::Set(c.occupantAfter, *c.key, 0);
+    if (another(c.occupantBefore) && c.occupantBefore != c.occupantAfter)
+        coop::puppet_seat::Clear(c.occupantBefore, *c.key);
 }
 
 void CallKerfurs(const uint8_t self) {
@@ -94,19 +93,18 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     coop::npc_sync::OnHostNpcRetired(&OnNpcRetired);
     coop::atv_rider_watch::Install(session);
+    coop::atv_seat_table::OnChange(&OnSeatChange);
+    coop::puppet_seat::SetResolver(&coop::atv_seat_table::ResolveSeat);
 }
 
 void Tick() {
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    SeatBodies();
     if (s->role() == coop::net::Role::Host) CallKerfurs(coop::players::Registry::Get().LocalPeerId());
 }
 
 void OnDisconnect() {
-    auto& reg = coop::players::Registry::Get();
-    for (uint8_t slot = 0; slot < coop::players::kMaxPeers; ++slot)
-        if (coop::RemotePlayer* p = reg.Puppet(slot)) p->SetSeat(nullptr);
+    coop::puppet_seat::OnDisconnect();
     if (g_calls || g_releases)
         UE_LOGI("atv_riders: session end -- kerfur calls=%u releases=%u", g_calls, g_releases);
     g_called.clear();

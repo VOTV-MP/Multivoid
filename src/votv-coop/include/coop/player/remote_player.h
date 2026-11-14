@@ -15,7 +15,6 @@
 #include "coop/player/puppet_body_yaw.h"
 #include "coop/player/players_registry.h"  // kPeerIdUnknown
 #include "coop/player/puppet_footsteps.h"
-#include "coop/player/puppet_seat.h"
 #include "coop/player/remote_player_ragdoll.h"
 #include "ue_wrap/core/types.h"
 
@@ -136,9 +135,9 @@ public:
 
     void* actor() const { return actor_; }
 
-    // The ATV whose seat the host's table gives this peer, or nullptr: the body sits there, not where the stream
-    // stands it (coop/player/puppet_seat.h). Game thread.
-    void SetSeat(void* atv);
+    // The body's seat on an ATV ended (coop/player/puppet_seat): the presentation yaw is re-based on the wire's and the
+    // stream places the body again at the next apply. Game thread.
+    void OnSeatReleased();
 
 private:
     // Spawn's before-finish callback (engine::SpawnActor): keeps the deferred actor and registers it
@@ -185,6 +184,10 @@ private:
 
     // The peer slot Spawn registers the puppet under, read by OnBeforeFinish during the spawn call.
     uint8_t pendingSlot_ = players::kPeerIdUnknown;
+
+    // The peer slot this body is, set at the end of a successful Spawn; kPeerIdUnknown for a puppet no session owns.
+    // The ragdoll stops and the pose guard name the seat owner's slot by it.
+    uint8_t slot_ = players::kPeerIdUnknown;
 
     // The GUObjectArray InternalIndex of actor_, captured in Spawn's before-finish callback while the
     // puppet was known live; valid() checks IsLiveByIndex, never plain IsLive. A mass GC purge can free the puppet without
@@ -241,8 +244,6 @@ private:
     // own step every native stride, since the puppet's BP tick (where the game's accumulator lives)
     // is suppressed.
     coop::puppet_footsteps::Stride footsteps_{};
-    // The ATV seat this body sits in while its peer drives (SetSeat).
-    coop::PuppetSeat seat_{};
     // The state bits (in air, ragdolled, burning), snapped on every SetTargetPose, never
     // interpolated. ApplyToEngine drives the movement mode from bit 0: set is falling, clear is
     // walking, which the AnimBP reads to gate the foot IK.
