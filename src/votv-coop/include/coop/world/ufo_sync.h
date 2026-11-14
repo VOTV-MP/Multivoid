@@ -33,7 +33,8 @@ void Tick();
 // element id the spawn carried.
 void OnHostSpawnSent(void* actor, uint32_t eid);
 
-// HOST, at a joiner's world-ready edge: the path of every UFO still flying, and the Midas run while it lasts.
+// HOST, at a joiner's world-ready edge: every UFO still flying is enrolled if it is not (a session end drains the host's
+// elements), and its path goes to the joiner; the Midas run too while it lasts.
 void SendJoinSnapshotForSlot(int slot);
 
 // [dev] What the lane has done since the process began (monotonic, so a drill's delta across a session end never

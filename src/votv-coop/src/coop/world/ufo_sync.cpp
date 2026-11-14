@@ -17,6 +17,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/world/creature_event_relay.h"
+#include "coop/world/world_actor_sync.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -184,16 +185,26 @@ void SendPathOf(void* ufo, uint32_t eid, int slot) {
     SendPath(eid, k, pts, slot);
 }
 
+// A UFO the host never enrolled, or whose element the last client's leave drained (world_actor_sync releases the host's
+// elements with the session, and no scan enrols a live actor again), is enrolled now: its spawn goes to every client and
+// its rolled path follows in the same call (OnHostSpawnSent), so the joiner meets it. An enrolled one sends its path to
+// the joiner alone.
 void VisitUfo(void* ctx, void* obj, int32_t) {
     if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(obj);
-    if (eid != EL::kInvalidId) SendPathOf(obj, static_cast<uint32_t>(eid), *static_cast<const int*>(ctx));
+    if (eid == EL::kInvalidId) {
+        const unsigned enrolled = coop::world_actor_sync::HostEnrollExSpawn(obj);
+        UE_LOGI("ufo_sync: HOST a %ls flying without an element is enrolled for the joiner (eid %u)", R::ClassNameOf(obj).c_str(),
+                enrolled);
+        return;
+    }
+    SendPathOf(obj, static_cast<uint32_t>(eid), *static_cast<const int*>(ctx));
 }
 
-// A joiner's snapshot: every enrolled UFO still flying. Nothing announces what a joiner missed, so this is a scan, once
-// per joiner at its ready edge.
+// A joiner's snapshot: every UFO still flying. Nothing announces what a joiner missed, so this is a scan, once per
+// joiner at its ready edge.
 void ScanUfos(int slot) {
-    for (const wchar_t* cls : {L"ufo_ballfo_C", L"ufo_boofo_C", L"ufo_boofo_spawn1_C"})
+    for (const wchar_t* cls : {L"ufo_ballfo_C", L"ufo_boofo_C", L"ufo_boofo_spawn1_C", L"ufo_pillfo_C", L"ufo_joel_C"})
         if (void* c = OI::ClassByName(cls)) OI::ForEachInstance(c, &VisitUfo, &slot);
 }
 

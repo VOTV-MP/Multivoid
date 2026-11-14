@@ -168,9 +168,29 @@ bool CopySum(uint32_t eid, Sum& out) {
     return ok;
 }
 
+// The cause of a world actor's end, as the engine's drain hands it out (the host's and a client's copy alike).
+void OnWorldActorEnd(const coop::element::death_seam::Death& d) {
+    UE_LOGI("ufo-drill: world actor eid %u ended (mirror=%d, streamed out=%d)", static_cast<unsigned>(d.eid), d.mirror ? 1 : 0,
+            d.streamedOut ? 1 : 0);
+}
+
+// The copy of the UFO `eid` here. The first time it reads not live after it was, or after the lane applied a path to it, its
+// registry row, its actor and the actor's liveness are said once, so a copy that died names how.
 bool CopyLive(uint32_t eid) {
+    static bool s_wasLive = false, s_said = false;
     bool live = false;
-    OnGameThread([&] { live = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor) != nullptr; });
+    OnGameThread([&] {
+        live = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor) != nullptr;
+        if (live) {
+            s_wasLive = true;
+        } else if (!s_said && (s_wasLive || US::Read().pathsApplied >= 1)) {
+            s_said = true;
+            EL::Element* row = EL::Registry::Get().Get(static_cast<EL::ElementId>(eid));
+            void* act = row ? row->GetActor() : nullptr;
+            UE_LOGI("ufo-drill: copy eid %u is not live (was live=%d): registry row=%d, actor=%p, actor live=%d, paths applied=%u",
+                    eid, s_wasLive ? 1 : 0, row ? 1 : 0, act, act && R::IsLive(act) ? 1 : 0, US::Read().pathsApplied);
+        }
+    });
     return live;
 }
 
@@ -203,6 +223,7 @@ void RunHost() {
 
 void RunClient() {
     if (!disc_drill::HostPuppetUp() || !disc_drill::ClientJoined()) return;
+    OnGameThread([] { coop::element::death_seam::Subscribe(EL::ElementType::WorldActor, &OnWorldActorEnd); });
     PS::Mark("client_ready");
     std::string text;
     if (!PS::AwaitText("ufos", text, kStepSec)) return;
@@ -241,12 +262,6 @@ void RunClient() {
 
 // ---- join ----
 
-// The cause of a held ball's end, if one comes: its element end as the engine drained it.
-void OnWorldActorEnd(const coop::element::death_seam::Death& d) {
-    UE_LOGI("ufo-drill: HOST world actor eid %u ended (mirror=%d, streamed out=%d)", static_cast<unsigned>(d.eid), d.mirror ? 1 : 0,
-            d.streamedOut ? 1 : 0);
-}
-
 void RunJoinHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
@@ -266,8 +281,14 @@ void RunJoinHost() {
     uint32_t sent0 = 0, sentAtEdge = 0;   // the counter is monotonic, so the delta cannot underflow
     OnGameThread([&] { sent0 = US::Read().pathsSent; });
     if (!rejoin::AwaitNextLifeReady(gen, [&] { sentAtEdge = US::Read().pathsSent - sent0; })) return;
+    // The ball itself is asked, not the registry: the last client's leave drained its element, and the joiner's edge enrols it again
+    // under a new id, which is the id the joiner's copy carries.
     bool flying = false;
-    OnGameThread([&] { flying = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor) != nullptr; });
+    uint32_t edgeEid = EL::kInvalidId;
+    OnGameThread([&] {
+        flying = R::IsLive(actor);
+        if (flying) edgeEid = static_cast<uint32_t>(EL::Registry::Get().EidForActor(actor));
+    });
     UE_LOGI("ufo-drill: HOST the rejoined client's world is up; %u path(s) sent at its edge", sentAtEdge);
     if (!flying) {
         RV::Say(kTagJoin, RV::Outcome::Invalid, "the held ball was gone at the client's ready edge");
@@ -278,7 +299,7 @@ void RunJoinHost() {
         RV::Say(kTagJoin, RV::Outcome::Fail, "the host's ball was flying at the client's ready edge and the host sent the joiner no path");
         return;
     }
-    PS::Mark("path_sent", Text(eid, ball));
+    PS::Mark("path_sent", Text(edgeEid, ball));
     std::string done;
     if (!PS::AwaitText("rejoin_done", done, kStepSec)) return;
     OnGameThread([&] { E::DestroyActor(actor); });
@@ -298,6 +319,7 @@ void RunJoinClient() {
 
 void RunRejoin() {
     if (!disc_drill::HostPuppetUp()) return;
+    OnGameThread([] { coop::element::death_seam::Subscribe(EL::ElementType::WorldActor, &OnWorldActorEnd); });
     std::string text;
     if (!PS::AwaitText("path_sent", text, kStepSec)) return;   // the host's path reached the edge: the joiner's must come
     uint32_t eid = 0;

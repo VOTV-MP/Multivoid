@@ -188,7 +188,7 @@ outputs of the gamemode's source on the world-actor lane, so each client gets a 
 animation. The ball and the boo roll their path on each machine at birth: the ball the turn and the two ends its
 lights fly between, kept from its construction script because the engine refuses to move those parts afterwards,
 and the boo the wobble of each point of its flight spline. So the host sends what its copy rolled (`UfoEvent`),
-right after the spawn it follows on the same ordered lane (a joiner gets the path of each UFO still flying at its ready
+right after the spawn it follows on the same ordered lane (a joiner gets each UFO still flying, enrolled again if the last client's leave drained it, and its path at its ready
 edge), and the client writes it over its own before the copy flies; a path the receive boundary refuses is logged with
 the UFO's id, and that copy flies its own roll (a boo) or stays parked (a ball). The host relays the Midas take-off, and each client runs
 its own. A copy the host ends first gives back the event entry its script would have given back on its own way out
