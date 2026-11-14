@@ -53,6 +53,7 @@ ALLOWLIST = [
     "src/coop/comms/peer_action_feed.cpp",
     "src/coop/creatures/kerfur_command_answer.cpp",
     "src/coop/dispatch/event_feed.cpp",
+    "src/coop/interactables/tv_link_sync.cpp",
     "src/coop/net/end_reason.cpp",
     "src/coop/player/local_body.cpp",
     "src/coop/player/nameplate.cpp",

@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 294;
+inline constexpr uint16_t kProtocolVersion = 295;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1455,6 +1455,8 @@ enum class ReliableKind : uint16_t {
     // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
     // RoombaPayload.
     RoombaIntent = 246,
+    // Client-allowed; relayed. TvLinkPayload.
+    TvLink = 272,
 };
 
 #pragma pack(push, 1)
@@ -4340,6 +4342,23 @@ struct PhysModsStatePayload {
     uint8_t bytes[12];  // 12 -- op 2: the canonical array; else zero
 };
 static_assert(sizeof(PhysModsStatePayload) == 16, "PhysModsStatePayload must be 16 bytes");
+
+// One television's web video (TvLink): the set by key, what was done, the play position it was done at, and for a
+// play the address as typed, ASCII, not terminated. The address's length is what one reliable datagram leaves.
+inline constexpr int kTvLinkMax = 186;
+inline constexpr uint8_t kTvOpPlay = 0;    // open `link`; `posMs` is where the sender's set already is (a joiner's replay)
+inline constexpr uint8_t kTvOpPause = 1;   // the remote's stop button
+inline constexpr uint8_t kTvOpResume = 2;  // the remote's play button, from `posMs`
+inline constexpr uint8_t kTvOpSeek = 3;    // the remote's playback slider, to `posMs`
+struct TvLinkPayload {
+    WireKey  key;               // 32  -- the television's key
+    uint16_t linkLen;           // 2   -- characters of `link` in use (0 unless op is kTvOpPlay)
+    uint8_t  op;                // 1   -- kTvOp*
+    uint8_t  _pad;              // 1   -- zero
+    uint32_t posMs;             // 4   -- the play position, milliseconds
+    char     link[kTvLinkMax];  // 186 -- the address
+};
+static_assert(sizeof(TvLinkPayload) == 226, "TvLinkPayload must be 226 bytes");
 
 // One drive-slot state line (DriveSlotState). role: 0 the desk play slot, 1 the desk comp slot,
 // 2 the eraser slot. occupied 1 names the slotted drive; 0 means empty, with driveEid the last

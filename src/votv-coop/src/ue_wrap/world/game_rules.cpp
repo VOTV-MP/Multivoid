@@ -180,6 +180,44 @@ int ReadDifficulty() {
     return sOff >= 0 ? static_cast<int>(reinterpret_cast<const uint8_t*>(gi)[sOff]) : -1;
 }
 
+namespace {
+
+// The Custom Content rule's byte in the process copy, or null.
+uint8_t* CustomContentByte() {
+    static void*   sGiClass = nullptr;
+    static int32_t sOff = -1;
+    void* gi = world_singleton::GameInstance();
+    void* giClass = gi ? R::ClassOf(gi) : nullptr;
+    if (!giClass) return nullptr;
+    if (giClass != sGiClass) {
+        const int32_t rulesOff = R::FindPropertyOffset(giClass, L"gameRules");
+        void* rules = rulesOff >= 0 ? R::PropertyInnerStruct(giClass, L"gameRules") : nullptr;
+        if (!rules) return nullptr;
+        sGiClass = giClass;
+        sOff = -1;
+        for (const R::StructFieldInfo& fi : R::EnumerateStructFields(rules))
+            if (TrimmedKey(fi.name) == "customContent" && fi.size == 1) {
+                sOff = rulesOff + fi.offset;
+                break;
+            }
+    }
+    return sOff >= 0 ? reinterpret_cast<uint8_t*>(gi) + sOff : nullptr;
+}
+
+}  // namespace
+
+int ReadCustomContent() {
+    const uint8_t* b = CustomContentByte();
+    return b ? (*b != 0 ? 1 : 0) : -1;
+}
+
+bool ForceCustomContent(bool on) {
+    uint8_t* b = CustomContentByte();
+    if (!b) return false;
+    *b = on ? 1 : 0;
+    return true;
+}
+
 const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n) {
     for (const RuleField& f : rules) {
         if (f.kind != kind) continue;

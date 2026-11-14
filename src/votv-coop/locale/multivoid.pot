@@ -709,7 +709,15 @@ msgid "Let a player's clip through the world take them to the backrooms and the 
 msgstr ""
 
 #: include/coop/config/config_registry_rows.inc
+msgid "Let players put videos on TVs"
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
 msgid "Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay."
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Let the players in this game put video links on TVs and pause or seek them. Off: only the host's links and controls reach everyone. On by default."
 msgstr ""
 
 #: src/ui/voice_panel.cpp
@@ -1235,6 +1243,46 @@ msgstr ""
 
 #: src/ui/dev_menu.cpp
 msgid "Stats"
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: a player's YouTube link could not be played here."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: a player's video link was not played here. This save's Custom Content rule is off."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: every media channel is in use, so the link was not played."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: getting the video from YouTube..."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: that link cannot be used. It must be an http or https address with no spaces or quotes."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: that link is too long to share, so it plays on your screen only."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: the YouTube link could not be played. The reason is in multivoid.log."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: the host has turned off video links from players."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: this install has no yt-dlp, so a YouTube link cannot play."
+msgstr ""
+
+#: src/coop/interactables/tv_link_sync.cpp
+msgid "TV: this set has no power, so the link was not played."
 msgstr ""
 
 #: src/ui/server_settings_pane.cpp

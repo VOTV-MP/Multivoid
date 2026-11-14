@@ -43,6 +43,10 @@ param(
     # untestable on the box that has it -- and a gate nobody can make fire is a gate
     # nobody has checked. (2026-09-01.)
     [string]$PakDir     = '',                       # default: <repo>/assets/paks
+    # A yt-dlp.exe to ship as mod\tools\yt-dlp.exe: what resolves a YouTube address put on a
+    # television (coop/interactables/tv_link_resolver). Not given, the zip carries none and a
+    # YouTube link is refused with a log line; a direct video address plays either way.
+    [string]$YtDlp      = '',
     # ASSEMBLING THE REAL THING. A release zip MUST carry the starter paks; a CI or
     # drill zip may lawfully be pak-less. Both statements were already written in this
     # file's header and NEITHER was enforced, so the two lanes produced the same
@@ -175,6 +179,26 @@ if ($Release) {
 # the literal "true" inside. Match them rather than shipping an empty file.
 Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Encoding ascii -NoNewline
 
+# --- The optional yt-dlp program (mod\tools) ---
+if ($YtDlp) {
+    if (-not (Test-Path -LiteralPath $YtDlp)) { throw "yt-dlp not found: $YtDlp" }
+    New-Item -ItemType Directory -Path (Join-Path $stage 'mod/tools') -Force | Out-Null
+    Copy-Item -LiteralPath $YtDlp (Join-Path $stage 'mod/tools/yt-dlp.exe')
+    $ytSha = (Get-FileHash -LiteralPath $YtDlp -Algorithm SHA256).Hash.ToLower()
+    $ytNote = @(
+        'yt-dlp.exe in this folder is the unmodified standalone Windows binary of yt-dlp,',
+        'https://github.com/yt-dlp/yt-dlp (releases page). Multivoid runs it as a separate',
+        'program to resolve a YouTube address put on an in-game television.',
+        '',
+        "sha256: $ytSha",
+        '',
+        'yt-dlp is released under The Unlicense. The standalone binary bundles third-party',
+        'components under their own licenses; see THIRD_PARTY_LICENSES.txt and the source',
+        'code in the yt-dlp repository for the release this binary came from.'
+    )
+    Set-Content -LiteralPath (Join-Path $stage 'mod/tools/yt-dlp-NOTICE.txt') -Value ($ytNote -join "`r`n") -Encoding ascii
+}
+
 # --- Pak route (pak\ -> shimloader\pak\<pkg>\ -> VFS LogicMods\<pkg>\) --
 # When -Pak is not given the default input is assets/paks/: the staged starter-model
 # paks plus their .png preview tiles, the F1 skin browser's sidecar convention.
@@ -255,3 +279,4 @@ Write-Host "  payload: $PayloadDll"
 Write-Host "  tree   : manifest.json, icon.png, README.md$(if ($logSections.Count -gt 0) { ", CHANGELOG.md ($($logSections.Count) build(s))" }), LICENSE, THIRD-PARTY-NOTICES.md, mod/enabled.txt, mod/dlls/main.dll"
 if ($Pak.Count -gt 0) { Write-Host "           + pak/ ($($Pak.Count) file(s))" }
 if ($Release) { Write-Host "           + mod/dlls/main.dll.sig" }
+if ($YtDlp) { Write-Host "           + mod/tools/yt-dlp.exe, mod/tools/yt-dlp-NOTICE.txt" }

@@ -570,8 +570,14 @@ msgstr "[[Left the session.]]"
 msgid "Let a player's clip through the world take them to the backrooms and the game's two secret maps, each player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until their visit ends."
 msgstr "[[Let a player's clip through the world take them to the backrooms and the game's two secret maps, each player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until their visit ends.]]"
 
+msgid "Let players put videos on TVs"
+msgstr "[[Let players put videos on TVs]]"
+
 msgid "Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay."
 msgstr "[[Let players whose Multivoid build differs from this server's join -- an unofficial build when this server runs the official one, the official build when this server runs a modified one. Applies to the next joins; players already in stay.]]"
+
+msgid "Let the players in this game put video links on TVs and pause or seek them. Off: only the host's links and controls reach everyone. On by default."
+msgstr "[[Let the players in this game put video links on TVs and pause or seek them. Off: only the host's links and controls reach everyone. On by default.]]"
 
 msgid "Levels"
 msgstr "[[Levels]]"
@@ -1000,6 +1006,36 @@ msgstr "[[Starting your server -- loading %s]]"
 
 msgid "Stats"
 msgstr "[[Stats]]"
+
+msgid "TV: a player's YouTube link could not be played here."
+msgstr "[[TV: a player's YouTube link could not be played here.]]"
+
+msgid "TV: a player's video link was not played here. This save's Custom Content rule is off."
+msgstr "[[TV: a player's video link was not played here. This save's Custom Content rule is off.]]"
+
+msgid "TV: every media channel is in use, so the link was not played."
+msgstr "[[TV: every media channel is in use, so the link was not played.]]"
+
+msgid "TV: getting the video from YouTube..."
+msgstr "[[TV: getting the video from YouTube...]]"
+
+msgid "TV: that link cannot be used. It must be an http or https address with no spaces or quotes."
+msgstr "[[TV: that link cannot be used. It must be an http or https address with no spaces or quotes.]]"
+
+msgid "TV: that link is too long to share, so it plays on your screen only."
+msgstr "[[TV: that link is too long to share, so it plays on your screen only.]]"
+
+msgid "TV: the YouTube link could not be played. The reason is in multivoid.log."
+msgstr "[[TV: the YouTube link could not be played. The reason is in multivoid.log.]]"
+
+msgid "TV: the host has turned off video links from players."
+msgstr "[[TV: the host has turned off video links from players.]]"
+
+msgid "TV: this install has no yt-dlp, so a YouTube link cannot play."
+msgstr "[[TV: this install has no yt-dlp, so a YouTube link cannot play.]]"
+
+msgid "TV: this set has no power, so the link was not played."
+msgstr "[[TV: this set has no power, so the link was not played.]]"
 
 msgid "Takes effect at the next session."
 msgstr "[[Takes effect at the next session.]]"
