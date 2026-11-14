@@ -11,7 +11,8 @@
 // on both peers (VOTVCOOP_CAN_DIR). Red: cap_label_repaint_off. The driver launches the client once the host logs
 // `STATE 0-before-join`. The saved arm (cap_label_drill=saved, the host on the rig's own save, no --host-fresh) skips
 // the steps: the host's loaded desk must show its saved level and module's label, which only the lane's install
-// repaint gives it, and the joiner the same one. Its red is cap_label_install_repaint_off.
+// repaint gives it, and the joiner the same one; both are read once the joiner has applied the host's state. Its red
+// is cap_label_install_repaint_off.
 
 #include "harness/autotest.h"
 #include "disc_drills.h"   // co-located private header (src tree, not include/)
@@ -35,7 +36,6 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 
 namespace harness::autotest {
@@ -318,21 +318,24 @@ bool PrepareCap(const char* stateName, Label& prepared) {
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::cap_label_drill); }
 
 // The saved arm's host: its world was loaded from the rig's own save, whose desk the gamemode's load restored before
-// this lane installed, so its label is right only if the lane's install repaint ran. A client has begun to join by
-// the time it is read, which is long after the host's session ticked. The joiner must then show the host's label.
+// this lane installed, so its label is right only if the lane's install repaint ran. Its state (level, module) is
+// what the joiner waits for; the host's label is judged at the event the fresh arm judges the joiner's, the joiner's
+// own apply, by which the host's session has ticked.
 void RunSavedHost() {
     LogState("0-before-join");
     if (!Await("client_begun")) return;
-    const Label held = Read();
-    if (!held.module) {  // without the module the right label is the default one at every level
+    const Label loaded = Read();
+    if (!loaded.module) {  // without the module the right label is the default one at every level
         coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Invalid,
                                "the save holds no Auto Processing: the right label is the default one, so a stale "
                                "label could not be told from it");
         return;
     }
-    if (!CheckOwn(held, "0 (the host's loaded desk)")) return;
-    Mark("host_prepared", Format(held));
+    Mark("host_prepared", Format(loaded));
     if (!Await("client_joined")) return;
+    const Label held = Read();
+    LogState("1-host-after-join");
+    if (!CheckOwn(held, "1 (the host's loaded desk)")) return;
     UE_LOGI("cap-label: DONE");
     coop::rig_verdict::Say("cap-label", coop::rig_verdict::Outcome::Pass,
                            "the host's loaded desk and the joiner's show the saved level and module's label: %s",
@@ -370,8 +373,11 @@ void RunClient() {
         return;
     const Label joined = Read();
     LogState("1-after-join");
-    if (!Check(joined.ok && Format(joined) == hostLabel, "1: the joined label is the host's, '" + hostLabel + "'",
-               "1: expected the host's label '" + hostLabel + "', got '" + Format(joined) + "'"))
+    // The saved host judges its own label at this apply, so the saved joiner is judged against its own level.
+    if (Arm() == "saved") {
+        if (!CheckOwn(joined, "1 (the joined desk)")) return;
+    } else if (!Check(joined.ok && Format(joined) == hostLabel, "1: the joined label is the host's, '" + hostLabel + "'",
+                      "1: expected the host's label '" + hostLabel + "', got '" + Format(joined) + "'"))
         return;
     Mark("client_joined");
     if (Arm() != "saved" && !RunSteps(false)) return;

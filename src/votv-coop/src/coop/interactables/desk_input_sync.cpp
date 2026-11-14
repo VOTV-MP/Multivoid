@@ -79,7 +79,8 @@ bool InstallRepaintOff() {
 
 // The lane's start apply: a desk loaded from a save was restored by the gamemode's load (the desk's setData), which
 // repaints no label and ran before this lane installed on a host, so the cap label shows the desk's defaults until
-// something repaints it. Once per session, at the first tick with the desk resolved.
+// something repaints it. At the first tick with the desk resolved after a session starts, and again after the host's
+// last client leaves (OnDisconnect resets the latch there too).
 bool g_installRepaintDone = false;
 
 // Runs the applies the screen widget's absence left owed; one that cannot run yet stays owed. Game thread.
@@ -288,7 +289,7 @@ void Tick() {
     if (!g_installRepaintDone) {
         g_installRepaintDone = true;
         // A repaint that cannot run yet stays owed, and the desk's next watched event runs it.
-        if (!InstallRepaintOff() && RepaintCapLevelOrDefer()) UE_LOGI("desk_input: the cap label repainted at install");
+        if (!InstallRepaintOff() && RepaintCapLevelOrDefer()) UE_LOGI("desk_input: the cap label repainted at install (the first tick of a session or after the last peer left)");
     }
     if (!s->connected()) {
         // Keep the baseline current while unwired so a (re)connect never

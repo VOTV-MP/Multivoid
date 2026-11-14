@@ -147,7 +147,7 @@ CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "V
     "Drill, the refiner's cap label on two peers; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. fresh -- the host "
     "prepares the cap at its third level with the Auto Processing module, the client joins, then each peer plugs, "
     "pulls and presses in turn and both labels must be the actor's: 'rig: VERDICT cap-label PASS|FAIL|INVALID', the "
-    "FAIL at the step that failed. saved -- the host on the rig's own save (no --host-fresh), a client joins: the "
-    "host's label must be its loaded desk's level and module at once, and the client's the same after the join; a "
-    "save holding the defaults (level 0, no module) is INVALID. Red arms: cap_label_repaint_off (every repaint, both "
+    "FAIL at the step that failed. saved -- the host on its own loaded save (no --host-fresh), a client joins: the "
+    "host's label must be its loaded desk's level and module's, and the client's the same after the join; a save "
+    "whose desk holds no Auto Processing module is INVALID. Red arms: cap_label_repaint_off (every repaint, both "
     "peers), cap_label_install_repaint_off (the host, saved arm).")

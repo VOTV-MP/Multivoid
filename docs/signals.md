@@ -98,8 +98,8 @@ then each peer plugging and pulling the module and pressing the cap with and wit
 same on both peers after every step, read once when the actor's level and module arrive; the first check that fails
 says `FAIL` and no later step runs). A desk loaded from a save is restored by the gamemode's load (the desk's
 `setData`, which writes the cap level and the modules back and repaints no label), and on a host that runs before the
-lanes install, so no watch of the host can see it; the lane's start apply is the answer, as for every lane: once per
-session, at the first tick with the desk resolved, `desk_input_sync` repaints the label (`desk_input: the cap label
+lanes install, so no watch of the host can see it; the lane's start apply is the answer, as for every lane: at the
+first tick with the desk resolved after a session starts, and again after the host's last client leaves, `desk_input_sync` repaints the label (`desk_input: the cap label
 repainted at install`). The drill's `saved` arm `[?]` runs the host on the rig's own save with a client joining, and
 both peers' labels must be the host's loaded level and module. The reds: `dev.cap_label_repaint_off` drops every
 repaint, `dev.cap_label_install_repaint_off` (the host, `saved` arm) only the start apply; which of them FAIL is read
