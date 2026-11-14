@@ -60,8 +60,8 @@ bool AwaitMark(const std::string& name, std::string& out, int boundS, const char
 bool Barrier(const char* name, int boundS = kBarrierS);
 
 // Polls `fn` each step: 1 done, 0 not yet, -1 stop (a verdict was said). False when the run ended, `fn` stopped it or the bound
-// passed (INVALID said).
-bool PollFn(const char* what, int boundS, const std::function<int()>& fn);
+// passed (INVALID said, with `atBound`'s text after the bound's own when one is given).
+bool PollFn(const char* what, int boundS, const std::function<int()>& fn, const std::function<std::string()>& atBound = {});
 
 // ---- the records ----
 

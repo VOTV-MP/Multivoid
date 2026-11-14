@@ -104,7 +104,7 @@ void StepPass(int step, const std::string& what) {
     UE_LOGI("atv-riders: step %d PASS (%s): %s", step, RoleName(g_me), what.c_str());
 }
 
-bool PollFn(const char* what, int boundS, const std::function<int()>& fn) {
+bool PollFn(const char* what, int boundS, const std::function<int()>& fn, const std::function<std::string()>& atBound) {
     for (int i = 0; i < boundS * 10; ++i) {
         if (Aborted()) return false;
         const int r = fn();
@@ -112,7 +112,11 @@ bool PollFn(const char* what, int boundS, const std::function<int()>& fn) {
         if (r < 0) return false;
         PS::detail::SleepStep();
     }
-    if (!Aborted()) Invalid(std::string(what) + " not within " + std::to_string(boundS) + " s");
+    if (!Aborted()) {
+        std::string text = std::string(what) + " not within " + std::to_string(boundS) + " s";
+        if (atBound) text += "; " + atBound();
+        Invalid(text);
+    }
     return false;
 }
 

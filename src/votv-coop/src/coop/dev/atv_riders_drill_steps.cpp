@@ -28,6 +28,7 @@
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -41,6 +42,9 @@ namespace E = ue_wrap::engine;
 namespace K = ue_wrap::kerfur;
 using ue_wrap::FRotator;
 using ue_wrap::FVector;
+
+constexpr float kFlippedUpZ = 0.5f;   // an ATV whose up vector points lower than this lies on its side
+constexpr int kDriveLogGapS = 2;      // at most one drive line per this many seconds of block events
 
 float Dist(const FVector& a, const FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
@@ -70,6 +74,57 @@ bool ReadRoot(FVector& out) {
         ok = atv && ue_wrap::atv::GetRootTransform(atv, out, rot);
     });
     return ok;
+}
+
+// What step 7's drive leg reads of the host's ATV in one game-thread hop, and the kerfur's seat beside it. `ok` is false when the
+// root or the up vector does not read; `speed` is the root body's linear speed (cm/s), -1 when unread; `occupant` and `syncer`
+// are the table's slots, -1 when the table does not read.
+struct DriveRead {
+    bool ok = false;
+    FVector root{};
+    float upZ = 0.f, speed = -1.f, fuel = 0.f;
+    bool brake = false, turbo = false, kerfurOn = false;
+    int occupant = -1, syncer = -1;
+};
+
+DriveRead ReadDrive() {
+    DriveRead d;
+    OnGt([&] {
+        void* atv = AD::Atv(g_key);
+        FRotator rot{};
+        if (!atv || !ue_wrap::atv::GetRootTransform(atv, d.root, rot)) return;
+        const FVector up = E::GetActorUpVector(atv);
+        d.ok = up.X != 0.f || up.Y != 0.f || up.Z != 0.f;   // a unit vector is never zero: a zero is an unread one
+        d.upZ = up.Z;
+        FVector lin{}, ang{};
+        if (E::GetActorRootPhysicsVelocity(atv, lin, ang)) d.speed = std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z);
+        d.fuel = ue_wrap::atv::GetFuel(atv);
+        d.brake = ue_wrap::atv::GetBrake(atv);
+        d.turbo = ue_wrap::atv::GetTurbo(atv);
+        coop::atv_sync::TableView tv;
+        if (coop::atv_sync::ReadTable(g_key, tv)) {
+            d.occupant = tv.occupantSlot;
+            d.syncer = tv.syncerSlot;
+        }
+    });
+    d.kerfurOn = ReadKerfur(g_eid).parentIsAtv;
+    return d;
+}
+
+std::string DriveText(const DriveRead& d) {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "root=(%.0f,%.0f,%.0f) upZ=%.2f v=%.0f fuel=%.1f brake=%d turbo=%d seat=%d/%d kerfur=%s",
+                  static_cast<double>(d.root.X), static_cast<double>(d.root.Y), static_cast<double>(d.root.Z),
+                  static_cast<double>(d.upZ), static_cast<double>(d.speed), static_cast<double>(d.fuel), d.brake ? 1 : 0,
+                  d.turbo ? 1 : 0, d.occupant, d.syncer, d.kerfurOn ? "on" : "off");
+    return buf;
+}
+
+// Reads the drive leg's state, says it, and returns its text.
+std::string SayDrive() {
+    const std::string text = DriveText(ReadDrive());
+    UE_LOGI("atv-riders: step 7 drive (host): %s", text.c_str());
+    return text;
 }
 
 }  // namespace
@@ -475,22 +530,45 @@ bool DriverDrive() {
 // Step 7's second leg on the host: it drives its own ATV kDriveCm with its kerfur riding, lets the throttle go, reads where its
 // kerfur stands (JudgeKerfurSeat) and says `drive7-done` for the clients' reads.
 bool HostDriveSeated() {
-    FVector start{};
-    if (!ReadRoot(start)) {
-        Invalid("the ATV's root does not read");
+    const DriveRead first = ReadDrive();
+    if (!first.ok) {
+        Invalid("the ATV's root or up vector does not read");
         return false;
     }
+    UE_LOGI("atv-riders: step 7 drive (host): %s", DriveText(first).c_str());
+    // A flipped ATV cannot drive: the leg would measure something other than the host's own drive.
+    if (first.upZ < kFlippedUpZ) {
+        Invalid("the ATV is on its side before the host's drive (upZ=" + Num("%.2f", first.upZ) + ")");
+        return false;
+    }
+    const FVector start = first.root;
     std::string why;
     if (!AD::DriveOn(g_key, why)) {
-        Invalid(why);
+        Invalid(why + "; " + SayDrive());
         return false;
     }
+    SayDrive();
+    // The leg's line is said at each block of the key (the host's own built, or a client's applied) and at most once per
+    // kDriveLogGapS of them, so a drive that does not move shows where it stands without a line per block.
+    const int32_t tag = Tag();
+    uint32_t builtCursor = DE::Count(DE::kStampBuilt), appliedCursor = DE::Count(DE::kPoseApplied);
+    std::chrono::steady_clock::time_point lastSaid = std::chrono::steady_clock::now();
     float movedCm = 0.f;
     const bool arrived = PollFn("the host's own 600 cm drive", kDriveS, [&]() -> int {
-        FVector now{};
-        if (ReadRoot(now)) movedCm = std::sqrt((now.X - start.X) * (now.X - start.X) + (now.Y - start.Y) * (now.Y - start.Y));
+        bool block = false;
+        DE::Rec r;
+        while (DE::Next(DE::kStampBuilt, builtCursor, r)) block = block || r.i0 == tag;
+        while (DE::Next(DE::kPoseApplied, appliedCursor, r)) block = block || r.i0 == tag;
+        const auto now = std::chrono::steady_clock::now();
+        if (block && now - lastSaid >= std::chrono::seconds(kDriveLogGapS)) {
+            lastSaid = now;
+            SayDrive();
+        }
+        FVector at{};
+        if (ReadRoot(at)) movedCm = std::sqrt((at.X - start.X) * (at.X - start.X) + (at.Y - start.Y) * (at.Y - start.Y));
         return movedCm >= kDriveCm ? 1 : 0;
-    });
+    }, [] { return "at the bound: " + SayDrive(); });
+    if (arrived) SayDrive();
     AD::DriveOff(g_key);
     if (!arrived || !JudgeKerfurSeat('b', "at the end of its own 600 cm drive")) return false;
     PS::Mark("drive7-done");
