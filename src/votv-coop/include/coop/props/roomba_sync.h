@@ -49,7 +49,8 @@ void OnClientWorldReady();
 // Session end: the records are cleared.
 void OnDisconnect();
 
-// [dev] What the lane has done, for the cleaner drill. HOST: states sent, presses it switched for a client. CLIENT: states
+// [dev] What the lane has done since the process began (monotonic, so a drill's delta across a session end never
+// underflows), for the cleaner drill. HOST: states sent, presses it switched for a client. CLIENT: states
 // received and applied (a flip through `use`), presses asked of the host, states held for an unbound copy, and the id of
 // the cleaner the last state named.
 struct Counters {

@@ -479,8 +479,6 @@ void OnDisconnect() {
     g_known.clear();
     g_presses.clear();
     g_lastBrushMs = 0;
-    g_statesSent = g_intentsSwitched = g_statesReceived = g_statesApplied = g_intentsSent = 0;
-    g_lastStateEid = 0;
 }
 
 Counters Read() {

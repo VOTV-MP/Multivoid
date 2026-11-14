@@ -198,9 +198,11 @@ void RunClient() {
     // Arm 1: press A as the use key does; then the fence, B's answer.
     ue_wrap::FVector copyStart{};
     bool pressed = false;
+    uint32_t received0 = 0;   // the states taken before the press: B's birth announcement is among them
     OnGameThread([&] {
         void* r = CleanerOf(a);
         if (r) E::TryGetActorLocation(r, copyStart);
+        received0 = RS::Read().statesReceived;
         pressed = r && PressSwitch(r);
     });
     if (!pressed) {
@@ -214,7 +216,8 @@ void RunClient() {
         p.eid = b;
         p.active = 0;
         harness::session_runtime::Session().SendReliable(coop::net::ReliableKind::RoombaIntent, &p, sizeof(p));
-        return RS::Read().lastStateEid == b;
+        const RS::Counters now = RS::Read();
+        return now.statesReceived > received0 && now.lastStateEid == b;   // an answer that came after the press
     });
     if (!answered) return;
     RS::Counters c;
