@@ -6,11 +6,15 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cmath>
 #include <string>
@@ -58,9 +62,14 @@ Result Spawn(std::string_view name, int count, int slot, bool inFront, int* spaw
     std::wstring canonical;
     if (!coop::cheats::item_catalog::Resolve(name, canonical)) return Result::UnknownItem;
     const std::wstring path = L"/Game/objects/prop_" + canonical + L".prop_" + canonical + L"_C";
+    // An item with a class of its own is spawned as that class. The rest of the game's list (food, a row of the
+    // generic prop, a row that names another class) is spawned by the gamemode's own verb, which reads the row.
     void* const cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
-    if (!cls) {
-        UE_LOGI("cheats: no class at %ls", path.c_str());
+    void* const gamemode = cls ? nullptr : ue_wrap::world_singleton::Gamemode();
+    void* const listSpawn =
+        gamemode ? ue_wrap::reflection::FindFunction(ue_wrap::reflection::ClassOf(gamemode), L"spawnPropThroughGamemode") : nullptr;
+    if (!cls && !listSpawn) {
+        UE_LOGI("cheats: no class at %ls and no list spawn in this world", path.c_str());
         return Result::UnknownItem;
     }
     ue_wrap::FVector at{};
@@ -70,7 +79,16 @@ Result Spawn(std::string_view name, int count, int slot, bool inFront, int* spaw
     int made = 0;
     for (int i = 0; i < count; ++i) {
         const ue_wrap::FVector where{at.X + fx * ahead, at.Y + fy * ahead, at.Z + kLiftCm + kStackCm * static_cast<float>(i)};
-        if (E::SpawnActor(cls, where)) ++made;
+        if (cls) {
+            if (E::SpawnActor(cls, where)) ++made;
+            continue;
+        }
+        ue_wrap::ParamFrame f(listSpawn);
+        const ue_wrap::reflection::FName row = ue_wrap::fname_utils::StringToFName(canonical);
+        const ue_wrap::FTransform xform = ue_wrap::MakeTransform(where);
+        if (f.valid() && f.SetRaw(L"prop", &row, sizeof(row)) && f.SetRaw(L"InputPin", &xform, sizeof(xform)) &&
+            f.Set<int32_t>(L"Amount", 1) && ue_wrap::Call(gamemode, f) && f.Get<void*>(L"actor "))
+            ++made;
     }
     if (spawned) *spawned = made;
     UE_LOGI("cheats: spawned %d of %d x '%ls' %s slot %d at (%.0f, %.0f, %.0f)", made, count, canonical.c_str(),
