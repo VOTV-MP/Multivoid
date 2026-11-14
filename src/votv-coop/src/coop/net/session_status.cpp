@@ -3,6 +3,7 @@
 // seat, the close path's per-slot teardown, and the kick and leave entry points (their shared
 // teardown, and the session's all-peers-gone edge, are session_teardown.cpp).
 
+#include "coop/net/build_share.h"
 #include "coop/net/session.h"
 
 #include <cstdio>
@@ -176,6 +177,16 @@ void Session::SweepPending() {
     for (int i = 0; i < kMaxPending; ++i) {
         const uint32_t hConn = pendingConns_[i].load(std::memory_order_acquire);
         if (hConn == 0) continue;
+        // A connection held for a build exchange is that module's to time: left alone while it runs, closed
+        // for the mismatch it was held over when it lapses.
+        const build_share::Hold hold = build_share::HostHold(hConn);
+        if (hold == build_share::Hold::Busy) continue;
+        if (hold == build_share::Hold::Lapsed) {
+            UE_LOGW("net: PENDING %d (h=0x%08x) is on another build -- closing [%s]", i, static_cast<unsigned>(hConn),
+                    Describe(EndReason::BuildMismatch).id);
+            RetirePending(i, hConn, EndReason::BuildMismatch, "protocol mismatch");
+            continue;
+        }
         const uint64_t since = pendingSinceMs_[i].load(std::memory_order_acquire);
         if (since == 0 || now - since < kPendingDeadlineMs) continue;
         UE_LOGW("net: PENDING %d (h=0x%08x) never proved its identity in %llu ms "

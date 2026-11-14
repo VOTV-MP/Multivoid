@@ -5,6 +5,7 @@
 // callbacks in session_start.cpp and session_status.cpp; the scalar streams, the NPC, world-actor,
 // trash-carry and driven-prop batches, voice and the relay each have their own file beside this.
 
+#include "coop/net/build_share.h"
 #include "coop/net/session.h"
 
 #include "coop/net/prop_spawn_hook.h"  // the drill seam on SendPropSpawn
@@ -504,6 +505,20 @@ void Session::NetThread() {
 
         // 1b) Close pending sockets that never proved an identity (eight relaxed loads).
         if (cfg_.role == Role::Host) SweepPending();
+
+        // 1c) The build exchange: the host feeds its transfers, a client times its download.
+        if (cfg_.role == Role::Host)
+            // How the exchange may send to a connection now: a seated joiner still loading owns its connection for
+            // the world download, a seated player in the world shares it with the game, and a connection held for
+            // the exchange alone takes all of it.
+            build_share::HostPump([](void* self, uint32_t hConn) -> int {
+                const Session* s = static_cast<const Session*>(self);
+                for (int slot = 1; slot < kMaxPeers; ++slot)
+                    if (s->peerConns_[slot].load(std::memory_order_acquire) == hConn)
+                        return s->IsSlotWorldReady(slot) ? build_share::kGentle : build_share::kWait;
+                return build_share::kFull;
+            }, this);
+        else build_share::ClientPump();
 
         // 2) Drain inbound messages to empty every iteration: a full batch means more may be
         // queued, so the receive loops until a partial batch, and only then does the idle sleep run

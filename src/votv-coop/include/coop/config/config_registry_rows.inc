@@ -279,6 +279,13 @@ CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
     "their visit ends."))
 CFG_ROWFLAGS(world_backrooms, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(world_backrooms, L10N_MARK("Allow the backrooms"))
+CFG_FLAG(net_share_build, "net.share_build", "net", true, "VOTVCOOP_NET_SHARE_BUILD",
+    "Host: offer this game's Multivoid build to a joiner whose own differs, and send it when the joiner asks. "
+    "0: a joiner on another build is refused as before.")
+CFG_ENUM(net_build_updates, "net.build_updates", "net", "ask", "ask|trusted|off", "VOTVCOOP_NET_BUILD_UPDATES",
+    "When a host runs another Multivoid build: ask = offer to download it from the host and install it (an "
+    "official release and a host you have trusted install without asking), trusted = only those two, never "
+    "ask, off = never take a build from a host.")
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,

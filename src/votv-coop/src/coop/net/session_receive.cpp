@@ -3,6 +3,7 @@
 // goes through (the header checks, the stream stores, the reliable inbox, the relay fan-out).
 // The send paths and the net thread's loop stay in session.cpp.
 
+#include "coop/net/build_share.h"
 #include "coop/net/session.h"
 
 #include "coop/dev/wire_census.h"
@@ -53,6 +54,11 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // disk sync).
     if (pendIdx < 0 || pendIdx >= kMaxPending) return;
     if (pendingConns_[pendIdx].load(std::memory_order_acquire) != hConn) return;
+    // A build exchange frame is this module's on any protocol version (coop/net/build_share).
+    if (build_share::IsFrame(data, len)) {
+        build_share::HostOnFrame(hConn, data, len);
+        return;
+    }
     MsgType type;
     uint32_t seq, senderEpoch;
     uint8_t headerSenderSlot;
@@ -61,6 +67,9 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
         // a connection that stays "Connected" forever with every packet dropped.
         const uint16_t peerVer = PeekProtocolVersion(data, len);
         if (peerVer != 0 && peerVer != kProtocolVersion) {
+            // A joiner that can take this host's build is told which it is and held for the exchange; one
+            // that never asks is closed for the mismatch by the pending sweep.
+            if (build_share::HostOnPendingSpoke(hConn, /*mismatch=*/true)) return;
             char reason[64];
             std::snprintf(reason, sizeof(reason), "protocol mismatch: peer=v%u, ours=v%u",
                           static_cast<unsigned>(peerVer), static_cast<unsigned>(kProtocolVersion));
@@ -69,6 +78,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
         }
         return;
     }
+    build_share::HostOnPendingSpoke(hConn, /*mismatch=*/false);  // the host's build, said once a connection
     if (type != MsgType::Reliable) return;
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;
     ReliableHeader rh;
@@ -154,6 +164,12 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
 }
 
 void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int len) {
+    // A build exchange frame, on any protocol version: the host's side of it, or a client's from its host.
+    if (build_share::IsFrame(data, len)) {
+        if (cfg_.role == Role::Host) build_share::HostOnFrame(hConn, data, len);
+        else if (peerSlot == 0) build_share::ClientOnFrame(hConn, data, len);
+        return;
+    }
     MsgType type;
     uint32_t seq;
     uint32_t senderEpoch;

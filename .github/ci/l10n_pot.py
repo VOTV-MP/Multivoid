@@ -68,6 +68,7 @@ ALLOWLIST = [
     "src/coop/session/server_settings_sync.cpp",
     "src/ui/admin_panel.cpp",
     "src/ui/browser_input_screens.cpp",
+    "src/ui/build_update_dialog.cpp",
     "src/ui/bug_report_pane.cpp",
     "src/ui/chat_input.cpp",
     "src/ui/config_review_panel.cpp",

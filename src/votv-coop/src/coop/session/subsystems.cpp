@@ -53,6 +53,7 @@
 #include "coop/player/sleep_rest.h"
 #include "coop/player/nightmare_roll.h"
 #include "coop/player/level_visit.h"
+#include "coop/net/build_share.h"  // a joiner on another build takes the host's build
 #include "coop/player/puppet_hide.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/creatures/wisp_attack_sync.h"  // Killer Wisp coop: host detect + neutralize + relay
@@ -584,6 +585,7 @@ DisconnectStats DisconnectAll() {
     coop::sleep_sync::OnDisconnect();
     coop::nightmare_roll::OnDisconnect();
     coop::level_visit::OnDisconnect();
+    coop::net::build_share::OnDisconnect();  // a build exchange in flight is over
     coop::puppet_hide::OnDisconnect();  // every copy hidden for a dream or a visit is shown
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
     coop::prop_throw::OnDisconnect();  // the thrower's records of its own throws

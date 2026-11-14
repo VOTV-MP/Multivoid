@@ -20,6 +20,7 @@
 #include "ui/boot_warning_dialog.h"
 #include "ui/game_build_dialog.h"
 #include "ui/config_review_panel.h"
+#include "ui/build_update_dialog.h"
 #include "ui/end_reason_dialog.h"
 #include "ui/host_save_picker.h"
 #include "ui/loading_screen.h"
@@ -96,7 +97,7 @@ inline bool LoadingOpen() { return ui::loading_screen::IsOpen(); }
 inline bool ConsoleOpen() { return ui::console::IsOpen(); }
 inline bool ChatOpen()    { return ui::chat_input::IsOpen(); }
 inline bool VoiceOpen()   { return ui::voice_panel::IsOpen(); }
-inline bool EndReasonOpen() { return ui::end_reason_dialog::IsOpen(); }
+inline bool EndReasonOpen() { return ui::end_reason_dialog::IsOpen() || ui::build_update_dialog::IsOpen(); }
 inline bool BootWarningOpen()   { return ui::boot_warning_dialog::IsOpen(); }
 inline bool GameBuildOpen()     { return ui::game_build_dialog::IsOpen(); }
 inline bool ConfigReviewOpen()  { return ui::config_review_panel::IsOpen(); }
@@ -224,6 +225,8 @@ void RenderFrameGuarded(const overlay_backend::FrameTarget& t) {
         // The end-reason modal draws after the browser, which a failed join reopens, so it layers
         // on top; after a close following the join it draws over the menu the flee landed on.
         if (ui::end_reason_dialog::IsOpen()) ui::end_reason_dialog::Render();
+        // A host's build offer and its progress, over the notice of the join it interrupted.
+        if (ui::build_update_dialog::IsOpen()) ui::build_update_dialog::Render();
         // The config review (the settings check): persistent until dismissed, under the
         // boot-warning modal and over the regular surfaces.
         if (ConfigReviewOpen()) ui::config_review_panel::Render();

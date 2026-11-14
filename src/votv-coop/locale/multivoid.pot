@@ -579,6 +579,10 @@ msgid_plural "Down:  %1$s now,  %2$s total,  %3$llu packets"
 msgstr[0] ""
 msgstr[1] ""
 
+#: src/ui/build_update_dialog.cpp
+msgid "Downloading the host's build..."
+msgstr ""
+
 #: src/ui/loading_screen.cpp
 msgid "Downloading the host's world"
 msgstr ""
@@ -660,8 +664,21 @@ msgstr ""
 msgid "Host game"
 msgstr ""
 
+#: src/ui/build_update_dialog.cpp
+#, c-format
+msgid "Host identity: %s"
+msgstr ""
+
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
 msgid "ID"
+msgstr ""
+
+#: src/ui/build_update_dialog.cpp
+msgid "Install"
+msgstr ""
+
+#: src/ui/build_update_dialog.cpp
+msgid "Install, and always trust this host"
 msgstr ""
 
 #: src/ui/dev_menu.cpp
@@ -854,6 +871,10 @@ msgstr ""
 
 #: src/coop/player/nick_color.cpp
 msgid "Nickname color: reset to default"
+msgstr ""
+
+#: src/ui/build_update_dialog.cpp
+msgid "No"
 msgstr ""
 
 #: src/ui/net_stats_panel.cpp
@@ -1237,6 +1258,10 @@ msgstr ""
 msgid "Stats"
 msgstr ""
 
+#: src/ui/build_update_dialog.cpp
+msgid "THE HOST'S BUILD"
+msgstr ""
+
 #: src/ui/server_settings_pane.cpp
 msgid "Takes effect at the next session."
 msgstr ""
@@ -1437,6 +1462,14 @@ msgstr ""
 msgid "The host will run that kerfur command in a moment."
 msgstr ""
 
+#: src/ui/build_update_dialog.cpp
+msgid "The host's build is installed. Quit the game and start it again, then join this host. Your previous build is kept beside it as main.dll.old."
+msgstr ""
+
+#: src/ui/build_update_dialog.cpp
+msgid "The host's build was not installed. Your own build is unchanged."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The host's world arrived damaged and could not be used."
 msgstr ""
@@ -1498,6 +1531,15 @@ msgstr ""
 #: src/ui/game_build_dialog.cpp
 #, c-format
 msgid "This Multivoid (b%1$s) is made for VOTV %2$s. Your game is a version it has not been tested on."
+msgstr ""
+
+#: src/ui/build_update_dialog.cpp
+#, c-format
+msgid "This host runs a different Multivoid build (b%1$d, %2$s). Your game can download it from the host (%3$.0f MB) and use it from the next start of the game. Your current build is kept."
+msgstr ""
+
+#: src/ui/build_update_dialog.cpp
+msgid "This is NOT an official release. It is whatever this host built, and it will run on your PC with full access. Accept it only from someone you trust."
 msgstr ""
 
 #: src/ui/config_review_panel.cpp
@@ -2094,7 +2136,7 @@ msgctxt "hud"
 msgid "Kick"
 msgstr ""
 
-#: src/ui/end_reason_dialog.cpp
+#: src/ui/build_update_dialog.cpp src/ui/end_reason_dialog.cpp
 msgctxt "hud"
 msgid "OK"
 msgstr ""

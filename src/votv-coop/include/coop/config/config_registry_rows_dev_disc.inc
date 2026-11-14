@@ -10,3 +10,5 @@ CFG_FLAG(module_intent_off, "module_intent_off", "dev", false, "VOTVCOOP_MODULE_
     "Developer red arm of the module-row drill: never set. This client's press on an upgrade panel's module row runs "
     "on this machine alone, as it did before the press was an intent: the host never takes it, and its next balance "
     "gives the charge back.")
+CFG_FLAG(build_update_auto, "build_update_auto", "dev", false, "VOTVCOOP_BUILD_UPDATE_AUTO",
+    "Drill aid (client): a host's offered build is accepted without the prompt, as a trusted host's is.")

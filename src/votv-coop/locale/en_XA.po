@@ -464,6 +464,9 @@ msgid_plural "Down:  %1$s now,  %2$s total,  %3$llu packets"
 msgstr[0] "[[Down:  %1$s now,  %2$s total,  %3$llu packet]]"
 msgstr[1] "[[Down:  %1$s now,  %2$s total,  %3$llu packets]]"
 
+msgid "Downloading the host's build..."
+msgstr "[[Downloading the host's build...]]"
+
 msgid "Downloading the host's world"
 msgstr "[[Downloading the host's world]]"
 
@@ -533,8 +536,18 @@ msgstr ""
 msgid "Host game"
 msgstr "[[Host game]]"
 
+#, c-format
+msgid "Host identity: %s"
+msgstr "[[Host identity: %s]]"
+
 msgid "ID"
 msgstr "[[ID]]"
+
+msgid "Install"
+msgstr "[[Install]]"
+
+msgid "Install, and always trust this host"
+msgstr "[[Install, and always trust this host]]"
 
 msgid "Interface"
 msgstr "[[Interface]]"
@@ -682,6 +695,9 @@ msgstr "[[Nickname color: applied (synced to other players)]]"
 
 msgid "Nickname color: reset to default"
 msgstr "[[Nickname color: reset to default]]"
+
+msgid "No"
+msgstr "[[No]]"
 
 msgid "No active session."
 msgstr "[[No active session.]]"
@@ -1001,6 +1017,9 @@ msgstr "[[Starting your server -- loading %s]]"
 msgid "Stats"
 msgstr "[[Stats]]"
 
+msgid "THE HOST'S BUILD"
+msgstr "[[THE HOST'S BUILD]]"
+
 msgid "Takes effect at the next session."
 msgstr "[[Takes effect at the next session.]]"
 
@@ -1151,6 +1170,12 @@ msgstr "[[The host was busy, and this connection was the slowest to prove itself
 msgid "The host will run that kerfur command in a moment."
 msgstr "[[The host will run that kerfur command in a moment.]]"
 
+msgid "The host's build is installed. Quit the game and start it again, then join this host. Your previous build is kept beside it as main.dll.old."
+msgstr "[[The host's build is installed. Quit the game and start it again, then join this host. Your previous build is kept beside it as main.dll.old.]]"
+
+msgid "The host's build was not installed. Your own build is unchanged."
+msgstr "[[The host's build was not installed. Your own build is unchanged.]]"
+
 msgid "The host's world arrived damaged and could not be used."
 msgstr "[[The host's world arrived damaged and could not be used.]]"
 
@@ -1198,6 +1223,13 @@ msgstr "[[This Multivoid (b%1$s) is made for VOTV %2$s. Your game is VOTV %3$s, 
 #, c-format
 msgid "This Multivoid (b%1$s) is made for VOTV %2$s. Your game is a version it has not been tested on."
 msgstr "[[This Multivoid (b%1$s) is made for VOTV %2$s. Your game is a version it has not been tested on.]]"
+
+#, c-format
+msgid "This host runs a different Multivoid build (b%1$d, %2$s). Your game can download it from the host (%3$.0f MB) and use it from the next start of the game. Your current build is kept."
+msgstr "[[This host runs a different Multivoid build (b%1$d, %2$s). Your game can download it from the host (%3$.0f MB) and use it from the next start of the game. Your current build is kept.]]"
+
+msgid "This is NOT an official release. It is whatever this host built, and it will run on your PC with full access. Accept it only from someone you trust."
+msgstr "[[This is NOT an official release. It is whatever this host built, and it will run on your PC with full access. Accept it only from someone you trust.]]"
 
 msgid "This key holds your body skin -- if the winning value is not the one you expect, keep the other line."
 msgstr "[[This key holds your body skin -- if the winning value is not the one you expect, keep the other line.]]"

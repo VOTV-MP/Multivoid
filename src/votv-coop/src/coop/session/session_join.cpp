@@ -11,6 +11,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/endpoint_log.h"
 #include "coop/net/master_slots.h"  // DefaultSignalingUrl -- a P2P connect's relay when none is named
+#include "coop/net/build_share.h"   // Wanted: a mismatched host is dialled for its build
 #include "coop/net/protocol.h"      // kProtocolVersion, kDefaultPort, kReleasesUrl
 #include "coop/session/join_progress.h"
 #include "coop/props/prop_key_index.h"  // Unavailable -- an install that cannot index starts no session
@@ -103,7 +104,9 @@ PreflightVerdict VersionMismatchVerdict(const std::string& hostGame, int hostPro
                     coop::game_build::VersionText(coop::game_build::Running().id.key)};
     }
     // Tier 2, the build (the wire revision).
-    if (hostProto > 0 && hostProto != static_cast<int>(net::kProtocolVersion)) {
+    // A player who takes a host's build dials anyway: the host offers it on the connection (coop/net/build_share),
+    // and a host that does not closes the connection for the mismatch itself.
+    if (hostProto > 0 && hostProto != static_cast<int>(net::kProtocolVersion) && !net::build_share::Wanted()) {
         const bool hostNewer = hostProto > static_cast<int>(net::kProtocolVersion);
         return {hostNewer ? net::EndReason::HostNewer : net::EndReason::HostOlder,
                 std::string("host runs b") + std::to_string(hostProto) + ", you run b" +
