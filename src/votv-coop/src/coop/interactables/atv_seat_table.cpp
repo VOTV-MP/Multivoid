@@ -62,10 +62,10 @@ bool OnChange(Subscriber fn) {
     return true;
 }
 
-// MTA's server changes its occupant table in the in/out handlers and at an element's removal (SetOccupant /
-// SetOccupiedVehicle, reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2102-2103, :2162-2163,
-// :3152-3594) and sends each as a CVehicleInOutPacket. Ours keeps the ATV lane's one table and announces its changes
-// in-process, here, whichever path wrote them.
+// MTA's server changes its occupant table in the in/out handlers (SetOccupant / SetOccupiedVehicle,
+// reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3152-3594), at a death (:2102-2103, :2162-2163) and at an
+// element's removal (CVehicle.cpp:143-170, CPed.cpp:102-114), and sends each as a CVehicleInOutPacket. Ours keeps the ATV
+// lane's one table and announces its changes in-process, here, whichever path wrote them.
 void SetSeat(AtvEntry& e, uint8_t occupant, uint8_t syncer, const char* why, bool forgetHorn) {
     const uint8_t occupantBefore = e.seatOccupant;
     const uint8_t syncerBefore = e.seatSyncer;

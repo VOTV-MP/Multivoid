@@ -163,6 +163,16 @@ would invite every kerfur of its world, mirrors included, and its dismount and c
 riding one, so `tryToOccupyCar` and `getOffCar` on a mirror are cancelled at the script gate on a client. `[?]` Built to
 this design; no three-peer run has judged it yet.
 
+The unseat of a mirror (`UnseatWithoutCar`) is `getOffCar`'s own steps without its car read, teleport and kill tail: detach,
+collision on, `state` 0, `occupyCar` cleared, the AnimBP's seat pose off and the Mesh's absolute rotation restored. It sets
+no movement mode and calls no `move(false)`: the mirror stays where it is and the host's stream owns where it goes next.
+
+A stamp that reaches a client before its copy of the ATV is indexed is dropped whole, seat and rider with it (the vitals
+are held and applied at the index, the table is not). The host's next block for that key carries both again, at most one
+idle keepalive later, so a joiner that adopts its save's copy late sees the driver's body and the kerfur seated then.
+The same holds when a client's copy is replaced or pruned while the host's lives on: the client's seat state ends with the
+copy and returns with the next block. `[?]` Read from the code, not measured.
+
 | Step | The host | A client and an observer |
 |---|---|---|
 | A client sits | the table takes the seat; the host's kerfurs are invited; the first to arrive sits and the stamp names it | the client's body sits in the seat on every other peer; the stamped kerfur's mirror sits on the ATV |

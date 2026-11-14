@@ -195,6 +195,9 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         // host's re-spawn of a recurring key (a save-placed one) heals it: a flicker, not a ghost.
         if (isHost && thisWorld && row.world == thisWorld) SendAtvDestroy(it->first);
         coop::atv_host_sync::NoteAtvGone(it->first);   // its open requests can never be answered
+        // Divergence from MTA, whose client keeps the occupancy across a vehicle's Destroy and warps the occupants back in at
+        // its Create (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientVehicle.cpp:3001, :2735): our table is the
+        // entry, which ends with its actor, so the occupancy is taken again from the host's next block for the key.
         coop::atv_seat_table::Exit(it->second, "index prune");
         it = g_atvs.erase(it);
     }
@@ -212,6 +215,8 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         if (gained) e.key = f.key;
         const bool actorChanged = gained || e.actor != f.obj;
         if (e.actor && e.actor != f.obj) {
+            // The same divergence from MTA as the prune's (CClientVehicle.cpp:3001, :2735): the occupancy is not carried to the
+            // successor, the host's next block for the key seats it again.
             coop::atv_seat_table::Exit(e, "successor actor");
             coop::atv_authority::ClearTable(e);
             coop::atv_authority::ResetRequests(e);

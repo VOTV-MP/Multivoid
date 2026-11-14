@@ -61,7 +61,9 @@ bool IsNpcMirror(void* kerfur) {
 }
 
 // A client's own game acting on a kerfur the host owns is refused, and said once per session naming the Blueprint
-// function that made the call (the ATV's sit, dismount or crash path).
+// function that made the call (the ATV's sit, dismount or crash path). MTA's client never decides a remote ped's vehicle in
+// or out either: the server's in/out packet does (reference/mtasa-blue/Client/mods/deathmatch/logic/CPacketHandler.cpp:1690,
+// the confirmed-out case :1881).
 sg::Verdict RefuseOnMirror(const sg::Call& c, const char* what, int kind, std::atomic<uint32_t>& count,
                            std::atomic<bool>& said) {
     count.fetch_add(1, std::memory_order_relaxed);

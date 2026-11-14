@@ -90,8 +90,10 @@ void Unseat(uint32_t eid, Row& row, const wchar_t* keyText, void* actor) {
 }
 
 // MTA keeps the occupant on the vehicle and the ped, and warps the ped back in when the ped's model is created
-// (CClientVehicle.cpp:2735, :2746); a client never decides a remote ped's vehicle entry, the server's in/out packet does.
-// Here the host's stamp is that packet: a stored row is applied at the mirror's ready edges.
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:3715-3717; the vehicle's own create does the same for its
+// occupants, CClientVehicle.cpp:2735). A client never decides a remote ped's vehicle entry, the server's in/out packet does
+// (reference/mtasa-blue/Client/mods/deathmatch/logic/CPacketHandler.cpp:1690, :1744, :1881). Here the host's stamp is that
+// packet: a stored row is applied at the mirror's ready edges.
 void Reconcile(uint32_t eid, Row& row) {
     void* const actor = LiveMirrorActor(eid);
     if (!actor) {
