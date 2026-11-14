@@ -15,6 +15,7 @@
 #include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
 #include "coop/props/remote_prop_spawn.h"  // HasLoadTailQuiesced -- shared save-load-tail quiescence signal
 #include "coop/props/join_membership_sweep.h"  // anti-smear: claim+sweep
+#include "coop/dev/join_hold.h"  // the ATV riders drill holds a rejoined observer's binds
 #include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: re-arm the kerfur census on world-ready / session-end
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
@@ -277,8 +278,9 @@ void Tick() {
     auto* s = coop::npc_sync::GetSession();
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only
 
-    // (1) Resolve pending adoptions (throttled; only while entries exist).
-    if (!g_pending.empty() && MsSince(g_lastScan) >= kPollIntervalMs) {
+    // (1) Resolve pending adoptions (throttled; only while entries exist). The ATV riders drill's hold keeps a rejoined
+    // observer's binds back until its first applied ATV stamp.
+    if (!g_pending.empty() && !coop::dev::join_hold::BindHeld() && MsSince(g_lastScan) >= kPollIntervalMs) {
         g_lastScan = std::chrono::steady_clock::now();
         ResolvePending();
     }

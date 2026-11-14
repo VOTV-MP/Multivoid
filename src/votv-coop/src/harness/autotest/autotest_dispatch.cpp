@@ -11,6 +11,7 @@
 #include "coop/session/join_seed.h"  // the inline seed selftest
 #include "coop/config/config.h"
 #include "coop/dev/atv_gate_drill.h"
+#include "coop/dev/atv_riders_drill.h"
 #include "coop/dev/cremator_drill.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_walker_drill.h"
@@ -210,8 +211,6 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_CAN_STATE", "canned food state drill", &CanStateThread, role);
     SpawnIf("VOTVCOOP_RUN_FOOD_STATE", "world food state drill", &FoodStateThread, role);
     SpawnIfEnum(coop::config_registry::rows::world_sound_drill, "world sound drill", &WorldSoundThread, role);
-    // The ATV's riders: the driver's body and the kerfur, on both peers.
-    SpawnIf("VOTVCOOP_RUN_ATV_RIDERS", "ATV riders drill", &AtvRidersThread, role);
 
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     // The cargo lift, the base's elevator, as each peer sees it.
@@ -303,6 +302,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     }
     // The ATV drill: each act a player does at an ATV, decided on the events of the host path, green and eleven reds.
     SpawnIfEnum(coop::config_registry::rows::atv_gate_drill, "ATV drill", &coop::dev::atv_gate_drill::Thread, role);
+    // The ATV's riders: the driver's body and the host's kerfur on every peer, green and fifteen reds, three peers and a rejoin.
+    SpawnIfEnum(coop::config_registry::rows::atv_riders_drill, "ATV riders drill", &coop::dev::atv_riders_drill::Thread, role);
 }
 
 }  // namespace harness::autotest
