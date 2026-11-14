@@ -70,6 +70,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/prop_nametag.h"  // the tags put on this session, again
+#include "coop/props/fireext_sync.h"  // every extinguisher's thrust and every spray
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
@@ -183,6 +184,8 @@ void ConnectReplayForSlot(int slot) {
     coop::event_active_sync::SendJoinSnapshotForSlot(slot);
     // Each creature's count, after its NPC spawn (the queue above, same lane): the joiner applies a count at the bind.
     coop::creature_event_relay::SendJoinSnapshotForSlot(slot);
+    // Every thrusting extinguisher and every spray.
+    coop::fireext_sync::SendJoinSnapshotForSlot(slot);
     // The alarm lane's late-join answer: the current alarm state, unconditionally, so a mid-alarm
     // joiner starts its klaxon on arrival.
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);

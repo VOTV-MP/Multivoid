@@ -90,6 +90,7 @@
 #include "coop/props/food_tick_gate.h"  // the food ticks a client refuses: its counts end with the session
 #include "coop/world/world_sound_sync.h"
 #include "coop/props/prop_food_sync.h"
+#include "coop/props/fireext_sync.h"  // a fire extinguisher's foam: the host's rays, every peer's view
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/interactables/woodchipper_gate.h"  // the chipper bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
@@ -317,6 +318,7 @@ void Install(coop::net::Session& session) {
     coop::desk_short_sync::Install(&session);  // the base computer's short circuit is the host's
     coop::world_sound_sync::Install(&session);  // the sky's two sounds, a faucet's click
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
+    coop::fireext_sync::Install(&session);  // an extinguisher: a client refuses its thrust and ray, its spray is told the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::subsystems::desk::Install(session);
@@ -423,6 +425,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::trash_mirror::OnDisconnectForSlot(slot);  // phase 1: retire the leaver's trash mirrors BEFORE the generic mirror drain (else the rooted actor leaks)
     coop::trash_channel::OnGrabHolderLeft(session, static_cast<uint8_t>(slot));  // the leaver's carried clump is let go: it falls, streams, lands
     coop::broom_stroke::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's stroke rate goes with it
+    coop::fireext_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's spray ends
     coop::kerfus_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and the Kerfuses it turned on follow the host again (its verbs' queue goes with its slot)
     coop::dish_calib_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its precision-intent budget
     coop::drive_payload_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its drive rows in assembly, its brought drives
@@ -501,6 +504,7 @@ DisconnectStats DisconnectAll() {
     coop::vent_crawler_sync::OnDisconnect();
     coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
     coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
+    coop::fireext_sync::OnDisconnect();  // the sprays shown, the thrusts known and queued
     coop::desk_short_sync::OnDisconnect();
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
@@ -674,6 +678,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
+    coop::fireext_sync::Tick();  // the host's rays and thrust poll, every peer's spray mirrors
     coop::plant_sync::Tick();  // the plants' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
