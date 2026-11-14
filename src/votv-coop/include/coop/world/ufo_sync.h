@@ -36,7 +36,8 @@ void OnHostSpawnSent(void* actor, uint32_t eid);
 // HOST, at a joiner's world-ready edge: the path of every UFO still flying, and the Midas run while it lasts.
 void SendJoinSnapshotForSlot(int slot);
 
-// [dev] What the lane has done, for the UFO drill: paths the host sent, complete paths a client received and applied to
+// [dev] What the lane has done since the process began (monotonic, so a drill's delta across a session end never
+// underflows), for the UFO drill: paths the host sent, complete paths a client received and applied to
 // a copy, and Midas runs a client received.
 struct Counters {
     uint32_t pathsSent = 0, pathsReceived = 0, pathsApplied = 0, midasRuns = 0;

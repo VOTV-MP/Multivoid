@@ -192,8 +192,8 @@ right after the spawn it follows on the same ordered lane (a joiner gets the pat
 edge), and the client writes it over its own before the copy flies; a path the receive boundary refuses is logged with
 the UFO's id, and that copy flies its own roll (a boo) or stays parked (a ball). The host relays the Midas take-off, and each client runs
 its own. A copy the host ends first gives back the event entry its script would have given back on its own way out
-(`coop/world/ufo_sync`) `[?]` (`harness/autotest/autotest_ufo.cpp`, `ufo_drill`: the host's ball and boo paths reach a client's copies, and a
-joiner's at its ready edge; its first rig run is pending).
+(`coop/world/ufo_sync`) `[?]` (`harness/autotest/autotest_ufo.cpp`, `ufo_drill`: the host's ball path reaches a client's copy, and a
+joiner's at its ready edge; the boo's path sync is `[?]`, the gamemode's boo needing day 21 and a night hour, which the drill cannot set; first rig run pending).
 
 ### The base alarm
 

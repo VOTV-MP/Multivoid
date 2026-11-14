@@ -7,8 +7,8 @@ CFG_FLAG(ufo_path_send_off, "ufo_path_send_off", "dev", false, "VOTVCOOP_UFO_PAT
     "or a boo has none and the drill must FAIL at the Midas run it sends after them.")
 CFG_ENUM(ufo_drill, "ufo_drill", "dev", "off", "off|1|join", "VOTVCOOP_UFO_DRILL",
     "Drill, the ambient UFOs' rolled paths; set on BOTH peers, and VOTVCOOP_CAN_DIR on both. 1 -- the host calls the "
-    "gamemode's own ufo_ball and ufo_boo until each UFO stands enrolled, then runs the Midas UFO (its take-off is the "
-    "fence on the same ordered lane); the client must have received both paths by the Midas run, and each copy must "
+    "gamemode's own ufo_ball until a ball stands enrolled, then runs the Midas UFO (its take-off is the "
+    "fence on the same ordered lane); the client must have received the ball's path by the Midas run, and the copy must "
     "read the host's path: 'rig: VERDICT ufo PASS|FAIL|INVALID' and 'ufo-drill: DONE on host'. join -- with the rig's "
     "--rejoin: the host holds a ball, the client leaves, and at the rejoined client's ready edge (second life: "
     "VOTVCOOP_UFO_DRILL_REJOIN=1) the host must have sent a path and the copy must read it: 'rig: VERDICT ufo-join "

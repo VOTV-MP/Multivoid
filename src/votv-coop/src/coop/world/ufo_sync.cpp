@@ -402,10 +402,6 @@ void OnMirrorEnding(void* actor) {
 
 void OnDisconnect() {
     g_pending.clear();
-    g_pathsSent = 0;
-    g_pathsReceived = 0;
-    g_pathsApplied = 0;
-    g_midasRuns = 0;
 }
 
 }  // namespace coop::ufo_sync

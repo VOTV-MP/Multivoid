@@ -1,12 +1,14 @@
 // harness/autotest/autotest_ufo.cpp -- TEST-ONLY: the ambient UFOs' rolled paths cross from the host to a client's
 // copies. A verdict is decided by an event; a bound passing with none is INVALID. Armed by the row ufo_drill on both
 // peers (VOTVCOOP_CAN_DIR).
-//   1     The host calls the gamemode's own ufo_ball and ufo_boo until each UFO stands enrolled (the route the game
-//         takes: its spawn is the EX drain's, where the lane sends the path), then runs the Midas UFO, whose take-off
-//         is its own UfoEvent on the same ordered lane. The client waits for the Midas run (the fence): the path of
-//         each UFO, sent before it, has arrived by then or never will, so the client says FAIL there when fewer than
-//         two paths came. Past the fence it waits for both to be applied and compares each copy's path with the
-//         host's: `rig: VERDICT ufo PASS|FAIL|INVALID`. Red: ufo_path_send_off (host).
+//   1     The host calls the gamemode's own ufo_ball (once, until a ball is listed) and waits for it to stand enrolled
+//         (the route the game takes: its spawn is the EX drain's, where the lane sends the path), then runs the Midas
+//         UFO, whose take-off is its own UfoEvent on the same ordered lane. The client waits for the Midas run (the
+//         fence): the path sent before it has arrived by then or never will, so the client says FAIL there when none
+//         came. Past the fence it waits for the path to be applied and compares the copy's with the host's:
+//         `rig: VERDICT ufo PASS|FAIL|INVALID`. Red: ufo_path_send_off (host). The boo is not driven: the gamemode's
+//         ufo_boo needs day 21 and a night hour (mainGamemode ufo_boo, timeZ), which a fresh game never has and the
+//         gamemode has no setter for; its path sync is [?].
 //   join  With the rig's --rejoin. The host holds a ball (its tick off, so it still flies at the joiner's ready edge),
 //         the client leaves and comes back; at the ready edge the host must have sent the joiner a path, and the
 //         rejoined client (VOTVCOOP_UFO_DRILL_REJOIN=1) must apply it and read the host's path off its copy:
@@ -21,6 +23,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/element/death_seam.h"
 #include "coop/element/registry.h"
 #include "coop/session/rig_verdict.h"
 #include "coop/world/ufo_sync.h"
@@ -89,19 +92,17 @@ bool Same(const Sum& a, const Sum& b) {
     return a.n == b.n && std::fabs(a.x - b.x) < 1.f && std::fabs(a.y - b.y) < 1.f && std::fabs(a.z - b.z) < 1.f;
 }
 
-// The first live, enrolled UFO of one of the classes; its element id.
-void* FirstEnrolled(std::initializer_list<const wchar_t*> classes, uint32_t& eid) {
-    struct Ctx { void* found = nullptr; uint32_t eid = 0; } ctx;
+// The first live UFO of one of the classes; its element id, or kInvalidId while it is not enrolled yet.
+void* FirstLive(std::initializer_list<const wchar_t*> classes, uint32_t& eid) {
+    struct Ctx { void* found = nullptr; uint32_t eid = EL::kInvalidId; } ctx;
     for (const wchar_t* cls : classes) {
         void* c = ue_wrap::object_index::ClassByName(cls);
         if (!c) continue;
         ue_wrap::object_index::ForEachInstance(c, [](void* p, void* obj, int32_t) {
             auto& x = *static_cast<Ctx*>(p);
             if (x.found || !obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-            const EL::ElementId e = EL::Registry::Get().EidForActor(obj);
-            if (e == EL::kInvalidId) return;
             x.found = obj;
-            x.eid = static_cast<uint32_t>(e);
+            x.eid = static_cast<uint32_t>(EL::Registry::Get().EidForActor(obj));
         }, &ctx);
         if (ctx.found) break;
     }
@@ -116,16 +117,21 @@ bool CallGamemode(const wchar_t* fn) {
     return f && frame.valid() && ue_wrap::Call(gm, frame);
 }
 
-// The gamemode's own timer function, one call a pass, until its UFO stands enrolled (the drain that enrols it has run:
-// the spawn and the path went out in the same task). The path is read off the host's UFO. False when the bound passed.
+// The gamemode's own timer function, called while no UFO of the classes is listed (it rolls a chance, and a fresh
+// instance is listed from the next pass), then waited on until the UFO stands enrolled (the drain that enrols it has
+// run: the spawn and the path went out in the same task). The path is read off the host's UFO. False when the bound
+// passed.
 bool Summon(const wchar_t* fn, std::initializer_list<const wchar_t*> classes, uint32_t& eid, Sum& sum, void** actorOut) {
     return PS::WaitFor("the gamemode's UFO enrolled", kSummonSec, [&] {
         bool found = false;
         OnGameThread([&] {
-            CallGamemode(fn);
-            void* a = FirstEnrolled(classes, eid);
+            void* a = FirstLive(classes, eid);
+            if (!a) {
+                CallGamemode(fn);
+                return;
+            }
             std::vector<ue_wrap::FVector> pts;
-            if (a && US::DevReadPath(a, pts)) {
+            if (eid != EL::kInvalidId && US::DevReadPath(a, pts)) {
                 sum = SumOf(pts);
                 if (actorOut) *actorOut = a;
                 found = true;
@@ -174,26 +180,24 @@ void RunHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
     if (!WaitGT("the client's slot world-ready", 120, [] { return harness::session_runtime::Session().IsSlotWorldReady(1); })) return;
-    uint32_t ballEid = 0, booEid = 0;
-    Sum ball, boo;
+    uint32_t ballEid = 0;
+    Sum ball;
     if (!Summon(L"ufo_ball", {L"ufo_ballfo_C"}, ballEid, ball, nullptr)) return;
     UE_LOGI("ufo-drill: HOST ball eid %u, path %hs", ballEid, Text(ballEid, ball).c_str());
-    if (!Summon(L"ufo_boo", {L"ufo_boofo_spawn1_C", L"ufo_boofo_C"}, booEid, boo, nullptr)) return;
-    UE_LOGI("ufo-drill: HOST boo eid %u, path %hs", booEid, Text(booEid, boo).c_str());
-    PS::Mark("ufos", Text(ballEid, ball) + " " + Text(booEid, boo));
+    PS::Mark("ufos", Text(ballEid, ball));
     if (!PS::Await("copies", kStepSec)) return;
-    // The fence: the Midas take-off is a UfoEvent after the two paths, on the same ordered lane.
+    // The fence: the Midas take-off is a UfoEvent after the ball's path, on the same ordered lane.
     if (!RunMidas()) {
-        RV::Say(kTag, RV::Outcome::Invalid, "the level's Midas UFO could not be run: no fence for the paths");
+        RV::Say(kTag, RV::Outcome::Invalid, "the level's Midas UFO could not be run: no fence for the path");
         return;
     }
-    UE_LOGI("ufo-drill: HOST ran the Midas UFO after the paths -- the fence");
+    UE_LOGI("ufo-drill: HOST ran the Midas UFO after the path -- the fence");
     std::string done;
     if (!PS::AwaitText("client_done", done, kStepSec)) return;
     if (done[0] != 'P') return;  // the client said its FAIL where it was decided
     US::Counters c;
     OnGameThread([&] { c = US::Read(); });
-    RV::Say(kTag, RV::Outcome::Pass, "a ball and a boo flew the host's paths on the client (the host sent %u path(s))", c.pathsSent);
+    RV::Say(kTag, RV::Outcome::Pass, "a ball flew the host's path on the client (the host sent %u path(s))", c.pathsSent);
     UE_LOGI("ufo-drill: DONE on host");
 }
 
@@ -202,33 +206,32 @@ void RunClient() {
     PS::Mark("client_ready");
     std::string text;
     if (!PS::AwaitText("ufos", text, kStepSec)) return;
-    uint32_t ballEid = 0, booEid = 0;
-    Sum ball, boo;
-    if (sscanf_s(text.c_str(), "%u %u %f %f %f %u %u %f %f %f", &ballEid, &ball.n, &ball.x, &ball.y, &ball.z, &booEid,
-                 &boo.n, &boo.x, &boo.y, &boo.z) != 10) {
+    uint32_t ballEid = 0;
+    Sum ball;
+    if (!Parse(text.c_str(), ballEid, ball)) {
         RV::Say(kTag, RV::Outcome::Invalid, "the host's UFO summary '%s' does not parse", text.c_str());
         return;
     }
-    if (!WaitGT("the host's ball and boo copies", 60, [&] { return CopyLive(ballEid) && CopyLive(booEid); })) return;
+    if (!WaitGT("the host's ball copy", 60, [&] { return CopyLive(ballEid); })) return;
     PS::Mark("copies");
-    // The fence: the host's Midas run, sent after the paths.
+    // The fence: the host's Midas run, sent after the path.
     US::Counters c;
     if (!WaitGT("the host's Midas run received", kStepSec, [&] { return US::Read().midasRuns >= 1; })) return;
     OnGameThread([&] { c = US::Read(); });
-    if (c.pathsReceived < 2) {
-        RV::Say(kTag, RV::Outcome::Fail, "the host's Midas run arrived and only %u of the 2 UFO paths sent before it had", c.pathsReceived);
+    if (c.pathsReceived < 1) {
+        RV::Say(kTag, RV::Outcome::Fail, "the host's Midas run arrived and the ball's path, sent before it, had not");
         PS::Mark("client_done", "F");
         return;
     }
-    if (!WaitGT("both paths applied to the copies", 30, [] { return US::Read().pathsApplied >= 2; })) return;
-    Sum mineBall, mineBoo;
-    if (!CopySum(ballEid, mineBall) || !CopySum(booEid, mineBoo)) {
-        RV::Say(kTag, RV::Outcome::Invalid, "a copy's path could not be read");
+    if (!WaitGT("the path applied to the copy", 30, [] { return US::Read().pathsApplied >= 1; })) return;
+    Sum mine;
+    if (!CopySum(ballEid, mine)) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the copy's path could not be read");
         return;
     }
-    if (!Same(ball, mineBall) || !Same(boo, mineBoo)) {
-        RV::Say(kTag, RV::Outcome::Fail, "a copy flies another path than the host's: ball %s vs %s, boo %s vs %s",
-                Text(ballEid, ball).c_str(), Text(ballEid, mineBall).c_str(), Text(booEid, boo).c_str(), Text(booEid, mineBoo).c_str());
+    if (!Same(ball, mine)) {
+        RV::Say(kTag, RV::Outcome::Fail, "the copy flies another path than the host's: %s vs %s", Text(ballEid, ball).c_str(),
+                Text(ballEid, mine).c_str());
         PS::Mark("client_done", "F");
         return;
     }
@@ -238,6 +241,12 @@ void RunClient() {
 
 // ---- join ----
 
+// The cause of a held ball's end, if one comes: its element end as the engine drained it.
+void OnWorldActorEnd(const coop::element::death_seam::Death& d) {
+    UE_LOGI("ufo-drill: HOST world actor eid %u ended (mirror=%d, streamed out=%d)", static_cast<unsigned>(d.eid), d.mirror ? 1 : 0,
+            d.streamedOut ? 1 : 0);
+}
+
 void RunJoinHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
@@ -245,6 +254,7 @@ void RunJoinHost() {
     uint32_t eid = 0;
     Sum ball;
     void* actor = nullptr;
+    OnGameThread([] { coop::element::death_seam::Subscribe(EL::ElementType::WorldActor, &OnWorldActorEnd); });
     if (!Summon(L"ufo_ball", {L"ufo_ballfo_C"}, eid, ball, &actor)) return;
     // Held where it is: its tick off, so it has not flown to its end when the next life's ready edge comes.
     OnGameThread([&] { E::SetActorTickEnabled(actor, false); });
@@ -253,7 +263,7 @@ void RunJoinHost() {
     if (!PS::Await("client_done", kStepSec)) return;
     const uint32_t gen = rejoin::FirstLifeGen();
     PS::Mark("host_ack");
-    uint32_t sent0 = 0, sentAtEdge = 0;
+    uint32_t sent0 = 0, sentAtEdge = 0;   // the counter is monotonic, so the delta cannot underflow
     OnGameThread([&] { sent0 = US::Read().pathsSent; });
     if (!rejoin::AwaitNextLifeReady(gen, [&] { sentAtEdge = US::Read().pathsSent - sent0; })) return;
     bool flying = false;
