@@ -7,6 +7,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/player/hit_intent.h"
+#include "coop/world/copy_graph_gate.h"
 
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/actors/zombie.h"
@@ -56,15 +57,28 @@ void Predict(void* mirror, const FVector& hitLoc) {
     if (const wchar_t* played = ue_wrap::zombie::PlayHitFeedback(mirror, hitLoc)) SayPredicted(played);
 }
 
-// The creature the intent names: a live host Npc element of a parked family, else null.
+// The creature the intent names: a live host Npc element of a parked family, or a live host element of a class
+// whose graph a client's copy does not run (a boar is a prop, a fire tank a world actor), else null.
 void* CreatureOf(uint32_t eid) {
-    void* actor = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::Npc);
-    return actor && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor)) ? actor : nullptr;
+    const EL::ElementId id = static_cast<EL::ElementId>(eid);
+    void* actor = EL::LiveActorOfType(id, EL::ElementType::Npc);
+    if (actor && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor))) return actor;
+    for (const EL::ElementType type : {EL::ElementType::Npc, EL::ElementType::Prop, EL::ElementType::WorldActor}) {
+        void* gated = EL::LiveActorOfType(id, type);
+        if (gated && coop::copy_graph_gate::IsGatedClass(R::ClassOf(gated))) return gated;
+    }
+    return nullptr;
 }
 
 }  // namespace
 
 uint32_t ClientClaim(const sg::Call& c, coop::hit_intent::Swing& swing) {
+    // A copy whose graph is not run here takes no damage of its own: the swing is the host's to judge and apply.
+    if (c.object && coop::copy_graph_gate::IsGatedClass(R::ClassOf(c.object))) {
+        if (!coop::hit_intent::ReadLocalSwing(c, swing)) return EL::kInvalidId;
+        const EL::ElementId gated = EL::Registry::Get().EidForActor(c.object);
+        return gated == EL::kInvalidId ? coop::hit_intent::kClaimedUnsent : static_cast<uint32_t>(gated);
+    }
     if (!c.object || !coop::npc_mirror_brain::IsMarkedMirror(c.object) ||
         !coop::npc_mirror_brain::IsParkedClass(R::ClassOf(c.object)))
         return EL::kInvalidId;

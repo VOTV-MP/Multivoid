@@ -139,6 +139,7 @@
 #include "coop/dev/impact_damage_probe.h"  // [dev] what impactDamage receives, logged per call
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/event_fire_drill.h"  // [dev] the host fires one named event and the run watches it
+#include "coop/dev/boar_hit_drill.h"  // [dev] a client's swings at a boar copy
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
 #include "coop/dev/rng_roll_census.h"  // the dev roll census
@@ -305,6 +306,7 @@ void EndSession() {
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::event_fire_drill::OnDisconnect();  // [dev] back to the first step
+    coop::dev::boar_hit_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::pi3_drill::OnDisconnect();  // [dev] a spawner mid-arm is abandoned, a still peer lets go
     coop::dev::native_spawn_probe::OnDisconnect();  // [dev] the per-source counts are said and the records cleared
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
@@ -366,6 +368,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::fireext_drill::Tick(&session);  // [dev] the fire extinguisher drill (a single bool read when off)
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)
     coop::dev::event_fire_drill::Tick(&session);  // [dev] the named-event fire (a single read when off)
+    coop::dev::boar_hit_drill::Tick(&session);  // [dev] the boar hit drill (a single read when off)
     coop::dev::recycled_slot_drill::Tick();  // [dev] the recycled-slot drill (a single read when off)
     coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)
     coop::dev::container_join_drill::Tick(&session);  // [dev] the container join drill (a single bool read when off)

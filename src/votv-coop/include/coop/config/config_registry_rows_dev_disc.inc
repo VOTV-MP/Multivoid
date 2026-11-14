@@ -15,6 +15,9 @@ CFG_STRING(event_fire_drill, "event_fire_drill", "dev", "", "VOTVCOOP_EVENT_FIRE
     "event of the dev event table (the F1 menu's list) through the menu's own dispatch, then the run stays up "
     "for the seconds given (60 by default) so both logs record what each lane did with it. Lines tagged "
     "[EVENT-FIRE-DRILL]; the host's DONE line ends it. No verdict of its own.")
+CFG_FLAG(boar_hit_drill, "boar_hit_drill", "dev", false, "VOTVCOOP_BOAR_HIT_DRILL",
+    "Drill (BOTH peers): the host spawns a gray boar in front of the client, the client takes an axe and swings at "
+    "its copy; the host's boar must lose health to judged hits. One `[BOAR-HIT-DRILL] [H] PASS` or `FAIL` line.")
 CFG_STRING(host_place, "host_place", "dev", "", "VOTVCOOP_HOST_PLACE", false,
     "Drill aid (host): `x,y,z`. The host's own player is put there once its world is up, before anyone joins, so "
     "a drill whose client joins at the host and walks starts from a known spot. One [HOST-PLACE] line.")

@@ -189,6 +189,30 @@ The boar war's controller runs on the host alone. A boar is a prop with a brain:
 the host claims every boar the gamemode lists into the driven-prop stream (`coop/creatures/boar_sync`), and a
 client's copy runs its begin play, its hover tick and its destroy and no other entry of its graph
 (`coop/world/copy_graph_gate`), so it decides nothing; a client's night boar spawner is refused. A client's
+swing at such a copy (a boar, a fire tank, a kavotia, an igetis) is cancelled there and sent as a hit intent,
+which the host judges and applies with the actor's own `addDamage` (`coop/creatures/hit_target_creature`) `[V]`:
+`coop/dev/boar_hit_drill` -- three of a client's axe swings applied, the host's boar from 493 health to 193; a fire
+tank, a kavotia and an igetis take the same path and were not swung at `[RD]`. The fire tanks
+and the shooters are mirrored with the controller as their spawn source, a tank's copy gated as a boar's is, and
+the saucer over the treehouse rides `WeatherState.flags2` (`coop/world/ufo_shield_sync`) `[V]`:
+`VOTVCOOP_EVENT_FIRE_DRILL=boarwar:150` -- nine boars streamed and gated on the client, its saucer set active,
+two shooters mirrored. No fire tank spawned in that run and the saucer's leave was not reached `[RD]`.
+
+The Rozital hole's controller fires once a player walks into its box. The host's fire mints the room under the
+hole (a world-actor copy), the device, the grate and the beacons (props) and the patrol controller, whose kavotias
+and igetis are mirrored with their graphs gated; a client's own controller, which its save can hold, is refused
+its overlap `[V]`: `rozitalHole` -- the client made the room, the device, the beacons and forty kavotia copies
+(the drill's save held a second controller), each kavotia's graph refused. The run ended a second later, the
+drill having put the host inside geometry, so the patrol's movement and the igetis were not observed `[RD]`.
+
+The obelisk falls when a player walks into the host's armed box. The host's `obelisk_C` is a world-actor copy on a
+client (the level's `trigger_spawnProp_C` as its spawn source), and the copy runs the fall on its own machine:
+the sounds, the shakes and the punch of its own player. The props the fall mints are the host's, on the prop
+lane, and the copy's own are refused at the deferred spawn while it falls (`coop/world/obelisk_copy`) `[V]`:
+`obelisk` with its level box forced -- the client's copy was made, 71 of its mints were refused, and the host's
+obelisk prop and seventy rocks arrived. A save actor a joiner loaded itself (the obelisk, the hole's room, the
+salt pile, the Soltomia craft) is adopted as the copy when the host announces it within three metres `[RD]`: no
+run joined during one.
 
 The walking pyramid rides those rails for its spawn, pose and despawn, the creature lane for
 its four wisps, and the event lane for its identity; its own lane owns the one axis nothing
