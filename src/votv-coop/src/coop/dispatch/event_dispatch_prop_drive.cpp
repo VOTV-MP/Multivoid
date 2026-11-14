@@ -18,6 +18,7 @@
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
+#include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
@@ -277,6 +278,25 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::RoombaState:
+    case net::ReliableKind::RoombaIntent: {
+        // RoombaState HOST->ALL, RoombaIntent CLIENT->HOST (coop/props/roomba_sync). Exact length.
+        const bool intent = msg.kind == net::ReliableKind::RoombaIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::RoombaPayload)) {
+            UE_LOGW("event_feed: a robot cleaner message the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        net::RoombaPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.active > 1) {
+            UE_LOGW("event_feed: a robot cleaner message malformed -- dropping");
+            break;
+        }
+        if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::roomba_sync::OnState(p);
         break;
     }
     case net::ReliableKind::WoodchipperState:

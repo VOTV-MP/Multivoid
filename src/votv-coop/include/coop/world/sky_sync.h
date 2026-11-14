@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct SkyStatePayload;
@@ -33,5 +35,13 @@ void Tick();
 // Session teardown: reset the throttle clock, and say how many of its own setEye calls a client
 // refused and how many of the host's eye samples did not apply.
 void OnDisconnect();
+
+// [dev] What a client's lane has taken from the host's SkyState, for the sky drill: every state, those carrying the black
+// hole, the times the hole's flag fell after one that carried it, and the first state's flag (2: none yet).
+struct Counters {
+    uint32_t statesReceived = 0, holeOnReceived = 0, holeFalls = 0;
+    uint8_t  firstHole = 2;
+};
+Counters Read();
 
 }  // namespace coop::sky_sync

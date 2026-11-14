@@ -10,6 +10,7 @@
 // into the allowlist.
 
 #include "coop/world/world_actor_sync.h"
+#include "coop/world/ufo_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
 
@@ -738,10 +739,12 @@ unsigned int HostEnrollExSpawn(void* actor) {
     }
     // Broadcast only with peers present; an alone-host enroll is delivered by the join snapshot,
     // and a peer-less send would only warn.
-    if (s->connected() &&
-        !s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
-        UE_LOGW("world-actor[host ex-enroll]: SendReliable(WorldActorSpawn) failed for eid=%u "
-                "(element kept; the connect snapshot can still deliver it)", eid);
+    if (s->connected()) {
+        if (s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p)))
+            coop::ufo_sync::OnHostSpawnSent(actor, eid);  // an ambient UFO's rolled path follows its spawn, in order
+        else
+            UE_LOGW("world-actor[host ex-enroll]: SendReliable(WorldActorSpawn) failed for eid=%u "
+                    "(element kept; the connect snapshot can still deliver it)", eid);
     }
     return static_cast<unsigned int>(eid);
 }

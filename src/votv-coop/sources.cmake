@@ -121,6 +121,8 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/keypad_verbs.cpp
     src/coop/interactables/sleepingbag_sync.cpp
     src/coop/world/time_sync.cpp
+    src/coop/world/ufo_sync.cpp
+    src/coop/props/roomba_sync.cpp
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
     src/coop/world/power_decay.cpp
@@ -235,6 +237,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/npc_world_enum.cpp
     src/coop/creatures/piramid_sync.cpp
     src/coop/creatures/geom_octa_sync.cpp
+    src/coop/creatures/orb_authority.cpp
     src/coop/creatures/geom_octa_relay.cpp
     src/coop/creatures/roach_sync.cpp
     src/coop/creatures/ambient_creature_sync.cpp
@@ -721,6 +724,10 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_prop_props.cpp
     src/harness/autotest/autotest_nightmare.cpp
     src/harness/autotest/autotest_level_visit.cpp
+    src/harness/autotest/autotest_ufo.cpp
+    src/harness/autotest/autotest_orb.cpp
+    src/harness/autotest/autotest_sky_tp.cpp
+    src/harness/autotest/autotest_roomba.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

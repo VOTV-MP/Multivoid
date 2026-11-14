@@ -24,6 +24,7 @@
 #include "coop/props/container_act_host.h"  // overlap::OnBound: an overlap put waits for a prop's bind
 #include "coop/props/pile_look.h"
 #include "coop/creatures/walker_state_client.h"  // OnBound: a walker copy bound after the host sent its state takes the state here
+#include "coop/props/roomba_sync.h"  // OnBound: a cleaner copy bound after the host sent its state takes the state here
 #include "coop/props/prop_drive_host.h"    // OverrideClientSyncer: a release that writes the copy ends a client's row on it
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
 #include "coop/props/prop_syncer_host.h"   // ElectSyncer: a thrown prop is its thrower's to sync
@@ -454,6 +455,7 @@ void RegisterPropMirror(coop::element::ElementId eid,
         coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
         coop::drive_payload_sync::OnBound(static_cast<uint32_t>(eid), actor, senderSlot);  // a data drive's row, by its author
         coop::walker_state_client::OnBound(actor, key);  // a walker copy takes the host's held pose and hunt
+        coop::roomba_sync::OnBound(static_cast<uint32_t>(eid), actor, cls.c_str());  // a cleaner copy joins the brush list and takes its held state
         coop::element::bind_wait::OnBound(static_cast<uint32_t>(eid));  // messages held for this eid replay at the next Pump
         coop::props::container_act_host::overlap::OnBound(actor);  // an overlap put that waited for this prop's id is judged at the next tick
     } else if (!row && actor && eid != 0 && eid != coop::element::kInvalidId) {

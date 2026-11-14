@@ -27,7 +27,6 @@
 #include "ue_wrap/actors/prop_use.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/obj_keyed_cache.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
@@ -342,28 +341,13 @@ sg::Verdict PreDingus(const sg::Call& c) {
 uint32_t g_overlapCancelled = 0;
 uint32_t g_overlapNoFrame = 0;
 
-// Whether `fn` is the roomba's own ubergraph, asked of its name once per function. The roomba is the one caller of
-// putObjectIn_overlap that files a prop it has just spawned itself (a trash pile's item, from its graph, on itself): the
-// call consumes that spawn, so cancelling it on a client would leave the spawn loose in the world, and the host's judge
-// has no driver or holder to judge for it (container_act_host_overlap runs the body of a prop nobody drives).
-bool IsRoombaGraph(void* fn) {
-    static ue_wrap::ObjKeyedCache<bool, 8> sIsRoombaGraph;
-    bool* is = sIsRoombaGraph.Find(fn);
-    if (!is) {
-        static const std::wstring kGraph = L"ExecuteUbergraph_prop_roomba";
-        is = &sIsRoombaGraph.Insert(fn, R::ToString(R::NameOf(fn)).compare(0, kGraph.size(), kGraph) == 0);
-    }
-    return *is;
-}
-
 // A prop entering a shared mirror's box must never be filed by this client: the mirror is display only, and a local body
 // would add the record to the display and destroy the prop before the host's truth overrules it. The host judges a put
 // at its own overlap (container_act_host_overlap), so nothing is asked and nothing is sent: the call is cancelled, for
 // every caller (the container's own overlap graph, a drone sack's trigger forwarding what it takes to the drone's
 // container: run on a client, that local body filed the prop into this display mirror alone and destroyed it, and the
 // destroy took the host's copy with no record). Like PreDingus, the rule is the mirror's authority, not the caller's class.
-// The one exemption is the roomba's own graph (IsRoombaGraph). A call with no caller frame is cancelled too (fails
-// closed). On the host this seat is the host's judge.
+// A call with no caller frame is cancelled too (fails closed). On the host this seat is the host's judge.
 sg::Verdict PreOverlap(const sg::Call& c) {
     coop::net::Session* const s = LinkedSession();
     if (!s) return sg::Verdict::Run;
@@ -371,11 +355,7 @@ sg::Verdict PreOverlap(const sg::Call& c) {
     uint32_t eid = 0;
     if (SharedTarget(c.object, eid) == Target::Own) return sg::Verdict::Run;
     if (g_noOverlapCancel) return sg::Verdict::Run;   // the red: container_overlap_no_cancel, the BP body runs on the mirror
-    if (c.callerFunction) {
-        if (c.callerObject == c.object && IsRoombaGraph(c.callerFunction)) return sg::Verdict::Run;
-    } else {
-        ++g_overlapNoFrame;
-    }
+    if (!c.callerFunction) ++g_overlapNoFrame;
     const uint32_t n = ++g_overlapCancelled;
     if (n == 1 || n % 100 == 0) {   // the first, then every 100th: a prop at a box's edge re-enters at the physics rate
         static R::ParamOffset sActor{L"actor"};

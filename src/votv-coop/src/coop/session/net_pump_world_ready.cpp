@@ -18,6 +18,7 @@
 #include "coop/world/daily_task_sync.h"  // OnClientWorldReady: a task kept from the world left behind
 #include "coop/props/prop_key_index.h"     // CanAnswer at the world-ready gate
 #include "coop/props/join_membership_sweep.h"  // OnClientWorldReadyResetSweep
+#include "coop/props/roomba_sync.h"  // OnClientWorldReady: the cleaners bound and the states held
 #include "coop/session/rig_ready.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"  // the announce waits on the load-tail quiescence latch
@@ -206,6 +207,7 @@ const char* TickWorldReadyAnnounce(coop::net::Session& session, void* localNow, 
                 // state so the new world re-adopts its save NPCs and re-sweeps orphans.
                 coop::npc_adoption::OnClientWorldReady();
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // drop the stale prop-kerfur pending set
+                coop::roomba_sync::OnClientWorldReady();  // the cleaners bound and the states held for the old world go
                 coop::element::bind_wait::Clear("the world changed");  // the messages held for the old world's binds
                 coop::props::bracket_position_wait::Reset();  // and the spawns a bracket of the old world kept
                 coop::event_fire_sync::OnClientWorldReady();  // the fires queued in the join window replay now

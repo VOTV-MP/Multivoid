@@ -285,6 +285,14 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The nightmare lane: both peers, or a staging value (sleeper, dreamer) for one.
     SpawnIfEnum(coop::config_registry::rows::nightmare_drill, "nightmare drill", &NightmareThread, role);
     SpawnIfEnum(coop::config_registry::rows::level_visit_drill, "level visit drill", &LevelVisitThread, role);
+    // The ambient UFOs: the host's rolled paths reach a client's copies; a joiner is sent them at its ready edge.
+    SpawnIfEnum(coop::config_registry::rows::ufo_drill, "UFO drill", &UfoDrillThread, role);
+    // The black orb: the host judges each encounter, a client's copy runs its part.
+    SpawnIfEnum(coop::config_registry::rows::orb_drill, "orb drill", &OrbDrillThread, role);
+    // The earth teleport: the host's black hole reaches a client's sky, and a joiner's at its ready edge.
+    SpawnIfEnum(coop::config_registry::rows::sky_tp_drill, "sky tp drill", &SkyTpDrillThread, role);
+    // The robot cleaner: the host runs it, a client's press is asked of the host, its copies follow the drive.
+    SpawnIfEnum(coop::config_registry::rows::roomba_drill, "roomba drill", &RoombaDrillThread, role);
     // The walking mannequin's two-peer drill: armed by a value of the mannequin_drill row on both peers (`walker` or a red).
     if (coop::dev::mannequin_walker_drill::Armed()) {
         UE_LOGI("harness: mannequin_drill is a walker drill value (%s) -- spawning the mannequin drill thread", RoleStr(role));

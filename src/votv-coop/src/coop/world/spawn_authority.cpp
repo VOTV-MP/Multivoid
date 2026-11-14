@@ -104,6 +104,12 @@ UE_FACT_FN(kRowSphereHitMushroomSpore, "spawn_authority", L"mushroomSpore_C",
            L"BndEvt__mushroomSpore_Sphere_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
            Declared);
 UE_FACT_FN(kRowTrySpawnHerbOutsideChurch, "spawn_authority", L"outsideChurch_C", L"trySpawnHerb", Declared);
+UE_FACT_FN(kRowReceiveTickBlackballSpawner, "spawn_authority", L"blackballSpawner_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowUfoBallGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_ball", Declared);
+UE_FACT_FN(kRowUfoBooGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_boo", Declared);
+UE_FACT_FN(kRowUfoPillGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_pill", Declared);
+UE_FACT_FN(kRowUfoJoelGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_joel", Declared);
+UE_FACT_FN(kRowUfoMidasGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_midas", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries.
 struct Row {
@@ -205,6 +211,14 @@ constexpr Row kRows[] = {
     // 120-300 s timer), so a client's timer simply ends here. The host rolls and the source-gated catch mirrors the
     // Octa and the egg; the level-placed egg roller is already a row above.
     {&kRowCustomEvent5Gamemode,           "gamemode.CustomEvent_5"},
+    // The ambient UFOs: five timers of the gamemode, each a body that rolls, mints its UFO (or runs the Midas UFO)
+    // and re-arms itself, so a client's timers end here. The host's UFOs cross on the world-actor lane and its Midas
+    // run as a UfoEvent (coop/world/ufo_sync).
+    {&kRowUfoBallGamemode,                "gamemode.ufo_ball"},
+    {&kRowUfoBooGamemode,                 "gamemode.ufo_boo"},
+    {&kRowUfoPillGamemode,                "gamemode.ufo_pill"},
+    {&kRowUfoJoelGamemode,                "gamemode.ufo_joel"},
+    {&kRowUfoMidasGamemode,               "gamemode.ufo_midas"},
 
     // The ambient creatures and fixtures, the host's: the deer and walking tree roll absolute map points and the npc lane
     // mirrors what the host rolled; the hexahive's field of dirt holes and the beehive's branches cross on the fixture lane.
@@ -218,6 +232,11 @@ constexpr Row kRows[] = {
     // Delay resumes and the reap of the walkers it counts are all scheduled from that entry, in exclusive branches, so the
     // tick's row refuses every one. The host's walker, the statue's stand swap and its end cross as keyed props.
     {&kRowReceiveTickTickerMannequinSpawner, "mannequinSpawner.ReceiveTick"},
+    // The orb event's spawner: its tick counts player 0's laps around it, and past maxlaps mints an npc_orborb_C on the
+    // navmesh 200 m from that camera. On a client player 0 is the client, so its own tick would mint a private orb the
+    // host never saw. The host's orb crosses by the source-gated catch and its encounter is the host's
+    // (coop/creatures/orb_authority).
+    {&kRowReceiveTickBlackballSpawner,       "blackballSpawner.ReceiveTick"},
     // The plant spawners: each product is a growingPlant_C, which the host's plant_sync sends as PlantState, so a
     // client's own would stand apart from the host's under another key. The winter bush ticker's timer entry plants
     // one bush on a random trace (ticker_bushSpawning UG @206, spawnBush). A spore's hit plants a shroom_7 at the hit

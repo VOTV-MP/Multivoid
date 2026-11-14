@@ -3,6 +3,8 @@
 
 #include "coop/world/sky_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
@@ -25,6 +27,7 @@ namespace SKY = ue_wrap::skysphere;
 namespace sg  = ue_wrap::script_gate;
 
 UE_FACT_FN(kRowSetEye, "sky_sync", L"newsky_C", L"setEye", Declared);
+UE_FACT_FN(kRowTp, "sky_sync", L"newsky_C", L"tp", Declared);
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::chrono::steady_clock::time_point g_lastBroadcast{};
@@ -36,6 +39,7 @@ constexpr auto kPushInterval = std::chrono::milliseconds(1000);
 // The eye: the day's noon roll runs on every peer and calls the sky's setEye, so a client refuses its own
 // and shows the host's, which the lane carries. Game thread.
 constexpr int kSetEyeTag = 0x534b4559;  // 'SKEY'
+constexpr int kTpTag = 0x534b5450;      // 'SKTP'
 bool     g_gateAsked = false;            // the refusal gate was registered (or refused, said)
 bool     g_applyingEye = false;          // the lane's own apply of the host's eye runs
 uint64_t g_eyeRefused = 0;               // a client's own setEye calls refused this session
@@ -66,6 +70,26 @@ sg::Verdict OnSetEyePre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+// CLIENT, before newsky's tp, the earth teleport: the host's run is the only one. Its flip arrives on SkyState and its
+// emails on the host's append feed; a client's own would flip its sky apart from the host's.
+sg::Verdict OnTpPre(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == coop::net::Role::Host || !call.object) return sg::Verdict::Run;
+    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) return sg::Verdict::Run;
+    UE_LOGI("sky_sync: a client refused its own earth teleport (newsky_C.tp) -- the host's sky carries it");
+    return sg::Verdict::Cancel;
+}
+
+// [dev red] sky_flag_apply_off: a client reads the host's black hole flag and never applies it.
+bool HoleApplyOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::sky_flag_apply_off);
+    return off;
+}
+
+std::atomic<uint32_t> g_statesReceived{0}, g_holeOnReceived{0}, g_holeFalls{0};
+std::atomic<uint8_t>  g_firstHole{2};
+std::atomic<bool>     g_holeSeen{false};  // the last state received carried the hole
+
 bool Finite(const coop::net::SkyStatePayload& p) {
     return std::isfinite(p.skyPitch) && std::isfinite(p.skyYaw) &&
            std::isfinite(p.skyRoll) && std::isfinite(p.moonPhase);
@@ -82,6 +106,9 @@ bool MakePayload(coop::net::SkyStatePayload& out) {
     bool eye = false;
     SKY::ReadEye(eye);  // unread, the sky shows no eye
     out.eye = eye ? 1 : 0;
+    bool hole = false;
+    SKY::ReadBlackHole(hole);  // unread, the sky shows none
+    out.blackHole = hole ? 1 : 0;
     return Finite(out);  // never push NaN/inf onto the wire
 }
 
@@ -95,6 +122,9 @@ void Install(coop::net::Session* session) {
         if (!sg::WatchName(kRowSetEye, kSetEyeTag, &OnSetEyePre, nullptr))
             UE_LOGE("sky_sync: the script gate refused the watch on newsky_C.setEye -- a client's own noon roll "
                     "can still set its eye");
+        if (!sg::WatchName(kRowTp, kTpTag, &OnTpPre, nullptr))
+            UE_LOGE("sky_sync: the script gate refused the watch on newsky_C.tp -- a client's own earth teleport "
+                    "can still flip its sky");
     }
 }
 
@@ -117,6 +147,27 @@ void OnReliable(const coop::net::SkyStatePayload& payload) {
         else if (g_eyeApplyFailed++ == 0)
             UE_LOGW("sky_sync: the host's eye %d did not apply -- the sky's setEye did not run (first failure; the "
                     "rest are counted, and each next sample tries again)", want ? 1 : 0);
+    }
+    // The earth teleport's black hole through the sky's own skyVisibility, and its light; a client runs no `tp` of its
+    // own (refused below), so this is the only flip it sees.
+    const bool hole = payload.blackHole != 0;
+    g_statesReceived.fetch_add(1);
+    uint8_t unset = 2;
+    g_firstHole.compare_exchange_strong(unset, hole ? 1 : 0);
+    if (hole) {
+        g_holeOnReceived.fetch_add(1);
+        g_holeSeen.store(true);
+    } else if (g_holeSeen.exchange(false)) {
+        g_holeFalls.fetch_add(1);
+    }
+    bool holeNow = false;
+    if (SKY::ReadBlackHole(holeNow) && holeNow != hole) {
+        if (HoleApplyOff()) {
+            UE_LOGW("sky_sync: [dev red] sky_flag_apply_off -- the host's black hole %d is NOT applied", hole ? 1 : 0);
+        } else {
+            const bool ok = SKY::ApplyBlackHole(hole);
+            UE_LOGI("sky_sync: applied the host's black hole %d (ok=%d)", hole ? 1 : 0, ok ? 1 : 0);
+        }
     }
     static int s_n = 0;
     if ((s_n++ % 10) == 0)  // ~every 10s -- confirm convergence, not spam
@@ -170,6 +221,15 @@ void OnDisconnect() {
     g_eyeRefused = 0;
     g_saidEyeRefused = false;
     g_eyeApplyFailed = 0;
+    g_statesReceived = 0;
+    g_holeOnReceived = 0;
+    g_holeFalls = 0;
+    g_firstHole = 2;
+    g_holeSeen = false;
+}
+
+Counters Read() {
+    return {g_statesReceived.load(), g_holeOnReceived.load(), g_holeFalls.load(), g_firstHole.load()};
 }
 
 }  // namespace coop::sky_sync

@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 294;
+inline constexpr uint16_t kProtocolVersion = 295;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1440,6 +1440,31 @@ enum class ReliableKind : uint16_t {
     // run reaches every peer as CargoLiftState. Never relayed; not pre-world; a press whose sender has no body on the
     // host yet waits in its queue. Late join: none, a press is an act. KeyedTogglePayload.
     CargoLiftIntent = 242,
+    // HOST->CLIENT: the black orb's encounter (npc_orborb_C), which the host judges (coop/creatures/orb_authority).
+    // Begin, to every client: the host's orb began its encounter, and each client's copy runs its own begin. Death, to
+    // the toucher alone: the orb caught that player, whose machine answers the run's end as a death. Never relayed; not
+    // pre-world (a Begin for a copy not yet made is dropped). Late join: none is owed. The encounter is about 5.1 s (the
+    // timeline's last key is at 5.0 s, then the end's own 0.1 s delay) and a copy born inside it stands still with no
+    // fade until the host's destroy takes it; MTA replays no one-shot event to a joiner (CGame.cpp Packet_ExplosionSync,
+    // the join stream carries elements only). Host-authored: a client's copy is refused at the host's receive edge.
+    // OrbEventPayload.
+    OrbEvent = 258,
+    // HOST->CLIENT: the gamemode's ambient UFOs (coop/world/ufo_sync). A path, to every client after the UFO's
+    // WorldActorSpawn: what the host's copy rolled at its birth (a ball's turn and two ends, a boo's flight spline in
+    // chunks of 16 points), written over the client copy's own roll so every copy flies one path. MidasRun, to every
+    // client: the host's level-placed Midas UFO took off, and each client's own runs its flight. Never relayed; not
+    // pre-world (a path for a copy not yet made waits ten seconds). Late join: the host sends the path of every UFO
+    // still flying and the Midas run while it lasts. Host-authored: a client's copy is refused at the host's receive
+    // edge. UfoEventPayload.
+    UfoEvent = 259,
+    // HOST->ALL: a robot cleaner (prop_roomba_C) of the host's switched on or off (coop/props/roomba_sync), when its
+    // `active` changes and to a joiner at its ready edge; a client's copy takes it through the cleaner's own `use`. While
+    // it runs, the host's copy drives and its pose rides PropDrivePose. Never relayed; not pre-world. RoombaPayload.
+    RoombaState = 245,
+    // CLIENT->HOST: this client's player pressed a robot cleaner's switch (action 5); `active` is the state it wants.
+    // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
+    // RoombaPayload.
+    RoombaIntent = 246,
 };
 
 #pragma pack(push, 1)
@@ -2238,6 +2263,14 @@ struct SusHoleIntentPayload {
 };
 static_assert(sizeof(SusHoleIntentPayload) == 12, "SusHoleIntentPayload must be 12 bytes");
 static_assert(sizeof(SusHoleIntentPayload) <= 256 - 20 - 8, "SusHoleIntentPayload must fit in one reliable datagram");
+
+// A robot cleaner's switch (RoombaState, RoombaIntent): the cleaner's prop element id and its `active`.
+struct RoombaPayload {
+    uint32_t eid;     // the cleaner's prop element id
+    uint8_t  active;  // 1 on, 0 off: the state after the press (a state) or the one asked for (an intent)
+    uint8_t  pad[3];  // zero
+};
+static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set
@@ -4477,14 +4510,16 @@ static_assert(sizeof(TaskNewStatePayload) <= 256 - 20 - 8,
               "TaskNewStatePayload must fit in one reliable datagram");
 
 // The night sky (SkyState): the star dome's world rotation (its random initial yaw plus spin), the
-// moon phase and the eye; the client writes the first two and runs the sky's setEye for the eye.
+// moon phase, the eye and the earth teleport's black hole; the client writes the first two, runs the sky's setEye
+// for the eye and its skyVisibility for the black hole.
 struct SkyStatePayload {
     float skyPitch;    // sky mesh WORLD rotation (FRotator) -- pitch
     float skyYaw;      //   yaw  (the dominant value: random initial offset + accumulated spin)
     float skyRoll;     //   roll
     float moonPhase;   // Anewsky_C::moonPhase_mirror (= UsaveSlot_C::moonPhase)
     uint8_t eye;       // Anewsky_C::eye, the noon roll's setEye (the moon's texture swapped for an eye's)
-    uint8_t pad[3];
+    uint8_t blackHole; // Anewsky_C::skyHidden, the earth teleport's flip (the sky hidden, the black hole shown)
+    uint8_t pad[2];
 };
 static_assert(sizeof(SkyStatePayload) == 20, "SkyStatePayload must be 20 bytes");
 
@@ -4552,6 +4587,32 @@ inline constexpr uint8_t kGeomOctaOpVerdict = 1;
 inline constexpr uint8_t kGeomOctaTargetNone    = 0;
 inline constexpr uint8_t kGeomOctaTargetSlot    = 1;
 inline constexpr uint8_t kGeomOctaTargetElement = 2;
+
+// The black orb's encounter (OrbEvent): the orb's NPC element id and what happened.
+inline constexpr uint8_t kOrbEventBegin = 1;  // to every client: the host's orb began
+inline constexpr uint8_t kOrbEventDeath = 2;  // to the toucher: the orb caught this player
+struct OrbEventPayload {
+    uint32_t eid;     // the orb's NPC element id (host-allocated)
+    uint8_t  op;      // kOrbEvent*
+    uint8_t  pad[3];  // zero
+};
+static_assert(sizeof(OrbEventPayload) == 8, "OrbEventPayload must be 8 bytes");
+static_assert(sizeof(OrbEventPayload) <= 256 - 20 - 8, "OrbEventPayload must fit in one reliable datagram");
+// The ambient UFOs (UfoEvent): the UFO's world-actor element id, the op, and up to 16 vectors of a path.
+inline constexpr uint8_t kUfoEventBallPath = 1;  // v[0] the turn (pitch, yaw, roll), v[1] end a, v[2] end b
+inline constexpr uint8_t kUfoEventBooPath  = 2;  // v[0..count) the flight spline's points first.., local space
+inline constexpr uint8_t kUfoEventMidasRun = 3;  // eid 0: the level's Midas UFO takes off
+inline constexpr uint8_t kUfoEventMaxPoints = 16;
+struct UfoEventPayload {
+    uint32_t eid;     // the UFO's world-actor element id (host-allocated); 0 for MidasRun
+    uint8_t  op;      // kUfoEvent*
+    uint8_t  first;   // the index of v[0] in the whole path
+    uint8_t  count;   // vectors valid in v, at most kUfoEventMaxPoints
+    uint8_t  total;   // vectors in the whole path
+    float    v[kUfoEventMaxPoints][3];
+};
+static_assert(sizeof(UfoEventPayload) == 200, "UfoEventPayload must be 200 bytes");
+static_assert(sizeof(UfoEventPayload) <= 256 - 20 - 8, "UfoEventPayload must fit in one reliable datagram");
 
 struct GeomOctaEventPayload {
     uint8_t  op;

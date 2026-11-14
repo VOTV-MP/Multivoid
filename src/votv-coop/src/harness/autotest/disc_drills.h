@@ -13,6 +13,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 
 #include <atomic>
@@ -21,7 +22,9 @@ namespace harness::autotest::disc_drill {
 
 template <class Fn>
 void OnGameThread(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
+    // A body that faulted or threw is absorbed by the pump and leaves its outputs unread: said, never silent.
+    if (ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); }) != 1)
+        UE_LOGE("drill: a game-thread task faulted -- what it was to read stays unread");
 }
 
 // HOST: its player stands and its world has settled: the load's own removals are over and the object index holds every

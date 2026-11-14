@@ -258,6 +258,15 @@ void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
 }
 
+bool RetractEntryOf(void* actor) {
+    UE_ASSERT_GAME_THREAD("creature_event_relay::RetractEntryOf");
+    AE::Senders senders{};
+    if (!actor || !detail::Ready() || !AE::ReadSenders(senders)) return false;
+    for (int32_t i = 0; i < senders.num; ++i)
+        if (senders.data[i] == actor) return detail::Call(false, actor);
+    return false;
+}
+
 int TargetFor(EL::ElementId eid) { return detail::ClientTargetFor(eid); }
 int AppliedFor(EL::ElementId eid) { return detail::ClientAppliedFor(eid); }
 uint32_t PerViewerTrues(EL::ElementId eid) { return detail::ClientViewerTrues(eid); }

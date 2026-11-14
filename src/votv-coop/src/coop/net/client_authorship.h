@@ -40,6 +40,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::FoodRelease:
     case ReliableKind::FoodHand:
     case ReliableKind::PlantEdit:
+    case ReliableKind::RoombaIntent:
     case ReliableKind::FireExtIntent:
     case ReliableKind::DeskShortRequest:
     case ReliableKind::PropSpawn:
@@ -254,6 +255,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PropPropsState:
     case ReliableKind::FoodState:
     case ReliableKind::PlantState:
+    case ReliableKind::RoombaState:
     case ReliableKind::FireExtState:
     case ReliableKind::DeskShortState:
     case ReliableKind::SwingerRestPose:
@@ -270,6 +272,8 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::RequesterFeedback:
     case ReliableKind::KerfurCommandAnswer:
     case ReliableKind::WalkerState:
+    case ReliableKind::OrbEvent:
+    case ReliableKind::UfoEvent:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a value that names no kind: refused like Host

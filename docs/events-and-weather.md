@@ -41,7 +41,12 @@ its sun, sounds, decals and weekday, follow the host's minute for minute `[RD]`;
 sleep (on [players.md](players.md)) one comes about every 80 ms `[RD]`, and a frame longer than
 that on either peer can merge two and skip a minute's pulse `[RD]` -- one night gave 44 of 45
 `[V]`. The star dome's random orientation, the save-derived moon phase and the sky eye stream from
-the host once a second (`coop/world/sky_sync`) `[V]`.
+the host once a second (`coop/world/sky_sync`) `[V]`. So does the earth teleport's black hole: the event's `tp` hides the
+day sky and shows the black hole 20 s in and turns them back 86 s later, unless a game rule keeps the black hole. A
+client refuses its own `tp`, takes the host's flip through the sky's own `skyVisibility` and the black hole's light,
+and reads the emails from the host's feed; its two 2D sounds are carried as EventCue ids 100 and 101 (`coop/world/world_sound_sync`). A joiner gets the flip with the sky
+(`harness/autotest/autotest_sky_tp.cpp`, `sky_tp_drill`) `[?]`: the client's sky flips and turns back with the host's, and a
+client that joins mid-flip gets the black hole at its join (the drill's first rig run is pending).
 
 ### Weather
 
@@ -172,6 +177,24 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+### The ambient UFOs
+
+The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
+camera, every 40 to 75 minutes), the boo (somewhere over the map at night from day 21, as often), the pill (over the
+lake glow at night from day 7, every 90 to 112 minutes), Joel (over the radio tower by day from day 14 while a player
+stands at its top, checked every 5 to 10 minutes) and Midas (the level's own UFO, at night from day 14, every 100 to
+120 minutes); the last three come once a session. They are the host's, and every player sees the same ones. A client refuses all five timers (`coop/world/spawn_authority`). The host's four minted UFOs are
+outputs of the gamemode's source on the world-actor lane, so each client gets a copy, which runs the UFO's own
+animation. The ball and the boo roll their path on each machine at birth: the ball the turn and the two ends its
+lights fly between, kept from its construction script because the engine refuses to move those parts afterwards,
+and the boo the wobble of each point of its flight spline. So the host sends what its copy rolled (`UfoEvent`),
+right after the spawn it follows on the same ordered lane (a joiner gets each UFO still flying, enrolled again if the last client's leave drained it, and its path at its ready
+edge), and the client writes it over its own before the copy flies; a path the receive boundary refuses is logged with
+the UFO's id, and that copy flies its own roll (a boo) or stays parked (a ball). The host relays the Midas take-off, and each client runs
+its own. A copy the host ends first gives back the event entry its script would have given back on its own way out
+(`coop/world/ufo_sync`) `[?]` (`harness/autotest/autotest_ufo.cpp`, `ufo_drill`: the host's ball path reaches a client's copy, and a
+joiner's at its ready edge; the boo's path sync is `[?]`, the gamemode's boo needing day 21 and a night hour, which the drill cannot set; first rig run pending).
+
 ### The base alarm
 
 One trigger actor is the base alarm: the siren, every red beacon, the ceiling flicker, the
@@ -224,6 +247,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
@@ -232,12 +256,13 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome, the moon and the eye |
+| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome, the moon, the eye and the black hole |
 | `WeatherState`, `LightningStrike`, `RedSky`, `BadSun` | the host to all | the state fields; a strike location; the red sky's edge; whether a Bad Sun exists |
 | `FireflySpawn` | each peer, relayed | one spawn |
 | `EventFire`, `EventSnapshot`, `EventCue` | the host to all; the host to one joiner; the host to all | a fired row; an in-flight event; an emitter cue |
 | `WorldActorSpawn`, `WorldActorDestroy`, `WorldActorPose` (stream) | the host to all | an event actor's birth with scale and blob; its death; full-rotation poses |
 | `PyramidGather` | the host to all | the gather commit |
+| `UfoEvent` | the host to all; the host to one joiner | a UFO's rolled path (a ball's turn and ends, a boo's flight spline), or the Midas take-off |
 | `AlarmState` | either role | the alarm's active flag |
 | `EmailAppend`, `EmailDelete`, `TaskNewState` | the host to all; either role; the host to all | an email; a deletion; the task |
 
@@ -248,7 +273,8 @@ and day number; the sky (its eye included), the weather state, the red sky's sta
 clear, and whether a Bad Sun exists are seeded at the joiner's world-ready; the join blob already
 carries a saved Bad Sun copy, and the seed settles it against the host's state.
 The in-flight events arrive as snapshot entries and replay with the override; the live cues are
-re-sent; every tracked event actor is re-spawned on the joiner; the pyramid's gather in flight
+re-sent; every tracked event actor is re-spawned on the joiner, an ambient UFO with its rolled path, and the Midas UFO's
+run is re-sent while it flies; the pyramid's gather in flight
 is re-sent after its mirrors exist; the alarm's current flag is sent unconditionally, and the
 joiner runs the native trigger, which is idempotent against a save that already carried it.
 Emails are seeded as a delta against the blob instant; the task state is sent at the ready
@@ -258,7 +284,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Limit | Evidence |
 |---|---|
-| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given), but its black hole light and its other effects are the host's | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
+| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given); its black hole and its light ride SkyState | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
 | The alien sounds are each player's own: the event is replayed, and each peer's three noisers walk around its own player, sound and leave when that player sees one. A player does not hear the noisers around another. A joiner whose world is up while the host's noisers are out is sent the event once at its ready edge (the join snapshot, one row for the three noisers) and gets noisers of its own | `[?]` `harness/autotest/autotest_world_sound.cpp`: three noisers on each peer, and on a rejoined client (the rewritten drill has not run yet) |
 | A harvest's sound is the harvester's alone: no other peer plays it | `[RD]` the harvest half of #104 waits for the host to perform every harvest (#115): the host's own `growingPlant_C::harvestSound` call then sends an EventCue id 102 at the plant |
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
@@ -269,6 +295,8 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | A plant runs on the host's sun, rain and view of the world alone: a client refuses the bodies that change a plant on their own (`coop/world/plant_gate`). A fruit a client's toolgun forces on a plant that bears fruit as props stays on that client, as the prop it spawns does not cross; the host grows its own at its next ripening. What a client's copy shows between two gradual sends can be up to 5 s old | `[V]` `coop/world/plant_sync`; `tool_plantFruit_C`; `[?]` `coop/world/plant_gate` |
 | Rain falls inside the base for a player standing indoors, the host included: the game's own effect, the same in single player. The rain emitter follows the player's camera and spawns its drops around it, below the roof's rain-collision mesh, which stops only drops falling onto it from above | `[V]` `coop/world/weather_rain` never moves the emitter or the camera; `[RD]` the decompiled day-night cycle's emitter move |
 | A client that joins during a vent crawl gets the crawler from the join census but not the crawl's sounds, the vent's swing or the door's power, which start from the crawl's one cue; the crawl was forced through the eventer's own verb, not reached by the day 5 schedule | `[?]` `coop/world/vent_crawler_sync` |
+| The ball appears above the host's camera, and Joel's roll looks for a player at the radio tower's top on the host, so both follow the game's player 0, which is the host | `[RD]` the gamemode's `ufo_ball` and `ufo_joel` |
+| A joiner's UFO copy starts its flight from the beginning, so it trails the host's by the time the UFO had flown | `[?]` `coop/world/ufo_sync` |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |
 | Only the pyramid and the alarm have had the one-event-at-a-time pass; every other event rides the generic lanes on the per-row replay policy | `[V]` `coop/world/event_fire_sync`, the replay allowlist |
 
@@ -281,5 +309,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/world/vent_crawler_sync`, `coop/dev/event_trigger` |
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
+| the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

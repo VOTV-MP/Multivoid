@@ -534,6 +534,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
 | the drone | the host | a timed transform stream; the client's tick and physics off |
 | a woodchipper's fuel and on/off | the host | a client's pour and press are intents the host judges; the host's state when it changes and every second while its fuel moves |
+| the robot cleaner (`prop_roomba_C`) | the host | it drives by physics, so a client refuses its tick and pickup at the script gate; the host watches `use` (the switch's press and the save's load both end in it), sends each change of `active` as `RoombaState` and claims the drive while it runs, so copies follow the pose stream; a client's press is a `RoombaIntent` the host judges by reach; a state that outruns its copy is held until the bind, and a joiner gets every cleaner's state at its ready edge (`coop/props/roomba_sync`) `[?]` (`harness/autotest/autotest_roomba.cpp`, `roomba_drill`) |
 
 ## Wire messages
 
