@@ -21,6 +21,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_hold.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -35,6 +36,7 @@
 #include "ue_wrap/devices/generator.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <chrono>
@@ -74,7 +76,6 @@ constexpr float    kPlateNearCm = 300.f;  // a plate set back, from the prop to 
 constexpr float    kDoorReachCm = 600.f;  // a client's door press, from its eye to the station
 constexpr uint64_t kAskEveryMs = 250;     // a slot's asks, one per this
 constexpr uint64_t kScanEveryMs = 100;    // the host's look at the covers
-constexpr uint64_t kPickupWaitMs = 3000;  // a granted plate's copy, waited for this long
 constexpr uint64_t kBodyWaitMs = 5000;    // an ask waits this long for its sender's body here
 
 coop::net::Session* g_session = nullptr;
@@ -196,6 +197,16 @@ void SoundDetach(void* desk, const ue_wrap::FVector& at) {
     }
 }
 
+void* MemberObj(void* obj, const wchar_t* name) {
+    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
+    return off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const char*>(obj) + off) : nullptr;
+}
+
+bool Touches(void* lid, void* actor) {
+    ue_wrap::ParamFrame f(lid ? R::FindDispatchFunctionCached(R::ClassOf(lid), L"IsOverlappingActor") : nullptr);
+    return f.valid() && f.Set<void*>(L"Other", actor) && ue_wrap::Call(lid, f) && f.Get<bool>(L"ReturnValue");
+}
+
 // ---- the stations --------------------------------------------------------------------------------------------------
 
 void* Station(int index) {
@@ -266,11 +277,69 @@ struct Owed {
     uint64_t since = 0;
 };
 std::vector<Owed> g_owed;
-// A granted take-off's prop moves from the plate to its asker's hand over the next frames, leaving the lid and
-// brushing it again: the host's desk holds panelTakeoff until this, so its own set-back does not take the plate back
-// on the way.
-constexpr uint64_t kTakeOffSettleMs = 1500;
-uint64_t g_holdTakeOffUntilMs = 0;
+// A granted take-off's prop, born on its lid, moves from the plate to its asker's hand over the next frames and can
+// brush the lid again on the way. As the desk's own panelTakeoff waits for the prop's end-overlap, the host's desk does
+// not set that prop back until it has been seen off its lid in a hold: panelTakeoff is held while it is fresh, and the
+// desk's set-back is refused for it at the gate, since an end-overlap of another actor clears the flag between ticks.
+struct Fresh {
+    ue_wrap::CachedObjRef prop;
+    uint8_t plate = 0;
+    uint64_t since = 0;
+    bool touched = false;  // seen on its lid: a first read before the spawn's overlaps register does not arm it
+};
+std::vector<Fresh> g_fresh;
+constexpr uint64_t kFreshMaxMs = 60000;  // a prop left on its lid this long is the desk's again
+constexpr uint64_t kUnheldArmMs = 3000;  // a prop no one has taken by this is armed once off its lid
+constexpr float    kArmAwayCm = 80.f;    // and a held one once this far from its plate, past its fall off the lid
+
+// Whether `prop` is more than kArmAwayCm from the plate it came off.
+bool AwayFromPlate(void* desk, uint8_t plate, void* prop) {
+    void* const mesh = PlateMesh(desk, plate);
+    ue_wrap::FVector at{};
+    return mesh && E::TryGetActorLocation(prop, at) &&
+           Dist2(at, E::GetComponentLocation(mesh)) > kArmAwayCm * kArmAwayCm;
+}
+
+bool IsFresh(void* actor) {
+    for (const Fresh& f : g_fresh)
+        if (actor && f.prop.Is(actor)) return true;
+    return false;
+}
+
+// HOST, each tick: a fresh prop seen off its lid is armed, and the hold ends with the last one, as the end-overlap ends
+// panelTakeoff.
+void TendFresh() {
+    if (g_fresh.empty()) return;
+    void* const desk = Desk();
+    const uint64_t now = NowMs();
+    for (size_t i = 0; i < g_fresh.size();) {
+        Fresh& f = g_fresh[i];
+        void* const prop = f.prop.Get();
+        void* const lid = desk ? MemberObj(desk, kLid[f.plate]) : nullptr;
+        const bool gone = !prop || !lid || now - f.since > kFreshMaxMs;
+        const bool on = !gone && Touches(lid, prop);
+        if (on) f.touched = true;
+        // Off its lid in a player's hold, as the game's take-off hands it straight to its taker: until that hold arrives
+        // the host's copy falls off the lid by its own physics, and the hold lifts it back through it. A prop nobody
+        // takes is armed off its lid after kUnheldArmMs.
+        const bool held = !gone && coop::prop_hold::WhoHolds(prop, 0) != coop::prop_hold::Holder::None;
+        const bool away = !gone && AwayFromPlate(desk, f.plate, prop);
+        if (gone || (!on && (f.touched || now - f.since > 1000) && ((held && away) || now - f.since > kUnheldArmMs))) {
+            if (!gone) {
+                ue_wrap::FVector pa{}, la{};
+                E::TryGetActorLocation(prop, pa);
+                E::TryGetComponentLocation(lid, la);
+                UE_LOGI("cover_sync: HOST plate %u's prop has left its lid -- it can be set back (prop (%.0f,%.0f,%.0f), "
+                        "lid (%.0f,%.0f,%.0f), %.0f cm)", f.plate, pa.X, pa.Y, pa.Z, la.X, la.Y, la.Z, std::sqrt(Dist2(pa, la)));
+            }
+            g_fresh.erase(g_fresh.begin() + static_cast<std::ptrdiff_t>(i));
+            if (g_fresh.empty() && desk) WriteBool(desk, L"panelTakeoff", false);
+            continue;
+        }
+        ++i;
+    }
+    if (!g_fresh.empty() && desk) WriteBool(desk, L"panelTakeoff", true);
+}
 
 void PayOwed() {
     const uint64_t now = NowMs();
@@ -345,7 +414,10 @@ void JudgeDesk(const Ask& a) {
             g_owed.back().plate = plate;
             g_owed.back().prop.Set(prop);
             g_owed.back().since = NowMs();
-            g_holdTakeOffUntilMs = NowMs() + kTakeOffSettleMs;
+            g_fresh.emplace_back();
+            g_fresh.back().prop.Set(prop);
+            g_fresh.back().plate = plate;
+            g_fresh.back().since = NowMs();
         } else {
             AnswerTakeOff(a.slot, plate, 0);
         }
@@ -356,14 +428,15 @@ void JudgeDesk(const Ask& a) {
         ue_wrap::FVector at{};
         const bool near = prop && mesh && E::TryGetActorLocation(prop, at) &&
                           Dist2(at, E::GetComponentLocation(mesh)) <= kPlateNearCm * kPlateNearCm;
-        const bool ok = near && PlateOfClass(prop) == plate && !PlateOn(bits, plate);
+        const bool fresh = IsFresh(prop);  // not yet off its lid in a hold on the host
+        const bool ok = near && !fresh && PlateOfClass(prop) == plate && !PlateOn(bits, plate);
         if (ok) {
             WritePlates(desk, static_cast<uint8_t>(bits | (1u << plate)));
             CC::CallParamlessNamed(prop, L"K2_DestroyActor");
             SoundDetach(desk, at);
         }
         UE_LOGI("cover_sync: HOST slot %d sets plate %u back (prop eid %u) -- %hs", a.slot, plate, a.p.eid,
-                ok ? "taken" : PlateOn(bits, plate) ? "already on" : "refused");
+                ok ? "taken" : PlateOn(bits, plate) ? "already on" : fresh ? "refused, not yet off its lid" : "refused");
     }
     g_nextScanMs = 0;  // the change goes out at once
 }
@@ -385,11 +458,7 @@ void JudgeDoor(const Ask& a) {
 
 void TickHost() {
     PayOwed();
-    if (g_holdTakeOffUntilMs && NowMs() < g_holdTakeOffUntilMs) {
-        if (void* desk = Desk()) WriteBool(desk, L"panelTakeoff", true);
-    } else {
-        g_holdTakeOffUntilMs = 0;
-    }
+    TendFresh();
     std::vector<Ask> asks;
     asks.swap(g_asks);
     for (const Ask& a : asks) {
@@ -429,17 +498,16 @@ void TickHost() {
 // ---- the client ----------------------------------------------------------------------------------------------------
 void Ask(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 
-void* MemberObj(void* obj, const wchar_t* name) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    return off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const char*>(obj) + off) : nullptr;
-}
-
-bool Touches(void* lid, void* actor) {
-    ue_wrap::ParamFrame f(lid ? R::FindDispatchFunctionCached(R::ClassOf(lid), L"IsOverlappingActor") : nullptr);
-    return f.valid() && f.Set<void*>(L"Other", actor) && ue_wrap::Call(lid, f) && f.Get<bool>(L"ReturnValue");
-}
-
 uint64_t g_lastPutBackAskMs = 0;
+
+// Whether this player's hand grabs or holds one of `props`.
+bool HeldHere(const std::vector<void*>& props) {
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    if (!ue_wrap::engine::ReadMainPlayerGrabState(coop::players::Registry::Get().Local(), gs)) return false;
+    for (void* p : props)
+        if (p && (p == gs.grabbingActor || p == gs.holdingActor)) return true;
+    return false;
+}
 bool g_armed[N::kCoverDeskPanels] = {};  // a plate's prop has been seen off its lid since the plate came off
 
 // A plate prop touching the lid of a plate that is off, here: asked of the host, which sets it back on its desk. The
@@ -469,7 +537,14 @@ void AskPutBacks(void* desk, uint8_t bits) {
             Ask(N::kCoverOpPutBack, N::kCoverDesk, static_cast<uint8_t>(i), 0, static_cast<uint32_t>(eid));
             return;
         }
-        if (!touching && !props.empty()) g_armed[i] = true;  // the prop is here, and off its lid
+        // Armed off its lid in this player's own hand, as on the host: a copy that falls off the lid before the player
+        // grabs it is lifted back through it by that grab.
+        bool away = false;
+        for (void* prop : props) away = away || AwayFromPlate(desk, static_cast<uint8_t>(i), prop);
+        if (!touching && away && HeldHere(props) && !g_armed[i]) {
+            g_armed[i] = true;
+            UE_LOGI("cover_sync: CLIENT plate %d's prop is in this player's hand, off its lid -- a touch sets it back", i);
+        }
     }
 }
 bool g_deskWanted = false;   // the host's plates, held until the desk is read
@@ -477,8 +552,6 @@ bool g_haveDesk = false;     // the host's plates are known: the desk is kept at
 uint8_t g_deskBits = 0;
 uint64_t g_nextDeskCheckMs = 0;
 std::vector<int8_t> g_doorWanted;  // by station: -1 none, else the host's opened
-struct Pickup { uint32_t eid = 0; uint64_t since = 0; };
-Pickup g_pickup;
 
 void TickClient() {
     // The desk's own set-back returns at once while panelTakeoff is set: held every frame on a client, so a plate
@@ -522,19 +595,6 @@ void TickClient() {
             UE_LOGI("cover_sync: CLIENT station %zu's door %hs, as the host's", i, want ? "opens" : "shuts");
         }
         g_doorWanted[i] = -1;
-    }
-    if (g_pickup.eid) {
-        void* const prop = EL::LiveActorOfType(static_cast<EL::ElementId>(g_pickup.eid), EL::ElementType::Prop);
-        void* const me = coop::players::Registry::Get().Local();
-        if (prop && me) {
-            ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(me), L"pickupObjectDirect"));
-            const bool ok = f.valid() && f.Set<void*>(L"actor", prop) && ue_wrap::Call(me, f);
-            UE_LOGI("cover_sync: CLIENT the host's plate eid %u taken into the hand (ok=%d)", g_pickup.eid, ok ? 1 : 0);
-            g_pickup = Pickup{};
-        } else if (NowMs() - g_pickup.since > kPickupWaitMs) {
-            UE_LOGW("cover_sync: CLIENT the host's plate eid %u did not arrive in 3 s -- left where it was made", g_pickup.eid);
-            g_pickup = Pickup{};
-        }
     }
 }
 
@@ -583,9 +643,17 @@ sg::Verdict OnDeskActionPre(const sg::Call& c) {
 }
 
 // A plate touching its place on a client's desk: nothing is set back here. The client's put-back is asked of the host by
-// AskPutBacks, once the plate's prop has left its lid and comes back to it, as the desk's own panelTakeoff waits.
-sg::Verdict OnDeskOverlapPre(const sg::Call&) {
-    return IsClient() && !g_applying ? sg::Verdict::Cancel : sg::Verdict::Run;
+// AskPutBacks, once the plate's prop has left its lid and comes back to it, as the desk's own panelTakeoff waits. On the
+// host, a granted take-off's prop is not set back while it is fresh (TendFresh).
+sg::Verdict OnDeskOverlapPre(const sg::Call& c) {
+    if (g_applying) return sg::Verdict::Run;
+    if (IsClient()) return sg::Verdict::Cancel;
+    if (!IsHost() || g_fresh.empty() || !c.function || !c.locals) return sg::Verdict::Run;
+    const int32_t off = R::FindParamOffset(c.function, L"OtherActor");
+    void* const other = off >= 0 ? *reinterpret_cast<void* const*>(c.locals + off) : nullptr;
+    if (!IsFresh(other)) return sg::Verdict::Run;
+    UE_LOGI("cover_sync: HOST a fresh plate prop touched its lid before leaving it -- not set back");
+    return sg::Verdict::Cancel;
 }
 
 // A client's E press on a station's door: asked of the host. Every other press runs.
@@ -660,7 +728,8 @@ void OnIntent(int senderSlot, const coop::net::CoverPayload& p) {
 void OnState(const coop::net::CoverPayload& p) {
     if (!IsClient()) return;
     if (p.op == N::kCoverOpAnswer) {
-        if (p.eid && p.index < N::kCoverDeskPanels) g_pickup = Pickup{p.eid, NowMs()};
+        if (p.eid && p.index < N::kCoverDeskPanels)
+            UE_LOGI("cover_sync: CLIENT the host took plate %u off -- its prop eid %u lies where the plate was", p.index, p.eid);
         else UE_LOGI("cover_sync: CLIENT the host's desk refused this player's take-off of plate %u", p.index);
         return;
     }
@@ -678,6 +747,7 @@ void OnState(const coop::net::CoverPayload& p) {
 void OnDisconnect() {
     g_asks.clear();
     g_owed.clear();
+    g_fresh.clear();
     for (uint64_t& t : g_lastAskMs) t = 0;
     g_deskSaid = false;
     g_doorSent.clear();
@@ -685,7 +755,6 @@ void OnDisconnect() {
     g_haveDesk = false;
     for (bool& a : g_armed) a = false;
     g_doorWanted.clear();
-    g_pickup = Pickup{};
 }
 
 }  // namespace coop::cover_sync

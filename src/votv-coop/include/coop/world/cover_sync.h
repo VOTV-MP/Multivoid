@@ -10,8 +10,8 @@
 
 // Here a client refuses each of them and asks the host (CoverIntent): an unbolt or a bolt, a take-off, a plate set
 // back, a door press. The host judges the sender's reach and its own desk's or station's state and runs the change on
-// its copy; a take-off's plate is the host's prop, spawned where the plate was and answered to the asker, which takes
-// it into its hand. The host sends the desk's plates and each station's door when they change and to a joiner at its
+// its copy; a take-off's plate is the host's prop, spawned where the plate was, for the asker to grab as any prop (the
+// game's own take-off hands it to the taker's pickupObjectDirect, which a client's copy of a host prop does not take). The host sends the desk's plates and each station's door when they change and to a joiner at its
 // ready edge (CoverState); a client writes the plates and repaints through the desk's own `updPanels`, and swings a
 // door through the station's own `openDoor`. Game thread.
 #pragma once
