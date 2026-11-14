@@ -15,12 +15,16 @@ namespace coop::atv_sync { struct AtvEntry; }
 
 namespace coop::atv_seat_table {
 
-// What one change was. `key` points into the entry and is valid for the call only.
+// What one change was. `key` points into the entry and is valid for the call only. `actorIdx` is the object index of
+// `actor` as the entry holds it, for a liveness test that never reads the actor's own memory. `riderActorBefore` is the
+// riding kerfur's actor the entry held before the call (compared, never dereferenced); null on a client.
 struct Change {
     const std::wstring* key;
     void* actor;
+    int32_t actorIdx;
     uint8_t occupantBefore, occupantAfter, syncerBefore, syncerAfter;
     uint32_t riderBefore, riderAfter;
+    void* riderActorBefore;
     const char* why;
 };
 

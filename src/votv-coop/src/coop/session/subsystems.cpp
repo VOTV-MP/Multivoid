@@ -521,7 +521,6 @@ DisconnectStats DisconnectAll() {
     coop::plant_sync::OnDisconnect();
     coop::world_sound_sync::OnDisconnect();
     coop::prop_tool_flags::OnDisconnect();  // drop the pending press and the counters
-    coop::atv_riders::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
@@ -537,6 +536,7 @@ DisconnectStats DisconnectAll() {
     coop::fuse_tower_ops::OnDisconnect();
     coop::fuse_tower_rows::OnDisconnect();
     coop::atv_sync::OnDisconnect();
+    coop::atv_riders::OnDisconnect();  // after the lane's end, so the seat table's exits reached the riders' subscribers
     coop::drone_sync::OnDisconnect();
     coop::order_sync::OnDisconnect();
     coop::coingun_sync::OnDisconnect();  // dump the lane summary + drop the sold-set, the barrier queue and the cached gun
@@ -688,7 +688,6 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_short"}; coop::desk_short_sync::Tick(); }  // the desk short watch resolves its names, and the host serves the requests (an empty inbox costs one size check)
-    coop::atv_riders::Tick();  // the ATVs' riders: the remote drivers' bodies, a client seat's kerfurs
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list

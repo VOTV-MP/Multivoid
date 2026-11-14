@@ -111,4 +111,8 @@ bool UnseatWithoutCar(void* kerfur);
 // did not resolve, it is unset or it is not a live object. Game thread.
 void* GetOccupyCar(void* kerfur);
 
+// True when the Omega's `occupyCar` field holds exactly `car`: a pointer compare, `car` is never dereferenced and may be a
+// destroyed actor's. False for a null `car`, a non-Omega or an unresolved field. Game thread.
+bool OccupiesCar(void* kerfur, void* car);
+
 }  // namespace ue_wrap::kerfur

@@ -62,17 +62,20 @@ void SetSeat(AtvEntry& e, uint8_t occupant, uint8_t syncer, const char* why, boo
     if (forgetHorn || syncerBefore != syncer) coop::atv_sync::ForgetHorn(e);
     if (occupantBefore == occupant && syncerBefore == syncer) return;
     if (IsHost()) e.stampDue = true;
-    Announce(Change{&e.key, e.actor, occupantBefore, occupant, syncerBefore, syncer, e.seatRider, e.seatRider, why});
+    Announce(Change{&e.key, e.actor, e.idx, occupantBefore, occupant, syncerBefore, syncer, e.seatRider, e.seatRider,
+                    e.seatRiderActor, why});
 }
 
 void SetRider(AtvEntry& e, uint32_t eid, void* actor, const char* why) {
     const uint32_t riderBefore = e.seatRider;
+    void* const riderActorBefore = e.seatRiderActor;
     const bool host = IsHost();
     e.seatRider = eid;
     if (host) e.seatRiderActor = actor;
     if (riderBefore == eid) return;
     if (host) e.stampDue = true;
-    Announce(Change{&e.key, e.actor, e.seatOccupant, e.seatOccupant, e.seatSyncer, e.seatSyncer, riderBefore, eid, why});
+    Announce(Change{&e.key, e.actor, e.idx, e.seatOccupant, e.seatOccupant, e.seatSyncer, e.seatSyncer, riderBefore, eid,
+                    riderActorBefore, why});
 }
 
 void Exit(AtvEntry& e, const char* why) {

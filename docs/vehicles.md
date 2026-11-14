@@ -135,26 +135,40 @@ the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 
 ### Who rides
 
+One table says who rides an ATV: the host's. Every write of an ATV's seat, syncer and rider goes through
+`coop/interactables/atv_seat_table`, the table's one writer, which announces each change to its subscribers on whichever
+route made it: a judgement, a stamp, an answer, a departure, or the entry's own end (the ATV destroyed, the entry
+replaced, the session over). The seat and the rider ride every `AtvState` the host sends, the rider as the kerfur's
+element id (`riderEid`), so a peer learns who rides from the stamp and from nothing it watches itself.
+
 The driver's own player is attached to the ATV and hidden while it drives, so its stream says nothing a body could sit
-by. On every other peer, while the host's seat table puts a peer on an ATV, that peer's body is placed in the driver's
-seat every frame: behind the handlebars, 100 cm ahead of the ATV's `Camera` and 25 cm above `sitarrow` (where a
-riding kerfur's pivot goes), turned as the ATV is, in the AnimBP's ATV seat pose (`isOnAtv`), with its collision off so it cannot push the ATV. When the
-seat ends, the stream places the body again (`coop/player/puppet_seat`, `coop/interactables/atv_riders`).
+by. On every other peer, when the table puts a peer on an ATV, that peer's body is attached to the ATV once, behind the
+handlebars: 100 cm ahead of the ATV's `Camera` and 25 cm above `sitarrow`, in the AnimBP's ATV seat pose (`isOnAtv`),
+with its collision off so it cannot push the ATV. When the seat ends, the body is detached and the stream places it again
+(`coop/player/puppet_seat`).
 
 The kerfur passenger is the host's. The ATV's own sit asks every kerfur to come (`tryToOccupyCar`) and its dismount
 sends the rider off, but on the host that runs only for the host's own player. When a client's seat begins, the host
-runs the same steps on its own copy: it fills `allKerfuros` and asks each kerfur. When the seat ends, the rider gets off
-(`getOffCar`) and the rest turn back (`failCar`). A kerfur riding on the host carries `kEntityPoseBitKerfurOnAtv` in
-the NPC pose stream. Each client's mirror sits on the nearest ATV of its own copy through its own `sitOnCar`, which
-attaches it there; the stream's pose waits while it rides, and the mirror's own `getOffCar` runs when the bit clears.
-`[V]` (`harness/autotest/autotest_atv_riders.cpp`, run on this change and on the code before it.)
+runs the same steps on its copy at the seat's edge, not on a scan: it fills `allKerfuros` and asks each kerfur. When the
+seat ends the rider gets off (`getOffCar`) and the rest turn back (`failCar`). The host's own seat is the game's. When
+the ATV is destroyed under kerfurs it invited, those that were not seated are turned back by their own `failCar`; the
+seated one is the game's, which dismounts it through its crash paths (`coop/interactables/atv_riders`). The kerfur that
+sits tells the host's table (`coop/interactables/atv_rider_watch`, a watch on its `sitOnCar` and `getOffCar`), and the
+stamp carries it from there.
 
-| Step | Before | After |
+On a client, the stamped kerfur's mirror rides the ATV the stamp names, by the kerfur's own `sitOnCar`, which attaches
+it; the mirror's pose, state and movement stay the host's stream's, and when the stamp no longer names it the mirror is
+unseated without a car (`coop/creatures/npc_ride`). A client's own game never decides a mirror's seat: its ATV's sit
+would invite every kerfur of its world, mirrors included, and its dismount and crash paths would unseat or kill the
+riding one, so `tryToOccupyCar` and `getOffCar` on a mirror are cancelled at the script gate on a client. `[?]` Built to
+this design; no three-peer run has judged it yet.
+
+| Step | The host | A client and an observer |
 |---|---|---|
-| A client sits | the host's kerfur stays where it stands; on the host, the client's body stands 140 cm above the seat | the host's kerfur sits on the ATV on both peers; the client's body sits in the seat |
-| The client moves the ATV 8 m | the kerfur stays behind | the kerfur (50 cm from the root) and the body (in the seat) go with it |
-| The client gets off | — | the host's kerfur gets off, and the client's body stands again |
-| The host sits | the host's kerfur sits on the host; on the client it stands beside the ATV, and the host's body stands | the host's kerfur sits on the ATV on both peers; the host's body sits in the seat on the client |
+| A client sits | the table takes the seat; the host's kerfurs are invited; the first to arrive sits and the stamp names it | the client's body sits in the seat on every other peer; the stamped kerfur's mirror sits on the ATV |
+| The client moves the ATV | the kerfur rides with the ATV | the mirror rides with it, attached |
+| The client gets off | the rider gets off, the rest turn back, the stamp names no rider | the body stands again; the mirror is unseated where it stands |
+| The host sits | the game's own sit invites its kerfurs | the host's body sits in the seat; the stamped mirror sits on the ATV |
 
 ## Who owns what
 
@@ -171,8 +185,8 @@ attaches it there; the stream's pose waits while it rides, and the mirror's own 
 | fuel and health | the host | a client's refuel or repair is a request the host judges and applies on its copy; a client driver only lowers them |
 | the modules | the host | a client's fit or take-off is a request the host judges and makes on its copy |
 | lights, brake, turbo, the horn | the syncer | the syncer's copy's bools and the horn key's level ride its block's `stateBits`; the host applies each change and re-sends |
-| the kerfur passenger | the host | its kerfur's own sit, called for a client's seat too; a client's mirror rides its own copy's ATV |
-| the driver's body in the seat | the host's seat table | each peer places a seated peer's body in the seat |
+| the kerfur passenger | the host | its kerfur's own sit, called for a client's seat too on the seat's edge; the stamp names it and a client's mirror rides the ATV the stamp names |
+| the driver's body in the seat | the host's seat table | each peer attaches a seated peer's body to the ATV once |
 | tyre and spare presence | the host | consumed from the host's own copy only |
 | a runtime ATV's identity | the host | its game key, announced |
 
@@ -180,7 +194,7 @@ attaches it there; the stream's pose waits while it rides, and the mirror's own 
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat and the syncer the host stamps, the host copy's trap, the syncer's brake, lights, turbo and horn, the condition block with its vitals ack, an adopt flag |
+| `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat, the syncer and the riding kerfur the host stamps, the host copy's trap, the syncer's brake, lights, turbo and horn, the condition block with its vitals ack, an adopt flag |
 | `AtvSeat`, `AtvTakeover` | a client to the host | a sit in or leave of the driver's seat; a grab of the ATV |
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
@@ -217,7 +231,7 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
 | Not synced: the radio | `[V]` nothing under `coop/interactables/atv_*` carries them |
 | A client's refuel or repair is the rise its copy shows, which the host takes as is within the 100 ceiling and the reach; the gas can's own fuel after a pour is not carried. A refused take-off of a module the host does not have leaves its author's module in the world | `[V]` `coop/interactables/atv_host_sync` |
-| A seated driver's head does not follow its look, and its flashlight and steps are still; a riding kerfur and the driver's body share the ATV, the driver at the handlebars and the kerfur behind. A client's mirror finds its ATV by the nearest root within 4 m of the streamed place | `[V]` `coop/player/puppet_seat`, `coop/creatures/npc_pose_drive` |
+| A seated driver's head does not follow its look, and its flashlight and steps are still; a riding kerfur and the driver's body share the ATV, the driver at the handlebars and the kerfur behind. A client's mirror rides the ATV the stamp names, not the nearest one | `[?]` `coop/player/puppet_seat`, `coop/creatures/npc_ride` |
 
 ## Code map
 
@@ -231,5 +245,5 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | the seat | `coop/interactables/device_occupancy` |
 | fuel, health, modules | `coop/interactables/atv_host_sync` |
 | lights, brake, turbo, the horn (the block's bits taken and applied, the syncer's latch) | `coop/interactables/atv_stream_gates` (`TakeControls`) |
-| the riders: the driver's body, the kerfur passenger | `coop/interactables/atv_riders`, `coop/player/puppet_seat`, the mirror's ride in `coop/creatures/npc_pose_drive` |
+| the riders: the driver's body, the kerfur passenger | `coop/interactables/atv_riders`, `coop/player/puppet_seat`, `coop/interactables/atv_rider_watch`, `coop/interactables/atv_seat_table`, the mirror's ride in `coop/creatures/npc_ride` |
 | tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `coop/dev/atv_gate_drill` (the row `atv_gate_drill=green\|<red>`: each act a player does at an ATV, every outcome decided by an event of `coop/interactables/atv_drill_events`); the smoke run with the ATV scenario enabled |

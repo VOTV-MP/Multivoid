@@ -20,8 +20,8 @@
 #include "ue_wrap/devices/atv.h"
 
 #include <atomic>
+#include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace coop::atv_riders {
@@ -31,9 +31,42 @@ namespace R = ue_wrap::reflection;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// The host's: each ATV whose kerfurs it called for a client's seat, with that ATV's object slot.
-std::unordered_map<void*, int32_t> g_called;
+// The host's tallies, said at the session end.
 uint32_t g_calls = 0, g_releases = 0;
+
+bool IsClientSlot(uint8_t slot) { return slot != coop::players::kPeerIdUnknown && slot != 0; }
+
+// The host's kerfur steps on a seat edge, for a CLIENT's seat only: the host's own seat keeps the game's own sit and
+// dismount, which call the kerfurs already. The release of the slot that left runs before the invite of the slot that came.
+// A live ATV takes the ordinary release. An ATV that is gone has nothing to release through: the kerfurs it invited and did
+// not seat are turned back by their own failCar. They are found by their `occupyCar`, compared with the gone ATV's pointer
+// and never dereferenced; the seated rider (the entry's riderActorBefore) also carries it, and failCar would half-reset it.
+void HostKerfurSteps(const coop::atv_seat_table::Change& c) {
+    if (c.occupantBefore == c.occupantAfter) return;
+    const bool live = R::IsLiveByIndex(c.actor, c.actorIdx);
+    if (IsClientSlot(c.occupantBefore)) {
+        if (live) {
+            if (ue_wrap::atv::ReleaseKerfurs(c.actor)) {
+                ++g_releases;
+                UE_LOGI("atv_riders: the client's seat on %ls ends -- released", c.key->c_str());
+            }
+        } else {
+            uint32_t turned = 0;
+            for (void* k : ue_wrap::kerfur::AllKerfurs()) {
+                if (k == c.riderActorBefore || !ue_wrap::kerfur::OccupiesCar(k, c.actor)) continue;
+                if (ue_wrap::kerfur::FailCar(k)) ++turned;
+            }
+            UE_LOGI("atv_riders: %ls is gone -- %u invited kerfur(s) turned back", c.key->c_str(), turned);
+        }
+    }
+    if (live && IsClientSlot(c.occupantAfter)) {
+        const std::vector<void*> kerfurs = ue_wrap::kerfur::AllKerfurs();
+        if (ue_wrap::atv::InviteKerfurs(c.actor, kerfurs)) {
+            ++g_calls;
+            UE_LOGI("atv_riders: a client sits on %ls -- %zu kerfur(s) invited", c.key->c_str(), kerfurs.size());
+        }
+    }
+}
 
 // The body subscriber, on every peer: a slot other than this peer's own that takes the seat is seated, and one that leaves it
 // is let go. The host's own seat appears on a client as slot 0, so a client seats the host's body by the same rule.
@@ -43,43 +76,14 @@ void OnSeatChange(const coop::atv_seat_table::Change& c) {
     if (another(c.occupantAfter)) coop::puppet_seat::Set(c.occupantAfter, *c.key, 0);
     if (another(c.occupantBefore) && c.occupantBefore != c.occupantAfter)
         coop::puppet_seat::Clear(c.occupantBefore, *c.key);
-    // The rider subscriber, on a client: the host's kerfur rides the ATV its stamp names, on this copy too.
     const coop::net::Session* const s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Client || c.riderBefore == c.riderAfter) return;
+    if (!s) return;
+    // The host's kerfurs answer a client's seat on the seat's own edge.
+    if (s->role() == coop::net::Role::Host) { HostKerfurSteps(c); return; }
+    // The rider subscriber, on a client: the host's kerfur rides the ATV its stamp names, on this copy too.
+    if (s->role() != coop::net::Role::Client || c.riderBefore == c.riderAfter) return;
     if (c.riderBefore != 0) coop::npc_ride::Clear(c.riderBefore, *c.key);
     if (c.riderAfter != 0) coop::npc_ride::Set(c.riderAfter, *c.key);
-}
-
-void CallKerfurs(const uint8_t self) {
-    struct Seen { uint8_t self; std::vector<void*> seated, free; } seen{self, {}, {}};
-    coop::atv_sync::ForEachIndexed([](void* ctx, const std::wstring& key, void* actor) {
-        auto* s = static_cast<Seen*>(ctx);
-        coop::atv_sync::TableView tv;
-        if (!coop::atv_sync::ReadTable(key, tv)) return;
-        const bool client = tv.occupantSlot != 0xFF && tv.occupantSlot != s->self;
-        (client ? s->seated : s->free).push_back(actor);
-    }, &seen);
-    for (void* atv : seen.seated) {
-        if (g_called.count(atv)) continue;
-        const std::vector<void*> kerfurs = ue_wrap::kerfur::AllKerfurs();
-        if (!ue_wrap::atv::InviteKerfurs(atv, kerfurs)) continue;
-        g_called[atv] = R::InternalIndexOf(atv);
-        ++g_calls;
-        UE_LOGI("atv_riders: a client sits on ATV %p -- %zu kerfur(s) called, as the ATV's own sit calls them", atv,
-                kerfurs.size());
-    }
-    for (void* atv : seen.free) {
-        auto it = g_called.find(atv);
-        if (it == g_called.end()) continue;
-        g_called.erase(it);
-        if (!ue_wrap::atv::ReleaseKerfurs(atv)) continue;
-        ++g_releases;
-        UE_LOGI("atv_riders: the client's seat on ATV %p ends -- its kerfur is off, as the ATV's own dismount sends it",
-                atv);
-    }
-    // An ATV that left the index: nothing to send off.
-    for (auto it = g_called.begin(); it != g_called.end();)
-        it = R::IsLiveByIndex(it->first, it->second) ? std::next(it) : g_called.erase(it);
 }
 
 // The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted,
@@ -106,17 +110,10 @@ void Install(coop::net::Session* session) {
     coop::mirror_defer::OnReveal(&coop::npc_ride::OnRevealed);
 }
 
-void Tick() {
-    coop::net::Session* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
-    if (s->role() == coop::net::Role::Host) CallKerfurs(coop::players::Registry::Get().LocalPeerId());
-}
-
 void OnDisconnect() {
     coop::puppet_seat::OnDisconnect();
     if (g_calls || g_releases)
         UE_LOGI("atv_riders: session end -- kerfur calls=%u releases=%u", g_calls, g_releases);
-    g_called.clear();
     g_calls = g_releases = 0;
     coop::atv_rider_watch::OnDisconnect();
 }

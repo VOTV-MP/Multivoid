@@ -7,7 +7,7 @@
 #include "ue_wrap/devices/atv.h"
 
 #include "ue_wrap/actors/kerfur.h"   // the kerfur's own ATV functions (InviteKerfurs, ReleaseKerfurs)
-#include "ue_wrap/actors/save_record.h"  // ReadArr / WriteArrHeader / AllocZeroed -- the Modules and allKerfuros arrays
+#include "ue_wrap/actors/save_record.h"  // ReadArr / ReplaceArray -- the Modules and allKerfuros arrays
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/component_calls.h"  // CallParamlessNamed -- the ATV's own parameterless functions
@@ -290,7 +290,7 @@ int ReadModules(void* atv, uint8_t* out, int cap) {
 
 bool WriteModules(void* atv, const uint8_t* mods, int count) {
     if (!atv || g_modulesOff < 0 || count < 0 || count > kModulesCap || (count > 0 && !mods)) return false;
-    if (!save_record::ReplaceByteArray(atv, g_modulesOff, mods, count)) return false;
+    if (!save_record::ReplaceArray(atv, g_modulesOff, mods, count, 1)) return false;
     return component_calls::CallParamlessNamed(atv, L"updUpgrades");
 }
 
@@ -533,11 +533,8 @@ void* ReadObj(void* atv, int32_t off) {
 bool WriteKerfurList(void* atv, const std::vector<void*>& list) {
     const int32_t off = g_allKerfuros.Get();
     if (off < 0) return false;
-    void* buf = list.empty() ? nullptr : save_record::AllocZeroed(list.size(), sizeof(void*));
-    if (!list.empty() && !buf) return false;
-    if (buf) std::memcpy(buf, list.data(), list.size() * sizeof(void*));
-    save_record::WriteArrHeader(atv, off, buf, static_cast<int32_t>(list.size()));
-    return true;
+    return save_record::ReplaceArray(atv, off, list.data(), static_cast<int32_t>(list.size()),
+                                     static_cast<int32_t>(sizeof(void*)));
 }
 
 }  // namespace

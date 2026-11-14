@@ -242,6 +242,13 @@ void* GetOccupyCar(void* kerfur) {
     return (c && R::IsLive(c)) ? c : nullptr;
 }
 
+bool OccupiesCar(void* kerfur, void* car) {
+    if (!car || !IsKerfurActor(kerfur)) return false;
+    const int32_t off = OccupyCarOffset();
+    if (off < 0) return false;
+    return *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(kerfur) + off) == car;
+}
+
 std::vector<void*> AllKerfurs() {
     std::vector<void*> classes, out;
     object_index::ForEachClass([](void* c, void* cls, void* anyInstance) {

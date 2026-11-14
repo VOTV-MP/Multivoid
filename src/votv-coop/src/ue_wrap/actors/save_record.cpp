@@ -132,8 +132,8 @@ void* AllocZeroed(size_t count, size_t elemSize) {
     return buf;
 }
 
-bool ReplaceByteArray(void* base, int32_t off, const uint8_t* data, int32_t count) {
-    if (!base || count < 0 || count > kMaxArr || (count > 0 && !data)) return false;
+bool ReplaceArray(void* base, int32_t off, const void* data, int32_t count, int32_t elemSize) {
+    if (!base || elemSize <= 0 || count < 0 || count > kMaxArr || (count > 0 && !data)) return false;
     uint8_t* hdr = reinterpret_cast<uint8_t*>(base) + off;
     void* old = nullptr;
     int32_t oldNum = 0, oldMax = 0;
@@ -142,13 +142,13 @@ bool ReplaceByteArray(void* base, int32_t off, const uint8_t* data, int32_t coun
     std::memcpy(&oldMax, hdr + 12, 4);
     const bool own = old && PlausibleObjPtr(old) && oldNum >= 0 && oldNum <= oldMax && oldMax <= kMaxArr;
     if (own && oldMax >= count) {   // the array's own slack holds it: the buffer stays, only Num moves
-        if (count > 0) std::memcpy(old, data, static_cast<size_t>(count));
+        if (count > 0) std::memcpy(old, data, static_cast<size_t>(count) * static_cast<size_t>(elemSize));
         std::memcpy(hdr + 8, &count, 4);
         return true;
     }
-    void* buf = AllocZeroed(static_cast<size_t>(count), 1);
+    void* buf = AllocZeroed(static_cast<size_t>(count), static_cast<size_t>(elemSize));
     if (count > 0 && !buf) return false;
-    if (buf) std::memcpy(buf, data, static_cast<size_t>(count));
+    if (buf) std::memcpy(buf, data, static_cast<size_t>(count) * static_cast<size_t>(elemSize));
     WriteArrHeader(base, off, buf, count);
     if (own) R::EngineFree(old);
     return true;
