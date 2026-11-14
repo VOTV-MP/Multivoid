@@ -33,6 +33,7 @@
 #include "coop/props/prop_pry_sync.h"      // the host's pried-prop state, applied by a client
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
 #include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors
+#include "coop/props/fireext_sync.h"  // an extinguisher's thrust and a player's spray
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -269,6 +270,25 @@ bool HandlePropDriveEvent(net::Session& session,
         std::memcpy(&p, msg.payload, sizeof(p));
         if (intent) ::coop::cover_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::cover_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::FireExtState:
+    case net::ReliableKind::FireExtIntent: {
+        // FireExtState HOST->ALL, FireExtIntent CLIENT->HOST (coop/props/fireext_sync). Exact length.
+        const bool intent = msg.kind == net::ReliableKind::FireExtIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::FireExtPayload)) {
+            UE_LOGW("event_feed: an extinguisher message the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        net::FireExtPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (!std::isfinite(p.life) || p.life < -0.01f || p.life > 1.01f) {
+            UE_LOGW("event_feed: an extinguisher message malformed -- dropping");
+            break;
+        }
+        if (intent) ::coop::fireext_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::fireext_sync::OnState(p);
         break;
     }
     case net::ReliableKind::PlantState:

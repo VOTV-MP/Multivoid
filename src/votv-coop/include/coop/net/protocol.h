@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 306;
+inline constexpr uint16_t kProtocolVersion = 307;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -717,6 +717,16 @@ enum class ReliableKind : uint16_t {
     // sender, the host's own to everyone, and every hand's to a joiner at its ready edge. Each peer writes it into its
     // mirror of that hand through the item's own loadData.
     HandRecord = 268,
+    // HOST->ALL: a fire extinguisher's foam (coop/props/fireext_sync). Op 0: a world extinguisher's runaway thrust (its
+    // `active` with charge left) and its charge, when either changes and to a joiner at its ready edge; a client's copy
+    // shows the thrust's foam and sound, and never runs the thrust itself. Op 1: a player's spray from the extinguisher
+    // in its hand, on or off; every other peer shows it on that player's hand mirror. Never relayed; not pre-world.
+    // FireExtPayload.
+    FireExtState = 264,
+    // CLIENT->HOST: this client's player started or stopped spraying the extinguisher in its hand (op 2). The host checks
+    // the sender's hand holds one, sprays the game's own extinguishing ray along the sender's aim while it is on, and
+    // sends op 1 to every peer. Never relayed. FireExtPayload.
+    FireExtIntent = 265,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game
@@ -5105,6 +5115,17 @@ struct CoverPayload {
     uint32_t eid;    // op 3: the plate prop's element id; op 5: the plate the host spawned, 0 when refused
 };
 static_assert(sizeof(CoverPayload) == 8, "CoverPayload must be 8 bytes");
+// A fire extinguisher's foam (FireExtState, FireExtIntent).
+inline constexpr uint8_t kFireExtOpThrust = 0, kFireExtOpSpray = 1, kFireExtOpSprayAsk = 2;
+struct FireExtPayload {
+    uint32_t eid;   // op 0: the extinguisher's prop element id; ops 1, 2: zero
+    uint8_t  op;    // kFireExtOp*
+    uint8_t  slot;  // op 1: the sprayer's slot
+    uint8_t  on;    // 1 the thrust or the spray runs
+    uint8_t  pad;   // zero
+    float    life;  // op 0: the charge, 0..1
+};
+static_assert(sizeof(FireExtPayload) == 12, "FireExtPayload must be 12 bytes");
 
 #pragma pack(pop)
 
