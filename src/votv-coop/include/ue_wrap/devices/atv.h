@@ -180,6 +180,10 @@ bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot);
 // an unreadable component. Game thread.
 bool GetSitArrowLocation(void* atv, FVector& loc);
 
+// The world location of the ATV's `Camera`, the driver's eye, which GetSeatTransform measures the body's place from. False on
+// null, an unresolved ATV_C or an unreadable component. Game thread.
+bool GetCameraLocation(void* atv, FVector& loc);
+
 // The ATV's rider: the kerfur its own `sittingKerfuro` names, or null when the field is empty, names a dead object, or does
 // not resolve. Game thread.
 void* GetSittingKerfur(void* atv);

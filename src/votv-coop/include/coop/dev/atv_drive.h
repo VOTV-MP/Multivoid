@@ -1,5 +1,5 @@
 // coop/dev/atv_drive.h -- [dev] the acts a drill does to drive an ATV the way a player does: the director's walk to it, the
-// ATV's own input-action events (brake, throttle, turbo, dismount) called as the engine calls them on the possessed ATV, and
+// ATV's own input-action events (brake, throttle, reverse, turbo, dismount) called as the engine calls them on the possessed ATV, and
 // the reads a drill takes of the copy it holds. Shared by the ATV gate drill and the ATV riders drill. Every function is for
 // the drill's own thread unless it says game thread; each hops to the game thread for the engine through OnGt.
 
@@ -48,5 +48,7 @@ bool TurboOff(const std::wstring& key, std::string& why);    // the turbo key up
 bool Leave(const std::wstring& key, std::string& why);       // the dismount key
 bool DriveOn(const std::wstring& key, std::string& why);     // the brake off and the throttle key down
 void DriveOff(const std::wstring& key);                      // the throttle key up
+bool DriveBack(const std::wstring& key, std::string& why);   // the brake off and the reverse key down
+void DriveBackOff(const std::wstring& key);                  // the reverse key up
 
 }  // namespace coop::dev::atv_drive

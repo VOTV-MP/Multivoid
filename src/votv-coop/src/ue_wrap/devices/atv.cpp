@@ -564,6 +564,12 @@ bool GetSitArrowLocation(void* atv, FVector& loc) {
     return sit && engine::TryGetComponentLocation(sit, loc);
 }
 
+bool GetCameraLocation(void* atv, FVector& loc) {
+    if (!atv || !R::IsLive(atv)) return false;
+    void* camera = ReadObj(atv, g_camera.Get());
+    return camera && engine::TryGetComponentLocation(camera, loc);
+}
+
 void* GetSittingKerfur(void* atv) {
     if (!atv || !R::IsLive(atv)) return nullptr;
     return ReadObj(atv, g_sittingKerfuro.Get());

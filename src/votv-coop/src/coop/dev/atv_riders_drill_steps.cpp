@@ -43,8 +43,10 @@ namespace K = ue_wrap::kerfur;
 using ue_wrap::FRotator;
 using ue_wrap::FVector;
 
-constexpr float kFlippedUpZ = 0.5f;   // an ATV whose up vector points lower than this lies on its side
+constexpr float kWedgedUpZ = 0.9f;    // an ATV whose up vector points lower than this is tipped or climbing what it struck
 constexpr int kDriveLogGapS = 2;      // at most one drive line per this many seconds of block events
+constexpr int kProbeS = 3;            // the throttle's first seconds: the root must have left its start by kProbeCm in them
+constexpr float kProbeCm = 20.f;
 
 float Dist(const FVector& a, const FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
@@ -94,7 +96,7 @@ struct KerfurDrive {
 struct DriveRead {
     bool ok = false;
     FVector root{};
-    float upZ = 0.f, speed = -1.f, fuel = 0.f;
+    float upZ = 0.f, yaw = 0.f, speed = -1.f, fuel = 0.f;
     bool brake = false, turbo = false, kerfurOn = false;
     int occupant = -1, syncer = -1;
     KerfurDrive kerfur;
@@ -134,6 +136,7 @@ DriveRead ReadDrive() {
         const FVector up = E::GetActorUpVector(atv);
         d.ok = up.X != 0.f || up.Y != 0.f || up.Z != 0.f;   // a unit vector is never zero: a zero is an unread one
         d.upZ = up.Z;
+        d.yaw = rot.Yaw;
         FVector lin{}, ang{};
         if (E::GetActorRootPhysicsVelocity(atv, lin, ang)) d.speed = std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z);
         d.fuel = ue_wrap::atv::GetFuel(atv);
@@ -161,12 +164,12 @@ const char* TargetName(Target t) {
 }
 
 std::string DriveText(const DriveRead& d) {
-    char buf[384];
+    char buf[416];
     std::snprintf(buf, sizeof(buf),
-                  "root=(%.0f,%.0f,%.0f) upZ=%.2f v=%.0f fuel=%.1f brake=%d turbo=%d seat=%d/%d kerfur=%s kd=%.0f kmode=%d kv=%.0f "
-                  "kstate=%d ktarget=%s kpath=%s",
+                  "root=(%.0f,%.0f,%.0f) yaw=%.0f upZ=%.2f v=%.0f fuel=%.1f brake=%d turbo=%d seat=%d/%d kerfur=%s kd=%.0f "
+                  "kmode=%d kv=%.0f kstate=%d ktarget=%s kpath=%s",
                   static_cast<double>(d.root.X), static_cast<double>(d.root.Y), static_cast<double>(d.root.Z),
-                  static_cast<double>(d.upZ), static_cast<double>(d.speed), static_cast<double>(d.fuel), d.brake ? 1 : 0,
+                  static_cast<double>(d.yaw), static_cast<double>(d.upZ), static_cast<double>(d.speed), static_cast<double>(d.fuel), d.brake ? 1 : 0,
                   d.turbo ? 1 : 0, d.occupant, d.syncer, d.kerfurOn ? "on" : "off", static_cast<double>(d.kerfur.sitarrowCm),
                   d.kerfur.mode, static_cast<double>(d.kerfur.speed), d.kerfur.state, TargetName(d.kerfur.target),
                   PathName(d.kerfur.path));
@@ -225,8 +228,10 @@ bool SitLocal(int& invited) {
             void* atv = AD::Atv(g_key);
             void* me = AD::Me();
             done = atv && me && atv_seat::TrySit(me, atv, t);
-            if (done && coop::atv_sync::ActorSeatedBy(coop::players::Registry::Get().LocalPeerId()) == atv)
+            if (done && coop::atv_sync::ActorSeatedBy(coop::players::Registry::Get().LocalPeerId()) == atv) {
                 invited = InvitedMirrors(atv);
+                SayLocalSeatOffset();
+            }
         });
         return done;
     }, false);
@@ -380,6 +385,7 @@ bool HostRide(const Cur& cur) {
                     return -1;
                 }
                 g_attachCm = a->f0;
+                OnGt([] { SayRemoteSeatOffset(kSlotC); });
                 s1 = true;
                 StepPass(1, "the driver's body is attached to the ATV with the seat pose");
             }
@@ -445,6 +451,7 @@ bool ObserverSeat(const Cur& cur) {
             return -1;
         }
         g_attachCm = a->f0;
+        OnGt([] { SayRemoteSeatOffset(kSlotC); });
         StepPass(1, "the driver's body is attached to the ATV with the seat pose");
         return 1;
     });
@@ -580,9 +587,11 @@ bool DriverDrive() {
     return arrived;
 }
 
-// Step 7's second leg on the host: it drives its own ATV kDriveCm with its kerfur riding, lets the throttle go, reads where its
-// kerfur stands (JudgeKerfurSeat) and says `drive7-done` for the clients' reads. In the control the kerfur is idle and off the
-// ATV, and the leg ends on the 600 cm alone.
+// Step 7's second leg on the host: it backs its own ATV kDriveCm (the root's distance, whatever the direction) away from where
+// step 3 stopped it, with its kerfur riding, lets the reverse key go, reads where its kerfur stands (JudgeKerfurSeat) and says
+// `drive7-done` for the clients' reads. An ATV that stands tipped, or that the throttle does not move kProbeCm in kProbeS
+// seconds, ends the leg INVALID at once as wedged. In the control the kerfur is idle and off the ATV, and the leg ends on the
+// 600 cm alone.
 bool HostDriveSeated() {
     const DriveRead first = ReadDrive();
     if (!first.ok) {
@@ -590,14 +599,16 @@ bool HostDriveSeated() {
         return false;
     }
     UE_LOGI("atv-riders: step 7 drive (host): %s", DriveText(first).c_str());
-    // A flipped ATV cannot drive: the leg would measure something other than the host's own drive.
-    if (first.upZ < kFlippedUpZ) {
-        Invalid("the ATV is on its side before the host's drive (upZ=" + Num("%.2f", first.upZ) + ")");
+    // A tipped ATV cannot drive: the leg would measure something other than the host's own drive.
+    if (first.upZ < kWedgedUpZ) {
+        Invalid("the ATV is wedged before the host's drive (upZ=" + Num("%.2f", first.upZ) + ", yaw " + Num("%.0f", first.yaw) + ")");
         return false;
     }
     const FVector start = first.root;
     std::string why;
-    if (!AD::DriveOn(g_key, why)) {
+    // The leg backs away: step 3's drive ends against what it struck, ahead of the ATV, so the reverse key has the lane clear.
+    const auto driveStart = std::chrono::steady_clock::now();
+    if (!DriveBack(g_key, why)) {
         Invalid(why + "; " + SayDrive());
         return false;
     }
@@ -608,6 +619,7 @@ bool HostDriveSeated() {
     uint32_t builtCursor = DE::Count(DE::kStampBuilt), appliedCursor = DE::Count(DE::kPoseApplied);
     std::chrono::steady_clock::time_point lastSaid = std::chrono::steady_clock::now();
     float movedCm = 0.f;
+    bool probed = false;
     const bool arrived = PollFn("the host's own 600 cm drive", kDriveS, [&]() -> int {
         bool block = false;
         DE::Rec r;
@@ -620,10 +632,20 @@ bool HostDriveSeated() {
         }
         FVector at{};
         if (ReadRoot(at)) movedCm = std::sqrt((at.X - start.X) * (at.X - start.X) + (at.Y - start.Y) * (at.Y - start.Y));
-        return movedCm >= kDriveCm ? 1 : 0;
+        if (movedCm >= kDriveCm) return 1;
+        // The throttle's first seconds moved the root nowhere: the ATV is held (a wall, a rock), not slow; said at once.
+        if (!probed && now - driveStart >= std::chrono::seconds(kProbeS)) {
+            probed = true;
+            if (movedCm < kProbeCm) {
+                Invalid("the ATV is wedged before the host's drive: the first " + std::to_string(kProbeS) + " s of reverse moved the root " +
+                        Num("%.0f", movedCm) + " cm; " + SayDrive());
+                return -1;
+            }
+        }
+        return 0;
     }, [] { return "at the bound: " + SayDrive(); });
     if (arrived) SayDrive();
-    AD::DriveOff(g_key);
+    DriveBackOff(g_key);
     if (!arrived) return false;
     if (Control()) {
         // The control measures the drive with no kerfur on the ATV: a kerfur that rode anyway says nothing about it.
@@ -706,6 +728,7 @@ bool RejoinedObserver() {
         return false;
     }
     g_attachCm = attached->f0;
+    OnGt([] { SayRemoteSeatOffset(kSlotC); });
     StepPass(5, "the driver's body, born after the stamp, is attached with the seat pose");
 
     // The kerfur: decided at the bind when the mirror is shown there, else at its reveal.

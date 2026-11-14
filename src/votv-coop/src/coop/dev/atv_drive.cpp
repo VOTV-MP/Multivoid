@@ -1,5 +1,5 @@
 // coop/dev/atv_drive.cpp -- see coop/dev/atv_drive.h. The acts are what a player's hands do at an ATV: the walk is the bot
-// director's, and the brake, throttle, turbo and dismount keys are the ATV's own input-action events, called as the engine
+// director's, and the brake, throttle, reverse, turbo and dismount keys are the ATV's own input-action events, called as the engine
 // calls them when the possessed ATV's input fires.
 
 #include "coop/dev/atv_drive.h"
@@ -131,9 +131,11 @@ bool TurboOff(const std::wstring& key, std::string& why) {
     return PressAtv(key, L"InpActEvt_atv_turbo_K2Node_InputActionEvent_13", why);
 }
 
-// The seated player drives: the brake off (a parked ATV sits on its handbrake), then the throttle key down, held until the
-// driver's own fuel has fallen or the bound runs out. The throttle stays down for the step; DriveOff lets it go.
-bool DriveOn(const std::wstring& key, std::string& why) {
+namespace {
+
+// The seated player drives: the brake off (a parked ATV sits on its handbrake), the turbo up, then the throttle key `down`
+// pressed and held until the driver's own fuel has fallen or the bound runs out.
+bool HoldThrottle(const std::wstring& key, const wchar_t* down, std::string& why) {
     bool braked = false, turbo = false;
     float fuel0 = -1.f;
     OnGt([&] {
@@ -145,7 +147,7 @@ bool DriveOn(const std::wstring& key, std::string& why) {
     if (braked && !Brake(key, why)) return false;
     // Step 5 leaves the turbo key down; at turbo speed the ATV struck something within 2 s and threw its driver out (f3-green).
     if (turbo && !TurboOff(key, why)) return false;
-    if (!PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_4", why)) return false;
+    if (!PressAtv(key, down, why)) return false;
     // Decided on whichever comes first: the driver's own fuel falls, or the driver is out of the seat (nothing burns then).
     bool thrown = false;
     const bool burned = PS::WaitFor("the driver's own fuel falls", kBurnS, [&] {
@@ -158,9 +160,27 @@ bool DriveOn(const std::wstring& key, std::string& why) {
     return burned;
 }
 
+}  // namespace
+
+// The throttle stays down for the step; DriveOff lets it go.
+bool DriveOn(const std::wstring& key, std::string& why) {
+    return HoldThrottle(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_4", why);
+}
+
 void DriveOff(const std::wstring& key) {
     std::string unused;
     PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_5", unused);
+}
+
+// The ATV's reverse is its own `atv_back` action: the press sets input_back, which the tick reads as the opposite sign of the
+// forward axis; DriveBackOff is the release.
+bool DriveBack(const std::wstring& key, std::string& why) {
+    return HoldThrottle(key, L"InpActEvt_atv_back_K2Node_InputActionEvent_6", why);
+}
+
+void DriveBackOff(const std::wstring& key) {
+    std::string unused;
+    PressAtv(key, L"InpActEvt_atv_back_K2Node_InputActionEvent_7", unused);
 }
 
 }  // namespace coop::dev::atv_drive

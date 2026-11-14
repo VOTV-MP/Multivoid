@@ -173,6 +173,7 @@ bool RagdollWatch(Role me, const Cur& cur) {
                 Fail(8, "", "the driver, seated again, has no body attached to the ATV");
                 return -1;
             }
+            OnGt([] { SayRemoteSeatOffset(kSlotC); });
             return 1;
         }))
         return false;
@@ -315,6 +316,7 @@ bool WatchHostSeat(Role me, const Cur& cur) {
                 Fail(7, "", "the host's body is not attached to the ATV with the seat pose");
                 return -1;
             }
+            OnGt([] { SayRemoteSeatOffset(kSlotH); });
             StepPass(7, "the host's body is attached to the ATV with the seat pose");
             return 1;
         }))
