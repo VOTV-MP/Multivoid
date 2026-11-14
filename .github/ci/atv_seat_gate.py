@@ -4,7 +4,8 @@
 `AtvEntry::seatOccupant`, `seatSyncer`, `seatRider` and `seatRiderActor` are written only by
 `coop/interactables/atv_seat_table.cpp` (SetSeat, SetRider), which tells the subscribers of every
 change. A write from anywhere else would change the seat without announcing it. Over `src/votv-coop/src`
-and `src/votv-coop/include` (comments and string literals set aside) this gate refuses an assignment (plain or compound) to
+and `src/votv-coop/include` (comments and string literals set aside) this gate refuses an assignment (plain or compound, `<<=` and `>>=`
+too) or an increment or decrement (`++` and `--`, prefix or postfix) of
 one of the four names outside the owner, except the default member initializers of `AtvEntry` in
 `atv_sync_internal.h`.
 
@@ -21,8 +22,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 OWNER = "src/coop/interactables/atv_seat_table.cpp"
 DECLARING_HEADER = "include/coop/interactables/atv_sync_internal.h"
 
-# A plain or compound assignment (=, |=, &=, ^=, +=, -=, *=, /=, %=); never == (an equality test).
-WRITE = re.compile(r"\b(seatOccupant|seatSyncer|seatRider|seatRiderActor)\s*[|&^+\-*/%]?=[^=]")
+FIELDS = r"(seatOccupant|seatSyncer|seatRider|seatRiderActor)"
+# A plain or compound assignment (=, |=, &=, ^=, +=, -=, *=, /=, %=, <<=, >>=); never == (an equality test), <= or >=.
+WRITE = re.compile(r"\b" + FIELDS + r"\s*(?:<<|>>|[|&^+\-*/%])?=(?!=)")
+# An increment or decrement: postfix (name++) or prefix (++name, ++e.name, ++e->name).
+STEP = (re.compile(r"\b" + FIELDS + r"\s*(?:\+\+|--)"),
+        re.compile(r"(?:\+\+|--)\s*(?:\w+\s*(?:\.|->)\s*)*\b" + FIELDS + r"\b"))
 DECLARATION_PREFIX = re.compile(r"^\s*(?:uint8_t|uint32_t|void\s*\*)\s*$")
 SUFFIXES = (".cpp", ".h", ".hpp", ".inc")
 HEX_DIGITS = frozenset("0123456789abcdefABCDEF")  # a set: the empty string at a text edge is not a member
@@ -82,10 +87,12 @@ def check(files):
         if path == OWNER:
             continue
         code = strip(text)
-        for m in WRITE.finditer(code):
-            line_start = code.rfind("\n", 0, m.start()) + 1
-            if path == DECLARING_HEADER and DECLARATION_PREFIX.match(code[line_start:m.start()]):
-                continue
+        hits = [m for m in WRITE.finditer(code)
+                if not (path == DECLARING_HEADER
+                        and DECLARATION_PREFIX.match(code[code.rfind("\n", 0, m.start()) + 1:m.start()]))]
+        for rx in STEP:
+            hits.extend(rx.finditer(code))
+        for m in sorted(hits, key=lambda h: h.start()):
             faults.append("%s:%d: a write of %s outside %s (SetSeat and SetRider announce the change)"
                           % (path, code.count("\n", 0, m.start()) + 1, m.group(1), OWNER))
     return faults
@@ -112,6 +119,11 @@ def drill():
             "src/coop/x/a.cpp": "constexpr long k = 1'700'000'000;\ne.seatOccupant = 1;\n// it's\n"},
         "a write over two lines": {"src/coop/x/a.cpp": "e.seatRider\n    = 7;\n"},
         "a compound write": {"src/coop/x/a.cpp": "e->seatRider += 1;\n"},
+        "a prefix increment": {"src/coop/x/a.cpp": "++e.seatRider;\n"},
+        "a postfix decrement through a pointer": {"src/coop/x/a.cpp": "e->seatOccupant--;\n"},
+        "a prefix decrement of a bare name": {"src/coop/x/a.cpp": "--seatSyncer;\n"},
+        "a shift-left assignment": {"src/coop/x/a.cpp": "e.seatRider <<= 1;\n"},
+        "a shift-right assignment": {"src/coop/x/a.cpp": "e->seatRiderActor >>= 2;\n"},
         "a write in the declaring header that is no initializer": {
             DECLARING_HEADER: "uint8_t seatOccupant = 0xFF;\ninline void F(E& e) { e.seatOccupant = 1; }\n"},
         "a local named like the field": {"src/coop/x/a.cpp": "uint32_t seatRider = 5;\n"},
@@ -120,6 +132,8 @@ def drill():
         "an equality test": {"src/coop/x/a.cpp": "if (e.seatOccupant == 3 && e.seatSyncer == 0) {}\n"},
         "an inequality and an order test": {
             "src/coop/x/a.cpp": "if (e.seatRider != 0 || e.seatOccupant <= 2 || e.seatSyncer >= 1) {}\n"},
+        "a shift and a compare": {
+            "src/coop/x/a.cpp": "if (e.seatRider << 1 > 4 || e.seatSyncer >> 1 < 2) {}\n"},
         "a read": {"src/coop/x/a.cpp": "const uint8_t s = e.seatSyncer; auto r = e->seatRider;\n"},
         "the owner writes": {OWNER: "e.seatOccupant = o; e.seatSyncer = s; e.seatRider = r;\n"},
         "the default member initializers": {
