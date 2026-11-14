@@ -119,9 +119,10 @@ uint32_t OwnHandLookSeq();
 // the pry ends with an empty hand. Game thread only.
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
 
-// Host: how many hold announces (a state with an item in the hand) have been applied for `slot`'s occupant; it moves on
-// every identity change the owner announces, never on the pose stream. A verb that consumes the held item records the
-// number it spent, and a later request counts the hold only when this is newer (atv_host_judge). Game thread only.
+// Host: how many hold announces (a state with an item in the hand) have been applied for `slot`'s occupant, and the holds
+// an owed empty merged away (the same item taken up again); it moves on every identity change the owner announces, never
+// on the pose stream. A verb that consumes the held item records the number it spent, and a later request counts the hold
+// only when this is newer (hand_spend). Game thread only.
 uint32_t HoldGeneration(uint8_t slot);
 
 // Host: a consumer of the hand states the lane applied. Called on the game thread, after the state is applied and re-sent,

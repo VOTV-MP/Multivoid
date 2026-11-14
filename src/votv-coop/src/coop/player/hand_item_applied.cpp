@@ -100,7 +100,11 @@ void ApplyHandState(coop::net::Session& session, uint8_t slot, const SlotHand& i
 
 bool Settles(uint8_t slot, const SlotHand& in) {
     if (!SameHeld(in, g_hands[slot])) return false;
-    g_pendingHand[slot].pace.Withdraw();
+    PendingHand& pend = g_pendingHand[slot];
+    // An owed EMPTY that an identical hold settles: the hand left the item and took it up again, a new hold of the same
+    // item. The empty is merged away and never applied, so the generation it would have started is counted here.
+    if (pend.pace.Owed() && !pend.value.has && in.has) ++g_hands[slot].holdGen;
+    pend.pace.Withdraw();
     for (HandAppliedFn fn : g_appliedSubs) if (fn) fn(slot);   // an owed state that settles is an edge too
     return true;
 }
