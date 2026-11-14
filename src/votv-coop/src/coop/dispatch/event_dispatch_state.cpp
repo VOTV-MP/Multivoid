@@ -135,8 +135,8 @@ bool HandleStateEvent(net::Session& session,
         // block reaches the host alone, which applies it only from the ATV's syncer and re-sends it to
         // the other clients with its own stamp; a client receives only the host's. atv_sync gates the
         // apply on both sides.
-        if (msg.payloadLen < sizeof(net::AtvStatePayload)) {
-            UE_LOGW("event_feed: AtvState payload too short (%zu < %zu)",
+        if (msg.payloadLen != sizeof(net::AtvStatePayload)) {
+            UE_LOGW("event_feed: AtvState payload wrong size (%zu != %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AtvStatePayload));
             break;
         }
