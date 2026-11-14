@@ -72,6 +72,11 @@ void*           g_setCursorPosTarget = nullptr;
 
 HWND    g_hwnd    = nullptr;
 
+// The last built frame published an input claim (a capturing surface, or typed text). The claim is published
+// and the cursor transition runs only inside a built frame, so the frame after the surface closes must still
+// be built to publish the release; this keeps the render gate open for exactly that one. Render thread only.
+bool    g_lastFrameHeldInput = false;
+
 std::atomic<bool> g_installed{false};   // hooks installed
 std::atomic<bool> g_imguiReady{false};  // first-present init done (backend live)
 std::atomic<bool> g_visible{false};        // F1 dev menu shown
@@ -249,12 +254,15 @@ void RenderFrameGuarded(const overlay_backend::FrameTarget& t) {
 
         // The cursor ownership transition (MTA's CLocalGUI::Draw shape), before the probe so it
         // observes the state the frame draws with.
-        ui::overlay_cursor::FrameTransition(g_hwnd, CaptureActive(), g_setCursorPosTrampoline);
-        ui::overlay_diag::CursorFrame(g_hwnd, CaptureActive(), g_setCursorPosTrampoline);
+        const bool capture = CaptureActive();
+        ui::overlay_cursor::FrameTransition(g_hwnd, capture, g_setCursorPosTrampoline);
+        ui::overlay_diag::CursorFrame(g_hwnd, capture, g_setCursorPosTrampoline);
+        g_lastFrameHeldInput = capture || overlayText;
         ImGui::Render();
         overlay_backend::RenderDrawData(t);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         UE_LOGE("imgui_overlay: SEH in render frame -- hiding surfaces to protect the render thread");
+        g_lastFrameHeldInput = false;  // the handler below publishes the release itself
         g_visible.store(false, std::memory_order_relaxed);
         g_scoreboard.store(false, std::memory_order_relaxed);
         ui::voice_panel::Close();  // re-fault guard, same as the picker/loading below
@@ -317,9 +325,12 @@ void OverlayFrame(const overlay_backend::FrameTarget& t) {
 
     // Render when a surface is open, the passive HUD has something to show, or the join curtain is
     // fading (it must keep drawing for its 0.4 s fade after the loading panel drops). The curtain
-    // is in the render gate only, not AnyOpen, which also gates input and the cursor.
+    // is in the render gate only, not AnyOpen, which also gates input and the cursor. A frame that
+    // published an input claim is followed by one more, which publishes its release and runs the cursor's
+    // exit edge: without it a peer with no HUD and no curtain, once its last surface closed, would keep
+    // the claim published (typed-text capture, the cursor's capture state) until the next surface opened.
     if (g_imguiReady.load(std::memory_order_acquire) &&
-        (AnyOpen() || ui::hud::IsActive() || coop::join_curtain::IsActive())) {
+        (AnyOpen() || ui::hud::IsActive() || coop::join_curtain::IsActive() || g_lastFrameHeldInput)) {
         overlay_backend::EnsureTarget(t);  // recreate the render target after a resize
         RenderFrameGuarded(t);
     }
