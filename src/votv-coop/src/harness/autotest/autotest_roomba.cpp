@@ -26,6 +26,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/props/roomba_sync.h"
 #include "coop/session/rig_verdict.h"
 #include "ue_wrap/core/call.h"
@@ -130,6 +131,13 @@ void RunHost() {
     if (!PS::Await("client_ready", 480)) return;
     if (!WaitGT("the client's slot world-ready", 120, [] { return harness::session_runtime::Session().IsSlotWorldReady(1); })) return;
     if (!PS::Await("client_near", kStepSec)) return;
+    // The client's press is judged from its puppet's eye: the cleaners are placed only once that puppet is up.
+    if (!WaitGT("the client's puppet on the host", 120, [] {
+            coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
+            ue_wrap::FVector eye{};
+            return rp && rp->valid() && rp->TryGetEyePosition(eye);
+        }))
+        return;
     uint32_t a = 0, b = 0;
     if (!Drop(250.f, 0.f, EL::kInvalidId, a)) return;
     // B is the second one dropped: the first found enrolled cleaner is A, so B is dropped off the line and found by exclusion.
@@ -228,8 +236,11 @@ void RunClient() {
         flipped = r && Active(r);
     });
     if (!flipped) {
-        RV::Say(kTag, RV::Outcome::Fail, "the host answered the fence after A's press and A did not switch on here (presses asked of the host=%u, states applied=%u)",
-                c.intentsSent, c.statesApplied);
+        if (c.intentsSent == 0)
+            RV::Say(kTag, RV::Outcome::Fail, "A's press was never asked of the host (presses asked=0): the host answered the fence and switched nothing");
+        else
+            RV::Say(kTag, RV::Outcome::Fail, "A's press was asked of the host (%u) and its switch-on never reached this copy (states applied=%u)",
+                    c.intentsSent, c.statesApplied);
         PS::Mark("client_done", "F");
         return;
     }

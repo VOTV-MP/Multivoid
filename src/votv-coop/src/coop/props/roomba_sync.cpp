@@ -58,6 +58,7 @@ constexpr uint8_t  kActionSwitch = 5;      // EInteractionActions: the cleaner's
 constexpr float    kReachCm = 600.f;       // a client's press, from its eye to the cleaner's root
 constexpr uint64_t kPressEveryMs = 250;    // a slot's presses, one per this
 constexpr size_t   kMaxHeld = 64;          // states held for copies not yet bound, one per cleaner
+constexpr size_t   kMaxPresses = 64;       // presses held for a sender whose puppet is not up yet
 
 coop::net::Session* g_session = nullptr;
 bool g_watched = false;
@@ -158,7 +159,12 @@ void JudgePresses() {
     if (g_presses.empty()) return;
     std::vector<Press> presses;
     presses.swap(g_presses);
+    std::vector<Press> held;  // a sender whose puppet is not up yet: its press waits, in order, for the next tick
     for (const Press& pr : presses) {
+        if (!g_session->IsSlotConnected(pr.slot)) {
+            UE_LOGW("roomba_sync: HOST slot %d left with a press of cleaner eid %u unjudged -- dropped", pr.slot, pr.p.eid);
+            continue;
+        }
         void* const roomba = EL::LiveActorOfType(static_cast<EL::ElementId>(pr.p.eid), EL::ElementType::Prop);
         bool active = false;
         if (!roomba || !ReadActive(roomba, active) || R::ClassNameOf(roomba) != L"prop_roomba_C") {
@@ -167,7 +173,14 @@ void JudgePresses() {
         }
         coop::RemotePlayer& rp = coop::puppet_drive::Puppet(static_cast<uint8_t>(pr.slot));
         ue_wrap::FVector eye{}, at{};
-        if (!rp.valid() || !rp.TryGetEyePosition(eye) || !E::TryGetActorLocation(roomba, at)) continue;
+        if (!rp.valid() || !rp.TryGetEyePosition(eye)) {
+            held.push_back(pr);
+            continue;
+        }
+        if (!E::TryGetActorLocation(roomba, at)) {
+            UE_LOGW("roomba_sync: HOST cleaner eid %u's place cannot be read -- slot %d's press is refused", pr.p.eid, pr.slot);
+            continue;
+        }
         const float dx = eye.X - at.X, dy = eye.Y - at.Y, dz = eye.Z - at.Z;
         if (dx * dx + dy * dy + dz * dz > kReachCm * kReachCm) {
             UE_LOGW("roomba_sync: HOST slot %d pressed cleaner eid %u from out of reach -- refused", pr.slot, pr.p.eid);
@@ -183,6 +196,7 @@ void JudgePresses() {
         UE_LOGI("roomba_sync: HOST slot %d switched cleaner eid %u %hs (ran=%d)", pr.slot, pr.p.eid,
                 pr.p.active ? "on" : "off", ran ? 1 : 0);
     }
+    if (!held.empty()) g_presses.insert(g_presses.begin(), held.begin(), held.end());
 }
 
 Known* FindKnown(void* roomba) {
@@ -419,7 +433,11 @@ void SendJoinSnapshotForSlot(int slot) {
 }
 
 void OnIntent(int senderSlot, const coop::net::RoombaPayload& p) {
-    if (!IsHost() || senderSlot <= 0 || senderSlot >= static_cast<int>(N::kMaxPeers) || g_presses.size() >= 64) return;
+    if (!IsHost() || senderSlot <= 0 || senderSlot >= static_cast<int>(N::kMaxPeers)) return;
+    if (g_presses.size() >= kMaxPresses) {  // held presses wait for a puppet; a sender past the bound is refused, said
+        UE_LOGW("roomba_sync: HOST %zu presses are waiting -- slot %d's press of cleaner eid %u is refused", kMaxPresses, senderSlot, p.eid);
+        return;
+    }
     const uint64_t now = NowMs();
     if (now - g_lastPressMs[senderSlot] < kPressEveryMs) return;
     g_lastPressMs[senderSlot] = now;

@@ -9,7 +9,7 @@
 // every client's copy follows the host's pose. A cleaner is announced with its `active` when its element id is minted,
 // and to a joiner at its ready edge. A client animates the brushes of the copies it has bound, takes a state through
 // the cleaner's own `use`, and holds the newest state of a cleaner whose copy is not bound yet until it is. A client's
-// press of the switch (action 5) is refused and sent to the host (RoombaIntent), which judges its reach and presses
+// press of the switch (action 5) is refused and sent to the host (RoombaIntent), which judges its reach (a press whose sender has no puppet yet waits, in order, up to 64 of them, until the slot leaves) and presses
 // its own cleaner. Game thread.
 #pragma once
 
