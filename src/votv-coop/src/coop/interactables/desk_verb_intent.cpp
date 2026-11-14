@@ -29,6 +29,7 @@
 #include "ue_wrap/world/profile.h"
 
 #include <atomic>
+#include <cstdio>
 #include <string>
 #include <string_view>
 
@@ -70,6 +71,7 @@ bool     g_saidLive = false;
 bool     g_watchRefused = false;  // refused or settled dead: said once, and the attempts end
 bool     g_saidOffline = false;
 uint32_t g_pressSeq = 0;  // CLIENT: this machine's press count
+uint64_t g_nextHeldSayMs = 0;  // HOST: the next time its rows' hashes may be said with a refused selection
 
 // One sender: its queued presses with their bucket, and the latches that clear with its occupant.
 struct Slot {
@@ -90,6 +92,7 @@ struct Seen {
     uint64_t driveRow = 0, selectedRow = 0, compRow = 0;
     float    signal[4] = {};
     bool     signalArmed = false;
+    int32_t  selIndex = -1, rows = -1;  // the deck's selected index and the library's row count, for the log
 };
 
 // A row's cross-peer identity, 0 for a row with no data (size 0, the empty drive's and refiner's).
@@ -143,7 +146,9 @@ Seen Look(void* desk, uint8_t button) {
         }
     } else if (button == DV::kDeckDrive || button == DV::kDeckSend) {
         if (button == DV::kDeckDrive) DriveIn(DC::kRoleDeskPlay, true, s);
-        s.selectedRow = RowAt(DP::SelectedRow(desk));
+        s.selIndex = DP::SelectedRow(desk);
+        s.rows = ue_wrap::saved_signals::Count();
+        s.selectedRow = RowAt(s.selIndex);
     } else if (button == DV::kUpload || button == DV::kCompStart || button == DV::kCompStop) {
         // The start asks only that a drive sits in the slot (analogDScreenTest.cpp :3180); the upload moves its data.
         if (button != DV::kCompStop) DriveIn(DC::kRoleDeskComp, button == DV::kUpload, s);
@@ -226,9 +231,9 @@ sg::Verdict OnPressPre(const sg::Call& c) {
     s->SendReliable(coop::net::ReliableKind::DeskVerb, &p, static_cast<int>(sizeof(p)));
     ++g_sent;
     UE_LOGI("desk_verb: CLIENT refused its %s press #%u and asked the host (drive eid=%u row=%016llx selected=%016llx "
-            "comp=%016llx signal=%u)", kButtonName[button], p.seq, p.driveEid,
-            static_cast<unsigned long long>(p.driveRow), static_cast<unsigned long long>(p.selectedRow),
-            static_cast<unsigned long long>(p.compRow), static_cast<unsigned>(p.signalArmed));
+            "[index %d of %d] comp=%016llx signal=%u)", kButtonName[button], p.seq, p.driveEid,
+            static_cast<unsigned long long>(p.driveRow), static_cast<unsigned long long>(p.selectedRow), seen.selIndex,
+            seen.rows, static_cast<unsigned long long>(p.compRow), static_cast<unsigned>(p.signalArmed));
     return sg::Verdict::Cancel;
 }
 
@@ -286,6 +291,27 @@ void Refuse(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& p, uint8
     Answer(s, slot, p, verdict);
 }
 
+// A press whose selected row the host does not hold. It says what was asked and what the host holds, so a press
+// sent with no selection (a zero) reads apart from one naming a row this machine's copy does not match; the held
+// rows' hashes follow once in kSayEveryMs, for comparing against the asked one.
+void RefuseSelected(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& p) {
+    const int32_t n = ue_wrap::saved_signals::Count();
+    char why[120];
+    std::snprintf(why, sizeof(why), "the selected row: asked %016llx%s, the host holds %d row(s)",
+                  static_cast<unsigned long long>(p.selectedRow), p.selectedRow ? "" : " (none)", n);
+    Refuse(s, slot, p, DV::kMissed, why);
+    const uint64_t now = coop::net::NowMs();
+    if (!p.selectedRow || n <= 0 || now < g_nextHeldSayMs) return;
+    g_nextHeldSayMs = now + kSayEveryMs;
+    std::string held;
+    char one[24];
+    for (int32_t i = 0; i < n && i < 8; ++i) {
+        std::snprintf(one, sizeof(one), " %016llx", static_cast<unsigned long long>(RowAt(i)));
+        held += one;
+    }
+    UE_LOGI("desk_verb: the host's rows by index:%s%s", held.c_str(), n > 8 ? " ..." : "");
+}
+
 // One press, run or refused and then consumed, or left at the head of its queue while the host has no body for
 // its presser yet or requester_feedback's seams are settling: a window, not a verdict.
 bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
@@ -318,7 +344,7 @@ bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
     if (ReadsSelectedRow(p)) {
         row = FindRow(p.selectedRow);
         if (row < 0) {
-            Refuse(s, slot, p, DV::kMissed, "the selected row");
+            RefuseSelected(s, slot, p);
             return true;
         }
     }
