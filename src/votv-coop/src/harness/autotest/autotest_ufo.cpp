@@ -179,21 +179,20 @@ void OnWorldActorEnd(const coop::element::death_seam::Death& d) {
 // The copy of the UFO `eid` here, by the registry's own index liveness (LiveActorOfType): no object is read through a
 // pointer the engine may have freed. The first time it reads not live after it was, the registry row and the pointer are
 // said once, the pointer only printed and its slot asked by index.
+// Game thread only (its callers wait through WaitGT, which already runs the check there): an OnGameThread inside it
+// would ask the game thread to run a task from the game thread, which RunAndWait answers kTaskFaulted unrun.
 bool CopyLive(uint32_t eid) {
     static bool s_wasLive = false, s_said = false;
-    bool live = false;
-    OnGameThread([&] {
-        live = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor) != nullptr;
-        if (live) {
-            s_wasLive = true;
-        } else if (s_wasLive && !s_said) {
-            s_said = true;
-            EL::Element* row = EL::Registry::Get().Get(static_cast<EL::ElementId>(eid));
-            void* act = row ? row->GetActor() : nullptr;
-            UE_LOGI("ufo-drill: copy eid %u is not live any more: registry row=%d, actor=%p, its slot live=%d", eid, row ? 1 : 0, act,
-                    row && act && R::IsLiveByIndex(act, row->GetInternalIdx()) ? 1 : 0);
-        }
-    });
+    const bool live = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor) != nullptr;
+    if (live) {
+        s_wasLive = true;
+    } else if (s_wasLive && !s_said) {
+        s_said = true;
+        EL::Element* row = EL::Registry::Get().Get(static_cast<EL::ElementId>(eid));
+        void* act = row ? row->GetActor() : nullptr;
+        UE_LOGI("ufo-drill: copy eid %u is not live any more: registry row=%d, actor=%p, its slot live=%d", eid, row ? 1 : 0, act,
+                row && act && R::IsLiveByIndex(act, row->GetInternalIdx()) ? 1 : 0);
+    }
     return live;
 }
 
