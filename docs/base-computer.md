@@ -124,7 +124,8 @@ A mining rig (`prop_miner_C`) counts its slots, GPUs and coolers in its own fiel
 on it runs its `upgrade`, which counts one more and repaints it, and the item goes. Its tick mines points while it is
 powered and cools its heat, and its claim (action 4) pays the points into the balance. Each ran on the one machine, so a
 rig one player filled stood empty for the other, and each copy mined its own points (VOTV-MP/Multivoid issue 43). The
-rig is the host's: a client refuses its tick, and its use of an item and its claim are refused and asked of the host
+rig is the host's: a client refuses its tick and its fire (`fireDamage`, which spawns its debris and loose GPUs, so
+the host's burning rig is the one that throws them), and its use of an item and its claim are refused and asked of the host
 (`MinerIntent`), which judges the reach (6 m) and pace and runs its own rig's `upgrade` or claim, the rig's hints going
 to the asker. A granted use spends the item in the asker's hand. The host sends each rig's counts, points and heat when
 they change, the points at most once a second, and to a joiner at its ready edge (`MinerState`); a client writes them and

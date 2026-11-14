@@ -4,7 +4,8 @@
 // or cooler used on it (playerUsedOn) runs its `upgrade`, which counts one more and repaints it through `upd`, and the
 // item goes. Its tick mines `accumulatedPoints` while it is powered and cools `overheat`; its action 4 claims the points
 // (lib_C::addPoints) and empties them. Each ran on the one machine, so a rig a player filled stood empty for the others,
-// and each copy mined its own points. Here a client refuses the rig's tick, and its use of an item and its claim are
+// and each copy mined its own points. Here a client refuses the rig's tick and its fire (`fireDamage`, which spawns
+// the rig's debris and loose GPUs), and its use of an item and its claim are
 // refused and asked of the host (MinerIntent), which judges the sender's reach and pace and runs its own rig's `upgrade`
 // or claim, the rig's hints going to the asker (coop/requester_feedback). A granted use spends the item in the asker's
 // hand, whose going the prop lanes carry. The host sends each rig's counts, points and heat when they change, the
