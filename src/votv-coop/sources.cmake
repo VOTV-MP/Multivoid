@@ -422,6 +422,9 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/desk_cursor_sync.cpp
     src/coop/interactables/desk_input_sync.cpp
     src/coop/interactables/deck_play_sync.cpp
+    src/coop/gamefix/body_guard.cpp
+    src/coop/gamefix/disc_eject_fix.cpp
+    src/coop/gamefix/food_sleep_fix.cpp
     src/coop/interactables/physmods_sync.cpp
     src/coop/interactables/drive_payload_sync.cpp
     src/coop/interactables/drive_sync.cpp

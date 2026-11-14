@@ -48,8 +48,9 @@ bool CallPowerToggle();
 
 // [dev] The laptop's own insert, as the game's overlap runs it with no player: processFloppy through its floppy
 // hitbox with `disc` as the manual actor, which casts it to a disc and runs insertFloppy (the disc destroyed, the
-// slot filled). And its ejectFloppy. False when unresolved or the call failed.
-bool CallInsertDisc(void* disc);
+// slot filled). `zipSlot` goes through the zip hitbox, the one that takes a zip drive and refuses a floppy. And its
+// ejectFloppy. False when unresolved or the call failed.
+bool CallInsertDisc(void* disc, bool zipSlot = false);
 bool CallEjectDisc();
 
 // The slot timeline is still sliding a disc in or out (laptop_C.floppyProcess): both insertFloppy and ejectFloppy

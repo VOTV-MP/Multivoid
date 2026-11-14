@@ -140,11 +140,11 @@ bool ReadPower(PowerState& out) {
     return true;
 }
 
-bool CallInsertDisc(void* disc) {
+bool CallInsertDisc(void* disc, bool zipSlot) {
     void* l = Instance();
     void* cls = l ? R::ClassOf(l) : nullptr;
     void* fn = cls ? R::FindDispatchFunctionCached(cls, L"processFloppy") : nullptr;
-    const int32_t offHitbox = cls ? R::FindPropertyOffset(cls, L"floppyHitbox") : -1;
+    const int32_t offHitbox = cls ? R::FindPropertyOffset(cls, zipSlot ? L"zipHitbox" : L"floppyHitbox") : -1;
     if (!fn || offHitbox < 0 || !disc) return false;
     void* hitbox = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(l) + offHitbox);
     if (!hitbox) return false;

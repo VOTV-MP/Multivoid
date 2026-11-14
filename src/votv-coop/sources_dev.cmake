@@ -272,6 +272,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/keypad_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp
     src/coop/dev/fireext_drill.cpp
+    src/coop/dev/disc_eject_drill.cpp
+    src/coop/dev/food_sleep_drill.cpp
     src/coop/dev/pry_drill.cpp
     src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp
