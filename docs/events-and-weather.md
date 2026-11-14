@@ -172,6 +172,18 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+### The stolen radio tower
+
+Every hour the gamemode's `ticker_radiotowerPoof` may (chance 0.005) spawn a `radiotowerPoof_C`. After a delay it checks
+each second whether its peer's view has rendered the radio tower lately; once it has not, it hides the tower through
+the tower's own `setHidden` and takes the collision of the tower, its ladder and its two segments away, and later, again
+unseen, gives them back and goes. It ran on the one machine, so one player saw the tower gone with only its repair box
+in the air, and the other saw it stand (VOTV-MP/Multivoid issue 63). The stolen tower is the host's: a client refuses its
+own ticker at the script-body gate, the host's radio tower row on the fuse tower lane carries the hidden state
+(`kFuseTowerStolen`), and a client whose tower differs makes the event's own calls (`coop/world/fuse_tower_ops`,
+`coop/world/fuse_tower_kind`, `ue_wrap/devices/radio_tower`) `[V]` (`coop/dev/tower_poof_probe`, `VOTVCOOP_TOWER_POOF_PROBE=1`:
+before, the host's tower went for 40 s and the client's stood; after, the client's went and came back in the same
+second as the host's). A joiner gets the host's rows at its ready edge.
 ### The base alarm
 
 One trigger actor is the base alarm: the siren, every red beacon, the ceiling flicker, the
@@ -224,6 +236,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the stolen radio tower | the host | its ticker refused on a client; the hidden state on the radio tower's fuse tower row |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
@@ -281,5 +294,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/world/vent_crawler_sync`, `coop/dev/event_trigger` |
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
+| the stolen radio tower | `coop/world/fuse_tower_ops` (the ticker's refusal), `coop/world/fuse_tower_kind`, `ue_wrap/devices/radio_tower`; `coop/dev/tower_poof_probe` |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

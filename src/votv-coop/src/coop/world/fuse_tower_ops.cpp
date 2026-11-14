@@ -490,6 +490,20 @@ sg::Verdict OnRollPre(const sg::Call&) {
     return sg::Verdict::Cancel;
 }
 
+// The stolen tower is the host's too: a client's own hourly ticker never spawns the event (radiotowerPoof_C), and the
+// host's row carries the tower's hidden state, which a client applies (fuse_tower_kind's RadioApply).
+UE_FACT_FN(kRowTowerPoof, "fuse_tower_ops", L"mainGamemode_C", L"ticker_radiotowerPoof", Declared);
+constexpr int kTowerPoofTag = 0x5254504F;  // 'RTPO'
+uint32_t g_poofsRefused = 0;
+
+sg::Verdict OnPoofPre(const sg::Call& call) {
+    if (!IsClient(Connected()) || !call.object || !coop::net_pump::IsInAnnouncedWorld(call.object))
+        return sg::Verdict::Run;
+    if (++g_poofsRefused == 1)
+        UE_LOGI("fuse_tower: this client refuses its own stolen radio tower -- the host's tower is the author");
+    return sg::Verdict::Cancel;
+}
+
 // A parameter's offset in a watched body, one slot per kind (each kind's body is its own function): a player who
 // alternates between the towers never walks the parameter chain again.
 struct ParamSlot { void* fn = nullptr; int32_t off = -1; };
@@ -648,6 +662,8 @@ void Install(coop::net::Session* session) {
             UE_LOGE("fuse_tower: the script-body gate refused the watch on %ls::%ls -- that act stays each peer's own",
                     w.row->Class(), w.row->Name());
     }
+    if (!sg::WatchName(kRowTowerPoof, kTowerPoofTag, &OnPoofPre, nullptr))
+        UE_LOGE("fuse_tower: the script-body gate refused the watch on the stolen radio tower -- it stays each peer's own");
 }
 
 void Tick() {
