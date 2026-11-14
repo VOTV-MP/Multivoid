@@ -12,6 +12,7 @@
 #include "coop/dev/cover_probe.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/director/aimed_grab.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/call.h"
@@ -23,6 +24,7 @@
 #include "ue_wrap/devices/generator.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <windows.h>
 
@@ -261,6 +263,23 @@ void Tick(coop::net::Session* session) {
             }
         }
     }
+    static coop::director::AimedGrab* s_grab = nullptr;  // the plate grabbed as the use key grabs it, 23 s to 27 s
+    static bool s_grabDone = false;
+    if (!host && !s_grabDone && t >= 23000u && t < 27000u) {
+        void* const plate = First(L"prop_computerBackPanel_tl_C");
+        void* const me = coop::players::Registry::Get().Local();
+        if (!s_grab && plate && me) s_grab = new coop::director::AimedGrab(me, plate);
+        if (s_grab) {
+            const coop::director::GrabState g = s_grab->Tick();
+            if (g != coop::director::GrabState::Working) {
+                const bool ok = g == coop::director::GrabState::Grabbed;
+                UE_LOGI("[COVER] client: grabbed the plate prop (%hs%hs)", ok ? "ok" : "failed: ", ok ? "" : s_grab->Why());
+                delete s_grab;
+                s_grab = nullptr;
+                s_grabDone = true;
+            }
+        }
+    }
     if (!host && t >= 28000u && t < 30000u) {  // the plate held on its lid, as a player carries it there
         void* const plate = HeldPlate();
         const int32_t off = desk ? R::FindPropertyOffset(R::ClassOf(desk), L"lid1") : -1;
@@ -268,9 +287,33 @@ void Tick(coop::net::Session* session) {
         ue_wrap::FVector at{};
         if (plate && lid && E::TryGetComponentLocation(lid, at)) E::SetActorLocation(plate, at);
     }
+    if (host && t >= 20000u && t < 24000u) {  // the plate prop's path on the host while it goes to the client's hand
+        static uint64_t s_at = 0;
+        void* const plate = First(L"prop_computerBackPanel_tl_C");
+        const int32_t off = desk ? R::FindPropertyOffset(R::ClassOf(desk), L"lid1") : -1;
+        void* const lid = off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const char*>(desk) + off) : nullptr;
+        ue_wrap::FVector p{}, l{};
+        if (plate && lid && Now() >= s_at && E::TryGetActorLocation(plate, p) && E::TryGetComponentLocation(lid, l)) {
+            s_at = Now() + 100;
+            UE_LOGI("[COVER] host: plate prop at (%.0f,%.0f,%.0f), %.0f cm from lid1", p.X, p.Y, p.Z,
+                    std::sqrt((p.X - l.X) * (p.X - l.X) + (p.Y - l.Y) * (p.Y - l.Y) + (p.Z - l.Z) * (p.Z - l.Z)));
+        }
+    }
     if (t < 12000u || t > 65000u || Now() < g_reportAt) return;
     g_reportAt = Now() + 1000;
     Report();
+    if (!host) {  // the plate prop this player holds, and how far it is from its plate
+        ue_wrap::engine::MainPlayerGrabState gs{};
+        void* const plate = First(L"prop_computerBackPanel_tl_C");
+        void* const mesh = Plate(desk, 0);
+        ue_wrap::FVector p{}, m{};
+        if (plate && mesh && E::TryGetActorLocation(plate, p) && E::TryGetComponentLocation(mesh, m)) {
+            ue_wrap::engine::ReadMainPlayerGrabState(coop::players::Registry::Get().Local(), gs);
+            UE_LOGI("[COVER] client: plate prop %.0f cm from its plate, grabbed=%d held=%d", std::sqrt((p.X - m.X) * (p.X - m.X) +
+                    (p.Y - m.Y) * (p.Y - m.Y) + (p.Z - m.Z) * (p.Z - m.Z)), gs.grabbingActor == plate ? 1 : 0,
+                    gs.holdingActor == plate ? 1 : 0);
+        }
+    }
 }
 
 }  // namespace coop::dev::cover_probe

@@ -220,9 +220,9 @@ re-broadcasts the whole array, and a refused one goes back to its author with it
 (`coop/interactables/physmods_sync`). The four back plates over those slots are the host's: a
 client's unbolt or bolt, its take-off and its plate set back on its lid are refused and asked of the
 host (`CoverIntent`), which judges the reach and its own desk and runs the change there. A take-off's
-plate is the host's prop, spawned where the plate was and taken into the asker's hand; a client's
-desk never sets a plate back itself (its `panelTakeoff` is held), and asks once the plate has left
-its lid and comes back to it. The host sends the plates on change and to a joiner (`CoverState`),
+plate is the host's prop, spawned where the plate was for the asker to grab; no desk sets it back
+until it has been held off its lid, and a client's desk never sets a plate back itself (it asks)
+once the plate it holds has left its lid and comes back to it. The host sends the plates on change and to a joiner (`CoverState`),
 and a client writes them and repaints through the desk's own `updPanels`; the same lane carries a
 transformer station's door, swung through the station's own `openDoor` (`coop/world/cover_sync`)
 `[V]` (`coop/dev/cover_probe`, `VOTVCOOP_COVER_PROBE=1`: a client's unbolt, take-off, set-back and
