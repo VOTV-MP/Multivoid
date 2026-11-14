@@ -189,6 +189,7 @@ void OnDisconnect() {
     if (getOff || occupy)
         UE_LOGI("atv_rider_watch: session end -- this client's own calls on the host's kerfur mirrors refused: getOffCar=%u "
                 "tryToOccupyCar=%u", getOff, occupy);
+    g_session.store(nullptr, std::memory_order_release);   // the next Install names the next session
     g_saidNoEid.store(false, std::memory_order_relaxed);
     g_saidGetOff.store(false, std::memory_order_relaxed);
     g_saidOccupy.store(false, std::memory_order_relaxed);

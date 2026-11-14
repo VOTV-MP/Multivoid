@@ -113,6 +113,7 @@ void OnRideOutcome(uint32_t eid, int outcome, const std::wstring& key, float sit
 // and the task finds the ATV that names that eid and ends its ride. The eid's free is deferred to the element flush, so it is
 // not re-issued before the task runs.
 void OnNpcRetired(uint32_t eid) {
+    if (coop::atv_seat_table::HostRiderCount() == 0) return;   // no entry names a rider: nothing to end, nothing to post
     ue_wrap::game_thread::Post([eid] {
         coop::net::Session* s = g_session.load(std::memory_order_acquire);
         if (!s || s->role() != coop::net::Role::Host) return;
@@ -144,6 +145,7 @@ void OnDisconnect() {
     if (g_calls || g_releases)
         UE_LOGI("atv_riders: session end -- kerfur calls=%u releases=%u", g_calls, g_releases);
     g_calls = g_releases = 0;
+    g_session.store(nullptr, std::memory_order_release);   // the next Install names the next session
     coop::atv_rider_watch::OnDisconnect();
 }
 

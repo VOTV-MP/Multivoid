@@ -31,7 +31,8 @@ using Observer = void (*)(uint8_t slot, int outcome, const std::wstring& key, fl
 // Null = no call, and none of the reads. Game thread.
 void SetObserver(Observer fn);
 
-// The slot's peer sits in seat `seatIndex` of the ATV under `key`. Level-wise: the same answer again is cheap and safe.
+// The slot's peer sits in seat `seatIndex` of the ATV under `key`. Level-wise: the same answer again is safe (the attach is
+// skipped; the seat is resolved and the pose and collision written again, about six engine calls).
 void Set(uint8_t slot, const std::wstring& key, uint8_t seatIndex);
 
 // The slot's peer left the ATV under `key`. Clears the target only when it names that key, so a stale record of another

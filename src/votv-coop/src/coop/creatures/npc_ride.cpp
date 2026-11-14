@@ -221,7 +221,13 @@ void OnPoseApplied(uint32_t eid, void* actor, const ue_wrap::FVector& streamed) 
     g_observer(eid, kPlaced, key, 0.f, false, placedCm);
 }
 
+// A native ATV copy outlives the session and the mirrors are destroyed after this runs: each live ATV is told to forget the
+// kerfur it was seated with (no engine call on the mirror) so its own dismount never reaches a destroyed one.
 void OnDisconnect() {
+    for (const auto& kv : g_rows) {
+        void* const live = LiveLatch(kv.second);
+        if (live && kv.second.kerfur) ue_wrap::atv::ForgetSittingKerfur(live, kv.second.kerfur);
+    }
     g_rows.clear();
     g_placeWatch.clear();
 }

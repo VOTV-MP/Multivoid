@@ -44,6 +44,10 @@ void SetSeat(coop::atv_sync::AtvEntry& e, uint8_t occupant, uint8_t syncer, cons
 // owes a stamp, then every subscriber is called.
 void SetRider(coop::atv_sync::AtvEntry& e, uint32_t eid, void* actor, const char* why);
 
+// How many entries the host holds with a rider named. Any thread (a relaxed load): a worker that learns an NPC was retired
+// asks it before posting the game-thread work that would end that NPC's ride, and posts only when it is not zero.
+int HostRiderCount();
+
 // The entry's end: the seat free, the syncer the host, no rider. Run before an entry is erased or replaced.
 void Exit(coop::atv_sync::AtvEntry& e, const char* why);
 

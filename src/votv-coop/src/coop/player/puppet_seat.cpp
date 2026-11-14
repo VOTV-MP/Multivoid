@@ -67,12 +67,29 @@ void WarnOnce(int slot, SlotState& s, const char* what) {
     UE_LOGW("puppet_seat: slot %d on %ls -- %s; its body is left to the stream", slot, s.key.c_str(), what);
 }
 
-void Seat(int slot, SlotState& s, void* body) {
+void Release(int slot, SlotState& s, RemotePlayer& p, void* body) {
+    void* parent = nullptr;
+    // An ATV destroyed under the body detached it already; its pose and collision are restored all the same.
+    const bool detach = E::GetAttachParentActor(body, parent) && parent && ue_wrap::atv::IsAtv(parent);
+    if (detach) E::DetachActorFromParent(body);
+    ue_wrap::puppet::SetOnAtv(body, false);
+    E::SetActorEnableCollision(body, true);
+    p.OnSeatReleased();
+    s.seatedBody = nullptr;
+    s.atvAttached = nullptr;
+    UE_LOGI("puppet_seat: slot %d released (%s)", slot, detach ? "detached" : "already detached");
+    Notify(slot, kReleased, s.seatedKey, body, nullptr);
+}
+
+void Seat(int slot, SlotState& s, RemotePlayer& p, void* body) {
     void* atv = nullptr;
     int32_t atvIdx = -1;
     ue_wrap::FVector loc{};
     ue_wrap::FRotator rot{};
     if (!g_resolve || !g_resolve(s.key, s.seatIndex, atv, atvIdx, loc, rot)) {
+        // A body this owner attached to its old ATV is let go the way a seat's end lets it go: left attached, with collision
+        // off, it would be held by nobody while the stream writes its location.
+        if (s.seatedBody == body && s.atvAttached) Release(slot, s, p, body);
         s.atvAttached = nullptr;
         WarnOnce(slot, s, "no live ATV or no seat transform under that key");
         Notify(slot, kResolveFailed, s.key, nullptr, nullptr);
@@ -105,20 +122,6 @@ void Seat(int slot, SlotState& s, void* body) {
     Notify(slot, s.atvAttached ? kAttached : kResolveFailed, s.key, body, atv);
 }
 
-void Release(int slot, SlotState& s, RemotePlayer& p, void* body) {
-    void* parent = nullptr;
-    // An ATV destroyed under the body detached it already; its pose and collision are restored all the same.
-    const bool detach = E::GetAttachParentActor(body, parent) && parent && ue_wrap::atv::IsAtv(parent);
-    if (detach) E::DetachActorFromParent(body);
-    ue_wrap::puppet::SetOnAtv(body, false);
-    E::SetActorEnableCollision(body, true);
-    p.OnSeatReleased();
-    s.seatedBody = nullptr;
-    s.atvAttached = nullptr;
-    UE_LOGI("puppet_seat: slot %d released (%s)", slot, detach ? "detached" : "already detached");
-    Notify(slot, kReleased, s.seatedKey, body, nullptr);
-}
-
 void Apply(int slot) {
     SlotState& s = g_slots[slot];
     coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
@@ -129,7 +132,7 @@ void Apply(int slot) {
     }
     if (s.seatedBody != body) s.seatedBody = s.atvAttached = nullptr;  // a new body starts from the engine's own state
     if (p->IsRagdollDisplayed()) return;  // both ragdoll stops call OnBodyChanged
-    if (s.hasTarget) Seat(slot, s, body);
+    if (s.hasTarget) Seat(slot, s, *p, body);
     else if (s.seatedBody == body) Release(slot, s, *p, body);
 }
 
@@ -163,10 +166,9 @@ void Clear(uint8_t slot, const std::wstring& key) {
     UE_ASSERT_GAME_THREAD("puppet_seat::Clear");
     if (slot >= kSlots) return;
     SlotState& s = g_slots[slot];
-    if (s.hasTarget && s.key == key) {
-        s.hasTarget = false;
-        s.key.clear();
-    }
+    if (!s.hasTarget || s.key != key) return;   // a stale record of another ATV changes nothing, and re-seats nothing
+    s.hasTarget = false;
+    s.key.clear();
     Apply(slot);
 }
 

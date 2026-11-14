@@ -323,9 +323,10 @@ bool UnseatWithoutCar(void* kerfur) {
     ok = Step(puppet::SetNpcOnAtv(kerfur, false), 4, "isOnAtv") && ok;
     static int32_t sAbsOff = -2;
     static uint8_t sAbsMask = 0;
+    static void* sSceneClass = nullptr;   // resolved once; asked again only while it did not resolve
+    if (!sSceneClass) sSceneClass = R::FindClass(P::name::SceneComponentClass);
     void* const mesh = *reinterpret_cast<void* const*>(base + P::off::ACharacter_Mesh);
-    ok = Step(mesh && WriteBoolOf(mesh, R::FindClass(P::name::SceneComponentClass), L"bAbsoluteRotation", sAbsOff,
-                                  sAbsMask, true),
+    ok = Step(mesh && WriteBoolOf(mesh, sSceneClass, L"bAbsoluteRotation", sAbsOff, sAbsMask, true),
               5, "Mesh bAbsoluteRotation") && ok;
     return ok;
 }
