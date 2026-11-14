@@ -528,6 +528,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
+| `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
 
 ## Late join
 
@@ -588,7 +589,7 @@ prop resolves.
 | the stick | `coop/props/prop_stick_sync` |
 | a prop's nametag | `coop/props/prop_nametag`, `ue_wrap/actors/nametag` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
-| the robot cleaner | [devices.md](devices.md#the-robot-cleaner) (`coop/props/roomba_sync`) |
+| the robot cleaner | `coop/props/roomba_sync`; `harness/autotest/autotest_roomba.cpp` (`roomba_drill`) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
