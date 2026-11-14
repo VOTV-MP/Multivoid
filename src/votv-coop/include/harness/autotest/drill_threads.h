@@ -238,4 +238,12 @@ DWORD WINAPI WorldSoundThread(LPVOID arg);
 DWORD WINAPI NightmareThread(LPVOID arg);
 // level_visit_drill, both peers -- harness/autotest/autotest_level_visit.cpp
 DWORD WINAPI LevelVisitThread(LPVOID arg);
+// ufo_drill, both peers -- harness/autotest/autotest_ufo.cpp
+DWORD WINAPI UfoDrillThread(LPVOID arg);
+// orb_drill, both peers -- harness/autotest/autotest_orb.cpp
+DWORD WINAPI OrbDrillThread(LPVOID arg);
+// sky_tp_drill, both peers -- harness/autotest/autotest_sky_tp.cpp
+DWORD WINAPI SkyTpDrillThread(LPVOID arg);
+// roomba_drill, both peers -- harness/autotest/autotest_roomba.cpp
+DWORD WINAPI RoombaDrillThread(LPVOID arg);
 }  // namespace harness::autotest

@@ -82,6 +82,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/world/level_instance.cpp
     src/ue_wrap/world/active_events.cpp
     src/ue_wrap/world/jellyfish_path.cpp
+    src/ue_wrap/world/spline.cpp
     src/ue_wrap/world/bad_sun.cpp
     src/ue_wrap/world/red_sky.cpp
     src/ue_wrap/world/explosion.cpp

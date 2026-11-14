@@ -25,6 +25,8 @@
 #include "coop/creatures/piramid_sync.h"      // the PyramidGather receiver
 #include "coop/creatures/geom_octa_relay.h"   // the Geom Octa's decisions replayed on a client
 #include "coop/props/prop_nametag.h"      // a prop's nametag, the host's
+#include "coop/creatures/orb_authority.h"     // the black orb's encounter, judged by the host
+#include "coop/world/ufo_sync.h"              // the ambient UFOs' paths and the Midas run, the host's
 #include "coop/props/prop_save_data.h"    // the per-prop save record lane
 #include "coop/props/prop_stick_sync.h"
 #include "coop/props/prop_throw.h"        // JudgeRelease: the bounds and the relay of a client's release
@@ -557,6 +559,30 @@ bool HandleEntityEvent(net::Session& session,
         net::GeomOctaEventPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ue_wrap::game_thread::Post([p] { ::coop::geom_octa_relay::OnEvent(p); });
+        break;
+    }
+    case net::ReliableKind::OrbEvent: {
+        // HOST->CLIENT: the black orb's encounter, judged by the host (coop/creatures/orb_authority). Exact length.
+        if (msg.payloadLen != sizeof(net::OrbEventPayload)) {
+            UE_LOGW("event_feed: OrbEvent payload is %zu bytes, not %zu -- dropping", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::OrbEventPayload));
+            break;
+        }
+        net::OrbEventPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ue_wrap::game_thread::Post([p] { ::coop::orb_authority::OnEvent(p); });
+        break;
+    }
+    case net::ReliableKind::UfoEvent: {
+        // HOST->CLIENT: an ambient UFO's rolled path or the Midas run (coop/world/ufo_sync). Exact length.
+        if (msg.payloadLen != sizeof(net::UfoEventPayload)) {
+            UE_LOGW("event_feed: UfoEvent payload is %zu bytes, not %zu -- dropping", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::UfoEventPayload));
+            break;
+        }
+        net::UfoEventPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ue_wrap::game_thread::Post([p] { ::coop::ufo_sync::OnEvent(p); });
         break;
     }
     case net::ReliableKind::WorldActorSpawn: {

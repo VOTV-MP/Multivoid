@@ -71,6 +71,7 @@ leaving one leaves nothing to restore.
 | jellyfish path | spawn refused | its seven fish are made inside its graph; the host's run is mirrored through the source-gated catch |
 | vent crawler, grays, eggs, tentacle balls | gameplay entries refused (BeginPlay, tick, overlaps, AI and despawn verbs); the AnimBP and the pose stay | on a client they exist only as host mirrors through the npc lane's allowlist. A mirror loses what its BeginPlay also set up: a ball's and a gray's mesh attach, a ball's ambient loop. The crawler's crawl is the host's (any player's body in its box starts it there), and a client plays what its graph plays beside the pose: the vent steps, the steps along the crawl, the metal break and its burst, the vent's swing and the signal room door's power, from one EventCue at the crawl's start (`coop/world/vent_crawler_sync`) A peer that joins mid-event gets every living creature from the npc lane's join census; the event's own scene is not replayed |
 | gray controller, balls follower, super egger | the mint and activation bodies refused | their creature BeginDeferred calls are bytecode-internal: no spawn interceptor can see them, so the bodies must not run |
+| black orb spawner | tick refused | its tick counts the local player's laps around it and, past 240, mints an orb 200 m from that player's camera: a client's own would be a private orb. The host counts each client's laps by the same rule, from the client's streamed eye, and mints that client's orb, which crosses as any orb (`coop/creatures/orb_authority`) |
 | firefly, pinecone | left running | anchored on the local player's camera: each peer owns its roll and the others render a mirror |
 | eyer | left running | it stalks its own peer's player: each peer owns its eyer and the others render a mirror (`coop/creatures/owner_entity_sync`) |
 | underground garbage | left running | per-peer loot mounds; refusing one would delete a client's loot with no host replacement |
@@ -96,6 +97,28 @@ delay (`coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_tear_mirror`). Th
 where the native choreography puts them on every screen: the victim replays the capture against
 its own player and its wisp mirror, and the host and the third peers hold the victim's puppet at
 the wisp (`coop/creatures/wisp_grab_hold`). The tear plays on every peer's wisp mirror.
+
+### The black orb
+
+The orb event's orb (`npc_orborb_C`, minted by `blackballSpawner_C`) is the host's, and so is its
+encounter. In the game a player's touch stops the orb and plays its timeline (about 5.1 s with the end's own delay), whose
+end reads the player's camera: the orb behind the view destroys itself, the orb in it ends the run
+with a quit. Here a client's copy never reacts to a touch and its timeline end runs nothing. The
+host lets its own player's touch run as the game runs it, and begins the encounter itself when a
+client's body touches its orb; every client's copy then runs its own begin (`OrbEvent` Begin), so
+it stops, fades in and sounds as the host's does. At the timeline's end the host reads the
+toucher's view (its own camera, or a client's streamed eye and aim) with the orb's own test and
+destroys the orb whatever the verdict. A client's own spawner is refused (the table above), so every orb a
+client sees is the host's; the host counts every player's laps round the spawner, a client's from
+its streamed eye, and mints a client's orb 200 m from that client as the spawner would. A caught player is revived through the run end's usual
+answer, on the host directly or on the client by `OrbEvent` Death, and nobody's game closes; when
+that answer cannot run (its verbs, the dead flag's offset or the session missing) the player is spared and the
+log names the missing piece once, since the game's own end quits the whole process
+(`coop/creatures/orb_authority`). A joiner during an encounter is owed nothing: the encounter is about five seconds,
+the copy born inside it stands where the host's pose puts it, and the host's destroy takes it, as MTA replays no
+one-shot event to a joiner `[?]`. `[V]` on the rig (the probe `orb_drill` replaces): a client that walked into the host's orb with
+its view away from it was spared, and with its view toward it was caught and revived; the orb was
+gone on both peers either way.
 
 ### Roaches
 
@@ -155,6 +178,7 @@ on [players.md](players.md).
 | a shared-world character: existence, pose, death | the host | an interceptor on the spawn, a pose batch, a destroy broadcast; the client's spawns are cancelled |
 | a stalker creature | the peer it rolled for | native on the owner, a display mirror elsewhere |
 | the killer wisp's kill | the host detects, the victim dies | a grab message to the victim, the tear to all |
+| the black orb's encounter and verdict | the host | its begin to all, a caught player's death to that player; the orb destroyed either way |
 | the roach infestation | the host | a paged snapshot; a client's stomp is an intent |
 | the kerfur's identity across forms | the host | one id, rebound in place, one transition signal |
 | the kerfur's conversions and commands | the host | a client's verb is a request the host performs |
@@ -167,6 +191,7 @@ on [players.md](players.md).
 | `EntityPose` (stream) | the host to all | a pose batch, fair-share rotated |
 | `OwnerEntitySpawn`, `OwnerEntityPose`, `OwnerEntityDestroy` | the owner to all | a stalker's birth, pose and death |
 | `WispGrab`, `WispTear` | the host to the victim; the host to all | the grab and its delay; the tear to play on the mirror |
+| `OrbEvent` | the host to all; the host to the toucher | the orb's id and its encounter's begin; the orb's id and that it caught this player |
 | `RoachState`, `RoachConsumed` | the host to all; a client to the host | a page of the infestation; a stomped or eaten roach |
 | `KerfurConvertRequest`, `KerfurConvert` | a client to the host; the host to all | a turn-on or turn-off to perform; the form transition with both ids, the form, the class and the pose |
 | `KerfurCommand` | a client to the host | a radial verb with the sender's request number, which the host runs serving the sender |
@@ -204,6 +229,7 @@ wisp in flight is transient and owes nothing.
 | the engine wrappers | `ue_wrap/actors/kerfur`, `ue_wrap/actors/wisp` |
 | per-peer creatures | `coop/creatures/owner_entity_sync` |
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
+| the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `harness/autotest/autotest_orb.cpp` (`orb_drill`) |
 | roaches | `coop/creatures/roach_sync` |
 | the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |

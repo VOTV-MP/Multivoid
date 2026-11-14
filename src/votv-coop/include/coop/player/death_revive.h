@@ -37,6 +37,10 @@ void Tick(coop::net::Session& session, void* localPawn);
 // are resolved, the dead flag's offset is known and a session is live. Any thread.
 bool ReviveAvailable();
 
+// The piece ReviveAvailable lacks, in words (the verbs, the dead flag's offset, the session), or null when it is
+// available: for a caller that refuses to answer a death and must say why. Any thread.
+const char* ReviveMissing();
+
 // The seam publishes its own readiness here, so this module never has to name it back; the arm
 // at the death edge is `ReviveAvailable() && the seam can cancel`. Any thread.
 void NoteRunEndSeamReady(bool ready);
