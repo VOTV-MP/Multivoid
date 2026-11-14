@@ -46,6 +46,11 @@ bool HandleWindowMessage(void* hwnd, unsigned msg, uintptr_t wParam, intptr_t lP
 // Any thread.
 void OnMilestone(const char* milestone);
 
+// ImGui and the RHI backend are live: the game window has presented a frame and the overlay came up on it,
+// so an ImGui context exists. False before that, which for a window minimized or covered from its launch is
+// the whole join. Any thread (atomic).
+bool ImguiReady();
+
 // Force visibility (e.g. a future main-menu button opening the server browser).
 void SetVisible(bool visible);
 

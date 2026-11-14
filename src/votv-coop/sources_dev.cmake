@@ -303,6 +303,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp
     src/coop/dev/join_abort_drill.cpp
+    src/coop/dev/join_minimized_drill.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/puppet_reg_probe.cpp
     src/coop/dev/pi0_selftest.cpp

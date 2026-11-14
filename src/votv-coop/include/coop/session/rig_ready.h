@@ -17,25 +17,28 @@
 #pragma once
 
 #include "coop/dev/dependency_dump.h"
+#include "coop/dev/join_minimized_drill.h"
 #include "coop/dev/rig_verdict_selftest.h"
 #include "ue_wrap/core/log.h"
 #include "ui/imgui_overlay.h"
 
 namespace coop::rig_ready {
 
-// Each milestone also reaches the dependency dump, the verdict self-test and the overlay, which judges its draw
-// seams at the first of hosting, world-ready and solo-world.
+// Each milestone also reaches the dependency dump, the verdict self-test, the minimized-join drill and the
+// overlay, which judges its draw seams at the first of hosting, world-ready and solo-world.
 
 inline void Say(const char* milestone) {
     UE_LOGI("rig: READY %s", milestone);
     coop::dev::dependency_dump::OnMilestone(milestone);
     coop::dev::rig_verdict_selftest::OnMilestone(milestone);
+    coop::dev::join_minimized_drill::OnMilestone(milestone);
     ui::imgui_overlay::OnMilestone(milestone);
 }
 inline void Say(const char* milestone, int slot) {
     UE_LOGI("rig: READY %s slot=%d", milestone, slot);
     coop::dev::dependency_dump::OnMilestone(milestone);
     coop::dev::rig_verdict_selftest::OnMilestone(milestone);
+    coop::dev::join_minimized_drill::OnMilestone(milestone);
     ui::imgui_overlay::OnMilestone(milestone);
 }
 

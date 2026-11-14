@@ -4,15 +4,14 @@
 
 #pragma once
 
+#include "ui/imgui_overlay.h"  // ImguiReady, which this header used to declare
+
 namespace ui::overlay_backend { struct FrameTarget; }
 
 namespace ui::imgui_overlay {
 
 // One frame of overlay work; the target arrives from whichever present seam fired.
 void OverlayFrame(const overlay_backend::FrameTarget& t);
-
-// ImGui and the RHI backend are live (the resize bracket acts only then).
-bool ImguiReady();
 
 // The bring-up for a target whose own engine seam owns it (Vulkan): ImGui, the Win32 backend and the RHI
 // backend come up behind the SEH guard, and the overlay is ready on true. Once only; the DX targets are

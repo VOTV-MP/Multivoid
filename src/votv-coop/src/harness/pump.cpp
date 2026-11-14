@@ -15,6 +15,7 @@
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/function_lookup_parity.h"
 #include "coop/dev/join_abort_drill.h"
+#include "coop/dev/join_minimized_drill.h"
 #include "coop/dev/world_singleton_parity.h"
 #include "coop/input/game_window_proc.h"
 #include "coop/input/input_owner.h"
@@ -139,6 +140,9 @@ void TickFrameTail() {
     // the play loop alike, so it catches either abort window) and notes the rejoin's world-ready; a
     // single enum read when off.
     coop::dev::join_abort_drill::OnFrameTail();
+    // [dev] The minimized-window join proof minimizes the window at boot, judges at the first tick after the join
+    // completed and restores it; a single flag read when off.
+    coop::dev::join_minimized_drill::OnFrameTail();
     // The one subclass of the game window (close signals, hotkeys, native text fields): found and
     // followed here, in session or out of one, with no present needed.
     coop::input::game_window_proc::Tick();

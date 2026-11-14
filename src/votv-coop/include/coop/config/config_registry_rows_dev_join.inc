@@ -139,3 +139,9 @@ CFG_FLAG(curtain_dismiss_frame_clock_off, "curtain_dismiss_frame_clock_off", "de
     "it did before it was moved into the frame. A window that has never presented a frame has no ImGui context, "
     "so the snapshot-complete handler faults there and the reconcile window stays up: the minimized-join drill "
     "must say FAIL.")
+CFG_FLAG(join_minimized_drill, "join_minimized_drill", "dev", false, "VOTVCOOP_JOIN_MINIMIZED_DRILL",
+    "Drill (CLIENT): at boot the client minimizes its own game window, so the join runs with no frame ever "
+    "presented and no ImGui context. On the first tick after the join completed it says `rig: VERDICT "
+    "join-minimized PASS` when the reconcile window is down, FAIL when it is still up, INVALID when a frame was "
+    "presented first. After a PASS it restores the window and prints `join-minimized: DONE on client` once the "
+    "first frame is presented and the join curtain's fade is complete. Its red is curtain_dismiss_frame_clock_off.")
