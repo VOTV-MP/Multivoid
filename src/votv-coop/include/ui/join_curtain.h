@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::join_curtain {
 
 // Raise the cover (alpha = 1) -- CLIENT, at its world load (`join_progress::BeginWorldLoad`), and
@@ -36,6 +38,14 @@ void Reset();
 // (alpha > 0). False once Render has finished the fade. The overlay's render gate reads it, so a recorded
 // dismissal keeps frames coming until Render takes it.
 bool IsActive();
+
+// True while the cover is up or its dismissal is recorded and the fade has not begun, so Render has not
+// yet taken it. False while fading and once hidden. Any thread.
+bool AwaitingFade();
+
+// How many Render calls have finished (a frame the cover had its say in). A reader that sees the count rise
+// sees that frame's transition. Any thread.
+uint64_t RenderPasses();
 
 // Draw the full-viewport cover at the current alpha. Call every frame from the imgui overlay, inside the
 // frame; no-op when inactive. Uses ImGui::GetTime() for the fade clock.

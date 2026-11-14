@@ -94,6 +94,7 @@ std::atomic<bool> g_reconKindLoad{true};
 std::atomic<bool> g_reconRaiseRequested{false};
 std::chrono::steady_clock::time_point g_reconRaisedAt{};  // game thread; rising edge only, never restamped by Begin
 bool g_reconCompleteSinceArm = false;                     // game thread; the kind classifier
+const char* g_reconLastLowerWhy = "";                     // game thread; the last lowering's reason (a literal)
 constexpr int kReconCeilingMs = 180000;  // well clear of the slowest measured arm-to-complete
 
 // Game-thread rising-edge raise, shared by the raise sites and the Arm-request consume.
@@ -108,6 +109,7 @@ void ReconRaiseGT_(bool kindLoad, const char* who) {
 
 void ReconLowerGT_(const char* why) {
     if (g_reconUp.exchange(false, std::memory_order_relaxed)) {
+        g_reconLastLowerWhy = why;
         UE_LOGI("world_load_episode: reconcile window LOWERED (%s)", why);
     }
 }
@@ -426,6 +428,8 @@ bool InReconcileWindow() {
     if (sDisabled) return false;
     return g_reconUp.load(std::memory_order_relaxed);
 }
+
+const char* LastReconcileLowerReason() { return g_reconLastLowerWhy; }
 
 bool ReconcileWindowIsLoadKind() { return g_reconKindLoad.load(std::memory_order_relaxed); }
 

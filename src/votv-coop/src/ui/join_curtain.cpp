@@ -8,6 +8,7 @@
 #include "imgui.h"
 
 #include <atomic>
+#include <cstdint>
 
 namespace coop::join_curtain {
 namespace {
@@ -23,6 +24,8 @@ namespace {
 enum class State { Hidden, Up, DismissRequested, Fading };
 std::atomic<int>    g_state{static_cast<int>(State::Hidden)};
 std::atomic<double> g_fadeStart{0.0};  // ImGui::GetTime() when Render took the dismissal
+
+std::atomic<uint64_t> g_passes{0};     // Render calls finished: the frames the cover has had its say in
 
 constexpr float kFadeSeconds = 0.40f;  // smooth 1->0 dismiss (not a hard snap); the world fades in assembled
 
@@ -61,7 +64,18 @@ bool IsActive() {
     return Get() != State::Hidden;
 }
 
-void Render() {
+bool AwaitingFade() {
+    const State st = Get();
+    return st == State::Up || st == State::DismissRequested;
+}
+
+uint64_t RenderPasses() {
+    return g_passes.load(std::memory_order_acquire);
+}
+
+namespace {
+
+void DrawCover() {
     State st = Get();
     if (st == State::Hidden) return;
 
@@ -96,6 +110,13 @@ void Render() {
     const ImGuiIO& io = ImGui::GetIO();
     const ImU32 col = IM_COL32(0, 0, 0, static_cast<int>(alpha * 255.0f + 0.5f));
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), io.DisplaySize, col);
+}
+
+}  // namespace
+
+void Render() {
+    DrawCover();
+    g_passes.fetch_add(1, std::memory_order_release);  // after the pass: a reader of the count sees its effect
 }
 
 }  // namespace coop::join_curtain

@@ -1,16 +1,15 @@
 // coop/dev/join_minimized_drill.h -- [dev] a client whose game window never presents a frame completes its join.
 //
-// A window minimized or covered through its join has no ImGui context (the overlay comes up on the first
-// presented frame), so any ImGui call the SnapshotComplete case makes on the game thread faults and skips the
-// rest of the case: the reconcile window stays up all session. This drill reproduces that window. At boot the
-// client minimizes its own game window; the join runs with no frame presented. The case is synchronous on the
-// game thread, so the first tick after `rig: READY joined` already sees its effect:
-//   PASS     the reconcile window is down at that tick (the rig also expects its `LOWERED (SnapshotComplete)` line).
-//   FAIL     the window is still up: the case did not finish. Said at once, no later leg.
-//   INVALID  a frame was presented before the join completed, so the minimize did not take.
-// After a PASS the window is restored, and the drill waits for the first presented frame and for the curtain
-// to finish its fade (join_curtain::IsActive false), then prints `join-minimized: DONE on client`.
-// Off unless config join_minimized_drill is set; client only. Game thread, except OnMilestone.
+// A window that never presented has no ImGui context, so an ImGui call made by the SnapshotComplete case on
+// the game thread faults and skips the rest of it: the reconcile window stays up. At boot the client minimizes
+// its own window, so the join runs with no frame. The first tick after `rig: READY joined` judges:
+//   FAIL     the reconcile window is still up. Said at once, no later leg.
+// Lowered by the snapshot's own completion, it restores the window and waits on the cover:
+//   FAIL     the first presented frame left the cover up or waiting to fade.
+//   PASS     the cover is Hidden after the window presented, then `join-minimized: DONE on client`.
+//   INVALID  a frame came before the join completed, another cause lowered the window, no cover was up, or the
+//            fade ran past a frame bound.
+// Off unless config join_minimized_drill is set; on a host it logs that and does nothing.
 
 #pragma once
 

@@ -136,6 +136,11 @@ void NoteBracketFlake();
 // lost write.
 bool InReconcileWindow();
 
+// Why the window was last lowered: "SnapshotComplete", "ceiling", "Reset" or "bracket-flake backstop"; empty
+// before any lowering. Read-only, for a drill that must tell the snapshot's own lowering from the others.
+// Game thread.
+const char* LastReconcileLowerReason();
+
 // True while the window is up with the load kind; meaningful only while InReconcileWindow.
 // Any thread (atomic).
 //
