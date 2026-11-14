@@ -221,6 +221,12 @@ CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefault
     "not Unreal's 7777, which nothing in the mod has ever bound. Replacing the address "
     "while keeping the port is the natural edit.")
 CFG_ROWFLAGS(browser_lastdirect, kRowAddress)
+CFG_INT(browser_width, "browser.width", "ui", 980, 980, 7680, nullptr,
+    "The server browser's width, in the window's own units (remembered automatically when its corner is dragged). Its "
+    "layout is measured at 980, the least it takes.")
+CFG_INT(browser_height, "browser.height", "ui", 662, 662, 4320, nullptr,
+    "The server browser's height, in the window's own units (remembered automatically when its corner is dragged). Its "
+    "layout is measured at 662, the least it takes.")
 CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr,
     "Set to 1 to hide the Multiplayer main-menu button (the mod stays loaded).")
 CFG_STRING(game_build_ack, "game_build_ack", "ui", "", nullptr, false,
