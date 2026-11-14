@@ -720,12 +720,13 @@ enum class ReliableKind : uint16_t {
     // HOST->ALL: a fire extinguisher's foam (coop/props/fireext_sync). Op 0: a world extinguisher's runaway thrust (its
     // `active` with charge left) and its charge, when either changes and to a joiner at its ready edge; a client's copy
     // shows the thrust's foam and sound, and never runs the thrust itself. Op 1: a player's spray from the extinguisher
-    // in its hand, on or off; every other peer shows it on that player's hand mirror. Never relayed; not pre-world.
-    // FireExtPayload.
+    // in its hand, on or off, with the host's count of its charge, sent twice a second while it runs: the sprayer's hand and
+    // every mirror of it take it. Never relayed; not pre-world. FireExtPayload.
     FireExtState = 264,
-    // CLIENT->HOST: this client's player started or stopped spraying the extinguisher in its hand (op 2). The host checks
-    // the sender's hand holds one, sprays the game's own extinguishing ray along the sender's aim while it is on, and
-    // sends op 1 to every peer. Never relayed. FireExtPayload.
+    // CLIENT->HOST: this client's player started or stopped spraying the extinguisher in its hand (op 2), with the hand's
+    // charge. The host checks the sender's hand holds one, sprays the game's own extinguishing ray along the sender's aim
+    // while it is on, drains its own count of the charge, never above the hand's word, and sends op 1 to every peer.
+    // Never relayed. FireExtPayload.
     FireExtIntent = 265,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
@@ -5122,8 +5123,8 @@ struct FireExtPayload {
     uint8_t  op;    // kFireExtOp*
     uint8_t  slot;  // op 1: the sprayer's slot
     uint8_t  on;    // 1 the thrust or the spray runs
-    uint8_t  pad;   // zero
-    float    life;  // op 0: the charge, 0..1
+    uint8_t  charged;  // ops 1, 2: 1 when `life` is the hand's charge (op 1: the host's count of it)
+    float    life;  // op 0: the charge, 0..1; ops 1, 2: the hand's charge
 };
 static_assert(sizeof(FireExtPayload) == 12, "FireExtPayload must be 12 bytes");
 
