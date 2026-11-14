@@ -217,7 +217,17 @@ cannot pull the drive back out; a drive a conflicting line ejects is unfrozen wi
 no hold follows it. The desk's physical modules sit in slots, and a type
 may sit in more than one, so a plug and an unplug each name their slot; the host applies them and
 re-broadcasts the whole array, and a refused one goes back to its author with it
-(`coop/interactables/physmods_sync`). The tape caddy's reel slots are presser-authored edges, and
+(`coop/interactables/physmods_sync`). The four back plates over those slots are the host's: a
+client's unbolt or bolt, its take-off and its plate set back on its lid are refused and asked of the
+host (`CoverIntent`), which judges the reach and its own desk and runs the change there. A take-off's
+plate is the host's prop, spawned where the plate was and taken into the asker's hand; a client's
+desk never sets a plate back itself (its `panelTakeoff` is held), and asks once the plate has left
+its lid and comes back to it. The host sends the plates on change and to a joiner (`CoverState`),
+and a client writes them and repaints through the desk's own `updPanels`; the same lane carries a
+transformer station's door, swung through the station's own `openDoor` (`coop/world/cover_sync`)
+`[V]` (`coop/dev/cover_probe`, `VOTVCOOP_COVER_PROBE=1`: a client's unbolt, take-off, set-back and
+bolt each ran on the host and showed on both desks, a client's door press swung both doors, and the
+host's own unbolt and door reached the client). The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second
 (`coop/interactables/tape_caddy_sync`). The stationary PC's power is a presser edge
 (`coop/interactables/laptop_sync`); its disc slot is the host's like a server box's, a peer's
@@ -283,6 +293,7 @@ measured). Nine of the ten have a row on the laptop's panel, since no widget car
 | the desk's save family: save, delete, the deck's drive and send, the refiner's upload, start and stop | the host | a client's press as an intent the host replays; its gloss, stat and sounds back to the presser |
 | the refiner | the host; a completion's gloss and processed signal, the one whose start began it | the host's state stream |
 | drives, racks, modules, the crate, the file buffer | the host, canonical | any peer's operations, the host's array back |
+| the desk's back plates, a transformer station's door | the host | polled and sent on change; a client's change is an intent the host runs |
 | a drive's recorded row | the host | sent at the drive's own `upd`; a client's new drive's first row, from the client that brought it |
 | the eraser's delete | the host | a client's press as an intent; the host's press and wipe shown on every client's eraser |
 | the tape accrual | each peer, host-adjusted | a one-hertz re-snap |
@@ -309,6 +320,7 @@ measured). Nine of the ten have a row on the laptop's panel, since no widget car
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the host | playback edges; the refiner's state, its completions and its loaded signal |
 | `DriveSlotState` | any peer to the host; the host to every other client, a line it accepted; the host to the source, answering a line it refused | a slot's occupant, inserted or ejected |
 | `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | rack operations and arrays; the module set; the crate stack |
+| `CoverState`, `CoverIntent` | the host to all, a take-off's answer to its asker; a client to the host | the plates on and unbolted, a station's door; a client's unbolt, take-off, set-back or door press |
 | `DrivePayload` | the host to all and to a joiner; a client to the host; the host to that client | a drive's row; a client's own new drive's row; the host's own row, answering a client row it refused |
 | `EraserPressIntent` | a client to the host; the host to all, or to a presser | the eraser's delete, with the drive the presser saw seated; what the host's eraser did, for each client's eraser to show; a press the host refused |
 | `ReelSlot`, `ReelPose` (stream), `ReelEjectIntent` | the presser; the host; a client | slot edges; the corrector; a reel birth |
@@ -368,3 +380,4 @@ arrive with the save and never again.
 | the join seeds | `coop/session/join_seed` |
 | tests and instruments | `coop/dev/drive_selftest`, `coop/dev/drive_drill`, `coop/dev/download_drill`, `coop/dev/desk_diag`, `coop/dev/sat_console_drill`, `coop/dev/calib_drill`, `coop/dev/desk_ping_drill`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |
 | the desk's short circuit | `coop/interactables/desk_short_sync`, `ue_wrap/desk/desk_short` |
+| the desk's back plates and the stations' doors | `coop/world/cover_sync`; `coop/dev/cover_probe` |
