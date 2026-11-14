@@ -228,7 +228,10 @@ def check_range(repo, rng, empty_ok=True):
     if rng.startswith("-"):
         print("commit_msg_check: a range cannot start with '-' ({})".format(rng))
         return 2
-    raw = git(["log", "-z", "--format=%H%n%B", "--end-of-options", rng], repo)
+    # The first-parent line is main's own history: every linear commit (an adopted copy included) and a record merge
+    # itself. A record merge's second parent is the author's published branch head, kept as its author wrote it so the
+    # request shows merged; it is not main's message to judge.
+    raw = git(["log", "-z", "--first-parent", "--format=%H%n%B", "--end-of-options", rng], repo)
     bad = total = 0
     for rec in raw.split("\0"):
         if not rec.strip():
