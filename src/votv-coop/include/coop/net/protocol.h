@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 309;
+inline constexpr uint16_t kProtocolVersion = 310;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1549,6 +1549,16 @@ enum class ReliableKind : uint16_t {
     // the host alone. Late join: a joiner's prop row carries the same two values (PropSpawnPayload physFlags kPried
     // and pryMask), and PryState follows for what breaks after. PryStatePayload.
     PryState = 279,
+
+    // HOST->ALL: a GPU mining rig's (prop_miner_C) GPUs, slots, coolers, points and heat (coop/props/miner_sync), when one
+    // changes (the points at most once a second) and to a joiner at its ready edge; a client's copy writes them and
+    // repaints through the rig's own `upd`. Op 1, HOST->that client: its ask was granted or refused. Never relayed; not
+    // pre-world. MinerPayload.
+    MinerState = 247,
+    // CLIENT->HOST: this client's player used a GPU, a cooler or scrap metal on a rig (op 2) or claimed its points
+    // (op 3). The host judges the sender's reach and pace and runs its own rig's `upgrade` or claim, whose hints go to
+    // the asker. Never relayed. MinerPayload.
+    MinerIntent = 248,
 };
 
 #pragma pack(push, 1)
@@ -2668,6 +2678,23 @@ struct KeyedTogglePayload {
 static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 bytes");
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
+
+// A GPU mining rig (MinerState, MinerIntent).
+inline constexpr uint8_t kMinerOpState = 0, kMinerOpAnswer = 1, kMinerOpAdd = 2, kMinerOpClaim = 3;
+inline constexpr uint8_t kMinerItemSlot = 0, kMinerItemGpu = 1, kMinerItemFan = 2;  // scrap_metal, miner_gpu, miner_fan
+struct MinerPayload {
+    uint32_t eid;       // the rig's prop element id
+    uint8_t  op;        // kMinerOp*
+    uint8_t  item;      // ops 1, 2: kMinerItem*
+    uint8_t  granted;   // op 1: 1 the host's rig took it
+    uint8_t  pad;       // zero
+    int32_t  gpus;      // op 0: upg_gpu
+    int32_t  slots;     // op 0: upg_slots
+    int32_t  fans;      // op 0: upg_fans
+    int32_t  points;    // op 0: accumulatedPoints
+    float    overheat;  // op 0
+};
+static_assert(sizeof(MinerPayload) == 28, "MinerPayload must be 28 bytes");
 
 // Where an open swinger lid rests (SwingerRestPose): the container lane's key for the lid, as
 // KeyedTogglePayload carries it, and the lid actor's world location (cm) and rotation (deg).

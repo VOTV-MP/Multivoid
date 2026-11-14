@@ -12,6 +12,7 @@
 #include "coop/props/container_break.h"
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/fireext_sync.h"
+#include "coop/props/miner_sync.h"
 #include "coop/props/fireext_thrust_sync.h"
 #include "coop/props/food_tick_gate.h"
 #include "coop/props/glowstick_sync.h"
@@ -69,6 +70,7 @@ void OnDisconnect() {
     COOP_CLEANUP_STEP("disconnect", coop::prop_hold_claim::OnDisconnect());  // drop the refusal records and the notice cooldown
     COOP_CLEANUP_STEP("disconnect", coop::props::prop_food_sync::OnDisconnect());  // the food lane's tallies, latches and waiting records
     COOP_CLEANUP_STEP("disconnect", coop::fireext_sync::OnDisconnect());  // the sprays shown, the thrusts waiting for a copy, the asks and the tallies
+    COOP_CLEANUP_STEP("disconnect", coop::miner_sync::OnDisconnect());  // the rigs known, the asks and states queued
     COOP_CLEANUP_STEP("disconnect", coop::food_tick_gate::OnDisconnect());  // say the refused food ticks, start the next session from zero
     COOP_CLEANUP_STEP("disconnect", coop::prop_tool_flags::OnDisconnect());  // drop the pending press and the counters
     COOP_CLEANUP_STEP("disconnect", coop::props::container_break::OnDisconnect());
