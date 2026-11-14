@@ -279,6 +279,12 @@ CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
     "their visit ends."))
 CFG_ROWFLAGS(world_backrooms, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(world_backrooms, L10N_MARK("Allow the backrooms"))
+CFG_FLAG(net_hunger_shared, "net.hunger_shared", "net", false, "VOTVCOOP_NET_HUNGER_SHARED",
+    L10N_MARK("Each player gets hungry slower the more players are in the game (about three quarters of the normal "
+    "rate for two players, just over half for four), so a larger group does not need a "
+    "matching mountain of food. Stamina and sleep are unchanged. Off by default."))
+CFG_ROWFLAGS(net_hunger_shared, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(net_hunger_shared, L10N_MARK("Slower hunger in larger groups"))
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,

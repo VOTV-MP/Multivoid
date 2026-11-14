@@ -595,6 +595,7 @@ set(VOTVCOOP_SOURCES
     resources/thanks.rc
     src/coop/player/roster.cpp
     src/coop/player/roster_ledger.cpp
+    src/coop/player/hunger_share.cpp
     src/coop/moderation/ban_list.cpp
     src/coop/moderation/ban_list_selftest.cpp
     src/coop/moderation/cremate.cpp

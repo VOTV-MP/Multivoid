@@ -597,6 +597,10 @@ msgstr ""
 msgid "Duplicate settings with different values"
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "Each player gets hungry slower the more players are in the game (about three quarters of the normal rate for two players, just over half for four), so a larger group does not need a matching mountain of food. Stamina and sleep are unchanged. Off by default."
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr ""
@@ -1208,6 +1212,10 @@ msgstr ""
 
 #: src/ui/skins_panel.cpp
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Slower hunger in larger groups"
 msgstr ""
 
 #: src/coop/props/prop_act_request.cpp
