@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 294;
+inline constexpr uint16_t kProtocolVersion = 295;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -697,6 +697,16 @@ enum class ReliableKind : uint16_t {
     // stood at its cut, and its connect replay sends it, alone, an op 2 for each prop whose tag this session published,
     // ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by key.
     PropNametag = 261,
+    // HOST->ALL: a cover's state (coop/world/cover_sync), when it changes and to a joiner at its ready edge. The signal
+    // desk's four back plates: which are on and which are unbolted, written into the desk and shown through its own
+    // updPanels. A transformer station's (generator_C) maintenance door: open or shut, shown through its own openDoor.
+    // Op 5, HOST->that client: its take-off was granted or refused. Never relayed; not pre-world. CoverPayload.
+    CoverState = 266,
+    // CLIENT->HOST: this client's player unbolted or bolted a back plate (op 1), took one off (op 2), set one back (op 3,
+    // the plate prop's element id), or pressed a transformer station's door (op 4, the state it wants). The host judges
+    // the sender's reach and its own desk's or station's state, runs the change on its copy, and CoverState answers.
+    // Never relayed. CoverPayload.
+    CoverIntent = 267,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game
@@ -4853,6 +4863,21 @@ struct VentCrawlStatePayload {
 static_assert(sizeof(VentCrawlStatePayload) == 32, "VentCrawlStatePayload must be 32 bytes");
 static_assert(sizeof(VentCrawlStatePayload) <= 256 - 20 - 8,
               "VentCrawlStatePayload must fit in one reliable datagram");
+
+// A cover (CoverState, CoverIntent).
+inline constexpr uint8_t kCoverOpState = 0, kCoverOpUnscrew = 1, kCoverOpTakeOff = 2, kCoverOpPutBack = 3,
+                         kCoverOpDoor = 4, kCoverOpAnswer = 5;
+inline constexpr uint8_t kCoverDesk = 0, kCoverStation = 1;
+inline constexpr uint8_t kCoverDeskPanels = 4;  // the desk's back plates: top left, bottom left, top right, bottom right
+struct CoverPayload {
+    uint8_t  op;     // kCoverOp*
+    uint8_t  what;   // kCoverDesk, kCoverStation
+    uint8_t  index;  // ops 1-3, 5: the plate; a station: its place in the gamemode's list
+    uint8_t  bits;   // op 0 desk: plates on in bits 0-3, unbolted in bits 4-7; op 0 station and op 4: bit 0 open;
+                     // op 5: bit 0 granted
+    uint32_t eid;    // op 3: the plate prop's element id; op 5: the plate the host spawned, 0 when refused
+};
+static_assert(sizeof(CoverPayload) == 8, "CoverPayload must be 8 bytes");
 
 #pragma pack(pop)
 

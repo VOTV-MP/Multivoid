@@ -308,6 +308,7 @@ are the host's rolls, which a client never makes, and its values belong to the o
 panel (the device lock). That player's knob, switch and rotator inputs run on its client first and
 reach the host as values, taken in its order, so a press follows the inputs it rests on; every peer
 draws the host's puzzle with the panel's own setters and moves, and a joiner gets it with the rows.
+The door over the panel is the host's, a client's press asked of it (`coop/world/cover_sync`, [signals.md](signals.md)) `[V]`.
 The wind turbine's heading integrator is not saved and chases the synced wind at a degree per
 second, so the host mirrors six driver floats about once a second and the turbine's own tick
 interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are
