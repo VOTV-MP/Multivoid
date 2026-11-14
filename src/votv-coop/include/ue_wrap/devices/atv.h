@@ -169,19 +169,16 @@ bool DestroyMirror(void* atv);
 // and nothing done, on a null or dead actor, an unresolved function or a call that did not dispatch. Game thread.
 bool Dismount(void* atv);
 
-// Where a seated driver's body goes: behind the handlebars, 100 cm ahead of the driver's `Camera` along the ATV's
-// facing and 25 cm above `sitarrow` (where a riding kerfur's pivot goes, its AnimBP's seat pose built for it), so it
-// rides on the seat; turned as `sitarrow` is. The ATV's own sit puts its player at
-// `playerHit` instead, 140 cm higher, where only its hidden capsule stands. False on null, an unresolved ATV_C or
-// component, or an unreadable transform. Game thread.
+// Where a seated driver's body goes: the world transform of the ATV's `playerHit`, where the ATV's own sit puts its
+// player (location and rotation). False on null, an unresolved ATV_C or component, or an unreadable transform. Game thread.
 bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot);
 
 // The world location of the ATV's `sitarrow`, the point a riding kerfur's pivot goes. False on null, an unresolved ATV_C or
 // an unreadable component. Game thread.
 bool GetSitArrowLocation(void* atv, FVector& loc);
 
-// The world location of the ATV's `Camera`, the driver's eye, which GetSeatTransform measures the body's place from. False on
-// null, an unresolved ATV_C or an unreadable component. Game thread.
+// The world location of the ATV's `Camera`, the driver's eye. False on null, an unresolved ATV_C or an unreadable component.
+// Game thread.
 bool GetCameraLocation(void* atv, FVector& loc);
 
 // The ATV's rider: the kerfur its own `sittingKerfuro` names, or null when the field is empty, names a dead object, or does

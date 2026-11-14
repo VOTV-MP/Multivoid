@@ -1,6 +1,7 @@
 // coop/dev/atv_riders_drill_seat_offset.cpp -- the ATV riders drill's measurement of where each peer puts the driver: one line
 // per seating, every point in the ATV root's own axes (the offset from the root, rotated by the root's rotation undone), so the
-// lines of different peers compare. No verdict is read from them.
+// lines of different peers compare. The local driver's line is a measurement only; a remote driver's body is also judged against
+// the ATV's `playerHit` (JudgeRemoteSeat).
 
 #include "atv_riders_drill_detail.h"
 
@@ -14,6 +15,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace coop::dev::atv_riders_drill::detail {
 namespace {
@@ -63,7 +65,19 @@ void SayLocalSeatOffset() {
             Rooted(p, player, root, rot).c_str(), Rooted(c, camera, root, rot).c_str(), Rooted(s, sit, root, rot).c_str());
 }
 
-void SayRemoteSeatOffset(uint8_t slot) {
+namespace {
+
+// One remote driver's seating, said as a line and measured: the body's place against the ATV's `playerHit` (where the game's
+// own sit puts its player; GetSeatTransform reads it), both in the ATV root's axes. `read` is false when the body, the ATV's
+// root or `playerHit` does not read.
+struct RemoteSeat {
+    bool read = false;
+    float offCm = -1.f;
+    std::string body, hit;
+};
+
+RemoteSeat MeasureRemoteSeat(uint8_t slot) {
+    RemoteSeat m;
     coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(slot);
     void* body = puppet && puppet->valid() ? puppet->GetActor() : nullptr;
     void* atv = AD::Atv(g_key);
@@ -72,14 +86,41 @@ void SayRemoteSeatOffset(uint8_t slot) {
     if (!body || !atv || !ue_wrap::atv::GetRootTransform(atv, root, rot)) {
         UE_LOGI("atv-riders: seat offset (remote driver slot %u) on the %s: the body or the ATV's root does not read",
                 static_cast<unsigned>(slot), RoleName(MyRole()));
-        return;
+        return m;
     }
     const bool b = E::TryGetActorLocation(body, at);
     const bool t = ue_wrap::atv::GetSeatTransform(atv, seat, seatRot);
     const bool s = ue_wrap::atv::GetSitArrowLocation(atv, sit);
-    UE_LOGI("atv-riders: seat offset (remote driver slot %u) on the %s: body=%s seatTransform=%s sitarrow=%s",
-            static_cast<unsigned>(slot), RoleName(MyRole()), Rooted(b, at, root, rot).c_str(), Rooted(t, seat, root, rot).c_str(),
-            Rooted(s, sit, root, rot).c_str());
+    m.body = Rooted(b, at, root, rot);
+    m.hit = Rooted(t, seat, root, rot);
+    UE_LOGI("atv-riders: seat offset (remote driver slot %u) on the %s: body=%s playerHit=%s sitarrow=%s",
+            static_cast<unsigned>(slot), RoleName(MyRole()), m.body.c_str(), m.hit.c_str(), Rooted(s, sit, root, rot).c_str());
+    if (b && t) {
+        m.read = true;
+        const float dx = at.X - seat.X, dy = at.Y - seat.Y, dz = at.Z - seat.Z;
+        m.offCm = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    return m;
+}
+
+}  // namespace
+
+void SayRemoteSeatOffset(uint8_t slot) { MeasureRemoteSeat(slot); }
+
+bool JudgeRemoteSeat(uint8_t slot, int step) {
+    RemoteSeat m;
+    OnGt([&] { m = MeasureRemoteSeat(slot); });
+    if (!m.read) {
+        Invalid("the remote driver's body or the ATV's playerHit did not read (slot " + std::to_string(slot) + ")");
+        return false;
+    }
+    if (m.offCm > kRigidCm) {
+        Fail(step, "remote_seat_off",
+             "the remote driver's body " + m.body + " is " + Num("%.0f", m.offCm) + " cm from the ATV's playerHit " + m.hit +
+                 ", the seat the game's own sit uses (at most " + Num("%.0f", kRigidCm) + " cm)");
+        return false;
+    }
+    return true;
 }
 
 }  // namespace coop::dev::atv_riders_drill::detail

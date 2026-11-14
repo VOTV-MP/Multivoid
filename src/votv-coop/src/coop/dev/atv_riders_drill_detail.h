@@ -114,9 +114,13 @@ bool SitLocal(int& invited);
 
 // The measurement of where a peer seats the driver (atv_riders_drill_seat_offset.cpp), one line per seating, in the ATV root's
 // axes: the driver's own machine says where its pawn, the ATV's camera and its sitarrow are; every other peer says where the
-// driver's body, the seat transform and the sitarrow are. Game thread.
+// driver's body, the ATV's `playerHit` (the game's own driver seat) and the sitarrow are. Both Say calls run on the game thread.
+// JudgeRemoteSeat says the line from the drill's own thread and judges it: the body of `slot` within kRigidCm of `playerHit`, else
+// FAIL `remote_seat_off` for `step` (naming both places), and INVALID when the body or `playerHit` does not read. False when it
+// said a verdict.
 void SayLocalSeatOffset();
 void SayRemoteSeatOffset(uint8_t slot);
+bool JudgeRemoteSeat(uint8_t slot, int step);
 
 // ---- the steps, in the order the drill runs them ----
 

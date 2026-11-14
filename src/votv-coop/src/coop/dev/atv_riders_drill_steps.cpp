@@ -385,7 +385,7 @@ bool HostRide(const Cur& cur) {
                     return -1;
                 }
                 g_attachCm = a->f0;
-                OnGt([] { SayRemoteSeatOffset(kSlotC); });
+                if (!JudgeRemoteSeat(kSlotC, 1)) return -1;
                 s1 = true;
                 StepPass(1, "the driver's body is attached to the ATV with the seat pose");
             }
@@ -451,7 +451,7 @@ bool ObserverSeat(const Cur& cur) {
             return -1;
         }
         g_attachCm = a->f0;
-        OnGt([] { SayRemoteSeatOffset(kSlotC); });
+        if (!JudgeRemoteSeat(kSlotC, 1)) return -1;
         StepPass(1, "the driver's body is attached to the ATV with the seat pose");
         return 1;
     });
@@ -728,7 +728,7 @@ bool RejoinedObserver() {
         return false;
     }
     g_attachCm = attached->f0;
-    OnGt([] { SayRemoteSeatOffset(kSlotC); });
+    if (!JudgeRemoteSeat(kSlotC, 5)) return false;
     StepPass(5, "the driver's body, born after the stamp, is attached with the seat pose");
 
     // The kerfur: decided at the bind when the mirror is shown there, else at its reveal.

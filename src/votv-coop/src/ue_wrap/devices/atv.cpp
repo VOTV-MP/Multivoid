@@ -21,7 +21,6 @@
 
 #include <atomic>
 #include <cstring>
-#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -522,7 +521,8 @@ struct Field {
         return off;
     }
 };
-Field g_camera{L"Camera"}, g_sitarrow{L"sitarrow"}, g_sittingKerfuro{L"sittingKerfuro"}, g_allKerfuros{L"allKerfuros"};
+Field g_camera{L"Camera"}, g_sitarrow{L"sitarrow"}, g_playerHit{L"playerHit"}, g_sittingKerfuro{L"sittingKerfuro"},
+    g_allKerfuros{L"allKerfuros"};
 
 void* ReadObj(void* atv, int32_t off) {
     if (!atv || off < 0) return nullptr;
@@ -541,21 +541,10 @@ bool WriteKerfurList(void* atv, const std::vector<void*>& list) {
 
 bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot) {
     if (!atv || !R::IsLive(atv)) return false;
-    void* camera = ReadObj(atv, g_camera.Get());
-    void* sit = ReadObj(atv, g_sitarrow.Get());
-    FVector eye{}, seat{};
-    if (!camera || !sit || !engine::TryGetComponentLocation(camera, eye) || !engine::TryGetComponentLocation(sit, seat) ||
-        !engine::TryGetComponentWorldRotation(sit, rot))
-        return false;
-    // The camera stands at the back of the seat; the body sits forward of it, at the handlebars.
-    constexpr float kForwardCm = 100.f;
-    constexpr float kUpCm = 25.f;   // on the seat, not in it
-    constexpr float kDeg2Rad = 0.01745329252f;
-    const float yaw = rot.Yaw * kDeg2Rad, pitch = rot.Pitch * kDeg2Rad;
-    loc = FVector{eye.X + std::cos(pitch) * std::cos(yaw) * kForwardCm,
-                  eye.Y + std::cos(pitch) * std::sin(yaw) * kForwardCm,
-                  seat.Z + std::sin(pitch) * kForwardCm + kUpCm};
-    return true;
+    // The ATV's own sit attaches the player to the ATV and sets its location and rotation to the world transform of
+    // `playerHit` (in its `playerHitWith` event), so the body of a remote driver goes to the same place.
+    void* hit = ReadObj(atv, g_playerHit.Get());
+    return hit && engine::TryGetComponentLocation(hit, loc) && engine::TryGetComponentWorldRotation(hit, rot);
 }
 
 bool GetSitArrowLocation(void* atv, FVector& loc) {
