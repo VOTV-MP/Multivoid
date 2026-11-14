@@ -96,7 +96,11 @@ when they change and to a joiner, and a client's copy shows the thrust's foam an
 (`coop/props/fireext_sync`) `[V]` (`coop/dev/foam_probe`, `VOTVCOOP_FOAM_PROBE=1`: each player's
 spray showed on the other's mirror within a second, the host cast 365 rays along a client's aim, and
 a world extinguisher the host set thrusting thrusted on the client's copy). A fire put out by a
-client's spray is not measured `[?]`, and a client's hand extinguisher's charge drains on that client.
+client's spray is not measured `[?]`. The charge in a client's hand is the host's count: the spray's
+start and end carry the hand's charge, the host drains its own count at the game's rate while it runs,
+never above the hand's word, and sends it twice a second and at the end, so the hand, every mirror of
+it and a drop carry it `[V]` (`VOTVCOOP_ITEM_TRIP_ITEM=ext` of the item trip probe: six seconds' spray
+read 0.900 in the hand, on the host and on both copies after the drop, either player spraying).
 
 ### Name, colour and nameplate
 

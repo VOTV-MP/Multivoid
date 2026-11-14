@@ -157,18 +157,26 @@ void ShowThrust(void* ext, bool on, float life) {
 struct Spray {
     bool on = false;
     ue_wrap::CachedObjRef shown;  // the mirror the spray was put on
+    // The charge of the extinguisher in this slot's hand: HOST, the one it drains while the slot sprays (-1 unknown, until
+    // the slot's first spray says it); CLIENT, the host's last word, written into that hand's copy here.
+    float charge = -1.f;
+    uint64_t drainedMs = 0;  // HOST: the last drain
+    uint64_t saidMs = 0;     // HOST: the last charge sent while it sprays
 };
+constexpr uint64_t kChargeEveryMs = 500;  // a spray's charge, at most once per this while it runs
 Spray g_spray[N::kMaxPeers];
 uint32_t g_rays[N::kMaxPeers] = {};  // HOST: the rays cast for a slot's spray, logged as it ends
 bool g_ownOn = false;  // this peer's own hand's spray, as last told
 
 uint8_t OwnSlot() { return coop::players::Registry::Get().LocalPeerId(); }
 
-void SendSpray(uint8_t slot, bool on, int toSlot) {
+void SendSpray(uint8_t slot, bool on, int toSlot, float charge) {
     N::FireExtPayload p{};
     p.op = N::kFireExtOpSpray;
     p.slot = slot;
     p.on = on ? 1 : 0;
+    p.life = charge < 0.f ? 0.f : charge;
+    p.charged = charge < 0.f ? 0 : 1;
     if (toSlot >= 0) g_session->SendReliableToSlot(toSlot, N::ReliableKind::FireExtState, &p, sizeof(p));
     else g_session->SendReliable(N::ReliableKind::FireExtState, &p, sizeof(p));
 }
@@ -209,7 +217,7 @@ void CastRays() {
         if (!g_spray[s].on) continue;
         if (!coop::hand_item::HeldClassIs(s, kClass)) {
             g_spray[s].on = false;
-            SendSpray(s, false, -1);
+            SendSpray(s, false, -1, g_spray[s].charge);
             UE_LOGI("fireext_sync: HOST slot %u's hand no longer holds an extinguisher -- its spray ends", s);
             continue;
         }
@@ -353,6 +361,48 @@ void TickClientThrusts() {
     }
 }
 
+// The host's charge for a slot's hand, written into this peer's own hand or its mirror of that slot's.
+void WriteCharge(uint8_t slot, float charge) {
+    void* const ext = slot == OwnSlot() ? coop::hand_item::LocalHandActor() : coop::hand_item::MirrorActorForSlot(slot);
+    if (!IsExtinguisher(ext)) return;
+    if (float* life = LifeOf(ext)) *life = charge;
+}
+
+// HOST: a client's spray drains the host's count of its charge at the game's own rate (a second's spray, 1/60), and the
+// count goes to every peer twice a second and as the spray ends: the sprayer's hand and every mirror of it take it. A
+// spray whose charge runs out ends. The host's own hand drains in its own game and is said the same way.
+void DrainCharges() {
+    const uint64_t now = NowMs();
+    for (uint8_t s = 1; s < N::kMaxPeers; ++s) {
+        Spray& sp = g_spray[s];
+        if (!coop::hand_item::HeldClassIs(s, kClass)) {  // the hand let it go: its next one says its own charge
+            sp.charge = -1.f;
+            continue;
+        }
+        if (!sp.on || sp.charge < 0.f) continue;
+        sp.charge -= static_cast<float>(now - sp.drainedMs) / 60000.f;
+        sp.drainedMs = now;
+        if (sp.charge <= 0.f) {
+            sp.charge = 0.f;
+            sp.on = false;
+            SendSpray(s, false, -1, 0.f);
+            UE_LOGI("fireext_sync: HOST slot %u's extinguisher is empty -- its spray ends", s);
+            continue;
+        }
+        if (now - sp.saidMs >= kChargeEveryMs) {
+            sp.saidMs = now;
+            SendSpray(s, true, -1, sp.charge);
+            WriteCharge(s, sp.charge);  // the host's own mirror of that hand shows it too
+        }
+    }
+    static uint64_t s_ownSaidMs = 0;
+    if (g_ownOn && now - s_ownSaidMs >= kChargeEveryMs) {
+        s_ownSaidMs = now;
+        const float* life = LifeOf(coop::hand_item::LocalHandActor());
+        SendSpray(0, true, -1, life ? *life : -1.f);
+    }
+}
+
 // ---- the gate ------------------------------------------------------------------------------------------------------
 
 // This peer's own hand's spray, after its `fire`: what it now shows goes to the host, or from the host to everyone.
@@ -362,13 +412,16 @@ void OnFirePost(const sg::Call& c) {
     bool firing = false;
     if (!ReadBool(c.object, L"firing", firing) || firing == g_ownOn) return;
     g_ownOn = firing;
+    const float* life = LifeOf(c.object);
     if (IsHost()) {
-        SendSpray(0, firing, -1);
+        SendSpray(0, firing, -1, life ? *life : -1.f);
         UE_LOGI("fireext_sync: HOST this player's spray %hs -- sent", firing ? "began" : "ended");
     } else if (IsClient()) {
         N::FireExtPayload p{};
         p.op = N::kFireExtOpSprayAsk;
         p.on = firing ? 1 : 0;
+        p.life = life ? *life : 1.f;  // this hand's charge as it starts or stops; the host's word follows
+        p.charged = 1;
         const bool ok = g_session->SendReliable(N::ReliableKind::FireExtIntent, &p, sizeof(p));
         UE_LOGI("fireext_sync: CLIENT this player's spray %hs -- told the host (ok=%d)", firing ? "began" : "ended",
                 ok ? 1 : 0);
@@ -398,6 +451,7 @@ void Tick() {
     if (g_session && g_session->running() && g_session->connected()) {
         if (IsHost()) {
             CastRays();
+            DrainCharges();
             ScanThrusts();
         } else if (IsClient()) {
             TickClientThrusts();
@@ -424,9 +478,12 @@ void SendJoinSnapshotForSlot(int slot) {
         float life = 0.f;
         if (ReadThrust(ext, on, life) && (on || life < 1.f)) SendThrust(ext, on, life, slot);
     });
-    if (g_ownOn) SendSpray(0, true, slot);
+    if (g_ownOn) {
+        const float* life = LifeOf(coop::hand_item::LocalHandActor());
+        SendSpray(0, true, slot, life ? *life : -1.f);
+    }
     for (uint8_t s = 1; s < N::kMaxPeers; ++s)
-        if (g_spray[s].on && s != slot) SendSpray(s, true, slot);
+        if (g_spray[s].on && s != slot) SendSpray(s, true, slot, g_spray[s].charge);
 }
 
 void OnIntent(int senderSlot, const coop::net::FireExtPayload& p) {
@@ -436,14 +493,24 @@ void OnIntent(int senderSlot, const coop::net::FireExtPayload& p) {
     const bool on = p.on != 0;
     if (on && !coop::hand_item::HeldClassIs(s, kClass)) {
         UE_LOGW("fireext_sync: HOST slot %u sprays with no extinguisher in its hand -- refused", s);
-        SendSpray(s, false, senderSlot);
+        SendSpray(s, false, senderSlot, -1.f);
         return;
     }
-    if (g_spray[s].on == on) return;
-    g_spray[s].on = on;
-    SendSpray(s, on, -1);
-    UE_LOGI("fireext_sync: HOST slot %u's spray %hs -- shown and sent (%u rays cast along its aim)", s,
-            on ? "began" : "ended", on ? 0u : g_rays[s]);
+    // The charge is the host's count: the hand's own word starts it, and never raises it.
+    Spray& sp = g_spray[s];
+    const float said = std::isfinite(p.life) ? std::fmin(std::fmax(p.life, 0.f), 1.f) : 0.f;
+    sp.charge = sp.charge < 0.f ? said : std::fmin(sp.charge, said);
+    if (on && sp.charge <= 0.f) {
+        UE_LOGI("fireext_sync: HOST slot %u sprays an empty extinguisher -- refused", s);
+        SendSpray(s, false, -1, 0.f);
+        return;
+    }
+    if (sp.on == on) return;
+    sp.on = on;
+    sp.drainedMs = sp.saidMs = NowMs();
+    SendSpray(s, on, -1, sp.charge);
+    UE_LOGI("fireext_sync: HOST slot %u's spray %hs, charge %.3f -- shown and sent (%u rays cast along its aim)", s,
+            on ? "began" : "ended", sp.charge, on ? 0u : g_rays[s]);
     g_rays[s] = 0;
 }
 
@@ -451,8 +518,12 @@ void OnState(const coop::net::FireExtPayload& p) {
     if (!IsClient()) return;
     if (p.op == N::kFireExtOpSpray) {
         if (p.slot >= N::kMaxPeers) return;
+        if (p.charged == 1 && std::isfinite(p.life)) {
+            g_spray[p.slot].charge = p.life;
+            WriteCharge(p.slot, p.life);
+        }
         if (p.slot == OwnSlot()) {
-            if (!p.on && g_ownOn) UE_LOGW("fireext_sync: CLIENT the host ended this player's spray");
+            if (!p.on && g_ownOn) UE_LOGI("fireext_sync: CLIENT the host ended this player's spray, charge %.3f", p.life);
             return;
         }
         g_spray[p.slot].on = p.on != 0;
@@ -466,12 +537,14 @@ void OnPeerLeft(uint8_t slot) {
     if (slot >= N::kMaxPeers) return;
     g_spray[slot].on = false;
     g_spray[slot].shown.Set(nullptr);
+    g_spray[slot].charge = -1.f;
 }
 
 void OnDisconnect() {
     for (Spray& s : g_spray) {
         s.on = false;
         s.shown.Set(nullptr);
+        s.charge = -1.f;
     }
     g_ownOn = false;
     g_known.clear();
