@@ -1,9 +1,10 @@
-// coop/interactables/atv_drill_events.h -- [dev] the decision events of the ATV host path, for the ATV drill (coop/dev/atv_gate_drill).
+// coop/interactables/atv_drill_events.h -- [dev] the decision events of the ATV host path and the ATV riders, for the ATV drills (coop/dev/atv_gate_drill, coop/dev/atv_riders_drill).
 //
 // Each ATV mechanism that a drill judges says, at the point where its outcome is decided, one record: a request opened or
-// not, an answer arriving, a state applied, a block admitted, a request judged, a module refunded. The drill reads the
-// records and decides on them, never on a clock; a time bound in the drill can only call a run INVALID. The records are
-// kept only while the `atv_gate_drill` row is on (a static compare at each emit point), 256 per event, newest over oldest.
+// not, an answer arriving, a state applied, a block admitted, a request judged, a module refunded, a seat or a rider changed,
+// a body seated, a kerfur riding. The drill reads the records and decides on them, never on a clock; a time bound in the
+// drill can only call a run INVALID. The records are kept only while the `atv_gate_drill` or the `atv_riders_drill` row is on
+// (a static compare at each emit point), 256 per event, newest over oldest.
 // Written on the game thread, read from the drill's thread under one lock.
 //
 // The fields of a record by event are the comments on `Event`.
@@ -17,7 +18,7 @@ namespace coop::atv_drill_events {
 
 struct Rec {
     uint32_t ord = 0;   // the order this record was made in, across every event
-    int32_t i0 = 0, i1 = 0, i2 = 0;
+    int32_t i0 = 0, i1 = 0, i2 = 0, i3 = 0;
     float f0 = 0.f, f1 = 0.f, f2 = 0.f;
 };
 
@@ -35,7 +36,14 @@ enum Event : int {
     kUnadopted,    // CLIENT: a state arrived for an ATV with no copy. i0 stateSeq, i1 kept, i2 KeyTag
     kAdopted,      // CLIENT: a copy entered the index. i0 a kept state applied, i1 KeyTag, i2 stateSeq, f0 fuel, f1 health, f2 module count
     kPark,         // HOST: a request's turn. i0 slot, i1 phase (0 parked for the slot's world, 1 answered after a park, 2 answered with the slot not ready)
-    kPoseApplied,  // a pose block corrected the copy. i0 KeyTag, i1 role (0 the host, applying the syncing client's block; 1 a client, taking a placed block), i2 the actor's object slot
+    kPoseApplied,  // a pose block corrected the copy. i0 KeyTag, i1 role (0 the host, applying the syncing client's block; 1 a client, taking a placed block), i2 the actor's object slot, f0 the block's riderEid, f1 1 when it came from the ATV's syncer
+    kSeatChange,   // a seat or rider change of an entry was announced. i0 occupantBefore<<8|occupantAfter, i1 riderAfter, i2 subscribers that ran, i3 KeyTag, f0 riderBefore
+    kBodySeat,     // a body owner's outcome for a slot. i0 slot, i1 (0 released, 1 attached, 2 held no body, 3 resolve failed), i2 KeyTag, f0 the body's distance from the ATV root (cm, at an attach), f1 isOnAtv (0/1), f2 collision (0/1)
+    kRide,         // a ride owner's outcome for an eid. i0 eid, i1 (0 off, 1 rides, 2 held unbound, 3 held hidden, 4 held no atv, 5 refused class), i2 KeyTag, f0 the kerfur's distance to sitarrow (cm, at a ride), f1 at an off: the mirror was still attached when the clear began (1/0)
+    kStampBuilt,   // HOST: a block was built. i0 KeyTag, i1 riderEid, i2 1 = the re-send of a syncer's block
+    kInvite,       // HOST: the kerfur steps of a client's seat edge. i0 KeyTag, i1 (1 invited, 0 released, 2 turned back), i2 kerfur count
+    kMirrorCancel, // CLIENT: the game's own call on a kerfur mirror was cancelled. i0 (0 getOffCar, 1 tryToOccupyCar), i1 eid
+    kRiderFact,    // HOST: the kerfur's own seat. i0 KeyTag, i1 eid (0 at the getOffCar PRE), i2 1 at the sitOnCar POST
     kEventCount
 };
 
@@ -44,14 +52,16 @@ enum Event : int {
 bool On();
 
 // A pose block of the ATV under `key` was applied to `actor`'s copy (kPoseApplied), on the host or on a client. A no-op while
-// the module is off; the key's hash and the actor's slot are read only when it is on.
-void NotePoseApplied(const std::wstring& key, void* actor, bool host);
+// the module is off; the key's hash and the actor's slot are read only when it is on. `riderEid` and `fromSyncer` are the
+// block's own (a client's: the host's word and its syncer bit; the host's: zero and false).
+void NotePoseApplied(const std::wstring& key, void* actor, bool host, uint32_t riderEid, bool fromSyncer);
 
 // A number that names an ATV key in a record (kUnadopted, kAdopted), the same on every peer.
 int32_t KeyTag(const std::wstring& key);
 
 // Record one event (a no-op while the row is off).
-void Note(Event e, int32_t i0 = 0, int32_t i1 = 0, int32_t i2 = 0, float f0 = 0.f, float f1 = 0.f, float f2 = 0.f);
+void Note(Event e, int32_t i0 = 0, int32_t i1 = 0, int32_t i2 = 0, float f0 = 0.f, float f1 = 0.f, float f2 = 0.f,
+          int32_t i3 = 0);
 
 // How many of `e` were recorded; a cursor taken now reads only what follows.
 uint32_t Count(Event e);

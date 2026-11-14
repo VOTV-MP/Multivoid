@@ -4,6 +4,8 @@
 
 #include "coop/creatures/npc_ride.h"
 #include "coop/creatures/npc_sync.h"
+#include "coop/dev/atv_riders_arm.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_rider_watch.h"
 #include "coop/interactables/atv_seat_table.h"
 #include "coop/interactables/atv_sync.h"
@@ -28,6 +30,8 @@ namespace coop::atv_riders {
 namespace {
 
 namespace R = ue_wrap::reflection;
+namespace DE = coop::atv_drill_events;
+namespace arm = coop::dev::atv_riders_arm;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -49,6 +53,7 @@ void HostKerfurSteps(const coop::atv_seat_table::Change& c) {
             if (ue_wrap::atv::ReleaseKerfurs(c.actor)) {
                 ++g_releases;
                 UE_LOGI("atv_riders: the client's seat on %ls ends -- released", c.key->c_str());
+                if (DE::On()) DE::Note(DE::kInvite, DE::KeyTag(*c.key), 0, 0);
             }
         } else {
             uint32_t turned = 0;
@@ -57,13 +62,17 @@ void HostKerfurSteps(const coop::atv_seat_table::Change& c) {
                 if (ue_wrap::kerfur::FailCar(k)) ++turned;
             }
             UE_LOGI("atv_riders: %ls is gone -- %u invited kerfur(s) turned back", c.key->c_str(), turned);
+            if (DE::On()) DE::Note(DE::kInvite, DE::KeyTag(*c.key), 2, static_cast<int32_t>(turned));
         }
     }
-    if (live && IsClientSlot(c.occupantAfter)) {
+    // The riders drill's red `invite_off`: the seat edge invites no kerfur.
+    static const bool s_redInvite = arm::Is("invite_off");
+    if (live && IsClientSlot(c.occupantAfter) && !s_redInvite) {
         const std::vector<void*> kerfurs = ue_wrap::kerfur::AllKerfurs();
         if (ue_wrap::atv::InviteKerfurs(c.actor, kerfurs)) {
             ++g_calls;
             UE_LOGI("atv_riders: a client sits on %ls -- %zu kerfur(s) invited", c.key->c_str(), kerfurs.size());
+            if (DE::On()) DE::Note(DE::kInvite, DE::KeyTag(*c.key), 1, static_cast<int32_t>(kerfurs.size()));
         }
     }
 }
@@ -71,10 +80,15 @@ void HostKerfurSteps(const coop::atv_seat_table::Change& c) {
 // The body subscriber, on every peer: a slot other than this peer's own that takes the seat is seated, and one that leaves it
 // is let go. The host's own seat appears on a client as slot 0, so a client seats the host's body by the same rule.
 void OnSeatChange(const coop::atv_seat_table::Change& c) {
+    // The riders drill's reds: `release_seat_off` (a seat's end does not release the body), `mirror_ride_off` (the stamp's
+    // rider is not applied) and `release_ride_off` (the rider's end does not unseat the mirror).
+    static const bool s_redReleaseSeat = arm::Is("release_seat_off");
+    static const bool s_redMirrorRide = arm::Is("mirror_ride_off");
+    static const bool s_redReleaseRide = arm::Is("release_ride_off");
     const uint8_t self = coop::players::Registry::Get().LocalPeerId();
     const auto another = [self](uint8_t slot) { return slot != coop::players::kPeerIdUnknown && slot != self; };
     if (another(c.occupantAfter)) coop::puppet_seat::Set(c.occupantAfter, *c.key, 0);
-    if (another(c.occupantBefore) && c.occupantBefore != c.occupantAfter)
+    if (another(c.occupantBefore) && c.occupantBefore != c.occupantAfter && !s_redReleaseSeat)
         coop::puppet_seat::Clear(c.occupantBefore, *c.key);
     const coop::net::Session* const s = g_session.load(std::memory_order_acquire);
     if (!s) return;
@@ -82,8 +96,17 @@ void OnSeatChange(const coop::atv_seat_table::Change& c) {
     if (s->role() == coop::net::Role::Host) { HostKerfurSteps(c); return; }
     // The rider subscriber, on a client: the host's kerfur rides the ATV its stamp names, on this copy too.
     if (s->role() != coop::net::Role::Client || c.riderBefore == c.riderAfter) return;
-    if (c.riderBefore != 0) coop::npc_ride::Clear(c.riderBefore, *c.key);
-    if (c.riderAfter != 0) coop::npc_ride::Set(c.riderAfter, *c.key);
+    if (c.riderBefore != 0 && !s_redReleaseRide) coop::npc_ride::Clear(c.riderBefore, *c.key);
+    if (c.riderAfter != 0 && !s_redMirrorRide) coop::npc_ride::Set(c.riderAfter, *c.key);
+}
+
+// The owners' outcomes, as the drill's records (the owners know nothing of them: they only call an observer).
+void OnBodyOutcome(uint8_t slot, int outcome, const std::wstring& key, float offsetCm, bool onAtv, bool collision) {
+    DE::Note(DE::kBodySeat, slot, outcome, DE::KeyTag(key), offsetCm, onAtv ? 1.f : 0.f, collision ? 1.f : 0.f);
+}
+
+void OnRideOutcome(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached) {
+    DE::Note(DE::kRide, static_cast<int32_t>(eid), outcome, DE::KeyTag(key), sitarrowCm, wasAttached ? 1.f : 0.f);
 }
 
 // The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted,
@@ -107,7 +130,13 @@ void Install(coop::net::Session* session) {
     coop::atv_seat_table::OnChange(&OnSeatChange);
     coop::puppet_seat::SetResolver(&coop::atv_seat_table::ResolveSeat);
     coop::npc_ride::SetResolver(&coop::atv_seat_table::ResolveAtv);
-    coop::mirror_defer::OnReveal(&coop::npc_ride::OnRevealed);
+    // The riders drill's red `reveal_ride_off`: the reveal listener is not registered.
+    static const bool s_redReveal = arm::Is("reveal_ride_off");
+    if (!s_redReveal) coop::mirror_defer::OnReveal(&coop::npc_ride::OnRevealed);
+    if (DE::On()) {
+        coop::puppet_seat::SetObserver(&OnBodyOutcome);
+        coop::npc_ride::SetObserver(&OnRideOutcome);
+    }
 }
 
 void OnDisconnect() {

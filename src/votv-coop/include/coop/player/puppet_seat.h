@@ -23,6 +23,14 @@ using Resolver = bool (*)(const std::wstring& key, uint8_t seatIndex, void*& atv
                           ue_wrap::FRotator& rot);
 void SetResolver(Resolver fn);
 
+// What the owner did for a slot, told to the observer after each outcome: released, attached, held (a target and no body yet)
+// or failed (no live ATV, no seat transform, or an attach that did not run). `offsetCm` is the body's distance from the ATV's
+// root at an attach, `onAtv` its AnimBP's seat pose and `collision` its collision, read after the outcome's own writes.
+enum Outcome : int { kReleased = 0, kAttached = 1, kHeldNoBody = 2, kResolveFailed = 3 };
+using Observer = void (*)(uint8_t slot, int outcome, const std::wstring& key, float offsetCm, bool onAtv, bool collision);
+// Null = no call, and none of the reads. Game thread.
+void SetObserver(Observer fn);
+
 // The slot's peer sits in seat `seatIndex` of the ATV under `key`. Level-wise: the same answer again is cheap and safe.
 void Set(uint8_t slot, const std::wstring& key, uint8_t seatIndex);
 

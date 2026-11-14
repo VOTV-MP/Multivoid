@@ -3,6 +3,8 @@
 
 #include "coop/interactables/atv_seat_table.h"
 
+#include "coop/dev/atv_riders_arm.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/session.h"
 
@@ -27,9 +29,17 @@ bool IsHost() {
 }
 
 // Subscribers run in registration order. A nested change made by one of them is delivered in full from inside this
-// loop, so the count is read at each step.
+// loop, so the count is read at each step. The record of the change (the riders drill's) follows the loop, with how many
+// subscribers ran. The riders drill's red `seat_announce_off` writes the change and calls none.
 void Announce(const Change& c) {
-    for (int i = 0; i < g_subscriberCount; ++i) g_subscribers[i](c);
+    static const bool s_redAnnounce = coop::dev::atv_riders_arm::Is("seat_announce_off");
+    int ran = 0;
+    if (!s_redAnnounce)
+        for (int i = 0; i < g_subscriberCount; ++i, ++ran) g_subscribers[i](c);
+    namespace DE = coop::atv_drill_events;
+    if (DE::On())
+        DE::Note(DE::kSeatChange, (c.occupantBefore << 8) | c.occupantAfter, static_cast<int32_t>(c.riderAfter), ran,
+                 static_cast<float>(c.riderBefore), 0.f, 0.f, DE::KeyTag(*c.key));
 }
 
 }  // namespace
@@ -79,6 +89,8 @@ void SetRider(AtvEntry& e, uint32_t eid, void* actor, const char* why) {
 }
 
 void Exit(AtvEntry& e, const char* why) {
+    static const bool s_redExit = coop::dev::atv_riders_arm::Is("exit_seat_off");   // the riders drill's red: no exit is announced
+    if (s_redExit) return;
     SetSeat(e, 0xFF, 0, why, false);
     SetRider(e, 0, nullptr, why);
 }

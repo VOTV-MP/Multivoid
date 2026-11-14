@@ -86,3 +86,23 @@ CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "published), atv_joiner_rows_off (a state for an unadopted ATV dropped), atv_bits_off (a block's control bits "
     "ignored, horn included), atv_gate_hold_off (a state applies while the "
     "open-request gate is shut), atv_park_off (a request is judged before its sender's world is ready). MUTATES the ATV.")
+CFG_ENUM(atv_riders_drill, "atv_riders_drill", "dev", "off",
+    "off|on|join|seat_announce_off|body_attach_off|invite_off|rider_stamp_off|mirror_ride_off|mirror_invite_off|"
+    "resend_rider_off|birth_seat_off|bind_ride_off|reveal_ride_off|release_seat_off|release_ride_off|getoff_cancel_off|"
+    "ragdoll_restore_off|exit_seat_off",
+    "VOTVCOOP_ATV_RIDERS_DRILL",
+    "Drill (set on the host and both clients; three peers, the observer in slot 1 leaves and rejoins, the driver is slot 2): "
+    "the driver sits in an ATV and drives, the host's kerfur rides, and every peer must show the driver's body seated and the "
+    "kerfur riding, through a rejoin, the driver's leaving, a ragdoll while seated, the host's own seat and the ATV's "
+    "destruction. Every step is decided by an event (coop/interactables/atv_drill_events); the run ends on rig: VERDICT "
+    "atv-riders PASS|FAIL|INVALID. on: the host spawns a kerfur beside the ATV (the rejoined observer's kerfur takes the "
+    "reveal route); join: the host uses the world's own kerfur (the adoption route). Each other value is a red, read only by "
+    "the module whose mechanism it turns off, and must FAIL at its step: seat_announce_off (a seat change calls no subscriber, "
+    "step 1), body_attach_off (the body is placed, not attached, 1), invite_off (the host's seat-edge invite, 2), "
+    "rider_stamp_off (the host's stamp carries no rider, 2), mirror_ride_off (a client's rider subscriber, 2), "
+    "mirror_invite_off (a client's game invites a mirror, 2), resend_rider_off (the host's re-send carries no rider, 4), "
+    "birth_seat_off (a born body is not seated, 5), bind_ride_off (a bound mirror takes no ride, 5), reveal_ride_off (a "
+    "revealed mirror takes no ride, 5), release_seat_off (a seat's end does not release the body, 6), release_ride_off (the "
+    "rider's end does not unseat the mirror, 6), getoff_cancel_off (a client's own dismount unseats a mirror, 6), "
+    "ragdoll_restore_off (a ragdoll's stop restores no seat, 8), exit_seat_off (an ATV's end announces no change, 9). "
+    "MUTATES the ATV.")

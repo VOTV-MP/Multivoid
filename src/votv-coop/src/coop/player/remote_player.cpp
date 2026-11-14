@@ -7,6 +7,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/dev/puppet_head_probe.h"
 #include "coop/player/client_model.h"
 #include "coop/player/local_body.h"
@@ -51,6 +52,12 @@ float OffsetDegrees(float fromDeg, float toDeg) {
     if (d > 180.f)  d -= 360.f;
     if (d < -180.f) d += 360.f;
     return d;
+}
+
+// The riders drill's red `ragdoll_restore_off`: the two ragdoll stops tell the seat owner nothing.
+bool RagdollRestoreOff() {
+    static const bool off = coop::dev::atv_riders_arm::Is("ragdoll_restore_off");
+    return off;
 }
 
 float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -282,7 +289,7 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
     if (ragdoll_.OnWireBit((snap.stateBits & coop::net::kStateBitRagdoll) != 0,
                            actor_, internalIdx_)) {
         bodyYaw_.Reset(curYaw_);
-        coop::puppet_seat::OnBodyChanged(slot_);  // the display's attachment is gone: a stored seat is applied
+        if (!RagdollRestoreOff()) coop::puppet_seat::OnBodyChanged(slot_);  // the display's attachment is gone: a stored seat is applied
     }
 
     ShowBurning((snap.stateBits & coop::net::kStateBitBurning) != 0);
@@ -534,7 +541,7 @@ void RemotePlayer::ApplyToEngine() {
         return;
     case RagdollDisplay::Drive::StoppedNow:
         bodyYaw_.Reset(curYaw_);
-        coop::puppet_seat::OnBodyChanged(slot_);
+        if (!RagdollRestoreOff()) coop::puppet_seat::OnBodyChanged(slot_);
         break;
     case RagdollDisplay::Drive::Inactive:
         break;

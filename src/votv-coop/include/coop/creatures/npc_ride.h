@@ -20,6 +20,14 @@ namespace coop::npc_ride {
 using Resolver = void* (*)(const std::wstring& key, int32_t& atvIdx);
 void SetResolver(Resolver fn);
 
+// What the owner did for an eid, told to the observer after each outcome: the mirror taken off its ride, riding, or held
+// (no mirror bound yet, the mirror hidden, no ATV to sit on or a sit that did not attach, a class that is no kerfur).
+// `sitarrowCm` is the kerfur's distance to the ATV's `sitarrow` at a ride; `wasAttached` at an off says the mirror was still
+// attached to an ATV when the clear began. Null = no call and none of the reads. Game thread.
+enum Outcome : int { kOff = 0, kRides = 1, kHeldUnbound = 2, kHeldHidden = 3, kHeldNoAtv = 4, kRefusedClass = 5 };
+using Observer = void (*)(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached);
+void SetObserver(Observer fn);
+
 // The kerfur `eid` rides the ATV under `key`. Level-wise: the same answer again is cheap and safe.
 void Set(uint32_t eid, const std::wstring& key);
 

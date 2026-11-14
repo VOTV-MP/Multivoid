@@ -558,6 +558,12 @@ bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot) {
     return true;
 }
 
+bool GetSitArrowLocation(void* atv, FVector& loc) {
+    if (!atv || !R::IsLive(atv)) return false;
+    void* sit = ReadObj(atv, g_sitarrow.Get());
+    return sit && engine::TryGetComponentLocation(sit, loc);
+}
+
 void ForgetSittingKerfur(void* atv, void* kerfur) {
     const int32_t off = g_sittingKerfuro.Get();
     if (!atv || !kerfur || !R::IsLive(atv) || off < 0) return;

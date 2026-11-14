@@ -2,6 +2,7 @@
 
 #include "coop/player/puppet_seat.h"
 
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 
@@ -12,6 +13,8 @@
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
+
+#include <cmath>
 
 namespace coop::puppet_seat {
 namespace {
@@ -28,12 +31,33 @@ struct SlotState {
     void* seatedBody = nullptr;  // the body this owner seated: compared, never dereferenced
     void* atvAttached = nullptr; // the ATV the attach used, set only while the body is attached: compared, index-checked
     int32_t atvIdx = -1;
+    std::wstring seatedKey;      // the ATV the body was seated under, for the release's record
     bool warned = false;         // a failed read was said for warnedKey
     std::wstring warnedKey;
 };
 
 SlotState g_slots[kSlots];
 Resolver g_resolve = nullptr;
+Observer g_observer = nullptr;
+
+// Tells the observer an outcome, with what a drill judges it by: the body's distance from the ATV's root, its AnimBP's seat
+// pose and its collision. The reads are made only while an observer is set.
+void Notify(int slot, int outcome, const std::wstring& key, void* body, void* atv) {
+    if (!g_observer) return;
+    float offsetCm = 0.f;
+    bool onAtv = false, collision = false;
+    if (body) {
+        ue_wrap::puppet::GetOnAtv(body, onAtv);
+        collision = E::GetActorRootCollisionEnabled(body) > 0;
+        ue_wrap::FVector at{}, root{};
+        ue_wrap::FRotator rot{};
+        if (atv && E::TryGetActorLocation(body, at) && ue_wrap::atv::GetRootTransform(atv, root, rot)) {
+            const float dx = at.X - root.X, dy = at.Y - root.Y, dz = at.Z - root.Z;
+            offsetCm = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+    g_observer(static_cast<uint8_t>(slot), outcome, key, offsetCm, onAtv, collision);
+}
 
 // Says a failed read once per (slot, key); the next event for the slot tries again with no timer.
 void WarnOnce(int slot, SlotState& s, const char* what) {
@@ -51,6 +75,7 @@ void Seat(int slot, SlotState& s, void* body) {
     if (!g_resolve || !g_resolve(s.key, s.seatIndex, atv, atvIdx, loc, rot)) {
         s.atvAttached = nullptr;
         WarnOnce(slot, s, "no live ATV or no seat transform under that key");
+        Notify(slot, kResolveFailed, s.key, nullptr, nullptr);
         return;
     }
     void* parent = nullptr;
@@ -61,7 +86,9 @@ void Seat(int slot, SlotState& s, void* body) {
     } else {
         E::SetActorLocation(body, loc);
         E::SetActorRotation(body, rot);
-        if (E::AttachActorToActorKeepWorld(body, atv, false)) {
+        // The riders drill's red: the body is placed at the seat and the engine attach is skipped.
+        static const bool s_redAttach = coop::dev::atv_riders_arm::Is("body_attach_off");
+        if (s_redAttach || E::AttachActorToActorKeepWorld(body, atv, false)) {
             ue_wrap::puppet::DriveCharacterMovement(body, ue_wrap::FVector{}, false);
             s.atvAttached = atv;
             s.atvIdx = atvIdx;
@@ -74,6 +101,8 @@ void Seat(int slot, SlotState& s, void* body) {
     E::SetActorEnableCollision(body, false);
     if (!ue_wrap::puppet::SetOnAtv(body, true)) WarnOnce(slot, s, "the AnimBP took no seat pose");
     s.seatedBody = body;
+    s.seatedKey = s.key;
+    Notify(slot, s.atvAttached ? kAttached : kResolveFailed, s.key, body, atv);
 }
 
 void Release(int slot, SlotState& s, RemotePlayer& p, void* body) {
@@ -87,13 +116,17 @@ void Release(int slot, SlotState& s, RemotePlayer& p, void* body) {
     s.seatedBody = nullptr;
     s.atvAttached = nullptr;
     UE_LOGI("puppet_seat: slot %d released (%s)", slot, detach ? "detached" : "already detached");
+    Notify(slot, kReleased, s.seatedKey, body, nullptr);
 }
 
 void Apply(int slot) {
     SlotState& s = g_slots[slot];
     coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
     void* body = (p && p->valid()) ? p->actor() : nullptr;
-    if (!body) return;  // the target stays; the birth call applies it
+    if (!body) {  // the target stays; the birth call applies it
+        if (s.hasTarget) Notify(slot, kHeldNoBody, s.key, nullptr, nullptr);
+        return;
+    }
     if (s.seatedBody != body) s.seatedBody = s.atvAttached = nullptr;  // a new body starts from the engine's own state
     if (p->IsRagdollDisplayed()) return;  // both ragdoll stops call OnBodyChanged
     if (s.hasTarget) Seat(slot, s, body);
@@ -105,6 +138,7 @@ void DropSlot(SlotState& s) {
     s.key.clear();
     s.seatedBody = s.atvAttached = nullptr;
     s.atvIdx = -1;
+    s.seatedKey.clear();
     s.warned = false;
     s.warnedKey.clear();
 }
@@ -112,6 +146,8 @@ void DropSlot(SlotState& s) {
 }  // namespace
 
 void SetResolver(Resolver fn) { g_resolve = fn; }
+
+void SetObserver(Observer fn) { g_observer = fn; }
 
 void Set(uint8_t slot, const std::wstring& key, uint8_t seatIndex) {
     UE_ASSERT_GAME_THREAD("puppet_seat::Set");

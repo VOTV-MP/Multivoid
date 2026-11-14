@@ -6,6 +6,7 @@
 #include "coop/player/puppet_drive.h"
 
 #include "coop/creatures/wisp_grab_hold.h"
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -151,7 +152,10 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                     coop::player_handshake::NicknameForSlot(slot));
                 // A copy whose player is in a nightmare, or in a visited map, is hidden as it is born.
                 coop::puppet_hide::OnPuppetSpawned(static_cast<uint8_t>(slot));
-                coop::puppet_seat::OnPuppetSpawned(static_cast<uint8_t>(slot));  // a seat stored before the first pose is applied now
+                // The riders drill's red `birth_seat_off`: the birth applies no stored seat.
+                static const bool s_redBirthSeat = coop::dev::atv_riders_arm::Is("birth_seat_off");
+                if (!s_redBirthSeat)
+                    coop::puppet_seat::OnPuppetSpawned(static_cast<uint8_t>(slot));  // a seat stored before the first pose is applied now
                 coop::nightmare_roll::OnPuppetSpawned(slot);
                 // Join announcement at the APPEARANCE seam: the puppet just spawned, which
                 // is the moment a player actually sees the peer -- announcing on world-ready

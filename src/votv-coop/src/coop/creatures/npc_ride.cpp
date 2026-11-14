@@ -2,6 +2,7 @@
 
 #include "coop/creatures/npc_ride.h"
 
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/element/mirror_defer.h"
 #include "coop/element/mirror_managers.h"
 
@@ -10,8 +11,10 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
 
+#include <cmath>
 #include <unordered_map>
 #include <utility>
 
@@ -33,6 +36,19 @@ struct Row {
 
 std::unordered_map<uint32_t, Row> g_rows;
 Resolver g_resolve = nullptr;
+Observer g_observer = nullptr;
+
+// Tells the observer an outcome; the kerfur's distance to the ATV's sitarrow is read only while an observer is set.
+void Notify(uint32_t eid, int outcome, const Row& row, void* actor, void* atv, bool wasAttached) {
+    if (!g_observer) return;
+    float sitarrowCm = 0.f;
+    ue_wrap::FVector at{}, seat{};
+    if (actor && atv && E::TryGetActorLocation(actor, at) && ue_wrap::atv::GetSitArrowLocation(atv, seat)) {
+        const float dx = at.X - seat.X, dy = at.Y - seat.Y, dz = at.Z - seat.Z;
+        sitarrowCm = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    g_observer(eid, outcome, row.key, sitarrowCm, wasAttached);
+}
 
 // The live mirror actor of `eid`, or null.
 void* LiveMirrorActor(uint32_t eid) {
@@ -52,6 +68,11 @@ void* LiveLatch(const Row& row) {
 // null when it is gone too (a retired rider), where the ATV is told to forget the dead kerfur.
 void Unseat(uint32_t eid, Row& row, const wchar_t* keyText, void* actor) {
     void* const live = LiveLatch(row);
+    bool wasAttached = false;
+    if (g_observer && actor) {
+        void* parent = nullptr;
+        wasAttached = E::GetAttachParentActor(actor, parent) && parent && ue_wrap::atv::IsAtv(parent);
+    }
     if (actor && row.atvAttached) {
         K::UnseatWithoutCar(actor);
         if (live) ue_wrap::atv::ForgetSittingKerfur(live, actor);
@@ -63,6 +84,7 @@ void Unseat(uint32_t eid, Row& row, const wchar_t* keyText, void* actor) {
     row.atvAttached = nullptr;
     row.atvIdx = -1;
     row.kerfur = nullptr;
+    Notify(eid, kOff, row, nullptr, nullptr, wasAttached);
 }
 
 // MTA keeps the occupant on the vehicle and the ped, and warps the ped back in when the ped's model is created
@@ -72,6 +94,7 @@ void Reconcile(uint32_t eid, Row& row) {
     void* const actor = LiveMirrorActor(eid);
     if (!actor) {
         UE_LOGI("npc_ride: eid %u held (unbound)", eid);
+        Notify(eid, kHeldUnbound, row, nullptr, nullptr, false);
         return;
     }
     if (!K::IsKerfurActor(actor)) {
@@ -79,17 +102,20 @@ void Reconcile(uint32_t eid, Row& row) {
             row.refusedSaid = true;
             UE_LOGW("npc_ride: eid %u refused: not a kerfur (%ls)", eid, R::ClassNameOf(actor).c_str());
         }
+        Notify(eid, kRefusedClass, row, nullptr, nullptr, false);
         return;
     }
     coop::mirror_defer::HideInfo hide{};
     if (coop::mirror_defer::HideInfoOf(eid, hide)) {
         UE_LOGI("npc_ride: eid %u held (hidden)", eid);
+        Notify(eid, kHeldHidden, row, nullptr, nullptr, false);
         return;
     }
     int32_t atvIdx = -1;
     void* const atv = g_resolve ? g_resolve(row.key, atvIdx) : nullptr;
     if (!atv) {
         UE_LOGI("npc_ride: eid %u held (no atv)", eid);
+        Notify(eid, kHeldNoAtv, row, nullptr, nullptr, false);
         return;
     }
     void* parent = nullptr;
@@ -99,6 +125,7 @@ void Reconcile(uint32_t eid, Row& row) {
         row.atvAttached = atv;
         row.atvIdx = atvIdx;
         row.kerfur = actor;
+        Notify(eid, kRides, row, actor, atv, false);
         return;
     }
     if (read && parent && ue_wrap::atv::IsAtv(parent)) {
@@ -113,6 +140,7 @@ void Reconcile(uint32_t eid, Row& row) {
         row.atvIdx = atvIdx;
         row.kerfur = actor;
         UE_LOGI("npc_ride: eid %u rides %ls (sitOnCar)", eid, row.key.c_str());
+        Notify(eid, kRides, row, actor, atv, false);
         return;
     }
     row.atvAttached = nullptr;
@@ -120,11 +148,14 @@ void Reconcile(uint32_t eid, Row& row) {
         row.noAtvSaid = true;
         UE_LOGW("npc_ride: eid %u held (no atv): its sitOnCar on %ls did not attach it", eid, row.key.c_str());
     }
+    Notify(eid, kHeldNoAtv, row, nullptr, nullptr, false);
 }
 
 }  // namespace
 
 void SetResolver(Resolver fn) { g_resolve = fn; }
+
+void SetObserver(Observer fn) { g_observer = fn; }
 
 void Set(uint32_t eid, const std::wstring& key) {
     UE_ASSERT_GAME_THREAD("npc_ride::Set");
@@ -149,6 +180,8 @@ void Clear(uint32_t eid, const std::wstring& key) {
 
 void OnMirrorBound(uint32_t eid) {
     UE_ASSERT_GAME_THREAD("npc_ride::OnMirrorBound");
+    static const bool s_redBind = coop::dev::atv_riders_arm::Is("bind_ride_off");   // the riders drill's red: a bind applies no ride
+    if (s_redBind) return;
     const auto it = g_rows.find(eid);
     if (it == g_rows.end()) return;
     it->second.atvAttached = nullptr;  // a new actor is not attached

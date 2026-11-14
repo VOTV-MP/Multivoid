@@ -4,6 +4,8 @@
 
 #include "coop/element/mirror_managers.h"
 #include "coop/element/registry.h"
+#include "coop/dev/atv_riders_arm.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_seat_table.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/session.h"
@@ -24,6 +26,7 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
+namespace DE = coop::atv_drill_events;
 
 UE_FACT_FN(kRowSitOnCar, "atv_rider_watch", L"kerfurOmega_C", L"sitOnCar", Declared);
 UE_FACT_FN(kRowGetOffCar, "atv_rider_watch", L"kerfurOmega_C", L"getOffCar", Declared);
@@ -58,8 +61,10 @@ bool IsNpcMirror(void* kerfur) {
 
 // A client's own game acting on a kerfur the host owns is refused, and said once per session naming the Blueprint
 // function that made the call (the ATV's sit, dismount or crash path).
-sg::Verdict RefuseOnMirror(const sg::Call& c, const char* what, std::atomic<uint32_t>& count, std::atomic<bool>& said) {
+sg::Verdict RefuseOnMirror(const sg::Call& c, const char* what, int kind, std::atomic<uint32_t>& count,
+                           std::atomic<bool>& said) {
     count.fetch_add(1, std::memory_order_relaxed);
+    if (DE::On()) DE::Note(DE::kMirrorCancel, kind, static_cast<int32_t>(coop::element::Registry::Get().EidForActor(c.object)));
     if (!said.exchange(true)) {
         const std::wstring caller =
             c.callerFunction ? R::ToString(R::NameOf(c.callerFunction)) : std::wstring(L"ProcessEvent");
@@ -86,6 +91,7 @@ void OnSitOnCarPost(const sg::Call& c) {
                     R::ClassNameOf(c.object).c_str(), car);
         return;
     }
+    if (DE::On()) DE::Note(DE::kRiderFact, DE::KeyTag(e->key), static_cast<int32_t>(eid), 1);
     coop::atv_seat_table::SetRider(*e, eid, c.object, "sitOnCar");
 }
 
@@ -93,22 +99,29 @@ void OnSitOnCarPost(const sg::Call& c) {
 sg::Verdict OnGetOffCarPre(const sg::Call& c) {
     // A client's own dismount and crash paths never unseat or kill a mirror: its seat ends by the host's stamp, which
     // coop/creatures/npc_ride answers. Cancelling skips the kill tail with the rest.
+    // The riders drill's red `getoff_cancel_off`: the call runs on a mirror.
+    static const bool s_redGetOff = coop::dev::atv_riders_arm::Is("getoff_cancel_off");
     if (IsClient()) {
-        return IsNpcMirror(c.object) ? RefuseOnMirror(c, "getOffCar", g_getOffRefused, g_saidGetOff) : sg::Verdict::Run;
+        return IsNpcMirror(c.object) && !s_redGetOff ? RefuseOnMirror(c, "getOffCar", 0, g_getOffRefused, g_saidGetOff)
+                                                     : sg::Verdict::Run;
     }
     if (!IsHost()) return sg::Verdict::Run;
     const uint32_t eid = coop::element::Registry::Get().EidForActor(c.object);
     if (eid == coop::element::kInvalidId) return sg::Verdict::Run;
-    if (coop::atv_sync::AtvEntry* const e = coop::atv_sync::FindEntryByRider(eid))
+    if (coop::atv_sync::AtvEntry* const e = coop::atv_sync::FindEntryByRider(eid)) {
+        if (DE::On()) DE::Note(DE::kRiderFact, DE::KeyTag(e->key), 0, 0);
         coop::atv_seat_table::SetRider(*e, 0, nullptr, "getOffCar");
+    }
     return sg::Verdict::Run;
 }
 
 // PRE of tryToOccupyCar: the client's own ATV sit invites every kerfur of its world, its mirrors included, which would
 // start a local walk on a parked mirror. The host's kerfurs are the host's to invite.
 sg::Verdict OnTryToOccupyCarPre(const sg::Call& c) {
-    if (!IsClient() || !IsNpcMirror(c.object)) return sg::Verdict::Run;
-    return RefuseOnMirror(c, "tryToOccupyCar", g_occupyRefused, g_saidOccupy);
+    // The riders drill's red `mirror_invite_off`: the call runs on a mirror.
+    static const bool s_redOccupy = coop::dev::atv_riders_arm::Is("mirror_invite_off");
+    if (!IsClient() || !IsNpcMirror(c.object) || s_redOccupy) return sg::Verdict::Run;
+    return RefuseOnMirror(c, "tryToOccupyCar", 1, g_occupyRefused, g_saidOccupy);
 }
 
 // One watch: registered with the gate, then asked each call until it settles live or dead.

@@ -16,6 +16,7 @@
 #include "atv_spawn_park.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/atv_riders_arm.h"
 #include "coop/interactables/atv_authority.h"
 #include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_corrector.h"
@@ -248,7 +249,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
         // (bit 4).
         if (!AU::AdmitBlock(e, payload, senderPeerSlot, NowMs())) return;
         coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ false);
-        coop::atv_drill_events::NotePoseApplied(key, e.actor, true);
+        coop::atv_drill_events::NotePoseApplied(key, e.actor, true, 0, false);
         coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ false);
         TakeControls(e, payload.stateBits);
         NoteSyncerHealth(e, senderPeerSlot, A::GetHealth(e.actor));
@@ -260,11 +261,16 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
         out.ackSeq = coop::atv_host_sync::CurrentStateSeq(key);
         out.syncerSlot = e.seatSyncer;
         out.occupantSlot = e.seatOccupant;
-        out.riderEid = e.seatRider;
+        // The riders drill's red: the re-send keeps the sender's rider word (a client's block carries none).
+        static const bool s_redResend = coop::dev::atv_riders_arm::Is("resend_rider_off");
+        if (!s_redResend) out.riderEid = e.seatRider;
         out.stateBits =
             static_cast<uint8_t>((payload.stateBits & coop::net::kAtvControlBits) | coop::net::kAtvFromSyncer);
         StampHostTrap(e, out);
         out.adopt = 0;
+        if (coop::atv_drill_events::On())
+            coop::atv_drill_events::Note(coop::atv_drill_events::kStampBuilt, coop::atv_drill_events::KeyTag(key),
+                                         static_cast<int32_t>(out.riderEid), 1);
         SendToReadyClients(*s, out, senderPeerSlot);
         return;
     }
@@ -294,7 +300,8 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     if ((payload.stateBits & coop::net::kAtvFromSyncer) != 0) ++g_appliedFromSyncer;
     if (payload.adopt != 0) { ++g_snapshotReached; e.snapshotReached = true; }
     coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ payload.adopt != 0);
-    coop::atv_drill_events::NotePoseApplied(key, e.actor, false);
+    coop::atv_drill_events::NotePoseApplied(key, e.actor, false, payload.riderEid,
+                                              (payload.stateBits & coop::net::kAtvFromSyncer) != 0);
     // The condition block applies after the pose, behind the same gates; every block a client receives is the
     // host's, and its presence is consumed only for the host's own copy (atv_condition_sync.h).
     coop::atv_condition_sync::ApplyPayload(e, payload, /*fromHost*/ true);

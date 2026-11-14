@@ -2,6 +2,8 @@
 // a live ATV, the host's read of its copies' trap bit, and the host's stamped block to every world-ready client for each
 // entry whose table changed. atv_sync.cpp owns the map these read and the stream that calls them.
 
+#include "coop/dev/atv_riders_arm.h"
+#include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -58,7 +60,8 @@ bool ReadPayload(AtvEntry& e, const std::wstring& key, uint8_t occupantSlot, uin
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
     // The riding kerfur is the host's word: every block it sends names it, a client's carries 0.
-    p.riderEid = host ? e.seatRider : 0;
+    static const bool s_redStamp = coop::dev::atv_riders_arm::Is("rider_stamp_off");   // the riders drill's red
+    p.riderEid = (host && !s_redStamp) ? e.seatRider : 0;
     // The condition block (tires, spare, dirt, fuel, health), filled at this one site so the
     // syncer, the idle syncer and the adopt seed cannot fork; a failed read leaves it zeroed
     // with tiresValid 0, and receivers touch nothing.
@@ -67,6 +70,9 @@ bool ReadPayload(AtvEntry& e, const std::wstring& key, uint8_t occupantSlot, uin
     // vitals it applied (atv_host_sync.h).
     p.ackSeq = host ? coop::atv_host_sync::CurrentStateSeq(key) : coop::atv_host_sync::AppliedStateSeq(key);
     coop::atv_host_sync::NoteBlockBuilt(key);   // [dev] the drill's held state is applied after this block's ack was read
+    if (host && coop::atv_drill_events::On())
+        coop::atv_drill_events::Note(coop::atv_drill_events::kStampBuilt, coop::atv_drill_events::KeyTag(key),
+                                     static_cast<int32_t>(p.riderEid), 0);
     return true;
 }
 
