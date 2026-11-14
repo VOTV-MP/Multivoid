@@ -4,14 +4,19 @@
 // player. THE ACTOR (VOTVCOOP_ITEM_TRIP_PROBE, client or host), from 24 s: uses it -- a can's own Open, then its eat;
 // a disc's uses spent to 20 on its copy -- then at 32 s takes it into its hand through the player's own `Hold Object`;
 // an extinguisher then sprays from 34 s to 40 s through its own LMB; at 38 s (44 s for an extinguisher) it drops what its
-// hand holds through simulateDrop. BOTH, every second from 20 s to 55 s: every item of the class, its key and state, and
-// what this player's hand holds (`[TRIP]`).
+// hand holds through simulateDrop. With VOTVCOOP_ITEM_TRIP_ROUTE=inv the trip is the inventory's instead: at 32 s into
+// it through the player's own collectObject, at 38 s out of it through playerContainer.getObject, as the inventory's
+// drop button calls it. BOTH, every second from 20 s to 75 s: every item of the class, its key and state, whether it is
+// this player's hand or another player's hand mirror (`[TRIP]`).
 
 #include "coop/dev/item_trip_probe.h"
 
 #include "coop/config/config.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
+#include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
@@ -20,6 +25,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
 
@@ -45,6 +51,13 @@ const std::string& Item() {
     static const std::string i = coop::config::ReadEnv("VOTVCOOP_ITEM_TRIP_ITEM");
     return i;
 }
+// The route out and back: the hand (Hold Object, then simulateDrop) or the inventory (collectObject, then the
+// inventory's own drop, playerContainer.getObject).
+bool Inventory() {
+    static const bool inv = coop::config::ReadEnv("VOTVCOOP_ITEM_TRIP_ROUTE") == "inv";
+    return inv;
+}
+
 bool Can() { return Item() != "ext" && Item() != "disc"; }
 bool Disc() { return Item() == "disc"; }
 
@@ -125,12 +138,39 @@ void* Nearest() {
     return best;
 }
 
+// The inventory's drop of the record of `key`: playerContainer.getObject, as the inventory's drop button calls it.
+void* TakeOut(const std::wstring& key) {
+    ue_wrap::inventory::LivePersonalStore store;
+    if (!ue_wrap::inventory::ReadLivePersonalStore(store)) return nullptr;
+    int32_t index = -1;
+    for (size_t i = 0; i < store.records.size(); ++i)
+        if (store.records[i].key == key) index = static_cast<int32_t>(i);
+    void* const gm = ue_wrap::world_singleton::Gamemode();
+    void* const container = Obj(gm, L"playerContainer");
+    if (index < 0 || !container || !R::IsLive(container)) return nullptr;
+    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(container), L"getObject"));
+    const ue_wrap::FVector none{};
+    if (!f.valid() || !f.Set<int32_t>(L"index", index) || !f.Set(L"customLoc", false) ||
+        !f.SetRaw(L"loc", &none, sizeof(none)) || !ue_wrap::Call(container, f))
+        return nullptr;
+    void* const out = f.Get<void*>(L"OutputPin");
+    return out && R::IsLive(out) ? out : nullptr;
+}
+
+std::wstring g_tripKey;  // the item's key, as it went into the inventory
+
 void Report() {
     void* const me = coop::players::Registry::Get().Local();
     void* const hand = Obj(me, L"holding_actor");
     for (void* it : Items()) {
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(it);
-        UE_LOGI("[TRIP] item key=%ls %hs%hs", key.c_str(), State(it).c_str(), it == hand ? " (in this hand)" : "");
+        int mirrorOf = -1;
+        for (uint8_t sl = 0; sl < coop::net::kMaxPeers; ++sl)
+            if (coop::hand_item::MirrorActorForSlot(sl) == it) mirrorOf = sl;
+        char tag[48] = "";
+        if (it == hand) snprintf(tag, sizeof(tag), " (in this hand)");
+        else if (mirrorOf >= 0) snprintf(tag, sizeof(tag), " (mirror of slot %d's hand)", mirrorOf);
+        UE_LOGI("[TRIP] item key=%ls %hs%hs", key.c_str(), State(it).c_str(), tag);
     }
 }
 
@@ -174,7 +214,29 @@ void Tick(coop::net::Session* session) {
         g_step = 3;
         if (Can()) UE_LOGI("[TRIP] actor: ate from the can (ran=%d)", Call(Nearest(), L"eat", me) ? 1 : 0);
     }
-    if (acting && g_step == 3 && t >= 32000u) {
+    if (acting && Inventory() && g_step == 3 && t >= 32000u) {
+        g_step = 50;
+        void* const item = Nearest();
+        g_tripKey = item ? ue_wrap::prop::GetInteractableKeyString(item) : L"";
+        const int32_t laOff = me ? R::FindPropertyOffset(R::ClassOf(me), L"lookAtActor") : -1;
+        const int32_t lcOff = me ? R::FindPropertyOffset(R::ClassOf(me), L"lookAtComponent") : -1;
+        if (laOff >= 0) *reinterpret_cast<void**>(static_cast<char*>(me) + laOff) = item;
+        if (lcOff >= 0) *reinterpret_cast<void**>(static_cast<char*>(me) + lcOff) = item ? Obj(item, L"StaticMesh") : nullptr;
+        const bool ran = item && R::CallFunction(me, R::FindDispatchFunctionCached(R::ClassOf(me), L"collectObject"), nullptr);
+        ue_wrap::inventory::LivePersonalStore store;
+        size_t held = 0;
+        if (ue_wrap::inventory::ReadLivePersonalStore(store))
+            for (const auto& r : store.records) held += r.key == g_tripKey ? 1 : 0;
+        UE_LOGI("[TRIP] actor: took '%ls' into the inventory through collectObject (ran=%d, in the store=%zu)",
+                g_tripKey.c_str(), ran ? 1 : 0, held);
+    }
+    if (acting && Inventory() && g_step == 50 && t >= 38000u) {
+        g_step = 5;
+        void* const out = TakeOut(g_tripKey);
+        UE_LOGI("[TRIP] actor: dropped '%ls' from the inventory through getObject (spawned=%d %hs)", g_tripKey.c_str(),
+                out ? 1 : 0, out ? State(out).c_str() : "");
+    }
+    if (acting && !Inventory() && g_step == 3 && t >= 32000u) {
         g_step = 4;
         void* const item = Nearest();
         ue_wrap::ParamFrame f(me ? R::FindDispatchFunctionCached(R::ClassOf(me), L"Hold Object") : nullptr);

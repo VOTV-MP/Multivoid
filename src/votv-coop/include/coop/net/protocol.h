@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 294;
+inline constexpr uint16_t kProtocolVersion = 295;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -697,6 +697,11 @@ enum class ReliableKind : uint16_t {
     // stood at its cut, and its connect replay sends it, alone, an op 2 for each prop whose tag this session published,
     // ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by key.
     PropNametag = 261,
+    // A player's held item's own save record (coop/player/hand_record_sync), chunked (BlobChunkPayload) as
+    // [u8 slot][the record]: its owner's, when the item or its record changes, a client's to the host, which checks the
+    // sender's hand holds that class and sends it on to everyone, the host's own to everyone, and every hand's to a
+    // joiner at its ready edge. Each peer writes it into its mirror of that hand through the item's own loadData.
+    HandRecord = 268,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game

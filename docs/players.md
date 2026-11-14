@@ -82,6 +82,16 @@ each peer's battery drained in turn).
 A carried trash clump is driven to the puppet's hand on
 the host each tick (`coop/player/puppet_carry_drive`); a held physics prop is on the props lane.
 
+The mirror is spawned from the class alone, so it showed the class's defaults: a held can opened and eaten
+from was full and shut to the others, an extinguisher's charge full. The hand's owner reads its hand item's
+record through the item's own `getData` when the item or its state changes (the hold transform left out), at
+most four times a second, and sends it chunked (`HandRecord`): a client's to the host, which checks the
+sender's hand holds that class and sends it on, the host's to everyone, every hand's to a joiner. Each peer
+writes it into its mirror through the item's own `loadData`, the leaf state only, and again when the mirror is
+made anew (`coop/player/hand_record_sync`) `[V]` (`coop/dev/item_trip_probe`: a can held opened with 3 of 4
+left read the same on the other peer's mirror, either player holding it, with one record sent; an
+extinguisher's mirror followed its charge from 1.000 to 0.900 through a spray).
+
 ### Name, colour and nameplate
 
 The host is the canonical namer. Two clients typing the same name each believe they are unique,
@@ -421,6 +431,7 @@ host. A setting that holds a password is never set or shown by command.
 | `RagdollPose` (stream) | each peer, while ragdolled | pelvis transform and velocity |
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
+| `HandRecord` | each peer to the host; the host to all | a held item's own save record, chunked, for its hand mirrors |
 | `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
 | `PlayerHit` | host to the hit peer | a parked creature's hit on the peer's puppet: the verb (addDamage or punch) to run on its own player |
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
@@ -460,6 +471,7 @@ dead peer through the ragdoll bit of its next pose.
 | name, colour, nameplate | `coop/player/nameplate`, `coop/player/nick_color`, `ui/hud`, `ui/scoreboard` |
 | skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `assets/paks/` |
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
+| a held item's record on its mirrors | `coop/player/hand_record_sync` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
 | leaving during an event | `coop/player/leave_in_event` |
 | sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest`, `coop/player/nightmare_roll`, `harness/autotest/autotest_nightmare.cpp` (the drill) |
