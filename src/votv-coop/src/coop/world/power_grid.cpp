@@ -381,7 +381,7 @@ void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender)
     if (sender == 0 || sender >= coop::net::kMaxPeers || p.op == coop::net::kPowerGridOpRows) return;
     auto& q = g_waiting[sender];
     Waiting w{p, NowMs()};
-    // The hand is read once, after the lane's own limit: when the op took a rate token, or a place in the queue below.
+    // The hand is read once, after the lane's own limit: a rate token, or a queue place.
     bool judged = false;
     if (q.empty() && Spend(sender, p.op)) {
         w.handPaid = coop::power_grid::install::PaidByHand(*s, sender, p);
@@ -737,8 +737,7 @@ void HostPuzzleChanged() { g_puzzleDirty = true; }
 
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
-    // The sender's waiting ops go with it, answered to no one; an install the hand or a world spend paid for is given
-    // back where its sender stood (the tower's upgrade slot when the body is gone).
+    // Waiting ops go with their sender, answered to no one; a counted install is given back (RefundCounted).
     std::vector<void*> gens;
     for (const Waiting& w : g_waiting[slot]) RefundCounted(slot, w, gens);
     g_waiting[slot].clear();
