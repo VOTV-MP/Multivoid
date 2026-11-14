@@ -122,6 +122,45 @@ bool ApplyDeleteByHash(uint64_t hash) {
     return false;
 }
 
+// The first field, in the wire's order, where two copies of a row differ; null when they agree. The photo is left
+// out, as the identity leaves it out.
+const char* FirstDifference(const SD::Row& a, const SD::Row& b) {
+    if (a.frequency != b.frequency) return "frequency";
+    if (a.quality != b.quality) return "quality";
+    if (a.objectType != b.objectType) return "objectType";
+    if (a.isCopy != b.isCopy) return "isCopy";
+    if (a.level != b.level) return "level";
+    if (a.polarity != b.polarity) return "polarity";
+    if (a.size != b.size) return "size";
+    if (a.decoded != b.decoded) return "decoded";
+    if (a.downloadedAtQuality != b.downloadedAtQuality) return "downloadedAtQuality";
+    if (a.locX != b.locX || a.locY != b.locY) return "location";
+    if (a.date != b.date) return "date";
+    if (a.name != b.name) return "name";
+    if (a.id != b.id) return "id";
+    if (a.object != b.object) return "object";
+    if (a.signal != b.signal) return "signal";
+    return nullptr;
+}
+
+// The row the game stored is read back against the one that was sent. A row that hashes differently here than where
+// it was sent cannot be named by its identity on this machine, and the shadow, which keeps the sent hash, would not
+// show it; one that differs only in the case its names render in is said as well, the identity folding that. Said
+// for the first few only.
+void CheckStored(int32_t index, uint64_t sentHash, const SD::Row& sent) {
+    static int said = 0;
+    constexpr int kSayMax = 3;
+    SD::Row stored;
+    if (said >= kSayMax || !UE::ReadRow(index, stored)) return;
+    const uint64_t storedHash = HashRow(stored);
+    const char* field = FirstDifference(sent, stored);
+    if (storedHash == sentHash && !field) return;
+    ++said;
+    UE_LOGW("signal_sync: the game stored row '%ls' as %016llx, the sent %016llx -- first difference: %s%s (%d of %d)",
+            sent.name.c_str(), static_cast<unsigned long long>(storedHash), static_cast<unsigned long long>(sentHash),
+            field ? field : "none", storedHash == sentHash ? " (case only; same identity)" : "", said, kSayMax);
+}
+
 // The apply core. Terminal: the row is correctly dead (a tombstone won), unreadable, or refused by
 // the game -- each final, since the same row would meet the same answer again. NotNow: the game
 // cannot be asked yet, which the caller parks.
@@ -150,8 +189,10 @@ ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) 
     }
     const int32_t n = UE::Count();
     UE::RowKey key;
-    if (n > 0 && UE::ReadRowKey(n - 1, key))
+    if (n > 0 && UE::ReadRowKey(n - 1, key)) {
         g_applied.push_back({key, hash, Clock::now()});
+        CheckStored(n - 1, hash, row);
+    }
     UE_LOGI("signal_sync: applied row from slot %u ('%ls' lvl %d)",
             static_cast<unsigned>(senderSlot), row.name.c_str(), row.level);
     return ApplyVerdict::Applied;
