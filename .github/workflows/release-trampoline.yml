@@ -20,3 +20,6 @@ jobs:
     with:
       tag-name: ${{ github.ref_name }}
       tag-sha: ${{ github.sha }}   # evidence only; release-core re-resolves the tag
+    # The publish job's release key is an ENVIRONMENT secret: a job reached through workflow_call reads it only
+    # when the caller passes secrets (measured 2026-11-14: run 43602442292, plain EMPTY, inherit set).
+    secrets: inherit
