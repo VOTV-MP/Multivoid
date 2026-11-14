@@ -242,4 +242,6 @@ DWORD WINAPI LevelVisitThread(LPVOID arg);
 DWORD WINAPI UfoDrillThread(LPVOID arg);
 // orb_drill, both peers -- harness/autotest/autotest_orb.cpp
 DWORD WINAPI OrbDrillThread(LPVOID arg);
+// sky_tp_drill, both peers -- harness/autotest/autotest_sky_tp.cpp
+DWORD WINAPI SkyTpDrillThread(LPVOID arg);
 }  // namespace harness::autotest

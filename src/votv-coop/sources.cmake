@@ -725,6 +725,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_level_visit.cpp
     src/harness/autotest/autotest_ufo.cpp
     src/harness/autotest/autotest_orb.cpp
+    src/harness/autotest/autotest_sky_tp.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

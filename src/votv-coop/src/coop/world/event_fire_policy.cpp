@@ -56,9 +56,9 @@ const NoReplayRow kNoReplayRows[] = {
     // and punches getMainPlayer -- a replay would double-spawn the props client-local and hit the
     // client's own player. Host-only until the scene gets a lane:
     { "obelisk", "obelisk_C prop spawns + getMainPlayer punch (no lane)" },
-    // earthTp fires newsky_C.tp, which a client refuses: its sky and black hole flip ride SkyState and its emails the
-    // host's append feed; its two 2D sounds are not carried:
-    { "earthTp", "newsky_C.tp: the flip rides SkyState, the emails the append feed (its 2D sounds are not carried)" },
+    // earthTp fires newsky_C.tp, which a client refuses: its sky and black hole flip ride SkyState, its emails the
+    // host's append feed and its two 2D sounds EventCue ids 100 and 101 (coop/world/world_sound_sync):
+    { "earthTp", "newsky_C.tp: the flip rides SkyState, the emails the append feed, the sounds EventCue 100 and 101" },
     { "vehtp", "atv lane" },
     // bedEvent runs trigger_bedEvent -> bedEvent_C, which moves the bed and teleports
     // getMainPlayer on wake; the sleep lane only gates client dreams, it does not carry this:

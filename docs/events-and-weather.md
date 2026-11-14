@@ -44,9 +44,9 @@ that on either peer can merge two and skip a minute's pulse `[RD]` -- one night 
 the host once a second (`coop/world/sky_sync`) `[V]`. So does the earth teleport's black hole: the event's `tp` hides the
 day sky and shows the black hole 20 s in and turns them back 86 s later, unless a game rule keeps the black hole. A
 client refuses its own `tp`, takes the host's flip through the sky's own `skyVisibility` and the black hole's light,
-and reads the emails from the host's feed; its two 2D sounds are not carried. A joiner gets the flip with the sky
-(`coop/dev/sky_tp_probe`) `[V]`: the client's sky flipped and turned back in the same second as the host's, and a
-client that joined mid-flip got the black hole at its join.
+and reads the emails from the host's feed; its two 2D sounds are carried as EventCue ids 100 and 101 (`coop/world/world_sound_sync`). A joiner gets the flip with the sky
+(`harness/autotest/autotest_sky_tp.cpp`, `sky_tp_drill`) `[?]`: the client's sky flips and turns back with the host's, and a
+client that joins mid-flip gets the black hole at its join (the drill's first rig run is pending).
 
 ### Weather
 
@@ -284,7 +284,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Limit | Evidence |
 |---|---|
-| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given), but its black hole light and its other effects are the host's | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
+| The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given); its black hole and its light ride SkyState | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
 | The alien sounds are each player's own: the event is replayed, and each peer's three noisers walk around its own player, sound and leave when that player sees one. A player does not hear the noisers around another. A joiner whose world is up while the host's noisers are out is sent the event once at its ready edge (the join snapshot, one row for the three noisers) and gets noisers of its own | `[?]` `harness/autotest/autotest_world_sound.cpp`: three noisers on each peer, and on a rejoined client (the rewritten drill has not run yet) |
 | A harvest's sound is the harvester's alone: no other peer plays it | `[RD]` the harvest half of #104 waits for the host to perform every harvest (#115): the host's own `growingPlant_C::harvestSound` call then sends an EventCue id 102 at the plant |
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |

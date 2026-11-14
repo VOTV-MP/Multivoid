@@ -289,6 +289,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIfEnum(coop::config_registry::rows::ufo_drill, "UFO drill", &UfoDrillThread, role);
     // The black orb: the host judges each encounter, a client's copy runs its part.
     SpawnIfEnum(coop::config_registry::rows::orb_drill, "orb drill", &OrbDrillThread, role);
+    // The earth teleport: the host's black hole reaches a client's sky, and a joiner's at its ready edge.
+    SpawnIfEnum(coop::config_registry::rows::sky_tp_drill, "sky tp drill", &SkyTpDrillThread, role);
     // The walking mannequin's two-peer drill: armed by a value of the mannequin_drill row on both peers (`walker` or a red).
     if (coop::dev::mannequin_walker_drill::Armed()) {
         UE_LOGI("harness: mannequin_drill is a walker drill value (%s) -- spawning the mannequin drill thread", RoleStr(role));
