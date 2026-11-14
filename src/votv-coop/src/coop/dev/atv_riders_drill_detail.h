@@ -34,6 +34,7 @@ inline constexpr int kRideS = 240;     // the host's kerfur walks to the ATV and
 inline constexpr int kDriveS = 180;    // the ATV's drive to its 600 cm
 inline constexpr int kRejoinS = 480;   // the observer's restart, boot and join
 inline constexpr int kEventS = 60;     // a decision event of one step
+inline constexpr int kBarrierS = 60;   // a barrier between peers that are up and past the step before it
 
 enum Role : int { kHost = 0, kObserver = 1, kDriver = 2, kRoles = 3 };
 const char* RoleName(Role r);
@@ -52,8 +53,10 @@ void Fail(int step, const char* red, const std::string& why);   // FAIL: `red` n
 void Invalid(const std::string& why);
 void StepPass(int step, const std::string& what);
 bool ParseMark(const std::string& text, const char* what, uint32_t& out);   // a peer's number mark; malformed: INVALID, false
-bool AwaitMark(const std::string& name, std::string& out, int boundS);
-bool Barrier(const char* name, int boundS = kSignalS);   // this peer marks `name`; waits for the other two
+// Waits for a peer's mark, saying first what it waits for and for how long (`ctx` names the wait's frame, e.g. a barrier).
+bool AwaitMark(const std::string& name, std::string& out, int boundS, const char* ctx = nullptr);
+// This peer marks `name`; waits for the other two, who are already up and past the step before (kBarrierS).
+bool Barrier(const char* name, int boundS = kBarrierS);
 
 // Polls `fn` each step: 1 done, 0 not yet, -1 stop (a verdict was said). False when the run ended, `fn` stopped it or the bound
 // passed (INVALID said).

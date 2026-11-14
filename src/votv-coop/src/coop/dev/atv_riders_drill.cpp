@@ -115,15 +115,19 @@ bool PollFn(const char* what, int boundS, const std::function<int()>& fn) {
     return false;
 }
 
-bool AwaitMark(const std::string& name, std::string& out, int boundS) {
+// Says what this peer is about to wait for, so a stall names itself in the log at once. Every wait on a peer's mark goes through
+// PollFn, which also ends the wait the moment another peer has ended the run (the end mark).
+bool AwaitMark(const std::string& name, std::string& out, int boundS, const char* ctx) {
+    UE_LOGI("atv-riders: %s waits for %s (%s%s%d s)", RoleName(g_me), name.c_str(), ctx ? ctx : "", ctx ? ", " : "", boundS);
     return PollFn(("the signal '" + name + "'").c_str(), boundS, [&] { return PS::Peek(name.c_str(), out) ? 1 : 0; });
 }
 
 bool Barrier(const char* name, int boundS) {
     PS::Mark((std::string(name) + "_" + RoleName(g_me)).c_str());
     std::string t;
+    const std::string ctx = std::string("barrier ") + name;
     for (int r = 0; r < kRoles; ++r)
-        if (r != g_me && !AwaitMark(std::string(name) + "_" + RoleName(static_cast<Role>(r)), t, boundS)) return false;
+        if (r != g_me && !AwaitMark(std::string(name) + "_" + RoleName(static_cast<Role>(r)), t, boundS, ctx.c_str())) return false;
     return true;
 }
 
@@ -184,7 +188,7 @@ bool RunHost() {
     Cur cur = Snap();
     if (!Barrier("arm1") || !HostRide(cur) || !HostDrive() || !HostRejoin()) return false;
     cur = Snap();
-    if (!Barrier("arm6", kRejoinS + kSignalS) || !LeaveHost(cur)) return false;
+    if (!Barrier("arm6") || !LeaveHost(cur)) return false;
     cur = Snap();
     if (!Barrier("arm8") || !RagdollWatch(kHost, cur)) return false;
     cur = Snap();
@@ -211,7 +215,10 @@ bool RunDriver() {
     if (!AwaitMark("rider-sat", t, kRideS) || !ParseMark(t, "rider-sat", g_eid)) return false;
     if (!ClientRide(kDriver, cur) || !DriverDrive()) return false;
     cur = Snap();
-    if (!Barrier("arm6", kRejoinS + kSignalS) || !DriverLeave() || !LeaveWatch(kDriver, cur)) return false;
+    // The observer reads the driver's `arm6` mark in its second life, and a mark written before that life began reads as absent
+    // (peer_signal::Peek). So the driver marks it only after the observer's step 5 mark, the first thing that life writes after
+    // the rejoin: the wait spans the observer's leaving, restart, boot and join.
+    if (!AwaitMark("o2_s5", t, kRejoinS + kSignalS) || !Barrier("arm6") || !DriverLeave() || !LeaveWatch(kDriver, cur)) return false;
     cur = Snap();
     if (!Barrier("arm8") || !DriverRagdoll()) return false;
     cur = Snap();
@@ -225,7 +232,7 @@ bool RunDriver() {
 // The observer's later steps, in either life: its key and the rider's eid are known.
 bool ObserverLateSteps() {
     Cur cur = Snap();
-    if (!Barrier("arm6", kRejoinS + kSignalS) || !LeaveWatch(kObserver, cur)) return false;
+    if (!Barrier("arm6") || !LeaveWatch(kObserver, cur)) return false;
     cur = Snap();
     if (!Barrier("arm8") || !RagdollWatch(kObserver, cur)) return false;
     cur = Snap();
