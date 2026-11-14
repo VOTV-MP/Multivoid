@@ -11,6 +11,8 @@
 
 #include "coop/world/ufo_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -24,10 +26,13 @@
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/keyed_objects.h"
+#include "ue_wrap/world/spline.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <vector>
@@ -84,47 +89,20 @@ ue_wrap::FRotator RelRot(void* comp) {
                                                        ue_wrap::profile::off::USceneComponent_RelativeRotation);
 }
 
-// The engine refuses to move a component that is not Movable once construction is over, so the ball's ends and
-// turn keep what its construction script rolled (its begin play's own roll is refused the same way). A write here
-// holds the component Movable for the one call and puts its mobility back.
-class MovableFor {
-public:
-    explicit MovableFor(void* comp) {
-        off_ = R::FindPropertyOffset(R::ClassOf(comp), L"Mobility");
-        if (off_ < 0) return;
-        at_ = static_cast<uint8_t*>(comp) + off_;
-        was_ = *at_;
-        *at_ = 2;  // EComponentMobility::Movable
-    }
-    ~MovableFor() {
-        if (at_) *at_ = was_;
-    }
-    MovableFor(const MovableFor&) = delete;
-    MovableFor& operator=(const MovableFor&) = delete;
-
-private:
-    int32_t  off_ = -1;
-    uint8_t* at_ = nullptr;
-    uint8_t  was_ = 0;
-};
-
 // The engine classes' own functions: FindFunction reads one class's list, so each is found on the class declaring it.
 void* SceneFn(const wchar_t* name) {
     void* sc = R::FindClass(L"SceneComponent");
     return sc ? R::FindFunction(sc, name) : nullptr;
 }
 
-void* SplineFn(const wchar_t* name) {
-    void* sc = R::FindClass(L"SplineComponent");
-    return sc ? R::FindFunction(sc, name) : nullptr;
-}
-
+// The engine refuses to move a component that is not Movable once construction is over, so the ball's ends and turn
+// keep what its construction script rolled (its begin play's own roll is refused the same way). The component is made
+// Movable through the engine's own setter, once, before the first write; a UFO's parts end with the UFO.
 void SetRelLoc(void* comp, const ue_wrap::FVector& v) {
     ue_wrap::ParamFrame f(SceneFn(L"K2_SetRelativeLocation"));
     if (!f.valid()) return;
     f.Set<ue_wrap::FVector>(L"NewLocation", v);
     f.Set<bool>(L"bTeleport", true);
-    MovableFor movable(comp);
     ue_wrap::Call(comp, f);
 }
 void SetRelRot(void* comp, const ue_wrap::FRotator& r) {
@@ -132,11 +110,12 @@ void SetRelRot(void* comp, const ue_wrap::FRotator& r) {
     if (!f.valid()) return;
     f.Set<ue_wrap::FRotator>(L"NewRotation", r);
     f.Set<bool>(L"bTeleport", true);
-    MovableFor movable(comp);
     ue_wrap::Call(comp, f);
 }
 
 // ---- the host's paths ------------------------------------------------------------------------------------------
+constexpr int32_t kMaxBooPoints = 255;
+
 // What the host's copy rolled: a ball's turn and ends, or a boo's flight spline in its own (local) space.
 bool ReadPath(void* ufo, Kind k, std::vector<ue_wrap::FVector>& out) {
     out.clear();
@@ -152,26 +131,23 @@ bool ReadPath(void* ufo, Kind k, std::vector<ue_wrap::FVector>& out) {
         return true;
     }
     if (k != Kind::Boo) return false;
-    void* spline = Component(ufo, L"flySpline");
-    if (!spline) return false;
-    void* const numFn = SplineFn(L"GetNumberOfSplinePoints");
-    void* const atFn = SplineFn(L"GetLocationAtSplinePoint");
-    ue_wrap::ParamFrame num(numFn);
-    if (!num.valid() || !ue_wrap::Call(spline, num)) return false;
-    const int32_t n = std::min<int32_t>(num.Get<int32_t>(L"ReturnValue"), 255);
-    for (int32_t i = 0; i < n; ++i) {
-        ue_wrap::ParamFrame at(atFn);
-        if (!at.valid()) return false;
-        at.Set<int32_t>(L"PointIndex", i);
-        at.Set<uint8_t>(L"CoordinateSpace", 0);  // local, as gen() adds them
-        if (!ue_wrap::Call(spline, at)) return false;
-        out.push_back(at.Get<ue_wrap::FVector>(L"ReturnValue"));
-    }
-    return n > 0;
+    return ue_wrap::spline::ReadLocalPoints(Component(ufo, L"flySpline"), kMaxBooPoints, out);  // local, as gen() adds them
 }
+
+// [dev red] ufo_path_send_off: the host sends no path, so a client's copy has none.
+bool PathSendOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::ufo_path_send_off);
+    return off;
+}
+
+std::atomic<uint32_t> g_pathsSent{0}, g_pathsReceived{0}, g_pathsApplied{0}, g_midasRuns{0};
 
 void SendPath(uint32_t eid, Kind k, const std::vector<ue_wrap::FVector>& pts, int slot) {
     if (!g_session) return;
+    if (PathSendOff()) {
+        UE_LOGW("ufo_sync: [dev red] ufo_path_send_off -- eid %u's path is NOT sent", eid);
+        return;
+    }
     const uint8_t total = static_cast<uint8_t>(pts.size());
     bool ok = true;
     for (size_t first = 0; first < pts.size(); first += N::kUfoEventMaxPoints) {
@@ -190,54 +166,35 @@ void SendPath(uint32_t eid, Kind k, const std::vector<ue_wrap::FVector>& pts, in
                                                         sizeof(p))
                         : g_session->SendReliable(N::ReliableKind::UfoEvent, &p, sizeof(p))) && ok;
     }
+    if (ok) g_pathsSent.fetch_add(1);
     UE_LOGI("ufo_sync: HOST sent %hs eid %u's path, %u point(s), to %hs (ok=%d)", k == Kind::Ball ? "ball" : "boo", eid,
             static_cast<unsigned>(total), slot >= 0 ? "a joiner" : "every client", ok ? 1 : 0);
 }
 
-std::vector<ue_wrap::CachedObjRef> g_sent;  // HOST: the UFOs whose path went out
-uint64_t g_nextScanAt = 0;
-
-struct ScanCtx {
-    int slot;          // -1: every client, new UFOs only; else the joiner, every UFO
-    bool snapshot;
-};
+// Read one enrolled UFO's path and send it, to every client (slot -1) or to one slot.
+void SendPathOf(void* ufo, uint32_t eid, int slot) {
+    const Kind k = KindOf(ufo);
+    if (k != Kind::Ball && k != Kind::Boo) return;
+    std::vector<ue_wrap::FVector> pts;
+    if (!ReadPath(ufo, k, pts)) {
+        UE_LOGW("ufo_sync: HOST could not read eid %u's path -- its copies get none (a ball copy stays parked, a boo "
+                "copy flies its own roll)", eid);
+        return;
+    }
+    SendPath(eid, k, pts, slot);
+}
 
 void VisitUfo(void* ctx, void* obj, int32_t) {
-    const ScanCtx& sc = *static_cast<const ScanCtx*>(ctx);
     if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-    const Kind k = KindOf(obj);
-    if (k != Kind::Ball && k != Kind::Boo) return;
     const EL::ElementId eid = EL::Registry::Get().EidForActor(obj);
-    if (eid == EL::kInvalidId) return;  // not enrolled (yet): the next scan
-    if (!sc.snapshot) {
-        for (const auto& s : g_sent)
-            if (s.Is(obj)) return;
-    }
-    std::vector<ue_wrap::FVector> pts;
-    if (!ReadPath(obj, k, pts)) {
-        UE_LOGW("ufo_sync: HOST could not read eid %u's path -- its copies fly their own", static_cast<unsigned>(eid));
-    } else {
-        SendPath(static_cast<uint32_t>(eid), k, pts, sc.slot);
-    }
-    if (!sc.snapshot) {
-        g_sent.emplace_back();
-        g_sent.back().Set(obj);
-    }
+    if (eid != EL::kInvalidId) SendPathOf(obj, static_cast<uint32_t>(eid), *static_cast<const int*>(ctx));
 }
 
-void ScanUfos(int slot, bool snapshot) {
-    ScanCtx sc{slot, snapshot};
+// A joiner's snapshot: every enrolled UFO still flying. Nothing announces what a joiner missed, so this is a scan, once
+// per joiner at its ready edge.
+void ScanUfos(int slot) {
     for (const wchar_t* cls : {L"ufo_ballfo_C", L"ufo_boofo_C", L"ufo_boofo_spawn1_C"})
-        if (void* c = OI::ClassByName(cls)) OI::ForEachInstance(c, &VisitUfo, &sc);
-}
-
-void TickHost() {
-    const uint64_t now = NowMs();
-    if (now < g_nextScanAt) return;
-    g_nextScanAt = now + 100;
-    g_sent.erase(std::remove_if(g_sent.begin(), g_sent.end(), [](const ue_wrap::CachedObjRef& r) { return !r.Alive(); }),
-                 g_sent.end());
-    ScanUfos(-1, false);
+        if (void* c = OI::ClassByName(cls)) OI::ForEachInstance(c, &VisitUfo, &slot);
 }
 
 // ---- Midas -----------------------------------------------------------------------------------------------------
@@ -283,35 +240,24 @@ void ApplyBall(void* ufo, const Pending& p) {
     void* center = Component(ufo, L"center");
     void* a = Component(ufo, L"a");
     void* b = Component(ufo, L"b");
+    constexpr uint8_t kMovable = 2;  // EComponentMobility::Movable
+    for (void* comp : {center, a, b})
+        if (comp) E::SetComponentMobility(comp, kMovable);
     if (center) SetRelRot(center, {p.pts[0].X, p.pts[0].Y, p.pts[0].Z});
     if (a) SetRelLoc(a, p.pts[1]);
     if (b) SetRelLoc(b, p.pts[2]);
     E::SetActorTickEnabled(ufo, true);  // parked by the lane until this path; now it flies
 }
 
-void ApplyBoo(void* ufo, const Pending& p) {
+// True when the host's spline was written into the copy's own.
+bool ApplyBoo(void* ufo, const Pending& p) {
     void* spline = Component(ufo, L"flySpline");
-    if (!spline) return;
-    {
-        ue_wrap::ParamFrame clr(SplineFn(L"ClearSplinePoints"));
-        if (!clr.valid()) return;
-        clr.Set<bool>(L"bUpdateSpline", false);
-        ue_wrap::Call(spline, clr);
-    }
-    void* const addFn = SplineFn(L"AddSplinePoint");
-    for (const ue_wrap::FVector& v : p.pts) {
-        ue_wrap::ParamFrame add(addFn);
-        if (!add.valid()) return;
-        add.Set<ue_wrap::FVector>(L"Position", v);
-        add.Set<uint8_t>(L"CoordinateSpace", 0);
-        add.Set<bool>(L"bUpdateSpline", false);
-        ue_wrap::Call(spline, add);
-    }
-    if (void* upd = SplineFn(L"UpdateSpline")) R::CallFunction(spline, upd, nullptr);
-    ue_wrap::ParamFrame len(SplineFn(L"GetSplineLength"));
+    if (!spline || !ue_wrap::spline::WriteLocalPoints(spline, p.pts)) return false;
+    float length = 0.f;
     const int32_t lenOff = R::FindPropertyOffset(R::ClassOf(ufo), L"length");
-    if (len.valid() && lenOff >= 0 && ue_wrap::Call(spline, len))
-        *reinterpret_cast<float*>(static_cast<char*>(ufo) + lenOff) = len.Get<float>(L"ReturnValue");
+    if (lenOff >= 0 && ue_wrap::spline::Length(spline, length))
+        *reinterpret_cast<float*>(static_cast<char*>(ufo) + lenOff) = length;
+    return true;
 }
 
 bool TryApply(const Pending& p) {
@@ -324,8 +270,14 @@ bool TryApply(const Pending& p) {
                 R::ClassNameOf(ufo).c_str());
         return true;
     }
+    bool written = true;
     if (k == Kind::Ball) ApplyBall(ufo, p);
-    else ApplyBoo(ufo, p);
+    else written = ApplyBoo(ufo, p);
+    if (!written) {
+        UE_LOGW("ufo_sync: CLIENT eid %u's boo copy has no spline to write the host's path into -- it flies its own", p.eid);
+        return true;
+    }
+    g_pathsApplied.fetch_add(1);
     UE_LOGI("ufo_sync: CLIENT eid %u flies the host's path (%hs, %u point(s))", p.eid, k == Kind::Ball ? "ball" : "boo",
             static_cast<unsigned>(p.total));
     return true;
@@ -371,8 +323,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
-    if (IsHost()) TickHost();
-    else if (IsClient()) TickClient();
+    if (IsClient()) TickClient();
     if (!g_watched || g_settled) return;
     sg::ResolvePendingNames();
     if (!sg::NameWatchSettled(kRowMidasRunTrigger, kTagMidas)) return;
@@ -383,19 +334,35 @@ void Tick() {
 
 void SendJoinSnapshotForSlot(int slot) {
     if (!IsHost() || slot < 0) return;
-    ScanUfos(slot, true);
+    ScanUfos(slot);
     if (MidasActive(ue_wrap::keyed_objects::Resolve(L"midasufo"))) SendMidas(slot);
+}
+
+void OnHostSpawnSent(void* actor, uint32_t eid) {
+    if (!IsHost() || !actor) return;
+    SendPathOf(actor, eid, -1);
+}
+
+bool DevReadPath(void* ufo, std::vector<ue_wrap::FVector>& out) {
+    const Kind k = KindOf(ufo);
+    return (k == Kind::Ball || k == Kind::Boo) && ReadPath(ufo, k, out);
+}
+
+Counters Read() {
+    return {g_pathsSent.load(), g_pathsReceived.load(), g_pathsApplied.load(), g_midasRuns.load()};
 }
 
 void OnEvent(const coop::net::UfoEventPayload& p) {
     if (!IsClient()) return;
     if (p.op == N::kUfoEventMidasRun) {
+        g_midasRuns.fetch_add(1);
         RunMidas();
         return;
     }
     if ((p.op != N::kUfoEventBallPath && p.op != N::kUfoEventBooPath) || p.total == 0 || p.count == 0 ||
         p.count > N::kUfoEventMaxPoints || p.first + p.count > p.total) {
-        UE_LOGW("ufo_sync: CLIENT a malformed UfoEvent (op %u, %u+%u of %u) -- dropped", p.op, p.first, p.count, p.total);
+        UE_LOGW("ufo_sync: CLIENT eid %u's UfoEvent is malformed (op %u, %u+%u of %u) -- dropped, its copy gets no path",
+                p.eid, p.op, p.first, p.count, p.total);
         return;
     }
     Pending* rec = nullptr;
@@ -415,6 +382,7 @@ void OnEvent(const coop::net::UfoEventPayload& p) {
         rec->pts[p.first + i] = {p.v[i][0], p.v[i][1], p.v[i][2]};
         rec->got[p.first + i] = true;
     }
+    if (Complete(*rec)) g_pathsReceived.fetch_add(1);
 }
 
 void OnMirrorMaterialized(void* actor) {
@@ -433,8 +401,11 @@ void OnMirrorEnding(void* actor) {
 }
 
 void OnDisconnect() {
-    g_sent.clear();
     g_pending.clear();
+    g_pathsSent = 0;
+    g_pathsReceived = 0;
+    g_pathsApplied = 0;
+    g_midasRuns = 0;
 }
 
 }  // namespace coop::ufo_sync
