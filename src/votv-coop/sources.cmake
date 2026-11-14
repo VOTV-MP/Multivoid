@@ -262,6 +262,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/vent_crawler_sync.cpp
     src/coop/props/prop_food_sync.cpp
     src/coop/props/food_tick_gate.cpp
+    src/coop/props/fireext_sync.cpp
     src/ue_wrap/actors/food.cpp
     src/coop/world/plant_sync.cpp
     src/coop/interactables/desk_short_sync.cpp
