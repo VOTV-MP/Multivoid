@@ -3,6 +3,7 @@
 
 #include "ue_wrap/core/gc_pin.h"
 #include "coop/props/trash_mirror.h"
+#include "coop/session/interactable_ticks.h"
 #include "coop/session/subsystems.h"
 
 #include "coop/element/object_scan_hub.h"  // the shared pass over the object index
@@ -14,6 +15,7 @@
 #include "coop/interactables/desk_ping_sync.h"
 #include "coop/interactables/deck_play_sync.h"  // deck playback lane
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
+#include "coop/world/event_lanes.h"  // the lanes added after the port
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/drive_sync.h"  // the drive slots
@@ -236,6 +238,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::player_hit::Install(&session);  // the session the host's hit deliveries send through
     coop::explosion_sync::Install(&session);  // the birth seam on every Blueprint deferred spawn: a client's own explosions dissolve, from the load window on; also the request lane's session and client watches
     coop::explosion_parking::Install(&session);  // the explosion copy's parking watches: the four verbs, the rune check, the force narrowing (client session only)
+    coop::event_lanes::Install(session);  // the later lanes' watches
     coop::world_load_episode::InstallReplayWatch(session);
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
     coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
@@ -518,6 +521,7 @@ DisconnectStats DisconnectAll() {
     coop::weather_sync::OnDisconnect();
     coop::explosion_sync::OnDisconnect();  // the class table and the counters, and the request lane's queues, shot tables and client state
     coop::explosion_parking::OnDisconnect();  // the counters, after a summary
+    coop::event_lanes::OnDisconnect();  // the later lanes' state
     coop::interactable_sync::OnDisconnect();
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
@@ -683,6 +687,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion_coast"}; coop::explosion_parking::Tick(&session); }  // HOST: the props a blast flung, handed to the driven-prop channel (before its tick below; an empty list costs one size check)
+    coop::event_lanes::Tick(session, isHost);  // the later lanes, before the driven-prop pump
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
@@ -708,31 +713,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerView"}; coop::props::container_view_close::Tick(); }  // a client's view into a container, closed out of reach
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_cursor"}; coop::desk_cursor_sync::Tick(); }  // coords-panel live cursor -- holder streams viewCoordinate / mirror interpolates (50ms) + WriteCursorOnly
     { PP::Scope _s{PP::Bucket::Interactable}; coop::desk_ping_sync::Tick(); }  // the ping lane's watches until live
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_sim"}; coop::desk_sim_sync::Tick(); }  // download-SIM -- host streams outputs (10Hz) / client interpolates + WriteSimOutputs
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:dish"}; coop::dish_sync::Tick(); }  // host pose sweep (4Hz) / client apply + park latch / calib diff-poll (1Hz)
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::download_arm_sync::Tick(); }  // the desk watches' name resolve
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::dish_hashcode_sync::Tick(); }  // host: the marked codes, a joiner's owed set / client: rows waiting for their dish
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::sat_console_sync::Tick(); }  // owed blobs, and a terminal whose world is gone
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:reel"}; coop::tape_caddy_sync::Tick(); }  // 4Hz slot sentinel poll (both peers) + host 1Hz corrector / client exact-snap apply
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:task"}; coop::daily_task_sync::Tick(); }  // host 1Hz taskNew change-hash poll (fires a few times per game-day)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_input"}; coop::desk_input_sync::Tick(); }  // 250ms input-field poll -> claim-free DeskInput deltas + cooldown charge/scan classification
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_snd"}; coop::desk_snd_fx::Tick(); }  // audio-seam ring flush + lazy hook install + pending loop retry
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:deck_play"}; coop::deck_play_sync::Tick(); }  // deck playback ring flush + lazy Deactivate/fin seam install + gen author
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:physmods"}; coop::physmods_sync::Tick(); }  // parked-canonical apply at desk resolve
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); coop::drive_payload_sync::Tick(); }  // the slot lane's drain and sweep; the rows' enrolments
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive_rack"}; coop::drive_rack_sync::Tick(); }  // rack barrier drain + 1 Hz sweep
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }  // email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }  // saved-signals shadow poll (same shape on gamemode.savedSignals_0)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:meadow"}; coop::meadow_db_sync::Tick(); }  // meadow-DB: the writers' watches until settled, the pen's drain once the database is back, then retries (1 Hz) while a line, a tombstone or an owed order waits
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:comp"}; coop::comp_sync::Tick(); }  // the refiner: the host's stream and comp_data edges, the mirror's world edges
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:voice"}; coop::voice_chat::Tick(); }  // voice frame pump (mic drain -> send; inbox -> jitter; positions; state edges)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:order"}; coop::order_sync::Tick(); }  // drone economy: host commits assembled client orders; the queue mirror's retry
-    // The barrier for coingun_sync: the client's own coins are captured inside the gun's verb
-    // bracket (reads only; an engine call mid-bytecode corrupts) and destroyed here, one pump tick
-    // later, where a dispatch is safe.
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:coingun"}; coop::coingun_sync::Tick(); }
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window"}; coop::window_sync::Tick(); }  // base-window clean: deferred-apply retry (wipes go at the verb)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window_stroke"}; coop::window_stroke_sync::Tick(); }  // bay-window dabs: send observed, replay received
+    coop::interactable_ticks::Tick();  // the desk, the drives, the mail and signal shadows, voice, orders, the windows
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:grime"}; coop::grime_sync::Tick(); }  // surface grime: the lowering verbs' watches + the end-of-play subscription, until they take
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:movement_ledger"}; coop::movement_ledger::Tick(session); }  // HOST: throttled per-slot summary + the wire-vs-actor divergence sample (an ENGINE read, hence game thread)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:npc_host"}; coop::npc_sync::TickPoseStream(); }  // HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)

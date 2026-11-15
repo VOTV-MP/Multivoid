@@ -159,6 +159,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/explosion_recipe.cpp
     src/coop/world/explosion_recipe_selftest.cpp
     src/coop/world/explosion_parking.cpp
+    src/coop/world/event_lanes.cpp
     src/coop/world/event_cue_sync.cpp
     src/coop/world/event_fire_policy.cpp
     src/coop/world/event_fire_sync.cpp
@@ -412,6 +413,7 @@ set(VOTVCOOP_SOURCES
     src/coop/session/pause_guard.cpp
     src/coop/session/connect_replay.cpp
     src/coop/session/subsystems.cpp
+    src/coop/session/interactable_ticks.cpp
     src/coop/session/world_ready_answer.cpp
     src/coop/player/local_streams.cpp
     src/coop/interactables/device_occupancy.cpp
