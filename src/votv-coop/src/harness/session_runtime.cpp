@@ -131,58 +131,6 @@ void Post(GT::Task t) { GT::Post(std::move(t)); }
 
 }  // namespace
 
-// Spawn the second player the moment the local mainPlayer_C exists: a ~100 ms poll on the game
-// thread (engine state is read only there). The flag is a shared_ptr so it outlives the loop if
-// a posted check is still queued.
-void SpawnSecondPlayerWhenReady() {
-    UE_LOGI("play: waiting for STORY gameplay, spawn 2nd player the instant it's ready");
-    for (int i = 0; i < 1200; ++i) {  // ~120 s safety cap
-        if (coop::shutdown::IsShuttingDown()) {
-            UE_LOGI("play: SpawnSecondPlayerWhenReady aborting -- shutdown signaled");
-            return;
-        }
-        auto state = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 not-ready,2 ok,3 failed
-        Post([state, i] {
-            if (coop::puppet_drive::Puppet(1).valid()) { state->store(2); return; }
-            void* local = coop::players::Registry::Get().Local();
-            const bool diag = (i % 20 == 0);  // ~every 2 s
-            if (!local) {
-                if (diag) {
-                    void* w = R::FindObjectByClass(P::name::WorldClass);
-                    UE_LOGI("play[wait %d]: no mainPlayer_C; world=%ls objs=%d", i,
-                            w ? R::ToString(R::NameOf(w)).c_str() : L"(none)", R::NumObjects());
-                }
-                state->store(1); return;
-            }
-            // A mainPlayer_C also exists at the menu (the preLoad world), at the origin; a puppet
-            // spawned against it lands in the menu world, which the level load then destroys. Gate
-            // on a non-origin location.
-            ue_wrap::FVector p{};
-            const bool pRead = ue_wrap::engine::TryGetActorLocation(local, p);   // unread proves no gameplay either
-            if (!pRead || std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) < 100.f) {
-                if (diag) UE_LOGI("play[wait %d]: mainPlayer_C @ORIGIN (%.0f,%.0f,%.0f)%s -- waiting for real gameplay",
-                                  i, p.X, p.Y, p.Z, pRead ? "" : " (unread)");
-                state->store(1);  // still the origin menu player; wait for gameplay
-                return;
-            }
-            UE_LOGI("play: mainPlayer_C ready @ (%.0f,%.0f,%.0f) -- spawning puppet", p.X, p.Y, p.Z);
-            state->store(coop::puppet_drive::Puppet(1).Spawn() ? 2 : 3);
-        });
-        // Shutdown-aware like its two siblings: a posted task the game thread never drains holds
-        // this thread for as long as that lasts.
-        while (state->load() == 0 && !coop::shutdown::IsShuttingDown()) ::Sleep(5);
-        const int s = state->load();
-        if (s == 2) {
-            UE_LOGI("play: 2nd player spawned the moment the local player was ready");
-            return;
-        }
-        if (s == 3) UE_LOGW("play: spawn attempt failed; retrying");
-        // No sandbox fallback: coop targets story mode through the save system.
-        ::Sleep(100);  // local player not in world yet -> poll again
-    }
-    UE_LOGW("play: gave up waiting for local mainPlayer_C");
-}
-
 // Bring up a session on g_session: reset the per-session edge state, wire every subsystem,
 // (host) back the save up and load the ban list on every topology, then Start. The one path for
 // "start a coop session", from the env boot and from a browser action; on the TimelineThread,
@@ -409,33 +357,6 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
 // path and the native menu path.
 namespace {
 
-// The lobby's live player count for the heartbeat, on the announcer's worker thread, so atomics
-// only: running() and connectedPeerCount() (the peerConns_ and ready arrays); g_session is
-// process-lifetime. Not role(), a plain field, and only a host announces. +1 is the host itself;
-// before the session starts (the lobby is announced while the world loads) 1 is the honest
-// answer. A joiner is undercounted for its admission round trip (the pending band holds no seat),
-// invisible at a 30 s cadence.
-int LobbyPlayerCount() {
-    if (!g_session.running()) return 1;
-    return g_session.connectedPeerCount() + 1;
-}
-
-// The host's players counted by the link it measures on each (the host's own slot is none), for the lobby
-// heartbeat beside the count; a read of each connection's status, which the transport allows off its thread.
-coop::net::lobby::LobbyLinks LobbyLinkCounts() {
-    coop::net::lobby::LobbyLinks l;
-    if (!g_session.running()) return l;
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        switch (g_session.LinkKindForSlot(slot)) {
-            case coop::net::LinkKind::Relayed: ++l.relayed; break;
-            case coop::net::LinkKind::Direct:  ++l.direct; break;
-            case coop::net::LinkKind::Lan:     ++l.lan; break;
-            default: break;
-        }
-    }
-    return l;
-}
-
 // Is a gameplay world up RIGHT NOW? Asked of the module that owns world identity rather than of a
 // boot parameter, because the two are not the same question and a launch that reaches gameplay
 // later answers them differently. Free to ask: the memo behind it refreshes at 10 Hz on the game
@@ -510,11 +431,6 @@ void StartMenuModeJoin_(const coop::net::Config& cfg) {
 }
 
 }  // namespace
-
-void InstallLobbyHeartbeatSources() {
-    coop::session_manager::SetPlayerCountSource(&LobbyPlayerCount);
-    coop::session_manager::SetLinksSource(&LobbyLinkCounts);
-}
 
 bool EndClientSession(const char* why) {
     // The client-role guard the three timeline stop sites carried, in one place: a stale cancel must

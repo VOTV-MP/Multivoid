@@ -2,6 +2,7 @@
 
 #include "coop/interactables/floppy_slot_sync.h"
 
+#include "coop/interactables/floppy_slot_wire.h"
 #include "coop/interactables/laptop_buffer_sync.h"  // the quad's shadow primes after a laptop apply
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -29,6 +30,7 @@
 namespace coop::floppy_slot_sync {
 namespace {
 
+using namespace coop::floppy_slot_wire;
 namespace FS = ue_wrap::floppy_slot;
 namespace SB = ue_wrap::serverbox;
 namespace R  = ue_wrap::reflection;
@@ -56,104 +58,6 @@ constexpr uint64_t kRateWindowMs = 2000;
 constexpr int      kMaxClaimsPerWindow = 12;
 
 uint64_t NowMs() { return static_cast<uint64_t>(::GetTickCount64()); }
-
-// ---- wire ----
-// head [u8 op][u8 deviceKind]; op 0=claim{[u8 index][slot]}, 1=canonical{[u32 generation][u16 n]{[u8 index][slot]}}
-// The generation counts the host's changes of the laptop's occupancy (0 for the boxes): the laptop's file quad carries
-// it too, so the two lanes agree which disc an edit belongs to.
-// slot [i32 type][i32 rw][u8 zip][u32 nametypeLen][utf8][u32 jsonLen][utf8][u32 bytesLen][bytes][u16 rows]{[u32 len][utf8]}
-// bytes is the 0.10 disc's ActorToBytes stream (floppyObjectDataBytes): the slot's disc is that, not the JSON of 0.9.
-// nametype is empty for every class but the laptop's, and it is on the wire because the format
-// claims to leave room for that device: a member the digest raises an edge on and the wire drops
-// is a field the receiver would blank on every change.
-
-// A disc actor's stream is a few kilobytes; the slot reads and writes no more than this either (ue_wrap/devices/floppy_slot).
-constexpr size_t kMaxObjectBytes = 256 * 1024;
-
-constexpr uint8_t kOpClaim     = 0;
-constexpr uint8_t kOpCanonical = 1;
-
-void PutU16(std::vector<uint8_t>& b, uint16_t v) {
-    b.push_back(static_cast<uint8_t>(v & 0xFF));
-    b.push_back(static_cast<uint8_t>(v >> 8));
-}
-void PutU32(std::vector<uint8_t>& b, uint32_t v) {
-    for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
-}
-// A row or a JSON can be long, so both take a 32-bit length; the reader bounds them against the
-// blob it is reading out of.
-void PutStr32(std::vector<uint8_t>& b, const std::wstring& w) {
-    const std::string u = coop::text::ToUtf8Exact(w);
-    PutU32(b, static_cast<uint32_t>(u.size()));
-    b.insert(b.end(), u.begin(), u.end());
-}
-
-struct Reader {
-    const uint8_t* p; size_t n; size_t off = 0;
-    bool ok = true;
-    uint8_t U8() { if (off + 1 > n) { ok = false; return 0; } return p[off++]; }
-    uint16_t U16() { if (off + 2 > n) { ok = false; return 0; } uint16_t v = static_cast<uint16_t>(p[off] | (p[off + 1] << 8)); off += 2; return v; }
-    uint32_t U32() { if (off + 4 > n) { ok = false; return 0; } uint32_t v = 0; std::memcpy(&v, p + off, 4); off += 4; return v; }
-    std::wstring Str32() {
-        const uint32_t len = U32();
-        if (!ok || len > n - off) { ok = false; return std::wstring(); }
-        std::wstring w;
-        const bool wellFormed = coop::text::FromUtf8Strict(reinterpret_cast<const char*>(p + off), len, &w);
-        off += len;
-        if (!wellFormed) { ok = false; return std::wstring(); }
-        return w;
-    }
-};
-
-struct Slot {
-    FS::Scalars st;
-    FS::Content c;
-};
-
-// Whether two occupied slots hold one disc: by the save key where the JSON carries one (0.9), else by the ActorToBytes
-// stream (0.10, where the JSON is empty and the stream is the disc).
-bool SameDiscIdentity(const Slot& a, const Slot& b, const std::wstring& keyA, const std::wstring& keyB) {
-    if (!keyA.empty() || !keyB.empty()) return keyA == keyB;
-    return a.c.objectBytes == b.c.objectBytes;
-}
-
-// An empty slot is a type and nothing else. What the device still holds in its other fields is
-// residue its own eject left behind, so carrying it would put a stale disc's JSON on the wire for
-// every empty box in the connect set.
-void PackSlot(std::vector<uint8_t>& b, const Slot& s) {
-    PutU32(b, static_cast<uint32_t>(s.st.floppyType));
-    if (s.st.floppyType < 0) return;
-    PutU32(b, static_cast<uint32_t>(s.st.readWrites));
-    b.push_back(s.st.zip ? 1 : 0);
-    PutStr32(b, s.c.nametype);
-    PutStr32(b, s.c.objectData);
-    PutU32(b, static_cast<uint32_t>(s.c.objectBytes.size()));
-    b.insert(b.end(), s.c.objectBytes.begin(), s.c.objectBytes.end());
-    // The count and the rows that follow it are the same number or the reader desyncs, so the
-    // clamp binds both.
-    const size_t rows = s.c.data.size() < 0xFFFF ? s.c.data.size() : 0xFFFF;
-    PutU16(b, static_cast<uint16_t>(rows));
-    for (size_t i = 0; i < rows; ++i) PutStr32(b, s.c.data[i]);
-}
-
-bool ParseSlot(Reader& r, Slot& out) {
-    out.st.floppyType = static_cast<int32_t>(r.U32());
-    if (!r.ok) return false;
-    if (out.st.floppyType < 0) return true;  // empty: the type is the whole body
-    out.st.readWrites = static_cast<int32_t>(r.U32());
-    out.st.zip        = r.U8() != 0;
-    out.c.nametype    = r.Str32();
-    out.c.objectData  = r.Str32();
-    {
-        const uint32_t n = r.U32();
-        if (!r.ok || n > r.n - r.off || n > kMaxObjectBytes) { r.ok = false; return false; }
-        out.c.objectBytes.assign(r.p + r.off, r.p + r.off + n);
-        r.off += n;
-    }
-    const uint16_t rows = r.U16();
-    for (uint16_t i = 0; i < rows && r.ok; ++i) out.c.data.push_back(r.Str32());
-    return r.ok;
-}
 
 // ---- devices ----
 

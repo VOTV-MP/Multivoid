@@ -1,5 +1,6 @@
-// coop/dev/cremator_drill_g2.h -- what the cremator drill's G2 arms (cremator_drill_g2.cpp) take from the drill's own
-// file: the waits' bounds, the reading of a cremator copy and the verdict line. Private to coop/dev. Game thread unless a
+// coop/dev/cremator_drill_g2.h -- what the cremator drill's G1, G4 and G2 arms (cremator_drill_g1.cpp,
+// cremator_drill_g2.cpp) take from the drill's own file: the waits' bounds, the reading of a cremator copy and the
+// verdict line. Private to coop/dev. Game thread unless a
 // declaration says otherwise.
 
 #pragma once
@@ -56,8 +57,16 @@ std::wstring HostFindKey();
 // Waits for the copy at `active` and signals what it reads under `signal`; a copy that never gets there is reported as
 // it is, and the host judges it.
 void ReportCopy(const std::wstring& key, int active, const char* signal);
+// Shuts the door and pulls the lever on the host's copy, the machine's own verb; game thread.
+bool Pull(const std::wstring& key);
 
 }  // namespace detail
+
+// The G1 and G4 arms: the host's lever and the client's copy (RunHost, RunClient), and the client's second life that
+// rejoins into the running machine (RunRejoin).
+void RunHost();
+void RunClient();
+void RunRejoin();
 
 // The G2 arms (g2, g2-double, g2-far), one per role: a client presses the cremator's handle through the real seam and
 // the host judges what its own copy and the lever's call count show.

@@ -115,6 +115,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/cremator_probe.cpp
     src/coop/dev/cremator_probe_host.cpp
     src/coop/dev/cremator_drill.cpp
+    src/coop/dev/cremator_drill_g1.cpp
     src/coop/dev/cremator_drill_g2.cpp
     src/coop/dev/hand_drop_census.cpp
     src/coop/dev/hand_drop_selftest.cpp

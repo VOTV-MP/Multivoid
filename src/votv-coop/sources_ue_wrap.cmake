@@ -70,6 +70,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/engine/engine_hurt_flash.cpp
     src/ue_wrap/engine/screen_state.cpp
     src/ue_wrap/engine/engine_mainplayer.cpp
+    src/ue_wrap/engine/engine_mainplayer_light.cpp
     src/ue_wrap/engine/engine_player_verbs.cpp
     src/ue_wrap/engine/scs_rig.cpp
     src/ue_wrap/engine/engine_playerragdoll.cpp

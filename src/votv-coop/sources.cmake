@@ -457,6 +457,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/floppy_slot_entry.cpp
     src/coop/interactables/mirror_slot_entry.cpp
     src/coop/interactables/floppy_slot_sync.cpp
+    src/coop/interactables/floppy_slot_wire.cpp
     src/coop/interactables/floppybox_sync.cpp
     src/coop/interactables/signal_catch_sync.cpp
     src/coop/player/sleep_rest.cpp
@@ -627,6 +628,8 @@ set(VOTVCOOP_SOURCES
     src/coop/commands/command_sync.cpp
     src/harness/harness.cpp
     src/harness/session_runtime.cpp
+    src/harness/session_second_player.cpp
+    src/harness/session_lobby_sources.cpp
     src/harness/join_leave.cpp
     src/harness/pump.cpp
     src/harness/world_boot.cpp
@@ -641,6 +644,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_chippile.cpp
     src/harness/autotest/autotest_trashpark.cpp
     src/harness/autotest/autotest_driveslot.cpp
+    src/harness/autotest/autotest_driveslot_host.cpp
     src/harness/autotest/autotest_clump.cpp
     src/harness/autotest/autotest_flashlight.cpp
     src/harness/autotest/autotest_tracker_selftest.cpp
