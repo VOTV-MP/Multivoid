@@ -86,6 +86,15 @@ bool  GetBroken(void* atv);
 bool  SetBroken(void* atv, bool v);
 bool  CallUpdHealth(void* atv);
 
+// The battery: `battery`, a float charge, kNoBattery when none is fitted (the game's unscrewPanel writes -1, and a
+// fit takes the held battery's charge). `CallUpdBattery` is the game's repaint of it (the back lights, the lights).
+// GetBattery reads kNoBattery on null or an unresolved field; BatteryResolved says which. Game thread.
+inline constexpr float kNoBattery = -1.f;
+bool  BatteryResolved();
+float GetBattery(void* atv);
+bool  SetBattery(void* atv, float v);
+bool  CallUpdBattery(void* atv);
+
 // The fitted modules: the live `Modules` array, one byte per module VALUE (the game's enum_physicalModules; each is the
 // value `physModToActor` maps to the module's prop class). ReadModules copies at most `cap` into `out` and returns how
 // many the ATV holds (it may exceed `cap`), or -1 when unreadable. WriteModules writes the array into its own buffer when

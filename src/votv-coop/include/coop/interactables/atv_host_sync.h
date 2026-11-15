@@ -58,6 +58,7 @@ bool VitalsGated(const std::wstring& key);
 // What the state carries of an ATV: its vitals, the two marks and the module values.
 struct Vitals {
     float   fuel = 0.f, health = 0.f;
+    float   battery = -1.f;            // the charge; -1 with none fitted
     uint8_t flags = 0;                 // kAtvHostEmpty, kAtvHostBroken
     uint8_t count = 0;                 // how many of `modules` are fitted
     uint8_t modules[16] = {};

@@ -83,6 +83,11 @@ void ApplyState(const std::wstring& key, void* atv, const Payload& p, int source
         A::SetHealth(atv, p.health);
         A::CallUpdHealth(atv);
     }
+    // The battery as the host holds it, repainted by the game's own updBattery when it differs (a fit, an unscrew).
+    if ((p.flags & coop::net::kAtvHostBattery) && A::BatteryResolved() && A::GetBattery(atv) != p.battery) {
+        A::SetBattery(atv, p.battery);
+        A::CallUpdBattery(atv);
+    }
     A::SetEmpty(atv, (p.flags & coop::net::kAtvHostEmpty) != 0);
     A::SetBroken(atv, (p.flags & coop::net::kAtvHostBroken) != 0);
     Vitals have;
@@ -160,7 +165,7 @@ void KeepUnadopted(const std::wstring& key, const Payload& p) {
 }  // namespace
 
 bool Vitals::operator==(const Vitals& o) const {
-    return fuel == o.fuel && health == o.health && flags == o.flags && count == o.count &&
+    return fuel == o.fuel && health == o.health && battery == o.battery && flags == o.flags && count == o.count &&
            std::memcmp(modules, o.modules, count) == 0;
 }
 
@@ -193,8 +198,10 @@ bool ReadVitals(void* atv, Vitals& out) {
     if (n < 0 || n > kMaxModules) return false;
     out.fuel = A::GetFuel(atv);
     out.health = A::GetHealth(atv);
+    out.battery = A::GetBattery(atv);
     out.flags = static_cast<uint8_t>((A::GetEmpty(atv) ? coop::net::kAtvHostEmpty : 0) |
-                                     (A::GetBroken(atv) ? coop::net::kAtvHostBroken : 0));
+                                     (A::GetBroken(atv) ? coop::net::kAtvHostBroken : 0) |
+                                     (A::BatteryResolved() ? coop::net::kAtvHostBattery : 0));
     out.count = static_cast<uint8_t>(n);
     std::memcpy(out.modules, mods, sizeof(out.modules));
     return true;
@@ -205,6 +212,7 @@ void FillState(const std::wstring& key, const Vitals& v, uint8_t opcode, Payload
     out.op = opcode;
     out.fuel = v.fuel;
     out.health = v.health;
+    out.battery = v.battery;
     out.flags = v.flags;
     out.moduleCount = v.count;
     std::memcpy(out.modules, v.modules, sizeof(out.modules));
@@ -222,8 +230,8 @@ bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before) 
     ++g_n.published;
     coop::atv_host_judge::OnStatePublished(key);
     DE::Note(DE::kPublished, static_cast<int32_t>(p.stateSeq), now.count, 0, now.fuel, now.health);
-    UE_LOGI("atv_host: '%ls' state #%u published -- fuel %.1f health %.1f modules %hs%s%s", key.c_str(), p.stateSeq,
-            now.fuel, now.health, ModulesText(now).c_str(), (now.flags & coop::net::kAtvHostEmpty) ? " empty" : "",
+    UE_LOGI("atv_host: '%ls' state #%u published -- fuel %.1f health %.1f battery %.1f modules %hs%s%s", key.c_str(),
+            p.stateSeq, now.fuel, now.health, now.battery, ModulesText(now).c_str(), (now.flags & coop::net::kAtvHostEmpty) ? " empty" : "",
             (now.flags & coop::net::kAtvHostBroken) ? " broken" : "");
     return true;
 }

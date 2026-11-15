@@ -102,6 +102,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"atv_c", L"inpactevt_atv_honk_k2node_inputactionevent_15", L"atv_c.inpactevt_atv_honk_k2node_inputactionevent_15", 0xba244dce9f431cf1ull, 0x47f166aa7043fe26ull},
     {L"atv_c", L"playerusedon", L"atv_c.playerusedon", 0x2c4f0c15ebdccee4ull, 0x19f13461a4c2f108ull},
     {L"atv_c", L"toolboxfix", L"atv_c.toolboxfix", 0xeb2daf7bb16619f9ull, 0xe09ffc981c650f49ull},
+    {L"atv_c", L"unscrewpanel", L"atv_c.unscrewpanel", 0xcdb1549c510395dbull, 0x49b094f9cd576ec2ull},
     {L"atv_c", L"upgradetake", L"atv_c.upgradetake", 0xc302dbda6bf6e002ull, 0xaf1269b8742aa9b2ull},
     {L"audiocomponent", L"play", L"audiocomponent.play", 0xa6e73efb698bac63ull, 0xcbf29ce484222325ull},
     {L"badsun_c", L"remove", L"badsun_c.remove", 0x6a2d5d90ab51fa2dull, 0x00da73bc06856b90ull},

@@ -73,8 +73,8 @@ Accumulators apply from the syncer, clamped to the game's domains when it is a c
 which tyres are on and whether the spare is, is consumed only from the host's own copy, because a
 client syncer's eject ships a mask whose paired wheel prop cannot travel, and applying it would
 turn a divergence into an item loss the host persists. The mirror's own accrual is held at zero by the impulse neuter, so an
-overwrite never races an irreversible act. The battery is an inserted prop's charge and rides
-the prop lane.
+overwrite never races an irreversible act. The battery is the host's (below); each copy drains
+its own between the host's states.
 
 ### What the host owns beyond the rig
 
@@ -100,6 +100,14 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
   it does, writes its `Modules` and runs `updUpgrades`. A fit's module must be of the class the sender's hand last held,
   once per item. A fit refused as a duplicate, after the hand check passed, is refunded with that module's prop at the ATV.
   A copy that is adopted holding no state of the host's asks for it (request op 6), and the host answers with its state.
+- **The battery.** `battery` is a charge, -1 with none fitted. A fit (`playerUsedOn` with a `prop_atvcarbattery_C` in
+  hand) and an unscrew (`unscrewPanel`'s battery branch, which drops the battery as a prop with its charge) run on the
+  client's copy and are asked of the host: op 5 with the charge the copy took, op 7 for the unscrew. The host fits only
+  into an ATV with none (`full` otherwise) and only from a hand that last held a battery, takes out only a fitted one,
+  writes `battery` and runs the game's `updBattery`; the unscrewed battery is the client's own birth, carried by the
+  prop lane. Every host state carries the charge with a flag that it read, and a client writes it when it differs, with
+  `updBattery`. The rig's ATV drill fits, unscrews and fits back from a client on three peers (steps b1 to b3); before
+  this the host and the third peer kept no battery while the client's copy ran on its own (Trello #71).
 - **Lights, brake, turbo and the horn.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights
   0x20, turbo 0x40, horn 0x80) at each block build. The host takes them from an admitted block (the block's sender must be
   the ATV's syncer) and runs the ATV's own light, brake and turbo bodies on its copy for each bit that changed; its re-send
@@ -210,8 +218,8 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
-| `AtvHostState` | the host to all | an ATV's fuel, health, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
-| `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off (each with a request id), a copy's ask for the host's state |
+| `AtvHostState` | the host to all | an ATV's fuel, health, battery, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
+| `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off, a battery fitted (its charge) or unscrewed (each with a request id), a copy's ask for the host's state |
 
 ## Late join
 

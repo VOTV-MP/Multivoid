@@ -36,6 +36,7 @@ int32_t g_playerOff   = -1;       // Player   (0x05B0, AmainPlayer_C*)
 int32_t g_isDrivenOff = -1;       // isDriven (0x05F7, bool)
 int32_t g_fuelOff     = -1;       // fuel     (0x05D4, float)
 int32_t g_healthOff   = -1;       // health   (0x05E4, float)
+int32_t g_batteryOff  = -1;       // battery  (float; -1 none fitted), by reflection alone
 int32_t g_brakeOff    = -1;       // Brake    (0x05D9, bool)
 uint8_t g_brakeMask   = 0xFF;     // its bit; the whole byte when the bit could not be resolved
 int32_t g_lightsOff   = -1;       // lights, turbo: bool bits, byte and mask each
@@ -106,6 +107,8 @@ bool EnsureResolved() {
     g_isDrivenOff = ResolveOff(cls, L"isDriven", 0x05F7);
     g_fuelOff     = ResolveOff(cls, L"fuel",     0x05D4);
     g_healthOff   = ResolveOff(cls, L"health",   0x05E4);
+    g_batteryOff  = R::FindPropertyOffset(cls, L"battery");
+    if (g_batteryOff < 0) UE_LOGW("atv: battery offset not found -- an ATV's battery is not carried");
     g_brakeOff    = ResolveOff(cls, L"Brake",    0x05D9);
     {
         int32_t off = -1;
@@ -278,6 +281,21 @@ bool SetBroken(void* atv, bool v) {
 }
 
 bool CallUpdHealth(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updHealth"); }
+
+bool BatteryResolved() { return g_batteryOff >= 0; }
+
+float GetBattery(void* atv) {
+    if (!atv || g_batteryOff < 0) return kNoBattery;
+    return *reinterpret_cast<const float*>(reinterpret_cast<const char*>(atv) + g_batteryOff);
+}
+
+bool SetBattery(void* atv, float v) {
+    if (!atv || g_batteryOff < 0) return false;
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(atv) + g_batteryOff) = v;
+    return true;
+}
+
+bool CallUpdBattery(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updBattery"); }
 
 int ReadModules(void* atv, uint8_t* out, int cap) {
     if (!atv || g_modulesOff < 0) return -1;
