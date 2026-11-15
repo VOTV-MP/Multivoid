@@ -470,6 +470,7 @@ void ApplyPendingPosCorrections() {
         // A save-loaded chipPile native rests at Static mobility, where SetActorLocation silently
         // does nothing (the call returns true and the actor never moves), so the root is forced
         // Movable first. Kerfurs never needed this, since an NPC is Movable.
+        coop::prop_wire_parity::NoteCorrection(actor, loc, "snap-pos");
         ue_wrap::engine::SetActorRootMovable(actor);
         ue_wrap::engine::SetActorLocation(actor, loc);
         if (c.hasRot) ue_wrap::engine::SetActorRotation(actor, rot);

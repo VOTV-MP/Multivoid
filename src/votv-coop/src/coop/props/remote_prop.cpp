@@ -326,6 +326,8 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // where the holder's slot or mount put it -- all but a copy its stick placed. The host authors a
     // trash body's place.
     if (propActor && payload.hasPose && !HostAuthorsTrashBody(propActor) && !stuckOnWall) {
+        coop::prop_wire_parity::NoteCorrection(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
+                                               "release-pose");
         ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(propActor,
                                           ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
@@ -416,6 +418,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // The election, after the drive is cleared (a prop under a slot's drive opens no row) and only where the release
     // simulated the copy here: the thrower is the prop's syncer from now, and the host's copy follows its rows. Only the
     // prop's last holder is elected; any other slot's release has applied as it always did and elects nothing.
+    bool elected = false;
     if (thrownActor && payload.throwSeq != 0 && senderSlot >= 1 && coop::prop_element_tracker::SessionIsHost()) {
         ue_wrap::FVector at{payload.locX, payload.locY, payload.locZ};
         if (!lastHolder) {
@@ -423,10 +426,15 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                     senderSlot, static_cast<unsigned>(payload.throwSeq));
         } else if (payload.hasPose || E::TryGetActorLocation(thrownActor, at)) {
             const float start[3] = {at.X, at.Y, at.Z};
-            coop::prop_syncer_host::ElectSyncer(thrownActor, static_cast<uint8_t>(senderSlot), payload.throwSeq, start,
-                                                NowMs(), /*reachJudged=*/false);
+            elected = coop::prop_syncer_host::ElectSyncer(thrownActor, static_cast<uint8_t>(senderSlot), payload.throwSeq,
+                                                          start, NowMs(), /*reachJudged=*/false);
         }
     }
+    // A release no client was elected to fly (a drop, a set-down, a throw whose election was refused): the host's copy
+    // flies it and its stream carries every other copy to the host's rest, where each peer's own fall would have landed
+    // it somewhere of its own. The releasing client's copy, which flew on from the release, is parked on the first row.
+    if (thrownActor && !elected && senderSlot >= 1 && coop::prop_element_tracker::SessionIsHost())
+        coop::prop_drive_host::CoastLetGo(thrownActor, payload.throwSeq != 0 ? "client throw (not elected)" : "client release");
 }
 
 namespace {

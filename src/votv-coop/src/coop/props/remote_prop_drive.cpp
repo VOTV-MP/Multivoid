@@ -22,6 +22,7 @@
 #include "coop/props/prop_hold_claim.h"  // AdmitRemoteHold: one hold per keyed prop
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
+#include "coop/props/prop_wire_parity.h"  // NoteCorrection: how far the first pose of a hold moves a resting copy
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
 #include "coop/props/bracket_position_wait.h"  // KeepIfWaiting: a pose for a key whose spawn waits
 #include "coop/props/trash_channel.h"  // the per-eid sync-time context; stale carry and release drops
@@ -310,6 +311,9 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         coop::prop_sound::PlayUseClick(prop);
         coop::prop_sound::PlayGrabSound(prop);
     }
+    // A copy that rests elsewhere here than where the holder took it from is snapped to the holder's pose by the
+    // first row: the correction tally says how far.
+    coop::prop_wire_parity::NoteCorrection(prop, ue_wrap::FVector{pose.x, pose.y, pose.z}, "hold-first-pose");
     // Simulation off so the per-packet SetActorLocation sticks: a kinematic follow, the clump
     // through the generic root toggle, and a Character welded on the prop stopped (prop_park.h).
     coop::prop_park::Park(prop, mesh);

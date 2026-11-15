@@ -175,6 +175,8 @@ void AdoptByPosition(const coop::net::PropSpawnPayload& payload, int senderSlot,
     UE_LOGI("remote_prop::OnSpawn: Gap-I-1 FUZZY MATCH '%ls' (wire key '%ls') -> existing actor %p within %.1f cm -- de-duping, converging transform + rekeying",
             classW.c_str(), keyW.c_str(), fuzzy, kFuzzyRadiusCm);
     // The kinematic converge and restore, as on the exact-key diverged branch.
+    coop::prop_wire_parity::NoteCorrection(fuzzy, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
+                                           "spawn-adopt");
     ReconcileToHostPhysics(fuzzy, payload.physFlags);
     ue_wrap::engine::SetActorLocation(fuzzy,
         ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
@@ -482,6 +484,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // The kinematic converge: kinematic before the teleport so the move neither wakes nor
             // ejects the body, then the single-player physics state restored at the host's rest
             // pose, where the body re-settles instead of storming.
+            coop::prop_wire_parity::NoteCorrection(existing, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
+                                                   "spawn-converge");
             ReconcileToHostPhysics(existing, payload.physFlags);
             ue_wrap::engine::SetActorLocation(existing,
                 ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});

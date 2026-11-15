@@ -51,6 +51,12 @@ void Release(void* actor);
 // `reason` names the push for the log. Game thread.
 void Coast(void* actor, const char* reason);
 
+// A hand let go of `actor` and its body flies on this host (a client's release applied here, the host's own release):
+// Coast, when the prop is simulating and awake, has an element id and fewer than 32 props already coast. Past the
+// cap, or for a body at rest, a frozen, static or sleeping one, it does nothing and every peer's copy falls on its
+// own. `reason` names the release for the log. Game thread.
+void CoastLetGo(void* actor, const char* reason);
+
 // A host-side write to `actor` (its pose or its physics, from a peer's message) takes the prop from the client that
 // syncs it, as a host verb does: the client's row ends, the host's copy coasts from the last admitted pose. A no-op
 // for a prop with no client row, so a caller may ask before every such write. Game thread.

@@ -280,6 +280,18 @@ void Coast(void* actor, const char* reason) {
     Open(actor, /*claimed=*/false, reason ? reason : "");
 }
 
+void CoastLetGo(void* actor, const char* reason) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::CoastLetGo");
+    namespace pf = coop::net::propspawn_flags;
+    constexpr size_t kMaxCoasting = 32;   // the births' cap (host_spawn_watcher): one bound for every coasting row
+    if (!actor || CoastingCount() >= kMaxCoasting) return;
+    // The same refusals as a falling birth: no id means no peer holds a copy, and a body at rest, frozen, static or
+    // asleep has nothing to fly. Said by neither, since a let-go is the commonest thing a hand does.
+    if (coop::prop_element_tracker::GetPropElementIdForActor(actor) == coop::element::kInvalidId) return;
+    if (!(coop::prop_wire_parity::PhysFlagsOf(actor) & pf::kSimulatePhysics)) return;
+    Coast(actor, reason ? reason : "release");
+}
+
 void OverrideClientSyncer(void* actor, const char* reason) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::OverrideClientSyncer");
     const Driven* d = actor ? Find(actor) : nullptr;

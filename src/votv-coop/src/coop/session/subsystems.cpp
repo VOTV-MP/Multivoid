@@ -49,6 +49,7 @@
 #include "coop/creatures/orb_authority.h"    // the black orb's encounter, judged by the host
 #include "coop/world/ufo_sync.h"             // the ambient UFOs: the host's paths and the Midas run
 #include "coop/props/roomba_sync.h"           // the robot cleaner: the host drives it and owns its switch
+#include "coop/props/fireext_thrust_sync.h"  // an extinguisher in runaway thrust: the host's
 #include "coop/player/puppet_identity.h"  // a puppet's touch never runs this machine's player's effects
 #include "coop/player/sleep_rest.h"
 #include "coop/player/hunger_share.h"  // the host's shared-hunger rule on this peer's own player
@@ -546,6 +547,7 @@ DisconnectStats DisconnectAll() {
     coop::orb_authority::OnDisconnect();  // the encounters the host was judging
     coop::ufo_sync::OnDisconnect();  // the paths sent and pending
     coop::roomba_sync::OnDisconnect();  // the cleaners known, the presses and states queued
+    coop::fireext_thrust_sync::OnDisconnect();  // the thrusting extinguishers it held
     coop::puppet_identity::OnDisconnect();  // the resolved classes and stubs, the grunt and wisp_p windows
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
@@ -672,6 +674,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion_coast"}; coop::explosion_parking::Tick(&session); }  // HOST: the props a blast flung, handed to the driven-prop channel (before its tick below; an empty list costs one size check)
+    if (isHost) coop::fireext_thrust_sync::Tick(&session);  // HOST: an extinguisher in runaway thrust, onto the driven-prop channel (returns at once when none is)
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_short"}; coop::desk_short_sync::Tick(); }  // the desk short watch resolves its names, and the host serves the requests (an empty inbox costs one size check)
