@@ -246,7 +246,9 @@ docs/THUNDERSTORE.md
 docs/**
 !docs/architecture.md
 !docs/bytecode-fingerprint.md
+!docs/build-sharing.md
 !docs/code-map.md
+!docs/containers.md
 !docs/coop-dispatch-visibility.md
 !docs/coop-entity-expression-map.md
 !docs/coop-sync-doctrine.md
@@ -275,6 +277,7 @@ docs/**
 !docs/send-path.md
 !docs/signals.md
 !docs/testing.md
+!docs/tv-links.md
 !docs/ui.md
 !docs/vehicles.md
 !docs/versioning.md
