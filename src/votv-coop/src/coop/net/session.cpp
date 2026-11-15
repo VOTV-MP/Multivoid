@@ -10,6 +10,7 @@
 #include "coop/net/prop_spawn_hook.h"  // the drill seam on SendPropSpawn
 #include "coop/net/net_clock.h"  // NowMs, the net layer's one steady clock
 
+#include "coop/dev/traffic_census.h"
 #include "coop/dev/wire_census.h"
 #include "coop/element/element.h"
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
@@ -492,6 +493,7 @@ void Session::NetThread() {
         // The dev wire census flushes its counters at 1 Hz from the loop, not from arrivals, so the
         // final second before a disconnect still lands in the log.
         if (dev::wire_census::Enabled()) dev::wire_census::Tick();
+        if (dev::traffic_census::Enabled()) dev::traffic_census::Tick();
         // The receive edge's folded refusal lines close their windows here, when a window has run.
         hostKindRefusals_.Flush(RefusalTally::Clock::now());
         zeroEpochRefusals_.Flush(RefusalTally::Clock::now());
