@@ -46,7 +46,8 @@ bool ContainsI(const std::string& hay, const char* needle) {
 
 // The names the filter keeps, rebuilt only when the filter or the list changes.
 struct Filtered {
-    const std::vector<std::string>* source = nullptr;
+    // Held, not borrowed: a list freed under a raw pointer can be reallocated at its address.
+    std::shared_ptr<const std::vector<std::string>> source;
     std::string filter;
     std::vector<int> index;
 };
@@ -71,8 +72,8 @@ void RenderItems() {
     char line[160];
     ImGui::SetNextItemWidth(S(220.f));
     ImGui::InputTextWithHint("##itemfilter", l10n::T("Search items..."), filterBuf, sizeof(filterBuf));
-    if (cache.source != names.get() || cache.filter != filterBuf) {
-        cache.source = names.get();
+    if (cache.source != names || cache.filter != filterBuf) {
+        cache.source = names;
         cache.filter = filterBuf;
         cache.index.clear();
         for (size_t i = 0; i < names->size(); ++i)
