@@ -147,8 +147,15 @@ std::string Hex(const uint8_t* p, size_t n) {
     return s;
 }
 
-// This module's own file: the main.dll the process loaded.
+// This module's own file: the main.dll the process loaded. Under a mod manager the path the module reports is one
+// the loader maps for reads; the file a rename and a write must reach is in the mod's real folder
+// (ue_wrap/core/paths), so that one is used when it is there.
 std::wstring OwnPath() {
+    const std::wstring data = ue_wrap::paths::ModDataDir();
+    if (!data.empty()) {
+        const std::wstring real = data + L"\\dlls\\main.dll";
+        if (::GetFileAttributesW(real.c_str()) != INVALID_FILE_ATTRIBUTES) return real;
+    }
     HMODULE self = nullptr;
     if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                               reinterpret_cast<LPCWSTR>(&OwnPath), &self))
