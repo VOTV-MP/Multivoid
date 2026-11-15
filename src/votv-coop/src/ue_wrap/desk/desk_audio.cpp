@@ -263,6 +263,23 @@ bool ReplaySetActive(int compIdx, bool on) {
     return ue_wrap::Call(g_comps[compIdx], f);
 }
 
+bool LendAttenuation(int fromIdx, int toIdx) {
+    if (fromIdx < 0 || fromIdx >= kCompCount || toIdx < 0 || toIdx >= kCompCount || !g_compsValid) return false;
+    if (!R::IsLiveByIndex(g_desk, g_deskIdx)) { g_compsValid = false; return false; }
+    static int32_t s_attOff = -2;
+    if (s_attOff == -2) {
+        void* const audioCls = R::FindClass(L"AudioComponent");
+        s_attOff = audioCls ? R::FindPropertyOffset(audioCls, L"AttenuationSettings") : -1;
+    }
+    if (s_attOff < 0) return false;
+    void** const to = reinterpret_cast<void**>(static_cast<uint8_t*>(g_comps[toIdx]) + s_attOff);
+    if (*to) return true;
+    void* const from = *reinterpret_cast<void**>(static_cast<uint8_t*>(g_comps[fromIdx]) + s_attOff);
+    if (!from) return false;
+    *to = from;
+    return true;
+}
+
 bool ReplayActivate(int compIdx) {
     if (compIdx < 0 || compIdx >= kCompCount || !g_compsValid || !g_activateFn) return false;
     if (!R::IsLiveByIndex(g_desk, g_deskIdx)) { g_compsValid = false; return false; }

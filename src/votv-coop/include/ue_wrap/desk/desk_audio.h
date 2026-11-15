@@ -66,6 +66,10 @@ bool ReplaySetActive(int compIdx, bool on);
 // A one-shot fired as the native site fires it: Activate(bReset=true), the component's own sound.
 bool ReplayActivate(int compIdx);
 
+// Component `toIdx` given component `fromIdx`'s AttenuationSettings (the falloff a play starts with) when it has none of
+// its own. True when it then holds one; false when unresolved or the source has none either.
+bool LendAttenuation(int fromIdx, int toIdx);
+
 // Session-end / level-change cleanup of the instance-pointer cache (class
 // offsets and UFunctions persist -- they are engine/class-level).
 void ResetCache();

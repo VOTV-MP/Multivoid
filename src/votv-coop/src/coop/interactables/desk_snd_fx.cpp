@@ -20,6 +20,8 @@ namespace {
 
 namespace DA = ue_wrap::desk_audio;
 
+void* g_attenuatedDesk = nullptr;   // the desk whose cursor loop was given the falloff
+
 UE_FACT_FN(kRowPlay, "desk_snd_fx", L"AudioComponent", L"Play", Declared);
 UE_FACT_FN(kRowSetActive, "desk_snd_fx", L"ActorComponent", L"SetActive", Declared);
 UE_FACT_FN(kRowActivate, "desk_snd_fx", L"ActorComponent", L"Activate", Declared);
@@ -211,6 +213,17 @@ void Tick() {
         g_hooksInstalled = true;  // latch (InstallPostHook is idempotent + process-lifetime)
         UE_LOGI("desk_snd: audio seams installed (Play=%d SetActive=%d Activate=%d)",
                 a ? 1 : 0, b ? 1 : 0, c ? 1 : 0);
+    }
+
+    // The cursor's loop (corrds_loop) is the one desk sound component the game gives no attenuation: in single player
+    // it plays only under the player at the desk, so it was never heard elsewhere, but a peer's replay of another
+    // player's cursor played it at full volume across the whole map. It takes the ping loop's falloff (att_default,
+    // the falloff of every other desk sound), once per desk (Ghezra/Multivoid#29).
+    if (void* const desk = ue_wrap::console_desk::Instance(); desk && desk != g_attenuatedDesk && DA::EnsureResolved()) {
+        const bool lent = DA::LendAttenuation(static_cast<int>(coop::net::DeskSndComp::PingLoop),
+                                              static_cast<int>(coop::net::DeskSndComp::CorrdsLoop));
+        g_attenuatedDesk = desk;
+        UE_LOGI("desk_snd: the cursor loop %s the desk's falloff", lent ? "holds" : "could NOT be given");
     }
 
     // Dev self-test arming (per-session: OnDisconnect clears the latch).
