@@ -1,18 +1,16 @@
-// coop/world/spawn_authority.cpp -- see the header. The rows rest on these bytecode facts: the
-// mushroom master arms one looping spawn timer at begin-play, and its spawn mints spawner children
-// with a lifespan, so refused children are reaped by the engine independently of the refused event;
-// the mushroom spawner's own looping timer materialises the food cap and self-destroys, and with
-// spawn refused the lifespan reaps it; the yellow-wisp ticker spawns at a navmesh random-walk point,
-// not around the player, and its product is host-mirrored, so the client must not run its own
-// spawner; the sky-wisp ticker spawns the sky wisps at absolute map coordinates, so the host rolls
-// and clients mirror through the source-gated catch and the variant allowlist; the roach master's
-// summon and its three looping timer entries fire independently of its tick. The tick rows: the
-// insomniac and fossilhound tickers roll inside their tick with no delay chains or reap duties, so
-// refusing the tick stops the roll and the product, and the products are host-mirrored; the roach
-// master's tick drives roach movement, the food-eat mutation and crush traces, which a client running
-// it would diverge, so it and its summoner are refused while the roach sync drives the client
-// population. The jellyfish path's spawn makes seven fish inside its graph, and the host's are
-// mirrored through the source-gated catch, so a client's own, its 18:00 roll's, is refused.
+// coop/world/spawn_authority.cpp -- see the header. The rows rest on these bytecode facts: the mushroom master arms one
+// looping spawn timer at begin-play, and its spawn mints spawner children with a lifespan, so refused children are reaped
+// by the engine independently of the refused event; the mushroom spawner's own looping timer materialises the food cap and
+// self-destroys, and with spawn refused the lifespan reaps it; the yellow-wisp ticker spawns at a navmesh random-walk
+// point and its product is host-mirrored, so the client must not run its own spawner; the sky-wisp ticker spawns at
+// absolute map coordinates, so the host rolls and clients mirror through the source-gated catch and the variant
+// allowlist; the roach master's summon and its three looping timer entries fire independently of its tick. The tick rows:
+// the insomniac and fossilhound tickers roll inside their tick with no delay chains or reap duties, so refusing the tick
+// stops the roll and the product; the roach master's tick drives roach movement, the food-eat mutation and crush traces,
+// which would diverge on a client, so it and its summoner are refused while the roach sync drives the client population.
+// The jellyfish path's spawn makes seven fish inside its graph, mirrored through the source-gated catch, so a client's own
+// (its 18:00 roll's) is refused. The yellow-wisp ticker's killer wisp, the fossilhound ticker's hound and the fire tank
+// the gray tank's box unfolds into are mirrored through the same catch (that box's own unfolding is refused on a client).
 
 #include "coop/world/spawn_authority.h"
 
@@ -126,6 +124,62 @@ UE_FACT_FN(kRowBoxBeginOverlapHoleController, "spawn_authority", L"event_bottomH
            L"BndEvt__event_bottomHoleController_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
            Declared);
 UE_FACT_FN(kRowSetEventLib, "spawn_authority", L"lib_C", L"setEvent", Declared);
+UE_FACT_FN(kRowSpawnPartsFiretankDeploy, "spawn_authority", L"firetankDeploy_C", L"spawnParts", Declared);
+UE_FACT_FN(kRowCheckSurroundingsTreehouse, "spawn_authority", L"treehouse_C", L"checkSurroundings", Declared);
+UE_FACT_FN(kRowTrySpawnPigShooterTreehouse, "spawn_authority", L"treehouse_C", L"trySpawnPigShooter", Declared);
+UE_FACT_FN(kRowTrySpawnTankShooterTreehouse, "spawn_authority", L"treehouse_C", L"trySpawnTankShooter", Declared);
+UE_FACT_FN(kRowReceiveTickEventArirStealsGun, "spawn_authority", L"event_arirStealsGun_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowGraphCaveSpawner, "spawn_authority", L"antibreatherSPawner_C", L"ExecuteUbergraph_antibreatherSPawner",
+           Declared);
+UE_FACT_FN(kRowTickerLockerHeadGamemode, "spawn_authority", L"mainGamemode_C", L"ticker_lockerHead", Declared);
+UE_FACT_FN(kRowTickerRadioTowerPoofGamemode, "spawn_authority", L"mainGamemode_C", L"ticker_radioTowerPoof", Declared);
+UE_FACT_FN(kRowTickerLakeMonsterGamemode, "spawn_authority", L"mainGamemode_C", L"ticker_lakeMonsert", Declared);
+UE_FACT_FN(kRowUfoBallGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_ball", Declared);
+UE_FACT_FN(kRowUfoBooGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_boo", Declared);
+UE_FACT_FN(kRowUfoJoelGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_joel", Declared);
+UE_FACT_FN(kRowUfoPillGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_pill", Declared);
+UE_FACT_FN(kRowUfoMidasGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_midas", Declared);
+UE_FACT_FN(kRowTickerBodyGamemode, "spawn_authority", L"mainGamemode_C", L"tickerBody", Declared);
+UE_FACT_FN(kRowTickerFunguyGamemode, "spawn_authority", L"mainGamemode_C", L"tickerFunguy", Declared);
+UE_FACT_FN(kRowSphereBeginOverlapTheBody, "spawn_authority", L"theBody_C",
+           L"BndEvt__theBody_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowRedPhoneTimerAnalogScreen, "spawn_authority", L"analogDScreenTest_C", L"redPhoneEventTimer", Declared);
+UE_FACT_FN(kRowFinishedArirShipAppear, "spawn_authority", L"arirShipAppear_C", L"a__FinishedFunc", Declared);
+UE_FACT_FN(kRowSpawnTrifoAnalogScreen, "spawn_authority", L"analogDScreenTest_C", L"spawn_trifo", Declared);
+UE_FACT_FN(kRowSolarPowerControl, "spawn_authority", L"powercontrol_C", L"solar", Declared);
+UE_FACT_FN(kRowFuckEriePlush, "spawn_authority", L"prop_eriePlush_C", L"fuck", Declared);
+UE_FACT_FN(kRowAngerEriePlush, "spawn_authority", L"prop_eriePlush_C", L"anger", Declared);
+UE_FACT_FN(kRowWriteEriePlush, "spawn_authority", L"prop_eriePlush_C", L"write", Declared);
+UE_FACT_FN(kRowLoneTimerEriePlush, "spawn_authority", L"prop_eriePlush_C", L"lonetimer", Declared);
+UE_FACT_FN(kRowEatCheeseTimerEriePlush, "spawn_authority", L"prop_eriePlush_C", L"eatcheesetimer", Declared);
+UE_FACT_FN(kRowFireDamageEriePlush, "spawn_authority", L"prop_eriePlush_C", L"firedamage", Declared);
+UE_FACT_FN(kRowMicrowaveEriePlush, "spawn_authority", L"prop_eriePlush_C", L"microwave", Declared);
+UE_FACT_FN(kRowExplodedEriePlush, "spawn_authority", L"prop_eriePlush_C", L"exploded", Declared);
+UE_FACT_FN(kRowReceiveBeginPlayErieHold, "spawn_authority", L"prop_erieHold_C", L"ReceiveBeginPlay", Declared);
+UE_FACT_FN(kRowReceiveTickErieDrag, "spawn_authority", L"erieDrag_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowClothesFinishedErieChop, "spawn_authority", L"erieChop_C", L"anim_clothes__FinishedFunc", Declared);
+UE_FACT_FN(kRowReceiveTickChurch, "spawn_authority", L"church_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowTimerTeleBooth, "spawn_authority", L"teleBooth_C", L"timer", Declared);
+UE_FACT_FN(kRowReceiveTickSirenPost, "spawn_authority", L"sirenPost_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowReceiveBeginPlayHallwayDoor, "spawn_authority", L"hallwayDoor_C", L"ReceiveBeginPlay", Declared);
+UE_FACT_FN(kRowReceiveTickHexPillar, "spawn_authority", L"hexpillar_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowReceiveTickEasterZone, "spawn_authority", L"easterZone_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowSpawnEggEasterEggSpawn, "spawn_authority", L"easterEggSpawn_C", L"spawnEgg", Declared);
+UE_FACT_FN(kRowThrowItemsOminousBunny, "spawn_authority", L"ominousBunny_C", L"throwItems", Declared);
+UE_FACT_FN(kRowReceiveDestroyedOminousBunny, "spawn_authority", L"ominousBunny_C", L"ReceiveDestroyed", Declared);
+UE_FACT_FN(kRowTpTheDoor, "spawn_authority", L"TheDoor_C", L"tp", Declared);
+UE_FACT_FN(kRowOpenTheDoor, "spawn_authority", L"TheDoor_C", L"open", Declared);
+UE_FACT_FN(kRowCloseTheDoor, "spawn_authority", L"TheDoor_C", L"close", Declared);
+UE_FACT_FN(kRowMoveRorGraf, "spawn_authority", L"rorGraf_C", L"move", Declared);
+UE_FACT_FN(kRowReceiveTickLog, "spawn_authority", L"log_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowCheckLog, "spawn_authority", L"log_C", L"check", Declared);
+UE_FACT_FN(kRowGraphPropDuc, "spawn_authority", L"prop_duc_C", L"ExecuteUbergraph_prop_duc", Declared);
+UE_FACT_FN(kRowReceiveTickPropDuc, "spawn_authority", L"prop_duc_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowReceiveTickMannequinTp, "spawn_authority", L"mannequinTp_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowEatShrimpEaterMaster, "spawn_authority", L"shrimpEaterMaster_C", L"eat", Declared);
+UE_FACT_FN(kRowReceiveTickFprints, "spawn_authority", L"fprints_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowRunTriggerJamDoor, "spawn_authority", L"trigger_jamDoor_C", L"runTrigger", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries. `pre` is the verdict
 // when the row refuses only some calls, null for a row refused whole.
@@ -137,6 +191,10 @@ struct Row {
 
 SG::Verdict OnRowPre(const SG::Call& call);
 SG::Verdict OnMirrorSetEventPre(const SG::Call& call);
+SG::Verdict OnCaveSpawnerPre(const SG::Call& call);
+SG::Verdict OnTrifoSolarPre(const SG::Call& call);
+SG::Verdict OnDoorCallPre(const SG::Call& call);
+SG::Verdict OnDuckGraphPre(const SG::Call& call);
 constexpr Row kRows[] = {
     {&kRowSpawnMushroomMaster,            "mushroomMaster.Spawn"},
     {&kRowSpawnMushroomSpawner,           "mushroomSpawner.Spawn"},
@@ -254,6 +312,53 @@ constexpr Row kRows[] = {
     {&kRowSpawnBushTickerBushSpawning,    "bushSpawning.spawnBush"},
     {&kRowSphereHitMushroomSpore,         "mushroomSpore.SphereHit"},
     {&kRowTrySpawnHerbOutsideChurch,      "outsideChurch.trySpawnHerb"},
+    // The level's wandering fixtures, each placed in every peer's world (coop/world/level_fixture_sync places a client's
+    // copies where the host's stand). The Cursed Church's tick rolls a point and moves the church there when unseen; the
+    // Telephone Booth's two-hour timer shows it and may move it; the Siren Pole's tick walks it while unseen; the Hallway
+    // White Door's begin play destroys it unless the save was loaded at 03:33, by this peer's own clock.
+    {&kRowReceiveTickChurch,              "church.ReceiveTick"},
+    {&kRowTimerTeleBooth,                 "teleBooth.timer"},
+    {&kRowReceiveTickSirenPost,           "sirenPost.ReceiveTick"},
+    {&kRowReceiveBeginPlayHallwayDoor,    "hallwayDoor.ReceiveBeginPlay"},
+    // A Basalt Pillar's tick raises it and, in the same body, seeds a neighbour: the field is the host's, and a copy is
+    // raised by the height the host sends (coop/world/basalt_pillar). A pillar a joiner's save loaded is refused here from
+    // its first tick, before the lane adopts it.
+    {&kRowReceiveTickHexPillar,           "hexPillar.ReceiveTick"},
+    // The Easter hunt is the host's (coop/world/easter_hunt). The well's zone counts the carrots in its tick and starts the
+    // animation that mints the bunny; an egg point's spawnEgg mints one frozen egg prop; the bunny's throwItems mints the
+    // ears and the note; a bunny destroyed before its hunt ended mints the angry one. The host's eggs and items cross as
+    // props and its bunnies as world actors, so a client's own would stand beside them.
+    {&kRowReceiveTickEasterZone,          "easterZone.ReceiveTick"},
+    {&kRowSpawnEggEasterEggSpawn,         "easterEggSpawn.spawnEgg"},
+    {&kRowThrowItemsOminousBunny,         "ominousBunny.throwItems"},
+    {&kRowReceiveDestroyedOminousBunny,   "ominousBunny.ReceiveDestroyed"},
+    // The White Door (TheDoor_C): its 3600 s chain rolls a point in tp() and moves the door there when unseen, and its 10-15 s
+    // chain rolls open() or close(). Those are the host's (the pose, shown and open state cross on the level-fixture lane), so tp
+    // is refused whole and open and close are refused unless the lane's own call made them (it drives the copy to the host's
+    // state). The near-sphere slam is not on this list: the two overlap entries run the close inline, so a copy something stands
+    // beside slams on its own and the host's word comes with its next change.
+    {&kRowTpTheDoor,                      "theDoor.tp"},
+    {&kRowOpenTheDoor,                    "theDoor.open", &OnDoorCallPre},
+    {&kRowCloseTheDoor,                   "theDoor.close", &OnDoorCallPre},
+    // The Rorschach decal's move() (its 10 s loop, unseen), the Ghost Log's tick roll and its 10 s pawn check (both end in the
+    // teleport), the Rubber Duck's 60-300 s chain (a delay resume of its ubergraph; its tick catches a fall out of the world) and
+    // the tick of the trigger that carries the base's mannequins about while unseen: each moves a thing the host's copy carries
+    // to every peer on the level-fixture lane.
+    {&kRowMoveRorGraf,                    "rorGraf.move"},
+    {&kRowReceiveTickLog,                 "log.ReceiveTick"},
+    {&kRowCheckLog,                       "log.check"},
+    {&kRowGraphPropDuc,                   "propDuc.chain", &OnDuckGraphPre},
+    {&kRowReceiveTickPropDuc,             "propDuc.ReceiveTick"},
+    {&kRowReceiveTickMannequinTp,         "mannequinTp.ReceiveTick"},
+    // The shrimp eater's looping 15 s timer (its `eat` entry): it destroys the shrimp prop nearest its last place and mints the
+    // empty pack, so only the host's run changes the shrimp props; a client's own would destroy and mint beside it.
+    {&kRowEatShrimpEaterMaster,           "shrimpEater.eat"},
+    // The footprints' tick flickers the actor while unseen; its shown state is the host's. A client's show() is asked of the host.
+    {&kRowReceiveTickFprints,             "fprints.ReceiveTick"},
+    // The Reactor Restart's trigger (trigger_jamDoor_C): its `runTrigger` jams the two base doors (`door_C::jam`, the door lane carries
+    // their state) and sends the "Minor inconvenience" mail (the mail lane carries it). It is started by the level's armed trigger
+    // box when the host's player walks in, so it is the host's; a client's own run would jam and mail twice.
+    {&kRowRunTriggerJamDoor,              "jamDoor.runTrigger"},
 
     // The saucers the eventer flies in (ufoDropper_car_C, _body_C, _tank_C and _pig_C), a world-actor mirror each. The
     // car and the body declare no function of their own, so the base class's rows reach them; the tank and the pig
@@ -290,6 +395,83 @@ constexpr Row kRows[] = {
     // would stay raised and hold off the save. The mothership's, the morning UFO's and the knocker's begin plays
     // register, as does the saucer's activation, and each ends in its own clearing call.
     {&kRowSetEventLib,                    "lib.setEvent(ship mirror)", &OnMirrorSetEventPre},
+    // The Day-44 gray tank's box unfolds in spawnParts, the only body with its fire tank's BeginDeferred and the one
+    // that mints the scrap props the box is made of. The box is the host's (the saucer's drop that mints it is refused
+    // above, and no lane carries the box itself to a client); the host's tank crosses through the source-gated catch
+    // and its scrap as props. A box a client somehow held would mint a second tank and a second heap beside them.
+    {&kRowSpawnPartsFiretankDeploy,       "firetankDeploy.spawnParts"},
+    // The Ariral treehouse (a level actor on both sides, anchored at its own point) and the dropped gun's event actor: the
+    // host's mint their Arirals, which cross through the source-gated catch (npc_world_enum) as parked copies. The pig
+    // shooter's roll and the tank shooter's are the two bodies with those spawns, the latter also called from the Ariral
+    // crate's use (a client's opening then reads no shooter and goes on to its own slapper, bound to the player who opened
+    // it). checkSurroundings is the eater sphere's timer: it destroys the prop_poo, gun, shrimp and food lying in it, pays
+    // the Ariral reputation for each, mints the slapper for a prop_poo and throws a camera back, so a client's own run would
+    // pay and destroy again beside the host's. The event actor's tick is the only root of its graph: from dusk to dawn, with
+    // the gun about, it mints the stealer in a ring about player 0.
+    {&kRowCheckSurroundingsTreehouse,     "treehouse.checkSurroundings"},
+    {&kRowTrySpawnPigShooterTreehouse,    "treehouse.trySpawnPigShooter"},
+    {&kRowTrySpawnTankShooterTreehouse,   "treehouse.trySpawnTankShooter"},
+    {&kRowReceiveTickEventArirStealsGun,  "arirStealsGun.ReceiveTick"},
+    // The cave's spawner (level-placed on both sides). Its begin play re-arms a 10 s Delay whose resume is the roll: the
+    // antibreather at the spawner's point (or its removal), and `cencipede`, which mints Wolfgang or the egg. Both are the
+    // host's, anchored at the cave (the products cross through the source-gated catch: coop/creatures/npc_world_enum), so a
+    // client's loop and its `cencipede` entry are refused. The rest of its begin play stays: the 5 s `block` timer closes
+    // the cave's rock on the client's own distance, and the music trigger and the cave's ambience are the client's own.
+    {&kRowGraphCaveSpawner,               "caveSpawner.loop", &OnCaveSpawnerPre},
+
+    // The gamemode's hourly and lake rolls and the downloading panel's ring roll, each a timer's handler: the host rolls and
+    // coop/world/event_world_sync carries the result to every peer, so a client's own roll would stand apart from the host's.
+    // ticker_lockerHead (every 3600 s: 8 % that a random locker holds a head for whoever opens it, 1 % a lockerCorpse_C at a random
+    // locker, whose gore is props and a decal on their own lanes), ticker_radioTowerPoof (0.5 %: the radio tower vanishes while
+    // nobody looks) and ticker_lakeMonsert (a 15 to 20 minute re-arming roll that lights the lake on a moonlit night). The
+    // panel's redPhoneEventTimer rolls 2.5 % to start the red phone's ring. A client's timer simply ends here.
+    {&kRowTickerLockerHeadGamemode,       "gamemode.ticker_lockerHead"},
+    {&kRowTickerRadioTowerPoofGamemode,   "gamemode.ticker_radioTowerPoof"},
+    {&kRowTickerLakeMonsterGamemode,      "gamemode.ticker_lakeMonsert"},
+    // The gamemode's five UFO timers, the body's and the funguy's tickers: each a one-shot or looping timer handler that rolls
+    // and re-arms itself in its own body, so a client's timer simply ends here. The host's roll is the one UFO, body or duende:
+    // none of the four UFO classes (ufo_ballfo_C, ufo_boofo_spawn1_C, ufo_joel_C, ufo_pillfo_C) spawns another actor, and the
+    // body's and funguy's mint a mushroom spawner or a dirt hole only from their own graphs, which a copy has parked. The UFOs
+    // and the body are world-actor mirrors, the funguy an NPC mirror (npc_world_enum's mainGamemode_C outputs). The Midas UFO
+    // is a level-placed spline flyer (midasUfoTest_C), so its timer only runs its `runTrigger`: the host's start reaches a
+    // client as an EventCue that starts the client's own (coop/world/event_world_sync). Its overlap row refuses the copy's
+    // 5 s self-destroy on a pawn's touch: the host's body ends the copy.
+    {&kRowUfoBallGamemode,                "gamemode.ufo_ball"},
+    {&kRowUfoBooGamemode,                 "gamemode.ufo_boo"},
+    {&kRowUfoJoelGamemode,                "gamemode.ufo_joel"},
+    {&kRowUfoPillGamemode,                "gamemode.ufo_pill"},
+    {&kRowUfoMidasGamemode,               "gamemode.ufo_midas"},
+    {&kRowTickerBodyGamemode,             "gamemode.tickerBody"},
+    {&kRowTickerFunguyGamemode,           "gamemode.tickerFunguy"},
+    {&kRowSphereBeginOverlapTheBody,      "theBody.SphereBeginOverlap"},
+    {&kRowRedPhoneTimerAnalogScreen,      "analogScreen.redPhoneEventTimer"},
+    // The Day-13 ship tower's timeline end (`a`, its fade in): with the arrow fully shown it mails the blank "outside" rows on a
+    // random 10 s and up loop. The host's rows reach a client on the email lane, so a tower a client shows (on the host's cue)
+    // would mail a second set. The fade, the radar point and the event count are the tower's own and stay.
+    {&kRowFinishedArirShipAppear,         "arirShipAppear.finished"},
+    // The base computer's TriFO: `spawn_trifo` is called by the desk's autoSave and by the save button's press, the two paths a
+    // client's own refusals (desk_sim_sync, desk_verb_intent) already stop, and nothing else; refused whole as a third lock. The
+    // host's TriFO is a world-actor copy on a client, whose begin play blacks the base out through powercontrol.solar() once its
+    // flight starts (the lights and breakers reach the client by the host's lanes), so that call is refused when a TriFO makes it.
+    {&kRowSpawnTrifoAnalogScreen,         "analogScreen.spawn_trifo"},
+    {&kRowSolarPowerControl,              "powercontrol.solar(trifo copy)", &OnTrifoSolarPre},
+    // The Erie plush is the host's (coop/world/erie_sync); a client's copy of it is a pose. `fuck` is the morph (the live Erie, the
+    // achievement, the plush's end), `anger` the angry Erie's mint, `write` the notes' mint and the food's pick; `lonetimer` moves the
+    // plush when no player is by it, `eatcheesetimer` eats and moves the cheese props about; fire, a microwave and an explosion each end
+    // in `anger` or in `replaceProp` (the talking Erie). The hit handler is its own watch (the host is asked), and the host's results cross
+    // as props. The held form's begin play places a live Erie or throws the drag form, the drag form's tick lands it (a live Erie again,
+    // its own end), and the chop's clothes timeline ends in two live Erie: each is a mint the host's copy makes.
+    {&kRowFuckEriePlush,                  "eriePlush.fuck"},
+    {&kRowAngerEriePlush,                 "eriePlush.anger"},
+    {&kRowWriteEriePlush,                 "eriePlush.write"},
+    {&kRowLoneTimerEriePlush,             "eriePlush.lonetimer"},
+    {&kRowEatCheeseTimerEriePlush,        "eriePlush.eatcheesetimer"},
+    {&kRowFireDamageEriePlush,            "eriePlush.firedamage"},
+    {&kRowMicrowaveEriePlush,             "eriePlush.microwave"},
+    {&kRowExplodedEriePlush,              "eriePlush.exploded"},
+    {&kRowReceiveBeginPlayErieHold,       "erieHold.ReceiveBeginPlay"},
+    {&kRowReceiveTickErieDrag,            "erieDrag.ReceiveTick"},
+    {&kRowClothesFinishedErieChop,        "erieChop.anim_clothes_finished"},
 };
 constexpr int kRowCount = static_cast<int>(std::size(kRows));
 constexpr int kTagBase = 0x53410000;   // 'SA', then the row
@@ -309,11 +491,90 @@ SG::Verdict OnRowPre(const SG::Call& call) {
     return SG::Verdict::Cancel;
 }
 
+// The cave spawner's ubergraph, called with an EntryPoint (a cooked byte offset of 0.10.0: it moves with a game update, and the
+// row's fingerprint says so): 30 is the resume of the 10 s Delay of its begin play, whose body is the roll and which re-arms
+// itself, and 3593 is `cencipede`. Every other entry runs: the begin play (2603), `block` (3069) and the sphere's overlap
+// (3333). The first sight of each entry is said, so a drill can read the numbers against these.
+constexpr int32_t kCaveLoopEntry = 30;
+constexpr int32_t kCaveCencipedeEntry = 3593;
+
+SG::Verdict OnCaveSpawnerPre(const SG::Call& call) {
+    if (!IsActiveClientSession()) return SG::Verdict::Run;
+    static R::ParamOffset s_entryParam{L"EntryPoint"};
+    int32_t entry = -1;
+    const int32_t off = s_entryParam.Of(call.function);
+    if (off >= 0 && call.locals) std::memcpy(&entry, call.locals + off, sizeof(entry));
+    static int32_t s_seen[8];
+    static int s_seenCount = 0;
+    bool known = false;
+    for (int i = 0; i < s_seenCount; ++i) known = known || s_seen[i] == entry;
+    if (!known && s_seenCount < 8) {
+        s_seen[s_seenCount++] = entry;
+        UE_LOGI("spawn_authority[caveSpawner]: a client's spawner graph entered at entry %d (refused: %d)", entry,
+                (entry == kCaveLoopEntry || entry == kCaveCencipedeEntry) ? 1 : 0);
+    }
+    if (entry != kCaveLoopEntry && entry != kCaveCencipedeEntry) return SG::Verdict::Run;
+    const int row = call.tag - kTagBase;
+    if (row < 0 || row >= kRowCount) return SG::Verdict::Cancel;
+    const std::uint64_t n = ++g_refused[row];
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("spawn_authority[%s]: client-refuse %p entry %d (call #%llu)", kRows[row].tag, call.object, entry,
+                static_cast<unsigned long long>(n));
+    return SG::Verdict::Cancel;
+}
+
+// open() and close() of the White Door are refused on a client unless the level-fixture lane's own call made them.
+SG::Verdict OnDoorCallPre(const SG::Call& call) {
+    if (!IsActiveClientSession() || call.fromOurCode) return SG::Verdict::Run;
+    const int row = call.tag - kTagBase;
+    if (row < 0 || row >= kRowCount) return SG::Verdict::Cancel;
+    const std::uint64_t n = ++g_refused[row];
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("spawn_authority[%s]: client-refuse %p (call #%llu)", kRows[row].tag, call.object,
+                static_cast<unsigned long long>(n));
+    return SG::Verdict::Cancel;
+}
+
+// The Rubber Duck's ubergraph, entered with an EntryPoint (a cooked byte offset of 0.10.0): 137 is the resume of the 60-300 s delay
+// of its begin play, whose body is the roll and the move and which re-arms itself. The others run: the use's quack (a presentation),
+// the begin play's start and the quack's resume (1466, only reached from the move). The first sight of each entry is said.
+constexpr int32_t kDuckChainEntry = 137;
+
+SG::Verdict OnDuckGraphPre(const SG::Call& call) {
+    if (!IsActiveClientSession()) return SG::Verdict::Run;
+    static R::ParamOffset s_entryParam{L"EntryPoint"};
+    int32_t entry = -1;
+    const int32_t off = s_entryParam.Of(call.function);
+    if (off >= 0 && call.locals) std::memcpy(&entry, call.locals + off, sizeof(entry));
+    static int32_t s_seen[8];
+    static int s_seenCount = 0;
+    bool known = false;
+    for (int i = 0; i < s_seenCount; ++i) known = known || s_seen[i] == entry;
+    if (!known && s_seenCount < 8) {
+        s_seen[s_seenCount++] = entry;
+        UE_LOGI("spawn_authority[propDuc]: a client's duck graph entered at entry %d (refused: %d)", entry,
+                entry == kDuckChainEntry ? 1 : 0);
+    }
+    if (entry != kDuckChainEntry) return SG::Verdict::Run;
+    const int row = call.tag - kTagBase;
+    if (row < 0 || row >= kRowCount) return SG::Verdict::Cancel;
+    const std::uint64_t n = ++g_refused[row];
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("spawn_authority[%s]: client-refuse %p entry %d (call #%llu)", kRows[row].tag, call.object, entry,
+                static_cast<unsigned long long>(n));
+    return SG::Verdict::Cancel;
+}
+
 // Whether `cls` names one of the eventer's ships: the ufoDropper saucers, the mothership, the morning UFO or the
 // knocker, each a world-actor mirror on a client.
 bool IsShipClass(const std::wstring& cls) {
     return _wcsnicmp(cls.c_str(), L"ufoDropper_", 11) == 0 || _wcsicmp(cls.c_str(), L"rozitBorg_C") == 0 ||
-           _wcsicmp(cls.c_str(), L"morningUfo_C") == 0 || _wcsicmp(cls.c_str(), L"kocker_C") == 0;
+           _wcsicmp(cls.c_str(), L"morningUfo_C") == 0 || _wcsicmp(cls.c_str(), L"kocker_C") == 0 ||
+           // the gamemode's UFOs: each registers its flight in its begin play and ends it in its own destroy
+           _wcsicmp(cls.c_str(), L"ufo_ballfo_C") == 0 || _wcsnicmp(cls.c_str(), L"ufo_boofo", 9) == 0 ||
+           _wcsicmp(cls.c_str(), L"ufo_joel_C") == 0 || _wcsicmp(cls.c_str(), L"ufo_pillfo_C") == 0 ||
+           // the base computer's TriFO and Tardis: each registers in its begin play and ends in its own destroy
+           _wcsicmp(cls.c_str(), L"ufo_trifo_C") == 0 || _wcsicmp(cls.c_str(), L"tardis_C") == 0;
 }
 
 // lib_C::setEvent is every event's own begin and end, so only a ship's call is refused: the sender is the call's
@@ -330,6 +591,20 @@ SG::Verdict OnMirrorSetEventPre(const SG::Call& call) {
     const std::uint64_t n = ++g_refused[row];
     if ((n & (n - 1)) == 0)
         UE_LOGI("spawn_authority[%s]: client-refuse %p (call #%llu)", kRows[row].tag, sender,
+                static_cast<unsigned long long>(n));
+    return SG::Verdict::Cancel;
+}
+
+// powercontrol_C::solar from the TriFO's own graph (its abduct's last step): the call frame's object is the TriFO. Any other caller
+// (a generator's update, the desk's short circuit, the Sol event) is the host's lane and runs.
+SG::Verdict OnTrifoSolarPre(const SG::Call& call) {
+    if (!IsActiveClientSession() || !call.callerObject || !R::IsLive(call.callerObject)) return SG::Verdict::Run;
+    if (_wcsicmp(R::ClassNameOf(call.callerObject).c_str(), L"ufo_trifo_C") != 0) return SG::Verdict::Run;
+    const int row = call.tag - kTagBase;
+    if (row < 0 || row >= kRowCount) return SG::Verdict::Cancel;
+    const std::uint64_t n = ++g_refused[row];
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("spawn_authority[%s]: client-refuse %p (call #%llu)", kRows[row].tag, call.callerObject,
                 static_cast<unsigned long long>(n));
     return SG::Verdict::Cancel;
 }

@@ -41,6 +41,7 @@ bool     g_applyingEye = false;          // the lane's own apply of the host's e
 uint64_t g_eyeRefused = 0;               // a client's own setEye calls refused this session
 bool     g_saidEyeRefused = false;
 uint64_t g_eyeApplyFailed = 0;           // the host's eye samples whose setEye did not run this session
+uint64_t g_holeApplyFailed = 0;          // the host's black-hole samples whose flip did not run this session
 
 // The lane's own apply, for the length of one setEye call: the gate lets exactly this call run.
 struct ApplyingEye {
@@ -82,6 +83,9 @@ bool MakePayload(coop::net::SkyStatePayload& out) {
     bool eye = false;
     SKY::ReadEye(eye);  // unread, the sky shows no eye
     out.eye = eye ? 1 : 0;
+    bool hole = false;
+    SKY::ReadBlackHole(hole);  // unread, the sky is not the black hole
+    out.blackHole = hole ? 1 : 0;
     return Finite(out);  // never push NaN/inf onto the wire
 }
 
@@ -118,6 +122,18 @@ void OnReliable(const coop::net::SkyStatePayload& payload) {
             UE_LOGW("sky_sync: the host's eye %d did not apply -- the sky's setEye did not run (first failure; the "
                     "rest are counted, and each next sample tries again)", want ? 1 : 0);
     }
+    // The black hole: the Black Hole Sun event's `tp` is a 106 s latent sequence on the sky actor (a second call stacks its
+    // event count and its emails), so a client does not run it; it runs the two writes the flip is, when its sky differs from
+    // the host's. The same sample reaches a joiner at its world-ready, so one that arrives mid-event is shown the state.
+    const bool wantHole = payload.blackHole != 0;
+    bool curHole = false;
+    if (SKY::ReadBlackHole(curHole) && curHole != wantHole) {
+        if (SKY::CallBlackHole(wantHole))
+            UE_LOGI("sky_sync: applied the host's black-hole sky %d", wantHole ? 1 : 0);
+        else if (g_holeApplyFailed++ == 0)
+            UE_LOGW("sky_sync: the host's black-hole sky %d did not apply -- the sky's skyVisibility did not run (first failure; "
+                    "the rest are counted, and each next sample tries again)", wantHole ? 1 : 0);
+    }
     static int s_n = 0;
     if ((s_n++ % 10) == 0)  // ~every 10s -- confirm convergence, not spam
         UE_LOGI("sky_sync: applied host sky yaw=%.1f moonPhase=%.3f", payload.skyYaw, payload.moonPhase);
@@ -130,8 +146,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     coop::net::SkyStatePayload p{};
     if (!MakePayload(p)) return;
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::SkyState, &p, sizeof(p));
-    UE_LOGI("sky_sync: connect-snapshot -- sent sky (yaw=%.1f moonPhase=%.3f eye=%d) to slot %d",
-            p.skyYaw, p.moonPhase, p.eye, peerSlot);
+    UE_LOGI("sky_sync: connect-snapshot -- sent sky (yaw=%.1f moonPhase=%.3f eye=%d blackHole=%d) to slot %d",
+            p.skyYaw, p.moonPhase, p.eye, p.blackHole, peerSlot);
 }
 
 void Tick() {
@@ -153,7 +169,7 @@ void Tick() {
     if (s->SendReliable(coop::net::ReliableKind::SkyState, &p, sizeof(p))) {
         static int s_n = 0;
         if ((s_n++ % 10) == 0)  // ~every 10s
-            UE_LOGI("sky_sync: host sky yaw=%.1f moonPhase=%.3f eye=%d", p.skyYaw, p.moonPhase, p.eye);
+            UE_LOGI("sky_sync: host sky yaw=%.1f moonPhase=%.3f eye=%d blackHole=%d", p.skyYaw, p.moonPhase, p.eye, p.blackHole);
     } else {
         UE_LOGW("sky_sync: SendReliable(SkyState) failed");
     }
@@ -167,9 +183,13 @@ void OnDisconnect() {
     if (g_eyeApplyFailed)
         UE_LOGW("sky_sync: session end -- %llu sample(s) of the host's eye did not apply",
                 static_cast<unsigned long long>(g_eyeApplyFailed));
+    if (g_holeApplyFailed)
+        UE_LOGW("sky_sync: session end -- %llu sample(s) of the host's black-hole sky did not apply",
+                static_cast<unsigned long long>(g_holeApplyFailed));
     g_eyeRefused = 0;
     g_saidEyeRefused = false;
     g_eyeApplyFailed = 0;
+    g_holeApplyFailed = 0;
 }
 
 }  // namespace coop::sky_sync

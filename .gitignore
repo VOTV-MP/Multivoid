@@ -255,6 +255,8 @@ docs/**
 !docs/credits.md
 !docs/credits-reports.md
 !docs/devs-gauntlet.md
+!docs/easter-hunt.md
+!docs/erie.md
 !docs/feasibility.md
 !docs/install.md
 !docs/README.md
@@ -263,6 +265,7 @@ docs/**
 !docs/roadmap.md
 !docs/scope.md
 !docs/status.md
+!docs/vending.md
 !docs/votv-ui-style.md
 !docs/devices.md
 !docs/base-computer.md

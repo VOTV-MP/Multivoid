@@ -168,19 +168,22 @@ void Install(coop::net::Session* session) {
     // not suppressed yet; most of the game's NPC classes are loaded on gameplay-level entry.
     // Already-resolved entries skip the lookup, and the unresolved walks are bounded by the
     // throttle gate at the top.
+    // The late entries (sdk_profile_names.h) are looked up too but never waited for: one that is not loaded now
+    // is given its class when a spawn of it is seen (NoteLateAllowlistClass).
+    constexpr size_t kRequired = P::name::kNpcAllowlistSize - P::name::kNpcAllowlistLate;
     size_t resolved = 0;
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
         if (!g_npcAllowlist[i]) {
             g_npcAllowlist[i] = R::FindClass(P::name::kNpcAllowlist[i]);
         }
-        if (g_npcAllowlist[i]) ++resolved;
+        if (g_npcAllowlist[i] && i < kRequired) ++resolved;
     }
-    if (resolved < P::name::kNpcAllowlistSize) {
+    if (resolved < kRequired) {
         // Not installed yet: every class must be cached before going live, or some NPCs would be
         // suppressed and others not, depending on resolve timing. Throttle the next attempt.
         s_installRetryCountdown = 60;
         UE_LOGI("npc-suppress: NPC class load partial (%zu/%zu) -- throttled retry in ~0.5s",
-                resolved, P::name::kNpcAllowlistSize);
+                resolved, kRequired);
         return;
     }
 

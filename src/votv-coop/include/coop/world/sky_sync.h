@@ -1,5 +1,6 @@
 // coop/world/sky_sync.h -- host-authoritative NIGHT-SKY sync (star-dome orientation, moon phase, the
-// sky eye). A tiny host->client push (1 Hz + a joiner's world-ready); the client writes the dome and the
+// sky eye, and the black-hole sky of the Black Hole Sun event: SkyStatePayload.blackHole, which a client applies with the
+// sky's own skyVisibility and the black hole's light). A tiny host->client push (1 Hz + a joiner's world-ready); the client writes the dome and the
 // moon directly, the BP's own per-tick code rendering them, and runs the sky's setEye for the eye. Fixes the
 // per-peer-random star orientation + save-derived moon
 // phase that the clock (coop/world/time_sync) does NOT cover: the clock converges the sun/moon

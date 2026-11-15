@@ -99,6 +99,11 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid);
 // NPC bases, by a SuperStruct walk. False while the allowlist is not fully resolved.
 bool IsAllowlistedClass(void* cls);
 
+// Gives a late allowlist entry (sdk_profile_names.h, kNpcAllowlistLate) its class once `cls`, or a class above it, is that
+// class: called with a class a spawn source minted or a peer named, before the allowlist test. A class that is not a late
+// entry's own or below it is ignored.
+void NoteLateAllowlistClass(void* cls);
+
 // Clear the per-session state: the tracked-NPC map, the counter, the bypass slot. The
 // interceptor stays installed; the cached classes and the function pointer remain valid across
 // a disconnect.

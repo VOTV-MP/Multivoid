@@ -55,4 +55,13 @@ bool ReadSunIntensityMult(float& mult);
 // resolve. Game thread.
 bool CallSetEye(bool eye);
 
+// The black-hole sky, Anewsky_C::skyHidden: the Black Hole Sun event's `tp` sets it 20 s in and clears it at 106 s,
+// and a permanent-black-hole game rule sets it at begin play. False if not resolved or not streamed in. Game thread.
+bool ReadBlackHole(bool& on);
+
+// The two writes `tp` makes for the flip, in its order: the black hole's red light component shown or hidden, then the
+// sky's own skyVisibility(on), which hides the sun, the moon and the day-cycle actor and swaps the sky's material.
+// False if the sky is not streamed in or a verb did not run. Game thread.
+bool CallBlackHole(bool on);
+
 }  // namespace ue_wrap::skysphere

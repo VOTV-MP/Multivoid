@@ -141,6 +141,11 @@ processed signal sent to it. The host streams the refiner's state while decoding
 each completion; a client is a passive mirror that paints what nothing native repaints
 (`coop/interactables/comp_sync`).
 
+A finished download's `autoSave` is the host's too, and so is what some signals spawn when it runs (the Tardis, the TriFO, the shitting
+duende): they are world actors the host mints and a client shows a copy of (`coop/world/signal_spawn_copy`, and see
+[events-and-weather.md](events-and-weather.md)). A client's `autoSave` is refused, its save press is the host's, and so is its `spawn_trifo`, so
+no signal completion mints on a client `[V]` (the `sigTardis` drill, `coop/dev/signal_drill`: the client's own `autoSave` with the signal stood held no Tardis after).
+
 ### Drives, racks, modules, tapes, the laptop, the database
 
 The drive chain is idempotent per-slot state lines any peer announces and the host canonicalises
@@ -288,10 +293,10 @@ arrive with the save and never again.
 | A signal whose download's `begin` spawns a world prop (lifecrystal's crystal at the ROZ ship) spawns it on each peer, and a client's own is a world birth it does not author: the host's arriving birth adopts it when the arm's row came first, and it stays beside the host's when the host sent its birth before the arm's row (both ride the Default lane, so they arrive in send order) | `[RD]` `objectRenderer.begin`'s fourth step; the arriving birth's same-class match within 30 cm (`coop/props/remote_prop_spawn`) |
 | The signal camera's trigger runs on each peer, as its arm's `begin` does; the main map's one, the locker looker, watches that peer's own camera and ends that player's game as in single player | `[RD]` `mainGamemode.deleteActiveSignal`, `objectRenderer.begin`, `trigger_lockerLooker`; by design until decided |
 | The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
-| A level-3 refiner completion's world trigger (the evil's spawn, the rozship's, the deer's) runs on the host alone; a client sees what that object's own lane carries | `[V]` `coop/interactables/comp_sync`: the host is the one simulator; `[?]` each object's lane |
-| The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
+| A level-3 refiner completion's world trigger (the evil's spawn, the rozship's, the deer's) runs on the host alone; a client sees what that object's own lane carries (the Evil's ending is sent to every player: `coop/world/evil_ending`, docs/events-and-weather.md) | `[V]` `coop/interactables/comp_sync`: the host is the one simulator; `[?]` each object's lane |
+| The red phone's ring is the host's roll, a cue to each peer's own panel, which stops when its own player walks up (`docs/events-and-weather.md`) | `[V]` `coop/world/event_world_sync`, the `redPhone` drill |
 | A client's own write to a drive whose row is still its class default is neither put back nor sent; no client-side writer of such a drive exists in the game (every writer is a verb the host runs, or a drive the client brings in) | `[RD]` the writer census of `prop_drive_C.data_0`; `coop/interactables/drive_payload_sync` |
-| A SAT console command that spawns or destroys a class no lane carries (the rufus, the thiccfus, the llama's soul, the madness, the centipede, the murder kerfur) acts in the host's world only; its typist does not see it | `[V]` no lane exists for those classes |
+| A SAT console command that spawns or destroys a class no lane carries (the rufus, the thiccfus, the llama's soul, the madness, the murder kerfur, and the centipede when the console and not the cave's spawner mints it) acts in the host's world only; its typist does not see it | `[V]` no lane exists for those classes |
 | Each player's SAT console screen and log are its own; another player's typing is not shown | `[V]` by design until decided |
 | A client's cheat menu (`uncalib`, `summonvirus`) and a virus its own save starts change only its copy of the dishes' precision, and the copy is put back at its next poll; the virus itself waits on a lane for the desk's `virusEvent` | `[V]` `coop/interactables/dish_calib_sync`; no lane carries `virusEvent` |
 | The fakeGrays event's level trigger (`trigger_fakeLmaos`) breaks its dish's server and zeroes the dish on the machine where an allowed actor enters its volume; on a client the zero is put back and the break stays that client's | `[V]` the chain: the eventer's fakeGrays event arms the volume, whose first object is the trigger; `[?]` whether a client's body on the host's copy fires it |

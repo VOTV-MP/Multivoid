@@ -16,6 +16,7 @@
 #include "coop/creatures/piramid_sync.h"  // the piramid heading
 
 #include "coop/items/coingun_sync.h"   // the coin birth value
+#include "coop/world/signal_spawn_copy.h"  // the Tardis birth value
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -131,7 +132,13 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
 // connect snapshot, which the repair path re-fires per slot.
 void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, void* cls, void* actor) {
     p.birthLen = 0;
-    if (!actor || !coop::coingun_sync::IsCoinClass(cls)) return;
+    if (!actor) return;
+    // The Tardis's remaining delay is the other birth value (coop/world/signal_spawn_copy).
+    if (coop::signal_spawn_copy::IsTardisClass(cls)) {
+        p.birthLen = coop::signal_spawn_copy::FillBirth(cls, actor, p.birth, sizeof(p.birth));
+        return;
+    }
+    if (!coop::coingun_sync::IsCoinClass(cls)) return;
     const int32_t pts = coop::coingun_sync::ReadCoinPoints(actor);
     if (pts < 0) {
         UE_LOGW("world-actor: baocoin_C eid=%u -- points UNREADABLE, sending no birth content. The "
@@ -253,7 +260,7 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
         // birth-carrying class reaches this path (a sale's BeginDeferred is a math call the
         // interceptor cannot see, and the coins arrive through HostEnrollExSpawn); the check makes
         // the invariant say so itself, so a second birth-carrying class cannot regress in silence.
-        if (coop::coingun_sync::IsCoinClass(actorClass)) {
+        if (coop::coingun_sync::IsCoinClass(actorClass) || coop::signal_spawn_copy::IsTardisClass(actorClass)) {
             UE_LOGE("world-actor[host PRE]: a birth-value class reached the PE author, which cannot "
                     "carry its birth value -- this mirror will be born at the CDO default and render "
                     "wrong. A spawn path exists that the EX_CallMath census missed.");
@@ -428,6 +435,7 @@ void OnDisconnect() {
         }
     }
     ClearMirrorActors();   // the raw-pointer mirror set must not outlive the mirrors
+    coop::signal_spawn_copy::OnDisconnect();
     const size_t total = WaMirrors().DrainAll();
     if (total > 0)
         UE_LOGI("world-actor: drained %zu WorldActor element(s) (%zu host release-only, %zu client "

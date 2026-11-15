@@ -25,9 +25,6 @@ void Install();
 // are the host's, so a client's hit on its copy is an intent (coop/creatures/hit_target_creature).
 bool IsGatedClass(void* cls);
 
-// Graph calls refused since the session began, over every class.
-uint64_t RefusedCalls();
-
 // Says what was refused over the session, per class, and starts the counts again.
 void OnDisconnect();
 

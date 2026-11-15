@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace coop::net {
 class Session;
 struct WorldActorSpawnPayload;
@@ -78,6 +80,10 @@ unsigned int HostEnrollExSpawn(void* actor);
 
 // True if `actor` is a live wire-materialised mirror on this peer. Constant time. Any thread.
 bool IsMirroredActor(void* actor);
+
+// True for the save actors among the mirrored classes whose announce adopts the joiner's own loaded twin (within 3 m) instead of
+// making a second one: the obelisk, the hole's room, the salt pile, the Soltomia craft.
+bool AdoptsSaveTwin(const std::wstring& cls);
 
 // Register or unregister a materialised mirror. Called by the mirror path only. Any thread.
 void NoteMirrorActor(void* actor, bool add);

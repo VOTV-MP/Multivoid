@@ -320,9 +320,15 @@ void RunNpcAllowlistCheck(int& ok, int& fail, int& failPriority) {
     g_report << "--- NPC ALLOWLIST (" << P::name::kNpcAllowlistSize << " classes) ---\n";
     constexpr Severity kNpcSev = Severity::Important;
     int npcOk = 0;
+    // The late entries load with the save or event that holds them, so one missing here is not a fault: the
+    // install adds it when a spawn of it is seen.
+    const size_t firstLate = P::name::kNpcAllowlistSize - P::name::kNpcAllowlistLate;
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
         if (FindLoadedClass(P::name::kNpcAllowlist[i])) {
             ++ok; ++npcOk;
+        } else if (i >= firstLate) {
+            UE_LOGI("sdk-check: NPC CLASS '%ls' not loaded yet (a late entry: it joins when it spawns)",
+                    P::name::kNpcAllowlist[i]);
         } else {
             ++fail; ++failPriority;
             Failed(kNpcSev);

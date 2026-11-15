@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 286;
+inline constexpr uint16_t kProtocolVersion = 290;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2173,6 +2173,25 @@ inline constexpr uint8_t kHole = 0;
 inline constexpr uint8_t kBranch = 1;
 // Not a fixture: the host has sent a joiner every one it holds, so a loaded branch nothing named is one the host lacks.
 inline constexpr uint8_t kCensusEnd = 2;
+// A level-placed fixture the host places for everyone (coop/world/level_fixture_sync): `id` is that lane's row number (or its
+// own census end), `birthKey` the actor's level name, `hasNest` reads "shown".
+inline constexpr uint8_t kLevelFixture = 3;
+// A Basalt Pillar's height (coop/world/basalt_pillar): `id` is the pillar's world-actor element id, `x` its `a`.
+inline constexpr uint8_t kPillarGrowth = 4;
+// The Easter bunny's state (coop/world/easter_hunt): `id` is its world-actor element id, `_pad[0..1]` its talk objects' bits
+// (active and shown, two a talk object), `_pad2[0]` its flags (1 the eggs are out, 2 every egg is in).
+inline constexpr uint8_t kEasterBunny = 5;
+// A vending machine's stock, one message per slot (coop/world/vending_sync): `id` a hash of the machine's key, `x` the amount, `y` the
+// price, `z` the balance, `pitch` the slot count, `yaw` isEmpty, `_pad[0]` the slot, `birthKey` the item's name.
+inline constexpr uint8_t kVendStock = 8;
+// A door's `jammed` flag (coop/world/door_jam_sync): `id` a hash of the door's level name, `x y z` its place, `pitch` 1 jammed or 0.
+inline constexpr uint8_t kDoorJam = 9;
+// A plush's quest flags (coop/world/erie_sync): `id` a hash of the plush's key, `_pad[0]` bit 0 the paper is on it, bit 1 the pencil.
+inline constexpr uint8_t kEriePlush = 10;
+// 6 and 7 are unassigned: a message naming one is malformed, not a hole.
+inline constexpr bool Known(uint8_t family) {
+    return family <= kEasterBunny || (family >= kVendStock && family <= kEriePlush);
+}
 }  // namespace ambient_fixture
 
 // A dirt hole or a beehive branch (AmbientFixtureState), or the end of a joiner's census (family kCensusEnd, the rest zero).
@@ -2182,7 +2201,7 @@ struct AmbientFixtureStatePayload {
     float    pitch, yaw, roll;  // 12
     uint8_t  family;            // 1 -- ambient_fixture
     uint8_t  alive;             // 1 -- 0: the branch ended (a hole's end never crosses)
-    uint8_t  _pad[2];           // 2 -- zero
+    uint8_t  _pad[2];           // 2 -- zero; family kLevelFixture: _pad[0] is a door row's state (1 closed, 2 open), else zero
     WireKey  birthKey;          // 32 -- a branch: the key its nest had when the host first read it; a hole: len 0
     uint8_t  hasNest;           // 1 -- a branch: the host's branch holds its nest now (read at every send)
     uint8_t  _pad2[3];          // 3 -- zero
@@ -4397,14 +4416,17 @@ static_assert(sizeof(TaskNewStatePayload) <= 256 - 20 - 8,
               "TaskNewStatePayload must fit in one reliable datagram");
 
 // The night sky (SkyState): the star dome's world rotation (its random initial yaw plus spin), the
-// moon phase and the eye; the client writes the first two and runs the sky's setEye for the eye.
+// moon phase, the eye and the black-hole sky; the client writes the first two, runs the sky's setEye for the
+// eye and its skyVisibility for the black hole (a byte of the former padding: a sender that predates it sends
+// 0, a receiver that predates it never reads it).
 struct SkyStatePayload {
     float skyPitch;    // sky mesh WORLD rotation (FRotator) -- pitch
     float skyYaw;      //   yaw  (the dominant value: random initial offset + accumulated spin)
     float skyRoll;     //   roll
     float moonPhase;   // Anewsky_C::moonPhase_mirror (= UsaveSlot_C::moonPhase)
     uint8_t eye;       // Anewsky_C::eye, the noon roll's setEye (the moon's texture swapped for an eye's)
-    uint8_t pad[3];
+    uint8_t blackHole; // Anewsky_C::skyHidden: the black-hole sky (the Black Hole Sun event's flip, or the permanent rule)
+    uint8_t pad[2];
 };
 static_assert(sizeof(SkyStatePayload) == 20, "SkyStatePayload must be 20 bytes");
 

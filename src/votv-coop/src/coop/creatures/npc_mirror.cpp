@@ -93,7 +93,9 @@ void ArmDeerFloor(coop::element::ElementId eid) {
 // the target and its charge rings (its decisions are parked by npc_mirror_brain); it needs no landing replay, since
 // the mirror spawns at the host's current pose and the pose stream carries it down. The deer keeps it for its dissolve
 // (the camera's nearness, each viewer's own) and for the lean of its body on the floor; the floor the tick reads is
-// the pose drive's to refresh.
+// the pose drive's to refresh. The antibreather keeps it for its walk blend and Wolfgang for the rope of his segments
+// (npc_mirror_brain_table: each tick's decisions sit behind a state the refused entries never write); a row is found by
+// the spawned class or a class above it, so Wolfgang's pups take their parent's.
 struct MirrorTickRow {
     const wchar_t* cls;
     bool           keepActorTick;
@@ -103,6 +105,8 @@ constexpr MirrorTickRow kMirrorTicks[] = {
     {ue_wrap::profile::name::NpcClass_Wisp,     true, &ArmWispLanding},
     {ue_wrap::profile::name::NpcClass_GeomOcta, true, nullptr},
     {ue_wrap::profile::name::NpcClass_Deer,     true, &ArmDeerFloor},
+    {ue_wrap::profile::name::NpcClass_Antibreather, true, nullptr},
+    {ue_wrap::profile::name::NpcClass_Centipede,    true, nullptr},
 };
 
 constexpr size_t kMirrorTickCount = sizeof(kMirrorTicks) / sizeof(kMirrorTicks[0]);
@@ -126,7 +130,6 @@ const R::FName* MirrorTickNames() {
 // The row of the spawned actor's class, or null for a class with none. While the names cannot yet be resolved the class
 // is told by its rendered name instead (said once), so a class that has a row gets it either way.
 const MirrorTickRow* MirrorTickRowOf(void* actor) {
-    const R::FName& name = R::NameOf(R::ClassOf(actor));
     const R::FName* names = MirrorTickNames();
     if (!names) {
         static bool said = false;
@@ -135,12 +138,18 @@ const MirrorTickRow* MirrorTickRowOf(void* actor) {
             UE_LOGW("npc-sync[client OnSpawn]: the tick table's class names are not resolved -- a mirror is told by "
                     "its rendered name");
         }
-        for (const MirrorTickRow& row : kMirrorTicks)
-            if (R::NameEquals(name, row.cls)) return &row;
-        return nullptr;
     }
-    for (size_t i = 0; i < kMirrorTickCount; ++i)
-        if (name.ComparisonIndex == names[i].ComparisonIndex && name.Number == names[i].Number) return &kMirrorTicks[i];
+    int hops = 0;
+    for (void* cls = R::ClassOf(actor); cls && hops < 16; cls = R::SuperStructOf(cls), ++hops) {
+        const R::FName& name = R::NameOf(cls);
+        if (!names) {
+            for (const MirrorTickRow& row : kMirrorTicks)
+                if (R::NameEquals(name, row.cls)) return &row;
+            continue;
+        }
+        for (size_t i = 0; i < kMirrorTickCount; ++i)
+            if (name.ComparisonIndex == names[i].ComparisonIndex && name.Number == names[i].Number) return &kMirrorTicks[i];
+    }
     return nullptr;
 }
 
@@ -223,7 +232,8 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
         return;
     }
     // The allowlist gate: a peer could send any className, so only subclasses of the NPC bases
-    // materialise.
+    // materialise. A late entry (the gun stealer) is given its class here first: it names that one class only.
+    coop::npc_sync::NoteLateAllowlistClass(actorClass);
     if (!coop::npc_sync::IsAllowlistedClass(actorClass)) {
         UE_LOGW("npc-sync[client OnSpawn]: class '%ls' is NOT on NPC allowlist -- "
                 "rejecting (eid=%u; peer is broadcasting non-NPC EntitySpawn?)",

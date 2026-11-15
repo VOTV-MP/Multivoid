@@ -13,6 +13,11 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/world/event_world_sync.h"
+#include "coop/world/easter_hunt.h"
+#include "coop/world/erie_sync.h"
+#include "coop/world/evil_ending.h"
+#include "coop/world/solto_sync.h"
 #include "coop/world/vent_crawler_sync.h"
 
 #include "ue_wrap/core/asset_load.h"
@@ -264,6 +269,11 @@ void Install(coop::net::Session* session) {
 void OnReliable(const coop::net::EventCuePayload& payload) {
     if (!GT::IsGameThread()) { UE_LOGW("event_cue: OnReliable off-game-thread -- dropping"); return; }
     if (coop::vent_crawler_sync::OnCue(payload)) return;  // a crawl's start
+    if (coop::easter_hunt::OnCue(payload)) return;       // the Easter well's start, the hunt's end
+    if (coop::erie_sync::OnCue(payload)) return;         // the plush's morph into the live Erie, on the host
+    if (coop::evil_ending::OnCue(payload)) return;       // the Evil's ending on the host
+    if (coop::solto_sync::OnCue(payload)) return;         // the Soltomia craft's start or leave
+    if (coop::event_world_sync::OnCue(payload)) return;   // the sky, the ship tower, the lake, the phone, the lockers, the rains
     if (payload.cueId >= static_cast<uint32_t>(kCueCount)) {
         UE_LOGW("event_cue: OnReliable unknown cueId=%u (have %d cues) -- dropping (newer host?)",
                 payload.cueId, kCueCount);

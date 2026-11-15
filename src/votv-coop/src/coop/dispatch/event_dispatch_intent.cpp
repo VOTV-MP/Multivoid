@@ -37,6 +37,11 @@
 #include "coop/props/remover_request.h"  // CLIENT->HOST the tool gun's remover; HOST->CLIENT its answer
 #include "coop/items/broom_stroke.h"
 #include "coop/world/explosion_request.h"  // CLIENT->HOST a shot and an explosion request, strictly checked and queued
+#include "coop/world/easter_hunt.h"  // CLIENT->HOST the Easter bunny's talk ends and eggs, on the salt rocket message
+#include "coop/world/basalt_pillar.h"  // CLIENT->HOST a dig of the buried basalt, on the salt rocket message
+#include "coop/world/level_fixture_sync.h"
+#include "coop/world/vending_sync.h"  // CLIENT->HOST a footprints show(), on the same message
+#include "coop/world/erie_sync.h"  // CLIENT->HOST a hit on the Erie plush by a prop of its quest, on the same message
 #include "coop/world/salt_rocket_ignite.h"  // CLIENT->HOST a light on a salt rocket, judged and performed on the host
 #include "coop/props/trash_channel.h"
 
@@ -451,6 +456,11 @@ bool HandleIntentEvent(net::Session& session,
             UE_LOGW("event_feed: PropIgniteIntent from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;
         }
+        if (::coop::basalt_pillar::TakeDigIntent(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen)) break;  // verb 2
+        if (::coop::level_fixture_sync::TakeIntent(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen)) break;  // verb 3
+        if (::coop::easter_hunt::TakeIntent(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen)) break;  // verbs 4 to 6
+        if (::coop::vending_sync::TakeIntent(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen)) break;  // verbs 10, 11
+        if (::coop::erie_sync::TakeIntent(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen)) break;  // verb 12
         coop::salt_rocket_ignite::OnIntentReceived(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen);
         break;
     }

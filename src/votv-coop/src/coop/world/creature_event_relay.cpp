@@ -77,7 +77,7 @@ bool ResolveSetEvent() {
     return true;
 }
 
-// The four classes whose event is computed from the local camera, render state or player 0 (each peer's own
+// The five classes whose event is computed from the local camera, render state or player 0 (each peer's own
 // perception), compared by FName; resolved on the game thread on first use. MTA marks sync per datum
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp:1024-1035); here the class
 // decides, from its bytecode.
@@ -90,6 +90,7 @@ PerViewerClass g_perViewer[] = {
     { L"fossilhound_C" },    // rendered = camera 0 within 10000 (the Blueprint listing of fossilhound_C, lines 252-281)
     { L"antibreather_C" },   // rendered = camera 0 within 10000 (antibreather.cpp:944-952)
     { L"eg_C" },             // rendered = WasRecentlyRendered(0.5) (eg.cpp:124-136)
+    { L"centipedeHead_C" },  // rendered = camera 0 within 10000, in the begin play's 0.25 s loop (and wolfgangJr_C below it)
 };
 bool g_perViewerResolved = false;
 

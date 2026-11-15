@@ -213,8 +213,8 @@ kerfur Omega among them) moves the gamemode's event count, which drives a peer's
 save gate. Its mirror's own calls are refused once the relay binds it; the host's count for that creature crosses whole
 by its element id and is applied to the mirror's registration, after the mirror's own registrations from before its
 install are taken back, and taken back again at its end (`coop/world/creature_event_relay`). The killer wisp, the
-fossilhound, the antibreather and the egg compute their event from the local camera, render state or player 0 and keep
-their own per peer. `[RD]`
+fossilhound, the antibreather, Wolfgang (`centipedeHead_C`, his pups below him) and the egg compute their event from the
+local camera, render state or player 0 and keep their own per peer. `[RD]`
 
 **A parked creature's brain.** A mirror of the zombie family or the fossilhound runs none of its Blueprint's event
 graph. It is marked when it is born (between the two halves of its spawn, or at the bind of a client's own
@@ -224,7 +224,12 @@ for the eye is done by our code after the install: the zombie's animation instan
 mesh parent, animation instance and owner. Lost on a mirror: the attack animation and sounds, the fossilhound's hit
 sound and its hidden-then-dig-out. A client's own creature of these classes is never marked and runs whole. The mark
 is the actor's slot and the slot's serial, so a recycled address is never a mirror, and it ends with the mirror.
-`[RD]`; the refusals `[?]` until a run reads them.
+`[RD]`; the zombie's refusals `[?]` until a run reads them. The fossilhound's three allowed entries (the footstep 8433, the
+per-viewer loop 2723, the destroy 10655) were checked against the cooked 0.10 graph, walked offline for its statement
+offsets: each is the first statement of the body the bytecode capture shows (the step's push of its tail, the loop's push
+that its delay resumes at, the destroy's `rendered` test), and the begin play's entry 6368 (the four pushes, the movement
+mode, the hidden flag) is the one a mirror refused in the `fossilhoundTick` drill (`coop/dev/event_fire_drill`), where a host hound was enrolled, mirrored and
+parked `[V]`.
 
 **A client's hit on a parked creature.** A client's swing ends in the struck mirror's `addDamage` with the player as the
 damager. The call is watched (`coop/player/hit_intent`): the client plays the zombie family's hit feedback

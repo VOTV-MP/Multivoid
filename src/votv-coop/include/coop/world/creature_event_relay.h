@@ -6,13 +6,13 @@
 //   - HOST: a watch on setEvent keeps each enrolled creature's net count of `true` calls and sends its whole count,
 //     by element id, as ReliableKind::CreatureEventActive on every change, at the creature's enrolment after its own
 //     `true`, and at a joiner's world-ready; a creature that ends still holding a count sends 0.
-//   - CLIENT: a count is the target of the creature's mirror. The relay applies setEvent by reflection with the
-//     mirror as the context until its applied count equals the target, retracts the registrations the mirror made
-//     before it was installed, and refuses the mirror's own setEvent once the bind made an entry (a bind the relay
-//     cannot take makes none, and that mirror counts its own). The client's count is the sum of these keyed
-//     registrations and its own events; a mirror's end and the session's end retract them; a world change drops them.
-//   - PER VIEWER: killerwisp_C, fossilhound_C, antibreather_C and eg_C compute their event from the local camera or
-//     player 0; the host's relay skips them and their mirror's own call runs (counted per eid, PerViewerTrues).
+//   - CLIENT: a count is the target of the creature's mirror. The relay applies setEvent by reflection with the mirror
+//     as the context until its applied count equals the target, retracts the registrations the mirror made before it was
+//     installed, and refuses the mirror's own setEvent once the bind made an entry (a bind the relay cannot take makes
+//     none, and that mirror counts its own). A mirror's end, the session's end and a world change retract them.
+//   - PER VIEWER: killerwisp_C, fossilhound_C, antibreather_C, centipedeHead_C (Wolfgang, and his pups) and eg_C compute
+//     their event from the local camera or player 0; the host's relay skips them and their mirror's own call runs
+//     (counted per eid, PerViewerTrues).
 
 #pragma once
 

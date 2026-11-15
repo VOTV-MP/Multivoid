@@ -6,6 +6,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/creatures/centipede_pups.h"
 #include "coop/element/death_seam.h"
 #include "coop/element/element.h"
 
@@ -17,6 +18,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <cstddef>
@@ -42,6 +44,25 @@ UE_FACT_FN(kRowSkerfuro, "npc_mirror_brain", L"npc_zombie_skerfuro_C", L"Execute
 UE_FACT_FN(kRowHound, "npc_mirror_brain", L"fossilhound_C", L"ExecuteUbergraph_fossilhound", Declared);
 UE_FACT_FN(kRowGeomOcta, "npc_mirror_brain", L"geomOcta_C", L"ExecuteUbergraph_geomOcta", Declared);
 UE_FACT_FN(kRowInsomniac, "npc_mirror_brain", L"insomniac_C", L"ExecuteUbergraph_insomniac", Declared);
+UE_FACT_FN(kRowArirFollower, "npc_mirror_brain", L"npc_arirFollower_C", L"ExecuteUbergraph_npc_arirFollower", Declared);
+// The ariral classes below the follower own a graph beside its (the follower's row catches the part they inherit); the
+// shooter and the gun stealer are Characters with no follower in their chain.
+UE_FACT_FN(kRowArirPigBeater, "npc_mirror_brain", L"npc_ariral_pigBeater_C",
+           L"ExecuteUbergraph_npc_ariral_pigBeater", Declared);
+UE_FACT_FN(kRowArirSlapper, "npc_mirror_brain", L"arirSlapper_C", L"ExecuteUbergraph_arirSlapper", Declared);
+UE_FACT_FN(kRowAriralShooter, "npc_mirror_brain", L"npc_ariral_shooter_C", L"ExecuteUbergraph_npc_ariral_shooter",
+           Declared);
+UE_FACT_FN(kRowArirGunStealer, "npc_mirror_brain", L"npc_arirGunStealer_C", L"ExecuteUbergraph_npc_arirGunStealer",
+           Declared);
+// The cave's two: the antibreather (its subclasses antibreather_Child_C and antibreather_angry_C own no graph of their own
+// that anything spawns) and Wolfgang (centipedeHead_C; his pups, wolfgangJr_C, own none).
+UE_FACT_FN(kRowAntibreather, "npc_mirror_brain", L"antibreather_C", L"ExecuteUbergraph_antibreather", Declared);
+UE_FACT_FN(kRowCentipede, "npc_mirror_brain", L"centipedeHead_C", L"ExecuteUbergraph_centipedeHead", Declared);
+// The Erie plush's live forms (coop/world/erie_sync): the live Erie owns a graph, and its good and evil kinds one each beside it.
+UE_FACT_FN(kRowEriePlushLive, "npc_mirror_brain", L"eriePlushLive_C", L"ExecuteUbergraph_eriePlushLive", Declared);
+UE_FACT_FN(kRowErieLiveGood, "npc_mirror_brain", L"eriePlushLive_good_C", L"ExecuteUbergraph_eriePlushLive_good", Declared);
+UE_FACT_FN(kRowErieLiveEvil, "npc_mirror_brain", L"eriePlushLive_evil_C", L"ExecuteUbergraph_eriePlushLive_evil", Declared);
+UE_FACT_FN(kRowAngryErie, "npc_mirror_brain", L"npc_angryErieFlesh_C", L"ExecuteUbergraph_npc_angryErieFlesh", Declared);
 
 constexpr int kTagZombie   = 0x4D505A30;  // 'MPZ0'
 constexpr int kTagSummoner = 0x4D505A41;  // 'MPZA'
@@ -50,6 +71,17 @@ constexpr int kTagSkerfuro = 0x4D505A53;  // 'MPZS'
 constexpr int kTagHound    = 0x4D504630;  // 'MPF0'
 constexpr int kTagGeomOcta = 0x4D504730;  // 'MPG0'
 constexpr int kTagInsomniac = 0x4D504930;  // 'MPI0'
+constexpr int kTagArirFollower = 0x4D504130;  // 'MPA0'
+constexpr int kTagArirPigBeater = 0x4D504131;  // 'MPA1'
+constexpr int kTagArirSlapper = 0x4D504132;  // 'MPA2'
+constexpr int kTagAriralShooter = 0x4D504133;  // 'MPA3'
+constexpr int kTagArirGunStealer = 0x4D504134;  // 'MPA4'
+constexpr int kTagAntibreather = 0x4D504230;  // 'MPB0'
+constexpr int kTagCentipede = 0x4D504330;  // 'MPC0'
+constexpr int kTagEriePlushLive = 0x4D504530;  // 'MPE0'
+constexpr int kTagErieLiveGood = 0x4D504531;   // 'MPE1'
+constexpr int kTagErieLiveEvil = 0x4D504532;   // 'MPE2'
+constexpr int kTagAngryErie = 0x4D504533;      // 'MPE3'
 
 // ---- The mark ----
 
@@ -143,6 +175,17 @@ Watch g_watches[] = {
     {&kRowHound, kTagHound, R::ParamOffset{L"EntryPoint"}},
     {&kRowGeomOcta, kTagGeomOcta, R::ParamOffset{L"EntryPoint"}},
     {&kRowInsomniac, kTagInsomniac, R::ParamOffset{L"EntryPoint"}},
+    {&kRowArirFollower, kTagArirFollower, R::ParamOffset{L"EntryPoint"}},
+    {&kRowArirPigBeater, kTagArirPigBeater, R::ParamOffset{L"EntryPoint"}},
+    {&kRowArirSlapper, kTagArirSlapper, R::ParamOffset{L"EntryPoint"}},
+    {&kRowAriralShooter, kTagAriralShooter, R::ParamOffset{L"EntryPoint"}},
+    {&kRowArirGunStealer, kTagArirGunStealer, R::ParamOffset{L"EntryPoint"}},
+    {&kRowAntibreather, kTagAntibreather, R::ParamOffset{L"EntryPoint"}},
+    {&kRowCentipede, kTagCentipede, R::ParamOffset{L"EntryPoint"}},
+    {&kRowEriePlushLive, kTagEriePlushLive, R::ParamOffset{L"EntryPoint"}},
+    {&kRowErieLiveGood, kTagErieLiveGood, R::ParamOffset{L"EntryPoint"}},
+    {&kRowErieLiveEvil, kTagErieLiveEvil, R::ParamOffset{L"EntryPoint"}},
+    {&kRowAngryErie, kTagAngryErie, R::ParamOffset{L"EntryPoint"}},
 };
 constexpr size_t kWatches = sizeof(g_watches) / sizeof(g_watches[0]);
 
@@ -374,6 +417,9 @@ void PrepareBirth(void* actor) {
     if (!IsParkedClass(cls)) return;
     MarkMirror(actor);
     CheckWatchesLive(cls);
+    // Wolfgang's copy runs his begin play whole; the pups it would mint are refused until the finish returns.
+    static const EntryTable* const centipedeTable = TableNamed(P::name::NpcClass_Centipede);
+    if (centipedeTable && ChainHasTable(cls, *centipedeTable)) coop::centipede_pups::OnMirrorBorn(actor);
 }
 
 void SetUpPresentation(void* actor, Origin origin) {
@@ -383,8 +429,18 @@ void SetUpPresentation(void* actor, Origin origin) {
     static const EntryTable* const zombieTable = TableNamed(P::name::NpcClass_Zombie);
     static const EntryTable* const houndTable = TableNamed(P::name::NpcClass_Fossilhound);
     static const EntryTable* const octaTable = TableNamed(P::name::NpcClass_GeomOcta);
-    // The Octa's BeginPlay runs whole, so nothing is set up and nothing is said.
+    static const EntryTable* const antibreatherTable = TableNamed(P::name::NpcClass_Antibreather);
+    static const EntryTable* const centipedeTable = TableNamed(P::name::NpcClass_Centipede);
+    // The Octa's, the antibreather's and Wolfgang's BeginPlay run whole, so nothing is set up and nothing is said.
     if (octaTable && ChainHasTable(cls, *octaTable)) return;
+    if (antibreatherTable && ChainHasTable(cls, *antibreatherTable)) return;
+    if (centipedeTable && ChainHasTable(cls, *centipedeTable)) {
+        coop::centipede_pups::OnMirrorBegun(actor);
+        return;
+    }
+    // The live Erie's own begin play takes its collision off (its refused graph would have), so a copy does not shove the player.
+    static const EntryTable* const erieTable = TableNamed(P::name::NpcClass_EriePlushLive);
+    if (erieTable && ChainHasTable(cls, *erieTable)) ue_wrap::engine::SetActorEnableCollision(actor, false);
     bool ok = true;
     if (zombieTable && ChainHasTable(cls, *zombieTable)) {
         ok = ue_wrap::zombie::ApplyBeginPlayPresentation(actor);
@@ -455,6 +511,7 @@ void OnDisconnect() {
     g_notLiveSaid = false;
     g_namesPendingSaid.Clear();
     ClearMarks();
+    coop::centipede_pups::OnDisconnect();
 }
 
 }  // namespace coop::npc_mirror_brain

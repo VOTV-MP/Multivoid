@@ -91,6 +91,40 @@ constexpr int32_t kGeomOcta[] = {
     1064, 1826, 1854, 1882,
 };
 
+// antibreather_C
+//
+// The class's BeginPlay, tick, per-viewer check and destroy run on a mirror; every other entry of its graph is refused.
+// The four allowed, with what each does:
+//   9848 BeginPlay: the mesh attached to the spring arm, the animation instance written into `anim`, the 1 s door timer,
+//        the 0.25 s per-viewer timer and the 60 s mushroom timer, and `wander()` (all three land in refused entries).
+//   4489 ReceiveTick: the animation's walk blend from the velocity the pose drive writes, the feet and the yaw. Its one
+//        decision, the punch, runs only while `player` is valid, and the sight entry that writes it is refused here.
+//   11016 checkVisible (the timer): `rendered` is the distance of THIS machine's camera 0 within 10000, and its event
+//        count (lib::setEvent), so each viewer counts its own view (coop/world/creature_event_relay).
+//   10320 ReceiveDestroyed: the `false` of that count when the creature was in view.
+// Refused: 10278 wander (a move near player 0), 10283 the pawn-sensing sight (target, chase, the mushroom drop), 7861
+// punch, 9701 dashing, 6360 findBlindSpot, 6207 playSound and 6322 its callback, 11011 openDoor, 10669 acquireMushroom,
+// 11021 the hogger sphere (a gray boar or a fossilhound that touches it takes 1e8 damage), and the six move-to proxies'
+// success and fail entries (3847, 4209, 7752, 7965, 8453, 10288). A cooked byte offset each: a game update moves them.
+constexpr int32_t kAntibreather[] = {9848, 4489, 11016, 10320};
+
+// centipedeHead_C (Wolfgang, and wolfgangJr_C below it, the pups: their own classes own no graph)
+//
+// BeginPlay, tick, the per-viewer loop and destroy run on a mirror, so a copy stands with its body: the begin play mints
+// the segments (centipedeSegmet_C, each with its own begin play and nothing else), the tick lays them along the head's
+// path, and the destroy ends them with the head. Each segment is an Actor with a mesh and no gameplay.
+//   12599 BeginPlay: the segments, the five timers (kick 0.4 s, calc 0.5 s, checkDoors 1 s, customEvent 2 s and, for a
+//        pup, bbyoffste, each landing in a refused entry), the per-viewer loop, and for a head born while a parentWolfgang_C
+//        stands the eight pups, which a client refuses at the spawn (coop/creatures/centipede_pups).
+//   12997 ReceiveTick: the rope of segments from the head's pose, its mesh's bob, `addMovementInput` (a mirror's movement tick
+//        is off, so it moves nothing). Its target branches read `target`, which only calc writes, refused here.
+//   463  the per-viewer loop's 0.25 s resume: the camera-distance test and its event count, each viewer's own.
+//   15754 ReceiveDestroyed: the segments and the pups it holds, destroyed with the head, and the `false` of the count.
+// Refused: 15846 kick (physics impulses on the props about), 15851 calc (the target, and the food and chip piles it picks),
+// 15856 checkDoors (doors within reach), 16170 customEvent, 15889 bbyoffste, 14242 the mouth's overlap (it destroys the food
+// it touches, and a heap of foods hatches Wolfgang's egg), and the four move-to proxies' success and fail entries.
+constexpr int32_t kCentipede[] = {12599, 12997, 463, 15754};
+
 constexpr EntryTable kTables[] = {
     {P::name::NpcClass_Zombie, kZombie, sizeof(kZombie) / sizeof(kZombie[0])},
     {L"npc_zombie_alienSummoner_C", nullptr, 0},
@@ -99,6 +133,46 @@ constexpr EntryTable kTables[] = {
     {P::name::NpcClass_Fossilhound, kFossilhound, sizeof(kFossilhound) / sizeof(kFossilhound[0])},
     {P::name::NpcClass_GeomOcta, kGeomOcta, sizeof(kGeomOcta) / sizeof(kGeomOcta[0])},
     {P::name::NpcClass_Insomniac, nullptr, 0},
+    // npc_arirFollower_C allows none of its graph: its begin play starts the loops that walk it to player 0, slap the
+    // player it stands beside, take the item from that player's hand, and open the doors and lockers in its way. Each is
+    // the host's follower's to decide; a copy shows the host's pose. Its children (the pig beater) run this graph too.
+    {P::name::NpcClass_ArirFollower, nullptr, 0},
+    // The classes below it own a graph beside its, which the follower's row does not catch, and each allows none of it.
+    // The pig beater's begin play names the nearest gray boar its target, and its `targetDestroyed_d` re-picks one or runs
+    // away, so both only feed the follower's loops. The slapper's begin play notes where it stands to put a stolen thing
+    // back, and its `finished` returns that thing: a prop it was made to fetch, which the host's slapper alone moves.
+    {P::name::NpcClass_AriralPigBeater, nullptr, 0},
+    {L"arirSlapper_C", nullptr, 0},
+    // npc_ariral_shooter_C allows none of its graph. Its begin play registers an event (lib::setEvent, which a client must
+    // not raise for the host's), starts a 1 s sense timer that targets the nearest fire tank, gray boar or murder kerfur
+    // among the client's own copies, and a 0.3-0.5 s fire timer whose body spawns an arirgun_shoot_c: a beam whose begin
+    // play damages whatever implements the object interface within a metre or so of its hit and pushes the physics bodies
+    // there. Its tick walks it toward that target. A copy shows the host's pose; the host's beams are the host's.
+    {P::name::NpcClass_AriralShooter, nullptr, 0},
+    // npc_arirGunStealer_C allows none of its graph: its begin play registers an event and sets it walking to the dropped
+    // gun, or to player 0 once the gun is gone; its `punching` timer slaps any player in reach, opens lockers in its way and
+    // shoves props; and it destroys the gun and throws a prop at the end. A copy shows the host's pose.
+    {P::name::NpcClass_ArirGunStealer, nullptr, 0},
+    // npc_funguy_C allows none of its graph: its begin play arms the 0.1 s sensing loop (the pawns in its see radius, from
+    // which it runs away), the awake timer (the dig-up montage) and the despawn timer, and its move-to proxies wander it to a
+    // random point of this machine's navmesh; its footstep notify and its landing mint a mushroom spawner or a dirt hole; its
+    // radii read a mainPlayer and the knockout radius hits one. All of it is the host's duende's to decide; a copy shows the
+    // host's pose and its end is the host's despawn.
+    {P::name::NpcClass_Funguy, nullptr, 0},
+    {P::name::NpcClass_Antibreather, kAntibreather, sizeof(kAntibreather) / sizeof(kAntibreather[0])},
+    {P::name::NpcClass_Centipede, kCentipede, sizeof(kCentipede) / sizeof(kCentipede[0])},
+    // The live Erie (eriePlushLive_C) allows none of its graph. Its begin play takes its collision off, starts the 30 s `stealing`
+    // timer (it takes a prop from the floor in 10 m, and the evil kind throws grenades), the 120 s `reducerep` timer (its `rep` falls,
+    // and at -100 or 100 it turns into the evil or good kind and a bomb bottle) and the 1 s `regen`; its move-to chain (`startmoving`)
+    // walks it to a point of this machine's navmesh and picks a dance; its use (`actionOptionIndex` 7) makes the drag form and
+    // destroys it, a feed (`playerUsedOn`) eats the player's held prop, fire turns it into a drag form or a chip pile, a slice into
+    // the chop, and its end gives back the prop it stole. Each is the host's Erie's to decide; a copy shows the host's pose. The good
+    // and the evil kind own a graph beside it (the kind's begin play and one custom event), which allows none either; the angry one
+    // (npc_angryErieFlesh_C) chases, throws artillery and sets props alight, all the host's.
+    {P::name::NpcClass_EriePlushLive, nullptr, 0},
+    {L"eriePlushLive_good_C", nullptr, 0},
+    {L"eriePlushLive_evil_C", nullptr, 0},
+    {P::name::NpcClass_AngryErie, nullptr, 0},
 };
 
 constexpr size_t kTableCount = sizeof(kTables) / sizeof(kTables[0]);

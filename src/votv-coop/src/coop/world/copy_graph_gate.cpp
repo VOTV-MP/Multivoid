@@ -131,12 +131,6 @@ bool IsGatedClass(void* cls) {
     return n > 0 && ue_wrap::reflection::IsDescendantOfAny(cls, bases, n);
 }
 
-uint64_t RefusedCalls() {
-    uint64_t n = 0;
-    for (const uint64_t r : g_refused) n += r;
-    return n;
-}
-
 void OnDisconnect() {
     for (int i = 0; i < kGateCount; ++i) {
         if (g_refused[i] > 0)

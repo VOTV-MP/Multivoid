@@ -145,7 +145,8 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 // ProcessEvent-dispatched) and no interceptor sees it: the wisps event swarm (up to 32), the piramid
 // chain (four killer wisps and a pyramid on the world-actor lane), the ambient sky wisps and night
 // eggs (world-anchored, so the host rolls them and a client's ticker is refused in the spawn
-// authority), the sell gun's coin mint (the host's own sale and the re-commit of a client's alike;
+// authority), the ambient Killer Wisp and fossilhound tickers, the boar war event's hound, the Day-44 gray tank's
+// box (its fire tank), the sell gun's coin mint (the host's own sale and the re-commit of a client's alike;
 // without its row the coin allowlist entry is inert), the jellyfish path's seven, the story-event
 // spawners' creatures, the eventer's ships, saucers, salt pile and Soltomia craft, the insomniac ticker's creature, and
 // the gamemode's night roll (an Octa or an egg).
@@ -177,10 +178,53 @@ constexpr const wchar_t* kAlienDropperOutputs[] = {L"arirShip_C", nullptr};
 constexpr const wchar_t* kBoarInvasionOutputs[] = {L"npc_ariral_shooter_C", L"firetank_C", nullptr};
 constexpr const wchar_t* kHoleControllerOutputs[] = {L"holeBottom_C", nullptr};
 constexpr const wchar_t* kSpawnPropOutputs[] = {L"obelisk_C", nullptr};
+// The ambient Killer Wisp ticker's graph also mints the deer carcass's gibs (a prop each, with a one-hour lifespan);
+// only its killer wisp is a character, so the source is narrowed to it. The fossilhound's two spawners (the ticker, and
+// the boar war event the midnight roll mints) each spawn the hound in their own graph; the event's grayboar_C is a prop
+// on the boar lane (the gamemode's allGrayboars list) and is not an output of this seam. The Day-44 gray tank's box
+// (firetankDeploy_C) unfolds in its own graph into a firetank_C and the scrap props it is made of; the firetank is a
+// world-actor mirror whose copy the copy gate parks, and the scrap crosses as props.
+constexpr const wchar_t* kKillerWispOutputs[] = {L"killerwisp_C", nullptr};
+constexpr const wchar_t* kFossilhoundOutputs[] = {L"fossilhound_C", nullptr};
+constexpr const wchar_t* kFiretankDeployOutputs[] = {L"firetank_C", nullptr};
+// The Ariral treehouse (a level actor on both sides, anchored at its own point): trySpawnPigShooter mints the pig beater, or
+// a shooter when two boars are about; trySpawnTankShooter a shooter locked on a fire tank; checkSurroundings the slapper
+// that climbs out when a prop_poo lies in its eater sphere. The dropped gun's event mints the stealer that comes back for it,
+// in a ring about player 0 but for a gun that is a world prop. A client's copy of each source is refused in spawn_authority,
+// and each product's graph is parked on a mirror (npc_mirror_brain). The slapper's other spawners are bound to one player
+// (his camera, his bed, the crate he opened, the notebook he read) and are not sources.
+constexpr const wchar_t* kTreehouseOutputs[] = {L"npc_ariral_pigBeater_C", L"npc_ariral_shooter_C", L"arirSlapper_C", nullptr};
+constexpr const wchar_t* kStealsGunOutputs[] = {L"npc_arirGunStealer_C", nullptr};
 // The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
 // so its source is narrowed to the two outputs of the night roll (mainGamemode_C::CustomEvent_5, an Octa or a
-// night egg), whose client roll the spawn authority refuses.
-constexpr const wchar_t* kGeomOctaNpcOutputs[] = {L"geomOcta_C", L"eg_C", nullptr};
+// night egg), whose client roll the spawn authority refuses, and the antibreather that `loadObjects` mints behind the
+// player when the game instance's kick-out flag is set (a per-machine flag a joiner's own load does not carry), and the
+// outputs of its timers that spawn_authority refuses on a client: the mushroom duende (`tickerFunguy`, an NPC mirror whose
+// graph is parked), the body (`tickerBody`) and the four UFOs (`ufo_ball`, `ufo_boo`, `ufo_joel`, `ufo_pill`), each a
+// world-actor mirror. The Midas UFO (`ufo_midas`) mints nothing: it starts a level-placed flyer, which rides a cue.
+constexpr const wchar_t* kGeomOctaNpcOutputs[] = {L"geomOcta_C", L"eg_C", L"antibreather_C", L"npc_funguy_C", L"theBody_C",
+                                                  L"ufo_ballfo_C", L"ufo_boofo_spawn1_C", L"ufo_joel_C", L"ufo_pillfo_C", nullptr};
+// The cave. antibreatherSPawner_C is level-placed on both sides and rolls in a 10 s loop of its begin play: an antibreather
+// at its own point, or `cencipede`, which mints Wolfgang (centipedeHead_C), or the egg's prop when an eggyWolfgang is about
+// (the egg is no character). A client's loop is refused in spawn_authority. The egg's `damageByPlayer` mints an aggressive
+// antibreather at the egg, and Wolfgang's own begin play mints his pups (wolfgangJr_C, a subclass of his) when a
+// parentWolfgang_C has hatched. Each copy is parked (npc_mirror_brain).
+constexpr const wchar_t* kCaveSpawnerOutputs[] = {L"antibreather_C", L"centipedeHead_C", nullptr};
+constexpr const wchar_t* kAntibreatherOutputs[] = {L"antibreather_C", nullptr};
+constexpr const wchar_t* kCentipedePupOutputs[] = {L"wolfgangJr_C", nullptr};
+// The base computer (analogDScreenTest_C): a completed signal download's `autoSave` and the save button's press mint, by the
+// signal's name, the Tardis at a fixed point (with its `delay` set to 60 before the finish), the TriFO (`spawn_trifo`, at the
+// origin and 12 km down, scale 2 2 3) and the shitting duende (at the transform of the level's `basebathroomtoilet1`). The
+// desk also mints back panels and a marker, `ticker_kerf_C`, for the Kerfur Omega's sleep scare, which is bound to the host's
+// sleep and stays unmirrored; so the source is narrowed to the three world actors. A client's autoSave and its save press are
+// refused (coop/interactables/desk_sim_sync, desk_verb_intent), and so is its spawn_trifo (coop/world/spawn_authority).
+constexpr const wchar_t* kSignalSpawnOutputs[] = {L"tardis_C", L"ufo_trifo_C", L"shitDuende_C", nullptr};
+// The Erie plush's forms (coop/world/erie_sync). The plush's `fuck` mints the live Erie and its `anger` the angry one; the live Erie in
+// each kind mints the drag form (a pick up, a thrown landing), the other kinds (by `rep`) and the chop (`slice`); the drag form lands as a
+// live Erie; the chop ends in two; the held form (prop_erieHold_C) places one; a cremator burning a plush mints the angry one. The kinds
+// are subclasses and the source is told by exact class name, so each has its row; the outputs are narrowed where the source mints props too.
+constexpr const wchar_t* kEriePlushOutputs[] = {L"eriePlushLive_C", L"npc_angryErieFlesh_C", nullptr};
+constexpr const wchar_t* kAngryErieOutputs[] = {L"npc_angryErieFlesh_C", nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
@@ -201,6 +245,35 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"event_bottomHoleController_C", kHoleControllerOutputs}, // rozitalHole: the room under the hole
     {L"kavotiaPatrolController_C", nullptr},        // rozitalHole: the kavotia rings and the igetis
     {L"trigger_spawnProp_C",     kSpawnPropOutputs}, // the obelisk, from the level's trigger
+    {L"trigger_spawnFollowingArir_C", nullptr},     // arirFollower: runTrigger() mints the follower in its graph
+    {L"ticker_yellowWispSpawner_C", kKillerWispOutputs},   // the ambient Killer Wisp, a navmesh point by night in days 25-29
+    {L"ticker_fossilhoundSpawner_C", kFossilhoundOutputs}, // the fossilhound, rolled at an absolute map point by moonlit night
+    {L"event_fossilBoarWar_C",   kFossilhoundOutputs},     // the midnight roll's boar war: its hound (its boars are props)
+    {L"firetankDeploy_C",        kFiretankDeployOutputs},  // graystank: the dropped box unfolds into the Day-44 fire tank
+    {L"treehouse_C",             kTreehouseOutputs},       // the treehouse's pig beater, shooters and slapper
+    {L"event_arirStealsGun_C",   kStealsGunOutputs},       // the dropped gun: the Ariral that comes back for it
+    {L"antibreatherSPawner_C",   kCaveSpawnerOutputs},     // the cave: the antibreather, and Wolfgang by `cencipede`
+    {L"wolfgangEggs_C",          kAntibreatherOutputs},    // the egg's hit: an aggressive antibreather at the egg
+    {L"centipedeHead_C",         kCentipedePupOutputs},    // Wolfgang's begin play: his pups, when a parentWolfgang_C stands
+    {L"analogDScreenTest_C",     kSignalSpawnOutputs},     // the base computer's signal spawns: the Tardis, the TriFO, the duende
+    {L"easterZone_C",            nullptr},                 // the Easter well: its animation's end mints the bunny
+    {L"ominousBunny_C",          nullptr},                 // a bunny destroyed early: the angry one
+    {L"bloodSkeletonSpawner_C",  nullptr},                 // the Magnet Skeleton: its begin play mints the blood decal
+    {L"prop_hexpillar_C",        nullptr},                 // the buried basalt's digUp: the first Basalt Pillar
+    {L"hexpillar_C",             nullptr},                 // a full grown pillar's tick: the neighbour it seeds
+    {L"prop_eriePlush_C",        kEriePlushOutputs},       // the Erie plush: `fuck` the live Erie, `anger` the angry one
+    {L"prop_eriePlush_superEater_C", kEriePlushOutputs},   // the super eater kind of the plush, the same graph
+    {L"eriePlushLive_C",         nullptr},                 // the live Erie: the drag form, the other kinds, the chop
+    {L"eriePlushLive_good_C",    nullptr},                 //   (the kinds are subclasses with their own class names)
+    {L"eriePlushLive_evil_C",    nullptr},
+    {L"erieDrag_C",              nullptr},                 // the drag form's landing: the live Erie
+    {L"erieDrag_good_C",         nullptr},
+    {L"erieDrag_evil_C",         nullptr},
+    {L"erieChop_C",              nullptr},                 // the chop's end: two live Erie
+    {L"prop_erieHold_C",         nullptr},                 // the held form placed: a live Erie, or the thrown drag form
+    {L"prop_erieHold_good_C",    nullptr},
+    {L"prop_erieHold_evil_C",    nullptr},
+    {L"cremator_C",              kAngryErieOutputs},       // a cremator burning a plush: the angry Erie
 };
 
 // Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.
@@ -227,7 +300,7 @@ bool IsWaAllowlistedClass(void* cls) {
 // Queue entries carry the internal index captured at catch time, so the drain validates with
 // the index-paired liveness check; a raw pointer cached across a tick boundary is the recycle
 // hazard. Cleared on disconnect.
-struct PendingExSpawn { void* actor; int32_t internalIdx; };
+struct PendingExSpawn { void* actor; int32_t internalIdx; const wchar_t* source; };
 std::mutex g_pendingMx;
 std::vector<PendingExSpawn> g_pendingExSpawns;        // queued actors awaiting the GT drain
 constexpr size_t kMaxPendingExSpawns = 256;           // sanity cap (a swarm is 32)
@@ -266,6 +339,7 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     if (!cls) return;
     // A scoped source's outputs first: one render, before the world-actor list's per-entry renders.
     if (source->outputs && !NamesOneOf(cls, source->outputs)) return;
+    coop::npc_sync::NoteLateAllowlistClass(cls);  // the gun stealer joins the allowlist the first time one is minted
     if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
@@ -281,7 +355,7 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
         }
         return;
     }
-    g_pendingExSpawns.push_back({spawned, idx});
+    g_pendingExSpawns.push_back({spawned, idx, source->cls});
 }
 
 }  // namespace
@@ -296,10 +370,16 @@ void InstallExSpawnCatch() {
                 "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C + "
                 "rozitBorg_C + morningUfo_C + kocker_C + ufoDropper_*_C + saltpile_C + soltomiaCleaning_C, "
                 "ufoAlienDropper_C -> arirShip_C, ticker_insomniacSpawner_C -> insomniac_C + insomniac_Child_C, "
-                "boarInvasion_C -> firetank_C + npc_ariral_shooter_C, event_bottomHoleController_C -> holeBottom_C, "
+                "boarInvasion_C -> firetank_C + npc_ariral_shooter_C, trigger_spawnFollowingArir_C -> npc_arirFollower_C, "
+                "ticker_yellowWispSpawner_C -> killerwisp_C, ticker_fossilhoundSpawner_C + event_fossilBoarWar_C -> "
+                "fossilhound_C, firetankDeploy_C -> firetank_C, treehouse_C -> npc_ariral_pigBeater_C + "
+                "npc_ariral_shooter_C + arirSlapper_C, event_arirStealsGun_C -> npc_arirGunStealer_C, "
+                "antibreatherSPawner_C -> antibreather_C + centipedeHead_C, wolfgangEggs_C -> antibreather_C, "
+                "centipedeHead_C -> wolfgangJr_C, analogDScreenTest_C -> tardis_C + ufo_trifo_C + shitDuende_C, "
+                "event_bottomHoleController_C -> holeBottom_C, "
                 "kavotiaPatrolController_C -> kavotia_C + igetis_C, trigger_spawnProp_C -> obelisk_C, "
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
-                "mainGamemode_C -> geomOcta_C + eg_C, ticker_deerSpawner_C -> deer_C, "
+                "mainGamemode_C -> geomOcta_C + eg_C + antibreather_C + npc_funguy_C + theBody_C + ufo_ballfo_C + ufo_boofo_spawn1_C + ufo_joel_C + ufo_pillfo_C, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "
                 "tentacleBallsFollower_C -> tentacleBall_C; EX_CallMath spawns now enroll)");
     } else {
@@ -347,8 +427,8 @@ void DrainPendingExSpawns() {
             EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn", /*skipSlot=*/-1, &loc);
         if (eid != coop::element::kInvalidId) {
             UE_LOGI("npc-sync[ex-spawn]: enrolled '%ls' eid=%u at (%.0f, %.0f, %.0f) "
-                    "(EX_CallMath BeginDeferred, source-gated catch)",
-                    clsName.c_str(), eid, loc.X, loc.Y, loc.Z);
+                    "(EX_CallMath BeginDeferred, source-gated catch, source '%ls')",
+                    clsName.c_str(), eid, loc.X, loc.Y, loc.Z, e.source);
         }
     }
 }
@@ -402,6 +482,10 @@ int RegisterExistingWorldNpcs(int joiningSlot) {
         // through the catch, and a joiner reaches tracked wisps through the connect broadcast, not
         // this walk.
         if (clsName == P::name::NpcClass_Wisp) continue;
+        // The zombie deer's ghost (deer_ded_C, a deer_C child, so the allowlist's derived-class test lets it in) is bound to one
+        // player: it paths to player 0's camera, hurts player 0 and dissolves when that camera sees it, and the carcass prop that
+        // mints it runs on every peer, so each peer has its own. A copy made here would chase and hit the joiner's player.
+        if (clsName == L"deer_ded_C") continue;
         const coop::element::ElementId eid = EnrollUntrackedNpcActor(
             obj, clsName,
             // A save-keyed creature is one the joiner may have loaded itself, so its spawn (the

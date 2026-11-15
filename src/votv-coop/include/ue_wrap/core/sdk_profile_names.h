@@ -103,6 +103,19 @@ inline constexpr const wchar_t* NpcClass_GeomOcta     = L"geomOcta_C";
 inline constexpr const wchar_t* NpcClass_Deer         = L"deer_C";
 inline constexpr const wchar_t* NpcClass_WalkingTree  = L"walkingTree_C";
 inline constexpr const wchar_t* NpcClass_Kavotia      = L"kavotia_C";
+// npc_arirGunStealer_C (: ACharacter, no allowlisted parent): the Ariral that comes back for the dropped gun, minted by
+// event_arirStealsGun_C. Its package is a hard import of that event actor alone, which a save need not hold, so it is a
+// late entry (see kNpcAllowlistLate): the install does not wait for it, and it joins the walk when a spawn of it is seen.
+inline constexpr const wchar_t* NpcClass_ArirGunStealer = L"npc_arirGunStealer_C";
+// centipedeHead_C (: ACharacter, no allowlisted parent): Wolfgang, the cave's giant centipede; his pups, wolfgangJr_C, are a
+// subclass. The antibreather spawner's `cencipede` mints him, and his package is a hard import of that spawner alone, which a
+// save need not hold, so he is a late entry too.
+inline constexpr const wchar_t* NpcClass_Centipede = L"centipedeHead_C";
+// eriePlushLive_C (: ACharacter; its good and evil kinds are subclasses) and npc_angryErieFlesh_C (: ACharacter): the Erie plush's live
+// forms (coop/world/erie_sync). Both are minted inside Blueprint graphs (the plush's morph and anger, the drag and chop forms) and a
+// save need not hold their packages, so they are late entries too.
+inline constexpr const wchar_t* NpcClass_EriePlushLive = L"eriePlushLive_C";
+inline constexpr const wchar_t* NpcClass_AngryErie = L"npc_angryErieFlesh_C";
 
 // The allowlist array: resolved once at install through R::FindClass and cached. The classes load
 // on the first gameplay-level transition, not at the menu, so the install retries until every
@@ -138,8 +151,15 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_Deer,
     NpcClass_WalkingTree,
     NpcClass_Kavotia,           // the Rozital hole's patrol (its copy runs its begin play alone: coop/world/copy_graph_gate)
+    NpcClass_ArirGunStealer,    // LATE: the last kNpcAllowlistLate entries
+    NpcClass_Centipede,         // LATE
+    NpcClass_EriePlushLive,     // LATE: the live Erie, in each kind
+    NpcClass_AngryErie,         // LATE: the angry one
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
+// The entries at the end of the list that the install does not wait for: a class not loaded then stays null until a
+// spawn of it is seen (coop::npc_sync::NoteLateAllowlistClass), and a null slot is skipped by the walk.
+inline constexpr size_t kNpcAllowlistLate = 4;
 
 // The non-Character event actors the Character-only NPC mirror cannot replicate: npc_pose_drive
 // drives position, yaw and the CMC, so these AActor/APawn ships and saucers get a transform-only
@@ -172,11 +192,40 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"piramidSubpawn_C",           // pyramid sub-pawn (APawn; the SANDBOX piramidTest_C child, not the event)
     L"piramid2_C",                 // walking pyramid event actor (a plain AActor; brain suppression and the
                                    // gather relay: coop/creatures/piramid_sync)
+    L"theBody_C",                  // the body (mainGamemode.tickerBody): a still mesh at a ground point that ends 5 s after a
+                                   // pawn touches it; a copy's overlap is refused (coop/world/spawn_authority)
+    L"ufo_ballfo_C",               // the gamemode's UFOs (ufo_ball, ufo_boo, ufo_joel, ufo_pill): each spawns at a point, flies by
+    L"ufo_boofo_spawn1_C",         //   its own components, tick and timelines (sound and camera shake for the local player), mints
+    L"ufo_joel_C",                 //   no actor and destroys itself. A copy keeps its own tick (coop/world/world_actor_mirror) and
+    L"ufo_pillfo_C",               //   flies from the host's spawn point.
     L"baocoin_C",                  // the sell gun's coin: Abaocoin_C : AActor, not Aprop_C, so it rides no prop
                                    // lane; host-minted and mirrored (coop/items/coingun_sync). The mint is
                                    // EX_CallMath, so this entry alone does nothing: prop_coingun_C in
                                    // kExSpawnSourceClasses lets the Func-thunk drain reach
                                    // world_actor_sync::HostEnrollExSpawn, which allocates the eid.
+    L"tardis_C",                   // the Tardis (analogDScreenTest's "tardis" signal): a box that fades in at a fixed point
+                                   // after its `delay` and out 10 s after something enters its sphere. A copy keeps its own
+                                   // timeline and is born with the host's remaining delay (coop/world/signal_spawn_copy);
+                                   // its event count call is refused (coop/world/spawn_authority)
+    L"ufo_trifo_C",                // the TriFO (the "trifo" signal's spawn_trifo): flies a component, spins and blinks the
+                                   // lights and the lamps by its own tick, blacks the base out through powercontrol.solar and
+                                   // ends itself. A copy keeps its own tick; its solar call and its event count are refused
+    L"shitDuende_C",               // the shitting duende (the "shitduende" signal): stands at the base toilet and dissolves
+                                   // when a clear line runs from its eyes to the local camera; a copy keeps its own tick, so
+                                   // each peer's copy ends when that peer's camera sees it
+    L"decal_skeletonBlood_C",      // the Magnet Skeleton's blood stain (bloodSkeletonSpawner_C, run from the base computer's
+                                   // "process" signal): a decal_save_C with no body; the bones and the magnet cross as props
+    L"ominousBunny_C",             // the Ominous Easter Bunny (easterZone_C's animation end), a save actor that only turns its
+                                   // head by its tick; a copy's talk ends and eggs are asked of the host (coop/world/easter_hunt)
+    L"superHolyShitAngryBunny_C",  // the angry bunny a bunny destroyed before its hunt ended mints: a pose-driven copy
+    L"hexpillar_C",                // a Basalt Pillar (an actor_save_C): minted by the buried prop's digUp and then by each
+                                   // rising pillar's tick. A copy never ticks (the tick also seeds); the host sends its
+                                   // height (coop/world/basalt_pillar)
+    L"erieDrag_C",                 // the live Erie picked up or thrown (an Actor): a physics sphere that lands as a live Erie again;
+    L"erieDrag_evil_C",            //   its kinds are subclasses, each listed (leaf names). A copy's tick (the landing) is refused
+    L"erieDrag_good_C",            //   (coop/world/spawn_authority) and the host's landing mints the live Erie (coop/world/erie_sync)
+    L"erieChop_C",                 // the sliced Erie (an actor_save_C): its timelines play on a copy, the mint of the two live Erie
+                                   // it ends in is the host's (coop/world/spawn_authority)
 };
 inline constexpr size_t kWorldActorAllowlistSize =
     sizeof(kWorldActorAllowlist) / sizeof(kWorldActorAllowlist[0]);

@@ -4,6 +4,7 @@
 // through world_actor_detail.h. One public header, one namespace, two translation units.
 
 #include "coop/world/obelisk_copy.h"
+#include "coop/world/signal_spawn_copy.h"
 #include "coop/world/world_actor_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
@@ -25,7 +26,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/object_index.h"
-#include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -36,7 +36,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace coop::world_actor_sync {
@@ -57,8 +56,15 @@ bool IsSaucerClass(const std::wstring& cls) { return cls.rfind(L"ufoDropper_", 0
 
 // The classes whose own tick is their animation: the mothership's tick flies its ship component and ends the event,
 // the ariral ship's tick turns and scales its scan cone. The pose stream cannot carry either, since neither moves
-// the actor, so the mirror keeps the tick the other mirrors park.
-bool KeepsOwnTick(const std::wstring& cls) { return cls == L"rozitBorg_C" || cls == L"arirShip_C"; }
+// the actor, so the mirror keeps the tick the other mirrors park. The gamemode's UFOs are the same: each stays at its
+// spawn point and flies a component along its own route, by its tick or a timeline, then destroys itself.
+// The base computer's signal spawns are the same: the TriFO spins, blinks the lights and flies a component by its tick and a timeline,
+// the Tardis fades by a timeline and the shitting duende dissolves on its tick when a clear line runs to the local camera.
+bool KeepsOwnTick(const std::wstring& cls) {
+    return cls == L"rozitBorg_C" || cls == L"arirShip_C" || cls == L"ufo_ballfo_C" || cls == L"ufo_boofo_spawn1_C" ||
+           cls == L"ufo_joel_C" || cls == L"ufo_pillfo_C" || cls == L"tardis_C" || cls == L"ufo_trifo_C" ||
+           cls == L"shitDuende_C" || cls == L"ominousBunny_C";   // the bunny's tick turns its head to the local camera
+}
 
 // The morning UFO is hidden until a player enters its box, and the host's moves only once it shows. A mirror in the
 // box's absence stays hidden, so its first displacement from the spawn point reveals it. Keyed by eid, the spawn
@@ -81,60 +87,16 @@ void RevealOnMove(coop::element::WorldActor* el) {
     g_revealOrigin.erase(it);
 }
 
-// The Soltomia craft is hidden until a player enters its box, and the host's entry teleports the ATV onto it. A mirror
-// runs none of that (its begin play and overlap are refused), so it shows once an ATV, which the ATV lane moves, stands
-// within kSoltoAtvCm of it. Polled twice a second; the eids still waiting. Game thread.
-constexpr float kSoltoAtvCm = 300.f;
-constexpr long long kSoltoPollMs = 500;
-std::unordered_set<uint32_t> g_soltoHidden;
-
-struct AtvNear {
-    ue_wrap::FVector at;
-    bool found;
-};
-
-void PollSoltoReveal() {
-    if (g_soltoHidden.empty()) return;
-    static long long s_nextMs = 0;
-    const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (nowMs < s_nextMs) return;
-    s_nextMs = nowMs + kSoltoPollMs;
-    for (auto it = g_soltoHidden.begin(); it != g_soltoHidden.end();) {
-        coop::element::WorldActor* el = WaMirrors().Get(*it);
-        void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) {
-            it = g_soltoHidden.erase(it);
-            continue;
-        }
-        AtvNear n{};
-        if (!E::TryGetActorLocation(actor, n.at)) {
-            ++it;
-            continue;
-        }
-        ue_wrap::atv::ForEachAtv([](void* ctx, void* atv, int32_t) {
-            AtvNear* w = static_cast<AtvNear*>(ctx);
-            ue_wrap::FVector loc{};
-            ue_wrap::FRotator rot{};
-            if (w->found || !ue_wrap::atv::GetRootTransform(atv, loc, rot)) return;
-            const float dx = loc.X - w->at.X, dy = loc.Y - w->at.Y, dz = loc.Z - w->at.Z;
-            w->found = dx * dx + dy * dy + dz * dz <= kSoltoAtvCm * kSoltoAtvCm;
-        }, &n);
-        if (!n.found) {
-            ++it;
-            continue;
-        }
-        E::SetActorHiddenInGame(actor, false);
-        UE_LOGI("world-actor[client]: eid=%u an ATV stands on the Soltomia craft -- revealed",
-                static_cast<unsigned>(*it));
-        it = g_soltoHidden.erase(it);
-    }
-}
+// The Soltomia craft is hidden until a body enters its box on the host; a mirror runs none of that (its begin play
+// and overlap are refused) and is shown by the host's cue (coop/world/solto_sync).
 
 // The save actors among the mirrored classes: a joiner whose save holds one has loaded its own, so the host's
 // announce of the same actor adopts that one as the copy; a second beside it would be a duplicate.
 bool IsSaveActorClass(const std::wstring& cls) {
-    return cls == L"obelisk_C" || cls == L"holeBottom_C" || cls == L"saltpile_C" || cls == L"soltomiaCleaning_C";
+    return cls == L"obelisk_C" || cls == L"holeBottom_C" || cls == L"saltpile_C" || cls == L"soltomiaCleaning_C" ||
+           cls == L"decal_skeletonBlood_C" || cls == L"hexpillar_C" || cls == L"ominousBunny_C" ||
+           // the Erie drag forms implement the save interface (`ignoresave` false: class, rep and transform), so a joiner's load made one
+           cls == L"erieDrag_C" || cls == L"erieDrag_evil_C" || cls == L"erieDrag_good_C";
 }
 
 constexpr float kTwinCm = 300.f;
@@ -164,6 +126,8 @@ void* FindSaveTwin(void* actorClass, const ue_wrap::FVector& at) {
 }
 
 }  // namespace
+
+bool AdoptsSaveTwin(const std::wstring& cls) { return IsSaveActorClass(cls); }
 
 void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     using ue_wrap::ParamFrame;
@@ -337,6 +301,10 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
             coop::coingun_sync::SeedCoinMirror(spawned, pts);
         }
     }
+    // The Tardis waits `delay` seconds from its begin play and then appears: the host's remaining seconds are written before
+    // the finish, since the class default is another value (coop/world/signal_spawn_copy).
+    if (!twin && coop::signal_spawn_copy::IsTardisName(classW.c_str()) && payload.birthLen != 0)
+        coop::signal_spawn_copy::SeedTardisCopy(spawned, payload.birth, payload.birthLen);
     if (!twin) {
         ParamFrame finish(sp.finishSpawnFn);
         if (!finish.valid()) {
@@ -375,7 +343,6 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
                 "drive moves it", payload.elementId, classW.c_str(), stopped);
     coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
     if (classW == L"morningUfo_C") g_revealOrigin[payload.elementId] = {payload.locX, payload.locY, payload.locZ};
-    if (classW == L"soltomiaCleaning_C") g_soltoHidden.insert(payload.elementId);
     if (classW == L"obelisk_C") coop::obelisk_copy::OnCopy(spawned);
     if (IsSaucerClass(classW)) {
         const ue_wrap::facts::Resolved deploy = ue_wrap::facts::Resolve(kRowForceDeploy);
@@ -425,7 +392,6 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
     coop::world_actor_sync::NoteMirrorActor(actor, /*add=*/false);
     coop::obelisk_copy::OnCopyGone(actor);
     g_revealOrigin.erase(payload.elementId);
-    g_soltoHidden.erase(payload.elementId);
     const D::SpawnPath sp = D::GetSpawnPath();
     // Index-validated liveness, not the plain check: a cached mirror actor drained from the table
     // plus a destroy call. If its slot was recycled (this can race a world teardown), the plain
@@ -510,7 +476,6 @@ void TickClientWorldActors() {
             }
         }
     }
-    PollSoltoReveal();
 }
 
 }  // namespace coop::world_actor_sync

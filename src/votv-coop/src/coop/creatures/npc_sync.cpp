@@ -397,6 +397,22 @@ coop::net::Session* GetSession() {
     return g_session_ptr.load(std::memory_order_acquire);
 }
 
+void NoteLateAllowlistClass(void* cls) {
+    if (!cls) return;
+    constexpr size_t kFirstLate = P::name::kNpcAllowlistSize - P::name::kNpcAllowlistLate;
+    // The spawned class or a class above it: Wolfgang's pups (wolfgangJr_C) are seen as the entry's subclass, so the entry
+    // is given its own class whichever of the two is met first.
+    int hops = 0;
+    for (void* c = cls; c && hops < 16; c = R::SuperStructOf(c), ++hops) {
+        const R::FName& name = R::NameOf(c);
+        for (size_t i = kFirstLate; i < P::name::kNpcAllowlistSize; ++i) {
+            if (g_npcAllowlist[i] || !R::NameEquals(name, P::name::kNpcAllowlist[i])) continue;
+            g_npcAllowlist[i] = c;
+            UE_LOGI("npc-sync: late allowlist entry '%ls' = %p (first seen)", P::name::kNpcAllowlist[i], c);
+        }
+    }
+}
+
 bool IsAllowlistedClass(void* cls) {
     // The interceptor's walk. The allowlist may not be fully resolved yet (a fast-handshake peer's
     // receiver can fire while the host is still resolving); unresolved slots are null and skipped,

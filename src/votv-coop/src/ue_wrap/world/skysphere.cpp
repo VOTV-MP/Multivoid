@@ -180,4 +180,43 @@ bool CallSetEye(bool eye) {
     return ue_wrap::Call(sky, f);
 }
 
+bool ReadBlackHole(bool& on) {
+    void* sky = Sky();
+    if (!sky) return false;
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    if (sOff == -2) {
+        int32_t off = -1;
+        sOff = R::FindBoolProperty(R::ClassOf(sky), L"skyHidden", off, sMask) ? off : -1;
+        if (sOff < 0) UE_LOGW("skysphere: newsky_C.skyHidden did not resolve by name -- the black hole cannot be read");
+    }
+    if (sOff < 0) return false;
+    on = (*(reinterpret_cast<const uint8_t*>(sky) + sOff) & sMask) != 0;
+    return true;
+}
+
+bool CallBlackHole(bool on) {
+    void* sky = Sky();
+    if (!sky) return false;
+    void* cls = R::ClassOf(sky);
+    // The red light first, as `tp` does (`light_blackhole`.SetVisibility(on, false)): a scene component's own verb.
+    const int32_t lightOff = R::FindPropertyOffset(cls, L"light_blackhole");
+    void* light = lightOff >= 0 ? *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(sky) + lightOff) : nullptr;
+    void* setVis = (light && R::IsLive(light)) ? R::FindDispatchFunctionCached(R::ClassOf(light), L"SetVisibility") : nullptr;
+    if (setVis) {
+        ue_wrap::ParamFrame f(setVis);
+        if (f.valid() && f.Set<bool>(L"bNewVisibility", on)) {
+            f.Set<bool>(L"bPropagateToChildren", false);
+            ue_wrap::Call(light, f);
+        }
+    } else {
+        UE_LOGW("skysphere: the black hole's light component or its SetVisibility did not resolve -- the flip runs without its light");
+    }
+    void* fn = R::FindDispatchFunctionCached(cls, L"skyVisibility");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !f.Set<bool>(L"bnewhidden", on)) return false;
+    return ue_wrap::Call(sky, f);
+}
+
 }  // namespace ue_wrap::skysphere

@@ -65,6 +65,9 @@ messages, the late-join answer, the known limits with their evidence, and the co
 | [events-and-weather.md](events-and-weather.md) | The clock, the weather, who rolls, the story events and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task |
 | [signals.md](signals.md) | The signal workstation: occupancy, the desk, the download simulation, the catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades |
 | [devices.md](devices.md) | Doors, keypads, lights, the power panel, the turbine, windows and grime, the drone, the signal servers |
+| [easter-hunt.md](easter-hunt.md) | The Easter hunt: the well's animation, the one bunny, its eggs and talk, a client's talk end and egg as intents, the achievement |
+| [vending.md](vending.md) | The snack and soda vending machines: the host's stock, a client's buy and coin as intents, the refill |
+| [erie.md](erie.md) | The Erie plush: its quest as the host's, a client's hit on its copy asked of the host, and the live Erie's forms shown on every peer (written, not yet run) |
 | [base-computer.md](base-computer.md) | The base laptop and the economy: the balance, upgrades, the laptop's tab and inbox, shop orders, the coin gun, the floppy slot |
 | [vehicles.md](vehicles.md) | The ATV: a mirror that runs the vehicle's physics natively and is steered, the two authority predicates, the condition that travels |
 | [ui.md](ui.md) | The native screens, the F1 overlay, the HUD, and the game's notifications |

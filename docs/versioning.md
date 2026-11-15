@@ -22,6 +22,12 @@ Build 286 added the `CheatRequest` and `CheatResult` kinds (a player's cheat req
 [players.md](players.md)), so it is the first build whose F1 menu offers a host's players the cheat tools; a peer on 285 cannot
 join one on 286.
 
+Build 290 gave existing kinds new meanings, with no kind added and no size changed: `AmbientFixtureState` families 3, 4, 5, 8,
+9 and 10 (level fixtures, a basalt pillar's growth, the Easter bunny, a vending machine's stock, a door's jam, the Erie
+plush's flags), `PropIgniteIntent` verbs 2 to 6 and 10 to 12 (a dig, footprints, the bunny's talk ends and egg, a vending buy
+and coin, a hit on the plush) and `EventCue` ids 160, 161, 162 and 170 ([events-and-weather.md](events-and-weather.md), [easter-hunt.md](easter-hunt.md),
+[erie.md](erie.md), [vending.md](vending.md)). A peer on 289 would drop each as malformed, so it cannot join one on 290.
+
 An unofficial build -- any `main.dll` without its release signature -- shows `(unofficial build)`
 after the version. A host refuses a player on a build of the other kind -- an unofficial build on an
 official host (MV-H30), the official build on a modified host (MV-H31) -- unless it allows other

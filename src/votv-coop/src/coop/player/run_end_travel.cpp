@@ -20,6 +20,7 @@
 #include "coop/net/session.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/players_registry.h"
+#include "coop/world/evil_ending.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -213,6 +214,7 @@ sg::Verdict OnLoadLevelPre(const sg::Call& call) {
             isLocalPawn ? " = THE LOCAL PLAYER (the death chain)"
                         : " (a run-ending that never touches `dead`)");
     coop::death_revive::NoteRunEndCancelled(author, cls.c_str(), isLocalPawn);
+    coop::evil_ending::OnRunEndRefused();  // the Evil's ending, when that is what asked: its screen effect ends with the revive
     return sg::Verdict::Cancel;
 }
 

@@ -54,18 +54,24 @@ const NoReplayRow kNoReplayRows[] = {
     // unmirrored wisps. The arrival comes by mirror: the world-actor pose stream, npc-lane wisps
     // and the pyramid sync's brain suppression and gather relay.
     { "piramid", "piramid mirror lane (WA pose + piramid_sync brain/gather)" },
-    // The arm runs the level-placed arirShipAppear_C tower's runTrigger, which fades the tower in and
-    // spawns nothing, and no lane arms the client's own tower. arirShip_C, the warp-in ship, is not
-    // this event's output: the Halloween ufoAlienDropper_C's begin play spawns it, on the world-actor lane:
-    { "arirShip", "arirShipAppear_C tower arm (host-only, no lane); arirShip_C is the Halloween dropper's, world-actor lane" },
+    // The arm runs the level-placed arirShipAppear_C tower's runTrigger: `appear(true)` fades the tower in and binds the photo
+    // reward, and its own tick hides it again when a camera looks at it. A replay would arm the client's own tower on its own
+    // clock and run the second `appear` of a joiner's; the host's `appear(dir)` crosses as a cue instead (coop/world/
+    // event_world_sync: 132 shown, 133 hidden, and a joiner is told while it shows), which a client's own tower follows, its
+    // mail loop refused (spawn_authority). arirShip_C, the warp-in ship, is not this event's output: the Halloween
+    // ufoAlienDropper_C's begin play spawns it, on the world-actor lane:
+    { "arirShip", "arirShipAppear_C cues 132/133 (event_world_sync); arirShip_C is the Halloween dropper's, world-actor lane" },
     // The arm only readies a level box; the obelisk falls when a player walks into the host's. The host's
     // obelisk_C is a world-actor copy on a client, which runs the fall, the shakes and the punch of its own
     // player and mints none of the props (coop/world/obelisk_copy); the rocks and the obelisk prop are the
     // host's, on the prop lane. A replay of the arm would let a client's own box fire a second one:
     { "obelisk", "obelisk_C world-actor copy (coop/world/obelisk_copy); its props ride the prop lane" },
-    // earthTp fires newsky_C.tp: the black hole, sky and ambience flip plus a 2D sound and
-    // emails -- the emails already ride the host's append feed, and no lane carries the rest:
-    { "earthTp", "newsky_C.tp sky/blackhole flip + 2D cue (emails ride the host append feed)" },
+    // earthTp fires newsky_C.tp, a 106 s latent chain on the sky actor: setEvent(true), a 2D sound, the black hole's light and
+    // skyVisibility(true) at 20 s, a mail, a second sound at 86 s, both undone at 106 s and two mails. Run again it would stack
+    // the event count (its delays are one action each) and mail twice, and a joiner's would start the chain over, so it is
+    // not replayed: the flip rides the sky lane (SkyStatePayload.blackHole, once a second and at a joiner's world-ready), the two
+    // sounds are cues 130 and 131 (event_world_sync), and the mails ride the host's append feed:
+    { "earthTp", "SkyState.blackHole (sky_sync) + sound cues 130/131 (event_world_sync); the mails ride the host append feed" },
     { "vehtp", "atv lane" },
     { "picnic", "prop lane" }, { "destroyPicnic", "prop lane" },
     { "enasus", "prop lane" }, { "enacros", "prop lane" },
@@ -89,10 +95,16 @@ const NoReplayRow kNoReplayRows[] = {
     { "borgRozital", "world-actor lane (eventer EX-catch; rozitBorg_C flies by its own tick on each peer)" },
     { "graysforest", "npc lane (controller EX-catch)" },
     { "graystank", "world-actor lane (eventer EX-catch; ufoDropper_tank_C or _pig_C saucer, the generator break rides the power lane)" },
-    { "arirBuster", "creature spawn (no lane yet)" },
+    // The Lantern Prank. arirBusterSpawner_C's whole begin play is K2_DestroyActor on itself, and its child actors outlive
+    // it: the blinking lantern (prop_lamp_blinker_C) and the notepad (prop_notebook_busterSpawner_C) are minted by the host
+    // and cross on the prop lane (the event-fire drill copies both on a client), so a replay would mint a second pair. No creature is made by the arm.
+    // The door-battering Ariral is the arirSlapper (buster = true) that the notepad's use mints, in the notepad's own
+    // `actionOptionIndex`: it is bound to the player who read it (the batter walks to player 0, hits the doors in its way
+    // and then him), so it stays per player and is not a spawn source:
+    { "arirBuster", "prop lane (lantern and notepad survive the spawner); the battering slapper is the reader's own, per player" },
     { "eggvasion", "npc and world-actor lanes (eventer and egger EX-catch)" },
     { "boarwar", "boars: prop lane + boar_sync; fire tanks and shooters: mirrored; the saucer: ufo_shield_sync" },
-    { "soltoClean", "world-actor lane (eventer EX-catch; soltomiaCleaning_C is a husk on a client: its begin play, box overlap and destroy are refused, the ATV, doors and sponge come from the host's lanes, and it shows once an ATV stands on it)" },
+    { "soltoClean", "world-actor lane (eventer EX-catch; soltomiaCleaning_C is a husk on a client: its begin play, box overlap and destroy are refused, the ATV, doors and sponge come from the host's lanes, and solto_sync shows it and plays its leaving on the host's cues)" },
     { "salt", "world-actor lane (eventer EX-catch; saltpile_C has no body but the dispatcher's dropHeart, so a client's copy is inert; the heart rides the prop lane)" },
     { "rozitalHole", "the hole's room, kavotias and igetis: mirrored; its props: prop lane" },
     { "dreambase", "save-actor spawn (no lane)" },
@@ -107,8 +119,18 @@ const NoReplayRow kNoReplayRows[] = {
     { "vaccine", "prank special (prop lane)" },
     { "begos", "prank special (prop lane)" }, { "gascans", "prank special (prop lane)" },
     { "bombBox", "prank special (prop lane)" },
-    { "rockThrow", "prank spawner (no lane)" }, { "hillRoller", "prank spawner (no lane)" },
-    { "alienJump", "prank spawner (no lane)" }, { "trashBase", "prank spawner (trash_fling_sync coasts the props arirTrasher_C flings and announces its clumps)" },
+    // The three spawners are the host's, and a client has none and needs none: each is a stationary actor whose graph throws props, so
+    // what a client sees is the prop lane's. hillRollerSpawner_C's box overlap mints the cart (a pallet, four wheels, a spotlight head, a
+    // paper alien) and rolls it down the hill (seven props announced, coasted and copied on a client in the
+    // same second); its nails (four nail_C and four nail_ax_C, which hold the cart's pieces together: none stood on the client) and its rumble have no lane. alienJump_C is shown by a box overlap
+    // and, when a clear line runs to player 0's camera, throws its planks and a paper alien and hides (eleven props cross);
+    // the alien's scream is attached to the host's prop and has no lane. rockThrower_C (three at fixed points, no mesh) throws a
+    // prop_rock_C every 2 to 6 s while player 0's pawn stands in its box, 4 to 5 times (read from its graph: the box overlaps only the host's player,
+    // which a drill may not place, so no rock was thrown; each rock is a prop born as the cart's are). All three aim at the host alone.
+    { "rockThrow", "prank spawner (host only, no copy; its rocks ride the prop lane)" },
+    { "hillRoller", "prank spawner (host only, no copy; the cart's props ride the prop lane, its nails and rumble have no lane)" },
+    { "alienJump", "prank spawner (host only, no copy; the planks and the alien ride the prop lane, its scream has no lane)" },
+    { "trashBase", "prank spawner (trash_fling_sync coasts the props arirTrasher_C flings and announces its clumps)" },
     // The random prank's wrapper: the host picks the special, which arrives as its own fire.
     { "ariralPrank", "prank wrapper (host RNG; the picked special is its own fire)" },
 };

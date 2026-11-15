@@ -119,6 +119,10 @@ const LaneOwned kLaneOwnedClasses[] = {
     { "trigger_alarm_C", "alarm_sync" },
     { "badSun_C", "weather_badsun" },
     { "blackFog_C", "weather_blackfog" },
+    { "newsky_C", "sky_sync (the black-hole sky) and event_world_sync (its two sounds)" },
+    { "arirShipAppear_C", "event_world_sync (the Day-13 ship tower)" },
+    { "analogDScreenTest_C", "event_world_sync (the red phone's ring)" },
+    { "event_fleshRain_C", "event_world_sync (the meat rain)" },
 };
 const char* LaneFor(const std::string& className) {
     for (const auto& e : kLaneOwnedClasses)

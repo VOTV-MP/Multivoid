@@ -44,6 +44,12 @@
 #include "coop/creatures/ambient_creature_sync.h"
 #include "coop/creatures/walker_lanes.h"
 #include "coop/world/ambient_fixture_sync.h"
+#include "coop/world/basalt_pillar.h"
+#include "coop/world/easter_hunt.h"
+#include "coop/world/level_fixture_sync.h"
+#include "coop/world/vending_sync.h"
+#include "coop/world/door_jam_sync.h"
+#include "coop/world/erie_sync.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
@@ -65,6 +71,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/creatures/npc_world_enum.h"  // RegisterExistingWorldNpcs
 #include "coop/world/world_actor_sync.h"  // non-Character event-actor transform mirror (sibling of npc_sync)
+#include "coop/world/world_actor_rejoin.h"  // the live host actors the lane dropped when the last client left
 #include "coop/creatures/piramid_sync.h"  // piramid event choreography lane (mirror brain suppression + PyramidGather)
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_snapshot.h"
@@ -76,6 +83,8 @@
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
 #include "coop/world/spill_sync.h"
+#include "coop/world/event_world_sync.h"
+#include "coop/world/solto_sync.h"
 #include "coop/world/vent_crawler_sync.h"
 #include "coop/world/weather_sync.h"
 #include "ue_wrap/core/log.h"
@@ -160,6 +169,7 @@ void ConnectReplayForSlot(int slot) {
     coop::npc_world_enum::RegisterExistingWorldNpcs(slot);  // pre-existing/level-load NPCs (the save's kerfur) -> the peers already in; the joiner (slot) is skipped, its connect broadcast below sends it and it adopts its twin
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
+    coop::world_actor_rejoin::EnrolStandingForJoiner(slot);  // the standing ones the lane no longer holds (it drops its rows when the last client leaves): enrolled, so every peer is sent them
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
     coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake
     coop::daily_task_sync::SendCurrentToSlot(slot);  // and the daily task: a change in its load window was hashed but never sent to it
@@ -196,6 +206,12 @@ void ConnectReplayForSlot(int slot) {
     coop::event_cue_sync::QueueConnectBroadcastForSlot(slot);
     coop::ambient_creature_sync::QueueConnectBroadcastForSlot(slot);  // every tree again
     coop::ambient_fixture_sync::QueueConnectBroadcastForSlot(slot);  // every hole and branch again
+    coop::easter_hunt::QueueConnectBroadcastForSlot(slot);  // the Easter bunny's talk state and flags
+    coop::basalt_pillar::QueueConnectBroadcastForSlot(slot);  // every Basalt Pillar's height
+    coop::vending_sync::QueueConnectBroadcastForSlot(slot);  // the vending machines' stock
+    coop::door_jam_sync::QueueConnectBroadcastForSlot(slot);  // the jammed doors
+    coop::erie_sync::QueueConnectBroadcastForSlot(slot);  // the Erie plushes' paper and pencil
+    coop::level_fixture_sync::QueueConnectBroadcastForSlot(slot);  // where the church, the booth, the siren pole and the white door stand
     coop::walker_lanes::OnPeerWorldReady(slot);  // every held walker's pose and the player it hunts, to the joiner alone: its copy holds the state until it is born
     // The chat lane's late-join answer: the lobby's chat record, oldest first, one message per
     // line. It lands retained on the joiner: arriving in a lobby must not replay a conversation
@@ -203,6 +219,8 @@ void ConnectReplayForSlot(int slot) {
     coop::chat_sync::QueueConnectBroadcastForSlot(slot);
     coop::spill_sync::QueueConnectBroadcastForSlot(slot);  // every live spill again
     coop::vent_crawler_sync::QueueConnectBroadcastForSlot(slot);  // the vent crawl's state, when one began in this world
+    coop::solto_sync::QueueConnectBroadcastForSlot(slot);  // the Soltomia craft at work
+    coop::event_world_sync::QueueConnectBroadcastForSlot(slot);  // the lake lit, the ship tower shown, a ring, a vanish, a rain, a locker's head
 }
 
 }  // namespace coop::subsystems

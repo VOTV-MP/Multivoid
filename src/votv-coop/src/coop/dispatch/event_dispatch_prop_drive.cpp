@@ -14,6 +14,12 @@
 #include "coop/creatures/walker_gaze_host.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/world/ambient_fixture_sync.h"
+#include "coop/world/basalt_pillar.h"
+#include "coop/world/easter_hunt.h"
+#include "coop/world/level_fixture_sync.h"
+#include "coop/world/vending_sync.h"
+#include "coop/world/door_jam_sync.h"
+#include "coop/world/erie_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
@@ -405,13 +411,19 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::AmbientFixtureStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.family > net::ambient_fixture::kCensusEnd || p.alive > 1 || p.hasNest > 1 || p.birthKey.len > sizeof(p.birthKey.data) ||
+        if (!net::ambient_fixture::Known(p.family) || p.alive > 1 || p.hasNest > 1 || p.birthKey.len > sizeof(p.birthKey.data) ||
             !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) || !std::isfinite(p.pitch) || !std::isfinite(p.yaw) ||
             !std::isfinite(p.roll)) {
             UE_LOGW("event_feed: AmbientFixtureState malformed -- dropping");
             break;
         }
-        ::coop::ambient_fixture_sync::OnState(p);
+        if (p.family == net::ambient_fixture::kLevelFixture) ::coop::level_fixture_sync::OnState(p);
+        else if (p.family == net::ambient_fixture::kPillarGrowth) ::coop::basalt_pillar::OnGrowth(p);
+        else if (p.family == net::ambient_fixture::kEasterBunny) ::coop::easter_hunt::OnState(p);
+        else if (p.family == net::ambient_fixture::kVendStock) ::coop::vending_sync::OnState(p);
+        else if (p.family == net::ambient_fixture::kDoorJam) ::coop::door_jam_sync::OnState(p);
+        else if (p.family == net::ambient_fixture::kEriePlush) ::coop::erie_sync::OnState(p);
+        else ::coop::ambient_fixture_sync::OnState(p);
         break;
     }
     case net::ReliableKind::SusHoleIntent: {
