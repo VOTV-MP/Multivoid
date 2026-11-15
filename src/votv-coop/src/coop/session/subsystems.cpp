@@ -15,7 +15,7 @@
 #include "coop/interactables/desk_ping_sync.h"
 #include "coop/interactables/deck_play_sync.h"  // deck playback lane
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
-#include "coop/world/event_lanes.h"  // the lanes added after the port
+#include "coop/world/event_lanes.h"  // the lanes for what an event moves: lifted props, flung props, the boars
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/drive_sync.h"  // the drive slots
@@ -239,7 +239,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::player_hit::Install(&session);  // the session the host's hit deliveries send through
     coop::explosion_sync::Install(&session);  // the birth seam on every Blueprint deferred spawn: a client's own explosions dissolve, from the load window on; also the request lane's session and client watches
     coop::explosion_parking::Install(&session);  // the explosion copy's parking watches: the four verbs, the rune check, the force narrowing (client session only)
-    coop::event_lanes::Install(session);  // the later lanes' watches
+    coop::event_lanes::Install(session);  // the event lanes' watches (the trash prank's fling)
     coop::world_load_episode::InstallReplayWatch(session);
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
     coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
@@ -524,7 +524,7 @@ DisconnectStats DisconnectAll() {
     coop::weather_sync::OnDisconnect();
     coop::explosion_sync::OnDisconnect();  // the class table and the counters, and the request lane's queues, shot tables and client state
     coop::explosion_parking::OnDisconnect();  // the counters, after a summary
-    coop::event_lanes::OnDisconnect();  // the later lanes' state
+    coop::event_lanes::OnDisconnect();  // the lifted and flung props held, the boar counts, the copy gates' tallies
     coop::interactable_sync::OnDisconnect();
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
@@ -690,7 +690,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion_coast"}; coop::explosion_parking::Tick(&session); }  // HOST: the props a blast flung, handed to the driven-prop channel (before its tick below; an empty list costs one size check)
-    coop::event_lanes::Tick(session, isHost);  // the later lanes, before the driven-prop pump
+    coop::event_lanes::Tick(session, isHost);  // HOST: the props an event lifts or flings and the boars, onto the driven-prop channel
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come

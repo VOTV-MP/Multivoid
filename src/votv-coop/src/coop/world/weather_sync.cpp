@@ -11,6 +11,8 @@
 #include "coop/config/config.h"
 #include "coop/dev/weather_probe.h"
 #include "coop/world/weather_badsun.h"
+#include "coop/world/ufo_shield_sync.h"
+#include "coop/world/weather_blackfog.h"
 #include "coop/world/weather_event_births.h"
 #include "coop/world/weather_fog.h"
 #include "coop/world/weather_lightning.h"
@@ -421,6 +423,9 @@ void Install(coop::net::Session* session) {
     // client unsuppressed.
     if (!coop::weather_fog::Install(isHost)) return;
 
+    // Black fog: the role gate for the client's mirror of the host's event (nothing to resolve here).
+    coop::weather_blackfog::Install(isHost);
+
     // The event-birth catch: a client's own black fog and rolling fog births are destroyed at
     // FinishSpawningActor, where the organic roll surfaces (its caller is invisible to every
     // ProcessEvent seam). The latch waits on it too.
@@ -587,6 +592,8 @@ void OnDisconnect() {
     coop::weather_redsky::OnDisconnect();
     coop::weather_badsun::OnDisconnect();
     coop::weather_fog::OnDisconnect();
+    coop::weather_blackfog::OnDisconnect();
+    coop::ufo_shield_sync::OnDisconnect();
     coop::weather_event_births::OnDisconnect();
     // The wind gate drops, so a disconnected client's own gust rolls resume instead of freezing at
     // the last synced target.
@@ -631,6 +638,11 @@ void ApplyFromHost(const coop::net::WeatherStatePayload& payload) {
     // spawned on host-fog) and mirrors the enable bits. Unconditional, not diff-gated: the
     // connect-edge apply must clear a pre-existing client fog even when the bits already match.
     coop::weather_fog::ApplyFromHost(cycle, payload);
+
+    // The black fog event rides flags2 too: the client runs its own copy while the host's is up and
+    // ends it when the host's ends. It needs the gamemode, not the cycle.
+    coop::weather_blackfog::ApplyFromHost(payload);
+    coop::ufo_shield_sync::ApplyFromHost(payload);  // the boar war's saucer rides flags2 as well
 
     // Wind: the client's directionalWind state is overwritten with the host's when kWindValid is
     // set, windTarget included; the client's own ReceiveTick then springs the intensity from the

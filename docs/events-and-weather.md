@@ -73,7 +73,17 @@ wire half is `[V]` (the lane's drill: a spawn, a refused client spawn, the end, 
 stale copy, each with its red), the day cycle's midnight route `[V]`, and the cheat menu's `[RD]` (its
 handler needs a Sandbox or flying world). The black fog and the rolling fog the clock rolls
 funnel through the engine's finish-spawning call, where a client-side catch destroys any birth
-the host did not command (`coop/world/weather_event_births`).
+the host did not command (`coop/world/weather_event_births`). The black fog rides the weather state: the host
+stamps a bit while its gamemode holds a `blackFog_C`, each client runs the game's own `spawnBlackFog` once
+per host episode and ends its copy when the host's ends; the ghosts are each peer's own
+(`coop/world/weather_blackfog`) `[V]`: `coop/dev/event_fire_drill` (`VOTVCOOP_EVENT_FIRE_DRILL=spawnBlackFog:560`,
+both peers) -- the host's state carries the bit from the spawn to the fog's end, and the client runs its own
+`spawnBlackFog` at the first state that carries it. The anti-gravity event lifts props on the host alone, and the host
+streams each lifted prop on the driven-prop channel until it rests (`coop/world/agrav_sync`), 128 props at a time, the
+nearest to a player first: a prop lifted while every slot is taken floats on the host alone, and when the event ends
+the host sends its resting place, forty props a second `[V]` (`VOTVCOOP_EVENT_FIRE_DRILL=agrav:110:trigger_agrav_C`: of
+959 props lifted, 129 were streamed while they floated, 545 were sent their resting place at the end, 273 had not
+moved and 12 were never sent).
 
 Fireflies are the one peer-symmetric weather: the spawner rolls a ring around the local camera,
 so every peer keeps its own and shares each spawn, and the union is fireflies near everyone
@@ -152,6 +162,33 @@ pyramid's, the jellyfish path's) is caught at the native function seam and gated
 class. A mirror stops whatever its class simulates with (the coin's sphere, the jellyfish's
 capsule), so the pose drive alone moves it `[V]`. A heading
 that lives outside the actor's rotation streams as an auxiliary yaw.
+
+The event dispatcher's own spawns are enrolled by output: the vent crawler and the egg invader on the
+creature lane, and on this lane the mothership, the morning UFO, the vent knocker, the drop saucers (car,
+body, tank, pig), the salt pile and the Soltomia cleaning craft. A client's copy of one shows the ship and runs none of its gameplay: a saucer's BeginPlay and
+its drop are refused there (the dropped car, body or tank is the host's, on the prop lane) and the copy is told
+to deploy so it descends; a copy's own `setEvent` is refused, so a ship the host destroys first cannot leave the
+client's event count raised; the mothership and the ariral ship keep their own tick, which is where they fly;
+the morning UFO's copy is shown once the host's moves it (`coop/world/spawn_authority`,
+`coop/world/world_actor_mirror`) `[V]`: `coop/dev/event_fire_drill` fired `borgRozital`, `fallcar_0`, `graystank`,
+`morningGay` and `ventKnocker` on the host, and for each the client logged the mirror's birth and the refusals
+named above; what a client sees on screen was not watched. The salt pile has no body of its own to run and its
+heart crosses as a prop; the Soltomia craft's copy runs no begin play, overlap or destroy (the ATV, door and prop
+lanes carry what the host's does) and shows once an ATV stands on it `[V]`: the same drill fired `salt` and
+`soltoClean`, and the client logged each copy and the craft's refused begin play.
+
+The trash prank's flings are the host's: after each `trash` call the host coasts every prop the trasher's box
+threw and announces each clump it spawned (`coop/world/trash_fling_sync`) `[V]` (`trashBase`: the flung props
+streamed and the clumps reached the client within the second). A bed event replays on every peer, so each
+player's wake teleport is its own, and the bed it moves is the host's: a client's wake moves no bed, and the host
+streams its move (`coop/world/bed_event_gate`); a client's wake ran so in the drill, and the host's move of the bed
+was not reached `[RD]`. The insomniac is rolled on the host and mirrored with its graph parked
+(`ticker_insomniacSpawner_C` as a spawn source); it cannot be forced, so no run has shown one `[RD]`.
+
+The boar war's controller runs on the host alone. A boar is a prop with a brain: it crosses on the prop lane,
+the host claims every boar the gamemode lists into the driven-prop stream (`coop/creatures/boar_sync`), and a
+client's copy runs its begin play, its hover tick and its destroy and no other entry of its graph
+(`coop/world/copy_graph_gate`), so it decides nothing; a client's night boar spawner is refused. A client's
 
 The walking pyramid rides those rails for its spawn, pose and despawn, the creature lane for
 its four wisps, and the event lane for its identity; its own lane owns the one axis nothing
@@ -258,7 +295,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Limit | Evidence |
 |---|---|
-| A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | The flesh rain is rolled by every peer's own hour pulse and is not mirrored (the sky eye and the jellyfish are not: `SkyState` carries the eye, the world-actor lane the host's fish, and a client's own `setEye` and path spawn are refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
@@ -277,6 +313,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | weather | `coop/world/weather_sync`, `coop/world/weather_rain`, `coop/world/weather_fog`, `coop/world/weather_lightning`, `coop/world/weather_redsky`, `coop/world/weather_badsun`, `coop/world/weather_event_births`, `ue_wrap/world/directionalwind`, `ue_wrap/world/bad_sun` |
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/creature_event_relay`, `coop/world/event_cue_sync`, `coop/world/vent_crawler_sync`, `coop/dev/event_trigger` |
-| event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
+| event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync`, `coop/world/copy_graph_gate`, `coop/world/obelisk_copy` |
+| what an event moves | `coop/world/event_lanes`: `coop/world/agrav_sync`, `coop/world/trash_fling_sync`, `coop/creatures/boar_sync`; `coop/world/ufo_shield_sync`, `coop/world/bed_event_gate` |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

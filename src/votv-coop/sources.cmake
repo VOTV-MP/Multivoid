@@ -155,6 +155,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/firefly_sync.cpp
     src/coop/world/spawn_authority.cpp
     src/coop/world/plant_gate.cpp
+    src/coop/world/bed_event_gate.cpp
     src/coop/world/explosion_sync.cpp
     src/coop/world/explosion_request.cpp
     src/coop/world/explosion_request_atv.cpp
@@ -167,6 +168,12 @@ set(VOTVCOOP_SOURCES
     src/coop/world/explosion_recipe_selftest.cpp
     src/coop/world/explosion_parking.cpp
     src/coop/world/event_lanes.cpp
+    src/coop/world/agrav_sync.cpp
+    src/coop/world/copy_graph_gate.cpp
+    src/coop/world/obelisk_copy.cpp
+    src/coop/world/ufo_shield_sync.cpp
+    src/coop/creatures/boar_sync.cpp
+    src/coop/world/trash_fling_sync.cpp
     src/coop/world/event_cue_sync.cpp
     src/coop/world/event_fire_policy.cpp
     src/coop/world/event_fire_sync.cpp
@@ -310,6 +317,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/spill_sync.cpp
     src/coop/world/sus_hole_intent.cpp
     src/coop/world/weather_fog.cpp
+    src/coop/world/weather_blackfog.cpp
     src/coop/world/weather_lightning.cpp
     src/coop/world/weather_rain.cpp
     src/coop/world/weather_event_births.cpp

@@ -102,6 +102,7 @@ inline constexpr const wchar_t* NpcClass_GeomOcta     = L"geomOcta_C";
 // the spawn_authority rows refuse a client's tickers (coop/world/spawn_authority).
 inline constexpr const wchar_t* NpcClass_Deer         = L"deer_C";
 inline constexpr const wchar_t* NpcClass_WalkingTree  = L"walkingTree_C";
+inline constexpr const wchar_t* NpcClass_Kavotia      = L"kavotia_C";
 
 // The allowlist array: resolved once at install through R::FindClass and cached. The classes load
 // on the first gameplay-level transition, not at the menu, so the install retries until every
@@ -136,6 +137,7 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_GeomOcta,          // the Geom Octahedron; host-authored ACharacter, pose rides EntityPose
     NpcClass_Deer,
     NpcClass_WalkingTree,
+    NpcClass_Kavotia,           // the Rozital hole's patrol (its copy runs its begin play alone: coop/world/copy_graph_gate)
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 
@@ -148,14 +150,21 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"ufoDropper_body_C",          // ufoDropper delivery saucer body (the gray "drop pod")
     L"ufoDropper_car_C",           // ufoDropper car variant
     L"ufoDropper_tank_C",          // ufoDropper tank variant
+    L"ufoDropper_pig_C",           // ufoDropper pig variant (the graystank branch without combat)
     L"rozitBorg_C",                // Rozital mothership (borgRozital event)
     L"arirShip_C",                 // ariral ship
     L"skyUfo_C",                   // high-altitude sky UFO
     L"jellyfish_C",                // space jellyfish
     L"morningUfo_C",               // morningGay event UFO
     L"tentacleBallsFollower_C",    // tentacle-balls follower
-    L"soltomiaCleaning_C",         // soltomia cleaning craft
+    L"soltomiaCleaning_C",         // soltomia cleaning craft (a client's copy runs no begin play, overlap or destroy:
+                                   // coop/world/spawn_authority)
+    L"saltpile_C",                 // the salt event's pile (an actor_save_c with no Blueprint body but dropHeart,
+                                   // which only the host's dispatcher calls; the heart it mints crosses as a prop)
     L"kocker_C",                   // kocker
+    L"holeBottom_C",               // the Rozital hole's room (an actor_save_c with no body but its begin play)
+    L"obelisk_C",                  // the falling obelisk (its copy runs its whole graph; the props it would mint are
+                                   // refused: coop/world/obelisk_copy)
     L"skyFallingEvent_C",          // "Sky Falling" event body (AskyFallingEvent_C; distinct from skyFallingEvent's emitter cue)
     L"superEgger_C",               // super egger
     L"igetis_C",                   // igetis

@@ -1392,6 +1392,11 @@ enum class ReliableKind : uint8_t {
     // Host to one client: what the host did with its CheatRequest (CheatReason). Never relayed. Late join: none. Trust:
     // from the host alone. CheatResultPayload.
     CheatResult = 240,
+
+    // Any peer to all (a client's through the host's relay), and host to a joiner at its connect replay: the web
+    // address one television was asked to play, or a pause, resume or seek of it, the set named by its prop key. The
+    // receiver does the same to its own copy of the set; a YouTube address is resolved by each receiver. The last
+    // address wins.
 };
 
 #pragma pack(push, 1)
@@ -3142,6 +3147,8 @@ static_assert(sizeof(KeypadSyncPayload) == 72, "KeypadSyncPayload must be 72 byt
 static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
               "KeypadSyncPayload must fit in one reliable datagram");
 
+// The slots of an `ack` or `refused` array: one per player of the session, so kMaxPeers (this header does not
+// include session.h; each file that fills one of these arrays asserts it has a slot per peer).
 // The power panel (PowerControlState), its breakers a mask in field order: bit0 coord, 1 downl, 2 play, 3 calc,
 // 4 light. Op 0, a client's press: `bits` the breakers it flipped, `flags` bit0 set when the laptop's breaker
 // page pressed them, `terminal` for a page press the portable PC it was made through, by element id (none: the
@@ -4419,6 +4426,8 @@ inline constexpr uint8_t kFogActive      = 0x01;  // host has a live rolling-fog
 inline constexpr uint8_t kSuperFogActive = 0x02;  // host has a live AsuperFog_C
 inline constexpr uint8_t kPermanentFog   = 0x04;  // host's permanentFog gamerule (re-arms the scheduler)
 inline constexpr uint8_t kWindValid      = 0x08;  // the wind fields were read from a live host wind actor; the client applies wind only when set
+inline constexpr uint8_t kBlackFogActive = 0x10;  // the host's gamemode holds a live blackFog_C (the black fog event); the client runs the game's own spawnBlackFog once per host episode and ends its copy when the bit clears
+inline constexpr uint8_t kUfoShieldActive = 0x20; // the host's boar-war saucer (ufoshieldshader_C) was last set active; the client shows its own and sends it off when the bit clears (coop/world/ufo_shield_sync)
 }  // namespace fog_flags2
 
 // The red sky (RedSky): the receiver runs the same gamemode toggle (spawnRedSky) when its sky differs.

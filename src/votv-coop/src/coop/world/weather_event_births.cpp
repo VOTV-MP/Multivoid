@@ -3,6 +3,7 @@
 #include "coop/world/weather_event_births.h"
 
 #include "coop/net/session.h"
+#include "coop/world/weather_blackfog.h"
 #include "coop/world/weather_fog.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
@@ -65,10 +66,11 @@ void OnFinishSpawnPost(void* /*context*/, void* /*srcObj*/, void* result) {
     if (match < 0) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    // A wire-commanded mirror birth passes: the fog lane raises its echo flag
-    // around its own reflected spawn Call. (blackFog_C has no apply lane yet --
-    // every client birth of it is organic by construction.)
-    if (coop::weather_fog::MirrorEchoActive()) return;
+    // A wire-commanded mirror birth passes: each lane raises its echo flag around
+    // its own reflected spawn Call (weather_fog for the fog controller,
+    // weather_blackfog for blackFog_C), and a flag passes only its own class.
+    if (match == 0 ? coop::weather_fog::MirrorEchoActive()
+                   : coop::weather_blackfog::MirrorEchoActive()) return;
     if (!R::IsLive(actor)) return;
     E::DestroyActor(actor);
     const uint32_t nSup = ++g_suppressed[match];
@@ -105,7 +107,7 @@ bool Install(coop::net::Session* session, bool isHost) {
         }
         g_hookInstalled = true;
         UE_LOGI("weather_births: FinishSpawningActor POST hook installed "
-                "(client birth-catch for weatherFogController_C/blackFog_C)");
+                "(client birth-catch for weatherFogController_C/blackFog_C; each lane's echo flag passes its own class)");
     }
     return true;
 }

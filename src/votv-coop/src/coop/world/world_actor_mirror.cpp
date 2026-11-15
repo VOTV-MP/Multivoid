@@ -3,6 +3,7 @@
 // half and the install and lifecycle owner is world_actor_sync.cpp; shared internals come
 // through world_actor_detail.h. One public header, one namespace, two translation units.
 
+#include "coop/world/obelisk_copy.h"
 #include "coop/world/world_actor_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
@@ -23,6 +24,10 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/devices/atv.h"
+#include "ue_wrap/engine/world_identity.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <chrono>
 #include <cmath>
@@ -30,6 +35,8 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace coop::world_actor_sync {
@@ -40,6 +47,121 @@ namespace E = ue_wrap::engine;
 namespace D = coop::world_actor_sync::detail;
 
 using coop::element::WaMirrors;
+
+// The ufoDropper saucers (car, body, tank, pig) show only once activated: the base class's own deploy entry unhides
+// the mesh, starts the particles and plays the descent timeline. The mirror's own box overlap would deploy it only
+// for a client standing in the box, so the mirror is deployed when it is made.
+UE_FACT_FN(kRowForceDeploy, "world_actor_mirror", L"ufoDropper_C", L"forceDeploy", Declared);
+
+bool IsSaucerClass(const std::wstring& cls) { return cls.rfind(L"ufoDropper_", 0) == 0; }
+
+// The classes whose own tick is their animation: the mothership's tick flies its ship component and ends the event,
+// the ariral ship's tick turns and scales its scan cone. The pose stream cannot carry either, since neither moves
+// the actor, so the mirror keeps the tick the other mirrors park.
+bool KeepsOwnTick(const std::wstring& cls) { return cls == L"rozitBorg_C" || cls == L"arirShip_C"; }
+
+// The morning UFO is hidden until a player enters its box, and the host's moves only once it shows. A mirror in the
+// box's absence stays hidden, so its first displacement from the spawn point reveals it. Keyed by eid, the spawn
+// point each. Game thread.
+constexpr float kRevealMoveCm = 100.f;
+std::unordered_map<uint32_t, ue_wrap::FVector> g_revealOrigin;
+
+void RevealOnMove(coop::element::WorldActor* el) {
+    const auto it = g_revealOrigin.find(static_cast<uint32_t>(el->GetId()));
+    if (it == g_revealOrigin.end()) return;
+    void* actor = el->GetActor();
+    if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) return;
+    ue_wrap::FVector now{};
+    if (!E::TryGetActorLocation(actor, now)) return;
+    const float dx = now.X - it->second.X, dy = now.Y - it->second.Y, dz = now.Z - it->second.Z;
+    if (dx * dx + dy * dy + dz * dz < kRevealMoveCm * kRevealMoveCm) return;
+    E::SetActorHiddenInGame(actor, false);
+    UE_LOGI("world-actor[client]: eid=%u moved %.0f cm from its spawn point -- revealed",
+            static_cast<unsigned>(el->GetId()), std::sqrt(dx * dx + dy * dy + dz * dz));
+    g_revealOrigin.erase(it);
+}
+
+// The Soltomia craft is hidden until a player enters its box, and the host's entry teleports the ATV onto it. A mirror
+// runs none of that (its begin play and overlap are refused), so it shows once an ATV, which the ATV lane moves, stands
+// within kSoltoAtvCm of it. Polled twice a second; the eids still waiting. Game thread.
+constexpr float kSoltoAtvCm = 300.f;
+constexpr long long kSoltoPollMs = 500;
+std::unordered_set<uint32_t> g_soltoHidden;
+
+struct AtvNear {
+    ue_wrap::FVector at;
+    bool found;
+};
+
+void PollSoltoReveal() {
+    if (g_soltoHidden.empty()) return;
+    static long long s_nextMs = 0;
+    const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (nowMs < s_nextMs) return;
+    s_nextMs = nowMs + kSoltoPollMs;
+    for (auto it = g_soltoHidden.begin(); it != g_soltoHidden.end();) {
+        coop::element::WorldActor* el = WaMirrors().Get(*it);
+        void* actor = el ? el->GetActor() : nullptr;
+        if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) {
+            it = g_soltoHidden.erase(it);
+            continue;
+        }
+        AtvNear n{};
+        if (!E::TryGetActorLocation(actor, n.at)) {
+            ++it;
+            continue;
+        }
+        ue_wrap::atv::ForEachAtv([](void* ctx, void* atv, int32_t) {
+            AtvNear* w = static_cast<AtvNear*>(ctx);
+            ue_wrap::FVector loc{};
+            ue_wrap::FRotator rot{};
+            if (w->found || !ue_wrap::atv::GetRootTransform(atv, loc, rot)) return;
+            const float dx = loc.X - w->at.X, dy = loc.Y - w->at.Y, dz = loc.Z - w->at.Z;
+            w->found = dx * dx + dy * dy + dz * dz <= kSoltoAtvCm * kSoltoAtvCm;
+        }, &n);
+        if (!n.found) {
+            ++it;
+            continue;
+        }
+        E::SetActorHiddenInGame(actor, false);
+        UE_LOGI("world-actor[client]: eid=%u an ATV stands on the Soltomia craft -- revealed",
+                static_cast<unsigned>(*it));
+        it = g_soltoHidden.erase(it);
+    }
+}
+
+// The save actors among the mirrored classes: a joiner whose save holds one has loaded its own, so the host's
+// announce of the same actor adopts that one as the copy; a second beside it would be a duplicate.
+bool IsSaveActorClass(const std::wstring& cls) {
+    return cls == L"obelisk_C" || cls == L"holeBottom_C" || cls == L"saltpile_C" || cls == L"soltomiaCleaning_C";
+}
+
+constexpr float kTwinCm = 300.f;
+struct TwinSeek {
+    ue_wrap::FVector at;
+    void*            world;
+    void*            found;
+    float            bestD2;
+};
+
+// This world's live actor of `actorClass` nearest `at`, within kTwinCm, that is no copy yet. Null when none.
+void* FindSaveTwin(void* actorClass, const ue_wrap::FVector& at) {
+    TwinSeek seek{at, ue_wrap::world_identity::CurrentWorld(), nullptr, kTwinCm * kTwinCm};
+    if (!seek.world) return nullptr;
+    ue_wrap::object_index::ForEachInstance(actorClass, [](void* ctx, void* obj, int32_t) {
+        TwinSeek* s = static_cast<TwinSeek*>(ctx);
+        ue_wrap::FVector loc{};
+        if (!obj || !R::IsLive(obj) || ue_wrap::world_identity::WorldOf(obj) != s->world) return;
+        if (coop::world_actor_sync::IsMirroredActor(obj) || !E::TryGetActorLocation(obj, loc)) return;
+        const float dx = loc.X - s->at.X, dy = loc.Y - s->at.Y, dz = loc.Z - s->at.Z;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > s->bestD2) return;
+        s->bestD2 = d2;
+        s->found = obj;
+    }, &seek);
+    return seek.found;
+}
 
 }  // namespace
 
@@ -154,12 +276,18 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // identity source instead of hunting for a row that does not exist yet.
     coop::world_actor_sync::MaterializeScope materializeScope(payload.elementId);
 
+    // A save actor this peer loaded itself stands where the host's does: it is the copy, and nothing is spawned.
+    void* twin = IsSaveActorClass(classW) ? FindSaveTwin(actorClass, {payload.locX, payload.locY, payload.locZ}) : nullptr;
+    if (twin)
+        UE_LOGI("world-actor[client OnSpawn]: eid=%u '%ls' -- this peer's own %p, loaded with its save, is adopted as "
+                "the copy", payload.elementId, classW.c_str(), twin);
+
     // Bypass our own client interceptor for this spawn, then deferred-begin and finish-spawn the
     // mirror.
-    D::SetIncomingClass(actorClass);
+    if (!twin) D::SetIncomingClass(actorClass);
     constexpr uint8_t kAlwaysSpawn = 1;
-    void* spawned = nullptr;
-    {
+    void* spawned = twin;
+    if (!twin) {
         ParamFrame begin(sp.spawnFn);
         if (!begin.valid()) {
             UE_LOGE("world-actor[client OnSpawn]: ParamFrame(BeginDeferred) invalid -- dropping eid=%u",
@@ -209,7 +337,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
             coop::coingun_sync::SeedCoinMirror(spawned, pts);
         }
     }
-    {
+    if (!twin) {
         ParamFrame finish(sp.finishSpawnFn);
         if (!finish.valid()) {
             UE_LOGE("world-actor[client OnSpawn]: ParamFrame(FinishSpawning) invalid -- forcing K2 on %p",
@@ -238,7 +366,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // movement-component read; a world actor is a plain actor). Any residual component tick is
     // overwritten each frame by the pose drive's location and rotation writes (the MTA
     // dead-reckoning model).
-    E::SetActorTickEnabled(spawned, false);
+    if (!KeepsOwnTick(classW)) E::SetActorTickEnabled(spawned, false);
     // A pose-driven mirror must not also simulate: the two fight and the mirror drifts off the
     // host's transform. The coin simulates with its sphere and the jellyfish with its capsule, each its
     // root; whatever component a mirrored class simulates with is stopped, found from its members.
@@ -246,6 +374,18 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         UE_LOGI("world-actor[client OnSpawn]: eid=%u '%ls' -- %d simulating component(s) stopped, the pose "
                 "drive moves it", payload.elementId, classW.c_str(), stopped);
     coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
+    if (classW == L"morningUfo_C") g_revealOrigin[payload.elementId] = {payload.locX, payload.locY, payload.locZ};
+    if (classW == L"soltomiaCleaning_C") g_soltoHidden.insert(payload.elementId);
+    if (classW == L"obelisk_C") coop::obelisk_copy::OnCopy(spawned);
+    if (IsSaucerClass(classW)) {
+        const ue_wrap::facts::Resolved deploy = ue_wrap::facts::Resolve(kRowForceDeploy);
+        if (deploy.Fn() && R::IsLive(spawned) && R::CallFunction(spawned, deploy.Fn(), nullptr))
+            UE_LOGI("world-actor[client OnSpawn]: eid=%u '%ls' deployed -- the saucer shows and descends on its own "
+                    "timeline", payload.elementId, classW.c_str());
+        else
+            UE_LOGW("world-actor[client OnSpawn]: eid=%u '%ls' -- forceDeploy did not run, the saucer stays hidden",
+                    payload.elementId, classW.c_str());
+    }
     // The instrument. This line fires once per mirror, keyed by eid, so the birth seam is where
     // host and client can be paired; the host logs its own points and material at its enrol.
     // Both halves read the material because producer and instrument read the points through the
@@ -283,6 +423,9 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
     }
     void* actor = drained->GetActor();
     coop::world_actor_sync::NoteMirrorActor(actor, /*add=*/false);
+    coop::obelisk_copy::OnCopyGone(actor);
+    g_revealOrigin.erase(payload.elementId);
+    g_soltoHidden.erase(payload.elementId);
     const D::SpawnPath sp = D::GetSpawnPath();
     // Index-validated liveness, not the plain check: a cached mirror actor drained from the table
     // plus a destroy call. If its slot was recycled (this can race a world teardown), the plain
@@ -350,6 +493,7 @@ void TickClientWorldActors() {
     for (coop::element::WorldActor* el : elems) {
         if (!el || !el->IsMirror()) continue;
         el->Tick();
+        if (el->HasPose() && el->GetTypeName() == "morningUfo_C") RevealOnMove(el);
         // The pyramid's visible heading lives in its arrow components and its head look target in
         // its relative look; neither is the actor transform the generic drive writes, so hand the
         // interpolated or latest values to the lane.
@@ -366,6 +510,7 @@ void TickClientWorldActors() {
             }
         }
     }
+    PollSoltoReveal();
 }
 
 }  // namespace coop::world_actor_sync

@@ -85,6 +85,9 @@
 #include "coop/world/explosion_recipe.h"
 #include "coop/props/food_tick_gate.h"
 #include "coop/world/plant_gate.h"
+#include "coop/world/bed_event_gate.h"
+#include "coop/world/copy_graph_gate.h"
+#include "coop/world/ufo_shield_sync.h"
 #include "coop/interactables/woodchipper_gate.h"
 #include "coop/world/spawn_authority.h"
 #include "ui/server_browser.h"
@@ -310,6 +313,12 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     coop::food_tick_gate::Install();
     // A client's plants are refused the same way, on the session spawn_authority holds: they tick from the world's first frame.
     coop::plant_gate::Install();
+    coop::bed_event_gate::Install(&g_session);
+    // A client's copies of the host's boars, fire tanks, kavotias and igetis think from their begin play, so their
+    // graphs are gated from the world's first frame; and the boar war's saucer is watched on the host.
+    coop::copy_graph_gate::Install();
+    coop::ufo_shield_sync::Install(&g_session);
+    // An extinguisher's runaway thrust is the host's: a client's copy is refused its own from the first frame.
     // And a client's woodchippers: their tick and intake are refused from the world's first frame, and a player's pour
     // and press at one is asked of the host (the session it sends on is this one).
     coop::woodchipper_gate::Install(&g_session);

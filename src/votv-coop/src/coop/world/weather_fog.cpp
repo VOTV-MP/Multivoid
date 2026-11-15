@@ -3,6 +3,8 @@
 #include "coop/world/weather_fog.h"
 
 #include "coop/net/protocol.h"
+#include "coop/world/ufo_shield_sync.h"
+#include "coop/world/weather_blackfog.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -90,7 +92,8 @@ bool HostHasSuperFog() {
 }
 
 // Compute the host's active-fog bits from the live cycle. All reads are cheap: the fog slot
-// is a pointer read, super fog goes through the cache, the permanent flag is a bool read.
+// is a pointer read, super fog goes through the cache, the permanent flag is a bool read, and
+// the black fog is the gamemode's member (weather_blackfog applies it on the client).
 uint8_t ComputeHostFogBits(void* cycle) {
     using namespace coop::net::fog_flags2;
     auto* b = reinterpret_cast<uint8_t*>(cycle);
@@ -101,6 +104,10 @@ uint8_t ComputeHostFogBits(void* cycle) {
         f2 |= kSuperFogActive;
     if (*reinterpret_cast<bool*>(b + P::off::AdaynightCycle_permanentFog))
         f2 |= kPermanentFog;
+    if (coop::weather_blackfog::HostHasBlackFog())
+        f2 |= kBlackFogActive;
+    if (coop::ufo_shield_sync::HostActive())
+        f2 |= kUfoShieldActive;
     return f2;
 }
 

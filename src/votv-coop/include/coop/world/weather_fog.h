@@ -8,7 +8,8 @@
 // so host-clear to client-clear needs only actor destruction, never a density float.
 //
 // So the lane asserts the host's ACTOR PRESENCE (MTA CBlendedWeather::DoPulse): flags2
-// carries kFogActive, kSuperFogActive and kPermanentFog, the host stamps them, and the
+// carries kFogActive, kSuperFogActive and kPermanentFog (and kBlackFogActive, which
+// coop/world/weather_blackfog applies), the host stamps them, and the
 // client suppresses its own spawnFog and asserts what the host reports. The rolling actor
 // self-destructs with NO observable UFunction, so the scheduler observers miss the fog END
 // and HostFogStateChanged supplies the edge. Super-fog SPAWN is deferred, leaving this lane
@@ -30,7 +31,7 @@ bool Install(bool isHost);
 
 // HOST: stamp the active-fog bits into payload.flags2 from the live cycle -- kFogActive
 // (fogEventObject is non-null), kSuperFogActive (a live AsuperFog_C), kPermanentFog (the
-// gamerule). Called from weather_sync::ReadCycleState. Game thread. Reads
+// gamerule), kBlackFogActive (the gamemode holds a live blackFog_C). Called from weather_sync::ReadCycleState. Game thread. Reads
 // CountObjectsByClass for the super fog, but only on the occasional broadcast path, never
 // per frame.
 void ReadHostFogState(void* cycle, coop::net::WeatherStatePayload& out);
@@ -52,7 +53,7 @@ void TickClientReconcile(void* cycle);
 
 // HOST per-tick fog-edge detector (THROTTLED internally to ~3 Hz -- the super-fog
 // check walks GUObjectArray). Returns true when the host's (kFogActive,
-// kSuperFogActive, kPermanentFog) tuple CHANGED since the last fire, so
+// kSuperFogActive, kPermanentFog, kBlackFogActive) tuple CHANGED since the last fire, so
 // weather_sync re-broadcasts the (now fog-updated) state. This catches the
 // rolling actor's silent self-destruct END that the scheduler observers miss.
 // Game thread.

@@ -81,11 +81,14 @@ bool ResolveOffsets(void* boxObj) {
     if (g_offIsActiveByte >= 0 && g_offN >= 0 && g_offBoxComp >= 0) return true;
     void* cls = R::ClassOf(boxObj);
     if (!cls) return false;
-    if (!R::FindBoolProperty(cls, L"IsActive", g_offIsActiveByte, g_maskIsActive)) {
-        UE_LOGW("event_force: trigger_box_C.IsActive bool property unresolved");
+    // The armed flag and the shot count, by their 0.10.0 names and then their 0.9.0n ones.
+    if (!R::FindBoolProperty(cls, L"isTriggerActive", g_offIsActiveByte, g_maskIsActive) &&
+        !R::FindBoolProperty(cls, L"IsActive", g_offIsActiveByte, g_maskIsActive)) {
+        UE_LOGW("event_force: trigger_box_C's armed flag (isTriggerActive, IsActive) is unresolved");
         return false;
     }
-    g_offN = R::FindPropertyOffset(cls, L"N");
+    g_offN = R::FindPropertyOffset(cls, L"Amount");
+    if (g_offN < 0) g_offN = R::FindPropertyOffset(cls, L"N");
     g_offBoxComp = R::FindPropertyOffset(cls, L"Box");
     if (g_offN < 0 || g_offBoxComp < 0) {
         UE_LOGW("event_force: trigger_box_N offsets unresolved (N=%d Box=%d)", g_offN, g_offBoxComp);

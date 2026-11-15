@@ -118,6 +118,7 @@ struct LaneOwned { const char* className; const char* lane; };
 const LaneOwned kLaneOwnedClasses[] = {
     { "trigger_alarm_C", "alarm_sync" },
     { "badSun_C", "weather_badsun" },
+    { "blackFog_C", "weather_blackfog" },
 };
 const char* LaneFor(const std::string& className) {
     for (const auto& e : kLaneOwnedClasses)

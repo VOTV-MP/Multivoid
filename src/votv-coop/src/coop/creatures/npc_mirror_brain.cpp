@@ -41,6 +41,7 @@ UE_FACT_FN(kRowSkerfuro, "npc_mirror_brain", L"npc_zombie_skerfuro_C", L"Execute
            Declared);
 UE_FACT_FN(kRowHound, "npc_mirror_brain", L"fossilhound_C", L"ExecuteUbergraph_fossilhound", Declared);
 UE_FACT_FN(kRowGeomOcta, "npc_mirror_brain", L"geomOcta_C", L"ExecuteUbergraph_geomOcta", Declared);
+UE_FACT_FN(kRowInsomniac, "npc_mirror_brain", L"insomniac_C", L"ExecuteUbergraph_insomniac", Declared);
 
 constexpr int kTagZombie   = 0x4D505A30;  // 'MPZ0'
 constexpr int kTagSummoner = 0x4D505A41;  // 'MPZA'
@@ -48,6 +49,7 @@ constexpr int kTagCorpse   = 0x4D505A43;  // 'MPZC'
 constexpr int kTagSkerfuro = 0x4D505A53;  // 'MPZS'
 constexpr int kTagHound    = 0x4D504630;  // 'MPF0'
 constexpr int kTagGeomOcta = 0x4D504730;  // 'MPG0'
+constexpr int kTagInsomniac = 0x4D504930;  // 'MPI0'
 
 // ---- The mark ----
 
@@ -140,6 +142,7 @@ Watch g_watches[] = {
     {&kRowSkerfuro, kTagSkerfuro, R::ParamOffset{L"EntryPoint"}},
     {&kRowHound, kTagHound, R::ParamOffset{L"EntryPoint"}},
     {&kRowGeomOcta, kTagGeomOcta, R::ParamOffset{L"EntryPoint"}},
+    {&kRowInsomniac, kTagInsomniac, R::ParamOffset{L"EntryPoint"}},
 };
 constexpr size_t kWatches = sizeof(g_watches) / sizeof(g_watches[0]);
 

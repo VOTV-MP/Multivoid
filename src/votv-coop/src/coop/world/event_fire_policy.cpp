@@ -3,6 +3,7 @@
 
 #include "event_fire_policy.h"
 
+#include <cstring>
 #include <string>
 
 namespace coop::event_fire_sync {
@@ -29,6 +30,14 @@ const char* const kReplayRows[] = {
     // Graffiti decal specials (a grime decal spawn; no lane):
     "arirGraff_0", "arirGraff_1", "arirGraff_2", "arirGraff_3",
     "arirGraff_4", "arirGraff_5", "arirGraff_6",
+    // Effects on the machine's own player or screen; no lane carries them and none doubles. alienSounds
+    // spawns three noiser_C around the local player, console writes into the machine's own terminal widget
+    // (the empty line a client runs there is not forwarded), treehouseSleep and bedEvent teleport the local
+    // player at its own next wake. bedEvent's bed is the host's alone: a client's body leaves the bed where
+    // it is and the host's move rides the prop drive (coop/world/bed_event_gate):
+    "alienSounds", "console", "treehouseSleep", "bedEvent",
+    // Oil stains: eight spawners at fixed points, each leaving a grime decal where its trace lands (no lane):
+    "oil",
 };
 
 struct NoReplayRow { const char* name; const char* lane; };
@@ -45,62 +54,63 @@ const NoReplayRow kNoReplayRows[] = {
     // unmirrored wisps. The arrival comes by mirror: the world-actor pose stream, npc-lane wisps
     // and the pyramid sync's brain suppression and gather relay.
     { "piramid", "piramid mirror lane (WA pose + piramid_sync brain/gather)" },
-    // The ship: the trigger-box arm's overlap spawns the ship and the alarm lamp (and possibly
-    // NPC leaves); replaying the arm would spawn them client-local. Host-only until the ship gets
-    // a lane:
-    { "arirShip", "actor spawn on armed overlap (no lane)" },
-    // The obelisk's graph is not a bare flag flip: obelisk_C spawns prop_C/prop_obelisk_C actors
-    // and punches getMainPlayer -- a replay would double-spawn the props client-local and hit the
-    // client's own player. Host-only until the scene gets a lane:
-    { "obelisk", "obelisk_C prop spawns + getMainPlayer punch (no lane)" },
+    // The arm runs the level-placed arirShipAppear_C tower's runTrigger, which fades the tower in and
+    // spawns nothing, and no lane arms the client's own tower. arirShip_C, the warp-in ship, is not
+    // this event's output: the Halloween ufoAlienDropper_C's begin play spawns it, on the world-actor lane:
+    { "arirShip", "arirShipAppear_C tower arm (host-only, no lane); arirShip_C is the Halloween dropper's, world-actor lane" },
+    // The arm only readies a level box; the obelisk falls when a player walks into the host's. The host's
+    // obelisk_C is a world-actor copy on a client, which runs the fall, the shakes and the punch of its own
+    // player and mints none of the props (coop/world/obelisk_copy); the rocks and the obelisk prop are the
+    // host's, on the prop lane. A replay of the arm would let a client's own box fire a second one:
+    { "obelisk", "obelisk_C world-actor copy (coop/world/obelisk_copy); its props ride the prop lane" },
     // earthTp fires newsky_C.tp: the black hole, sky and ambience flip plus a 2D sound and
     // emails -- the emails already ride the host's append feed, and no lane carries the rest:
     { "earthTp", "newsky_C.tp sky/blackhole flip + 2D cue (emails ride the host append feed)" },
     { "vehtp", "atv lane" },
-    // bedEvent runs trigger_bedEvent -> bedEvent_C, which moves the bed and teleports
-    // getMainPlayer on wake; the sleep lane only gates client dreams, it does not carry this:
-    { "bedEvent", "bedEvent_C bed/player transform + wake teleport (no lane)" },
     { "picnic", "prop lane" }, { "destroyPicnic", "prop lane" },
     { "enasus", "prop lane" }, { "enacros", "prop lane" },
     { "cookier", "prop lane (armed prop)" }, { "paperGray", "prop lane (armed prop)" },
     { "arirEgg", "prop lane (armed prop)" },
-    { "console", "device lanes" }, { "lightswitch", "device lanes" },
+    { "lightswitch", "device lanes" },
     { "keypadGuess", "device lanes" },
     // atvExplode sets car.trap on the host's own ATV; the ATV lane carries that flag to every copy in the stamp's
     // bit 4, so the event itself stays host-only (a client's car need not be the host's). `zapped` has no lane:
     { "atvExplode", "car.trap rides the ATV lane's stamp (zapped has no lane)" },
     // Host-local by design:
-    { "agrav", "physics divergence (by-design host-local)" },
-    { "treehouseSleep", "per-player teleport" },
+    { "agrav", "prop drive (agrav_sync streams the host's nearest lifted props and corrects the rest at the end; a replay would lift its own and break a generator)" },
     // Creature and save-actor spawns, host-only until mirrored. The crawler, the egger's eggs, the
-    // grays and the tentacle balls are mirrored; the eventer's other outputs are not (its catch
-    // enrols only what a client's copy is kept inert for, npc_world_enum), so they stay host-only:
+    // grays, the tentacle balls and the eventer's ships, saucers, salt pile and Soltomia craft are mirrored; the eventer's other
+    // outputs are not (its catch enrols only what a client's copy is kept inert for or has no
+    // gameplay to run, npc_world_enum), so they stay host-only:
     { "ventCrawler", "npc lane (allowlisted; eventer EX-catch)" },
-    { "ventKnocker", "world-actor spawn (no lane yet: the eventer's catch leaves kocker_C out)" },
+    { "ventKnocker", "world-actor lane (eventer EX-catch; kocker_C's knocks play on each peer whose player enters its box)" },
     { "tentacleBalls", "npc lane (follower EX-catch)" },
-    { "morningGay", "world-actor spawn (no lane yet: the eventer's catch leaves morningUfo_C out)" },
-    { "borgRozital", "world-actor spawn (no lane yet: the eventer's catch leaves rozitBorg_C out)" },
+    { "morningGay", "world-actor lane (eventer EX-catch; morningUfo_C pose-driven, shown once it moves)" },
+    { "borgRozital", "world-actor lane (eventer EX-catch; rozitBorg_C flies by its own tick on each peer)" },
     { "graysforest", "npc lane (controller EX-catch)" },
-    { "graystank", "creature spawn (no lane yet)" }, { "arirBuster", "creature spawn (no lane yet)" },
+    { "graystank", "world-actor lane (eventer EX-catch; ufoDropper_tank_C or _pig_C saucer, the generator break rides the power lane)" },
+    { "arirBuster", "creature spawn (no lane yet)" },
     { "eggvasion", "npc and world-actor lanes (eventer and egger EX-catch)" },
-    { "boarwar", "creature spawn (no lane yet)" },
-    { "soltoClean", "world-actor spawn (no lane yet: soltomiaCleaning_C plays gameplay on a mirror)" },
-    { "salt", "save-actor spawn (no lane)" }, { "rozitalHole", "save-actor spawn (no lane)" },
+    { "boarwar", "boars: prop lane + boar_sync; fire tanks and shooters: mirrored; the saucer: ufo_shield_sync" },
+    { "soltoClean", "world-actor lane (eventer EX-catch; soltomiaCleaning_C is a husk on a client: its begin play, box overlap and destroy are refused, the ATV, doors and sponge come from the host's lanes, and it shows once an ATV stands on it)" },
+    { "salt", "world-actor lane (eventer EX-catch; saltpile_C has no body but the dispatcher's dropHeart, so a client's copy is inert; the heart rides the prop lane)" },
+    { "rozitalHole", "the hole's room, kavotias and igetis: mirrored; its props: prop lane" },
     { "dreambase", "save-actor spawn (no lane)" },
-    { "fallbody_0", "dropper spawn (no lane yet: the eventer's catch leaves the droppers out)" },
-    { "fallbody_1", "dropper spawn (no lane yet: the eventer's catch leaves the droppers out)" },
-    { "fallcar_0", "dropper spawn (no lane yet: the eventer's catch leaves the droppers out)" },
+    { "fallbody_0", "world-actor lane for the ufoDropper_body_C saucer (eventer EX-catch); the drop rides the prop lane" },
+    { "fallbody_1", "world-actor lane for the ufoDropper_body_C saucer (eventer EX-catch); the drop rides the prop lane" },
+    { "fallcar_0", "world-actor lane for the ufoDropper_car_C saucer (eventer EX-catch); the drop rides the prop lane" },
     // The prank layer (host-local RNG; thrown-prop outputs ride the prop lane):
     { "food", "prank special (prop lane)" }, { "drive", "prank special (prop lane)" },
     { "atvFuel", "prank special (prop lane)" }, { "atvFix", "prank special (prop lane)" },
     { "poisonFood", "prank special (prop lane)" }, { "expDrive", "prank special (prop lane)" },
     { "cookiebox", "prank special (prop lane)" }, { "trashPiles", "prank special (prop lane)" },
-    { "vaccine", "prank special (prop lane)" }, { "oil", "prank special (prop lane)" },
+    { "vaccine", "prank special (prop lane)" },
     { "begos", "prank special (prop lane)" }, { "gascans", "prank special (prop lane)" },
     { "bombBox", "prank special (prop lane)" },
     { "rockThrow", "prank spawner (no lane)" }, { "hillRoller", "prank spawner (no lane)" },
-    { "alienJump", "prank spawner (no lane)" }, { "trashBase", "prank spawner (no lane)" },
-    { "alienSounds", "sound gap (future WorldSoundCue)" },
+    { "alienJump", "prank spawner (no lane)" }, { "trashBase", "prank spawner (trash_fling_sync coasts the props arirTrasher_C flings and announces its clumps)" },
+    // The random prank's wrapper: the host picks the special, which arrives as its own fire.
+    { "ariralPrank", "prank wrapper (host RNG; the picked special is its own fire)" },
 };
 
 // The interaction rows: the row's entire effect is the prank special, host-local RNG.
@@ -108,11 +118,17 @@ static bool IsPrankRow(const std::string& n) {
     return n.rfind("arirInteraction_", 0) == 0;
 }
 
+// An event's name is an FName, which renders in whichever casing the process registered first ("Console" for the
+// row "console"), so a row is matched without regard to case.
+static bool SameName(const std::string& name, const char* row) {
+    return _stricmp(name.c_str(), row) == 0;
+}
+
 int ReplayVerdict(const std::string& name, const char** laneOut) {
     for (const char* r : kReplayRows)
-        if (name == r) return 1;
+        if (SameName(name, r)) return 1;
     for (const auto& nr : kNoReplayRows)
-        if (name == nr.name) { *laneOut = nr.lane; return 0; }
+        if (SameName(name, nr.name)) { *laneOut = nr.lane; return 0; }
     if (IsPrankRow(name)) { *laneOut = "prank special (host-local RNG)"; return 0; }
     return -1;
 }

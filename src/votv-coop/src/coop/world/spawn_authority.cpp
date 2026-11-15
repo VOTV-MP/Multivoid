@@ -20,6 +20,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -27,11 +28,13 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <string>
 
 namespace coop::spawn_authority {
 namespace {
 
 namespace SG = ue_wrap::script_gate;
+namespace R  = ue_wrap::reflection;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -104,12 +107,36 @@ UE_FACT_FN(kRowSphereHitMushroomSpore, "spawn_authority", L"mushroomSpore_C",
            L"BndEvt__mushroomSpore_Sphere_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
            Declared);
 UE_FACT_FN(kRowTrySpawnHerbOutsideChurch, "spawn_authority", L"outsideChurch_C", L"trySpawnHerb", Declared);
+UE_FACT_FN(kRowReceiveBeginPlayUfoDropper, "spawn_authority", L"ufoDropper_C", L"ReceiveBeginPlay", Declared);
+UE_FACT_FN(kRowReceiveBeginPlayUfoDropperTank, "spawn_authority", L"ufoDropper_tank_C", L"ReceiveBeginPlay",
+           Declared);
+UE_FACT_FN(kRowReceiveBeginPlayUfoDropperPig, "spawn_authority", L"ufoDropper_pig_C", L"ReceiveBeginPlay",
+           Declared);
+UE_FACT_FN(kRowDropTimelineUfoDropper, "spawn_authority", L"ufoDropper_C", L"Timeline_0__Drop__EventFunc",
+           Declared);
+UE_FACT_FN(kRowReceiveBeginPlaySoltomiaCleaning, "spawn_authority", L"soltomiaCleaning_C", L"ReceiveBeginPlay",
+           Declared);
+UE_FACT_FN(kRowBoxBeginOverlapSoltomiaCleaning, "spawn_authority", L"soltomiaCleaning_C",
+           L"BndEvt__soltomiaCleaning_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowReceiveDestroyedSoltomiaCleaning, "spawn_authority", L"soltomiaCleaning_C", L"ReceiveDestroyed",
+           Declared);
+UE_FACT_FN(kRowReceiveTickGrayBoarSpawner, "spawn_authority", L"grayBoarSpawner_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowBoxBeginOverlapHoleController, "spawn_authority", L"event_bottomHoleController_C",
+           L"BndEvt__event_bottomHoleController_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowSetEventLib, "spawn_authority", L"lib_C", L"setEvent", Declared);
 
-// One row: the facts row a client must not run, and the tag its refusal log carries.
+// One row: the facts row a client must not run, and the tag its refusal log carries. `pre` is the verdict
+// when the row refuses only some calls, null for a row refused whole.
 struct Row {
     const ue_wrap::facts::Function* row;
     const char* tag;
+    SG::PreFn pre = nullptr;
 };
+
+SG::Verdict OnRowPre(const SG::Call& call);
+SG::Verdict OnMirrorSetEventPre(const SG::Call& call);
 constexpr Row kRows[] = {
     {&kRowSpawnMushroomMaster,            "mushroomMaster.Spawn"},
     {&kRowSpawnMushroomSpawner,           "mushroomSpawner.Spawn"},
@@ -227,6 +254,42 @@ constexpr Row kRows[] = {
     {&kRowSpawnBushTickerBushSpawning,    "bushSpawning.spawnBush"},
     {&kRowSphereHitMushroomSpore,         "mushroomSpore.SphereHit"},
     {&kRowTrySpawnHerbOutsideChurch,      "outsideChurch.trySpawnHerb"},
+
+    // The saucers the eventer flies in (ufoDropper_car_C, _body_C, _tank_C and _pig_C), a world-actor mirror each. The
+    // car and the body declare no function of their own, so the base class's rows reach them; the tank and the pig
+    // override the begin play and own theirs. The base begin play registers the actor as a save actor and arms the
+    // 10 s kerfur drop; the tank's and the pig's breaks generator 0 after it, which the power lane carries. The
+    // timeline's Drop event mints the dropped car or body, and the host's mint reaches a client as an ordinary prop,
+    // so a client's own would stand beside it. The saucer's descent, particles and unhide stay:
+    // world_actor_mirror deploys the copy.
+    {&kRowReceiveBeginPlayUfoDropper,     "ufoDropper.ReceiveBeginPlay"},
+    {&kRowReceiveBeginPlayUfoDropperTank, "ufoDropperTank.ReceiveBeginPlay"},
+    {&kRowReceiveBeginPlayUfoDropperPig,  "ufoDropperPig.ReceiveBeginPlay"},
+    {&kRowDropTimelineUfoDropper,         "ufoDropper.DropTimeline"},
+    // The Soltomia craft (soltomiaCleaning_C), a world-actor mirror. Its begin play registers the event, finds the ATV and
+    // zeroes its dirt, looks the doors up by key and binds the door's opened event (the cleaning montage and its sponge
+    // throw hang from that bind). The box overlap is the entry: it teleports the ATV, closes a door, jams three, switches
+    // the password locks off and starts the talk loop. Its destroy releases the jams and ends the event. The host's run
+    // of each reaches a client by the ATV, door, prop and event lanes, so the mirror runs none: it keeps the actor and its
+    // animation blueprint, and world_actor_mirror shows it once an ATV stands on it. With these three
+    // refused, opened, talking, talk, repeat and the montage's delegates (the throw's sponge mint, the faces, the
+    // destroy) are never entered; ReceiveTick only stores the cleaning mesh's location, and the mirror's tick is parked.
+    {&kRowReceiveBeginPlaySoltomiaCleaning,  "soltomiaCleaning.ReceiveBeginPlay"},
+    {&kRowBoxBeginOverlapSoltomiaCleaning,   "soltomiaCleaning.BoxBeginOverlap"},
+    {&kRowReceiveDestroyedSoltomiaCleaning,  "soltomiaCleaning.ReceiveDestroyed"},
+    // The night boar spawner of a combat save: its tick rolls a boar near the camera and reaps one far from it. The
+    // host's boars cross as props and its claim streams them (coop/creatures/boar_sync), so a client's own roll would
+    // stand beside them, with a brain the copy gate has parked.
+    {&kRowReceiveTickGrayBoarSpawner,     "grayBoarSpawner.ReceiveTick"},
+    // The Rozital hole's controller is a save actor, so a joiner loads one. Its box overlap mints the room, the
+    // device, the patrol, the grate and the beacons, and swaps the fence to a dynamic prop: the host's, which reach
+    // a client as props, a world actor and creatures.
+    {&kRowBoxBeginOverlapHoleController,  "holeController.BoxBeginOverlap"},
+    // lib_C::setEvent from one of the ships' own mirrors: the in-flight count, the sender list and the ambient track
+    // are the host's, and a mirror whose host actor is destroyed first never reaches its own end call, so the count
+    // would stay raised and hold off the save. The mothership's, the morning UFO's and the knocker's begin plays
+    // register, as does the saucer's activation, and each ends in its own clearing call.
+    {&kRowSetEventLib,                    "lib.setEvent(ship mirror)", &OnMirrorSetEventPre},
 };
 constexpr int kRowCount = static_cast<int>(std::size(kRows));
 constexpr int kTagBase = 0x53410000;   // 'SA', then the row
@@ -242,6 +305,31 @@ SG::Verdict OnRowPre(const SG::Call& call) {
     const std::uint64_t n = ++g_refused[row];
     if ((n & (n - 1)) == 0)
         UE_LOGI("spawn_authority[%s]: client-refuse %p (call #%llu)", kRows[row].tag, call.object,
+                static_cast<unsigned long long>(n));
+    return SG::Verdict::Cancel;
+}
+
+// Whether `cls` names one of the eventer's ships: the ufoDropper saucers, the mothership, the morning UFO or the
+// knocker, each a world-actor mirror on a client.
+bool IsShipClass(const std::wstring& cls) {
+    return _wcsnicmp(cls.c_str(), L"ufoDropper_", 11) == 0 || _wcsicmp(cls.c_str(), L"rozitBorg_C") == 0 ||
+           _wcsicmp(cls.c_str(), L"morningUfo_C") == 0 || _wcsicmp(cls.c_str(), L"kocker_C") == 0;
+}
+
+// lib_C::setEvent is every event's own begin and end, so only a ship's call is refused: the sender is the call's
+// __WorldContext parameter, as event_active_sync reads it.
+SG::Verdict OnMirrorSetEventPre(const SG::Call& call) {
+    if (!IsActiveClientSession()) return SG::Verdict::Run;
+    static int32_t s_senderOff = -2;
+    if (s_senderOff == -2) s_senderOff = R::FindParamOffset(call.function, L"__WorldContext");
+    if (s_senderOff < 0 || !call.locals) return SG::Verdict::Run;
+    void* sender = *reinterpret_cast<void* const*>(call.locals + s_senderOff);
+    if (!sender || !R::IsLive(sender) || !IsShipClass(R::ClassNameOf(sender))) return SG::Verdict::Run;
+    const int row = call.tag - kTagBase;
+    if (row < 0 || row >= kRowCount) return SG::Verdict::Cancel;
+    const std::uint64_t n = ++g_refused[row];
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("spawn_authority[%s]: client-refuse %p (call #%llu)", kRows[row].tag, sender,
                 static_cast<unsigned long long>(n));
     return SG::Verdict::Cancel;
 }
@@ -286,7 +374,7 @@ void Install(coop::net::Session* session) {
             UE_LOGI("spawn_authority: red arm -- the row %s is left out", kRows[i].tag);
             continue;
         }
-        if (SG::WatchName(*kRows[i].row, kTagBase + i, &OnRowPre, nullptr)) {
+        if (SG::WatchName(*kRows[i].row, kTagBase + i, kRows[i].pre ? kRows[i].pre : &OnRowPre, nullptr)) {
             ++watched;
         } else {
             UE_LOGE("spawn_authority: the watch on %ls::%ls did not register -- a client runs it",

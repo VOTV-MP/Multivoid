@@ -147,16 +147,36 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 // eggs (world-anchored, so the host rolls them and a client's ticker is refused in the spawn
 // authority), the sell gun's coin mint (the host's own sale and the re-commit of a client's alike;
 // without its row the coin allowlist entry is inert), the jellyfish path's seven, the story-event
-// spawners' creatures, and the gamemode's night roll (an Octa or an egg). Outputs still pass the allowlist gates in the queue branch below (NPC, else
-// world-actor), so no arbitrary EX spawn enrolls. `outputs` narrows a source to the outputs whose
-// client copies the spawn authority makes inert: the eventer also mints world actors whose BeginPlay
-// plays gameplay on a mirror (soltomiaCleaning_C writes the client's ATV and mints a sponge), so they
-// stay unmirrored, as before this source, until they have refusal rows.
+// spawners' creatures, the eventer's ships, saucers, salt pile and Soltomia craft, the insomniac ticker's creature, and
+// the gamemode's night roll (an Octa or an egg).
+// Outputs still pass the allowlist gates in the queue branch below (NPC, else world-actor), so no
+// arbitrary EX spawn enrolls. `outputs` narrows a source to the outputs whose client copies are safe:
+// the spawn authority refuses their gameplay, or they have none of their own to run. The eventer's
+// other world actors stay unmirrored until they have refusal rows.
 struct ExSpawnSource {
     const wchar_t* cls;
     const wchar_t* const* outputs;   // null-terminated; null: any allowlisted output
 };
-constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
+// The eventer's creatures (the crawler, the egger) and its world actors: the mothership, the morning UFO, the vent
+// knocker, the ufoDropper saucers, the salt pile and the Soltomia craft. Each world actor's client copy is a
+// pose-driven husk: the spawn authority refuses what would mint props, write the ATV or the doors, or break a
+// generator, world_actor_mirror deploys a saucer's copy by itself and shows the craft once an ATV stands on it, and
+// the salt pile has no Blueprint body of its own to run (its heart is the host's prop).
+constexpr const wchar_t* kEventerOutputs[] = {
+    L"ventCrawler_C", L"superEgger_C",
+    L"rozitBorg_C", L"morningUfo_C", L"kocker_C",
+    L"ufoDropper_car_C", L"ufoDropper_body_C", L"ufoDropper_tank_C", L"ufoDropper_pig_C",
+    L"saltpile_C", L"soltomiaCleaning_C",
+    nullptr};
+// The Halloween alien dropper's begin play is the only Blueprint that spawns arirShip_C; the ship's own begin play is
+// the whole warp-in and ends in its own destroy, with no gameplay to refuse.
+constexpr const wchar_t* kAlienDropperOutputs[] = {L"arirShip_C", nullptr};
+// The boar war's controller throws out boars (props, on the prop lane), fire tanks and, a minute in, a ring of
+// shooters; the Rozital hole's controller mints the hole's room among its props; the level's spawn-prop trigger
+// mints whatever its row names, the obelisk among them.
+constexpr const wchar_t* kBoarInvasionOutputs[] = {L"npc_ariral_shooter_C", L"firetank_C", nullptr};
+constexpr const wchar_t* kHoleControllerOutputs[] = {L"holeBottom_C", nullptr};
+constexpr const wchar_t* kSpawnPropOutputs[] = {L"obelisk_C", nullptr};
 // The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
 // so its source is narrowed to the two outputs of the night roll (mainGamemode_C::CustomEvent_5, an Octa or a
 // night egg), whose client roll the spawn authority refuses.
@@ -175,6 +195,12 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+    {L"ufoAlienDropper_C",       kAlienDropperOutputs}, // the Halloween chain: its begin play mints the ariral ship
+    {L"ticker_insomniacSpawner_C", nullptr},        // the insomniac and its child: rolled on the host, mirrored with the graph parked
+    {L"boarInvasion_C",          kBoarInvasionOutputs},   // boarwar: its fire tanks and its shooters
+    {L"event_bottomHoleController_C", kHoleControllerOutputs}, // rozitalHole: the room under the hole
+    {L"kavotiaPatrolController_C", nullptr},        // rozitalHole: the kavotia rings and the igetis
+    {L"trigger_spawnProp_C",     kSpawnPropOutputs}, // the obelisk, from the level's trigger
 };
 
 // Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.
@@ -267,7 +293,11 @@ void InstallExSpawnCatch() {
                                                  &OnBeginDeferredExSpawn)) {
         UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred (source-gated: "
                 "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C, "
-                "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C, "
+                "jellyfishPath_C -> jellyfish_C, trigger_eventer_C -> ventCrawler_C + superEgger_C + "
+                "rozitBorg_C + morningUfo_C + kocker_C + ufoDropper_*_C + saltpile_C + soltomiaCleaning_C, "
+                "ufoAlienDropper_C -> arirShip_C, ticker_insomniacSpawner_C -> insomniac_C + insomniac_Child_C, "
+                "boarInvasion_C -> firetank_C + npc_ariral_shooter_C, event_bottomHoleController_C -> holeBottom_C, "
+                "kavotiaPatrolController_C -> kavotia_C + igetis_C, trigger_spawnProp_C -> obelisk_C, "
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
                 "mainGamemode_C -> geomOcta_C + eg_C, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "

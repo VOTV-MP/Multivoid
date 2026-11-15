@@ -98,6 +98,7 @@ constexpr EntryTable kTables[] = {
     {L"npc_zombie_skerfuro_C", nullptr, 0},
     {P::name::NpcClass_Fossilhound, kFossilhound, sizeof(kFossilhound) / sizeof(kFossilhound[0])},
     {P::name::NpcClass_GeomOcta, kGeomOcta, sizeof(kGeomOcta) / sizeof(kGeomOcta[0])},
+    {P::name::NpcClass_Insomniac, nullptr, 0},
 };
 
 constexpr size_t kTableCount = sizeof(kTables) / sizeof(kTables[0]);
