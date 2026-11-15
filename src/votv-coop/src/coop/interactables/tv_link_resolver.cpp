@@ -7,6 +7,7 @@
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/paths.h"
 
 #include <windows.h>
 
@@ -83,9 +84,16 @@ bool HostIs(const std::wstring& host, const wchar_t* domain) {
            host[host.size() - d.size() - 1] == L'.';
 }
 
-// tools\yt-dlp.exe beside the folder this module was loaded from (Mods\Multivoid\dlls).
+// tools\yt-dlp.exe in the mod's own folder. Under a mod manager the path a module reports for itself is one the
+// loader maps for file reads only: a program cannot be started from it. The data folder is the real one
+// (ue_wrap/core/paths), so the tool is looked for there first, then beside the folder this module was loaded from.
 std::wstring ToolPath() {
     static const std::wstring path = [] {
+        const std::wstring data = ue_wrap::paths::ModDataDir();
+        if (!data.empty()) {
+            const std::wstring real = data + L"\\tools\\yt-dlp.exe";
+            if (::GetFileAttributesW(real.c_str()) != INVALID_FILE_ATTRIBUTES) return real;
+        }
         HMODULE self = nullptr;
         if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                                   reinterpret_cast<LPCWSTR>(&ToolPresent), &self))
