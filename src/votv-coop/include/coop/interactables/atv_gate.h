@@ -1,11 +1,10 @@
 // coop/interactables/atv_gate.h -- an ATV's acts at their own functions, observed at the script gate. A player's item on
 // an ATV runs in the ATV's own Blueprint bodies, and what they change of the ATV is the host's (atv_host_sync.h):
-//   - fuelUp (the gas can's pour, from gascanFuel), toolboxFix, playerUsedOn (a module fitted) and upgradeTake (a module
-//     taken off) are observed before and after, refused only as below: on a CLIENT the verb runs on its copy, where the item is
-//     spent, and what it did to the ATV is asked of the host (op refuel with the gain, repair once per hold, fit and
-//     take-off with the module's value); on the HOST the same POSTs call the publish point, which sends nothing when the
-//     call changed nothing, and a verb nested in another (playerUsedOn calls fuelUp and toolboxFix) publishes once, at the
-//     outermost one's POST;
+//   - fuelUp (from gascanFuel), toolboxFix, playerUsedOn (a module or battery fitted), upgradeTake and unscrewPanel are
+//     observed before and after, refused only as below: on a CLIENT the verb runs on its copy, where the item is spent,
+//     and what it did is asked of the host (refuel's gain, a repair, a module's value, a battery's charge, an unscrew);
+//     on the HOST the same POSTs call the publish point, which sends nothing when the call changed nothing, and a verb
+//     nested in another (playerUsedOn calls fuelUp and toolboxFix) publishes once, at the outermost one's POST;
 //   - the exceptions: fuelUp from anything but gascanFuel (the fuelbox's overlap with a can lying in the world) is refused on a
 //     client, the host's copy being that can's author; and a client at its cap of open requests (4 on one ATV, 8 over all)
 //     has the verb cancelled at its PRE, since nothing irreversible may happen on its copy unanswered;
@@ -24,7 +23,7 @@ namespace coop::net { class Session; }
 namespace coop::atv_gate {
 
 // The ATV functions this module watches, one row each (the verbs' own bodies and the honk key's two events).
-enum Row : int { kFuelUp, kToolbox, kUsedOn, kTake, kHonkPress, kHonkRelease, kRowCount };
+enum Row : int { kFuelUp, kToolbox, kUsedOn, kTake, kHonkPress, kHonkRelease, kUnscrew, kRowCount };
 
 // [dev] How often `row`'s watch has run this process, one relaxed bump a hit (the honk rows at their POST, the others at
 // their PRE): the ATV drill's way to learn that the game answered an act. Any thread.

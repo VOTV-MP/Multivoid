@@ -34,6 +34,7 @@
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
@@ -348,6 +349,62 @@ bool EmptyHand(const std::wstring& /*key*/, std::string& why) {
 }
 
 bool HandHoldsModule() { return HandIs(kModuleClass); }
+
+// ---- the battery ----
+
+constexpr const wchar_t* kBatteryClass = L"prop_atvcarbattery_C";
+
+float ReadBattery(const std::wstring& key) {
+    float v = std::nanf("");
+    OnGt([&] {
+        void* atv = Atv(key);
+        if (atv) ReadFloat(atv, L"battery", v);
+    });
+    return v;
+}
+
+bool SetLocalBattery(const std::wstring& key, float charge) {
+    bool ok = false;
+    OnGt([&] {
+        void* atv = Atv(key);
+        ok = atv && WriteFloat(atv, L"battery", charge) && CallByName(atv, L"updBattery");
+    });
+    return ok;
+}
+
+bool FitBattery(const std::wstring& key, float charge, std::string& why) {
+    if (!TakeHand(L"atvcarbattery", kBatteryClass)) {
+        why = "the battery did not reach the hand";
+        return false;
+    }
+    bool set = false;
+    OnGt([&] { set = WriteFloat(coop::hand_item::LocalHandActor(), L"battery", charge); });
+    if (!set) {
+        why = "the held battery's charge could not be set";
+        return false;
+    }
+    if (!AimAtAtv(key, why)) return false;
+    return HoldFire(AG::kUsedOn, kAnswerS, why);
+}
+
+bool UnscrewBattery(const std::wstring& key, std::string& why) {
+    bool ran = false;
+    OnGt([&] {
+        void* atv = Atv(key);
+        void* fn = atv ? R::FindDispatchFunctionCached(R::ClassOf(atv), L"unscrewPanel") : nullptr;
+        const int32_t off = fn ? R::FindParamOffset(fn, L"spawnAt") : -1;
+        void* root = atv ? ue_wrap::engine::RootComponentOf(atv) : nullptr;
+        if (!fn || off < 0 || !root) return;
+        // The panel's branch is the battery's when the player looks at no tire and no tire socket.
+        WriteInt(atv, L"lookAtTire", -1);
+        WriteInt(atv, L"lookAtTireSocket", -1);
+        std::vector<uint8_t> frame(static_cast<size_t>(R::FunctionFrameSize(fn)), 0u);
+        std::memcpy(frame.data() + off, &root, sizeof(root));
+        ran = R::CallFunction(atv, fn, frame.data());
+    });
+    if (!ran) why = "the ATV's unscrewPanel did not run";
+    return ran;
+}
 
 bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why) {
     bool ok = false;

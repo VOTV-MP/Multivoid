@@ -45,11 +45,14 @@ UE_FACT_FN(kRowPlayerUsedOn, "atv_gate", L"ATV_C", L"playerUsedOn", Declared);
 UE_FACT_FN(kRowUpgradeTake, "atv_gate", L"ATV_C", L"upgradeTake", Declared);
 UE_FACT_FN(kRowHonkPress, "atv_gate", L"ATV_C", L"InpActEvt_atv_honk_K2Node_InputActionEvent_14", Declared);
 UE_FACT_FN(kRowHonkRelease, "atv_gate", L"ATV_C", L"InpActEvt_atv_honk_K2Node_InputActionEvent_15", Declared);
+UE_FACT_FN(kRowUnscrew, "atv_gate", L"ATV_C", L"unscrewPanel", Declared);
 
 namespace DE = coop::atv_drill_events;
-const ue_wrap::facts::Function* const kRows[kRowCount] = {&kRowFuelUp,    &kRowToolboxFix, &kRowPlayerUsedOn,
-                                                          &kRowUpgradeTake, &kRowHonkPress, &kRowHonkRelease};
-const char* const kRowTag[kRowCount] = {"fuelUp", "toolboxFix", "playerUsedOn", "upgradeTake", "honk press", "honk release"};
+const ue_wrap::facts::Function* const kRows[kRowCount] = {&kRowFuelUp,      &kRowToolboxFix, &kRowPlayerUsedOn,
+                                                          &kRowUpgradeTake, &kRowHonkPress,  &kRowHonkRelease,
+                                                          &kRowUnscrew};
+const char* const kRowTag[kRowCount] = {"fuelUp",     "toolboxFix",   "playerUsedOn", "upgradeTake",
+                                        "honk press", "honk release", "unscrewPanel"};
 constexpr int kTagBase = 0x41475400;   // 'AGT', then the row
 constexpr float kMax = 100.f;
 constexpr size_t kMaxTakeoffs = 8;
@@ -232,6 +235,13 @@ void OnPost(const sg::Call& call) {
             UE_LOGI("atv_gate: this player repaired '%ls' -- the host repairs it", key.c_str());
         break;
     case kUsedOn:
+        // A battery fitted into an ATV with none: the charge the copy's own body took from the held battery.
+        if (pd.before.battery < 0.f && now.battery >= 0.f) {
+            if (Request(key, op::kBatteryIn, now.battery, 0))
+                UE_LOGI("atv_gate: this player fitted a battery (%.1f) into '%ls' -- the host fits it", now.battery,
+                        key.c_str());
+            break;
+        }
         if (now.count == pd.before.count + 1) {
             for (int i = 0; i < now.count; ++i) {
                 if (Has(pd.before, now.modules[i])) continue;
@@ -241,6 +251,12 @@ void OnPost(const sg::Call& call) {
                 break;
             }
         }
+        break;
+    case kUnscrew:
+        // The panel's unscrew took the battery out (a tire's takes none): the battery prop its body spawned is this
+        // client's birth, which the prop lane carries.
+        if (pd.before.battery >= 0.f && now.battery < 0.f && Request(key, op::kBatteryOut, 0.f, 0))
+            UE_LOGI("atv_gate: this player unscrewed the battery of '%ls' -- the host takes it out", key.c_str());
         break;
     case kTake:
         if (now.count + 1 == pd.before.count && !Has(now, pd.value)) {

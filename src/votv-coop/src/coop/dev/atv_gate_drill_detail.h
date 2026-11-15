@@ -65,6 +65,14 @@ void DriveOff(const std::wstring& key);                           // the throttl
 // The host's own copy's fuel and health set, published through the host's one publish point as any change of the host copy.
 bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why);
 
+// The battery (Trello #71): this peer's copy's charge (-1 none fitted; NaN when it does not read), the copy's charge
+// written with the game's updBattery (a local fixture), a charged battery in the hand with the fire key on the ATV,
+// and the panel's unscrew (the game's unscrewPanel, spawning the battery where the ATV stands).
+float ReadBattery(const std::wstring& key);
+bool SetLocalBattery(const std::wstring& key, float charge);
+bool FitBattery(const std::wstring& key, float charge, std::string& why);
+bool UnscrewBattery(const std::wstring& key, std::string& why);
+
 // A fitted module's value on this peer's copy (the first), or -1.
 int FirstModule(const std::wstring& key);
 // The hand holds a module prop.

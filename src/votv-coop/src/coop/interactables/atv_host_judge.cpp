@@ -63,6 +63,7 @@ constexpr size_t kMaxPending = 8;
 constexpr int kMaxModules = 16;
 constexpr const wchar_t* kCanClass = L"prop_gascan_C";
 constexpr const wchar_t* kToolboxClass = L"prop_toolbox_C";
+constexpr const wchar_t* kBatteryClass = L"prop_atvcarbattery_C";
 constexpr const wchar_t* kUpgradeClass = L"prop_atvUpgrade_C";
 constexpr uint32_t kToolboxUses = 10;   // prop_toolbox_C's `fixes` default; its hold record carries none, so the class's bound
 constexpr uint32_t kModuleUses = 1;     // a module is consumed by its fit
@@ -83,7 +84,7 @@ uint32_t g_holdSeq = 0;
 
 constexpr uint8_t kReasons = 11;   // atv_host_reason::kOk .. kFull
 struct Counts {
-    uint32_t accepted[7] = {};   // by request op
+    uint32_t accepted[8] = {};   // by request op
     uint32_t refused[kReasons] = {};   // by atv_host_reason
     uint32_t parked = 0, noKey = 0, refunded = 0;
 };
@@ -152,9 +153,11 @@ void Refund(void* atv, uint8_t module) {
 bool WellFormed(const Payload& p) {
     switch (p.op) {
     case op::kRefuel: return p.reqId != 0 && std::isfinite(p.amount) && p.amount > 0.f && p.amount <= kMax;
+    case op::kBatteryIn: return p.reqId != 0 && std::isfinite(p.amount) && p.amount >= 0.f && p.amount <= kMax;
     case op::kRepair:
     case op::kFit:
     case op::kTakeoff:
+    case op::kBatteryOut:
     case op::kSync: return p.reqId != 0;
     default: return false;
     }
@@ -170,7 +173,7 @@ void Applied(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& 
         if (H::ReadVitals(atv, after))
             DE::Note(DE::kAccepted, p.op, slot, static_cast<int32_t>(H::CurrentStateSeq(key)), after.fuel, after.health, after.count);
     }
-    ++g_n.accepted[p.op < 7 ? p.op : 0];
+    ++g_n.accepted[p.op < 8 ? p.op : 0];
     UE_LOGI("atv_host: slot %u %s '%ls' on the host", static_cast<unsigned>(slot), what, key.c_str());
     Answer(s, slot, p, why::kOk, atv);
 }
@@ -231,6 +234,35 @@ uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& k
     return why::kOk;
 }
 
+// A battery fitted: the playerUsedOn branch's own body is battery := the held battery's charge, the battery prop spent,
+// then the game's updBattery; refused while one is fitted ("Battery is equipped"). The client's copy ran it with its own
+// battery, so the charge is the one its battery held; the host's copy of that battery is the hand mirror, which carries
+// none, so the bound is the field's range, as the refuel's is the tank's room.
+uint8_t BatteryIn(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
+    if (!JudgeOff() && !coop::hand_spend::Spend(slot, kBatteryClass, 1)) return why::kNoItem;
+    if (v.battery >= 0.f) return why::kFull;
+    {
+        H::ApplyScope applying;
+        A::SetBattery(atv, std::fmin(std::fmax(p.amount, 0.f), kMax));
+        A::CallUpdBattery(atv);
+    }
+    Applied(s, slot, p, key, atv, v, "fitted a battery into");
+    return why::kOk;
+}
+
+// A battery unscrewed: unscrewPanel's battery branch is battery := -1, then updBattery. The battery prop its body spawned
+// is the client's birth, which the prop lane carries, so the host spawns none.
+uint8_t BatteryOut(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
+    if (v.battery < 0.f) return why::kNotHeld;
+    {
+        H::ApplyScope applying;
+        A::SetBattery(atv, ue_wrap::atv::kNoBattery);
+        A::CallUpdBattery(atv);
+    }
+    Applied(s, slot, p, key, atv, v, "unscrewed the battery of");
+    return why::kOk;
+}
+
 uint8_t Takeoff(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv,
                 const H::Vitals& v) {
     uint8_t mods[kMaxModules] = {};
@@ -266,7 +298,7 @@ N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
         }
         g_holdKey.clear();
     }
-    const bool handJudged = p.op == op::kRefuel || p.op == op::kRepair || p.op == op::kFit;
+    const bool handJudged = p.op == op::kRefuel || p.op == op::kRepair || p.op == op::kFit || p.op == op::kBatteryIn;
     const bool ready = s.IsSlotWorldReady(slot);
     if ((!ready && !ParkOff()) || (handJudged && coop::hand_item::HandStateOwed(slot))) {
         sl.parked = true;
@@ -302,6 +334,8 @@ N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
         case op::kRefuel: verdict = Refuel(s, slot, p, key, atv, v); break;
         case op::kRepair: verdict = Repair(s, slot, p, key, atv, v); break;
         case op::kFit: verdict = Fit(s, slot, p, key, atv, v); break;
+        case op::kBatteryIn: verdict = BatteryIn(s, slot, p, key, atv, v); break;
+        case op::kBatteryOut: verdict = BatteryOut(s, slot, p, key, atv, v); break;
         case op::kSync:
             ++g_n.accepted[op::kSync];
             Answer(s, slot, p, why::kOk, atv);

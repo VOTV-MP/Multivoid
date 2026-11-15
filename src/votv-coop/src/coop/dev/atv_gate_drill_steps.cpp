@@ -182,6 +182,34 @@ Result DecideRequest(Ctx& c, uint8_t opcode) {
 }
 
 Result D1(Ctx& c) { return DecideRequest(c, op::kRefuel); }
+
+// b1, b2, b3 (Trello #71): the battery a client fits into an ATV with none, the one it unscrews, and one fitted back so
+// the steps after it drive a powered ATV. Every peer starts b1
+// from a copy with no battery (a local fixture: the host publishes nothing for it), and decides on its own copy: the
+// fitted charge, then none, within the event bound.
+constexpr float kBatteryCharge = 80.f;
+bool SetupNoBattery(Ctx& c, std::string& why) {
+    if (SetLocalBattery(c.key, -1.f)) return true;
+    why = "this copy's battery could not be taken out";
+    return false;
+}
+bool ActFitBattery(Ctx& c, std::string& why) { return FitBattery(c.key, kBatteryCharge, why); }
+bool ActUnscrewBattery(Ctx& c, std::string& why) { return UnscrewBattery(c.key, why); }
+Result DecideBattery(Ctx& c, float want, const char* what) {
+    // Waited for here, not with WaitUntil: a copy that never shows the charge is this step's FAIL, not an undecided run.
+    float v = 0.f;
+    bool got = false;
+    for (int i = 0; i < kEventS * 10 && !got; ++i) {
+        if (Aborted()) return Stopped();
+        v = ReadBattery(c.key);
+        got = std::fabs(v - want) < 0.5f;
+        if (!got) SleepStep();
+    }
+    if (!got) return Fail("this copy's battery is " + std::to_string(v) + ", not " + std::to_string(want));
+    return Pass(std::string("this copy shows ") + what);
+}
+Result Db1(Ctx& c) { return DecideBattery(c, kBatteryCharge, "the fitted battery's charge"); }
+Result Db2(Ctx& c) { return DecideBattery(c, -1.f, "no battery"); }
 Result D2(Ctx& c) { return DecideRequest(c, op::kRepair); }
 Result D3(Ctx& c) { return DecideRequest(c, op::kFit); }
 Result D4(Ctx& c) { return DecideRequest(c, op::kTakeoff); }
@@ -387,6 +415,9 @@ const Step kSteps[] = {
     {"2", kClient, "a client's repair", nullptr, nullptr, &ActToolbox, &D2, nullptr},
     {"3", kClient, "a client's module fitted", nullptr, nullptr, &ActFit, &D3, nullptr},
     {"4", kClient, "a client's module taken off", nullptr, nullptr, &ActTake, &D4, nullptr},
+    {"b1", kClient, "a client fits a charged battery into an ATV with none", nullptr, &SetupNoBattery, &ActFitBattery, &Db1, nullptr},
+    {"b2", kClient, "a client unscrews the ATV's battery", nullptr, nullptr, &ActUnscrewBattery, &Db2, nullptr},
+    {"b3", kClient, "a client fits the battery back", nullptr, nullptr, &ActFitBattery, &Db1, nullptr},
     {"5", kClient, "the seated client's lights, brake and turbo", nullptr, nullptr, &ActControls, &D5, nullptr},
     {"6", kClient, "the syncer's horn, tapped (press and release in one block)", nullptr, nullptr, &ActTap, &D6, nullptr},
     {"6h", kClient, "the syncer's horn held", nullptr, nullptr, &ActHold, &D6h, nullptr},
