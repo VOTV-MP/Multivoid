@@ -19,9 +19,11 @@
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -96,6 +98,21 @@ bool BindAsMirror(uint32_t eid, void* obj, const std::wstring& classW) {
 // A candidate local actor found in the GUObjectArray scan (one walk feeds all pending entries).
 struct Cand { void* obj; void* cls; float x, y, z; };
 
+// The object index's walk of one pending class: a live, untracked instance that is no class default and has a
+// location is a candidate. It creates and destroys nothing, as the index's callback contract asks.
+struct CandSink {
+    std::vector<Cand>*               cands;
+    const std::unordered_set<void*>* tracked;
+};
+void ConsiderCandidate(void* ctx, void* obj, int32_t /*index*/) {
+    auto* sink = static_cast<CandSink*>(ctx);
+    if (!obj || sink->tracked->count(obj) > 0 || !R::IsLive(obj)) return;
+    if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) return;
+    sink->cands->push_back(Cand{obj, R::ClassOf(obj), loc.X, loc.Y, loc.Z});
+}
+
 // One throttled scan: collect untracked allowlisted NPC candidates, then bind each pending entry
 // to its NEAREST same-class unclaimed candidate (multi-kerfur disambiguation), or fresh-spawn on
 // timeout. Erases resolved entries from g_pending.
@@ -114,7 +131,27 @@ void ResolvePending() {
     // ONE GUObjectArray walk -> candidates (the allowlist prefilter eliminates >99% before any
     // alloc; only a handful of real NPCs reach NameOf/TryGetActorLocation).
     std::vector<Cand> cands;
-    const int32_t n = R::NumObjects();
+    // A candidate is used only by a pending entry of its exact class, so the walk is each pending class's own
+    // instances, from the object index. While the index trails the engine (a level load's backlog) the whole
+    // array is walked instead: about 40 ms a pass, five passes a second, which a joiner felt as stutter for the
+    // seconds after its loading screen dropped.
+    const bool indexed = ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0;
+    if (indexed) {
+        CandSink sink{&cands, &tracked};
+        std::vector<void*> walked;
+        for (const Pending& e : g_pending) {
+            if (!e.actorClass || std::find(walked.begin(), walked.end(), e.actorClass) != walked.end()) continue;
+            walked.push_back(e.actorClass);
+            ue_wrap::object_index::ForEachInstance(e.actorClass, &ConsiderCandidate, &sink);
+        }
+    }
+    static bool s_saidWalk = false;
+    if (!s_saidWalk) {
+        s_saidWalk = true;
+        UE_LOGI("npc-adopt: the twin scan walks %s (%zu pending)", indexed ? "each pending class's instances"
+                : "the whole object array, the index trailing the engine", g_pending.size());
+    }
+    const int32_t n = indexed ? 0 : R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
