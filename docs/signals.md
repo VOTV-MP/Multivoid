@@ -130,7 +130,12 @@ interpolated on the mirror and written as a pure memcpy the widget repaints
 (`coop/interactables/desk_cursor_sync`). The sounds the presser hears (key clicks, verb beeps,
 the fail tone, the cursor and ping loops) are forwarded at the native audio seam, the component's
 play and activate calls, as effect events (`coop/interactables/desk_snd_fx`); the two loops are
-state and are re-sent to a joiner from the components' ground truth.
+state and are re-sent to a joiner from the components' ground truth. Each plays on the desk's own component, so it is
+heard from the desk with the component's falloff, the game's `att_default` (full within 5 m, fading over 150 m). The
+cursor's loop (`corrds_loop`) is the one the game gives none: it plays only under the player at the desk in single
+player, but another player's replay of it played at full volume across the whole map, so each peer gives it the
+ping loop's falloff once per desk `[V]` (`coop/dev/deskaudio_probe`, `VOTVCOOP_DESKAUDIO_PROBE=1`: every component
+read `att_default` but that loop, which read none; after the change it reads `att_default` too).
 
 A liquid on the desk shorts it: a thrown liquid's projectile (`grimeProjectile_C`) that strikes it and a sponge
 bucket's pour that overlaps it call the desk's own `shortCircuit`, which sparks for about ten seconds and then puts
