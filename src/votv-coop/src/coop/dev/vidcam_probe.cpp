@@ -5,8 +5,8 @@
 // the MSC_Record plugin's RecordCameraManager): the camcorder's LMB runs its beginRecord, which starts the capture, turns
 // the player's microphone component on when the audio settings allow it and moves the audio listener to the camera; the
 // manager's stopRecord finishes the capture, and the plugin's merger writes the mp4. THE RECORDER, 20 s after a client
-// is connected: spawns a camcorder 80 uu before its player and takes it into its hand through `Hold Object`; at 23 s
-// fills the manager's battery and presses the camcorder's LMB; at VOTVCOOP_VIDCAM_STOP s (default 33) runs stopRecord.
+// is connected: spawns a camcorder before its player and picks it up through `Hold Object`; at 23 s fills the
+// manager's battery and presses the hand's camcorder's LMB; at VOTVCOOP_VIDCAM_STOP s (default 33) runs stopRecord.
 // It logs, every quarter second from 22 s to 90 s, the recorder's flags, its export progress and its file names
 // (`[VIDCAM]`). THE OTHER PEER, with VOTVCOOP_VIDCAM_AWAY=<uu>: at 21 s steps that far along world X.
 
@@ -23,6 +23,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <windows.h>
@@ -36,10 +37,8 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
 
 constexpr const wchar_t* kCamClass = L"prop_vidcam_C";
-constexpr const wchar_t* kCamPath  = L"/Game/objects/prop_vidcam.prop_vidcam_C";
 
 uint64_t Now() { return ::GetTickCount64(); }
 
@@ -79,15 +78,6 @@ std::wstring Str(void* obj, const wchar_t* name) {
 }
 
 void* Manager() { return Obj(ue_wrap::world_singleton::Gamemode(), L"rcm_manager"); }
-
-void* Camcorder() {
-    void* found = nullptr;
-    if (void* const cls = OI::ClassByName(kCamClass))
-        OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) *static_cast<void**>(ctx) = obj;
-        }, &found);
-    return found;
-}
 
 bool CallWithPlayer(void* obj, const wchar_t* fn, void* player) {
     void* const f = obj ? R::FindDispatchFunctionCached(R::ClassOf(obj), fn) : nullptr;
@@ -141,23 +131,30 @@ void Tick(coop::net::Session* session) {
     void* const me = coop::players::Registry::Get().Local();
     if (g_step == 0 && t >= 20000u) {
         g_step = 1;
+        // A camcorder spawned before the player and picked up through `Hold Object`, as a bought one is: its data (the
+        // frame rate, the quality) goes into the hand with it. The drill hand's empty hold slot records at 0 fps.
+        // VOTVCOOP_VIDCAM_CLASS=low takes the low-quality camcorder (prop_vidcam_low_C) instead.
+        const bool low = coop::config::ReadEnv("VOTVCOOP_VIDCAM_CLASS") == "low";
+        void* cls = ue_wrap::object_index::ClassByName(low ? L"prop_vidcam_low_C" : kCamClass);
+        if (!cls)
+            cls = ue_wrap::asset_load::LoadObjectByPath(low ? L"/Game/objects/prop_vidcam_low.prop_vidcam_low_C"
+                                                            : L"/Game/objects/prop_vidcam.prop_vidcam_C");
         ue_wrap::FVector at{};
-        void* cls = OI::ClassByName(kCamClass);
-        if (!cls) cls = ue_wrap::asset_load::LoadObjectByPath(kCamPath);
         const ue_wrap::FVector f = me ? E::GetActorForwardVector(me) : ue_wrap::FVector{};
         void* const cam = cls && me && E::TryGetActorLocation(me, at)
                               ? E::SpawnActor(cls, {at.X + f.X * 80.f, at.Y + f.Y * 80.f, at.Z})
                               : nullptr;
-        ue_wrap::ParamFrame h(me ? R::FindDispatchFunctionCached(R::ClassOf(me), L"Hold Object") : nullptr);
-        const bool held = cam && h.valid() && h.Set<bool>(L"useHold", true) && h.Set<void*>(L"manual", cam) &&
-                          ue_wrap::Call(me, h);
-        UE_LOGI("[VIDCAM] recorder: spawned a camcorder (ok=%d) and took it into the hand (ran=%d)", cam ? 1 : 0, held ? 1 : 0);
+        bool collected = false;
+        const bool held = cam && E::CallMainPlayerHoldObject(me, cam, collected);
+        void* const hand = Obj(me, L"holding_actor");
+        UE_LOGI("[VIDCAM] recorder: picked up a spawned camcorder (spawned=%d, Hold Object ran=%d, the hand holds %ls)",
+                cam ? 1 : 0, held ? 1 : 0, hand ? R::ClassNameOf(hand).c_str() : L"nothing");
     }
     if (g_step == 1 && t >= 23000u) {
         g_step = 2;
         void* const m = Manager();
         if (float* const battery = FloatAt(m, L"batteryPower")) *battery = 100.f;
-        void* const cam = Camcorder();
+        void* const cam = Obj(me, L"holding_actor");
         UE_LOGI("[VIDCAM] recorder: pressed the camcorder's LMB (camcorder %p, manager %p, ran=%d)", cam, m,
                 CallWithPlayer(cam, L"playerHandUse_LMB", me) ? 1 : 0);
     }
@@ -167,7 +164,7 @@ void Tick(coop::net::Session* session) {
     if (s_pause && g_step == 2 && (g_pauseStep == 0 && t >= 26000u || g_pauseStep == 1 && t >= 29000u)) {
         ++g_pauseStep;
         UE_LOGI("[VIDCAM] recorder: pressed the camcorder's LMB to %hs (ran=%d)", g_pauseStep == 1 ? "pause" : "resume",
-                CallWithPlayer(Camcorder(), L"playerHandUse_LMB", me) ? 1 : 0);
+                CallWithPlayer(Obj(me, L"holding_actor"), L"playerHandUse_LMB", me) ? 1 : 0);
     }
     if (g_step == 2 && t >= StopAtMs()) {
         g_step = 3;
