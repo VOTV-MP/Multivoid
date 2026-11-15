@@ -66,9 +66,9 @@ constexpr uint64_t kPinWindowMs     = 30000;   // from the client's settle: the 
 constexpr uint64_t kWatchWindowMs   = 60000;   // from the client's walk back
 constexpr uint64_t kPossessWindowMs = 150000;  // the host's own: the pin wait, the walk back, the watch
 constexpr uint64_t kSampleMs        = 100;
-// Both peers stand where the verified runs stood before the walks (drill_place.cpp: the rig save's start moved on 2026-11-10, and
-// from the join's own places (5608, 818, 6180) for the host and (-2405, 856, 6163) for the client the walk to the Kerfus
-// ended "did not arrive", drill-kerfus_m1-client.log 13:27:28; kerfus_throw reached the Kerfus from these spots).
+// Both peers stand where the verified runs stood before the walks (drill_place.cpp): from the join's own places
+// (5608, 818, 6180) for the host and (-2405, 856, 6163) for the client the walk to the Kerfus ended "did not arrive",
+// and kerfus_throw reaches the Kerfus from these spots.
 constexpr drill_place::Spot kHostSpot{-1692.f, 560.f, 6318.f, 102.3f};
 constexpr drill_place::Spot kClientSpot{-535.f, 310.f, 6665.f, 0.f};
 drill_place::Placement g_hostPlace, g_clientPlace;

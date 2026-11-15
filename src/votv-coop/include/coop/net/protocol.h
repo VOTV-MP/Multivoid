@@ -785,11 +785,9 @@ enum class ReliableKind : uint8_t {
     // The host runs the keyboard's own verb, drone.triggerFly, whose body owns every condition, and
     // the flight reaches the peers on the pose stream that already carries it; the timer face flips
     // the host drone's leaveAfter5min, which reaches the peers as DroneState bit 3, and its click
-    // plays on the presser's machine and on the host. The drone's own drop-sack option is the third verb: it
-    // names no console, and the host re-tests that the sender is within reach of the drone and that the drone is
-    // parked with its sack aboard, then runs dropSack, whose sack and cargo reach the peers on the prop lanes and
-    // on DroneCargo. Late join: nothing to replay, since a press the host has not run changed nothing, and the
-    // timer's value rides every DroneState. DroneFlyIntentPayload.
+    // plays on the presser's machine and on the host. The third verb, the drone's drop-sack, names no console: the
+    // host re-tests reach and a parked drone with its sack aboard, then runs dropSack (sack and cargo cross on the
+    // prop lanes and DroneCargo). Late join: nothing to replay; the timer rides every DroneState. DroneFlyIntentPayload.
     DroneFlyIntent = 145,
 
     // Host to all: the signal machine's eighteen upgrade levels, absolute. The levels are one

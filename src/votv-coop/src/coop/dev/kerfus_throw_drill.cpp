@@ -48,7 +48,7 @@ constexpr uint8_t  kActionToggle  = 8;        // the Kerfus's on/off
 constexpr float    kReachCm       = 150.f;    // the use key's trace takes it from here
 constexpr int      kWalkDeadlineS = 60;
 // The walks to the Kerfus start from the spots the verified runs used (drill_place.cpp): the walk is a means, the drill
-// judges the grab and the throw. The host's spot is where its 23 m walk to the Kerfus began on 2026-11-09.
+// judges the grab and the throw. The host's spot is where its 23 m walk to the Kerfus begins.
 constexpr drill_place::Spot kHostSpot{-1692.f, 560.f, 6318.f, 102.3f};
 constexpr drill_place::Spot kClientSpot{-535.f, 310.f, 6665.f, 0.f};
 constexpr float    kWalkFloorCmS  = 200.f;    // a walk's deadline grows by its straight length at under half the pace

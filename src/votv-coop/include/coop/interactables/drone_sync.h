@@ -1,19 +1,15 @@
-// coop/interactables/drone_sync.h -- the delivery DRONE (Adrone_C), body pose, on
-// ReliableKind::DroneState. Gameplay/network layer (principle 7): the wire protocol, the
-// host-authoritative transform stream, the receiver's kinematic apply through a LerpWindow, and the
-// connect snapshot, reaching the engine only through ue_wrap::drone.
+// coop/interactables/drone_sync.h -- the delivery DRONE (Adrone_C), body pose, on ReliableKind::DroneState.
+// Gameplay/network layer (principle 7): the wire protocol, the host-authoritative transform stream, the receiver's
+// kinematic apply through a LerpWindow, and the connect snapshot, reaching the engine only through ue_wrap::drone.
 //
-// The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick
-// is a fragile per-tick float flight integrator, not worth reproducing bit-exact on a remote. The
-// host streams the resolved transform, at most about 20 Hz, while the drone moves -- Active or not, since
-// it glides on after Active drops -- and its state, including the five-minute/indefinite leave mode,
-// the moment it changes; a client suppresses
-// its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
-// stream, and drives the streamed transform kinematically through the interpolation window. Host to
-// client only and never relayed; the host refuses a client's copy at its receive edge. Identity is the
-// singleton found by class: both peers load the same placed drone, and a joiner gets the current pose
-// with adopt=1. The drone's CARGO is its inventory component (coop/interactables/drone_cargo_sync); the sack it
-// drops is a world container and rides the prop and container lanes.
+// The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick is a fragile per-tick
+// float flight integrator, not worth reproducing bit-exact on a remote. The host streams the resolved transform, at most
+// about 20 Hz, while the drone moves -- Active or not, since it glides on after Active drops -- and its state, including
+// the five-minute/indefinite leave mode, the moment it changes; a client suppresses its own drone tick, so the drone there
+// is ALWAYS a mirror, and drives the streamed transform kinematically through the interpolation window. Host to client
+// only and never relayed; the host refuses a client's copy at its receive edge. Identity is the singleton found by class,
+// and a joiner gets the current pose with adopt=1. The drone's CARGO is its inventory component
+// (coop/interactables/drone_cargo_sync); the sack it drops is a world container and rides the prop and container lanes.
 
 #pragma once
 

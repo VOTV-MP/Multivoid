@@ -95,9 +95,6 @@ bool CurrentVolume(void* inventory, float& out);
 
 // The inventory's maxVolume, the capacity addItemAdvanced's volume check reads. False when the field does not resolve.
 bool MaxVolume(void* inventory, float& out);
-// Dev: a raw write of maxVolume, for the intent drill's full-pocket arm; the caller writes the old value back. False
-// when the field does not resolve.
-bool SetMaxVolume(void* inventory, float value);
 
 // Whether the container's inventory component has begun play: its `owner` field, set by makeOwner at BeginPlay and
 // never cleared, is live. False when the component or the field does not resolve.

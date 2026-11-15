@@ -28,12 +28,4 @@ bool CallBaseSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping)
 // thread.
 bool CallPropThrown(void* prop, void* player);
 
-// The two pure answers prop_container's putObjectIn_overlap reads of a prop before it files it (it returns silently on
-// either): the prop's ignoreSave, and its canPickup (not static, not frozen, and its propData allows holding it). Each
-// is the BP function of that name on the prop's own class, so an override answers. False, `out` untouched, for a null or
-// dead prop and for a class without the function (an actor without the interface takes the body's cast branch), so a
-// caller reads an unresolved answer as no answer and never as a pass. Game thread.
-bool ReadIgnoreSave(void* prop, bool& out);
-bool ReadCanPickup(void* prop, bool& out);
-
 }  // namespace ue_wrap::prop

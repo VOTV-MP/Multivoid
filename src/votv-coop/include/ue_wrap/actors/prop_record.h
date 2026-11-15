@@ -1,21 +1,18 @@
 // ue_wrap/actors/prop_record.h -- a prop's save state as the game itself saves it: the bytes of its own betterGetData
 // record, handed back through its own betterLoadData.
 //
-// The game's persistence is the pair betterGetData / betterLoadData. betterGetData fills a struct_betterSave with
-// the actor's identity (class, transform, name, tag, key, attachKey, index) and, in actorData, the stream the native
+// The game's persistence is the pair betterGetData / betterLoadData. betterGetData fills a struct_betterSave with the
+// actor's identity (class, transform, name, tag, key, attachKey, index) and, in actorData, the stream the native
 // ThingsAndStuffLib::ActorToBytes writes: every SaveGame property of the actor, the base prop's and each class's own.
 // betterLoadData reads that stream back with BytesIntoActor, then re-seats the identity fields and re-runs init(). A
 // class that keeps state elsewhere (an attached socket, a component) declares its own betterGetData to put it where
 // ActorToBytes reaches. So the state of a prop is the actorData and nothing else here is worth carrying: the identity
-// half of a record names the actor it came from, and on the receiving peer that actor already exists and has its own.
-//
-// Capture returns the actorData. Apply builds the record betterLoadData takes from the RECEIVER'S OWN betterGetData
-// (so the class, transform, name, tag, key, attachKey and index are the receiver's, never the sender's: a record is
-// not a primitive for renaming a prop or moving it) and swaps the sender's actorData in. The stream is applied as
-// the game applies a save file's; its remaining-lifespan field alone is put back afterwards, since SetLifeSpan
-// destroys the actor and the lifespan, like the identity, is the receiving peer's own clock.
-//
-// Engine-wrapper layer (principle 7). Game thread.
+// half of a record names the actor it came from, and on the receiving peer that actor already exists.
+// Capture returns the actorData. Apply builds the record betterLoadData takes from the RECEIVER'S OWN betterGetData (so
+// the class, transform, name, tag, key, attachKey and index are the receiver's, never the sender's: a record is not a
+// primitive for renaming a prop or moving it) and swaps the sender's actorData in. The stream is applied as the game
+// applies a save file's; its remaining-lifespan field alone is put back afterwards, since SetLifeSpan destroys the actor
+// and the lifespan, like the identity, is the receiving peer's own clock. Engine-wrapper layer (principle 7). Game thread.
 
 #pragma once
 

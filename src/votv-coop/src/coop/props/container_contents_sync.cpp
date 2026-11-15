@@ -9,7 +9,6 @@
 #include "coop/props/prop_save_data.h"
 #include "coop/props/container_contents_sync.h"
 #include "coop/props/container_contents_internal.h"
-#include "coop/props/container_apply_hold.h"
 #include "coop/props/container_birth.h"
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_park.h"
@@ -167,7 +166,6 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     size_t o = 0;
     uint16_t count = 0;
     if (!cw::ParseHeader(blob, o, outEid, count)) return Ingest::Handled;
-    if (IsHost() && senderSlot != 0 && src == cb::Source::Arrival) ct::NoteSliceReceived(senderSlot);
     // A container a client threw: the host built its copy empty from the intent and has published
     // nothing for it, so the slice of that author is the newest version of the transfer. There is no
     // reach to measure: the throw put it where it is.
@@ -323,7 +321,6 @@ void Install(coop::net::Session* session) {
     // save record carries the index into that stack, with none of the contents.
     coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_container_C");
     g_session.store(session, std::memory_order_release);
-    coop::props::container_apply_hold::SetApply(&ApplyHeld);
     cww::Install(session);
 }
 
@@ -379,9 +376,6 @@ void DeliverBlob(std::vector<uint8_t> blob, uint8_t senderSlot) {
     if (outcome == Ingest::Applied) pk::Erase(eid);
 }
 
-// What container_apply_hold replays a kept blob through.
-void ApplyHeld(const std::vector<uint8_t>& blob, uint8_t senderSlot) { DeliverBlob(blob, senderSlot); }
-
 }  // namespace
 
 void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
@@ -407,14 +401,6 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     std::vector<uint8_t> blob;
     if (!g_asm.OnChunk(p, senderSlot, blob)) return;  // incomplete
 
-    if (coop::props::container_apply_hold::Armed()) {   // the drill's hold: the header is read for it alone
-        size_t headerEnd = 0;
-        uint16_t headerCount = 0;
-        uint32_t headerEid = 0;
-        if (cw::ParseHeader(blob, headerEnd, headerEid, headerCount) &&
-            coop::props::container_apply_hold::Keep(headerEid, std::move(blob), senderSlot))
-            return;
-    }
     DeliverBlob(std::move(blob), senderSlot);
 }
 
@@ -435,23 +421,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 }
 
 // The dev-instrument seams (see the header).
-
-size_t SnapshotWorldContainers(WorldContainer* out, size_t want) {
-    if (!out || want == 0) return 0;
-    std::vector<coop::element::Registry::ActorIdPair> pairs;
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    size_t n = 0;
-    for (const auto& pr : pairs) {
-        if (n >= want) break;
-        // IsLiveByIndex: the snapshot does not protect the actor pointer.
-        if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;
-        if (!ci::IsContainer(pr.actor)) continue;
-        void* inv = ci::InventoryOf(pr.actor);
-        if (!inv || !ci::IsWorldInventory(inv)) continue;   // BOUNDARY 1, the shipped one
-        out[n++] = WorldContainer{static_cast<uint32_t>(pr.id), pr.actor, inv};
-    }
-    return n;
-}
 
 bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol) {
     outCount = -1;
@@ -476,50 +445,6 @@ bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords) {
     outHash = cw::RecordsHash(eid, recs);
     outRecords = static_cast<uint32_t>(recs.size());
     return true;
-}
-
-bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole) {
-    out.clear();
-    void* actor = LivePropActor(eid);
-    void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
-    std::vector<II::Item> recs;
-    if (!inv || !ci::IsWorldInventory(inv) || !cio::ReadRecords(inv, recs)) return false;
-    for (const II::Item& r : recs) out.push_back(cw::RecordsHash(eid, std::vector<II::Item>{r}));
-    whole = cw::RecordsHash(eid, recs);
-    return true;
-}
-
-// Applies `recs` (the container's own records plus one appended) as a client's accepted slice is applied, and when
-// `publish` marks the container for the sweep like any local write.
-namespace {
-bool ApplyAppended(uint32_t eid, const std::vector<II::Item>& recs, bool publish) {
-    if (ApplyContents(eid, recs, cw::RecordsHash(eid, recs)) != Ingest::Applied) return false;
-    if (publish) MarkHostWrite(eid);
-    return true;
-}
-}  // namespace
-
-bool DevRawAppend(uint32_t eid, bool publish) {
-    void* actor = LivePropActor(eid);
-    void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
-    std::vector<II::Item> recs;
-    if (!inv || !ci::IsWorldInventory(inv) || !cio::ReadRecords(inv, recs) || recs.empty())
-        return false;
-    recs.push_back(recs.front());
-    return ApplyAppended(eid, recs, publish);
-}
-
-// The item's own betterGetData (inventory_item's Capture), which is what addItemAsObject files. A raw write is not a
-// put replay: the entry keeps the canvas origin, where addItemAdvanced would find it a free place.
-bool DevRawAppendActor(uint32_t eid, void* item, bool publish) {
-    void* actor = LivePropActor(eid);
-    void* inv = actor && ci::IsContainer(actor) ? ci::InventoryOf(actor) : nullptr;
-    std::vector<II::Item> recs;
-    II::Item rec;
-    if (!item || !inv || !ci::IsWorldInventory(inv) || !cio::ReadRecords(inv, recs) || !II::Capture(item, rec))
-        return false;
-    recs.push_back(std::move(rec));
-    return ApplyAppended(eid, recs, publish);
 }
 
 bool SendTruthToSlot(uint32_t eid, int slot) {
@@ -560,7 +485,6 @@ uint32_t TouchEpochOf(uint32_t eid) {
 }
 
 void OnDisconnect() {
-    coop::props::container_apply_hold::Reset();
     g_wrongClassSaid.clear();
     internal::ResetPublish();
     g_touchEpoch.clear();

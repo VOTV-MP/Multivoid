@@ -106,7 +106,7 @@ Response Request(const std::string& hostPort, const std::string& path,
         return out;
     }
 
-    // The user agent names the game target the build was made for, as the boot banner does.
+    // The HTTP client string names the game target the build was made for, as the boot banner does.
     const std::string target = coop::version::kGameTarget;
     const std::wstring agent = L"multivoid/" + std::wstring(target.begin(), target.end());
     WinHttpHandle session(::WinHttpOpen(agent.c_str(),

@@ -10,7 +10,7 @@
 // which a pryable refuses with its "Tool required" hint: the replay the receiver ran before, kept
 // as the contrast. Both peers print every pryable they have, stuck or not, and every change of
 // one; the acting peer prints ACTOR DONE once its copy has come to rest and says where in the lobby chat; the watching
-// peer then judges its own copy against that rest and prints `[PRY-DRILL] [H|C] PASS` or `FAIL`: the copy left its wall,
+// peer then judges its own copy against that rest and prints `[PRY-DRILL]` with the peer's tag and `PASS` or `FAIL`: the copy left its wall,
 // is no longer stuck, and rests within 25 cm of the acting peer's.
 
 #pragma once

@@ -433,10 +433,6 @@ bool ReadPropData(void* prop, PropDataFlags& out) {
     return true;
 }
 
-bool IsGatherable(void* prop) {
-    return prop && !engine::IsChildActor(prop) && (prop::IsFrozen(prop) || engine::IsActorRootSimulatingPhysics(prop));
-}
-
 bool ReadVolumeAndBound(void* prop, float& volume, float& bound) {
     UE_ASSERT_GAME_THREAD("prop_gather::ReadVolumeAndBound");
     volume = bound = 0.f;

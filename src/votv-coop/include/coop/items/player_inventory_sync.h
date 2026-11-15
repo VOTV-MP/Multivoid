@@ -1,20 +1,17 @@
-// coop/items/player_inventory_sync.h -- the per-player profile (coop/items/player_profile.h: the
-// player's own save record -- their vitals, what they carry, wear and hold -- and where they
-// stood), host-persisted at <mod data dir>/coop_players/<host save>/<guid>.json. The GUID is
-// derived from the key that peer PROVED at admission (coop/net/peer_identity.h), never from a
-// value it sent.
+// coop/items/player_inventory_sync.h -- the per-player profile (coop/items/player_profile.h: the player's own save
+// record -- their vitals, what they carry, wear and hold -- and where they stood), host-persisted at
+// <mod data dir>/coop_players/<host save>/<guid>.json. The GUID is derived from the key that peer PROVED at admission
+// (coop/net/peer_identity.h), never from a value it sent.
 //
-// A joiner's world is built from a capture of the HOST's save object, and the player's record is
-// one of the saved actors in it (saveSlot.betterObjectsData), so without a substitution every
-// joiner carries the host's items under the host's keys at the host's vitals, and the host's
-// status effects ride along as records of its world, which the join hook resets out of the
-// joiner's copy. In session order: the host sends a joining peer its profile while that peer is
-// still pre-world (a first join gets one with no record, and starts as a new game's player), and
-// the client writes it into the save object before the world materialises; the client streams
-// its profile back as it changes (and at once after an admin's order, SendProfileNow), only from
-// a world that was built from one; the host holds each complete, changed blob by GUID and cuts
-// the held profiles to disk when its own world is saved, at no other moment
-// (coop/player/player_profile_store.h says why). Nothing held and no file IS the first-join test.
+// A joiner's world is built from a capture of the HOST's save object, and the player's record is one of the saved actors
+// in it (saveSlot.betterObjectsData), so without a substitution every joiner carries the host's items under the host's
+// keys at the host's vitals, and the host's status effects ride along, which the join hook resets out of the joiner's
+// copy. In session order: the host sends a joining peer its profile while that peer is still pre-world (a first join gets
+// one with no record, and starts as a new game's player), and the client writes it into the save object before the world
+// materialises; the client streams its profile back as it changes (and at once after an admin's order, SendProfileNow),
+// only from a world that was built from one; the host holds each complete, changed blob by GUID and cuts the held
+// profiles to disk when its own world is saved, at no other moment (coop/player/player_profile_store.h says why).
+// Nothing held and no file IS the first-join test.
 
 #pragma once
 

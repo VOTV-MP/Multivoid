@@ -139,8 +139,4 @@ CargoWrite WriteCargo(void* drone, const std::vector<CargoItem>& items);
 bool DropSack(void* drone);
 bool PutSackOn(void* drone, void* sack);
 
-// The drone a droneSellLocation_C instance names through its `drone` field, or null when it is null or dead.
-// Game thread.
-void* OfSellLocation(void* sellLocation);
-
 }  // namespace ue_wrap::drone

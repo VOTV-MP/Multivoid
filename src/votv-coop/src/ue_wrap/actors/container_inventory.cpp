@@ -277,12 +277,6 @@ bool MaxVolume(void* inventory, float& out) {
     return true;
 }
 
-bool SetMaxVolume(void* inventory, float value) {
-    if (!inventory || CachedOffset(g_offMaxVol, R::ClassOf(inventory), L"maxVolume") < 0) return false;
-    std::memcpy(reinterpret_cast<uint8_t*>(inventory) + g_offMaxVol, &value, sizeof(value));
-    return true;
-}
-
 // The host's world-settle edge: makeOwner sets `owner` at the component's BeginPlay and nothing clears it, so a live
 // `owner` is the mark that a container's inventory has begun play.
 bool InventoryInitialized(void* container) {

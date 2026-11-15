@@ -35,10 +35,9 @@ std::set<uint32_t> g_said;            // said once per container
 uint64_t g_nextMs = 0;
 
 // The client half: the (container, outermost script function) pairs already said, capped; past the cap the
-// probe only counts.
+// probe only counts the ones it did not say.
 constexpr size_t kMaxClientKeys = 256;
 std::set<std::pair<uint32_t, void*>> g_clientSaid;
-std::map<uint32_t, uint32_t> g_clientVerbs;   // verbs counted per container, capped at kMaxClientKeys containers
 uint32_t g_clientOverCap = 0;
 bool g_clientCapSaid = false;
 
@@ -72,13 +71,7 @@ void Tick(coop::net::Session* session) {
     CC::ForEachWorldContainer(&ReadOne, nullptr);
 }
 
-uint32_t ClientVerbsOf(uint32_t eid) {
-    const auto it = g_clientVerbs.find(eid);
-    return it == g_clientVerbs.end() ? 0 : it->second;
-}
-
 void OnClientVerb(uint32_t eid, void* owner, const ue_wrap::script_gate::Call& c, bool take) {
-    if (g_clientVerbs.size() < kMaxClientKeys || g_clientVerbs.count(eid) != 0) ++g_clientVerbs[eid];
     static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::container_writer_probe);
     if (!on) return;
     void* const outer = ue_wrap::script_gate::OutermostFunction(c);
@@ -109,7 +102,6 @@ void OnDisconnect() {
         UE_LOGW("container_writer_probe: %u client verbs on pairs past the cap were counted and not said",
                 g_clientOverCap);
     g_clientSaid.clear();
-    g_clientVerbs.clear();
     g_clientOverCap = 0;
     g_clientCapSaid = false;
     g_last.clear();

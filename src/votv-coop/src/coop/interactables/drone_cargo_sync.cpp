@@ -239,21 +239,4 @@ void OnDisconnect() {
     for (uint64_t& ms : g_truthMs) ms = 0;
 }
 
-uint64_t CargoHash() {
-    Items items;
-    void* const drone = D::Find();
-    if (!drone || !D::ReadCargo(drone, items, cw::kMaxRecords)) return 0;
-    return cw::RecordsHash(kDroneEid, items);
-}
-
-int CargoCount() {
-    Items items;
-    void* const drone = D::Find();
-    if (!drone || !D::ReadCargo(drone, items, cw::kMaxRecords)) return -1;
-    int n = 0;
-    for (const D::CargoItem& it : items)
-        if (!ue_wrap::inventory_item::IsEmpty(it)) ++n;
-    return n;
-}
-
 }  // namespace coop::drone_cargo_sync

@@ -62,15 +62,6 @@ void OnDisconnect();
 // instead of reimplementing it. A probe free to get boundary 1 wrong would be testing a different
 // rule than the one that ships.
 
-struct WorldContainer {
-    uint32_t eid;
-    void* actor;
-    void* inv;    // the propInventory_C component
-};
-
-// Fill `out` with up to `want` live world containers, boundary 1 applied. Host or client.
-size_t SnapshotWorldContainers(WorldContainer* out, size_t want);
-
 // The observable digest for one container: how many records its slice holds and the currVol the
 // engine reports. Both peers print it; the smoke compares the numbers. False if the eid is not a
 // live world container here.
@@ -80,20 +71,6 @@ bool ContentsDigest(uint32_t eid, int32_t& outCount, float& outVol);
 // report. False when the eid is not a
 // live world container here, its contents do not read, or a transfer into it is in progress. Game thread.
 bool ContentHashOf(uint32_t eid, uint64_t& outHash, uint32_t& outRecords);
-
-// Dev (the route census drill): the hash of each record of one container as the lane publishes it
-// (RecordsHash over that record alone), in order, and of the whole slice's records. False as ContentHashOf.
-// Game thread.
-bool DevRecordHashes(uint32_t eid, std::vector<uint64_t>& out, uint64_t& whole);
-
-// Dev (the route census drill): one raw write to a container's contents the way an accepted client slice is applied
-// -- the first record appended once more -- and, when `publish`, marked for the sweep like any local write; unpublished,
-// the host's contents move ahead of every client's base. False when the contents do not read or are empty. Game thread.
-bool DevRawAppend(uint32_t eid, bool publish);
-
-// Dev (the route census drill): as DevRawAppend, with the entry of a live item (its own betterGetData, as addItemAsObject
-// files it) appended instead of a copy of the first. False as DevRawAppend, or when the item's entry does not read.
-bool DevRawAppendActor(uint32_t eid, void* item, bool publish);
 
 // Host: send this container's live contents to one slot, forced past the unchanged-hash guard -- the truth a refused
 // client converges on. False when this is not the host, the container is not live, or the send was refused; true

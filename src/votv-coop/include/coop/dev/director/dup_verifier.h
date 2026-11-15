@@ -39,11 +39,6 @@ struct ItemSig {
 // The signature of a Fstruct_save POD record.
 ItemSig SigOf(const ue_wrap::save_record::SaveRecord& rec);
 
-// Capture X's signature from a live container's propInventory GObjStack slice at slot `slotIdx`,
-// reading the raw slice rather than the sync lane. Invalid ItemSig if unresolvable or out of
-// range.
-ItemSig CaptureContainerSlotSig(void* containerActor, int32_t slotIdx);
-
 // Count instances of `x` across the WHOLE global GObjStack (all propInventory indices, the
 // player's carried slot included); worn and held matches are logged beside it. When `print`, logs every matching row with its location and a scan summary.
 // Returns the total match count, or -1 if the saveSlot is unresolvable. Game thread.

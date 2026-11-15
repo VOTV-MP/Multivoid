@@ -22,7 +22,6 @@ struct TruthSlot {
     std::unordered_map<uint32_t, uint64_t> sentMs;
     uint64_t anyMs = 0;   // 0: none sent yet
     RefusalOnce refused;
-    DevClientSlices dev;   // the drill's counts
 };
 coop::roster_ledger::PerSlotState<TruthSlot> g_truth;
 coop::net::RefusalTally g_refusals{"container_contents"};
@@ -45,7 +44,6 @@ RefusalOnce::Say RefusalOnce::Note(uint32_t eid) {
 void RefuseNonBirth(uint32_t eid, uint8_t senderSlot) {
     g_refusals.Note(senderSlot, "not a birth", coop::net::RefusalTally::Clock::now());
     TruthSlot& t = g_truth[senderSlot];
-    ++t.dev.refused;
     switch (t.refused.Note(eid)) {
         case RefusalOnce::Say::Refusal:
             UE_LOGI("container_contents: refused a client slice eid=%u from slot %u (not a birth)", eid,
@@ -81,15 +79,8 @@ bool SendTruthBounded(uint32_t eid, int slot) {
     if (!inv) return false;
     t.sentMs[eid] = now;
     t.anyMs = now;
-    ++t.dev.truths;
     return ccs::SendContainerTo(eid, inv, slot);
 }
-
-DevClientSlices DevClientSlicesOf(int slot) {
-    return slot > 0 && slot < coop::net::kMaxPeers ? g_truth[slot].dev : DevClientSlices{};
-}
-
-void NoteSliceReceived(uint8_t senderSlot) { ++g_truth[senderSlot].dev.received; }
 
 void Flush() { g_refusals.Flush(coop::net::RefusalTally::Clock::now()); }
 

@@ -1,21 +1,17 @@
 // coop/props/container_act_host.h -- the host's half of a client's act on a shared inventory (a world container, or the
-// delivery drone's cargo, coop/props/container_target): a request is judged
-// (the sender's world, the family, the holds, the reach, the container, the record's address or its own terms), and
-// the sender's commit ends the hold. A take's grant puts the record into escrow: done drops it, abort restores it. A
-// put's grant reserves room and writes nothing: done inserts the record the client's container stored, abort releases.
-// Gameplay layer (principle 7). Game thread unless marked.
+// delivery drone's cargo, coop/props/container_target): a request is judged (the sender's world, the family, the holds,
+// the reach, the container, the record's address or its own terms), and the sender's commit ends the hold. A take's grant
+// puts the record into escrow: done drops it, abort restores it. A put's grant reserves room and writes nothing: done
+// inserts the record the client's container stored, abort releases. Gameplay layer (principle 7). Game thread unless marked.
 //
-// Every hold ends: by the commit, by its 30 s deadline, by the sender's departure or by the session's end. A write
-// that cannot happen now is owed and retried at 1 Hz. A reservation that lapses leaves a tombstone, so a late done is
-// still inserted, and slows its sender. The queue's Wait is the mid-join answer: a request before the sender's world
-// is ready, before its body has a pose, or while a hold stands in its way stays at the head of its queue until
-// kWaitBoundMs after it was queued; then it is answered Gone.
-//
+// Every hold ends: by the commit, by its 30 s deadline, by the sender's departure or by the session's end. A write that
+// cannot happen now is owed and retried at 1 Hz. A reservation that lapses leaves a tombstone, so a late done is still
+// inserted. A request before the sender's world is ready, before its body has a pose, or while a hold stands in its way
+// stays at the head of its queue until kWaitBoundMs after it was queued; then it is answered Gone.
 // The Take, TakeStack, MergeStack and PutRecord families are served here. A take has already run on the client when it
-// asks (the inventory screen's call is not held for the answer); a refusal is answered with the host's truth of the
-// target, which the client's mirror applies, beside the line it shows. A take of part of a stack puts the part taken in
-// escrow like a whole entry (a restore files it as an entry of its own); a merge is one write and holds nothing, so the
-// client sends no commit for it. A put from a drag onto the screen's canvas is a PutRecord like the hold-and-run one.
+// asks; a refusal is answered with the host's truth of the target, which the client's mirror applies. A take of part of a
+// stack puts the part taken in escrow like a whole entry; a merge is one write and holds nothing, so the client sends no
+// commit for it. A put from a drag onto the screen's canvas is a PutRecord like the hold-and-run one.
 
 #pragma once
 

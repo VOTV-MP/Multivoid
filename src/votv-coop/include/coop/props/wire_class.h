@@ -17,10 +17,7 @@ namespace coop::wire_class {
 
 using Lookup = void* (*)(const wchar_t*);
 
-// Fill `cn` with `actor`'s class: its leaf name and, for a /Game/ Blueprint class, its content path.
-void FillFromActor(coop::net::WireClassName& cn, void* actor);
-
-// The same from a class and the leaf the caller already holds.
+// Fill `cn` with a class's leaf name (the caller holds it) and, for a /Game/ Blueprint class, its content path.
 void FillFromClass(coop::net::WireClassName& cn, const std::wstring& leaf, void* cls);
 
 // The class `cn` names: `lookup` first (null = FindClass; the host passes object_index::ClassByName), then, on a miss, the

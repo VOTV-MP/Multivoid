@@ -10,11 +10,9 @@
 // `eid` names a world container's element, or the delivery drone's cargo (container_target::kDroneCargoEid).
 // Commit: `[u16 id][u8 committed][u8 pad=0][u32 eid]`, then iff the commit carries an entry
 //   `[u16 index][u32 n][n bytes]`             a put's done: where it landed and the entry, as the container stored it
-//
-// HOSTILE-INPUT CONTRACT: the peer is not trusted. Every field is bounds-checked, an entry's declared length is held
-// to inventory_item_wire::kMaxItemBytes BEFORE any parse (so a refused or unserved put costs a bounds check, not a
-// parse), and any byte after a family's tail is Malformed. The whole blob is already bounded by
-// blob_chunks::MaxBlobBytes at the assembler. The entry's own codec and bounds are coop/items/inventory_item_wire.
+// HOSTILE-INPUT CONTRACT: the peer is not trusted. Every field is bounds-checked, an entry's declared length is held to
+// inventory_item_wire::kMaxItemBytes BEFORE any parse, and any byte after a family's tail is Malformed. The whole blob is
+// already bounded by blob_chunks::MaxBlobBytes at the assembler.
 
 #pragma once
 

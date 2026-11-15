@@ -28,8 +28,6 @@ std::unordered_map<std::wstring, Entry>& Table() {
     return *t;
 }
 
-Stats g_stats;
-
 uint64_t NowMs() {
     using namespace std::chrono;
     return static_cast<uint64_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
@@ -69,8 +67,6 @@ std::wstring ObjectPathOfClass(void* cls) {
     return pkgName + L"." + R::ToString(R::NameOf(cls));
 }
 
-Stats Counters() { return g_stats; }
-
 void* ResolveSoftPath(const std::wstring& softPath, Lookup lookup) {
     const size_t colon = softPath.find(L':');
     const std::wstring path = colon == std::wstring::npos ? softPath : softPath.substr(0, colon);
@@ -92,13 +88,9 @@ void* Resolve(const wchar_t* shortName, const wchar_t* objectPath, Lookup lookup
     if (e.cls && R::IsLiveByIndex(e.cls, e.idx)) return e.cls;
     e.cls = nullptr;
     const uint64_t now = NowMs();
-    if (e.failedAtMs != 0 && now - e.failedAtMs < kRetryAfterMs) {
-        ++g_stats.backedOff;
-        return nullptr;
-    }
+    if (e.failedAtMs != 0 && now - e.failedAtMs < kRetryAfterMs) return nullptr;
     const std::wstring path(objectPath);
     if (!IsLoadablePath(path)) {
-        ++g_stats.refused;
         e.failedAtMs = now;
         UE_LOGW("class_load: refusing path '%ls' for class '%ls' (not a /Game/ content path)", objectPath, shortName);
         return nullptr;
@@ -107,7 +99,6 @@ void* Resolve(const wchar_t* shortName, const wchar_t* objectPath, Lookup lookup
     // loaded for this name.
     const size_t dot = path.rfind(L'.');
     if (dot == std::wstring::npos || ::_wcsicmp(path.c_str() + dot + 1, shortName) != 0) {
-        ++g_stats.refused;
         e.failedAtMs = now;
         UE_LOGW("class_load: path '%ls' does not name class '%ls' -- not loaded", objectPath, shortName);
         return nullptr;
@@ -115,7 +106,6 @@ void* Resolve(const wchar_t* shortName, const wchar_t* objectPath, Lookup lookup
     const uint64_t t0 = NowMs();
     void* const obj = asset_load::LoadObjectByPath(objectPath);
     if (!obj || !IsClassObject(obj) || ::_wcsicmp(R::ToString(R::NameOf(obj)).c_str(), shortName) != 0) {
-        ++g_stats.failed;
         e.failedAtMs = NowMs();
         UE_LOGW("class_load: '%ls' did not give class '%ls' (object %p) -- not asked again for %llu ms", objectPath,
                 shortName, obj, static_cast<unsigned long long>(kRetryAfterMs));
@@ -127,7 +117,6 @@ void* Resolve(const wchar_t* shortName, const wchar_t* objectPath, Lookup lookup
     e.cls = obj;
     e.idx = R::InternalIndexOf(obj);
     e.failedAtMs = 0;
-    ++g_stats.loaded;
     // An index-backed lookup trails the engine's birth notifications; catch it up so the next name lookup answers.
     object_index::DrainAll();
     UE_LOGI("class_load: loaded class '%ls' from '%ls' in %llu ms (%s); lookup now %s", shortName, objectPath,

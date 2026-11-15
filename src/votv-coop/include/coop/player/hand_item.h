@@ -1,22 +1,17 @@
 // coop/player/hand_item.h -- the hotbar HAND-ITEM display axis.
 //
-// The item shown in a player's hand is NOT a world entity: VOTV's better_holdItem_mainhand destroys and
-// respawns a fresh local actor on every quick-slot switch. Riding the WORLD-prop pipeline
-// (PropSpawn/PropPose/PropRelease) therefore produced a peer's held item updating late or never
-// -- the host's pre-quiescence express gate suppressed every host hand item forever, the client
-// dropped its 60 Hz keyed poses as unmatched, and every switch left physics-release litter and
-// a fresh key/mirror churn.
+// The item shown in a player's hand is NOT a world entity: VOTV's better_holdItem_mainhand destroys and respawns a fresh
+// local actor on every quick-slot switch. Riding the WORLD-prop pipeline (PropSpawn/PropPose/PropRelease) therefore left a
+// peer's held item updating late or never, and every switch left physics-release litter and a fresh key/mirror churn.
 //
-// The model is MTA's: a ped's current weapon is PLAYER STATE attached to the ped locally on
-// every machine, so the hand item is part of the player's EXPRESSION like skin and nick colour.
-// The owner polls mainPlayer.holdingActor_main and holdingActor_offhand (Aprop_C only -- the trash
-// clump/pile carry keeps its own lane) and broadcasts a small reliable HandItem{hand, class, name,
-// item} for a hand that changed (coop/player/hand_item_wire.h); every peer keeps a display-only
-// mirror per hand: the main hand's held in the puppet's view, the off hand's attached to the
-// puppet's own `weapon_off`, where the game attaches it. Nothing goes per-tick on the wire but the
-// main hand's pose, switch latency is one reliable message, and late join replays per-slot state.
-// The queries below answer for the main hand, the one the game's verbs use. All functions
-// game-thread only.
+// The model is MTA's: a ped's current weapon is PLAYER STATE attached to the ped locally on every machine, so the hand
+// item is part of the player's EXPRESSION like skin and nick colour. The owner polls mainPlayer.holdingActor_main and
+// holdingActor_offhand (Aprop_C only -- the trash clump/pile carry keeps its own lane) and broadcasts a small reliable
+// HandItem{hand, class, name, item} for a hand that changed (coop/player/hand_item_wire.h); every peer keeps a
+// display-only mirror per hand: the main hand's held in the puppet's view, the off hand's attached to the puppet's own
+// `weapon_off`, where the game attaches it. Nothing goes per-tick on the wire but the main hand's pose, switch latency is
+// one reliable message, and late join replays per-slot state. The queries below answer for the main hand, the one the
+// game's verbs use. All functions game-thread only.
 
 #pragma once
 

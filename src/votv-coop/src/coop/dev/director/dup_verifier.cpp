@@ -48,31 +48,6 @@ uint64_t ContentHash(const SR::SaveRecord& r) {
     return h;
 }
 
-// Read the container's propInventory GObjStack slice base (the TArray<Fstruct_save> for its index).
-// Self-contained: resolves the offsets directly, not via the sync lane. Null if unresolvable.
-const uint8_t* ContainerSliceBase(void* containerActor, int32_t& outNum) {
-    outNum = 0;
-    if (!containerActor) return nullptr;
-    const int32_t offPropInv = R::FindPropertyOffset(R::ClassOf(containerActor), L"propInventory");
-    if (offPropInv < 0) return nullptr;
-    void* inv = nullptr;
-    std::memcpy(&inv, reinterpret_cast<const uint8_t*>(containerActor) + offPropInv, sizeof(inv));
-    if (!inv || !R::IsLive(inv)) return nullptr;
-    void* save = INV::ResolveSaveSlot();
-    if (!save) return nullptr;
-    const int32_t offStack = R::FindPropertyOffset(R::ClassOf(save), L"GObjStack");
-    const int32_t offIndex = R::FindPropertyOffset(R::ClassOf(inv), L"Index");
-    if (offStack < 0 || offIndex < 0) return nullptr;
-    int32_t idx = -1;
-    std::memcpy(&idx, reinterpret_cast<const uint8_t*>(inv) + offIndex, sizeof(idx));
-    if (idx < 0) return nullptr;
-    const SR::Arr outer = SR::ReadArr(save, offStack);
-    if (idx >= outer.num) return nullptr;
-    const uint8_t* slice = outer.data + static_cast<size_t>(idx) * SR::kMxStride;   // Fstruct_mObject
-    const SR::Arr inner = SR::ReadArr(slice, 0);   // TArray<Fstruct_save> @ +0
-    outNum = inner.num;
-    return inner.data;
-}
 }  // namespace
 
 ItemSig SigOf(const SR::SaveRecord& rec) {
@@ -81,18 +56,6 @@ ItemSig SigOf(const SR::SaveRecord& rec) {
     s.key = rec.key;
     s.contentHash = ContentHash(rec);
     s.valid = !rec.className.empty();   // a null-class record is not a real item
-    return s;
-}
-
-ItemSig CaptureContainerSlotSig(void* containerActor, int32_t slotIdx) {
-    int32_t num = 0;
-    const uint8_t* base = ContainerSliceBase(containerActor, num);
-    if (!base || slotIdx < 0 || slotIdx >= num) return {};
-    SR::SaveRecord rec;
-    SR::ReadSaveRecord(base + static_cast<size_t>(slotIdx) * SR::kSaveStride, rec);
-    const ItemSig s = SigOf(rec);
-    UE_LOGI("dup_verifier: captured X from container slot %d -- cls=%ls key=%ls hash=%016llx valid=%d",
-            slotIdx, s.className.c_str(), s.key.c_str(), static_cast<unsigned long long>(s.contentHash), s.valid ? 1 : 0);
     return s;
 }
 

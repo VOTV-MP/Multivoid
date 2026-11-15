@@ -1,20 +1,16 @@
 // coop/props/prop_save_data.h -- a prop's OWN save record on the wire, addressed by its Key.
 //
-// The prop lane moved an actor's identity and its class-default appearance and none of its
-// mutable save payload, so every route that destroys and re-creates the actor -- a pocket
-// pickup, a hand switch, a device insert or eject -- lost that payload on at least one peer,
-// and whichever peer re-authored the prop won with an empty copy.
+// The prop lane moved an actor's identity and its class-default appearance and none of its mutable save payload, so every
+// route that destroys and re-creates the actor -- a pocket pickup, a hand switch, a device insert or eject -- lost that
+// payload on at least one peer, and whichever peer re-authored the prop won with an empty copy.
 //
-// Three properties, each answered by the game rather than by a table kept here: capture is the
-// actor's own betterGetData, apply is its own betterLoadData (ue_wrap/actors/prop_record), and
-// membership is "a class below Aprop_C declares SaveGame state or a betterGetData of its own". That
-// last is why this is not a class list -- a list goes stale the first time VOTV adds a save-backed
-// prop, and it goes stale silently. What crosses is the stream the game's ActorToBytes writes, the
-// bytes of the prop's state; the receiver's own record supplies the rest, so a body names the prop by
-// its Key and carries nothing that could rename or move it.
-//
-// Authority: the host publishes; a client that authors a prop's state sends an intent the host
-// validates and re-publishes. Game thread for capture and apply (both dispatch UFunctions).
+// Three properties, each answered by the game rather than by a table kept here: capture is the actor's own
+// betterGetData, apply is its own betterLoadData (ue_wrap/actors/prop_record), and membership is "a class below Aprop_C
+// declares SaveGame state or a betterGetData of its own" (a class list goes stale silently the first time VOTV adds a
+// save-backed prop). What crosses is the stream the game's ActorToBytes writes, the bytes of the prop's state; the
+// receiver's own record supplies the rest, so a body names the prop by its Key and carries nothing that could rename or
+// move it. Authority: the host publishes; a client that authors a prop's state sends an intent the host validates and
+// re-publishes. Game thread for capture and apply (both dispatch UFunctions).
 
 #pragma once
 

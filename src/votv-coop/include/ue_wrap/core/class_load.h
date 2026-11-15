@@ -42,12 +42,4 @@ std::wstring ObjectPathOfClass(void* cls);
 // Whether `path` is a content path Resolve will load: "/Game/" first, then only [A-Za-z0-9_/.], at most 200 characters.
 bool IsLoadablePath(const std::wstring& path);
 
-struct Stats {
-    uint32_t loaded = 0;        // classes loaded and rooted
-    uint32_t failed = 0;        // loads that did not give the class
-    uint32_t refused = 0;       // paths refused before a load
-    uint32_t backedOff = 0;     // misses answered from a remembered failure
-};
-Stats Counters();
-
 }  // namespace ue_wrap::class_load

@@ -60,6 +60,4 @@ void Install() {
     }
 }
 
-uint64_t AnsweredCount() { return g_answered.load(std::memory_order_relaxed); }
-
 }  // namespace coop::puppet_save_skip

@@ -26,9 +26,4 @@ void Tick();
 // screen. Game thread.
 bool ViewInReach(void* player, void* container);
 
-// The room that rule has left, in uu: the arm plus the sphere's radius minus the camera's distance to its
-// centre, the best over the container and its openers. Negative: Tick closes the view. A very negative value
-// when the camera, the arm or every sphere does not read. Game thread.
-float ViewReachMargin(void* player, void* container);
-
 }  // namespace coop::props::container_view_close

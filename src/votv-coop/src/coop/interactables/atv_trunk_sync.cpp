@@ -302,13 +302,6 @@ void OnDisconnect() {
     g_refusalSaid = false;
 }
 
-uint64_t TrunkHash(uint32_t eid) {
-    Items items;
-    void* const atv = AtvOfEid(eid);
-    if (!atv || !A::ReadTrunk(atv, items, cw::kMaxRecords)) return 0;
-    return cw::RecordsHash(eid, items);
-}
-
 int TrunkCount(uint32_t eid) {
     Items items;
     void* const atv = AtvOfEid(eid);

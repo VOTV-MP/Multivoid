@@ -38,9 +38,6 @@ bool ReadPropData(void* prop, PropDataFlags& out);
 bool ReadPocketFacts(void* prop, PocketFacts& out);
 bool ReadHoldFacts(void* prop, HoldFacts& out);
 
-// Not a child actor, and frozen or the root simulating physics: the physical state a drill's prop is taken from.
-bool IsGatherable(void* prop);
-
 // The prop's volume (the game's Get Volume on its mesh; zero when it has none) and the largest volume a
 // container a player can reach holds.
 bool ReadVolumeAndBound(void* prop, float& volume, float& bound);

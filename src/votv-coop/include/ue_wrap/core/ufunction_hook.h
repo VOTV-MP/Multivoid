@@ -95,22 +95,19 @@ using PreNativeCallback = script_gate::Verdict (*)(void* context, void* sourceOb
 // firewall contract as the pre callback; not called for a call the pre callback refused.
 using PreNativeDone = void (*)(void* context, void* sourceObject, const uint8_t* parms, const void* result);
 
-// Patch `ufunction`'s native Func with a forwarder that, armed, reads the call's parameters before the
-// original does. A native thunk steps them off the caller's bytecode into its own locals, one expression each
-// through the VM's exec-handler table, so a post forwarder never sees them, and UE4SS's native pre-hook reads
-// the frame's Locals (LuaMod.cpp:128-200), which hold them only on the ProcessEvent path. This one steps them
-// through the same table (script_gate::ExecHandlers) into a frame of its own. Run rewinds the caller's code
-// pointer and forwards, so the original steps them again: the engine's own shape for a native it calls both
-// remotely and locally (UObject::CallFunction). A ProcessEvent call's parameters are read from its frame.
-// A const reference parameter is read as an input. A string parameter is read as one (an FString in the
-// frame, valid for the callbacks) and freed by the forwarder afterwards. A refused call (Cancel) answers a
-// return value with zeros: false for a bool, null for an object. Refused at install, logged: a script
-// function, an out parameter or a reference that is not const, a parameter the engine must destroy that is
-// not a string, a frame past this one's, no exec-handler table. Off the game thread it forwards
-// untouched. A pre hook stays the outermost patch on its function in either install order, so a post hook
-// never reports a call its pre hook refused. `armed` defaults to false, the shape being a seam armed only
-// while a call of the consumer's own runs. `done`, when given, is called after the original returns.
-// Idempotent per (ufunction, cb). Game thread.
+// Patch `ufunction`'s native Func with a forwarder that, armed, reads the call's parameters before the original does. A
+// native thunk steps them off the caller's bytecode into its own locals, one expression each through the VM's exec-handler
+// table, so a post forwarder never sees them, and UE4SS's native pre-hook reads the frame's Locals (LuaMod.cpp:128-200),
+// which hold them only on the ProcessEvent path. This one steps them through the same table (script_gate::ExecHandlers)
+// into a frame of its own. Run rewinds the caller's code pointer and forwards, so the original steps them again (the
+// engine's own shape for a native it calls both remotely and locally, UObject::CallFunction). A ProcessEvent call's
+// parameters are read from its frame. A const reference parameter is read as an input; a string parameter is read as one
+// and freed by the forwarder afterwards. A refused call (Cancel) answers a return value with zeros. Refused at install,
+// logged: a script function, an out parameter or a reference that is not const, a parameter the engine must destroy that
+// is not a string, a frame past this one's, no exec-handler table. Off the game thread it forwards untouched. A pre hook
+// stays the outermost patch on its function in either install order, so a post hook never reports a call its pre hook
+// refused. `armed` defaults to false: a seam armed only while a call of the consumer's own runs. `done`, when given, is
+// called after the original returns. Idempotent per (ufunction, cb). Game thread.
 bool InstallPreHook(const facts::Resolved& fn, PreNativeCallback cb, bool armed = false,
                     PreNativeDone done = nullptr);
 

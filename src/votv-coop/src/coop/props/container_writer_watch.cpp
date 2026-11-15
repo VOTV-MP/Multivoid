@@ -143,6 +143,5 @@ void OnDisconnect() { g_verbEntered = false; }
 
 bool ExtractInFlight() { return g_extractInFlight.exchange(false, std::memory_order_relaxed); }
 
-bool VerbWatchEntered() { return g_verbEntered; }
 
 }  // namespace coop::props::container_writer_watch

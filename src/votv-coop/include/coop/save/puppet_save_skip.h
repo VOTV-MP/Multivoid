@@ -14,7 +14,4 @@ namespace coop::puppet_save_skip {
 // thread.
 void Install();
 
-// The calls answered for a puppet this process, for a drill. Any thread.
-uint64_t AnsweredCount();
-
 }  // namespace coop::puppet_save_skip

@@ -38,13 +38,6 @@ inline constexpr uint64_t kTruthSlotEveryMs = 500;
 bool TruthDue(uint64_t lastSentMs, uint64_t nowMs);
 bool SlotTruthDue(uint64_t lastAnyMs, uint64_t nowMs);   // lastAnyMs 0: none sent yet
 
-// Dev (container_intent_drill): what the host took in from one client slot since the session began (or the slot's
-// occupant changed): the slices that arrived, those refused as not a birth, and the truths it sent back through
-// SendTruthBounded. Host; zeros for a slot that is not a client's. Game thread.
-struct DevClientSlices { uint32_t received = 0, refused = 0, truths = 0; };
-DevClientSlices DevClientSlicesOf(int slot);
-void NoteSliceReceived(uint8_t senderSlot);
-
 // The refusal log's window, closed on the pump tick; cheap with none open.
 void Flush();
 

@@ -2,20 +2,11 @@
 
 #include "coop/net/wire_class_path.h"
 #include "ue_wrap/core/class_load.h"
-#include "ue_wrap/core/reflection.h"
 
 namespace coop::wire_class {
 
-namespace {
-namespace R = ue_wrap::reflection;
-}
-
 void FillFromClass(coop::net::WireClassName& cn, const std::wstring& leaf, void* cls) {
     coop::net::wire_class_path::Fill(cn, leaf, ue_wrap::class_load::ObjectPathOfClass(cls));
-}
-
-void FillFromActor(coop::net::WireClassName& cn, void* actor) {
-    FillFromClass(cn, R::ClassNameOf(actor), R::ClassOf(actor));
 }
 
 void* Resolve(const coop::net::WireClassName& cn, Lookup lookup) {

@@ -29,8 +29,4 @@ void OnDisconnect();
 // extraction. One-shot by exchange; also reached on a task-graph worker.
 bool ExtractInFlight();
 
-// Has the writer watch fired on this peer at least once? A dev instrument's verdict needs it: an absent effect means
-// one thing if the edge is live and another if it never was.
-bool VerbWatchEntered();
-
 }  // namespace coop::props::container_writer_watch

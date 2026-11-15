@@ -2,23 +2,17 @@
 // delivery drone's cargo): the act is asked of the host (Ask), the host's reply is taken (a refusal shows a line, a grant
 // is answered with the commit that ends the host's hold), and a commit the transport refused is sent again until it goes,
 // so a host hold always ends. Gameplay layer (principle 7). Game thread.
-//
-// Takes are pending together, and so are a drag's puts; a hold-and-run put is pending alone. An honest wait ends in
-// milliseconds; the 10 s bound covers a transport that refused the reply. A request whose wait ran out is kept until the
-// host answers it, and a grant that comes after the bound is answered with an abort; one older than the host's 30 s hold
-// deadline is dropped. A refused commit is sent again every 250 ms at most.
-//
+// Takes are pending together, and so are a drag's puts; a hold-and-run put is pending alone. A request whose wait ran out
+// (10 s) is kept until the host answers it, and a grant that comes after the bound is answered with an abort; one older
+// than the host's 30 s hold deadline is dropped. A refused commit is sent again every 250 ms at most.
 // The take: the inventory screen moves an entry out of a shared inventory with the component's removeInventoryItem, after
 // it has filed the entry's copy in the player's bag. The call runs at once on this peer and is asked of the host in the
 // same step; the host takes the entry out into escrow and grants, and the commit ends the escrow. A refusal gives the
-// entry back: the copy is taken out of the bag again, and the host's truth of the inventory is sent. A take of part of a
-// stack (the item widget's takeFromStack) and a merge of two entries (its addToStack) are asked the same way, the first
-// with the copy found once the drag's call has filed it, the second with no escrow (container_act_stack.cpp).
-// The put-record family has a replay: the player's verb is cancelled at its seat and asked of the host with the record;
-// on a grant the same verb runs again under the replay latch if it still names the record asked, and the commit says
-// where the inventory stored it. The verbs are the container's playerUsedOn (hold and run, container_act_put.cpp) and the
-// inventory's addItemAdvanced called by the screen when an entry is dropped on a canvas (container_act_drag.cpp), whose
-// replay also takes the entry out of the bag. Any other family's grant is answered with an abort.
+// entry back: the copy leaves the bag again and the host's truth of the inventory is sent. A take of part of a stack and
+// a merge of two entries are asked the same way (container_act_stack.cpp). The put-record family has a replay: the verb
+// is cancelled at its seat and asked of the host with the record; on a grant it runs again under the replay latch if it
+// still names the record asked, and the commit says where the inventory stored it (container_act_put.cpp for the
+// container's playerUsedOn, container_act_drag.cpp for an entry dropped on a canvas). Any other family is aborted.
 
 #pragma once
 

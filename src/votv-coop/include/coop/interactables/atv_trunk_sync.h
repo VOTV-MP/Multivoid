@@ -1,27 +1,18 @@
-// coop/interactables/atv_trunk_sync.h -- an ATV's TRUNK, the host's, mirrored on every client.
-// Gameplay/network layer (principle 7): the wire, the host's publication and the client's apply; the engine is
-// reached through ue_wrap::atv.
+// coop/interactables/atv_trunk_sync.h -- an ATV's TRUNK, the host's, mirrored on every client. Gameplay/network layer
+// (principle 7): the wire, the host's publication and the client's apply; the engine is reached through ue_wrap::atv.
 //
 // In 0.10 the trunk is the ATV's own inventoryComponent_C (ATV_C.inventoryComponent): the open option runs
-// ui_FLI_inventory.begin on it, a hand item put into it runs addItemAsObject on it, and the `spawnedContainer` prop of 0.9
-// is never created, so no world container, no element and no container lane covers it. It is a shared inventory of the
-// drone cargo's kind (coop/interactables/drone_cargo_sync): the host's component is the truth and a client's is a copy.
-//
-// Identity is the ATV's own game Key (coop/interactables/atv_sync names every ATV by it on every peer). The container act
-// lane names a target by one u32, so a trunk's target id is container_target::kAtvTrunkBase plus 20 bits of a hash of the
-// ATV's key; an ATV whose id another live ATV shares is not shared (said once) rather than judged against the wrong one.
-// Reach is judged at the ATV itself (coop/props/container_reach).
-//
-// The host reads each ATV's trunk twice a second and sends it whole, in the container slice grammar
-// (coop/props/container_slice_wire, eid = the target id), when its hash changed; a joiner gets every trunk at its connect
-// replay. A client holds the newest blob per target until the ATV it names is live here, then writes it over its component
-// through the game's own volume derivation. Every verb that writes the trunk other than the host's is the host's to run:
-// a client's take, put and stack acts are asked of the host (coop/props/container_act_request, judged by
-// container_act_host with the trunk as the target), and the client's hand put (the ATV's playerUsedOn files the held item
-// with addItemAsObject) is refused here, since it would write a copy the host never sees.
-//
-// Host to client only and never relayed (ReliableKind::AtvTrunk). The pacing and the readiness of the pen are
-// coop/net/blob_chunks'.
+// ui_FLI_inventory.begin on it and a hand item put into it runs addItemAsObject on it, so no world container, element
+// or container lane covers it. It is a shared inventory of the drone cargo's kind (coop/interactables/drone_cargo_sync):
+// the host's component is the truth and a client's is a copy.
+// Identity is the ATV's own game Key (coop/interactables/atv_sync). The container act lane names a target by one u32,
+// so a trunk's target id is container_target::kAtvTrunkBase plus 20 bits of a hash of the ATV's key; an ATV whose id
+// another live ATV shares is not shared (said once). Reach is judged at the ATV itself (coop/props/container_reach).
+// The host reads each trunk twice a second and sends it whole, in the container slice grammar (coop/props/
+// container_slice_wire, eid = the target id), when its hash changed; a joiner gets every trunk at its connect replay. A
+// client holds the newest blob per target until its ATV is live, then writes it over its component. A client's take,
+// put and stack are acts the host judges (coop/props/container_act_request, container_act_host) and its hand put is
+// refused here. Host to client only, never relayed (ReliableKind::AtvTrunk).
 
 #pragma once
 
@@ -71,9 +62,6 @@ void ForgetApplied(uint32_t eid);
 // unthrottled (a send owed once). False when nothing was sent. Game thread.
 inline constexpr uint64_t kTruthEveryMs = 500;
 bool SendTruthToSlot(uint32_t eid, int peerSlot, bool bounded);
-
-// Dev: the hash a peer holds of trunk `eid` as it reads now, 0 when it does not read or the ATV is absent. Game thread.
-uint64_t TrunkHash(uint32_t eid);
 
 // Dev: the number of non-blank entries trunk `eid` holds, -1 when it does not read. Game thread.
 int TrunkCount(uint32_t eid);

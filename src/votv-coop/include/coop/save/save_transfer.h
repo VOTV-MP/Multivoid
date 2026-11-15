@@ -1,20 +1,15 @@
-// coop/save/save_transfer.h -- the save-transfer join bootstrap: the host's save to the joining
-// client. A menu-mode joining client does not generate its own fresh world (its first-run
-// spawns and litter would never match the host's): it connects at the menu, requests the
-// host's save, receives it chunked on the Transfer lane, unpacks it as the ephemeral scratch save
-// zcoop_<pid> (main.sav, persistent.sav, main.meta, and areas/<area>.sav for a host standing in an area:
-// coop/save/save_folder_pack), loads it through
-// the game's own save load (the engine places every prop at rest, with the host's keys), then
-// announces world-ready, and the host runs the connect replay (the key diff, the snapshot
-// bracket, the state broadcasts) as a thin true-up for whatever moved since the save was written.
-// The scratch save lives beside SaveGames (coop/save/save_scratch), so the game's save menu, which lists
-// the folders under SaveGames, never shows it; it is per instance so same-machine peers cannot collide,
-// lives for the session, and a boot sweep removes the ones a crashed session left.
-// Clients are blocked from saving during coop, so the game never refreshes it; only the save
-// folder's load set is transferred, never the global progression file; a copy of the bytes
-// mid-session is not prevented. The host side runs on the game thread; the client side spans the
-// net thread (the chunk and begin sinks) and the harness join loop (the polls), behind one small
-// mutex.
+// coop/save/save_transfer.h -- the save-transfer join bootstrap: the host's save to the joining client. A menu-mode
+// joining client does not generate its own fresh world (its first-run spawns and litter would never match the host's): it
+// connects at the menu, requests the host's save, receives it chunked on the Transfer lane, unpacks it as the ephemeral
+// scratch save zcoop_<pid> (main.sav, persistent.sav, main.meta, and areas/<area>.sav for a host standing in an area:
+// coop/save/save_folder_pack), loads it through the game's own save load (the engine places every prop at rest, with the
+// host's keys), then announces world-ready, and the host runs the connect replay (the key diff, the snapshot bracket, the
+// state broadcasts) as a thin true-up for whatever moved since the save was written. The scratch save lives beside
+// SaveGames (coop/save/save_scratch), so the game's save menu never shows it; it is per instance so same-machine peers
+// cannot collide, lives for the session, and a boot sweep removes the ones a crashed session left. Clients are blocked
+// from saving during coop, so the game never refreshes it; only the save folder's load set is transferred, never the
+// global progression file. The host side runs on the game thread; the client side spans the net thread (the chunk and
+// begin sinks) and the harness join loop (the polls), behind one small mutex.
 #pragma once
 
 #include "coop/net/protocol.h"

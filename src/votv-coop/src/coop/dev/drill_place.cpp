@@ -1,12 +1,11 @@
 // coop/dev/drill_place.cpp -- see drill_place.h.
 //
 // Why the spots are fixed: a walk drill starts its walk from wherever the local player stands after the join, and that
-// place comes from the save it loads (the rig's "heelloo" save, VotV/Saved/SaveGames/heelloo). Its main.sav was rewritten
-// on 2026-11-10 at 00:02. The passing runs of 2026-11-09 walked from (-535, 310, 6665) as a client (the join's
-// teleport_client "teleportWObackrooms", drill-kerfus_throw-client.log 14:25:22 and drill-ctake-client.log 09:56:32) and
-// the host from (-1692, 560, 6318) (drill-kerfus_throw-host.log). Since the rewrite the join lands the client at
-// (-2405, 856, 6163) and the host starts at (5608, 818, 6180); the walks from there found no route or stalled on the
-// landscape and timed out. The drill places the pawn at the verified spot; what the drill verifies is untouched.
+// place comes from the save it loads (the rig's "heelloo" save, VotV/Saved/SaveGames/heelloo). The verified walks start
+// from (-535, 310, 6665) as a client (the join's teleport_client "teleportWObackrooms") and from (-1692, 560, 6318) as
+// the host. The join now lands the client at (-2405, 856, 6163) and the host starts at (5608, 818, 6180); walks from
+// there found no route or stalled on the landscape and timed out. The drill places the pawn at the verified spot; what
+// the drill verifies is untouched.
 
 #include "coop/dev/drill_place.h"
 

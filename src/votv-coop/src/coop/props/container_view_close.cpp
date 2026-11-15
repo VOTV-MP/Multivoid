@@ -81,13 +81,6 @@ bool ViewInReach(void* player, void* container) {
     return BestMargin(eye, arm, container, /*stopAtReach=*/true) >= 0.f;
 }
 
-float ViewReachMargin(void* player, void* container) {
-    FVector eye{};
-    float arm = 0.f;
-    if (!ReadReach(player, eye, arm)) return kUnread;
-    return BestMargin(eye, arm, container, /*stopAtReach=*/false);
-}
-
 void Tick() {
     if (coop::roster::LocalIsHost()) return;
     // The view is a container's, or an ATV's trunk (0.10: the ATV opens its own inventory component, so the screen shows
