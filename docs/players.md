@@ -210,7 +210,9 @@ connected player is awake rests as a client does: its world held at 1, its body 
 effects at the game's factor, its food and coffee settled (`coop/player/sleep_rest`). Once every
 connected player rests or dreams, the world takes the game's factor; when one wakes, or a player
 joins, it goes back to 1 and the host rests on. The clients' line says the speed-up waits for
-everyone. `[?]` Not yet run on the rig. The host's own nightmare roll is the game's, 500 s of world
+everyone. `[V]` `coop/dev/sleepall_probe` (`VOTVCOOP_SLEEPALL_PROBE=1`): with the rule on, the host's
+world read 1 while the client was awake, 20 within a second of the client's sleep, and 1 again within a
+second of its wake; with it off, 20 for the host's whole sleep. The host's own nightmare roll is the game's, 500 s of world
 time, so while the host rests alone it comes 500 real seconds into the sleep.
 
 A nightmare is one player's. The game rolls once per sleep, 500 s of world time after the sleeper
