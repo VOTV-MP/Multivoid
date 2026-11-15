@@ -274,6 +274,16 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/lookat_aim_drill.cpp
     src/coop/dev/fireext_drill.cpp
     src/coop/dev/event_fire_drill.cpp
+    src/coop/dev/cave_drill.cpp
+    src/coop/dev/world_event_drill.cpp
+    src/coop/dev/easter_drill.cpp
+    src/coop/dev/gamemode_drill.cpp
+    src/coop/dev/level_fixture_drill.cpp
+    src/coop/dev/level_prop_drill.cpp
+    src/coop/dev/vending_drill.cpp
+    src/coop/dev/erie_drill.cpp
+    src/coop/dev/join_leftovers_drill.cpp
+    src/coop/dev/signal_drill.cpp
     src/coop/dev/boar_hit_drill.cpp
     src/coop/dev/pry_drill.cpp
     src/coop/dev/recycled_slot_drill.cpp
