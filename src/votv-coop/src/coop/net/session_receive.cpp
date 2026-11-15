@@ -5,6 +5,7 @@
 
 #include "coop/net/session.h"
 
+#include "coop/dev/traffic_census.h"
 #include "coop/dev/wire_census.h"
 #include "coop/net/connect_history.h"  // Floods -- the source a flood ended stays refused
 #include "coop/net/net_clock.h"        // NowMs -- the probe's echo is timed on the net layer's clock
@@ -246,6 +247,8 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
     // origin; reliables are counted once the kind is parsed.
     if (type != MsgType::Reliable && dev::wire_census::Enabled())
         dev::wire_census::NoteStream(routeSlot, static_cast<unsigned>(type));
+    if (type != MsgType::Reliable && dev::traffic_census::Enabled())
+        dev::traffic_census::NoteStream(static_cast<unsigned>(type), static_cast<uint32_t>(len));
 
     switch (type) {
     case MsgType::PoseSnapshot:
@@ -291,6 +294,8 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             rateControl_.NoteReliableReceived(peerSlot, len);
         if (dev::wire_census::Enabled())
             dev::wire_census::NoteReliable(routeSlot, static_cast<unsigned>(rh.kind));
+        if (dev::traffic_census::Enabled())
+            dev::traffic_census::NoteReliable(static_cast<unsigned>(rh.kind), static_cast<uint32_t>(len));
         // Default deny at the edge (client_authorship.h): a kind no client may author, or a value that names no
         // kind, is dropped here, counted by the budget ahead of the epoch latch and acted on by nothing below --
         // not diverted, echoed, inboxed or relayed. The first of each value in a session is said with its number,
