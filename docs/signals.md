@@ -75,8 +75,22 @@ Every input-class scalar (knob speeds, filter toggles, polarity direction, volum
 row, the target level, the unit power toggles) is polled four times a second and sent as a
 field-granular delta (`coop/interactables/desk_input_sync`); receivers apply it through the
 field's native side-effect path and prime their own poll baseline for that field, so nothing
-echoes. The cooldown charge is detected as an upward jump, and the same jump classifies the
-quick-scan, whose accepted-branch effects the mirrors replay.
+echoes. The frequency and polarity dials' speeds are read every frame instead, so a scroll leaves
+at once and a nudge shorter than the poll is not lost. While a peer turns a dial, and after it
+stops until the host's stream shows where it stopped (a second and a half at most), that peer keeps
+its own desk's offset and match for the dial rather than the stream's; at its stop it sends the
+offset, which the host takes, clamped to the range the desk's tick holds it to, and its stream
+carries on. The dial answers the turning hand without a round trip, and every peer settles where
+it stopped `[V]` (`coop/dev/dial_probe`, `VOTVCOOP_DIAL_PROBE=1`, three peers, each client
+turning a dial by wheel notches, then the second client the first's dial while the first turned the
+other; `dev.desk_dial_fast_off` is the before arm: the turner's display moved in 10 to 51 ms and
+did not move past its stop, against up to 523 ms past it before; the host moved in 33 to 66 ms,
+against 239 to 282; the other client in 120 to 180 ms, against 251 to 269; all three settled on
+the same offsets in both arms, and an earlier two-peer run lost a 150 ms nudge before. The cost
+is one delta per notch rather than four a second at most, and a stopped offset per stop: the four
+turns' DeskInput deltas, counted where received, went from 63 to 135).
+The cooldown charge is detected as an upward jump, and the same jump classifies the quick-scan,
+whose accepted-branch effects the mirrors replay.
 
 The signal view's settings ride the same poll: the two bounds of `remapValue` and `visualizerMode`, graph or
 spectrogram, the red button the spectrogram module unlocks. A bound repaints through the game's `updRemap`, and
@@ -295,7 +309,7 @@ measured). Nine of the ten have a row on the laptop's panel, since no widget car
 | Kind | Direction | Carries |
 |---|---|---|
 | `DeviceClaim` | a client to the host; the host to all | a claim, a release, the busy table |
-| `DeskInput`, `DeskScanEvent`, `DeskState`, `DeskLogLine` | the presser, relayed | a field delta; a quick-scan; the desk scalars; a one-shot log line |
+| `DeskInput`, `DeskScanEvent`, `DeskState`, `DeskLogLine` | the presser, relayed | a field delta (a dial's stopped offset among them); a quick-scan; the desk scalars; a one-shot log line |
 | `DeskSimPose` (stream), `DeskCursorPose` (stream) | the host to all; the mover to all | the simulation outputs; the cursor |
 | `DeskSndFx` | the presser, relayed | an audio effect event |
 | `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the host; the occupant | the signal set; a catch; committed coordinates |
@@ -358,7 +372,7 @@ arrive with the save and never again.
 | Concept | Files |
 |---|---|
 | occupancy | `coop/interactables/device_occupancy` |
-| the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_ping_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
+| the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_ping_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync`; the dial probe `coop/dev/dial_probe` |
 | signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync`, `coop/interactables/download_arm_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
 | drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |

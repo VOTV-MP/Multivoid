@@ -2,6 +2,8 @@
 
 #include "coop/interactables/desk_sim_sync.h"
 
+#include "coop/interactables/desk_input_sync.h"
+
 #include "coop/net/blob_chunks.h"  // Fnv64
 #include "coop/net/session.h"
 
@@ -97,6 +99,8 @@ struct SimInterp {
 
 SimInterp g_interp;
 constexpr int kDecoded = 0, kNeedle = 1;  // SimInterp's channels, in DeskSimSnapshot's order
+constexpr int kFrData = 3, kPoData = 4, kFrOffset = 5, kPoOffset = 6;
+bool g_ownedFr = false, g_ownedPo = false;   // this peer's own dial held its channels last tick
 
 CD::SimOutputs ToOutputs(const float* c) {
     CD::SimOutputs o;
@@ -389,7 +393,33 @@ void Tick() {
     g_interp.Advance(nowMs);
     // The write is not the whole apply: these fields are painted by the desk's own tick, but a crossing's and
     // canDL's painters run from the host's edges (Paint).
-    CD::WriteSimOutputs(ToOutputs(g_interp.cur));
+    CD::SimOutputs out = ToOutputs(g_interp.cur);
+    // A dial this peer is turning (or has just stopped) stays its own: its offset and the match its own tick derives
+    // from it, until the host's stream shows where it stopped (desk_input_sync::OwnsDialOffset).
+    const bool ownFr = coop::desk_input_sync::OwnsDialOffset(0, g_interp.target[kFrOffset]);
+    const bool ownPo = coop::desk_input_sync::OwnsDialOffset(1, g_interp.target[kPoOffset]);
+    // At the handoff the stream's target already shows where this peer stopped, but the eased value may still be on
+    // its way from an older one: the dial's channels snap to the target, so the dial does not dip back and slide.
+    if (g_ownedFr && !ownFr) {
+        g_interp.Snap(kFrOffset, g_interp.target[kFrOffset]);
+        g_interp.Snap(kFrData, g_interp.target[kFrData]);
+        out = ToOutputs(g_interp.cur);
+    }
+    if (g_ownedPo && !ownPo) {
+        g_interp.Snap(kPoOffset, g_interp.target[kPoOffset]);
+        g_interp.Snap(kPoData, g_interp.target[kPoData]);
+        out = ToOutputs(g_interp.cur);
+    }
+    g_ownedFr = ownFr;
+    g_ownedPo = ownPo;
+    if (ownFr || ownPo) {
+        CD::SimOutputs mine;
+        if (CD::ReadSimOutputs(mine)) {
+            if (ownFr) { out.frOffset = mine.frOffset; out.frData = mine.frData; }
+            if (ownPo) { out.poOffset = mine.poOffset; out.poData = mine.poData; }
+        }
+    }
+    CD::WriteSimOutputs(out);
     if (desk && edges) Paint(desk, edges, snap);
     if (desk && g_formedCrossed) {
         g_formedCrossed = false;
@@ -402,6 +432,7 @@ void Tick() {
 
 void OnDisconnect() {
     g_interp.Reset();
+    g_ownedFr = g_ownedPo = false;
     Unpark();
     g_seen = Seen{};
     g_seenDesk = nullptr;
