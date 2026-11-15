@@ -265,6 +265,7 @@ docs/**
 !docs/devices.md
 !docs/base-computer.md
 !docs/deployables.md
+!docs/fuel-machines.md
 !docs/events-and-weather.md
 !docs/join.md
 !docs/master-server.md
