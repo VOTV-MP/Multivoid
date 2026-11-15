@@ -3,6 +3,8 @@
 #include "coop/player/sleep_sync.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/latest_wins.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
@@ -117,7 +119,12 @@ void RefuseBed(BedRefusal why, int senderSlot) {
 void PushHostAsleepLine() {
     const std::string name = coop::text::ToUtf8(coop::roster_ledger::DisplayName(0));
     char buf[256];
-    if (l10n::Fmt(buf, sizeof(buf), l10n::T("%1$s is asleep -- the world runs faster"), name.c_str()) < 0)
+    // Under world.sleep_everyone the host's sleep alone speeds nothing up (coop/player/sleep_rest).
+    const bool everyone = coop::config::ResolveFlag(coop::config_registry::rows::world_sleep_everyone);
+    if (l10n::Fmt(buf, sizeof(buf),
+                  everyone ? l10n::T("%1$s is asleep -- the world speeds up once everyone sleeps")
+                           : l10n::T("%1$s is asleep -- the world runs faster"),
+                  name.c_str()) < 0)
         return;
     // A status readout of a state that ends: reading it back hours later would be noise, not history.
     coop::chat_feed::Push(std::string(buf), coop::chat_feed::Keep::Transient);
