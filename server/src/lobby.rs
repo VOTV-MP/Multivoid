@@ -42,6 +42,8 @@ pub const RL_MUTATE: (Duration, usize) = (Duration::from_secs(60), 240);
 // An open browser fetches every 5 s (12 a minute), so 120 leaves room for ten players behind one address.
 pub const RL_BROWSE: (Duration, usize) = (Duration::from_secs(60), 120);
 
+// A lobby's seats: the mod's peer cap (kMaxPeers).
+pub const MAX_PLAYERS: i64 = 8;
 pub const MAX_NAME: usize = 63;
 pub const MAX_WORLD: usize = 39;
 pub const MAX_VERSION: usize = 23;
