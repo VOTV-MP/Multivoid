@@ -7,6 +7,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/voice/voice_capture.h"
+#include "coop/voice/camcorder_voice.h"
 #include "coop/voice/voice_playback.h"
 
 #include "coop/config/config.h"
@@ -219,6 +220,7 @@ void Install(coop::net::Session* session) {
     // session-START work and runs exactly once, whichever way the enabled decision goes.
     if (g_installed) return;
     g_installed = true;
+    coop::voice::camcorder_voice::Install();   // the recorder's merger launch: the camera's voice track joins its wav
 
     g_enabled = CFG::ResolveFlag(coop::config_registry::rows::voice_enabled);
     g_installAt = Clock::now();
@@ -277,6 +279,7 @@ void Tick() {
         if (s->connected()) s->SendVoiceFrame(f);
         if (g_loopback)
             g_playback.OnFrame(localSlot != coop::players::kPeerIdUnknown ? localSlot : 0, f);
+        if (coop::voice::camcorder_voice::WantsSelf()) g_playback.OnSelfFrame(localSlot, f);   // the camera hears it
     }
 
     // Inbound: the session voice inbox into the jitter buffers. One batch drain is one lock per
@@ -323,6 +326,9 @@ void Tick() {
             }
         }
     }
+
+    // A camcorder recording here: the voices as heard at the camera, streamed to its voice track.
+    coop::voice::camcorder_voice::Tick(g_playback, localSlot != coop::players::kPeerIdUnknown ? localSlot : -1, g_loopback);
 
     // VoiceState edges (display-only; first connected tick sends the baseline).
     // voiceDisabled is part of the edge. It is constant inside this gate today, since Tick

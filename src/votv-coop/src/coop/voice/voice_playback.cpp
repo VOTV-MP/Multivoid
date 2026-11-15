@@ -42,6 +42,10 @@ bool Playback::Start(const PlaybackConfig& cfg) {
     distanceCm_.store(cfg.distanceCm, std::memory_order_relaxed);
     jitterThreshold_ = cfg.jitterThreshold;
     prebufferFrames_ = cfg.prebufferFrames;
+    camRing_.assign(2 * kCamRingFrames, 0.0f);
+    camScratch_.assign(2 * kCamBlockFrames, 0.0f);
+    camWrite_.store(0);
+    camRead_.store(0);
 
     auto* ctx = new ma_context();
     if (ma_context_init(nullptr, 0, nullptr, ctx) != MA_SUCCESS) {
@@ -314,8 +318,62 @@ void Playback::PushPcm(Channel& ch, const int16_t* samples, int count) {
 
 // ---- the mixer (miniaudio callback thread) ----
 
+// The gains a channel at (sx, sy, sz) is heard with from (lx, ly, lz) facing `yawRad`: the distance gain, the vertical
+// fade and the REDUCED-mode pan, for the listener and for the camera alike.
+static void SpatialGains(float sx, float sy, float sz, float lx, float ly, float lz, float yawRad, float range, bool whispering,
+                  float& gainL, float& gainR) {
+    const float dx = sx - lx;
+    const float dy = sy - ly;
+    const float dz = sz - lz;
+    const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    // The range, four cases. range > 0, speaking: maxDist = range, the vertical fade spans range *
+    // kVerticalFadeRatio. range > 0, whispering: maxDist = range / 2 and the same fade (a whisper halves the reach,
+    // not the fade). range == 0 (unlimited), speaking: no attenuation and no fade. range == 0, whispering: as under
+    // the row's default range, so a whisper stays local on a server with global voice.
+    float att = 1.0f;    // SVC AL_LINEAR_DISTANCE: 1 - dist / maxDist
+    float vfade = 1.0f;  // SVC vertical fade: 1 - |dz| / fade
+    if (range > 0.0f || whispering) {
+        const float base = range > 0.0f ? range : DefaultRangeCm();
+        const float maxDist = whispering ? base * 0.5f : base;
+        att = 1.0f - dist / maxDist;
+        if (att < 0) att = 0;
+        if (att > 1) att = 1;
+        vfade = 1.0f - std::fabs(dz) / (base * kVerticalFadeRatio);
+        if (vfade < 0) vfade = 0;
+    }
+    // SVC REDUCED-mode pan: lateral/forward in listener space (UE: yaw 0 = +X, right = (-sin yaw, cos yaw)).
+    const float fwd = dx * std::cos(yawRad) + dy * std::sin(yawRad);
+    const float lat = -dx * std::sin(yawRad) + dy * std::cos(yawRad);
+    float pan = 0.0f;
+    if (dist > 1.0f) {
+        pan = std::atan2(lat, fwd) / kPi;  // [-1, 1]
+        if (pan > 0.5f) pan = 0.5f;        // SVC clamps to +-0.5
+        if (pan < -0.5f) pan = -0.5f;
+    }
+    float volL = 1.0f - pan * 1.4f;
+    float volR = 1.0f + pan * 1.4f;
+    if (volL > 1) volL = 1;
+    if (volL < 0.3f) volL = 0.3f;
+    if (volR > 1) volR = 1;
+    if (volR < 0.3f) volR = 0.3f;
+    const float g = att * vfade;
+    gainL = g * volL;
+    gainR = g * volR;
+}
+
 void Playback::MixOutput(float* out, uint32_t frameCount) {
     std::memset(out, 0, sizeof(float) * 2 * frameCount);
+    // The camera mix, while a recording runs here: the first kCamBlockFrames of the block (a callback is far
+    // shorter), pushed to the ring after the channels.
+    const bool cam = camOn_.load(std::memory_order_acquire) && !camScratch_.empty();
+    const int self = camSelf_.load(std::memory_order_relaxed);
+    const uint32_t camFrames = cam ? (frameCount < kCamBlockFrames ? frameCount : kCamBlockFrames) : 0;
+    float* const camBuf = cam ? camScratch_.data() : nullptr;
+    if (cam) std::memset(camBuf, 0, sizeof(float) * 2 * camFrames);
+    const float cx = camX_.load(std::memory_order_relaxed);
+    const float cy = camY_.load(std::memory_order_relaxed);
+    const float cz = camZ_.load(std::memory_order_relaxed);
+    const float camYawRad = camYaw_.load(std::memory_order_relaxed) * kPi / 180.0f;
     const float lx = listenerX_.load(std::memory_order_relaxed);
     const float ly = listenerY_.load(std::memory_order_relaxed);
     const float lz = listenerZ_.load(std::memory_order_relaxed);
@@ -338,51 +396,22 @@ void Playback::MixOutput(float* out, uint32_t frameCount) {
 
         // Spatial params once per callback block (~10 ms).
         float gainL = 1.0f, gainR = 1.0f;
+        float camL = 0.0f, camR = 0.0f;
+        const bool whispering = ch.whispering.load(std::memory_order_relaxed);
         if (ch.posValid.load(std::memory_order_relaxed)) {
-            const float dx = ch.posX.load(std::memory_order_relaxed) - lx;
-            const float dy = ch.posY.load(std::memory_order_relaxed) - ly;
-            const float dz = ch.posZ.load(std::memory_order_relaxed) - lz;
-            const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-            // The range, four cases. range > 0, speaking: maxDist = range, the vertical fade
-            // spans range * kVerticalFadeRatio. range > 0, whispering: maxDist = range / 2 and
-            // the same fade (a whisper halves the reach, not the fade). range == 0 (unlimited),
-            // speaking: no attenuation and no fade. range == 0, whispering: as under the row's
-            // default range, so a whisper stays local on a server with global voice.
-            const bool whispering = ch.whispering.load(std::memory_order_relaxed);
-            float att = 1.0f;    // SVC AL_LINEAR_DISTANCE: 1 - dist / maxDist
-            float vfade = 1.0f;  // SVC vertical fade: 1 - |dz| / fade
-            if (range > 0.0f || whispering) {
-                const float base = range > 0.0f ? range : DefaultRangeCm();
-                const float maxDist = whispering ? base * 0.5f : base;
-                att = 1.0f - dist / maxDist;
-                if (att < 0) att = 0;
-                if (att > 1) att = 1;
-                vfade = 1.0f - std::fabs(dz) / (base * kVerticalFadeRatio);
-                if (vfade < 0) vfade = 0;
-            }
-            // SVC REDUCED-mode pan: lateral/forward in listener space (UE:
-            // yaw 0 = +X, right = (-sin yaw, cos yaw)).
-            const float fwd = dx * std::cos(yawRad) + dy * std::sin(yawRad);
-            const float lat = -dx * std::sin(yawRad) + dy * std::cos(yawRad);
-            float pan = 0.0f;
-            if (dist > 1.0f) {
-                pan = std::atan2(lat, fwd) / kPi;  // [-1, 1]
-                if (pan > 0.5f) pan = 0.5f;        // SVC clamps to +-0.5
-                if (pan < -0.5f) pan = -0.5f;
-            }
-            float volL = 1.0f - pan * 1.4f;
-            float volR = 1.0f + pan * 1.4f;
-            if (volL > 1) volL = 1;
-            if (volL < 0.3f) volL = 0.3f;
-            if (volR > 1) volR = 1;
-            if (volR < 0.3f) volR = 0.3f;
-            const float g = att * vfade;
-            gainL = g * volL;
-            gainR = g * volR;
+            const float sx = ch.posX.load(std::memory_order_relaxed);
+            const float sy = ch.posY.load(std::memory_order_relaxed);
+            const float sz = ch.posZ.load(std::memory_order_relaxed);
+            SpatialGains(sx, sy, sz, lx, ly, lz, yawRad, range, whispering, gainL, gainR);
+            if (cam) SpatialGains(sx, sy, sz, cx, cy, cz, camYawRad, range, whispering, camL, camR);
         }
-        const float vol = master * ch.volume.load(std::memory_order_relaxed);
+        const float slotVol = ch.volume.load(std::memory_order_relaxed);
+        const float vol = master * slotVol;
         gainL *= vol;
         gainR *= vol;
+        camL *= slotVol;
+        camR *= slotVol;
+        if (slot == self) gainL = gainR = 0.0f;   // this peer's own voice: for the camera alone
 
         const uint32_t take =
             avail < frameCount ? static_cast<uint32_t>(avail) : frameCount;
@@ -391,10 +420,30 @@ void Playback::MixOutput(float* out, uint32_t frameCount) {
                 static_cast<float>(ch.ring[(read + i) % Channel::kRingSamples]) / 32768.0f;
             out[2 * i + 0] += s * gainL;
             out[2 * i + 1] += s * gainR;
+            if (i < camFrames) {
+                camBuf[2 * i + 0] += s * camL;
+                camBuf[2 * i + 1] += s * camR;
+            }
         }
         ch.ringRead.store(read + take, std::memory_order_release);
         // (take < frameCount leaves silence for the tail -- the underrun
         // re-prime triggers on the next callback when avail hits 0.)
+    }
+
+    // The camera block to its ring: dropped whole when the game thread has not drained a second of it.
+    if (cam) {
+        const uint64_t w = camWrite_.load(std::memory_order_relaxed);
+        const uint64_t r = camRead_.load(std::memory_order_acquire);
+        if (kCamRingFrames - (w - r) < camFrames) {
+            camDropped_.fetch_add(camFrames, std::memory_order_relaxed);
+        } else {
+            for (uint32_t i = 0; i < camFrames; ++i) {
+                const uint32_t at = static_cast<uint32_t>((w + i) % kCamRingFrames);
+                camRing_[2 * at + 0] = camBuf[2 * i + 0];
+                camRing_[2 * at + 1] = camBuf[2 * i + 1];
+            }
+            camWrite_.store(w + camFrames, std::memory_order_release);
+        }
     }
 
     // Soft clip.
@@ -403,6 +452,45 @@ void Playback::MixOutput(float* out, uint32_t frameCount) {
         if (out[i] > 1.0f) out[i] = 1.0f;
         else if (out[i] < -1.0f) out[i] = -1.0f;
     }
+}
+
+void Playback::SetCamera(bool on, float x, float y, float z, float yawDeg, int selfSlot) {
+    camX_.store(x, std::memory_order_relaxed);
+    camY_.store(y, std::memory_order_relaxed);
+    camZ_.store(z, std::memory_order_relaxed);
+    camYaw_.store(yawDeg, std::memory_order_relaxed);
+    const int wasSelf = camSelf_.load(std::memory_order_relaxed);
+    const int self = on ? selfSlot : -1;
+    if (wasSelf >= 0 && wasSelf != self) {
+        camSelf_.store(-1, std::memory_order_release);
+        ResetSlot(wasSelf);   // the own voice the camera heard does not stay queued in a channel
+    }
+    camSelf_.store(self, std::memory_order_release);
+    camOn_.store(on && running_, std::memory_order_release);
+}
+
+void Playback::OnSelfFrame(int slot, const coop::net::VoiceFramePayload& f) {
+    if (slot < 0 || slot >= coop::players::kMaxPeers || !running_ || camSelf_.load(std::memory_order_relaxed) != slot)
+        return;
+    DeliverInOrder(channels_[slot], f);   // in order already: this peer's own frames, in its own send order
+}
+
+uint64_t Playback::DrainCamera(std::vector<int16_t>& out) {
+    if (camRing_.empty()) return 0;
+    const uint64_t w = camWrite_.load(std::memory_order_acquire);
+    const uint64_t r = camRead_.load(std::memory_order_relaxed);
+    out.reserve(out.size() + 2 * static_cast<size_t>(w - r));
+    for (uint64_t i = r; i < w; ++i) {
+        const uint32_t at = static_cast<uint32_t>(i % kCamRingFrames);
+        for (int c = 0; c < 2; ++c) {
+            float v = camRing_[2 * at + c];
+            if (v > 1.0f) v = 1.0f;
+            if (v < -1.0f) v = -1.0f;
+            out.push_back(static_cast<int16_t>(v * 32767.0f));
+        }
+    }
+    camRead_.store(w, std::memory_order_release);
+    return camDropped_.load(std::memory_order_relaxed);
 }
 
 std::vector<std::string> Playback::EnumerateDevices() {
