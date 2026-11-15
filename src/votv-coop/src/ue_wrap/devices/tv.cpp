@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -11,6 +12,7 @@
 #include "ue_wrap/engine/world_identity.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 namespace ue_wrap::tv {
@@ -240,6 +242,70 @@ bool ForcePowered(void* tv, bool on) {
         if (f.valid()) ue_wrap::Call(tv, f);
     }
     return true;
+}
+
+std::string ScreenState(void* tv) {
+    if (!IsTv(tv)) return "no set";
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(tv);
+    const auto flag = [&](const wchar_t* name) {
+        const int32_t off = Off(tv, name);
+        return off < 0 ? -1 : (base[off] != 0 ? 1 : 0);
+    };
+    const auto num = [&](const wchar_t* name) {
+        const int32_t off = Off(tv, name);
+        return off < 0 ? -99 : *reinterpret_cast<const int32_t*>(base + off);
+    };
+    // A no-argument or one-argument call that answers an object, an int or a float.
+    const auto askObj = [](void* obj, const wchar_t* fnName, const wchar_t* arg, int32_t value) -> void* {
+        void* fn = obj ? Fn(obj, fnName) : nullptr;
+        if (!fn) return nullptr;
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid() || (arg && !f.Set<int32_t>(arg, value)) || !ue_wrap::Call(obj, f)) return nullptr;
+        return f.Get<void*>(L"ReturnValue");
+    };
+    const auto askInt = [](void* obj, const wchar_t* fnName, const wchar_t* arg, uint8_t value) -> int32_t {
+        void* fn = obj ? Fn(obj, fnName) : nullptr;
+        if (!fn) return -99;
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid() || (arg && !f.Set<uint8_t>(arg, value)) || !ue_wrap::Call(obj, f)) return -99;
+        return f.Get<int32_t>(L"ReturnValue");
+    };
+    void* dynmat = Member(tv, L"dynmat");
+    void* texture = Member(tv, L"MediaTexture");
+    void* player = PlayerOf(tv);
+    void* mesh = Member(tv, L"StaticMesh");
+    const int32_t index = num(L"screenMaterialIndex");
+    void* worn = askObj(mesh, L"GetMaterial", L"ElementIndex", index);
+    const auto scalar = [&](const wchar_t* name) {
+        void* fn = dynmat ? Fn(dynmat, L"K2_GetScalarParameterValue") : nullptr;
+        if (!fn) return -99.f;
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid() || !f.Set<R::FName>(L"ParameterName", ue_wrap::fname_utils::StringToFName(name)) ||
+            !ue_wrap::Call(dynmat, f))
+            return -99.f;
+        return f.Get<float>(L"ReturnValue");
+    };
+    void* shown = nullptr;
+    if (void* fn = dynmat ? Fn(dynmat, L"K2_GetTextureParameterValue") : nullptr) {
+        ue_wrap::ParamFrame f(fn);
+        if (f.valid() && f.Set<R::FName>(L"ParameterName", ue_wrap::fname_utils::StringToFName(L"tex")) &&
+            ue_wrap::Call(dynmat, f))
+            shown = f.Get<void*>(L"ReturnValue");
+    }
+    const std::wstring wornName = worn ? R::ToString(R::NameOf(worn)) : std::wstring(L"none");
+    char line[640];
+    std::snprintf(line, sizeof(line),
+                  "powered=%d picture=%d security=%d channel=%d player=%d dynmat=%d mesh-wears-dynmat=%d (index %d, worn '%ls') "
+                  "static=%.2f active=%.2f disconnected=%.2f brightness=%.2f tex-is-channel-texture=%d texture=%dx%d "
+                  "texture-player-is-set's=%d video-tracks=%d selected=%d",
+                  flag(L"powered"), flag(L"picture"), flag(L"isSecurity"), num(L"channel"), player ? 1 : 0, dynmat ? 1 : 0,
+                  (dynmat && worn == dynmat) ? 1 : 0, index, wornName.c_str(), scalar(L"static"),
+                  scalar(L"active"), scalar(L"disconnected"), scalar(L"brightness"),
+                  (texture && shown == texture) ? 1 : 0, askInt(texture, L"GetWidth", nullptr, 0),
+                  askInt(texture, L"GetHeight", nullptr, 0),
+                  (player && askObj(texture, L"GetMediaPlayer", nullptr, 0) == player) ? 1 : 0,
+                  askInt(player, L"GetNumTracks", L"TrackType", 6), askInt(player, L"GetSelectedTrack", L"TrackType", 6));
+    return line;
 }
 
 }  // namespace ue_wrap::tv

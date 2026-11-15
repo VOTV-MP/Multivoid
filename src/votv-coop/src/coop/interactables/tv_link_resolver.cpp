@@ -87,29 +87,41 @@ bool HostIs(const std::wstring& host, const wchar_t* domain) {
 // tools\yt-dlp.exe in the mod's own folder. Under a mod manager the path a module reports for itself is one the
 // loader maps for file reads only: a program cannot be started from it. The data folder is the real one
 // (ue_wrap/core/paths), so the tool is looked for there first, then beside the folder this module was loaded from.
+// Read on every call, not cached: a first call before the data folder is known would pin the mapped path.
 std::wstring ToolPath() {
-    static const std::wstring path = [] {
-        const std::wstring data = ue_wrap::paths::ModDataDir();
-        if (!data.empty()) {
-            const std::wstring real = data + L"\\tools\\yt-dlp.exe";
-            if (::GetFileAttributesW(real.c_str()) != INVALID_FILE_ATTRIBUTES) return real;
-        }
-        HMODULE self = nullptr;
-        if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                  reinterpret_cast<LPCWSTR>(&ToolPresent), &self))
-            return std::wstring();
-        wchar_t buf[1024] = {};
-        const DWORD n = ::GetModuleFileNameW(self, buf, 1024);
-        if (n == 0 || n >= 1024) return std::wstring();
-        std::wstring dir(buf, n);
-        const size_t slash = dir.find_last_of(L"\\/");
-        if (slash == std::wstring::npos) return std::wstring();
-        dir.erase(slash);                       // ...\dlls
-        const size_t up = dir.find_last_of(L"\\/");
-        if (up == std::wstring::npos) return std::wstring();
-        return dir.substr(0, up) + L"\\tools\\yt-dlp.exe";
-    }();
-    return path;
+    const std::wstring data = ue_wrap::paths::ModDataDir();
+    if (!data.empty()) {
+        const std::wstring real = data + L"\\tools\\yt-dlp.exe";
+        if (::GetFileAttributesW(real.c_str()) != INVALID_FILE_ATTRIBUTES) return real;
+    }
+    HMODULE self = nullptr;
+    if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              reinterpret_cast<LPCWSTR>(&ToolPresent), &self))
+        return std::wstring();
+    wchar_t buf[1024] = {};
+    const DWORD n = ::GetModuleFileNameW(self, buf, 1024);
+    if (n == 0 || n >= 1024) return std::wstring();
+    std::wstring dir(buf, n);
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return std::wstring();
+    dir.erase(slash);                       // ...\dlls
+    const size_t up = dir.find_last_of(L"\\/");
+    if (up == std::wstring::npos) return std::wstring();
+    return dir.substr(0, up) + L"\\tools\\yt-dlp.exe";
+}
+
+// The option that names the JavaScript runtime shipped beside the tool (tools\qjs.exe, QuickJS). YouTube gives
+// a stream with picture and sound in one file only to a client that has solved its script challenge, and the
+// tool solves it with this runtime; without one it is offered the two apart, which a television cannot open.
+// Empty when the runtime is not there, said once.
+std::wstring RuntimeOption(const std::wstring& tool) {
+    const size_t slash = tool.find_last_of(L"\\/");
+    const std::wstring qjs = (slash == std::wstring::npos ? std::wstring() : tool.substr(0, slash + 1)) + L"qjs.exe";
+    if (::GetFileAttributesW(qjs.c_str()) != INVALID_FILE_ATTRIBUTES) return L"--js-runtimes \"quickjs:" + qjs + L"\" ";
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true))
+        UE_LOGW("tv_link: tools\\qjs.exe is not beside yt-dlp -- YouTube may offer no stream with both picture and sound");
+    return {};
 }
 
 // Run the tool and return what it printed on either stream, at most 4 KB. Empty when it could not be started or
@@ -124,8 +136,8 @@ std::string RunTool(const std::wstring& link) {
     // One stream with picture and sound, an mp4 first. The address follows `--`, so nothing in it is
     // read as an option, and ValidLink has kept quotes and spaces out of it.
     std::wstring cmd = L"\"" + tool +
-                       L"\" --no-playlist --no-warnings --quiet --socket-timeout 15 "
-                       L"-f \"18/b[ext=mp4][acodec!=none][vcodec!=none]/b[acodec!=none][vcodec!=none]\" -g -- " +
+                       L"\" --no-playlist --no-warnings --quiet --socket-timeout 15 " + RuntimeOption(tool) +
+                       L"-f\"18/b[ext=mp4][acodec!=none][vcodec!=none]/b[acodec!=none][vcodec!=none]\" -g -- " +
                        link;
     STARTUPINFOW si{};
     si.cb = sizeof(si);

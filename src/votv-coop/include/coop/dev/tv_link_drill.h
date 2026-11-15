@@ -9,7 +9,7 @@
 // the search box of the set's remote, with `set:` by calling the set's own openLink as its remote's list
 // does; with `client:` the client asks its copy and the host watches.
 // Each peer then reads its set's
-// media player every two seconds for forty: `[TV-LINK-DRILL] [H|C] PASS` when the play time moved by
+// media player every two seconds for forty: `[TV-LINK-DRILL]` with `PASS` when the play time moved by
 // two seconds or more, `FAIL` otherwise.
 
 #pragma once

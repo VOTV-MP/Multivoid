@@ -3,6 +3,7 @@
 #include "coop/dev/tv_link_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/interactables/tv_link_resolver.h"
 #include "coop/interactables/tv_link_sync.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
@@ -41,6 +42,7 @@ struct Plan {
     std::wstring url;
     bool typed = false;  // `typed:<address>`: entered in the remote's search box, not handed to the lane
     bool fromClient = false;  // `client:<address>`: the client asks its copy of the set, the host watches
+                              // (`clienttyped:<address>`: the client enters it in its remote's search box)
     bool viaSet = false;      // `set:<address>`: the set's own openLink is called, as a row of its remote's list does
     bool control = false;     // `control:<address>`: the host also pauses at 4 s, then seeks to 1 s and resumes at 10 s
 };
@@ -61,6 +63,9 @@ const Plan& ThePlan() {
         } else if (v.compare(0, 7, "client:") == 0) {
             out.fromClient = true;
             v.erase(0, 7);
+        } else if (v.compare(0, 12, "clienttyped:") == 0) {
+            out.fromClient = out.typed = true;
+            v.erase(0, 12);
         }
         out.url.assign(v.begin(), v.end());
         return out;
@@ -152,6 +157,8 @@ void Watch(uint64_t now) {
             static_cast<unsigned long long>((now - g_playedMs) / 1000), tv ? 1 : 0, playing, t,
             static_cast<unsigned long long>(coop::tv_link_sync::Opened()),
             static_cast<unsigned long long>(coop::tv_link_sync::Controls()));
+    if (tv && (now - g_playedMs) / kStepMs % 5 == 4)
+        UE_LOGI("[TV-LINK-DRILL] [%s] screen: %s", Who(), TV::ScreenState(tv).c_str());
     if (now - g_playedMs < kWatchMs) return;
     // A clip shorter than the watch plays again from its start, so the furthest time is the measure.
     if (g_first >= 0.0 && g_max >= g_first + 2.0)
@@ -186,8 +193,9 @@ void Tick(coop::net::Session* session) {
             // The asker is this client: its copy has stood for the settle time, so the host's set has too.
             if (!g_readyMs) g_readyMs = now;
             if (now - g_readyMs < kSettleMs) return;
-            const bool asked = coop::tv_link_sync::PlayLocal(copy, Url());
-            UE_LOGI("[TV-LINK-DRILL] [C] asked this peer's copy of the set for the address: %d", asked ? 1 : 0);
+            const bool asked = ThePlan().typed ? TypeOnRemote(copy, Url()) : coop::tv_link_sync::PlayLocal(copy, Url());
+            UE_LOGI("[TV-LINK-DRILL] [C] asked this peer's copy of the set for the address%s: %d",
+                    ThePlan().typed ? ", typed on its remote" : "", asked ? 1 : 0);
             if (asked) g_playedMs = now;
             else g_done = true;
             return;
@@ -238,7 +246,9 @@ void Tick(coop::net::Session* session) {
     }
     const std::wstring key = ue_wrap::prop::GetInteractableKeyString(tv);
     const uint64_t before = coop::tv_link_sync::Opened();
-    const bool asked = ThePlan().typed    ? (TypeOnRemote(tv, Url()) && coop::tv_link_sync::Opened() > before)
+    // A typed address that is resolved first opens later, so the type alone is the ask; the play time is the proof.
+    const bool later = coop::tv_link_resolver::NeedsResolve(Url());
+    const bool asked = ThePlan().typed    ? (TypeOnRemote(tv, Url()) && (later || coop::tv_link_sync::Opened() > before))
                        : ThePlan().viaSet ? (TV::TakeAnyChannel(tv) && TV::OpenLink(tv, L"drill", Url()))
                                           : coop::tv_link_sync::PlayLocal(tv, Url());
     UE_LOGI("[TV-LINK-DRILL] [H] asked the set key='%ls' (%ls) for the address%s: %d", key.c_str(),

@@ -36,7 +36,7 @@ At a join the host reads each set of its world: one whose player is playing a we
 to the joiner with its play position, and the joiner's set seeks there once its own player has
 started. The host remembers nothing between sessions; what a set plays is read from the set.
 
-`[V]` `coop/dev/tv_link_drill` (`VOTVCOOP_TV_LINK_DRILL=[typed:|set:|client:|control:]<address>`,
+`[V]` `coop/dev/tv_link_drill` (`VOTVCOOP_TV_LINK_DRILL=[typed:|set:|client:|clienttyped:|control:]<address>`,
 both peers), each arm with a 10 second sample file over https on a spawned mini TV: the lane's
 entry, the remote's search box, the set's own `openLink` and a client as the asker each ended with
 both peers' sets playing to the clip's end, the client's about half a second behind; `control:`
@@ -50,12 +50,19 @@ A YouTube page is not a file, so a YouTube address (`youtube.com`, `youtu.be`) i
 (`coop/interactables/tv_link_resolver`): the yt-dlp program, shipped as `tools\yt-dlp.exe` beside
 the mod when the package was built with `-YtDlp`, is run without a window from the mod's real folder
 (under a mod manager the folder a module reports is mapped for reads and starts no program) and asked for the address
-of one stream with picture and sound, an mp4 first. YouTube ties that address to the machine that
+of one stream with picture and sound, an mp4 first. YouTube names such a stream only to a client
+that has solved its script challenge; to one that has not it offers picture and sound apart and an
+HLS playlist, and the engine's player (Windows Media Foundation) opens neither as one video. So the
+package built with `-QuickJs` ships QuickJS-NG as `tools\qjs.exe`, and the tool is told to solve the
+challenge with it (`--js-runtimes`). A run takes about eight seconds. YouTube ties that address to the machine that
 asked, so the address that crosses the wire is the one the player typed and every peer resolves it
 for itself. An answer is kept for twenty minutes, so a replay, a second set or a joiner's catch-up
 does not run the tool again. How a run ended is one log line: the Windows error when it could not
-start, else its exit code and what it printed. `[RD]`: no run of this project has resolved a
-YouTube address; the path from the tool's answer to `openLink` is the direct link's.
+start, else its exit code and what it printed. `[V]` (`tv_link_drill` with a YouTube address, both
+peers: asked by the host, typed on the host's remote, and `clienttyped:`, typed on the client's
+remote): each peer ran the tool for about nine seconds and its set played a 640x360 picture, read
+from the set's screen material and channel texture. A live stream has no such stream and is refused
+with the tool's line. A rejoin during a YouTube video has not been measured `[RD]`.
 
 ## What a player sees
 

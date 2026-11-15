@@ -58,6 +58,10 @@ void*  RemoteSet(void* remote);
 double RemoteSliderSeconds(void* remote);
 bool   ClearRemoteSearch(void* remote);
 
+// Drill aid: one line on what the set's screen is made of now: its flags, its channel, whether its mesh wears the
+// screen material, that material's scalars and texture, and the texture's size and player.
+std::string ScreenState(void* tv);
+
 // Drill aid: write the `powered` flag as a plugged cord would.
 bool ForcePowered(void* tv, bool on);
 
