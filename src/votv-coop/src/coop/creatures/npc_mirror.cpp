@@ -32,6 +32,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/walk_timer.h"  // [WALK-TIME] attribution of the tick's steps
 #include "ue_wrap/core/sdk_profile.h"  // NpcClass_Wisp, NpcClass_GeomOcta, NpcClass_Deer (the mirrors that keep their actor tick)
 #include "ue_wrap/core/types.h"
 
@@ -689,23 +690,26 @@ void TickClientNpcs() {
     // does not allocate.
     static std::vector<coop::element::Npc*> elems;
     NpcMirrors().Snapshot(elems);
-    for (coop::element::Npc* el : elems)
-        if (el && el->IsMirror()) el->Tick();
+    {
+        ue_wrap::ScopedWalkTimer _w{"npc_client:mirrors"};
+        for (coop::element::Npc* el : elems)
+            if (el && el->IsMirror()) el->Tick();
+    }
 
     // 3. The deferred adoption of save-persisted NPCs and the one-shot ghost sweep, both owned by
     // npc_adoption; a single compare once converged.
-    coop::npc_adoption::Tick();
+    { ue_wrap::ScopedWalkTimer _w{"npc_client:adoption"}; coop::npc_adoption::Tick(); }
     // 3b. The deferred adoption of save-loaded prop-form kerfurs, the prop analogue; a single bool
     // once empty.
-    coop::kerfur_prop_adoption::Tick();
+    { ue_wrap::ScopedWalkTimer _w{"npc_client:kerfur_adoption"}; coop::kerfur_prop_adoption::Tick(); }
 
     // 4. The deferred prop divergence sweep: it waits for the save load's late key-minting tail to
     // quiesce, so a prop the host converted away is destroyed by its real key instead of skipped
     // into a ghost. A single bool read when nothing is armed.
-    coop::join_membership_sweep::TickClientReconcile();
+    { ue_wrap::ScopedWalkTimer _w{"npc_client:membership_sweep"}; coop::join_membership_sweep::TickClientReconcile(); }
 
     // The one-shot kerfur census at quiescence, after both sweeps: reads and logs only.
-    coop::kerfur_census::Tick();  // one-shot at quiescence; periodic when kerfur_census=1
+    { ue_wrap::ScopedWalkTimer _w{"npc_client:kerfur_census"}; coop::kerfur_census::Tick(); }  // one-shot at quiescence; periodic when kerfur_census=1
 }
 
 }  // namespace coop::npc_mirror

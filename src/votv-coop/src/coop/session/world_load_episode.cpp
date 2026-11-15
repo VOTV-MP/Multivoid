@@ -15,6 +15,7 @@
 #include "ue_wrap/core/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD (probe fields are GT-owned)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -122,30 +123,53 @@ void ReconLowerGT_(const char* why) {
 // flagged. One GUObjectArray walk, pure pointer-compare class filters before any key or name read,
 // throttled and only while a session is open. Stability is about population CHANGE, not membership:
 // a claimed still-keyless actor contributes a constant term that cannot block the latch.
+// One object's term of the census, its class already told: (a) an allowlisted NPC, or (b) a keyed interactable.
+int TailTerm_(void* obj, bool npc) {
+    if (!R::IsLive(obj)) return 0;
+    if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return 0;  // CDO (alloc-free)
+    if (npc) return 1;
+    // (b') The chipPile field, counted even mid-purge.
+    if (ue_wrap::prop::IsChipPile(obj)) return 1;
+    if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(obj))) return 0;
+    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
+    return (key.empty() || key == L"None") ? 1 : 0;
+}
+
+struct TailWalk_ {
+    int  unsettled;
+    bool npc;
+};
+
 int CountLoadTailUnsettled_() {
+    // The object index lists each class's instances, so the census reads the two populations' own classes: a
+    // few thousand objects, where the array holds a couple of hundred thousand (about 35 ms a walk, and the
+    // probe needs ten in a row: the stutter a joiner felt once its loading screen dropped). While the index
+    // trails the engine its membership is not the array's, and the array is walked as before.
+    if (ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0) {
+        TailWalk_ walk{0, false};
+        ue_wrap::object_index::ForEachClass([](void* ctx, void* cls, void* /*anyInstance*/) {
+            TailWalk_* w = static_cast<TailWalk_*>(ctx);
+            // (a) before (b), as the array walk tests them: an unresolved allowlist degrades to prop-only.
+            if (coop::npc_sync::IsAllowlistedClass(cls)) w->npc = true;
+            else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) w->npc = false;
+            else return;
+            ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
+                TailWalk_* inner = static_cast<TailWalk_*>(c);
+                inner->unsettled += TailTerm_(obj, inner->npc);
+            }, w);
+        }, &walk);
+        return walk.unsettled;
+    }
     const int32_t n = R::NumObjects();
     int unsettled = 0;
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
-        // (a) The allowlisted-NPC load tail. Lineage test first, so NameOf and IsLive run only for
-        // the handful that pass. An unresolved allowlist degrades to prop-only quiescence.
-        if (coop::npc_sync::IsAllowlistedClass(cls)) {
-            if (!R::IsLive(obj)) continue;
-            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
-            ++unsettled;
-            continue;
-        }
-        // (b) The keyless-prop load tail.
-        if (!ue_wrap::prop::IsClassKeyedInteractable(cls)) continue;
-        if (!R::IsLive(obj)) continue;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO (alloc-free)
-        // (b') The chipPile field, counted even mid-purge.
-        if (ue_wrap::prop::IsChipPile(obj)) { ++unsettled; continue; }
-        if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(obj))) continue;
-        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
-        if (key.empty() || key == L"None") ++unsettled;
+        // (a) The allowlisted-NPC load tail, then (b) the keyless-prop load tail. Lineage tests first, so the
+        // name and liveness reads run only for the few that pass.
+        if (coop::npc_sync::IsAllowlistedClass(cls)) unsettled += TailTerm_(obj, true);
+        else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) unsettled += TailTerm_(obj, false);
     }
     return unsettled;
 }
