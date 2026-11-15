@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 #include <cstdint>
 #include <string>
 
@@ -73,5 +75,16 @@ bool SpParitySimulate(uint8_t physFlags);
 // host's rest pose in an identical transferred world, so the body wakes at a valid pose. Aprop_C
 // only, for the same reason as ReconcileToHostPhysics.
 void RestoreSpParityPhysicsAfterConverge(void* actor, uint8_t physFlags);
+
+// Called by a path that is about to teleport a prop this peer already has (a drive's end pose, a release's pose, a
+// join converge, the first pose of another peer's hold) BEFORE it writes: reads where the copy stands now and, when
+// the move to `to` is 3 cm or more, tallies it under `path` (a string literal) and logs one `[PROP-CORRECT]` line
+// with the prop's eid and key, the distance, and whether the body is kinematic, asleep or awake. At most 6 lines per
+// 5 s; the rest are counted, and a summary line (per path: count, moves of 10 cm or more, mean, max) follows every
+// 30 s. Reads only. Game thread.
+void NoteCorrection(void* actor, const ue_wrap::FVector& to, const char* path);
+
+// Emits the summary line when 30 s have passed since the last one and a correction was tallied. Per tick, cheap.
+void FlushCorrectionSummary(uint64_t nowMs);
 
 }  // namespace coop::prop_wire_parity

@@ -146,6 +146,8 @@ size_t g_endCount = 0;   // ends recorded since the session began; the newest is
 // a body this module parked and the flags leave simulating, and only when it is not zero, since
 // assigning a velocity wakes a body at rest.
 void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedHere) {
+    coop::prop_wire_parity::NoteCorrection(actor, ue_wrap::FVector{p.x, p.y, p.z},
+                                           parkedHere ? "drive-end" : "drive-end-unparked");
     E::SetActorLocation(actor, ue_wrap::FVector{p.x, p.y, p.z});
     if (dev::DriveView* v = DevViewOf(p.eid, p.gen)) v->endApplied = true;
     EndOnActor& on = g_endOnActor[p.eid];
@@ -349,6 +351,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
         ++it;
     }
     coop::prop_child_release::Tick(nowMs);   // a waiting door's liveness and its failure bound
+    coop::prop_wire_parity::FlushCorrectionSummary(nowMs);   // the 30 s tally of every path that moved a copy
 }
 
 namespace {

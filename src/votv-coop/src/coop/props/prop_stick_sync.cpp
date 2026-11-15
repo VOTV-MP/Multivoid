@@ -11,6 +11,7 @@
 #include "coop/props/prop_drive_host.h"  // OverrideClientSyncer: a replay that writes the copy ends a client's row on it
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
+#include "coop/props/prop_wire_parity.h"  // NoteCorrection: how far a let-go moves the copy
 #include "coop/props/remote_prop.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_physics.h"
@@ -406,6 +407,7 @@ void ApplyUnstick(void* prop, const coop::net::PropStickStatePayload& p, const s
     }
     const bool owned = coop::remote_prop::IsOwnedHere(prop);
     if (!owned) {
+        coop::prop_wire_parity::NoteCorrection(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ}, "unstick-let-go");
         E::SetActorLocation(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ});
         E::SetActorRotation(prop, ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
         if (void* mesh = ue_wrap::prop::GetStaticMesh(prop)) {

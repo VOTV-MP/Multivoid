@@ -25,6 +25,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"marsstruct_test1_skeleton_animblueprint_c", L"blueprintupdateanimation", L"marsstruct_test1_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x0ffc590698427747ull},
     {L"mmann_rigg_skeleton_animblueprint_c", L"blueprintupdateanimation", L"mmann_rigg_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xe4ee9b42fe7fe767ull},
     {L"piramid_sk_prot_skeleton_animblueprint_c", L"blueprintupdateanimation", L"piramid_sk_prot_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x967dd224b19e6260ull},
+    {L"prop_fireext_c", L"shoot", L"prop_fireext_c.shoot", 0x6a2d5d90ab51fa2dull, 0xe2bec1cb455ac29aull},
     {L"rufus_skeleton_animblueprint_c", L"blueprintupdateanimation", L"rufus_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf4ab9b5d37adac21ull},
     {L"shitduende_rigged_skeleton_animblueprint_c", L"blueprintupdateanimation", L"shitduende_rigged_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x13309a9ea9590d69ull},
     {L"tentacleball_prot_skeleton_animblueprint1_c", L"blueprintupdateanimation", L"tentacleball_prot_skeleton_animblueprint1_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf253073b0390594dull},

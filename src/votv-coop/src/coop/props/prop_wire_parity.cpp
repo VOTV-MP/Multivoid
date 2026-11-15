@@ -5,12 +5,20 @@
 
 #include "coop/props/prop_wire_parity.h"
 
+#include "coop/element/registry.h"         // EidForActor: the id a correction line names
 #include "coop/net/protocol.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"         // TryGetActorLocation, IsComponentSimulatingPhysics
 #include "ue_wrap/engine/engine_attach.h"  // IsActorRootBodyAtRest
+
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace coop::prop_wire_parity {
 
@@ -120,6 +128,91 @@ void RestoreSpParityPhysicsAfterConverge(void* actor, uint8_t physFlags) {
     void* mesh = ue_wrap::prop::GetStaticMesh(actor);
     if (!mesh) return;
     ue_wrap::engine::SetComponentSimulatePhysics(mesh, SpParitySimulate(physFlags));
+}
+
+namespace {
+
+constexpr float    kNoteMinCm      = 3.f;     // a smaller move is jitter, not a correction
+constexpr float    kNoteFarCm      = 10.f;    // the summary counts these apart
+constexpr uint64_t kNoteWindowMs   = 5000;
+constexpr int      kNoteLinesPerWindow = 6;
+constexpr uint64_t kSummaryEveryMs = 30000;
+constexpr size_t   kMaxPaths       = 8;
+
+struct PathTally {
+    const char* path = nullptr;   // a literal: compared by pointer, then by text
+    uint32_t    n = 0, far = 0;
+    float       sumCm = 0.f, maxCm = 0.f;
+};
+PathTally g_tally[kMaxPaths];     // game thread only
+uint64_t  g_windowStartMs = 0;
+int       g_windowLines   = 0;
+uint32_t  g_suppressed    = 0;    // counted since the last line that went out
+uint64_t  g_nextSummaryMs = 0;
+bool      g_anyTallied    = false;
+
+uint64_t SteadyMs() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+PathTally* TallyFor(const char* path) {
+    for (PathTally& t : g_tally) {
+        if (t.path == path || (t.path && std::strcmp(t.path, path) == 0)) return &t;
+        if (!t.path) { t.path = path; return &t; }
+    }
+    return nullptr;   // more paths than slots: still logged, not tallied
+}
+
+}  // namespace
+
+void NoteCorrection(void* actor, const ue_wrap::FVector& to, const char* path) {
+    UE_ASSERT_GAME_THREAD("prop_wire_parity::NoteCorrection");
+    ue_wrap::FVector from{};
+    if (!actor || !path || !ue_wrap::engine::TryGetActorLocation(actor, from)) return;
+    const float dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
+    const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(cm >= kNoteMinCm)) return;   // also drops a NaN
+    if (PathTally* t = TallyFor(path)) {
+        ++t->n;
+        if (cm >= kNoteFarCm) ++t->far;
+        t->sumCm += cm;
+        if (cm > t->maxCm) t->maxCm = cm;
+        g_anyTallied = true;
+    }
+    const uint64_t now = SteadyMs();
+    if (g_nextSummaryMs == 0) g_nextSummaryMs = now + kSummaryEveryMs;
+    if (now - g_windowStartMs >= kNoteWindowMs) { g_windowStartMs = now; g_windowLines = 0; }
+    if (g_windowLines >= kNoteLinesPerWindow) { ++g_suppressed; return; }
+    ++g_windowLines;
+    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(actor);
+    const char* body = "kinematic";
+    if (void* mesh = ue_wrap::prop::GetStaticMesh(actor);
+        mesh && ue_wrap::engine::IsComponentSimulatingPhysics(mesh))
+        body = ue_wrap::engine::IsActorRootBodyAtRest(actor) ? "asleep" : "awake";
+    UE_LOGI("[PROP-CORRECT] eid=%u key='%ls' path=%s moved=%.1f cm (dz %.1f) body=%s%s",
+            static_cast<unsigned>(eid == coop::element::kInvalidId ? 0u : eid),
+            ue_wrap::prop::GetInteractableKeyString(actor).c_str(), path, cm, dz, body,
+            g_suppressed ? " (more suppressed since the last line)" : "");
+    g_suppressed = 0;
+}
+
+void FlushCorrectionSummary(uint64_t nowMs) {
+    if (!g_anyTallied || nowMs < g_nextSummaryMs) return;
+    g_nextSummaryMs = nowMs + kSummaryEveryMs;
+    char line[512];
+    size_t used = 0;
+    for (PathTally& t : g_tally) {
+        if (!t.path || t.n == 0) continue;
+        const int w = std::snprintf(line + used, sizeof(line) - used, "%s%s n=%u far=%u mean=%.1f max=%.1f cm",
+                                    used ? "; " : "", t.path, t.n, t.far, t.sumCm / static_cast<float>(t.n), t.maxCm);
+        if (w < 0 || static_cast<size_t>(w) >= sizeof(line) - used) break;
+        used += static_cast<size_t>(w);
+        t.n = t.far = 0;
+        t.sumCm = t.maxCm = 0.f;
+    }
+    g_anyTallied = false;
+    if (used) UE_LOGI("[PROP-CORRECT] last 30 s: %s", line);
 }
 
 }  // namespace coop::prop_wire_parity

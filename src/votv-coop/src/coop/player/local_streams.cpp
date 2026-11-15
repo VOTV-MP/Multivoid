@@ -366,16 +366,21 @@ void SendHeldRelease(coop::net::Session& session) {
                 coop::element::quiescence_drain::SupersedePosCorrection(heldEid, "own release");
         }
     }
-    // The host's own throw of a prop it held: its copy flies on, and the driven-prop stream follows it to rest so every
-    // mirror lands where the host does. Opened after the hold state clears (a prop in a hand opens no row); a client's
-    // throw is the thrower's to stream, elected by the host.
-    void* const thrown = (throwSeq != 0 && g_lastHeldProp.Alive()) ? g_lastHeldProp.Raw() : nullptr;
+    // The host's own release of a prop it held, thrown or let go: its copy flies or falls on, and the driven-prop
+    // stream follows it to rest so every mirror lands where the host does. Opened after the hold state clears (a prop
+    // in a hand opens no row); a client's throw is the thrower's to stream, elected by the host.
+    // A let-go trash piece or swinger is left to its own lane.
+    void* const released = g_lastHeldProp.Alive() ? g_lastHeldProp.Raw() : nullptr;
+    const bool plainLetGo = throwSeq == 0 && !isTrashEid && !g_heldSwinger;
     g_lastHeldProp.Reset();
     g_lastHeldKey = {};
     g_heldSwinger = false;
     g_coasting = false;
     g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
-    if (thrown && session.role() == coop::net::Role::Host) coop::prop_drive_host::Coast(thrown, "throw");
+    if (released && session.role() == coop::net::Role::Host) {
+        if (throwSeq != 0) coop::prop_drive_host::Coast(released, "throw");
+        else if (plainLetGo) coop::prop_drive_host::CoastLetGo(released, "release");
+    }
 }
 
 }  // namespace
