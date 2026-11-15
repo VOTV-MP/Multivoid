@@ -133,12 +133,11 @@ void Tick(coop::net::Session* session) {
         g_step = 1;
         // A camcorder spawned before the player and picked up through `Hold Object`, as a bought one is: its data (the
         // frame rate, the quality) goes into the hand with it. The drill hand's empty hold slot records at 0 fps.
-        // VOTVCOOP_VIDCAM_CLASS=low takes the low-quality camcorder (prop_vidcam_low_C) instead.
-        const bool low = coop::config::ReadEnv("VOTVCOOP_VIDCAM_CLASS") == "low";
-        void* cls = ue_wrap::object_index::ClassByName(low ? L"prop_vidcam_low_C" : kCamClass);
-        if (!cls)
-            cls = ue_wrap::asset_load::LoadObjectByPath(low ? L"/Game/objects/prop_vidcam_low.prop_vidcam_low_C"
-                                                            : L"/Game/objects/prop_vidcam.prop_vidcam_C");
+        // VOTVCOOP_VIDCAM_CLASS=<model> takes prop_vidcam_<model>_C (supershit, low, mid, high, superhigh) instead.
+        const std::string model = coop::config::ReadEnv("VOTVCOOP_VIDCAM_CLASS");
+        const std::wstring leaf = model.empty() ? L"prop_vidcam" : L"prop_vidcam_" + std::wstring(model.begin(), model.end());
+        void* cls = ue_wrap::object_index::ClassByName((leaf + L"_C").c_str());
+        if (!cls) cls = ue_wrap::asset_load::LoadObjectByPath((L"/Game/objects/" + leaf + L"." + leaf + L"_C").c_str());
         ue_wrap::FVector at{};
         const ue_wrap::FVector f = me ? E::GetActorForwardVector(me) : ue_wrap::FVector{};
         void* const cam = cls && me && E::TryGetActorLocation(me, at)
