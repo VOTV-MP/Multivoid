@@ -203,6 +203,16 @@ host, which relays it to every other client; the host's own sleeping flag goes t
 one chat line naming the host when it rises. A joiner is sent the host's flag and every peer's
 state that is not awake, and a leaver is told to every client as awake.
 
+The host may choose the speed-up's trigger with the world rule `world.sleep_everyone` ("Time speeds
+up only when everyone sleeps", off by default, shown in the host's world rules and sent to every
+client). Off, the host's sleep speeds the world up as in single player. On, a host that sleeps while a
+connected player is awake rests as a client does: its world held at 1, its body and the world's
+effects at the game's factor, its food and coffee settled (`coop/player/sleep_rest`). Once every
+connected player rests or dreams, the world takes the game's factor; when one wakes, or a player
+joins, it goes back to 1 and the host rests on. The clients' line says the speed-up waits for
+everyone. `[?]` Not yet run on the rig. The host's own nightmare roll is the game's, 500 s of world
+time, so while the host rests alone it comes 500 real seconds into the sleep.
+
 A nightmare is one player's. The game rolls once per sleep, 500 s of world time after the sleeper
 falls asleep, and the host's sleep runs the world at 20, so a host rolls 25 real seconds into a
 rest. A client's rest keeps its world at 1, so the same wait would end after 500 real seconds. The

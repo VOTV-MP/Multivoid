@@ -279,6 +279,12 @@ CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
     "their visit ends."))
 CFG_ROWFLAGS(world_backrooms, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(world_backrooms, L10N_MARK("Allow the backrooms"))
+CFG_FLAG(world_sleep_everyone, "world.sleep_everyone", "world", false, nullptr,
+    L10N_MARK("Speed the world up only while every player in the session sleeps. Off, the host's sleep speeds it up "
+    "for everyone, as in single player. On, a host asleep while someone is awake rests at the world's normal speed "
+    "as a client does, and the speed-up starts once everyone is asleep and stops when anyone wakes."))
+CFG_ROWFLAGS(world_sleep_everyone, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(world_sleep_everyone, L10N_MARK("Time speeds up only when everyone sleeps"))
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,

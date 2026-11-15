@@ -159,6 +159,11 @@ msgstr ""
 msgid "%1$s is asleep -- the world runs faster"
 msgstr ""
 
+#: src/coop/player/sleep_sync.cpp
+#, c-format
+msgid "%1$s is asleep -- the world speeds up once everyone sleeps"
+msgstr ""
+
 #: src/coop/session/player_handshake.cpp
 #, c-format
 msgid "%1$s is connecting to the game..."
@@ -1224,6 +1229,10 @@ msgid ""
 "meter: set the slider just above your room's noise."
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "Speed the world up only while every player in the session sleeps. Off, the host's sleep speeds it up for everyone, as in single player. On, a host asleep while someone is awake rests at the world's normal speed as a client does, and the speed-up starts once everyone is asleep and stops when anyone wakes."
+msgstr ""
+
 #: src/ui/loading_screen.cpp
 msgid "Starting your server"
 msgstr ""
@@ -1573,6 +1582,10 @@ msgstr ""
 
 #: src/ui/config_review_panel.cpp
 msgid "Tidy up multivoid.ini"
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Time speeds up only when everyone sleeps"
 msgstr ""
 
 #: src/ui/hud.cpp

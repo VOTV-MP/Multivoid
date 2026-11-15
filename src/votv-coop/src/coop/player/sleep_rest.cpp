@@ -2,9 +2,13 @@
 
 #include "coop/player/sleep_rest.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/net_clock.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/sleep_sync.h"
 
 #include "ue_wrap/actors/effects.h"
 #include "ue_wrap/actors/sleep.h"
@@ -225,6 +229,48 @@ void EnsureWatch() {
     SettleWatch(g_wakeWatch);
 }
 
+// ---- HOST: the world rule world.sleep_everyone ----
+
+// The rule's on, and a connected client is awake: the host's sleep would speed up a world someone is playing in.
+// A joiner still connecting counts as awake, as it is not asleep.
+bool HostRestsAlone(coop::net::Session& s) {
+    if (!coop::config::ResolveFlag(coop::config_registry::rows::world_sleep_everyone)) return false;
+    for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot)
+        if (s.IsSlotConnected(slot) && coop::sleep_sync::PeerState(slot) == coop::net::SleepPeerState::Awake) return true;
+    return false;
+}
+
+void TickRest();
+
+// The host asleep: the game's own sleep (the world at its factor) while everyone else sleeps or the rule is off; a
+// client's rest (the world at 1, the body and the effects at the factor) while the rule is on and someone is awake.
+// Each switch is an edge of who sleeps, so it happens in the tick that sees it.
+void HostTick(coop::net::Session& s) {
+    const bool asleep = SLP::EnsureResolved() && SLP::IsSleeping();
+    if (!asleep) {
+        if (g_resting) EndRest("the host woke");
+        return;
+    }
+    const bool alone = HostRestsAlone(s);
+    if (alone && !g_resting) {
+        if (!SLP::SetGlobalTimeDilation(1.f)) {
+            UE_LOGE("sleep_rest: the world's dilation could not be held at 1 for the host's rest");
+            return;
+        }
+        BeginRest();
+        UE_LOGI("sleep_rest: the host sleeps while a player is awake -- the world stays at 1 until everyone sleeps "
+                "(world.sleep_everyone)");
+        return;
+    }
+    if (!alone && g_resting) {
+        EndRest("everyone is asleep, or the rule is off");
+        if (SLP::SetGlobalTimeDilation(kNativeSleepDilation))
+            UE_LOGI("sleep_rest: everyone sleeps -- the world runs at the game's %.0f", kNativeSleepDilation);
+        return;
+    }
+    if (g_resting) TickRest();
+}
+
 // A fall since the last read: food gets (1 - 1/F) of it back, coffee loses (F - 1) times it more. A rise
 // is not touched, and the baseline is read again after the write.
 void SettleNeeds() {
@@ -254,9 +300,16 @@ void Install(coop::net::Session* session) {
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    if (s->role() == coop::net::Role::Client) EnsureWatch();
+    if (s->role() == coop::net::Role::Host) return HostTick(*s);
+    EnsureWatch();
     if (!g_resting) return;
     if (!ConnectedClient()) return EndRest("the session left");
+    TickRest();
+}
+
+namespace {
+// A rest's own tick, a client's or the host's alone: its owner unchanged, the effects at the factor, the needs settled.
+void TickRest() {
     void* const gm = ue_wrap::world_singleton::Gamemode();
     if (!gm || gm != g_gm.Raw() || !g_gm.Alive()) return EndRest("the gamemode changed");
     void* const body = CurrentBody();
@@ -266,11 +319,17 @@ void Tick() {
     FX::ForEachWorldEffect(&DilateEffect, &factor);
     SettleNeeds();
 }
+}  // namespace
 
 bool Resting() { return g_resting; }
 
 void OnDisconnect() {
-    if (g_resting) EndRest("the session ended");
+    if (!g_resting) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    const bool host = s && s->role() == coop::net::Role::Host;
+    EndRest("the session ended");
+    // A host resting alone sleeps on by itself: its world takes the game's factor back.
+    if (host && SLP::IsSleeping()) SLP::SetGlobalTimeDilation(kNativeSleepDilation);
 }
 
 }  // namespace coop::sleep_rest
