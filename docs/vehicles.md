@@ -48,6 +48,14 @@ dismounts through the game's own dismount, a refused grab drops. Every machine f
 stamp, the seat and the syncer on each `AtvState` the host sends. `[?]` Built to this design; no
 two-peer run has judged it yet.
 
+### A second ATV
+
+A session holds up to eight players. Once `net.second_atv_players` players (5 by default; 0 for never) stand in the
+host's world and it holds one `ATV_C`, the host spawns a second beside the first, at the first of eight spots around it
+with a clear line and ground (`coop/interactables/atv_fleet`); it reaches the clients as any runtime ATV does and stays
+in the host's save. `[V]` on the 0.10.0 port: a two-peer run with the threshold at 2 -- the host spawned it and the client
+made its mirror; no 0.9.0n run yet.
+
 ### The stream
 
 While synced by a peer, the rig's pose, full rotation, linear and angular velocity stream about

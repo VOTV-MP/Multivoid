@@ -279,6 +279,9 @@ CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
     "their visit ends."))
 CFG_ROWFLAGS(world_backrooms, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(world_backrooms, L10N_MARK("Allow the backrooms"))
+CFG_INT(net_second_atv_players, "net.second_atv_players", "net", 5, 0, 8, "VOTVCOOP_NET_SECOND_ATV_PLAYERS",
+    "Host: once this many players stand in the world and it holds one ATV, a second ATV is spawned beside "
+    "the first. 0: never.")
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,
