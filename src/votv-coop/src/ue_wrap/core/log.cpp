@@ -58,6 +58,20 @@ wchar_t g_prevPath[MAX_PATH] = {};
 // last flush.
 constexpr ULONGLONG kFlushIntervalMs = 1000;
 ULONGLONG g_lastFlushMs = 0;
+// The line stamps are the local clock's time of day alone, so the file says which day and which offset from UTC they
+// are: once in its header and again on the line where either changes (midnight, a daylight-saving shift). Under g_lock.
+int g_clockHour = -1;      // the local hour of the last line; the date and offset are looked at when it changes
+long g_clockKey = -1;      // the date and offset last written, as one number
+
+// The local date and its offset from UTC, as "YYYY-MM-DD UTC+HH:MM", and the pair as one number.
+long ClockOf(std::time_t now, const std::tm& local, char* out, size_t n) {
+    std::tm copy = local;
+    const long offsetMin = static_cast<long>((_mkgmtime(&copy) - now) / 60);
+    const long a = offsetMin < 0 ? -offsetMin : offsetMin;
+    std::snprintf(out, n, "%04d-%02d-%02d UTC%c%02ld:%02ld", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+                  offsetMin < 0 ? '-' : '+', a / 60, a % 60);
+    return (static_cast<long>(local.tm_year) * 400 + local.tm_yday) * 2000 + (offsetMin + 1000);
+}
 
 // The optional log sink, the in-game console; atomic, so setting it is lock-free against a
 // write.
@@ -136,6 +150,13 @@ void EnsureOpen() {
             std::fprintf(g_file, "==== Multivoid log ====\n");
             std::fprintf(g_file, "%s\n", kLogFormatLine);
             std::fprintf(g_file, "process %lu\n", static_cast<unsigned long>(::GetCurrentProcessId()));
+            const std::time_t now = std::time(nullptr);
+            std::tm tm{};
+            localtime_s(&tm, &now);
+            char clock[48] = {};
+            g_clockKey = ClockOf(now, tm, clock, sizeof(clock));
+            g_clockHour = tm.tm_hour;
+            std::fprintf(g_file, "clock %s (each line's stamp is this local time of day)\n", clock);
         }
         g_opened = true;
     }
@@ -304,14 +325,22 @@ void Write(Level level, const char* fmt, ...) {
     const char* const line = whole ? whole.get() : msg;
 
     char ts[32] = {};
-    {
-        const std::time_t now = std::time(nullptr);
-        std::tm tm{};
-        localtime_s(&tm, &now);
-        std::strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
-    }
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &now);
+    std::strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
 
     ::EnterCriticalSection(&g_lock);
+    // A new local hour may be a new date or a new offset (midnight, a daylight-saving shift): said in a line of its own.
+    if (tm.tm_hour != g_clockHour) {
+        g_clockHour = tm.tm_hour;
+        char clock[48] = {};
+        const long key = ClockOf(now, tm, clock, sizeof(clock));
+        if (key != g_clockKey) {
+            g_clockKey = key;
+            std::fprintf(g_file, "[%s] [%-5s] log clock: %s\n", ts, Tag(Level::Info), clock);
+        }
+    }
     std::fprintf(g_file, "[%s] [%-5s] %s\n", ts, Tag(level), line);
     // Flush on warnings and errors only, keeping them visible at once; info lines ride the
     // runtime's buffer and land in bursts, since a per-line flush costs tens of synchronous disk
