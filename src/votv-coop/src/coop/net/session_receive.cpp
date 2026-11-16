@@ -104,7 +104,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // every transport holds an id and a route: the proved id, and the connection's own address
     // (empty on a relayed path or when GNS has none). Before the supersession kick and the seat:
     // a banned joiner costs no seat and kicks nobody.
-    if (banCheck_) {
+    if (hooks_.banCheck) {
         char addr[SteamNetworkingIPAddr::k_cchMaxString] = {};
         SteamNetConnectionInfo_t ci{};
         auto* sockets = SteamNetworkingSockets();
@@ -114,7 +114,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
             ci.m_addrRemote.ToString(addr, sizeof(addr), /*bWithPort*/false);
         }
         char why[96] = {};
-        if (banCheck_(guid.c_str(), addr, why, sizeof(why))) {
+        if (hooks_.banCheck(guid.c_str(), addr, why, sizeof(why))) {
             UE_LOGI("net: PENDING %d refused -- identity %.8s... or its address is banned (%s) [%s]",
                     pendIdx, guid.c_str(), why[0] ? why : "no reason recorded",
                     Describe(EndReason::Banned).id);

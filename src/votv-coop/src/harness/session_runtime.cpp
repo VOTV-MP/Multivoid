@@ -117,12 +117,6 @@ namespace GT = ue_wrap::game_thread;
 // The single networking session; off until a scenario or a menu action starts it.
 coop::net::Session g_session;
 
-// The host's ban predicate (Session::SetBanCheck): a plain function, so it converts to the
-// session's pointer type.
-bool BanCheck(const char* playerId, const char* address, char* whyOut, int whyLen) {
-    return coop::ban_list::IsBanned(playerId, address, whyOut, whyLen);
-}
-
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
 }  // namespace
@@ -373,7 +367,6 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
         // The ban list, on every topology: read from the hosted server's folder, and asked at the
         // identity proof, which both transports pass.
         coop::ban_list::Load(serverDir);
-        g_session.SetBanCheck(&BanCheck);
         // The server's permission store, read here and published to the game thread before
         // Start spawns the net thread, so every check a client's line causes sees it.
         coop::permissions::host::OnHostStart(
@@ -382,7 +375,7 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // The client's connecting state is not raised here but by the browser connect actions, so the
     // loading screen is browser-join only; the env and autotest client boot reaches this function
     // directly and shows nothing.
-    const bool ok = g_session.Start(netCfg, coop::session_hooks::Game(), why);
+    const bool ok = g_session.Start(netCfg, coop::session_hooks::Game(netCfg.role), why);
     // A session that never ran never stops, so the stop listener will not end its layer; a Start
     // refused because a session already runs must not end that one's.
     if (!ok && !g_session.running()) coop::server_settings_sync::OnSessionEnd();

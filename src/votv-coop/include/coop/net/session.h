@@ -333,14 +333,6 @@ public:
 
     // --- Moderation (host-only admin actions) ---
 
-    // The host's ban predicate over a joiner's PROVED player id and its connection's own address
-    // (empty when the path is relayed or GNS knows none), asked right after the identity proof and
-    // before a seat is given; true refuses the connection as banned, and whatever it wrote into
-    // `whyOut` rides the close. Set once before Start spawns the net thread. MTA: the serial and IP
-    // checks in CGame::Packet_PlayerJoinData (CGame.cpp:1956, :1973).
-    using BanCheckFn = bool (*)(const char* playerId, const char* address, char* whyOut, int whyLen);
-    void SetBanCheck(BanCheckFn fn) { banCheck_ = fn; }
-
     // Host: disconnect the client at peerSlot with no linger; `code` and `reason` reach the peer's
     // status callback, the code as the transport's application end reason. Runs the slot's
     // teardown itself (GNS gives no callback for a connection we close): on the net thread all of
@@ -768,10 +760,6 @@ private:
     // Per-slot RTT in ms from GNS's m_nPing, sampled ~1 Hz on the net thread; -1 without a live
     // connection. event_feed fans it to each puppet.
     std::array<std::atomic<int>, kMaxPeers> rttMsBySlot_{};
-
-    // The host's ban predicate (SetBanCheck); nullptr = nobody is banned. Set before Start spawns
-    // the net thread.
-    BanCheckFn banCheck_ = nullptr;
 
     // The game-side calls (Start's argument), stored beside cfg_ before the net thread exists.
     NetHooks hooks_{};

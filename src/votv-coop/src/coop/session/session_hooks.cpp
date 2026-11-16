@@ -2,6 +2,7 @@
 
 #include "coop/session/session_hooks.h"
 
+#include "coop/moderation/ban_list.h"
 #include "coop/net/session.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/players_registry.h"
@@ -21,11 +22,16 @@ void ClientPose(coop::net::Session& s, int slot, float x, float y, float z, uint
 
 void DriveMerged(uint32_t eid) { coop::prop_drive_stream::dev::NoteMerged(eid); }
 
+bool BanCheck(const char* playerId, const char* address, char* whyOut, int whyLen) {
+    return coop::ban_list::IsBanned(playerId, address, whyOut, whyLen);
+}
+
 }  // namespace
 
-const coop::net::NetHooks& Game() {
-    static const coop::net::NetHooks hooks{&HostElementId, &ClientPose, &DriveMerged};
-    return hooks;
+const coop::net::NetHooks& Game(coop::net::Role role) {
+    static const coop::net::NetHooks host{&HostElementId, &ClientPose, &DriveMerged, &BanCheck};
+    static const coop::net::NetHooks client{&HostElementId, &ClientPose, &DriveMerged, nullptr};
+    return role == coop::net::Role::Host ? host : client;
 }
 
 }  // namespace coop::session_hooks
