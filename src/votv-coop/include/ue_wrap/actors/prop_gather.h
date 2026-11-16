@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace ue_wrap::prop_gather {
 
@@ -53,5 +54,9 @@ bool ReadRowFlags(const std::wstring& name, PropDataFlags& out, bool& found);
 // for a string a peer sent. False when the table cannot be read or the game has not filled it yet; `valid` is false for
 // a name the table lacks, and `out` is then no volume.
 bool VolumeOfName(const std::wstring& name, float& out, bool& valid);
+
+// Every name in the game's prop list (the gamemode's propRenderer Names), as spelled. False when the list cannot be read
+// or is not filled yet. Game thread.
+bool ListNames(std::vector<std::wstring>& out);
 
 }  // namespace ue_wrap::prop_gather

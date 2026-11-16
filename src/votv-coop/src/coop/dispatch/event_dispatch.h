@@ -84,6 +84,12 @@ bool HandleCargoLiftEvent(net::Session& session,
 bool HandleRequesterFeedbackEvent(net::Session& session,
                                   const net::Session::ReliableMessage& msg);
 
+// Cheat family: a player's cheat request and the host's answer. CheatRequest checks role()==Host and a client sender
+// slot here and hands the request to the host's judge (coop/cheats/cheat_request); CheatResult is the HOST->CLIENT
+// answer, dropped on the host and from any sender but slot 0.
+bool HandleCheatEvent(net::Session& session,
+                      const net::Session::ReliableMessage& msg);
+
 // Kerfur-command family: a client's radial command for a kerfur and the host's answer to it. KerfurCommand checks
 // role()==Host and the sender slot here and hands the request to the host's lane (its short payload is counted in
 // that lane's tally); KerfurCommandAnswer is the HOST->CLIENT answer, dropped on the host and from any sender but

@@ -73,6 +73,7 @@
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/props/prop_throw.h"        // the game's own throw, seen at throwShit and numbered
 #include "coop/props/remover_request.h"  // the tool gun's remover as a request the host performs
+#include "coop/cheats/cheat_request.h"  // the host's cheat tools, and a player's request for one
 #include "coop/player/hit_intent.h"  // a client's hit on a host entity as an intent the host judges
 #include "coop/props/prop_damage_gate.h"  // a client never decides the damage of a prop it does not author
 #include "coop/props/container_act_host.h"  // a client's take of a record out of a world container, judged and held on the host
@@ -338,6 +339,7 @@ void Install(coop::net::Session& session) {
     coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu relay, serving the requester
     coop::kerfur_command_seat::Install(&session);  // the actionName watch: a relayed radial command is cancelled where it is picked and sent to the host (CLIENT) or handed back (HOST)
     coop::remover_request::Install(&session);  // CLIENT: the remover press becomes a request (init watch); HOST: its judge
+    coop::cheats::Install(&session);  // a panel's cheat runs here on the host, or goes to it from a client as a request
     coop::hit_intent::Install(&session);  // CLIENT: a swing that hit a host entity's mirror becomes an intent (addDamage watch); HOST: its judge
     coop::props::prop_damage_gate::Install(&session);  // CLIENT: the impactDamage and fireDamage watches cancel the damage of a prop this client does not author
     coop::props::container_act_host::Install(&session);  // HOST: the judge of a client's take of a record out of a world container
@@ -485,6 +487,7 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_command_seat::OnDisconnect();  // drop the cached session (the watch stays registered)
     coop::requester_feedback::OnDisconnect();  // say the routed counts, close the scope
     coop::remover_request::OnDisconnect();  // drop the remover queues and the shown notices
+    coop::cheats::OnDisconnect();  // forget the last cheat's status
     coop::hit_intent::OnDisconnect();  // forget the once-per-session log latches
     coop::cremator_hit::OnDisconnect();  // say the cremator hits sent and applied, forget the once-per-session latches
     coop::props::prop_damage_gate::OnDisconnect();  // say the cancelled counts, forget the once-per-class latches

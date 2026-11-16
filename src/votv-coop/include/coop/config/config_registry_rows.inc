@@ -303,6 +303,12 @@ CFG_ENUM(world_sleep_speedup, "world.sleep_speedup", "world", "everyone", "host|
     "normal speed."))
 CFG_ROWFLAGS(world_sleep_speedup, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(world_sleep_speedup, L10N_MARK("Time speeds up while sleeping"))
+CFG_FLAG(net_allow_player_cheats, "net.allow_player_cheats", "net", false, "VOTVCOOP_NET_ALLOW_PLAYER_CHEATS",
+    L10N_MARK("Let the players in this game use the host's cheat tools: spawn items, add or remove points and trigger "
+    "events. Their requests are sent to the host, which checks and runs each one; the host's own tools are always its "
+    "own. Off by default."))
+CFG_ROWFLAGS(net_allow_player_cheats, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(net_allow_player_cheats, L10N_MARK("Let players use cheats"))
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,

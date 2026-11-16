@@ -193,6 +193,8 @@ CFG_ENUM(stat_order_drill, "stat_order_drill", "dev", "off", "off|on|red|redjoin
     "answer, redjoin the host's effect on the joiner.")
 CFG_ENUM(bug_report_drill, "bug_report_drill", "dev", "off", "off|on|red", "VOTVCOOP_BUG_REPORT_DRILL",
     "The bug-report drill: plants values, saves a report, opens it and judges it (red: plants an address unmarked).")
+// The cheat tools drill: its own file, one concept.
+#include "coop/config/config_registry_rows_dev_cheat.inc"
 CFG_ENUM(grants_drill, "grants_drill", "dev", "off", "off|grant|none|hostdeny", "VOTVCOOP_GRANTS_DRILL",
     "The local grants drill: checks this machine's dev grants against an arm's expectation.")
 CFG_ENUM(grants_drill_expect, "grants_drill_expect", "dev", "same", "same|grant|none|hostdeny",

@@ -46,7 +46,7 @@ enum class Category : uint8_t {
     COUNT
 };
 
-// Display name for a category (the menu's section header). Stable, ASCII.
+// Display name for a category (the menu's section header): the English msgid, which the Events pane looks up.
 const char* CategoryName(Category c);
 
 // How the menu dispatches the event.

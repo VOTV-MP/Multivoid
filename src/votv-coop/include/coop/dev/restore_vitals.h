@@ -2,7 +2,7 @@
 // coffeePower is deliberately excluded: writing it to 100 triggers a post-coffee screen shake in
 // the blueprint.
 //
-// Driven by the ImGui dev menu (Player > Vitals), and HOST-ONLY through dev_gate like every dev
+// Driven by the ImGui dev menu (Host tools > World > Players), and HOST-ONLY through dev_gate like every dev
 // verb: solo or hosting, Restore() applies locally AND broadcasts a RestoreVitals reliable so the
 // other peers refill too. A connected client is refused at the call, and its packet is dropped
 // again at the receiver -- refilling your own vitals in someone else's game is a survival cheat.
@@ -18,11 +18,15 @@ namespace coop::dev::restore_vitals {
 // Called once from harness boot. Mirrors prop_lifecycle::SetSession.
 void SetSession(coop::net::Session* session);
 
-// Menu action (Player > Vitals): refill the local player's vitals AND broadcast
+// Menu action (Host tools > World > Players): refill the local player's vitals AND broadcast
 // a RestoreVitals reliable so the remote peer's vitals refill too. Safe to call
 // off the game thread (the local apply is posted to it; the broadcast is
 // wire-thread-safe).
 void Restore();
+
+// Menu action (Host tools > World > Players): refill ONE player's vitals -- the host's own (slot 0) or the client in
+// `slot`, whose own game applies the RestoreVitals the host sends it. HOST-only like Restore. Safe off the game thread.
+void RestoreFor(int slot);
 
 // Menu action (Player > Vitals): set THIS peer's stamina low (10) to test the tired and exhausted
 // state -- no sprint, the low-energy HUD and effects. VOTV has no stamina scalar; the energy

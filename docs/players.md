@@ -436,6 +436,21 @@ at once. When a server setting such as the voice range changes, every player's c
 friend given `multivoid.set` in the permission files can change them too: their line runs on the
 host. A setting that holds a password is never set or shown by command.
 
+### Cheats
+
+The host's F1 **Host tools** (Items, Economy, Events, Entities, World; see [ui.md](ui.md)) are the host's alone. The
+server setting "Let players use cheats", `net.allow_player_cheats`, is off by default; changed with `/set` or by the
+checkbox in Host tools > Player cheats, it persists with the host's other settings and tells every player when it
+changes. While it is on, a client's menu offers Player tools > Items, Economy and Events, and each use is a
+`CheatRequest`: a prop name, a count and where (in front of the sender, or at a player), a signed amount of points, or an
+event name. The host judges everything and runs the cheat itself; the client writes nothing. It refuses with the
+setting off, a request from a world that is not up, a name that is not text, a count over 10 or an amount over 100000, an item the
+game's own list lacks or whose class does not load, an unknown event, an event of the story, save or relocation kinds, and
+a sender past its budget (a burst of eight, then three a second). A removal of points stops at zero. Each request is
+logged on the host with the player's name and what came of it, and the host's chat says what each player did;
+the player is told the result (`CheatResult`). A spawned prop is an ordinary host spawn, expressed to every client by the prop lane; a credit
+is mirrored by the balance lane; an event is broadcast by the event watch.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -465,6 +480,7 @@ host. A setting that holds a password is never set or shown by command.
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
+| `CheatRequest`, `CheatResult` | a client to the host; the host to that client | one cheat a player asks for (spawn props, change the points, fire an event) and what the host did with it |
 
 ## Late join
 

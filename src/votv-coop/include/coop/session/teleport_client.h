@@ -24,7 +24,7 @@ namespace coop::teleport_client {
 // Called once from harness boot.
 void SetSession(coop::net::Session* session);
 
-// Menu action (Player > Movement): HOST snapshots its own mainPlayer Location +
+// Menu action (Host tools > World > Players): HOST snapshots its own mainPlayer Location +
 // Rotation and sends it to the clients (they K2_TeleportTo). HOST-only -- on a
 // client this logs + no-ops. Safe to call off the game thread (the snapshot is
 // posted to it).
