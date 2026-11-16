@@ -12,8 +12,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv.h"
 
-#include <atomic>
-
 namespace coop::atv_seat_table {
 
 namespace R = ue_wrap::reflection;
@@ -24,7 +22,6 @@ namespace {
 constexpr int kMaxSubscribers = 4;
 Subscriber g_subscribers[kMaxSubscribers] = {};
 int g_subscriberCount = 0;
-std::atomic<int> g_hostRiders{0};   // entries the host holds with a nonzero rider; written on the game thread, read by any
 
 bool IsHost() {
     const coop::net::Session* s = coop::atv_sync::LaneSession();
@@ -86,18 +83,10 @@ void SetRider(AtvEntry& e, uint32_t eid, void* actor, const char* why) {
     e.seatRider = eid;
     if (host) e.seatRiderActor = actor;
     if (riderBefore == eid) return;
-    if (host) {
-        // The one writer of the count, on the game thread: a rider named adds, a rider ended takes away (never below zero).
-        const int count = g_hostRiders.load(std::memory_order_relaxed);
-        if (riderBefore == 0) g_hostRiders.store(count + 1, std::memory_order_relaxed);
-        else if (eid == 0 && count > 0) g_hostRiders.store(count - 1, std::memory_order_relaxed);
-        e.stampDue = true;
-    }
+    if (host) e.stampDue = true;
     Announce(Change{&e.key, e.actor, e.idx, e.seatOccupant, e.seatOccupant, e.seatSyncer, e.seatSyncer, riderBefore, eid,
                     riderActorBefore, why});
 }
-
-int HostRiderCount() { return g_hostRiders.load(std::memory_order_relaxed); }
 
 void Exit(AtvEntry& e, const char* why) {
     static const bool s_redExit = coop::dev::atv_riders_arm::Is("exit_seat_off");   // the riders drill's red: no exit is announced

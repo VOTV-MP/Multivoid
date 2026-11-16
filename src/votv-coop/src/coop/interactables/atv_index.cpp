@@ -226,8 +226,9 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         e.actor = f.obj;
         e.idx   = f.idx;
         e.world = W::WorldOf(f.obj);
-        // A kerfur already riding this ATV is the entry's rider from the start (a ride begun before the entry existed).
-        if (isHost && actorChanged) coop::atv_rider_watch::SeedRider(e);
+        // A kerfur already riding this ATV is the entry's rider from the start (a ride begun before the entry existed); one whose
+        // element id was not registered yet is asked again at each pass that sees the same actor.
+        if (isHost && (actorChanged || coop::atv_rider_watch::SeedWaiting(e.key))) coop::atv_rider_watch::SeedRider(e);
         if (gained && isHost) AnnounceGained(f.key, e);
         if (gained && !isHost) coop::atv_host_sync::NoteAtvIndexed(f.key, f.obj);   // a state held for it is applied
     }

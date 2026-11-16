@@ -20,10 +20,12 @@
 #include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::atv_rider_watch {
 namespace {
@@ -46,6 +48,13 @@ std::atomic<bool> g_saidGetOff{false};
 std::atomic<bool> g_saidOccupy{false};
 std::atomic<uint32_t> g_getOffRefused{0};
 std::atomic<uint32_t> g_occupyRefused{0};
+
+// An ATV whose riding kerfur had no element id when SeedRider read it; `kerfur` is compared, never dereferenced. Game thread.
+struct SeedWait {
+    std::wstring key;
+    void* kerfur;
+};
+std::vector<SeedWait> g_seedWait;
 
 bool IsHost() {
     const coop::net::Session* s = g_session.load(std::memory_order_acquire);
@@ -191,13 +200,33 @@ void InstallWatch(Watch& w) {
 
 void SeedRider(coop::atv_sync::AtvEntry& e) {
     if (!IsHost() || !e.actor) return;
+    const auto wait = std::find_if(g_seedWait.begin(), g_seedWait.end(),
+                                   [&](const SeedWait& w) { return w.key == e.key; });
+    const auto forget = [&] { if (wait != g_seedWait.end()) g_seedWait.erase(wait); };
     void* const kerfur = ue_wrap::atv::GetSittingKerfur(e.actor);
-    if (!kerfur) return;
     void* parent = nullptr;
-    if (!ue_wrap::engine::GetAttachParentActor(kerfur, parent) || parent != e.actor) return;
+    if (!kerfur || !ue_wrap::engine::GetAttachParentActor(kerfur, parent) || parent != e.actor) {
+        forget();
+        return;
+    }
     const uint32_t eid = coop::element::Registry::Get().EidForActor(kerfur);
-    if (eid == coop::element::kInvalidId) return;
+    if (eid == coop::element::kInvalidId) {
+        // Its element is registered by a later scan: the next index pass that sees this actor asks again (SeedWaiting).
+        if (wait == g_seedWait.end()) g_seedWait.push_back(SeedWait{e.key, kerfur});
+        else if (wait->kerfur == kerfur) return;
+        else wait->kerfur = kerfur;
+        UE_LOGI("atv_rider_watch: the kerfur %p riding ATV '%ls' has no element id yet -- it is seeded at a later index pass",
+                kerfur, e.key.c_str());
+        return;
+    }
+    forget();
     coop::atv_seat_table::SetRider(e, eid, kerfur, "seeded");
+}
+
+bool SeedWaiting(const std::wstring& key) {
+    for (const SeedWait& w : g_seedWait)
+        if (w.key == key) return true;
+    return false;
 }
 
 void Install(coop::net::Session* session) {
@@ -216,6 +245,7 @@ void OnDisconnect() {
     g_saidNoEid.store(false, std::memory_order_relaxed);
     g_saidGetOff.store(false, std::memory_order_relaxed);
     g_saidOccupy.store(false, std::memory_order_relaxed);
+    g_seedWait.clear();
 }
 
 }  // namespace coop::atv_rider_watch

@@ -109,11 +109,11 @@ void OnRideOutcome(uint32_t eid, int outcome, const std::wstring& key, float sit
     DE::Note(DE::kRide, static_cast<int32_t>(eid), outcome, DE::KeyTag(key), sitarrowCm, wasAttached ? 1.f : 0.f);
 }
 
-// The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted,
-// and the task finds the ATV that names that eid and ends its ride. The eid's free is deferred to the element flush, so it is
-// not re-issued before the task runs.
+// The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted on
+// every retire (a retire is a cold path, and a gate read on this thread could miss a rider named after it), and the task finds
+// the ATV that names that eid and ends its ride. The eid's free is deferred to the element flush, so it is not re-issued before
+// the task runs.
 void OnNpcRetired(uint32_t eid) {
-    if (coop::atv_seat_table::HostRiderCount() == 0) return;   // no entry names a rider: nothing to end, nothing to post
     ue_wrap::game_thread::Post([eid] {
         coop::net::Session* s = g_session.load(std::memory_order_acquire);
         if (!s || s->role() != coop::net::Role::Host) return;

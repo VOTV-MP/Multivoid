@@ -145,8 +145,8 @@ std::string SayDrive() {
 
 // Step 7's second leg on the host: it backs its own ATV kDriveCm (the root's distance, whatever the direction) away from where
 // step 3 stopped it, with its kerfur riding, lets the reverse key go, reads where its kerfur stands (JudgeKerfurSeat) and says
-// `drive7-done` for the clients' reads. An ATV that stands tipped, or that the throttle does not move kProbeCm in kProbeS
-// seconds, ends the leg INVALID at once as wedged. In the control the kerfur is idle and off the ATV, and the leg ends on the
+// `drive7-done` for the clients' reads. An ATV that stands tipped, or that the throttle does not move kProbeCm in the kProbeS
+// seconds after the reverse key is down, ends the leg INVALID at once as wedged. In the control the kerfur is idle and off the ATV, and the leg ends on the
 // 600 cm alone.
 bool HostDriveSeated() {
     const DriveRead first = ReadDrive();
@@ -163,11 +163,15 @@ bool HostDriveSeated() {
     const FVector start = first.root;
     std::string why;
     // The leg backs away: step 3's drive ends against what it struck, ahead of the ATV, so the reverse key has the lane clear.
-    const auto driveStart = std::chrono::steady_clock::now();
     if (!DriveBack(g_key, why)) {
+        DriveBackOff(g_key);
         Invalid(why + "; " + SayDrive());
         return false;
     }
+    // DriveBack returns with the key down and the driver's fuel fallen: the wedge probe's window and its root start here.
+    const auto driveStart = std::chrono::steady_clock::now();
+    FVector probeRoot = start;
+    ReadRoot(probeRoot);
     SayDrive();
     // The leg's line is said at each block of the key (the host's own built, or a client's applied) and at most once per
     // kDriveLogGapS of them, so a drive that does not move shows where it stands without a line per block.
@@ -187,14 +191,16 @@ bool HostDriveSeated() {
             SayDrive();
         }
         FVector at{};
-        if (ReadRoot(at)) movedCm = std::sqrt((at.X - start.X) * (at.X - start.X) + (at.Y - start.Y) * (at.Y - start.Y));
+        const bool read = ReadRoot(at);
+        if (read) movedCm = std::sqrt((at.X - start.X) * (at.X - start.X) + (at.Y - start.Y) * (at.Y - start.Y));
         if (movedCm >= kDriveCm) return 1;
         // The throttle's first seconds moved the root nowhere: the ATV is held (a wall, a rock), not slow; said at once.
-        if (!probed && now - driveStart >= std::chrono::seconds(kProbeS)) {
+        if (read && !probed && now - driveStart >= std::chrono::seconds(kProbeS)) {
             probed = true;
-            if (movedCm < kProbeCm) {
+            const float probeCm = std::sqrt((at.X - probeRoot.X) * (at.X - probeRoot.X) + (at.Y - probeRoot.Y) * (at.Y - probeRoot.Y));
+            if (probeCm < kProbeCm) {
                 Invalid("the ATV is wedged before the host's drive: the first " + std::to_string(kProbeS) + " s of reverse moved the root " +
-                        Num("%.0f", movedCm) + " cm; " + SayDrive());
+                        Num("%.0f", probeCm) + " cm; " + SayDrive());
                 return -1;
             }
         }

@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace coop::net { class Session; }
 namespace coop::atv_sync { struct AtvEntry; }
 
@@ -14,8 +16,11 @@ namespace coop::atv_rider_watch {
 
 // Host only: the entry's ATV is read for a kerfur already riding it (its own `sittingKerfuro`, attached to it, with an element
 // id) and that kerfur is named the entry's rider. Run where an entry is created or gets its actor, for a ride begun before the
-// watch was live or before this session reached its joiners. A client does nothing.
+// watch was live or before this session reached its joiners. A riding kerfur with no element id yet is said once per (key,
+// kerfur) and the entry is left waiting: SeedWaiting says so, and the next index pass that sees the actor runs it again. A
+// client does nothing.
 void SeedRider(coop::atv_sync::AtvEntry& e);
+bool SeedWaiting(const std::wstring& key);
 
 // Store the session and register the watches; asked again each call until each watch settles live or dead. Idempotent.
 void Install(coop::net::Session* session);
