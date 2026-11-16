@@ -4,7 +4,7 @@
 // THE HOST fires the vent knocker's event at 14 s. BOTH PEERS, 20 s after a client is connected: the vent knocker's (kocker_C) and the vent crawler event's
 // (ventCrawler_C) places are logged, and every vent cover's (prop_vent_C). THE CRAWLER crouches through its own Crouch,
 // at 21 s goes to the knocker's place, or the first vent cover's (VOTVCOOP_VENT_AT="x,y,z" instead, when set), through
-// teleportWObackrooms, and from 24 s walks 3 s each way along VOTVCOOP_VENT_DIR="x,y" and back, twice, through
+// teleportWObackrooms, and from 24 s walks 3 s each way along VOTVCOOP_VENT_DIR="x,y" and back, four times, through
 // AddMovementInput, its place logged each second. The other peer's lines `puppet_footsteps:` say
 // which of the crawler's steps found ground.
 
@@ -122,8 +122,8 @@ void Tick(coop::net::Session* session) {
         const bool placed = g_haveAt && PlaceMe(me, g_at);
         UE_LOGI("[VENT] crawler: placed=%d", placed ? 1 : 0);
     }
-    if (Who() != (host ? "host" : "client") || g_step < 1 || t < 24000u || t >= 36000u) return;
-    // The legs go along VOTVCOOP_VENT_DIR="x,y" and back, twice (+x and back when unset).
+    if (Who() != (host ? "host" : "client") || g_step < 1 || t < 24000u || t >= 48000u) return;
+    // The legs go along VOTVCOOP_VENT_DIR="x,y" and back, four times (+x and back when unset).
     static ue_wrap::FVector s_dir{1.f, 0.f, 0.f};
     static bool s_dirRead = false;
     if (!s_dirRead) {
