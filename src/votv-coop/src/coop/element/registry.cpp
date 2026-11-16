@@ -329,15 +329,16 @@ void Registry::NoteReleased_(ElementId id) {
 }
 
 void Registry::LogBandPeaks_() const {
-    // The host range always, a peer band only once it held an id. 17 entries at most, 20 bytes each.
+    // Each entry reads live/peak/cap, so a drain after a peak shows. The host range always, a peer
+    // band only once it held an id. 17 entries at most, 30 bytes each.
     char line[512];
-    int n = std::snprintf(line, sizeof line, "host=%u/%u", m_bandPeak[0], BandStatCap(0));
+    int n = std::snprintf(line, sizeof line, "host=%u/%u/%u", m_bandLive[0], m_bandPeak[0], BandStatCap(0));
     for (size_t s = 1; s < kBandStats && n > 0 && static_cast<size_t>(n) < sizeof line; ++s) {
         if (m_bandPeak[s] == 0) continue;
-        n += std::snprintf(line + n, sizeof line - static_cast<size_t>(n), " b%u=%u/%u",
-                           static_cast<unsigned>(s - 1), m_bandPeak[s], BandStatCap(s));
+        n += std::snprintf(line + n, sizeof line - static_cast<size_t>(n), " b%u=%u/%u/%u",
+                           static_cast<unsigned>(s - 1), m_bandLive[s], m_bandPeak[s], BandStatCap(s));
     }
-    UE_LOGI("element bands: peak live %s", line);
+    UE_LOGI("element bands: live/peak/cap %s", line);
 }
 
 void Registry::ReportBandPeaksAtSessionEnd() {

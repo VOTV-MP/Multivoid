@@ -109,7 +109,7 @@ public:
     size_t HostCount() const;
     size_t LocalCount() const;
 
-    // The live ids per band and their peak, said as one `element bands:` line: the host range and each
+    // The live ids per band and their peak, said as one `element bands:` line of live/peak/cap: the host range and each
     // peer band that held an id. The peak is of the ids this process's table held, so a client's own
     // band reads its own mints, and the host's table also reads each client's band (the mirrors of what
     // that client minted). Said from the allocation that moved a peak, at most once a minute, and here
