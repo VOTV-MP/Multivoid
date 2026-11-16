@@ -110,6 +110,14 @@ void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 // hasSack. A component call only when the visibility differs. False when the mesh does not resolve. Game thread.
 bool SetSackVisible(void* drone, bool visible);
 
+// The drone's own putSackOn(sack, sack's root): the hook of a loose sack, as the overlap of its sack box (`sackPhys`) calls
+// it. Its body runs only when the drone has no sack and its sack interaction is open, marks the sack taken, destroys it
+// and shows the drone's sack. And the sack box's world location. False when unresolved. Game thread.
+bool CallPutSackOn(void* drone, void* sack);
+bool ReadSackBoxLocation(void* drone, FVector& out);
+// The drone's hasSack and sackInteract fields; false when unresolved.
+bool ReadSackState(void* drone, bool& hasSack, bool& sackInteract);
+
 // CLIENT mirror: point the mirror drone's container field at the already-prop-mirrored cargo
 // container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
 void RepointContainer(void* drone);

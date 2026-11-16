@@ -9,6 +9,7 @@
 // convert paths share it). Game thread only (the event drain and the quiescence sweep); no
 // mutex.
 
+#include "coop/interactables/drone_sync.h"
 #include "coop/props/remote_prop.h"
 #include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 
@@ -147,6 +148,9 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
     // GC), and a rooted pending-kill actor would leak its object-array slot forever. A harmless
     // no-op on a save-loaded native or a keyed prop.
     coop::trash_mirror::Unpin(actor);
+    // The drone sack: another peer's destroy of it may be its hook onto the drone, which the host's drone takes, and a
+    // client's copy must not scold and respawn (coop/interactables/drone_sync). True when the hook destroyed it.
+    if (coop::drone_sync::OnSackDestroyReceived(actor)) return;
     R::CallFunction(actor, g_destroyActorFn, nullptr);
 }
 

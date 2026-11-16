@@ -17,6 +17,9 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/devices/drone.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/types.h"  // FVector, FRotator, NormalizeAxis
 
@@ -40,6 +43,7 @@ constexpr uint64_t kSendIntervalMs = 50;   // ~20 Hz at most, while the drone mo
 // go: a glide streams until it is this close to where it rests, and a parked drone sends nothing.
 constexpr float    kMoveEpsCm  = 1.0f;
 constexpr float    kTurnEpsDeg = 0.5f;
+constexpr float    kSackHookReach = 300.0f;  // cm: a destroyed sack this near the drone's sack box was a peer's hook
 // The client shows the drone where the host's was a little while ago, between the two poses either side of
 // that moment, each placed at the host's own send time, so the copy keeps the host's speed however the poses
 // arrive. How long ago follows the link: the lateness that 95 of the last 100 poses kept within, plus a margin,
@@ -427,6 +431,37 @@ void Tick() {
 }
 
 int HostActive() { return g_m.hostActive; }
+
+bool OnSackDestroyReceived(void* actor) {
+    static void* s_sackCls = nullptr;
+    if (!s_sackCls) s_sackCls = ue_wrap::reflection::FindClass(L"prop_dronesack_C");
+    if (!actor || !s_sackCls || ue_wrap::reflection::ClassOf(actor) != s_sackCls) return false;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return false;
+    if (s->role() != coop::net::Role::Host) {
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (ue_wrap::reflection::FindBoolProperty(ue_wrap::reflection::ClassOf(actor), L"takenByDrone", off, mask)) {
+            static_cast<uint8_t*>(actor)[off] |= mask;
+            UE_LOGI("drone_sync: CLIENT the host's destroy of the drone sack -- its copy goes as taken, no sack of its own");
+        }
+        return false;
+    }
+    void* const drone = D::Find();
+    bool hasSack = true, interact = false;
+    ue_wrap::FVector box{}, at{};
+    if (!drone || !D::ReadSackState(drone, hasSack, interact) || hasSack || !interact ||
+        !D::ReadSackBoxLocation(drone, box) || !ue_wrap::engine::TryGetActorLocation(actor, at))
+        return false;
+    const float dx = at.X - box.X, dy = at.Y - box.Y, dz = at.Z - box.Z;
+    if (dx * dx + dy * dy + dz * dz > kSackHookReach * kSackHookReach) return false;
+    const bool ran = D::CallPutSackOn(drone, actor);
+    bool now = false;
+    D::ReadSackState(drone, now, interact);
+    UE_LOGI("drone_sync: HOST a client hooked the drone sack -- the host's drone takes it (putSackOn ran=%d, hasSack %d)",
+            ran ? 1 : 0, now ? 1 : 0);
+    return ran && now;
+}
 
 MirrorStats Stats() { return {g_m.playTicks, g_m.starvedTicks, g_m.delayMs}; }
 

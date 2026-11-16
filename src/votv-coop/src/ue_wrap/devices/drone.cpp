@@ -12,6 +12,8 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"  // SetActorSimulatePhysics: the mirror's root sphere
+#include "ue_wrap/engine/engine_component.h"  // TryGetComponentLocation: the sack box
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -338,6 +340,34 @@ void WriteGateFields(void* drone, bool canTakeOff, bool hasSack) {
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(drone) + g_canTakeOffOff) = canTakeOff;
     if (g_hasSackOff >= 0)
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(drone) + g_hasSackOff) = hasSack;
+}
+
+bool CallPutSackOn(void* drone, void* sack) {
+    if (!drone || !sack || !R::IsLive(drone) || !R::IsLive(sack)) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(drone), L"putSackOn");
+    void* const root = engine::RootComponentOf(sack);
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !root || !f.Set<void*>(L"sack", sack) || !f.Set<void*>(L"velocityComponent", root)) return false;
+    return ue_wrap::Call(drone, f);
+}
+
+bool ReadSackBoxLocation(void* drone, FVector& out) {
+    const int32_t off = drone ? R::FindPropertyOffset(R::ClassOf(drone), L"sackPhys") : -1;
+    void* const box = off >= 0 ? *reinterpret_cast<void**>(reinterpret_cast<char*>(drone) + off) : nullptr;
+    return box && R::IsLive(box) && engine::TryGetComponentLocation(box, out);
+}
+
+bool ReadSackState(void* drone, bool& hasSack, bool& sackInteract) {
+    if (!drone) return false;
+    int32_t hOff = -1, iOff = -1;
+    uint8_t hMask = 0, iMask = 0;
+    if (!R::FindBoolProperty(R::ClassOf(drone), L"hasSack", hOff, hMask) ||
+        !R::FindBoolProperty(R::ClassOf(drone), L"sackInteract", iOff, iMask))
+        return false;
+    const auto* o = static_cast<const uint8_t*>(drone);
+    hasSack = (o[hOff] & hMask) != 0;
+    sackInteract = (o[iOff] & iMask) != 0;
+    return true;
 }
 
 bool SetSackVisible(void* drone, bool visible) {

@@ -52,6 +52,14 @@ void OnDisconnect();
 // thread.
 int HostActive();
 
+// Another peer destroyed the loose drone sack (`actor`, before this peer destroys its copy). The sack's own
+// ReceiveDestroyed scolds the player and spawns a new sack at the drone unless the drone took it. A peer's hook of the
+// sack (its drone's putSackOn, on a sack overlapping the drone's sack box) reaches the others only as that destroy. The
+// HOST: a sack at its drone's sack box, the drone with none and its sack interaction open, is hooked by its own drone's
+// putSackOn, which destroys it (true: the caller destroys nothing). A CLIENT: its copy is marked taken, so it neither
+// scolds nor spawns a sack of its own; the respawn is the host's. False for any other actor. Game thread.
+bool OnSackDestroyReceived(void* actor);
+
 // CLIENT: how its mirror has played this session: the frames played while poses were arriving, the frames of
 // them that ran past the newest pose and its extrapolation (the copy held still), and the playback delay now.
 // Game thread.
