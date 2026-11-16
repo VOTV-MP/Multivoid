@@ -1597,6 +1597,10 @@ enum class ReliableKind : uint16_t {
     // the host's water buckets (the mop bucket among them), concrete buckets and cement bags that changed, and every one to a
     // joiner at its world-ready. A client's verbs on them ride PropActRequest (families 6..11). Not pre-world. BucketStatePayload.
     BucketState = 283,
+    // A sound the game played at a place on one machine alone (coop/world/sound_relay): a melee hit's impact sound. Its
+    // player's machine sends it; the host plays a client's and relays it to the other clients. Not pre-world.
+    // SoundAtPayload.
+    SoundAt = 282,
 };
 
 #pragma pack(push, 1)
@@ -2482,6 +2486,17 @@ struct KerfurDressPatPayload {
     uint32_t elementId;   // 4 -- the Omega's NPC element id
 };
 static_assert(sizeof(KerfurDressPatPayload) == 4, "KerfurDressPatPayload must be 4 bytes");
+
+// SoundAt. The Sound and the attenuation as object paths ("/Game/audio/x.x", ASCII, NUL-padded; an empty attenuation
+// plays with none), the place, the volume and the pitch, as the original call passed them.
+struct SoundAtPayload {
+    char  sound[96];         // 96
+    char  attenuation[64];   // 64
+    float loc[3];            // 12
+    float volume;            // 4
+    float pitch;             // 4
+};
+static_assert(sizeof(SoundAtPayload) == 180, "SoundAtPayload must be 180 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

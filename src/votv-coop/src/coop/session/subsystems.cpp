@@ -145,6 +145,7 @@
 #include "coop/interactables/turbine_sync.h"
 #include "coop/world/flood_sync.h"   // the basement flood, the host's
 #include "coop/creatures/kerfur_dress_sync.h"   // an Omega's outfit and its pat
+#include "coop/world/sound_relay.h"   // a player's own sounds at a place
 #include "coop/props/glowstick_sync.h"   // a glowstick stuck to a surface, on every peer
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_gate.h"
@@ -315,6 +316,7 @@ void Install(coop::net::Session& session) {
     coop::vent_crawler_sync::Install(&session);  // the crawl's start, for a client's sounds
     coop::bucket_sync::Install(&session);  // a mop bucket's water and a concrete bucket's concrete: the host's rows
     coop::props::prop_can_state::Install(&session);  // a canned food's lid and contents: its record on a change
+    coop::sound_relay::Install(&session);       // a player's own sounds at a place (a melee hit)
     coop::desk_short_sync::Install(&session);  // the base computer's short circuit is the host's
     coop::world_sound_sync::Install(&session);  // the sky's two sounds, a faucet's click
     coop::atv_riders::Install(&session);  // a remote driver's body in the seat, the kerfurs a client's seat calls
@@ -509,6 +511,7 @@ DisconnectStats DisconnectAll() {
     coop::vent_crawler_sync::OnDisconnect();
     coop::hand_record_sync::OnDisconnect();  // the hands' records and half-assemblies
     coop::cover_sync::OnDisconnect();  // the covers sent, the asks and states queued
+    coop::sound_relay::OnDisconnect();
     coop::desk_short_sync::OnDisconnect();
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
     coop::woodchipper_gate::OnDisconnect();  // say the refused ticks and the asks, start the next session from zero
