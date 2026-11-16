@@ -65,7 +65,8 @@
 #include "coop/element/bind_wait.h"  // OnSlotLeft / Clear: the messages held for a deferred bind
 #include "coop/props/bracket_position_wait.h"  // Reset: the wait goes with the session
 #include "coop/element/death_seam.h"  // an element's end of play, handed to the lanes that subscribed
-#include "coop/element/registry.h"  // ReportBandPeaksAtSessionEnd
+#include "coop/element/registry.h"  // ReportIfDue, ReportBandPeaksAtSessionEnd
+#include "coop/net/net_clock.h"  // NowMs: the id bands' pacing
 #include "coop/props/host_spawn_watcher.h"  // HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/props/prop_throw.h"        // the game's own throw, seen at throwShit and numbered
@@ -640,6 +641,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // before the hub's pass can complete: a pass prunes what has died from its consumers' indexes, and a
     // lane names an ended actor by its index (grime's position key).
     { PP::Scope _s{PP::Bucket::Interactable}; coop::element::death_seam::Drain(); }
+    coop::element::Registry::Get().ReportIfDue(coop::net::NowMs());  // the id bands' live/peak line: a time compare until it is due
     // The walk timer logs each sync's call over a millisecond, so a heavy one names itself; the
     // perf-probe bucket covers the whole block. The shared pass over the object index serves every
     // index consumer, and runs before the consumers' ticks so a completed pass's fresh index is

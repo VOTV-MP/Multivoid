@@ -12,7 +12,7 @@
 #include "coop/element/element.h"
 #include "coop/player/slot_count.h"  // kMaxPeers: the band count
 
-#include <chrono>
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <mutex>
@@ -109,12 +109,16 @@ public:
     size_t HostCount() const;
     size_t LocalCount() const;
 
-    // The live ids per band and their peak, said as one `element bands:` line of live/peak/cap: the host range and each
-    // peer band that held an id. The peak is of the ids this process's table held, so a client's own
-    // band reads its own mints, and the host's table also reads each client's band (the mirrors of what
-    // that client minted). Said from the allocation that moved a peak, at most once a minute, and here
-    // once at the session's end, which then restarts the peaks from the live counts. No line when no
-    // id was ever held, and none when no number changed since the last line.
+    // The live ids per band and their peak, said as one `element bands:` line of live/peak/cap: the
+    // host range and each peer band that held an id. The peak is of the ids this process's table held,
+    // so a client's own band reads its own mints, and the host's table also reads each client's band
+    // (the mirrors of what that client minted). No line when no id was ever held, and none when no
+    // number changed since the last line.
+    //
+    // ReportIfDue says it from the gameplay tick: 10 s after a tick first sees a held id, then at most
+    // once a minute. `nowMs` is coop::net::NowMs(). Game thread.
+    void ReportIfDue(uint64_t nowMs);
+    // Says it once at the session's end and restarts the peaks from the live counts.
     void ReportBandPeaksAtSessionEnd();
 
     // Copy the (actor, id, internal index, mirror flag) tuple of every allocated Element of the
@@ -166,8 +170,10 @@ private:
     static constexpr size_t kBandStats = 1u + coop::players::kMaxPeers;
     uint32_t m_bandLive[kBandStats] = {};
     uint32_t m_bandPeak[kBandStats] = {};
-    bool     m_bandPeakMoved = false;   // a peak rose since the last line
-    std::chrono::steady_clock::time_point m_bandLastLog = std::chrono::steady_clock::now();
+    // ReportIfDue's pacing, read by the game thread without the lock: some id was ever held, and
+    // when the next line is due (0 until a tick has seen a held id).
+    std::atomic<bool>     m_bandAnyHeld{false};
+    std::atomic<uint64_t> m_bandDueMs{0};
     void NoteHeld_(ElementId id);       // m_mutex held: an id entered the table
     void NoteReleased_(ElementId id);   // m_mutex held: an id left the table
     // The numbers of the last line said, so an unchanged state is not said again.

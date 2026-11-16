@@ -66,8 +66,10 @@ constexpr uint32_t BandStatCap(size_t stat) {
     return stat == 0 ? kHostRangeSize - 1
                      : BandEnd(static_cast<uint8_t>(stat - 1)) - BandBase(static_cast<uint8_t>(stat - 1));
 }
-// How often a moved peak is said from the allocation that moved it.
-constexpr auto kBandLogEvery = std::chrono::seconds(60);
+// ReportIfDue: the first line comes this long after a tick first sees a held id, the next ones this
+// far apart.
+constexpr uint64_t kBandFirstLogMs = 10 * 1000;
+constexpr uint64_t kBandLogEveryMs = 60 * 1000;
 }  // namespace
 
 // The latch flipper in element.cpp.
@@ -311,16 +313,22 @@ size_t Registry::LocalCount() const {
 
 void Registry::NoteHeld_(ElementId id) {
     const size_t s = BandStatOf(id);
-    if (++m_bandLive[s] > m_bandPeak[s]) {
-        m_bandPeak[s] = m_bandLive[s];
-        m_bandPeakMoved = true;
+    if (++m_bandLive[s] > m_bandPeak[s]) m_bandPeak[s] = m_bandLive[s];
+    m_bandAnyHeld.store(true, std::memory_order_relaxed);
+}
+
+void Registry::ReportIfDue(uint64_t nowMs) {
+    // Game thread, once per tick: two relaxed loads and a compare until a line is due.
+    if (!m_bandAnyHeld.load(std::memory_order_relaxed)) return;
+    const uint64_t due = m_bandDueMs.load(std::memory_order_relaxed);
+    if (due == 0) {  // the first held id seen: arm the first line
+        m_bandDueMs.store(nowMs + kBandFirstLogMs, std::memory_order_relaxed);
+        return;
     }
-    if (!m_bandPeakMoved) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (now - m_bandLastLog < kBandLogEvery) return;
-    LogBandPeaks_();
-    m_bandPeakMoved = false;
-    m_bandLastLog = now;
+    if (nowMs < due) return;
+    std::lock_guard<std::mutex> lk(m_mutex);
+    LogBandPeaks_();  // says nothing when no number changed since the last line
+    m_bandDueMs.store(nowMs + kBandLogEveryMs, std::memory_order_relaxed);
 }
 
 void Registry::NoteReleased_(ElementId id) {
@@ -360,8 +368,7 @@ void Registry::ReportBandPeaksAtSessionEnd() {
     // The next session's peaks start from what this process still holds (the host range outlives a
     // client's departure).
     for (size_t s = 0; s < kBandStats; ++s) m_bandPeak[s] = m_bandLive[s];
-    m_bandPeakMoved = false;
-    m_bandLastLog = std::chrono::steady_clock::now();
+    m_bandDueMs.store(0, std::memory_order_relaxed);  // the next session's first line is armed afresh
 }
 
 size_t Registry::SnapshotActorsByType(ElementType t,
