@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "coop/player/slot_count.h"
+
 #include <cstdint>
 #include <map>
 
@@ -42,8 +44,6 @@ struct LaneAdapter {
 // One instance per lane (static in the lane's TU).
 class Seeder {
 public:
-    static constexpr int kMaxPeers = 4;  // static_assert'd == net::kMaxPeers in the .cpp
-
     explicit Seeder(const LaneAdapter& a) : a_(a) {}
 
     // save_transfer OnRequest: snapshot what the joiner's save will contain, as a content-hash
@@ -75,8 +75,8 @@ private:
         bool valid = false;
     };
     const LaneAdapter& a_;
-    SlotSnap snaps_[kMaxPeers];
-    bool seededOnce_[kMaxPeers] = {};
+    SlotSnap snaps_[coop::players::kMaxPeers];
+    bool seededOnce_[coop::players::kMaxPeers] = {};
 };
 
 // Deterministic delta-math selftest (engine-free): multiset counts, gap-deletion,
