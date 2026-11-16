@@ -6,6 +6,8 @@
 
 #include "coop/creatures/walker_target_rule.h"
 
+#include "coop/creatures/hunt_target_rule.h"
+
 #include "ue_wrap/core/log.h"
 
 #include <cstddef>
@@ -103,9 +105,12 @@ bool RunSelftest() {
         check(DecideTarget(1, p, 2) == 2, "a target with no entry is lost and the nearest player taken");
     }
 
+    // The general rule every host-run hunter shares runs in this pass too (its own rows, its own line).
+    const bool huntOk = coop::hunt_target::RunSelftest();
+
     if (pass == total) {
         UE_LOGI("walker_target selftest: ALL PASS (%d checks)", total);
-        return true;
+        return huntOk;
     }
     UE_LOGE("walker_target selftest FAIL: %d/%d checks passed", pass, total);
     return false;

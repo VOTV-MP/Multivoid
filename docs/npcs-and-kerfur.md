@@ -49,6 +49,19 @@ roll, owns the entity it rolled, and broadcasts it so every other peer renders a
 (`coop/creatures/owner_entity_sync`). The first member is the night stalker, the eyes that watch
 from the dark.
 
+### The host's hunters
+
+A host-owned creature whose Blueprint reads "the player" as player 0 hunts the host alone. For the
+Krampus and the ariral follower a pass every quarter second picks each one's target by its own range, the
+nearest player in it (`coop/creatures/hunt_target`, the rule in `hunt_target_rule`), and
+`coop/creatures/served_player` answers the creature's reads of the player with that client's puppet. The
+Grays' punch (`grayEventController_C::despawn`) lands on the player the gray reached
+(`coop/creatures/hunt_gray`). `[V]` `coop/dev/hunt_drill` (`VOTVCOOP_HUNT_DRILL=krampus|follower|gray`,
+the host; with `hunt_skip_host` the host is left out of the candidates): the Krampus picked the client
+and its reads were answered with the puppet, and picked the host when the host was nearer; the Grays'
+punch was delivered to the client; the follower picked the client and its reads were answered, but it
+did not walk to the puppet in the 40 s watched `[?]`.
+
 ### Which spawners a client refuses
 
 A connected client ticks no shared-world spawner and rolls no shared-world spawn RNG: shared
@@ -213,6 +226,7 @@ wisp in flight is transient and owes nothing.
 | The Omega's take-object, pat, equipment, kill and sit-on-the-ATV verbs are not synced | `[V]` `coop/creatures/kerfur_command`, the verb table |
 | The Omega's floppy state is not synced, so a relayed get-reports diverges on its result; its accessories and carried object likewise | `[V]` no lane under `coop/creatures` carries them |
 | Only one stalker class is owned per peer so far | `[V]` `coop/creatures/owner_entity_sync`, the member table |
+| The tentacle ball still hunts the host alone: its reads are not served, since a lone ball could not be staged for a run | `[V]` `coop/creatures/hunt_target`, the rows |
 | The conversion is detected by a poll, five times a second, not at the verb | `[V]` `coop/creatures/kerfur_convert`; the lane reads the result rather than the call, because a peer's own conversion has already happened by the time any watch of ours runs |
 | Three ambient spawner families (bp7, the bush and the tick) are neither mirrored nor refused, so each peer grows its own | `[V]` they appear in no lane under `coop/creatures` and in no row of `coop/world/spawn_authority` |
 | A walking mannequin freezes on the gaze of the player it hunts only, and a client's look reaches the host a moment late, so it can slide on for that long. It goes for the nearest player within its range and keeps that player until it is lost (the player left, died, or is beyond the range), and the host's walker lands the hit, which runs on the victim's machine with its sound: the host refuses its own 2D copy of a hit on a peer. Its anger does not cross: a copy holds the host's `looking`, which is false while the walker is angry | `[V]` `prop_wMannequin_C`'s tick and `timer_damage`; `coop/player/player_damage` (the hit relay and the sound hush), `coop/creatures/walker_target` (its target, and the walker served as that player: `coop/creatures/served_player`), `coop/creatures/walker_state_host`, `coop/creatures/walker_gaze_host` |
@@ -228,6 +242,7 @@ wisp in flight is transient and owes nothing.
 | host-owned characters | `coop/creatures/npc_sync`, `coop/creatures/npc_mirror`, `coop/creatures/npc_world_enum`, `coop/creatures/npc_adoption`, `coop/creatures/npc_pose_host.cpp`, `coop/creatures/npc_pose_drive.cpp` |
 | the engine wrappers | `ue_wrap/actors/kerfur`, `ue_wrap/actors/wisp` |
 | per-peer creatures | `coop/creatures/owner_entity_sync` |
+| the host's hunters | `coop/creatures/hunt_target`, `coop/creatures/hunt_target_rule`, `coop/creatures/hunt_gray`, `coop/creatures/served_player`; `coop/dev/hunt_drill` |
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
 | the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `harness/autotest/autotest_orb.cpp` (`orb_drill`) |
 | roaches | `coop/creatures/roach_sync` |

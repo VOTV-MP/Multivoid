@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "coop/creatures/hunt_target_rule.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -28,24 +30,19 @@ inline constexpr uint8_t kHostSlot = 0;
 
 // One player as the walker's read finds it: the slot, whether it counts as alive (the host always does), and its 3D distance
 // from the walker, negative when its body did not read.
-struct PlayerView {
-    uint8_t slot;
-    bool    alive;
-    float   distanceCm;
-};
+using PlayerView = coop::hunt_target::PlayerView;
 
-// The rule follows its precedents and departs from them on purpose. KEEP is MTA's syncer, kept while it stays near and chosen
-// again only when lost (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:106-139). Source's enemy is kept less
-// firmly (reference/source-sdk-2013/src/game/server/ai_basenpc.cpp:10144-10204, ShouldChooseNewEnemy): it is chosen again on
-// sight of a hated or feared entity (10161), so a nearer one takes over, and when the enemy eluded it or was last seen over ten
-// seconds ago (10156, 10186). The walker keeps its target through both: it hunts one player, whose gaze alone freezes it, and its
-// Blueprint looks again only at the reads named above, so sight of another player re-chooses nothing and a target out of sight
-// is lost by range, death or leaving alone. ACQUIRE takes the nearest player where MTA elects the one syncing the fewest peds in
-// range (CPedSync.cpp:188-218): a hunt follows its prey, and shares no load. It and KEEP share one range, where MTA acquires
-// inside the keep distance less 20 (CPedSync.cpp:146 against :127) so a player at the edge does not flip the syncer each pulse:
-// the keep test must equal the Blueprint's own range branch, which an acquire margin would contradict. Validity is judged at
-// the Blueprint's own reads, where MTA re-checks on a 500 ms pulse (CPedSync.cpp:40-44), so a target that dies or leaves the
-// range between two reads stays the target until the next; a leaver is cleared at once (walker_target::OnPeerLeft).
+// The rule itself is the general one every host-run hunter shares (coop/creatures/hunt_target_rule.h): the mannequin's is that rule
+// with its own range, kRangeCm, and no dev switch.
+// KEEP is MTA's syncer, kept while it stays near and chosen again only when lost
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CPedSync.cpp:106-139); Source's enemy is chosen again on sight of a
+// nearer hated one (reference/source-sdk-2013/src/game/server/ai_basenpc.cpp:10144-10204, ShouldChooseNewEnemy). The walker
+// keeps its target through both: it hunts one player, whose gaze alone freezes it, so sight of another player re-chooses
+// nothing and a target is lost by range, death or leaving alone.
+// ACQUIRE takes the nearest player, where MTA elects the one syncing the fewest peds (CPedSync.cpp:188-218): a hunt follows its
+// prey and shares no load. ACQUIRE and KEEP share one range, where MTA acquires inside the keep distance less 20, because the
+// keep test must equal the Blueprint's own range branch. Validity is judged at the Blueprint's own reads, where MTA re-checks on
+// a 500 ms pulse (CPedSync.cpp:40-44); a leaver is cleared at once (walker_target::OnPeerLeft).
 
 // The slot the walker hunts after this read: `current` (kNoTarget for none) kept or replaced as above. `players` lists each
 // slot at most once, in slot order. Pure.

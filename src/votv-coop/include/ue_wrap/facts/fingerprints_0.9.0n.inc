@@ -224,6 +224,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"geomoctalazer_c", L"receivebeginplay", L"geomoctalazer_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0xb133d213ebe7ceddull},
     {L"grayeventcontroller_c", L"begin", L"grayeventcontroller_c.begin", 0x6a2d5d90ab51fa2dull, 0xa675651814ff88c3ull},
     {L"grayeventcontroller_c", L"bndevt__grayeventcontroller_triggerbox_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"grayeventcontroller_c.bndevt__grayeventcontroller_triggerbox_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x3ca2ddcd9fa9c757ull},
+    {L"grayeventcontroller_c", L"despawn", L"grayeventcontroller_c.despawn", 0x6a2d5d90ab51fa2dull, 0x025ac85e5fa9ee3bull},
     {L"grayeventcontroller_c", L"spawn", L"grayeventcontroller_c.spawn", 0x6a2d5d90ab51fa2dull, 0xafae5a428efd0f0cull},
     {L"grayeventcontroller_c", L"turnedon", L"grayeventcontroller_c.turnedon", 0x6a2d5d90ab51fa2dull, 0xe817f703d35dd014ull},
     {L"graytest_c", L"bndevt__graytest_sphere_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"graytest_c.bndevt__graytest_sphere_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x8f344348d4e77074ull},

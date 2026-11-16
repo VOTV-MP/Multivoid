@@ -33,7 +33,9 @@ namespace UH = ue_wrap::ufunction_hook;
 UE_FACT_FN(kRowGetMainPlayer, "served_player", L"lib_C", L"getMainPlayer", Declared);
 UE_FACT_FN(kRowGetPlayerCharacter, "served_player", L"GameplayStatics", L"GetPlayerCharacter", Declared);
 UE_FACT_FN(kRowGetPlayerPawn, "served_player", L"GameplayStatics", L"GetPlayerPawn", Declared);
+UE_FACT_FN(kRowGetPlayerCameraManager, "served_player", L"GameplayStatics", L"GetPlayerCameraManager", Declared);
 constexpr int kTagMainPlayer = 0x53505001;  // 'SPP' 1
+constexpr uint8_t kMainSeams = kMainPlayer | kMainPlayerAny;  // both are answered by the one getMainPlayer watch
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -102,9 +104,13 @@ void AnswerNative(void* source, uint8_t seam) {
 
 void OnCharacterPost(void* /*context*/, void* source, void* /*result*/) { AnswerNative(source, kPlayerCharacter); }
 void OnPawnPost(void* /*context*/, void* source, void* /*result*/) { AnswerNative(source, kPlayerPawn); }
+// The camera manager read answers the body itself: the creatures that ask for this seam use the result only as an actor (its
+// location, forward vector or distance), which a pawn answers.
+void OnCameraManagerPost(void* /*context*/, void* source, void* /*result*/) { AnswerNative(source, kCameraManager); }
 
 NativeSeam g_gpc{&kRowGetPlayerCharacter, kPlayerCharacter, &OnCharacterPost};
 NativeSeam g_gpp{&kRowGetPlayerPawn, kPlayerPawn, &OnPawnPost};
+NativeSeam g_gcm{&kRowGetPlayerCameraManager, kCameraManager, &OnCameraManagerPost};
 
 // lib.getMainPlayer(__WorldContext, out AsMain Player): the library's default object runs the body, so the
 // calling robot is the caller frame's object. Of a served robot's calls only the Omega's disc insert reads
@@ -116,7 +122,8 @@ NativeSeam g_gpp{&kRowGetPlayerPawn, kPlayerPawn, &OnPawnPost};
 sg::Verdict OnMainPlayerPre(const sg::Call& c) {
     if (g_records.empty() || !c.callerObject) return sg::Verdict::Run;
     void* pawn = nullptr;
-    if (!Served(c.callerObject, kMainPlayer, pawn)) return sg::Verdict::Run;
+    if (!Served(c.callerObject, kMainSeams, pawn)) return sg::Verdict::Run;
+    const bool any = (g_records.find(c.callerObject)->second.seams & kMainPlayerAny) != 0;  // Served found it
     static void*   sFn = nullptr;
     static int32_t sOutOff = -1;
     if (c.function != sFn) {
@@ -126,6 +133,10 @@ sg::Verdict OnMainPlayerPre(const sg::Call& c) {
     uint8_t* out = sOutOff >= 0 ? sg::OutParamPtr(c, sOutOff) : nullptr;
     if (!out) return sg::Verdict::Run;
     if (ue_wrap::ambient_creature::IsWalker(c.callerObject)) {
+        if (!pawn) return sg::Verdict::Run;
+    } else if (any) {
+        // A hunter's read (a creature recorded with kMainPlayerAny): every one answers its target, and an absent body
+        // leaves the host's, as the walker's does.
         if (!pawn) return sg::Verdict::Run;
     } else if (!K::IsInsertPlayerRead(c.callerFunction, c.callerLocals, out)) {
         return sg::Verdict::Run;
@@ -137,7 +148,7 @@ sg::Verdict OnMainPlayerPre(const sg::Call& c) {
 
 uint8_t RefusedSeams() {
     return static_cast<uint8_t>((g_gpc.refused ? kPlayerCharacter : 0) | (g_gpp.refused ? kPlayerPawn : 0) |
-                                (g_mainRefused ? kMainPlayer : 0));
+                                (g_gcm.refused ? kCameraManager : 0) | (g_mainRefused ? kMainSeams : 0));
 }
 
 // A robot one of whose seams will not answer serves no one: answered through some reads and not others, it
@@ -153,7 +164,7 @@ void RefuseMain(const char* why) {
     g_mainRefused = true;
     UE_LOGE("served_player: the getMainPlayer seam is refused (%s) -- an Omega serves no client for the rest of "
             "this process", why);
-    DropRecordsNeeding(kMainPlayer);
+    DropRecordsNeeding(kMainSeams);
 }
 
 bool MainLive() { return sg::NameWatchLive(kRowGetMainPlayer, kTagMainPlayer); }
@@ -205,7 +216,7 @@ uint8_t WantedSeams() {
 // Each seam follows the records that need it: armed, or watched, while one lives.
 void UpdateArm() {
     if (g_mainPrimed) {
-        const bool need = (WantedSeams() & kMainPlayer) != 0;
+        const bool need = (WantedSeams() & kMainSeams) != 0;
         if (need && !g_mainWatched) {
             g_mainWatched = sg::WatchName(kRowGetMainPlayer, kTagMainPlayer, &OnMainPlayerPre, nullptr);
             if (!g_mainWatched || !MainLive()) RefuseMain("its resolved watch did not come back live");
@@ -217,6 +228,7 @@ void UpdateArm() {
     const uint8_t want = WantedSeams();
     ArmSeam(g_gpc, (want & kPlayerCharacter) != 0);
     ArmSeam(g_gpp, (want & kPlayerPawn) != 0);
+    ArmSeam(g_gcm, (want & kCameraManager) != 0);
 }
 
 }  // namespace
@@ -225,17 +237,21 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!OnHost()) return;  // a client never records a served robot
     PrimeMain();
-    if ((g_gpc.installed || g_gpc.refused) && (g_gpp.installed || g_gpp.refused)) return;
+    if ((g_gpc.installed || g_gpc.refused) && (g_gpp.installed || g_gpp.refused) &&
+        (g_gcm.installed || g_gcm.refused))
+        return;
     void* statics = R::FindClass(P::name::GameplayStaticsClass);
     if (!statics) return;  // the engine class resolves at boot; asked again next call
     InstallSeam(g_gpc);
     InstallSeam(g_gpp);
+    InstallSeam(g_gcm);
 }
 
 bool SeamsReady(uint8_t seams) {
     if ((seams & kPlayerCharacter) && !g_gpc.installed) return false;
     if ((seams & kPlayerPawn) && !g_gpp.installed) return false;
-    if ((seams & kMainPlayer) && (!g_mainPrimed || g_mainRefused)) return false;
+    if ((seams & kCameraManager) && !g_gcm.installed) return false;
+    if ((seams & kMainSeams) && (!g_mainPrimed || g_mainRefused)) return false;
     return true;
 }
 
@@ -262,8 +278,10 @@ uint8_t ServedSlot(void* robot) {
     return it->second.slot;
 }
 
+unsigned long long AnsweredCount() { return g_answered; }
+
 void Tick() {
-    if (g_records.empty() && !g_mainWatched && !g_gpc.armed && !g_gpp.armed) return;
+    if (g_records.empty() && !g_mainWatched && !g_gpc.armed && !g_gpp.armed && !g_gcm.armed) return;
     for (auto it = g_records.begin(); it != g_records.end();) {
         if (!R::IsLiveByIndex(it->first, it->second.idx)) it = g_records.erase(it);
         else ++it;
