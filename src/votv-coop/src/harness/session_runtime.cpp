@@ -52,7 +52,6 @@
 #include "coop/permissions/permissions_selftest.h"
 #include "coop/player/hand_history.h"
 #include "coop/player/movement_ledger.h"
-#include "coop/player/nickname_arbiter.h"
 #include "coop/player/player_profile_store.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
@@ -70,13 +69,13 @@
 #include "coop/props/trash_morph_gate.h"
 #include "coop/save/save_guard.h"
 #include "coop/save/save_transfer.h"
+#include "coop/session/boot_selftests.h"
 #include "coop/session/join_beacon.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/local_grants.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/player_handshake.h"
 #include "coop/session/server_settings_sync.h"
-#include "coop/text/novelty_ledger.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/session/shutdown.h"
@@ -327,14 +326,8 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     coop::ban_list::RunSelftest();
     // And the one file writer: a write that is not whole is a lost ini, ban or key.
     coop::atomic_file::RunSelftest();
-    // And four the session once ran for them, once per process (a latch, so a Stop/Start repeats
-    // nothing): the join beacon's Draining cases, the nickname arbiter's suffix and collision rows, the
-    // nickname's trims, and the novelty cap's diverse-alphabet peer -- none of which a LAN drill stages.
-    static const bool kJoinDrainingOk = coop::join_beacon::RunDrainingSelftest();
-    static const bool kNickArbiterOk = coop::nickname_arbiter::RunNicknameArbiterSelftest();
-    static const bool kNickSanitizerOk = coop::player_handshake::RunNicknameSanitizerSelftest();
-    static const bool kNoveltyOk = coop::text::RunNoveltyLedgerSelftest();
-    (void)kJoinDrainingOk; (void)kNickArbiterOk; (void)kNickSanitizerOk; (void)kNoveltyOk;
+    // And the four the session once ran (join beacon, nickname arbiter and trims, novelty cap).
+    coop::boot_selftests::RunOnce();
     // Reset net_pump's edge detectors, so a Stop/Start on one process carries no stale "was
     // connected" or "was holding" entries into the new session.
     coop::net_pump::OnSessionStart();
