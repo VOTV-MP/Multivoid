@@ -13,7 +13,6 @@
 #include "coop/dev/traffic_census.h"
 #include "coop/dev/wire_census.h"
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
-#include "coop/player/players_registry.h"
 #include "ice_config.h"         // co-located: TickTurnCredential
 #include "session_lanes.h"      // co-located private header (src tree, not include/)
 #include "signaling_client.h"   // co-located: complete type for the shared_ptr<SignalingClient> dtor + Poll()
