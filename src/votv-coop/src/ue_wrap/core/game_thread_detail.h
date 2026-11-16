@@ -1,6 +1,5 @@
-// ue_wrap/core/game_thread_detail.h -- PRIVATE seam between the two game_thread TUs (and the
-// portable game_thread_id.cpp, which owns the thread id). NOT public
-// API: nothing outside src/ue_wrap/{game_thread,pe_detour,game_thread_id}.cpp may include this (subsystems use
+// ue_wrap/core/game_thread_detail.h -- PRIVATE seam between the game_thread TUs. NOT public API:
+// nothing outside src/ue_wrap/{game_thread,pe_detour,game_thread_id}.cpp may include this (subsystems use
 // ue_wrap/core/game_thread.h).
 //
 // The two TUs split along one concept boundary. pe_detour.cpp is the INTERPOSITION MECHANISM: the
