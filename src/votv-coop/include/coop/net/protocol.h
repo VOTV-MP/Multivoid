@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 300;
+inline constexpr uint16_t kProtocolVersion = 301;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1477,6 +1477,11 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+    // The basement flood (coop/world/flood_sync): a burst pipe's state and a flood volume's level, the host's, to every
+    // client when one changes and to a joiner (FloodState); a client's repair of a pipe, to the host, which judges it and
+    // mends its copy (FloodIntent). Not pre-world. FloodPayload.
+    FloodState = 276,
+    FloodIntent = 277,
 };
 
 #pragma pack(push, 1)
@@ -2283,6 +2288,19 @@ struct RoombaPayload {
     uint8_t  pad[3];  // zero
 };
 static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
+
+// FloodState / FloodIntent. A burst pipe (burstWaterPipe_C) or a flood volume (waterVolume_basementFlooder_C), both placed in
+// the level, is named by its object name. op 0 a pipe's state (`damaged`), op 1 a volume's level (getLevel's units), op 2
+// a client's repair of a pipe.
+inline constexpr uint8_t kFloodOpPipe = 0, kFloodOpLevel = 1, kFloodOpFix = 2;
+struct FloodPayload {
+    WireKey name;      // 32 -- the actor's object name
+    float   level;     // 4 -- a volume's level
+    uint8_t damaged;   // 1 -- a pipe burst
+    uint8_t op;        // 1 -- kFloodOp*
+    uint8_t _pad[2];   // 2 -- zero
+};
+static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

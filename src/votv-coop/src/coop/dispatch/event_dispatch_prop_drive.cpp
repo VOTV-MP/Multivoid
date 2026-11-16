@@ -22,6 +22,7 @@
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/world/flood_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -294,6 +295,24 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::roomba_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::FloodState:
+    case net::ReliableKind::FloodIntent: {
+        // FloodState HOST->ALL, FloodIntent CLIENT->HOST.
+        const bool intent = msg.kind == net::ReliableKind::FloodIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen < sizeof(net::FloodPayload)) {
+            UE_LOGW("event_feed: a flood message the wrong way or too short from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::FloodPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.damaged > 1 || p.op > net::kFloodOpFix || !std::isfinite(p.level)) {
+            UE_LOGW("event_feed: flood message malformed -- dropping");
+            break;
+        }
+        if (intent) ::coop::flood_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::flood_sync::OnState(p);
         break;
     }
     case net::ReliableKind::WoodchipperState:
