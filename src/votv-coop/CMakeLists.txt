@@ -389,6 +389,10 @@ if (MSVC)
     # name by grepping the linker map -- no IDA needed. The .map lands in
     # build/ (gitignored); link-time cost is trivial.
     target_link_options(votv-coop PRIVATE /MAP)
+    # Every object of the net library goes into the DLL, referenced or not, as when its files were
+    # the DLL's own: an archive member nothing names would otherwise be left out, and with it any
+    # static initialiser it carries.
+    target_link_options(votv-coop PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:coop-net>")
 
     # MinHook must match the mod's static CRT or the link fails.
     set_property(TARGET minhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
