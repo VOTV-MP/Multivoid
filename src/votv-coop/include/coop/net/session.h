@@ -10,6 +10,7 @@
 #include "coop/net/eid_pose_lane.h"        // the trash-carry and driven-prop pose lanes
 #include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
+#include "coop/net/net_hooks.h"            // the game-side calls the host program sets
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/origin_context.h"       // which occupancy a relayed stream packet belongs to
 #include "coop/net/outbound_streams.h"     // what this peer sends on its streams
@@ -350,6 +351,10 @@ public:
     // checks in CGame::Packet_PlayerJoinData (CGame.cpp:1956, :1973).
     using BanCheckFn = bool (*)(const char* playerId, const char* address, char* whyOut, int whyLen);
     void SetBanCheck(BanCheckFn fn) { banCheck_ = fn; }
+
+    // The game-side calls the session makes (coop/net/net_hooks.h), set once before Start spawns the
+    // net thread, for every role; a null member is a call that does nothing.
+    void SetHooks(const NetHooks& hooks) { hooks_ = hooks; }
 
     // Host: disconnect the client at peerSlot with no linger; `code` and `reason` reach the peer's
     // status callback, the code as the transport's application end reason. Runs the slot's
@@ -782,6 +787,9 @@ private:
     // The host's ban predicate (SetBanCheck); nullptr = nobody is banned. Set before Start spawns
     // the net thread.
     BanCheckFn banCheck_ = nullptr;
+
+    // The game-side calls (SetHooks); every member null until set. Read on the net thread.
+    NetHooks hooks_{};
 
     // Client: what the host or the transport said when the link ended (the end reason decoded, and
     // its text); written on the net thread, taken on the game thread by TakeHostCloseReason. Its

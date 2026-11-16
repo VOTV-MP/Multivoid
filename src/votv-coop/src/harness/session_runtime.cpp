@@ -63,6 +63,7 @@
 #include "coop/props/container_act_host.h"
 #include "coop/creatures/kerfur_command_wire.h"
 #include "coop/props/prop_act_host.h"
+#include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/trash_morph_gate.h"
@@ -124,6 +125,13 @@ bool BanCheck(const char* playerId, const char* address, char* whyOut, int whyLe
     return coop::ban_list::IsBanned(playerId, address, whyOut, whyLen);
 }
 
+// The session's game-side calls (Session::SetHooks): what the net layer asks of the game it runs in.
+uint32_t HostElementId() { return coop::players::Registry::Get().LocalPlayerElementId(); }
+static_assert(coop::net::kNoHostElementId == coop::element::kInvalidId, "the registry's no-element value");
+void ClientPose(coop::net::Session& s, int slot, float x, float y, float z, uint32_t stamp24) {
+    coop::movement_ledger::OnClientPose(s, slot, ue_wrap::FVector{x, y, z}, stamp24);
+}
+void DriveMerged(uint32_t eid) { coop::prop_drive_stream::dev::NoteMerged(eid); }
 
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
@@ -360,6 +368,7 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the trash morph gate's three verbs: a joiner's pile loads with the save, and the watch is
     // by class and name, so no pile runs a morph unjudged. Idempotent across Stop/Start.
     coop::trash_morph_gate::Install(&g_session);
+    g_session.SetHooks({&HostElementId, &ClientPose, &DriveMerged});   // every role, before Start
     if (netCfg.role == coop::net::Role::Host) {
         // Snapshot the canonical save before coop injects state (host only; clients are
         // save-blocked); synchronous, so it completes before Start.

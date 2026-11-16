@@ -12,7 +12,6 @@
 #include "ue_wrap/core/log.h"
 
 #include "coop/net/protocol.h"  // PacketHeader / EntityPoseBatchHeader / PropDriveRow / kMaxPropDriveBatchEntries
-#include "coop/props/prop_drive_stream.h"  // dev::NoteMerged: the rows that reached the store, for the syncer drill
 
 #include <cmath>
 #include <cstdint>
@@ -90,7 +89,8 @@ void Session::StoreRemotePropDriveBatch(int originSlot, const void* data, int le
             return;
         }
     }
-    for (int i = 0; i < count; ++i) coop::prop_drive_stream::dev::NoteMerged(batch[i].elementId);   // [dev] counted for the drill
+    if (hooks_.noteDriveMerged)   // [dev] counted for the syncer drill
+        for (int i = 0; i < count; ++i) hooks_.noteDriveMerged(batch[i].elementId);
     std::lock_guard<std::mutex> lk(remoteMutex_);
     if (onHost) origin_[originSlot].propDrive.Merge(batch, count, seq);
     else        host_.propDrive.Merge(batch, count, seq);

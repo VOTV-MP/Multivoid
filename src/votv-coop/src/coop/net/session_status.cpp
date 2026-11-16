@@ -13,7 +13,6 @@
 #include "connection_tuning.h"            // co-located: TuneConnection, kDefaultSendBufBytes
 #include "coop/net/net_clock.h"           // NowMs, the net layer's one steady clock
 #include "coop/net/peer_admission.h"      // the exchange state a pending entry owns
-#include "coop/player/players_registry.h"
 #include "signaling_client.h"             // co-located: DialReport, the rendezvous half of a dial
 #include "ue_wrap/core/log.h"
 
@@ -371,7 +370,7 @@ void Session::FinishPeerConnected(int slot, uint32_t hConn) {
         // it lives for the session, so the read is well-defined unless the client connects in the
         // boot window before the first pump tick, when it reads kInvalidId and the client falls
         // back to non-mirror routing.
-        p.hostElementId = coop::players::Registry::Get().LocalPlayerElementId();
+        p.hostElementId = hooks_.localPlayerElementId ? hooks_.localPlayerElementId() : kNoHostElementId;
         if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
             UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
         } else {
