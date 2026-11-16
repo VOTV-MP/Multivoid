@@ -297,6 +297,9 @@ void ApplyState(void* drone, const coop::net::DroneStatePayload& payload) {
     // Interaction gate: write canTakeOff (THE gate) + hasSack (option prerequisite) onto the mirror so
     // a parked drone is interactable instead of "in motion" (the suppressed tick never sets them).
     D::WriteGateFields(drone, canTakeOff, hasSack);
+    // The sack the drone draws: the host's unhook (dropSack) hides it, which this copy's drone never runs.
+    if ((!g_m.haveStateBits || ((ob ^ nb) & D::kFxHasSack) != 0) && D::SetSackVisible(drone, hasSack))
+        UE_LOGI("drone_sync: the drone's sack %s, as the host's", hasSack ? "shown" : "hidden");
     if (!D::WriteLeaveAfter5min(drone, leaveAfter5min) && !g_m.leaveWriteWarned) {
         g_m.leaveWriteWarned = true;
         UE_LOGW("drone_sync: the host's leave timer could not be written onto this copy's drone");

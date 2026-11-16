@@ -422,13 +422,13 @@ generators and puts the kept row back onto the tower after each.
 
 ### The drone
 
-The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host
-streams its transform, stamped with its send time, while it moves and its state as it changes. The client
-stops the drone's tick and physics (a touched body spun between writes) and plays the poses back a little
-behind the host's times, as late as the link needs, so late or bunched poses do not lurch, and the
-cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
-runs on the host only, which is what makes selling into it the one economy path that credits the
-group correctly.
+The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host streams its
+transform, stamped with its send time, while it moves and its state as it changes. The client stops the drone's tick and
+physics (a touched body spun between writes) and plays the poses back a little behind the host's times, as late as the link
+needs, so late or bunched poses do not lurch, and the cargo it drops rides the ordinary prop lanes
+(`coop/interactables/drone_sync`). The client's stopped drone never runs the host's unhook, which hides the sack it draws, so
+it shows or hides its copy's sack mesh on the host's `hasSack` `[V]` (`coop/dev/droneunhook_probe`). The drone's sale runs on
+the host only, which is what makes selling into it the one economy path that credits the group correctly.
 
 The garage console calls and sends it. Its one action option dispatches on what the presser is
 looking at -- the keyboard runs the drone's own call-or-send verb, the other face toggles the

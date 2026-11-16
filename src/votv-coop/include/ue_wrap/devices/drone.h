@@ -105,6 +105,11 @@ void SetSignalLight(void* drone, bool on);
 // no options -- the suppressed tick never sets them). Game thread.
 void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 
+// CLIENT mirror: the sack the drone draws (its `sack` skeletal mesh) shown or hidden. The host's dropSack hides it as it
+// clears hasSack, and the client's suppressed tick and its unrun dropSack never do, so the mirror follows the host's
+// hasSack. A component call only when the visibility differs. False when the mesh does not resolve. Game thread.
+bool SetSackVisible(void* drone, bool visible);
+
 // CLIENT mirror: point the mirror drone's container field at the already-prop-mirrored cargo
 // container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
 void RepointContainer(void* drone);

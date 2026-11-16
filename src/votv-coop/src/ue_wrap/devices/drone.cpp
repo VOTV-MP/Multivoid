@@ -340,6 +340,30 @@ void WriteGateFields(void* drone, bool canTakeOff, bool hasSack) {
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(drone) + g_hasSackOff) = hasSack;
 }
 
+bool SetSackVisible(void* drone, bool visible) {
+    if (!drone) return false;
+    static int32_t s_sackOff = -2;
+    static void* s_setVis = nullptr;
+    static void* s_isVis = nullptr;
+    if (s_sackOff == -2) {
+        s_sackOff = R::FindPropertyOffset(R::ClassOf(drone), L"sack");
+        if (void* sc = R::FindClass(L"SceneComponent")) {
+            s_setVis = R::FindFunction(sc, L"SetVisibility");
+            s_isVis = R::FindFunction(sc, L"IsVisible");
+        }
+    }
+    void* const sack = s_sackOff >= 0 ? *reinterpret_cast<void**>(reinterpret_cast<char*>(drone) + s_sackOff) : nullptr;
+    if (!sack || !R::IsLive(sack) || !s_setVis) return false;
+    if (s_isVis) {
+        ue_wrap::ParamFrame q(s_isVis);
+        if (q.valid() && ue_wrap::Call(sack, q) && q.Get<bool>(L"ReturnValue") == visible) return true;
+    }
+    ue_wrap::ParamFrame f(s_setVis);
+    if (!f.valid() || !f.Set<bool>(L"bNewVisibility", visible) || !f.Set<bool>(L"bPropagateToChildren", false))
+        return false;
+    return ue_wrap::Call(sack, f);
+}
+
 void RepointContainer(void* drone) {
     if (!drone || !EnsureFxResolved() || g_containerOff < 0) return;
     // openPropInv(container) reads the mirror drone's OWN container@0x04F8, which the suppressed tick
