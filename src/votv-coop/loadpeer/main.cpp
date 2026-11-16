@@ -13,10 +13,10 @@
 #include "coop/net/session.h"
 #include "coop/version.h"
 
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
@@ -45,10 +45,12 @@ constexpr const char* kUsage =
 // The wait for a seat is bounded: a dial that nothing answers is reported, not held forever.
 constexpr int kSeatWaitSeconds = 30;
 constexpr int kPoseIntervalMs = 16;
+constexpr int kPoseLagRebaseMs = 100;
 constexpr uint32_t kEidBase = 32768;  // the Join's element id lies in [32768, 65536)
 
 struct Args {
-    std::string host;
+    std::string ip;
+    int port = coop::net::kDefaultPort;
     std::string key;
     std::string shaHex;
     int index = 0;
@@ -74,6 +76,34 @@ bool ParseSha(const std::string& hex, uint8_t* out) {
     return true;
 }
 
+// The whole of `s` as a number in [lo, hi]; anything else (empty, a trailing letter, a sign where none
+// fits, out of range) is refused.
+bool ParseInt(const std::string& s, int lo, int hi, int* out) {
+    int v = 0;
+    const char* end = s.data() + s.size();
+    const auto r = std::from_chars(s.data(), end, v);
+    if (s.empty() || r.ec != std::errc() || r.ptr != end || v < lo || v > hi) return false;
+    *out = v;
+    return true;
+}
+
+bool BadValue(const std::string& k, const std::string& v) {
+    std::fprintf(stderr, "loadpeer: %s '%s' is not an accepted value (--help)\n", k.c_str(), v.c_str());
+    return false;
+}
+
+// "<ip>" or "<ip>:<port>", the port 1..65535; an IPv6 literal is not taken.
+bool ParseHost(const std::string& s, Args& a) {
+    const size_t colon = s.find(':');
+    if (colon == std::string::npos) {
+        a.ip = s;
+        return !s.empty();
+    }
+    if (s.find(':', colon + 1) != std::string::npos) return false;
+    a.ip = s.substr(0, colon);
+    return !a.ip.empty() && ParseInt(s.substr(colon + 1), 1, 65535, &a.port);
+}
+
 // 0 = run, 1 = --help was asked, 2 = a bad argument (already said).
 int ParseArgs(int argc, char** argv, Args& a) {
     for (int i = 1; i < argc; ++i) {
@@ -84,35 +114,31 @@ int ParseArgs(int argc, char** argv, Args& a) {
             return 2;
         }
         const std::string v = argv[++i];
-        if (k == "--host") a.host = v;
+        bool ok = true;
+        if (k == "--host") ok = ParseHost(v, a);
         else if (k == "--game-build-key") a.key = v;
         else if (k == "--build-sha") a.shaHex = v;
-        else if (k == "--index") a.index = std::atoi(v.c_str());
-        else if (k == "--seconds") a.seconds = std::atoi(v.c_str());
-        else if (k == "--world-ready") a.worldReady = v != "0";
-        else {
+        else if (k == "--index") ok = ParseInt(v, 0, 32767, &a.index);
+        else if (k == "--seconds") ok = ParseInt(v, 0, 86400, &a.seconds);
+        else if (k == "--world-ready") {
+            ok = v == "0" || v == "1";
+            a.worldReady = v == "1";
+        } else {
             std::fprintf(stderr, "loadpeer: unknown argument %s\n", k.c_str());
+            return 2;
+        }
+        if (!ok) {
+            BadValue(k, v);
             return 2;
         }
     }
     uint8_t sha[coop::build_trust::kShaBytes];
-    if (a.host.empty() || a.key.empty() || !ParseSha(a.shaHex, sha) || a.index < 0 || a.index >= 32768 ||
-        a.seconds < 0) {
+    if (a.ip.empty() || a.key.empty() || !ParseSha(a.shaHex, sha)) {
         std::fprintf(stderr, "loadpeer: --host, --game-build-key and a 64-hex --build-sha are required "
                              "(--help)\n");
         return 2;
     }
     return 0;
-}
-
-void SplitHost(const std::string& hostPort, coop::net::Config& cfg) {
-    const size_t colon = hostPort.rfind(':');
-    if (colon == std::string::npos) {
-        cfg.peerIp = hostPort;
-        return;
-    }
-    cfg.peerIp = hostPort.substr(0, colon);
-    cfg.port = static_cast<uint16_t>(std::atoi(hostPort.c_str() + colon + 1));
 }
 
 bool SendJoin(coop::net::Session& session, const Args& a) {
@@ -127,6 +153,15 @@ bool SendJoin(coop::net::Session& session, const Args& a) {
     const std::vector<uint8_t> payload = coop::net::EncodeJoin(f);
     return session.SendReliableToSlot(0, coop::net::ReliableKind::Join, payload.data(),
                                       static_cast<int>(payload.size()));
+}
+
+// The host's pose is a peer's bytes: the circle is built on it only when it is finite and well inside the
+// world's bounds, so no value we send is one the receive boundary would refuse.
+bool CentreUsable(const coop::net::PoseSnapshot& c) {
+    const float limit = coop::net::kMaxCoord - 1000.f;
+    for (const float v : {c.x, c.y, c.z})
+        if (!std::isfinite(v) || std::fabs(v) > limit) return false;
+    return true;
 }
 
 // A standing player on a 3 m circle (cm) around `c`, walking its tangent. Every value finite and
@@ -166,7 +201,8 @@ int main(int argc, char** argv) {
     coop::net::Config cfg;
     cfg.role = coop::net::Role::Client;
     cfg.selfAddressed = true;
-    SplitHost(a.host, cfg);
+    cfg.peerIp = a.ip;
+    cfg.port = static_cast<uint16_t>(a.port);
     coop::net::Refusal why{};
     if (!session.Start(cfg, {}, &why)) {
         std::printf("loadpeer %d: could not start (%s)\n", a.index, coop::net::Describe(why.code).id);
@@ -219,13 +255,16 @@ int main(int argc, char** argv) {
             break;
         }
 
-        // The circle is centred on the host's own pose, the first one that arrives; no pose goes out before it.
+        // The circle is centred on the host's own pose, the first finite one that arrives; no pose goes out
+        // before it.
         if (!haveCentre) {
-            haveCentre = session.TryGetRemotePose(0, centre);
+            haveCentre = session.TryGetRemotePose(0, centre) && CentreUsable(centre);
         } else if (now >= nextPose) {
             const double t = std::chrono::duration<double>(now - begin).count();
             session.SetLocalPose(CirclePose(centre, t, a.index));
             ++posesSent;
+            // A stall (a long drain, a descheduled process) does not turn into a burst of catch-up poses.
+            if (now - nextPose > std::chrono::milliseconds(kPoseLagRebaseMs)) nextPose = now;
             nextPose += std::chrono::milliseconds(kPoseIntervalMs);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -238,16 +277,18 @@ int main(int argc, char** argv) {
         kinds += std::to_string(kv.first) + ":" + std::to_string(kv.second);
     }
     kinds += "}";
-    const bool clean = !ended && joinSent && (worldReadySent || !a.worldReady);
+    const bool clean = !ended && joinSent && (worldReadySent || !a.worldReady) && posesSent > 0;
     if (clean) {
         std::printf("loadpeer %d: seated slot %d, %s, %u reliables by kind %s, %llu poses sent, exit clean\n",
                     a.index, seat, a.worldReady ? "world-ready" : "no world-ready", reliables, kinds.c_str(),
                     static_cast<unsigned long long>(posesSent));
         return 0;
     }
+    const char* verdict = "the seat was not completed";
+    if (ended) verdict = endText.c_str();
+    else if (joinSent && posesSent == 0) verdict = "no usable host pose arrived";
     std::printf("loadpeer %d: %s, %u reliables by kind %s, %llu poses sent, exit NOT clean (%s)\n", a.index,
                 seat >= 0 ? ("seated slot " + std::to_string(seat)).c_str() : "never seated", reliables,
-                kinds.c_str(), static_cast<unsigned long long>(posesSent),
-                ended ? endText.c_str() : "the seat was not completed");
+                kinds.c_str(), static_cast<unsigned long long>(posesSent), verdict);
     return 1;
 }
