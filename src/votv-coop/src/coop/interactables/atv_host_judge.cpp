@@ -136,20 +136,32 @@ bool InReach(uint8_t slot, void* atv) {
     return dx * dx + dy * dy + dz * dz <= kReachCm * kReachCm;
 }
 
-// A fit the host would not make is given back: the module's prop at the ATV, as the take-off hands one over.
-void Refund(void* atv, uint8_t module) {
+// The spawn place of a refund: 120 cm above the ATV, or, when the ATV is gone, at the sender's pawn (its puppet's actor,
+// read as InReach reads it).
+bool RefundPlace(uint8_t slot, void* atv, ue_wrap::FVector& at) {
+    if (atv) {
+        if (!ue_wrap::engine::TryGetActorLocation(atv, at)) return false;
+        at.Z += 120.f;
+        return true;
+    }
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    void* const body = rp && rp->valid() ? rp->GetActor() : nullptr;
+    return body && ue_wrap::engine::TryGetActorLocation(body, at);
+}
+
+// A fit the host would not make is given back: the module's prop at `at`, as the take-off hands one over.
+void Refund(uint8_t slot, const Payload& p, const ue_wrap::FVector& at) {
     if (RefundOff()) {
         DE::Note(DE::kRefund, 0);
         return;
     }
-    void* cls = ue_wrap::phys_mods::ClassForByte(module);
-    ue_wrap::FVector at{};
-    if (!cls || !ue_wrap::engine::TryGetActorLocation(atv, at)) {
-        UE_LOGW("atv_host: no prop class for module %u -- the refused fit is not refunded", static_cast<unsigned>(module));
+    void* cls = ue_wrap::phys_mods::ClassForByte(p.module);
+    if (!cls || !ue_wrap::engine::SpawnActor(cls, at)) {
+        UE_LOGW("atv_host: slot %u's op %u: the module %u did not spawn -- the refused fit is not refunded",
+                static_cast<unsigned>(slot), static_cast<unsigned>(p.op), static_cast<unsigned>(p.module));
         DE::Note(DE::kRefund, 0);
         return;
     }
-    ue_wrap::engine::SpawnActor(cls, {at.X, at.Y, at.Z + 120.f});
     ++g_n.refunded;
     DE::Note(DE::kRefund, 1);
 }
@@ -161,22 +173,47 @@ void NoteBatterySpawned(int32_t kind, void* actor, float charge) {
 }
 
 // A battery fit the host would not make is given back: a battery prop at the request's charge (the client's copy consumed
-// a real battery of that charge), 120 cm above the ATV as the module's is, spawned the way the ATV's own unscrew spawns
-// one. The charge is bounded as the accepted fit bounds it.
-void RefundBattery(void* atv, float charge) {
+// a real battery of that charge) at `at`, the module's refund place, with the always-spawn collision handling. The charge
+// is bounded as the accepted fit bounds it.
+void RefundBattery(uint8_t slot, const Payload& p, const ue_wrap::FVector& at) {
     if (BatteryRefundOff()) return;
-    ue_wrap::FVector at{};
-    if (!ue_wrap::engine::TryGetActorLocation(atv, at)) {
-        UE_LOGW("atv_host: the ATV's place is unreadable -- the refused battery fit is not refunded");
-        return;
-    }
-    void* const born = A::SpawnBattery({at.X, at.Y, at.Z + 120.f}, {}, {1.f, 1.f, 1.f}, 1, charge);
+    void* const born = A::SpawnBattery(at, {}, {1.f, 1.f, 1.f}, 1, p.amount);
     if (!born) {
-        UE_LOGW("atv_host: the refunded battery did not spawn");
+        UE_LOGW("atv_host: slot %u's op %u: the refunded battery did not spawn", static_cast<unsigned>(slot),
+                static_cast<unsigned>(p.op));
         return;
     }
     ++g_n.refunded;
-    NoteBatterySpawned(1, born, charge);
+    NoteBatterySpawned(1, born, p.amount);
+}
+
+// The prop a request's hand judge spent, given back after any refusal that follows it: at the ATV's refund place, or at
+// the sender's pawn when the ATV is gone.
+void RefundHeld(uint8_t slot, const Payload& p, void* atv) {
+    ue_wrap::FVector at{};
+    if (!RefundPlace(slot, atv, at)) {
+        UE_LOGW("atv_host: slot %u's op %u: no place to give the spent prop back -- it is lost", static_cast<unsigned>(slot),
+                static_cast<unsigned>(p.op));
+        return;
+    }
+    if (p.op == op::kBatteryIn) RefundBattery(slot, p, at);
+    else Refund(slot, p, at);
+}
+
+// The hand judge of the two ops that consume a held prop (a module's fit, a battery's): kOk when the prop was the sender's
+// to spend and is now counted spent, kNoItem when its hand held none, kMalformed for a module byte that is no ATV upgrade.
+// It runs ahead of every other refusal of the request, because the client's copy has consumed the prop by the time it asks.
+uint8_t SpendHeld(uint8_t slot, const Payload& p) {
+    if (p.op == op::kBatteryIn)
+        return JudgeOff() || BatteryJudgeOff() || coop::hand_spend::Spend(slot, kBatteryClass, 1) ? why::kOk : why::kNoItem;
+    // The module's byte is bound to the item the sender held: the class the game gives that byte (physModToActor) is the
+    // class its hand last announced, and an ATV upgrade's. A module's value is read from no hand state (the announce
+    // carries a class, a name and an item), so the class is the binding; a byte of another class is no fit of this item.
+    void* const cls = ue_wrap::phys_mods::ClassForByte(p.module);
+    void* const base = ue_wrap::object_index::ClassByName(kUpgradeClass);
+    if (!cls || !base || !ue_wrap::prop::WalksToBase(cls, base)) return why::kMalformed;
+    const std::wstring held = ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls));
+    return JudgeOff() || coop::hand_spend::Spend(slot, held.c_str(), kModuleUses) ? why::kOk : why::kNoItem;
 }
 
 bool WellFormed(const Payload& p) {
@@ -238,22 +275,12 @@ uint8_t Repair(N::Session& s, uint8_t slot, const Payload& p, const std::wstring
     return why::kOk;
 }
 
+// A module fitted. The hand judge has passed (SpendHeld); a refusal here is refunded by Execute.
 uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    // The module's byte is bound to the item the sender held: the class the game gives that byte (physModToActor) is the
-    // class its hand last announced, and an ATV upgrade's. A module's value is read from no hand state (the announce
-    // carries a class, a name and an item), so the class is the binding; a byte of another class is no fit of this item.
-    void* const cls = ue_wrap::phys_mods::ClassForByte(p.module);
-    void* const base = ue_wrap::object_index::ClassByName(kUpgradeClass);
-    if (!cls || !base || !ue_wrap::prop::WalksToBase(cls, base)) return why::kMalformed;
-    const std::wstring held = ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls));
-    if (!JudgeOff() && !coop::hand_spend::Spend(slot, held.c_str(), kModuleUses)) return why::kNoItem;
     uint8_t mods[kMaxModules + 1] = {};
     std::copy(v.modules, v.modules + v.count, mods);
-    if ((!DupOff() && std::find(mods, mods + v.count, p.module) != mods + v.count) || v.count >= kMaxModules) {
-        // The hand judge passed: the module was this sender's to fit, and it is spent on its copy, so it comes back.
-        Refund(atv, p.module);
+    if ((!DupOff() && std::find(mods, mods + v.count, p.module) != mods + v.count) || v.count >= kMaxModules)
         return why::kDuplicate;
-    }
     mods[v.count] = p.module;
     {
         H::ApplyScope applying;
@@ -265,15 +292,13 @@ uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& k
 
 // A battery fitted: the playerUsedOn branch's own body is battery := the held battery's charge, the battery prop spent,
 // then the game's updBattery; refused while one is fitted ("Battery is equipped"). The client's copy ran it with its own
-// battery, so the charge is the one its battery held; the host's copy of that battery is the hand mirror, which carries
-// none, so the bound is the field's range, as the refuel's is the tank's room. The hand judge comes first (a request with
-// no battery held is refused and refunded nothing); kFull is the only refusal after it, and it gives the battery back.
+// battery, so the charge is the one its battery held. The host holds no number for that battery (the hand lane carries a
+// class, a name and an item; a held prop has no record on the host), so the claim is kept and clamped to the field's range:
+// #89's refuel bounds the client's amount by the tank the same way, and MTA takes a vehicle's damage state from its driver's
+// claim alone (CGame.cpp:2417, Packet_VehicleDamageSync). The hand judge has passed (SpendHeld, before every refusal);
+// kFull is refused here and refunded by Execute with every other refusal after it.
 uint8_t BatteryIn(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    if (!JudgeOff() && !BatteryJudgeOff() && !coop::hand_spend::Spend(slot, kBatteryClass, 1)) return why::kNoItem;
-    if (v.battery >= 0.f) {
-        RefundBattery(atv, p.amount);
-        return why::kFull;
-    }
+    if (v.battery >= 0.f) return why::kFull;
     {
         H::ApplyScope applying;
         A::SetBattery(atv, std::fmin(std::fmax(p.amount, 0.f), kMax));
@@ -369,11 +394,18 @@ N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
     H::Vitals v;
     // A sync asks for the host's state, nothing of this sender's body or reach: it is answered, and nothing is applied.
     const bool sync = p.op == op::kSync;
+    const bool formed = WellFormed(p);
+    // A fit or a battery consumes a prop the sender's copy has already spent, so the hand judge runs ahead of every
+    // refusal below, and a refusal after a passed judge gives the prop back (RefundHeld).
+    const bool consumes = formed && (p.op == op::kFit || p.op == op::kBatteryIn);
+    const uint8_t handVerdict = consumes ? SpendHeld(slot, p) : why::kOk;
+    const bool spent = consumes && handVerdict == why::kOk;
     if (!atv) verdict = why::kGone;
-    else if (!WellFormed(p)) verdict = why::kMalformed;
+    else if (!formed) verdict = why::kMalformed;
     else if (!sync && coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) verdict = why::kNotReady;
     else if (!sync && t.occupantSlot != slot && !JudgeOff() && !InReach(slot, atv)) verdict = why::kReach;
     else if (!H::ReadVitals(atv, v)) verdict = why::kNotReady;
+    else verdict = handVerdict;
     if (verdict == why::kOk) {
         switch (p.op) {
         case op::kRefuel: verdict = Refuel(s, slot, p, key, atv, v); break;
@@ -389,6 +421,7 @@ N::Served Execute(N::Session& s, const Payload& p, uint8_t slot) {
         }
         if (verdict == why::kOk) return N::Served::Done;   // Applied() answered
     }
+    if (spent) RefundHeld(slot, p, atv);
     Answer(s, slot, p, verdict, atv);
     return N::Served::Done;
 }
