@@ -299,6 +299,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/keypad_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp
     src/coop/dev/fireext_drill.cpp
+    src/coop/dev/media_url_probe.cpp
+    src/coop/dev/tv_link_drill.cpp
     src/coop/dev/pry_drill.cpp
     src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp

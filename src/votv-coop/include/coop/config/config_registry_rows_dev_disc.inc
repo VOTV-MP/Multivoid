@@ -10,3 +10,11 @@ CFG_FLAG(module_intent_off, "module_intent_off", "dev", false, "VOTVCOOP_MODULE_
     "Developer red arm of the module-row drill: never set. This client's press on an upgrade panel's module row runs "
     "on this machine alone, as it did before the press was an intent: the host never takes it, and its next balance "
     "gives the charge back.")
+CFG_STRING(media_url_probe, "media_url_probe", "dev", "", "VOTVCOOP_MEDIA_URL_PROBE", false,
+    "Probe (either peer): web addresses, `|` between them. Twenty seconds after the world is up the gamemode's "
+    "sixteenth media channel is asked to open each in turn, and the player is read once a second for 25 "
+    "seconds. Lines tagged [MEDIA-URL-PROBE]; each address ends PLAYED or NOT-PLAYED.")
+CFG_STRING(tv_link_drill, "tv_link_drill", "dev", "", "VOTVCOOP_TV_LINK_DRILL", false,
+    "Drill (BOTH peers): a web address. Each peer powers the televisions of its world; the host spawns a set when "
+    "the save holds none and asks it for the address through the TV link lane; each peer reads its set's play "
+    "time for forty seconds. One `[TV-LINK-DRILL] [H|C] PASS` or `FAIL` line per peer.")

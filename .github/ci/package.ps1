@@ -43,6 +43,14 @@ param(
     # untestable on the box that has it -- and a gate nobody can make fire is a gate
     # nobody has checked. (2026-09-01.)
     [string]$PakDir     = '',                       # default: <repo>/assets/paks
+    # A yt-dlp.exe to ship as mod\tools\yt-dlp.exe: what resolves a YouTube address put on a
+    # television (coop/interactables/tv_link_resolver). Not given, the zip carries none and a
+    # YouTube link is refused with a log line; a direct video address plays either way.
+    [string]$YtDlp      = '',
+    # A QuickJS-NG qjs.exe to ship as mod\tools\qjs.exe: the JavaScript runtime yt-dlp solves
+    # YouTube's script challenge with. Without it YouTube offers picture and sound as two
+    # streams, which a television cannot open. Only read together with -YtDlp.
+    [string]$QuickJs    = '',
     # ASSEMBLING THE REAL THING. A release zip MUST carry the starter paks; a CI or
     # drill zip may lawfully be pak-less. Both statements were already written in this
     # file's header and NEITHER was enforced, so the two lanes produced the same
@@ -175,6 +183,68 @@ if ($Release) {
 # the literal "true" inside. Match them rather than shipping an empty file.
 Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Encoding ascii -NoNewline
 
+# --- The optional yt-dlp program (mod\tools) ---
+if ($YtDlp) {
+    if (-not (Test-Path -LiteralPath $YtDlp)) { throw "yt-dlp not found: $YtDlp" }
+    New-Item -ItemType Directory -Path (Join-Path $stage 'mod/tools') -Force | Out-Null
+    Copy-Item -LiteralPath $YtDlp (Join-Path $stage 'mod/tools/yt-dlp.exe')
+    $ytSha = (Get-FileHash -LiteralPath $YtDlp -Algorithm SHA256).Hash.ToLower()
+    $ytNote = @(
+        'yt-dlp.exe in this folder is the unmodified standalone Windows binary of yt-dlp,',
+        'https://github.com/yt-dlp/yt-dlp (releases page). Multivoid runs it as a separate',
+        'program to resolve a YouTube address put on an in-game television.',
+        '',
+        "sha256: $ytSha",
+        '',
+        'yt-dlp is released under The Unlicense. The standalone binary bundles third-party',
+        'components under their own licenses; see THIRD_PARTY_LICENSES.txt and the source',
+        'code in the yt-dlp repository for the release this binary came from.'
+    )
+    Set-Content -LiteralPath (Join-Path $stage 'mod/tools/yt-dlp-NOTICE.txt') -Value ($ytNote -join "`r`n") -Encoding ascii
+    if ($QuickJs) {
+        if (-not (Test-Path -LiteralPath $QuickJs)) { throw "QuickJS not found: $QuickJs" }
+        Copy-Item -LiteralPath $QuickJs (Join-Path $stage 'mod/tools/qjs.exe')
+        $qjsSha = (Get-FileHash -LiteralPath $QuickJs -Algorithm SHA256).Hash.ToLower()
+        $qjsNote = @(
+            'qjs.exe in this folder is the unmodified Windows x86_64 binary of QuickJS-NG,',
+            'https://github.com/quickjs-ng/quickjs (releases page). yt-dlp runs it to solve the',
+            'script challenge YouTube sets before it names a stream.',
+            '',
+            "sha256: $qjsSha",
+            '',
+            'The MIT License (MIT)',
+            '',
+            'Copyright (c) 2017-2026 Fabrice Bellard',
+            'Copyright (c) 2017-2024 Charlie Gordon',
+            'Copyright (c) 2023-2026 Ben Noordhuis',
+            "Copyright (c) 2023-2026 Sa$([char]0xFA)l Ibarra Corretg$([char]0xE9)",
+            '',
+            'Permission is hereby granted, free of charge, to any person obtaining a copy',
+            'of this software and associated documentation files (the "Software"), to deal',
+            'in the Software without restriction, including without limitation the rights',
+            'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+            'copies of the Software, and to permit persons to whom the Software is',
+            'furnished to do so, subject to the following conditions:',
+            '',
+            'The above copyright notice and this permission notice shall be included in',
+            'all copies or substantial portions of the Software.',
+            '',
+            'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+            'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,',
+            'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE',
+            'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER',
+            'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,',
+            'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN',
+            'THE SOFTWARE.'
+        )
+        Set-Content -LiteralPath (Join-Path $stage 'mod/tools/qjs-NOTICE.txt') -Value ($qjsNote -join "`r`n") -Encoding utf8
+    } else {
+        Write-Warning 'yt-dlp is shipped without -QuickJs: YouTube links will find no stream a television can open.'
+    }
+} elseif ($QuickJs) {
+    throw '-QuickJs is only read together with -YtDlp.'
+}
+
 # --- Pak route (pak\ -> shimloader\pak\<pkg>\ -> VFS LogicMods\<pkg>\) --
 # When -Pak is not given the default input is assets/paks/: the staged starter-model
 # paks plus their .png preview tiles, the F1 skin browser's sidecar convention.
@@ -255,3 +325,5 @@ Write-Host "  payload: $PayloadDll"
 Write-Host "  tree   : manifest.json, icon.png, README.md$(if ($logSections.Count -gt 0) { ", CHANGELOG.md ($($logSections.Count) build(s))" }), LICENSE, THIRD-PARTY-NOTICES.md, mod/enabled.txt, mod/dlls/main.dll"
 if ($Pak.Count -gt 0) { Write-Host "           + pak/ ($($Pak.Count) file(s))" }
 if ($Release) { Write-Host "           + mod/dlls/main.dll.sig" }
+if ($YtDlp) { Write-Host "           + mod/tools/yt-dlp.exe, mod/tools/yt-dlp-NOTICE.txt" }
+if ($YtDlp -and $QuickJs) { Write-Host "           + mod/tools/qjs.exe, mod/tools/qjs-NOTICE.txt" }

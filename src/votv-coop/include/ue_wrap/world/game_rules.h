@@ -65,6 +65,13 @@ int ReadDifficulty();
 // on a BeginPlay. Returns how many rules the copy changed, 0 when the two already agreed, -1 when
 // either struct could not be resolved (nothing written). Game thread.
 int ApplySavedToProcess(void* gameInstance, void* save);
+// The process copy's Custom Content rule: 1, 0, or -1 while the rules are not resolvable. While it is off the
+// game's television and radio refuse a player's own files and web addresses (lib_C::isCustom). Game thread.
+int ReadCustomContent();
+
+// Drill aid: write that rule in the process copy. False while the rules are not resolvable. Game thread.
+bool ForceCustomContent(bool on);
+
 
 // The outcome of WriteSavedRule.
 enum class WriteResult { Written, UnknownKey, BadValue, Unresolved };

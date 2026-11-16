@@ -23,6 +23,7 @@
 #include "coop/interactables/floppybox_sync.h"   // FloppyBoxState
 #include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // PhysModsState
+#include "coop/interactables/tv_link_sync.h"  // TvLink
 #include "coop/interactables/sat_console_sync.h"  // SatConsole
 #include "coop/interactables/drive_payload_sync.h"  // DrivePayload
 #include "coop/interactables/drive_sync.h"       // DriveSlotState
@@ -121,6 +122,22 @@ bool HandleSignalEvent(net::Session& session, const net::Session::ReliableMessag
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::physmods_sync::OnPhysMods(pm, pmslot);
+        break;
+    }
+    case net::ReliableKind::TvLink: {
+        // The web address a television was asked to play on another peer; this peer's copy of the set takes it.
+        if (msg.payloadLen < sizeof(net::TvLinkPayload)) {
+            UE_LOGW("event_feed: TvLink payload too short (%zu < %zu)", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::TvLinkPayload));
+            break;
+        }
+        net::TvLinkPayload tl{};
+        std::memcpy(&tl, msg.payload, sizeof(tl));
+        const uint8_t tlslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::tv_link_sync::OnLink(tl, tlslot);
         break;
     }
     case net::ReliableKind::DriveSlotState: {

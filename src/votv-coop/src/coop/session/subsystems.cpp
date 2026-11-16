@@ -12,6 +12,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_ping_sync.h"
+#include "coop/interactables/tv_link_sync.h"  // a web video on a television, for every player
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/meadow_db_sync.h"  // meadow signal-DB mirror (multiset shadow + join seed)
@@ -288,6 +289,7 @@ void Install(coop::net::Session& session) {
     coop::orb_authority::Install(&session);  // the black orb's encounter is the host's: its begin and timeline watches
     coop::ufo_sync::Install(&session);  // the ambient UFOs fly the host's paths; the Midas run is relayed
     coop::roomba_sync::Install(&session);  // the robot cleaner: a client refuses its tick and pickup, its switch is the host's
+    coop::tv_link_sync::Install(&session);  // a web video on a television: watches on the set and its remote
     coop::puppet_identity::Install(&session);  // a puppet's touch of a wisp, a grunt, a trigger box or a dream box acts on no machine's player
     coop::roach_sync::Install(&session);  // roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::owner_entity_sync::Install(&session);  // owner-entity lane: eyer per-peer owned + cross-peer display mirrors
@@ -552,6 +554,7 @@ DisconnectStats DisconnectAll() {
     coop::orb_authority::OnDisconnect();  // the encounters the host was judging
     coop::ufo_sync::OnDisconnect();  // the paths sent and pending
     coop::roomba_sync::OnDisconnect();  // the cleaners known, the presses and states queued
+    coop::tv_link_sync::OnDisconnect();  // the parked links and each set's last address
     coop::puppet_identity::OnDisconnect();  // the resolved classes and stubs, the grunt and wisp_p windows
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
@@ -673,6 +676,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server_upgrade"}; coop::server_upgrade_sync::Tick(); }  // a parked canonical, applied once the servers resolve
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); coop::mirror_slot_entry::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim; the mirror entry's watches settle
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
+    coop::tv_link_sync::Tick();  // a link that waits for its set (returns at once when none does)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists

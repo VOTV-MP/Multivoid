@@ -8,6 +8,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
+#include "coop/interactables/tv_link_sync.h"  // each television's last web address
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/drive_sync.h"  // the drive slots
@@ -141,6 +142,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_input_sync::SeedPingAttributionFromMachine();  // a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
+    coop::tv_link_sync::QueueConnectBroadcastForSlot(slot);  // each television's last web address
     coop::props::prop_food_sync::QueueConnectBroadcastForSlot(slot);  // every world food's condition again
     coop::plant_sync::QueueConnectBroadcastForSlot(slot);  // every plant again
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
