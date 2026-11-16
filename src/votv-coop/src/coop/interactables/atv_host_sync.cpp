@@ -99,7 +99,7 @@ void ApplyState(const std::wstring& key, void* atv, const Payload& p, int source
     NoteAppliedStateSeq(key, p.stateSeq);
     ++g_n.applied;
     DE::Note(DE::kStateApplied, static_cast<int32_t>(p.stateSeq), source, p.moduleCount, A::GetFuel(atv), A::GetHealth(atv),
-             A::GetBattery(atv));
+             A::GetBattery(atv), DE::On() ? DE::KeyTag(key) : 0);
 }
 
 // [dev] The drill's fixture: the next state for this ATV is held, not applied, until the copy builds its next condition
@@ -402,6 +402,8 @@ void QueueConnectBroadcastForSlot(int slot) {
     coop::net::Session* s = Live();
     if (!s || s->role() != coop::net::Role::Host) return;
     if (A::EnsureResolved()) {
+        // Red battery_join_off: the state a joiner is sent carries no battery (the live publish keeps it).
+        static const bool s_joinOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "battery_join_off";
         std::vector<Indexed> atvs;
         coop::atv_sync::ForEachIndexed(&Collect, &atvs);
         for (const Indexed& x : atvs) {
@@ -409,6 +411,7 @@ void QueueConnectBroadcastForSlot(int slot) {
             if (!ReadVitals(x.actor, v)) continue;
             Payload p{};
             FillState(x.key, v, op::kState, p);
+            if (s_joinOff) p.flags = static_cast<uint8_t>(p.flags & ~coop::net::kAtvHostBattery);
             s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
             ++g_n.replayed;
         }

@@ -74,7 +74,7 @@ CFG_FLAG(atv_eject_red, "atv_eject_red", "dev", false, "VOTVCOOP_ATV_EJECT_RED",
 CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "off|green|atv_gate_off|atv_ack_off|atv_judge_off|atv_dup_module|atv_refund_off|atv_publish_off|atv_joiner_rows_off|"
     "atv_bits_off|atv_gate_hold_off|atv_park_off|battery_refund_off|battery_spawn_off|local_destroy_off|battery_in_off|"
-    "battery_out_off|battery_publish_off|battery_judge_off",
+    "battery_out_off|battery_publish_off|battery_judge_off|battery_join_off",
     "VOTVCOOP_ATV_GATE_DRILL",
     "Drill (BOTH peers, plus a third client as observer): the client, the host and the observer do each act a player does "
     "at an ATV -- a refuel, a repair, a module fitted and taken off, the seat, lights, brake, turbo and horn, a drive -- and "
@@ -90,7 +90,8 @@ CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "battery_refund_off (a refused battery fit is not refunded), battery_spawn_off (the host spawns no battery on an "
     "accepted unscrew), local_destroy_off (a client keeps the battery prop its own unscrew spawned), battery_in_off and "
     "battery_out_off (the client's battery fit, or unscrew, row asks nothing), battery_publish_off (the host's states carry "
-    "no battery), battery_judge_off (a battery fit is not judged against the hand, so a forged one is refunded a battery). "
+    "no battery), battery_judge_off (a battery fit is not judged against the hand, so a forged one is refunded a battery), battery_join_off (the state a joiner is sent "
+    "carries no battery). "
     "The battery steps: b1 a fit, b2 an unscrew (the host spawns the one battery every peer holds), b3 a fit back, b0 a fit "
     "the host refuses as full and refunds, b4 an unscrew it refuses as not held, b6 a forged fit with an empty hand, b5 the "
     "rejoined copy's battery. MUTATES the ATV.")

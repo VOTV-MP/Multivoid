@@ -50,6 +50,11 @@ void NotePoseApplied(const std::wstring& key, void* actor, bool host, uint32_t r
          fromSyncer ? 1.f : 0.f);
 }
 
+void NoteMirrorBound(const std::wstring& cls, void* actor) {
+    if (!On() || cls != L"prop_atvcarbattery_C") return;
+    Note(kBatteryBound, ue_wrap::reflection::InternalIndexOf(actor));
+}
+
 uint32_t Count(Event e) {
     std::lock_guard<std::mutex> hold(g_lock);
     return e >= 0 && e < kEventCount ? g_ring[e].count : 0u;

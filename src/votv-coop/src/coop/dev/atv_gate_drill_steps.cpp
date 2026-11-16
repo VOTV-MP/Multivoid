@@ -223,34 +223,35 @@ bool PreludeHostFull(Ctx& c, std::string& why) { return SeedHostBattery(c.key, k
 
 bool ActFitBattery(Ctx& c, std::string& why) { return FitBattery(c.key, kBatteryCharge, why); }
 bool ActFitRefused(Ctx& c, std::string& why) { return FitBattery(c.key, kRefundCharge, why); }
-bool ActUnscrewBattery(Ctx& c, std::string& why) { return UnscrewBattery(c.key, c.bat0, c.ownNew, why); }
+bool ActUnscrewBattery(Ctx& c, std::string& why) { return UnscrewBattery(c.key, why); }
 bool ActForgeBatteryIn(Ctx& c, std::string& why) { return EmptyHand(c.key, why) && Forge(c, op::kBatteryIn, kForgedCharge, 0, why); }
 
+// A state of the DRILL ATV's (its key's tag, never another ATV's) that this copy applied before order `beforeOrd` and that
+// left its battery at `charge`.
+bool AppliedBefore(Ctx& c, uint32_t beforeOrd, float charge) {
+    uint32_t cursor = c.cur[DE::kStateApplied];
+    const int32_t tag = DE::KeyTag(c.key);
+    DE::Rec s;
+    while (DE::Next(DE::kStateApplied, cursor, s))
+        if (s.ord < beforeOrd && s.i3 == tag && std::fabs(s.f2 - charge) < 0.5f) return true;
+    return false;
+}
+
 // The records the decisions look for before an event's own (AnyBefore's predicates; `arg` is a charge or unused).
-bool StateBattery(const DE::Rec& r, int32_t charge) { return std::fabs(r.f2 - static_cast<float>(charge)) < 0.5f; }
 bool SpawnedUnscrew(const DE::Rec& r, int32_t charge) { return r.i0 == 0 && std::fabs(r.f0 - static_cast<float>(charge)) < 0.5f; }
 bool SpawnedRefund(const DE::Rec& r, int32_t charge) { return r.i0 == 1 && std::fabs(r.f0 - static_cast<float>(charge)) < 0.5f; }
 bool SpawnedAny(const DE::Rec&, int32_t) { return true; }
 
-// The battery props this peer did not hold before the step, waited for: 1 once `atLeast` have arrived (their count and the
-// first one's charge in `n` and `charge`), 0 when the bound passed (INVALID said), -1 when the run ended.
-int WaitNewBatteries(Ctx& c, int atLeast, int& n, float& charge) {
-    for (int i = 0; i < kEventS * 10; ++i) {
-        if (Aborted()) return -1;
-        n = NewBatteryProps(c.bat0, &charge);
-        if (n >= atLeast) return 1;
-        SleepStep();
-    }
-    if (!Aborted()) End('I', "no new battery prop within " + std::to_string(kEventS) + " s");
-    return 0;
-}
-
-// Exactly one new battery prop at `want`, decided at its arrival: `own` are the ones this peer's own game made (the actor's
-// unscrew leaves none), so the host's prop is the one that brings the count past them; a second is the ghost.
-Result OneNewBattery(Ctx& c, int own, float want) {
-    int n = 0;
+// Exactly one new battery prop at `want`, decided at its arrival and counted once there: on the host the record of its own
+// spawn (of `kind`), on every other peer the prop lane's bind of that prop. The count is every live battery this peer did
+// not hold before the step, so a prop this peer's own game made and never destroyed (the client's ghost) is counted with it.
+Result OneNewBattery(Ctx& c, float want, int32_t kind) {
+    const bool host = c.me == kHost;
+    DE::Rec r;
+    if (WaitRec(c, host ? DE::kBatterySpawned : DE::kBatteryBound, [&](const DE::Rec& a) { return !host || a.i0 == kind; }, r) != 1)
+        return Stopped();
     float charge = -1.f;
-    if (WaitNewBatteries(c, own + 1, n, charge) != 1) return Stopped();
+    const int n = NewBatteryProps(c.bat0, &charge);
     if (n != 1) return Fail("this peer holds " + std::to_string(n) + " battery props it did not hold before the step, not 1");
     if (!(std::fabs(charge - want) < 0.5f))
         return Fail("the new battery prop's charge is " + std::to_string(charge) + ", not " + std::to_string(want));
@@ -280,7 +281,7 @@ Result Db1(Ctx& c) {
         if (w < 0) return Stopped();
         if (!w) return Fail(fail);
         if (r.i1 != reason::kOk) return Fail("the host refused the fit: reason " + std::to_string(r.i1));
-        if (r.i2 && !DE::AnyBefore(DE::kStateApplied, c.cur[DE::kStateApplied], r.ord, &StateBattery, static_cast<int32_t>(kBatteryCharge)))
+        if (r.i2 && !AppliedBefore(c, r.ord, kBatteryCharge))
             return Fail("the host's answer did not leave this copy holding the fitted battery");
         return Pass("the host's answer closed the request and this copy holds the fitted charge");
     }
@@ -294,7 +295,8 @@ Result Db1(Ctx& c) {
     std::string t;
     Facts f;
     if (!AwaitFact(c, kHost, t) || !Parse(t, f)) return Stopped();
-    if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& a) { return a.i1 == 0 && Ge(static_cast<uint32_t>(a.i0), f.seq); }, r) != 1)
+    const int32_t tag = DE::KeyTag(c.key);
+    if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& a) { return a.i3 == tag && a.i1 == 0 && Ge(static_cast<uint32_t>(a.i0), f.seq); }, r) != 1)
         return Stopped();
     if (!(std::fabs(r.f2 - kBatteryCharge) < 0.5f))
         return Fail("this copy's battery is " + std::to_string(r.f2) + " after the host's state, not " + std::to_string(kBatteryCharge));
@@ -311,9 +313,9 @@ Result Db2(Ctx& c) {
         if (w < 0) return Stopped();
         if (!w) return Fail(fail);
         if (r.i1 != reason::kOk) return Fail("the host refused the unscrew: reason " + std::to_string(r.i1));
-        if (r.i2 && !DE::AnyBefore(DE::kStateApplied, c.cur[DE::kStateApplied], r.ord, &StateBattery, -1))
+        if (r.i2 && !AppliedBefore(c, r.ord, -1.f))
             return Fail("the host's answer did not leave this copy without a battery");
-        return OneNewBattery(c, c.ownNew, kBatteryCharge);
+        return OneNewBattery(c, kBatteryCharge, 0);
     }
     if (c.me == kHost) {
         if (WaitRec(c, DE::kAccepted, [](const DE::Rec& a) { return a.i0 == op::kBatteryOut && a.i1 == kClient; }, r) != 1) return Stopped();
@@ -321,15 +323,16 @@ Result Db2(Ctx& c) {
         if (r.f3 >= 0.f) return Fail("the host's copy still holds a battery after accepting the unscrew");
         if (!DE::AnyBefore(DE::kBatterySpawned, c.cur[DE::kBatterySpawned], r.ord, &SpawnedUnscrew, static_cast<int32_t>(kBatteryCharge)))
             return Fail("the host accepted the unscrew and spawned no battery at the charge its copy held");
-        return OneNewBattery(c, 0, kBatteryCharge);
+        return OneNewBattery(c, kBatteryCharge, 0);
     }
     std::string t;
     Facts f;
     if (!AwaitFact(c, kHost, t) || !Parse(t, f)) return Stopped();
-    if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& a) { return a.i1 == 0 && Ge(static_cast<uint32_t>(a.i0), f.seq); }, r) != 1)
+    const int32_t tag = DE::KeyTag(c.key);
+    if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& a) { return a.i3 == tag && a.i1 == 0 && Ge(static_cast<uint32_t>(a.i0), f.seq); }, r) != 1)
         return Stopped();
     if (r.f2 >= 0.f) return Fail("this copy still shows a battery after the host's state");
-    return OneNewBattery(c, 0, kBatteryCharge);
+    return OneNewBattery(c, kBatteryCharge, 0);
 }
 
 // b0: a fit the host refuses as full gives the battery back, at the charge the client's copy consumed, on every peer.
@@ -342,16 +345,16 @@ Result Db0(Ctx& c) {
         if (!w) return Fail(fail);
         if (r.i1 != reason::kFull)
             return Fail(r.i1 == reason::kOk ? "the host fitted a second battery" : "refused for reason " + std::to_string(r.i1) + ", not full");
-        return OneNewBattery(c, 0, kRefundCharge);
+        return OneNewBattery(c, kRefundCharge, 1);
     }
     if (c.me == kHost) {
         if (WaitRec(c, DE::kRefused, [](const DE::Rec& a) { return a.i0 == op::kBatteryIn; }, r) != 1) return Stopped();
         if (r.i1 != reason::kFull) return Fail("the fit was refused for reason " + std::to_string(r.i1) + ", not full");
         if (!DE::AnyBefore(DE::kBatterySpawned, c.cur[DE::kBatterySpawned], r.ord, &SpawnedRefund, static_cast<int32_t>(kRefundCharge)))
             return Fail("the host refused the fit as full and did not give the battery back at its charge");
-        return OneNewBattery(c, 0, kRefundCharge);
+        return OneNewBattery(c, kRefundCharge, 1);
     }
-    return OneNewBattery(c, 0, kRefundCharge);
+    return OneNewBattery(c, kRefundCharge, 1);
 }
 
 // b4: an unscrew the host refuses as not held leaves no battery anywhere: the client's own prop is destroyed at its body's

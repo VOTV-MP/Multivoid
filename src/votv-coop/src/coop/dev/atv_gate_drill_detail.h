@@ -9,6 +9,7 @@
 
 #include "harness/autotest/peer_signal.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/types.h"
 
@@ -71,13 +72,12 @@ float ReadBattery(const std::wstring& key);
 bool SetLocalBattery(const std::wstring& key, float charge);
 bool SeedHostBattery(const std::wstring& key, float charge, std::string& why);
 bool FitBattery(const std::wstring& key, float charge, std::string& why);
-// The unscrew; `ownNew` is how many battery props `before` did not hold that this game holds when the body returns, in the
-// same game-thread slice (this client's own prop, none once the gate destroyed it).
-bool UnscrewBattery(const std::wstring& key, const std::vector<void*>& before, int& ownNew, std::string& why);
-// The live battery props of this world as identities (the hand's and the hand mirrors' excluded), and how many of them a
+bool UnscrewBattery(const std::wstring& key, std::string& why);   // the panel's unscrew on the battery branch
+// The live battery props of this world as weak references (the hand's and the hand mirrors' excluded), and how many of them a
 // snapshot did not hold, with the first new one's charge (-1 when none). Neither counts by place or by element id.
-std::vector<void*> BatteryProps();
-int NewBatteryProps(const std::vector<void*>& before, float* firstCharge);
+using BatterySet = std::vector<ue_wrap::CachedObjRef>;
+BatterySet BatteryProps();
+int NewBatteryProps(const BatterySet& before, float* firstCharge);
 
 // A fitted module's value on this peer's copy (the first), or -1.
 int FirstModule(const std::wstring& key);
@@ -131,8 +131,7 @@ struct Ctx {
     uint32_t reqId = 0;                   // the forged request the actor made
     float fuel0 = -1.f, health0 = -1.f;   // this copy's vitals at the barrier
     int modules0 = -1;
-    std::vector<void*> bat0;              // the battery props this peer held before a battery step's act (BatteryProps)
-    int ownNew = 0;                       // the actor: the battery props its own act left behind (UnscrewBattery)
+    BatterySet bat0;                      // the battery props this peer held before a battery step's act (BatteryProps)
 };
 
 // A fact one peer leaves for the others in this step ("<id>_f_<role>"), and the wait for it.

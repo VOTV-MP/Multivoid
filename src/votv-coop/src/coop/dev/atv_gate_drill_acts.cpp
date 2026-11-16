@@ -319,8 +319,7 @@ bool FitBattery(const std::wstring& key, float charge, std::string& why) {
 
 namespace {
 
-// The live battery props of this world other than the hand's and the hand mirrors', by identity (the pointers are only
-// compared, never read again). Game thread.
+// The live battery props of this world other than the hand's and the hand mirrors'. Game thread.
 std::vector<void*> ScanBatteries() {
     std::vector<void*> out;
     for (void* o : R::FindObjectsByClass(kBatteryClass)) {
@@ -330,12 +329,13 @@ std::vector<void*> ScanBatteries() {
     return out;
 }
 
-// How many live battery props `before` did not hold, and the first one's charge (-1 when none). Game thread.
-int CountNew(const std::vector<void*>& before, float* firstCharge) {
+// How many live battery props `before` did not hold, and the first one's charge (-1 when none). A prop is held by `before`
+// when the weak reference still names it. Game thread.
+int CountNew(const BatterySet& before, float* firstCharge) {
     int n = 0;
     if (firstCharge) *firstCharge = -1.f;
     for (void* o : ScanBatteries()) {
-        if (std::find(before.begin(), before.end(), o) != before.end()) continue;
+        if (std::any_of(before.begin(), before.end(), [&](const ue_wrap::CachedObjRef& b) { return b.Is(o); })) continue;
         if (!n && firstCharge) ReadFloat(o, L"battery", *firstCharge);
         ++n;
     }
@@ -344,21 +344,25 @@ int CountNew(const std::vector<void*>& before, float* firstCharge) {
 
 }  // namespace
 
-std::vector<void*> BatteryProps() {
-    std::vector<void*> out;
-    OnGt([&] { out = ScanBatteries(); });
+BatterySet BatteryProps() {
+    BatterySet out;
+    OnGt([&] {
+        for (void* o : ScanBatteries()) {
+            out.emplace_back();
+            out.back().Set(o);
+        }
+    });
     return out;
 }
 
-int NewBatteryProps(const std::vector<void*>& before, float* firstCharge) {
+int NewBatteryProps(const BatterySet& before, float* firstCharge) {
     int n = 0;
     OnGt([&] { n = CountNew(before, firstCharge); });
     return n;
 }
 
-bool UnscrewBattery(const std::wstring& key, const std::vector<void*>& before, int& ownNew, std::string& why) {
+bool UnscrewBattery(const std::wstring& key, std::string& why) {
     bool ran = false;
-    ownNew = 0;
     OnGt([&] {
         void* atv = Atv(key);
         void* fn = atv ? R::FindDispatchFunctionCached(R::ClassOf(atv), L"unscrewPanel") : nullptr;
@@ -371,9 +375,6 @@ bool UnscrewBattery(const std::wstring& key, const std::vector<void*>& before, i
         std::vector<uint8_t> frame(static_cast<size_t>(R::FunctionFrameSize(fn)), 0u);
         std::memcpy(frame.data() + off, &root, sizeof(root));
         ran = R::CallFunction(atv, fn, frame.data());
-        // In the same game-thread slice as the body, so no host spawn can have arrived: what the body left behind is this
-        // client's own prop (none, once its POST destroyed it).
-        ownNew = CountNew(before, nullptr);
     });
     if (!ran) why = "the ATV's unscrewPanel did not run";
     return ran;
