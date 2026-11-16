@@ -35,12 +35,12 @@ int32_t KeyTag(const std::wstring& key) {
     return static_cast<int32_t>(std::hash<std::wstring>{}(key) & 0x7fffffff);
 }
 
-void Note(Event e, int32_t i0, int32_t i1, int32_t i2, float f0, float f1, float f2, int32_t i3) {
+void Note(Event e, int32_t i0, int32_t i1, int32_t i2, float f0, float f1, float f2, int32_t i3, float f3) {
     if (!On() || e < 0 || e >= kEventCount) return;
     std::lock_guard<std::mutex> hold(g_lock);
     Ring& r = g_ring[e];
     Rec& rec = r.recs[r.count % kRing];
-    rec = Rec{++g_ord, i0, i1, i2, i3, f0, f1, f2};
+    rec = Rec{++g_ord, i0, i1, i2, i3, f0, f1, f2, f3};
     ++r.count;
 }
 

@@ -15,6 +15,7 @@
 #include <atomic>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace coop::dev::atv_gate_drill::detail {
 
@@ -63,15 +64,20 @@ using coop::dev::atv_drive::DriveOff;                             // the throttl
 // The host's own copy's fuel and health set, published through the host's one publish point as any change of the host copy.
 bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why);
 
-// The battery (Trello #71): this peer's copy's charge (-1 none fitted; NaN when it does not read), the copy's charge
-// written with the game's updBattery (a local fixture), a charged battery in the hand with the fire key on the ATV,
-// and the panel's unscrew (the game's unscrewPanel, spawning the battery where the ATV stands).
+// The battery: this peer's copy's charge (-1 none fitted; NaN when it does not read), the copy's charge written with the
+// game's updBattery (a local fixture, published by no one), the host copy's charge written and published, a charged battery in
+// the hand with the fire key on the ATV, and the panel's unscrew (the game's unscrewPanel on the battery branch).
 float ReadBattery(const std::wstring& key);
 bool SetLocalBattery(const std::wstring& key, float charge);
+bool SeedHostBattery(const std::wstring& key, float charge, std::string& why);
 bool FitBattery(const std::wstring& key, float charge, std::string& why);
-bool UnscrewBattery(const std::wstring& key, std::string& why);
-// The loose batteries within 4 m of the ATV on this copy (no hand and no hand mirror), and how many carry `charge`.
-int LooseBatteries(const std::wstring& key, float charge, int& withCharge);
+// The unscrew; `ownNew` is how many battery props `before` did not hold that this game holds when the body returns, in the
+// same game-thread slice (this client's own prop, none once the gate destroyed it).
+bool UnscrewBattery(const std::wstring& key, const std::vector<void*>& before, int& ownNew, std::string& why);
+// The live battery props of this world as identities (the hand's and the hand mirrors' excluded), and how many of them a
+// snapshot did not hold, with the first new one's charge (-1 when none). Neither counts by place or by element id.
+std::vector<void*> BatteryProps();
+int NewBatteryProps(const std::vector<void*>& before, float* firstCharge);
 
 // A fitted module's value on this peer's copy (the first), or -1.
 int FirstModule(const std::wstring& key);
@@ -83,6 +89,7 @@ bool HandHoldsModule();
 namespace DE = coop::atv_drill_events;
 
 inline constexpr int kEventS = 40;   // a bound on an event: past it the run is INVALID, never a verdict
+inline constexpr float kBatterySame = 2.f;   // the rejoined copy's adopted battery agrees with the host's mark of it within this (it drains)
 
 // A verdict decided anywhere ends every peer's sequence: the deciding peer marks `atv_end` ("F <text>" or "I <text>"), the host
 // says the verdict at once, and every wait of the sequencer returns on the mark. Aborted() is true from then on.
@@ -124,6 +131,8 @@ struct Ctx {
     uint32_t reqId = 0;                   // the forged request the actor made
     float fuel0 = -1.f, health0 = -1.f;   // this copy's vitals at the barrier
     int modules0 = -1;
+    std::vector<void*> bat0;              // the battery props this peer held before a battery step's act (BatteryProps)
+    int ownNew = 0;                       // the actor: the battery props its own act left behind (UnscrewBattery)
 };
 
 // A fact one peer leaves for the others in this step ("<id>_f_<role>"), and the wait for it.

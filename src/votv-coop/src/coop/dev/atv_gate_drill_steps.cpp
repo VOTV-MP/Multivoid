@@ -1,10 +1,11 @@
 // coop/dev/atv_gate_drill_steps.cpp -- the steps of the ATV drill before the client leaves, each decided on events of the ATV
 // host path (coop/interactables/atv_drill_events.h), never on a clock. A step is a prelude on the host, a setup on every peer,
 // the actor's act and a decision on every peer; see atv_gate_drill_detail.h. The step ids are the drill's own: 1 refuel, 2
-// repair, 3 fit, 4 take-off, 5 the seated controls, 6 the horn tapped (6h held, 6r its release), 7a the host's refuel with
-// the client not driving, 7 with the seated client streaming, 8 the client's burn, 5b the dismount with the brake, 9 the host's burn, 11 a
-// forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel, then 10 (atv_gate_drill_joiner.cpp)
-// a joiner's mirror adopted after the host's state for it.
+// repair, 3 fit, 4 take-off, b1 a battery fitted, b2 it unscrewed, b3 fitted back, b0 a battery fit the host refuses as full, b4 an
+// unscrew it refuses as not held, b6 a forged battery fit, 5 the seated controls, 6 the horn tapped (6h held, 6r its release), 7a
+// the host's refuel with the client not driving, 7 with the seated client streaming, 8 the client's burn, 5b the dismount with
+// the brake, 9 the host's burn, 11 a forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel,
+// then 10 (atv_gate_drill_joiner.cpp) a joiner's mirror adopted after the host's state for it.
 
 #include "atv_gate_drill_detail.h"
 
@@ -183,49 +184,221 @@ Result DecideRequest(Ctx& c, uint8_t opcode) {
 
 Result D1(Ctx& c) { return DecideRequest(c, op::kRefuel); }
 
-// b1, b2, b3 (Trello #71): the battery a client fits into an ATV with none, the one it unscrews, and one fitted back so
-// the steps after it drive a powered ATV. Every peer starts b1
-// from a copy with no battery (a local fixture: the host publishes nothing for it), and decides on its own copy: the
-// fitted charge, then none, within the event bound.
-constexpr float kBatteryCharge = 80.f;
+// The battery steps. A client fits a charged battery into an ATV with none (b1), unscrews it (b2) and fits it back (b3);
+// the host refuses a fit as full and gives the battery back (b0), refuses an unscrew of a battery its copy does not hold
+// (b4), and refuses a forged fit from an empty hand with no refund (b6). Each peer decides on its own events: the
+// records of the ATV host path for the requests, and the battery props this peer holds now against the ones it held before
+// the step (BatteryProps, by actor), so a prop only this client's own game made is counted as the second battery it is.
+// A bound on an event says INVALID, never a verdict.
+constexpr float kBatteryCharge = 80.f;   // what b1 and b3 fit, and the charge the host's unscrewed prop carries
+constexpr float kRefundCharge = 60.f;    // what b0's refused fit holds, and the charge the host's refund carries
+constexpr float kForgedCharge = 50.f;    // the charge b6's forged fit claims
+
+bool SnapBatteries(Ctx& c, std::string&) {
+    c.bat0 = BatteryProps();
+    return true;
+}
+// Every peer's copy starts b1 with no battery (a local fixture: the host publishes nothing for it).
 bool SetupNoBattery(Ctx& c, std::string& why) {
     if (SetLocalBattery(c.key, -1.f)) return true;
     why = "this copy's battery could not be taken out";
     return false;
 }
-bool ActFitBattery(Ctx& c, std::string& why) { return FitBattery(c.key, kBatteryCharge, why); }
-bool ActUnscrewBattery(Ctx& c, std::string& why) { return UnscrewBattery(c.key, why); }
-Result DecideBattery(Ctx& c, float want, const char* what) {
-    // Waited for here, not with WaitUntil: a copy that never shows the charge is this step's FAIL, not an undecided run.
-    float v = 0.f;
-    bool got = false;
-    for (int i = 0; i < kEventS * 10 && !got; ++i) {
-        if (Aborted()) return Stopped();
-        v = ReadBattery(c.key);
-        got = std::fabs(v - want) < 0.5f;
-        if (!got) SleepStep();
+// b0: the client's copy shows none while the host's holds one, so the fit the client makes is one the host refuses.
+bool SetupFullHost(Ctx& c, std::string& why) {
+    if (c.me == kClient && !SetLocalBattery(c.key, -1.f)) {
+        why = "this client's copy's battery could not be taken out";
+        return false;
     }
-    if (!got) return Fail("this copy's battery is " + std::to_string(v) + ", not " + std::to_string(want));
-    return Pass(std::string("this copy shows ") + what);
+    return SnapBatteries(c, why);
 }
-Result Db1(Ctx& c) { return DecideBattery(c, kBatteryCharge, "the fitted battery's charge"); }
-// b2 also needs the battery the unscrew handed back, once, on every copy, with its charge: the unscrew runs only on the
-// client's game, so a battery that did not cross is on that copy alone.
-Result Db2(Ctx& c) {
-    const Result r = DecideBattery(c, -1.f, "no battery");
-    if (r.out != Out::Pass) return r;
-    int loose = 0, charged = 0;
+// b4: the host's copy shows none (a fixture it publishes nothing for) while the client's still holds one.
+bool PreludeHostEmpty(Ctx& c, std::string& why) {
+    if (SetLocalBattery(c.key, -1.f)) return true;
+    why = "the host copy's battery could not be taken out";
+    return false;
+}
+// b6: the host's copy holds a battery again, published, so the forged fit meets a full ATV.
+bool PreludeHostFull(Ctx& c, std::string& why) { return SeedHostBattery(c.key, kBatteryCharge, why); }
+
+bool ActFitBattery(Ctx& c, std::string& why) { return FitBattery(c.key, kBatteryCharge, why); }
+bool ActFitRefused(Ctx& c, std::string& why) { return FitBattery(c.key, kRefundCharge, why); }
+bool ActUnscrewBattery(Ctx& c, std::string& why) { return UnscrewBattery(c.key, c.bat0, c.ownNew, why); }
+bool ActForgeBatteryIn(Ctx& c, std::string& why) { return EmptyHand(c.key, why) && Forge(c, op::kBatteryIn, kForgedCharge, 0, why); }
+
+// The records the decisions look for before an event's own (AnyBefore's predicates; `arg` is a charge or unused).
+bool StateBattery(const DE::Rec& r, int32_t charge) { return std::fabs(r.f2 - static_cast<float>(charge)) < 0.5f; }
+bool SpawnedUnscrew(const DE::Rec& r, int32_t charge) { return r.i0 == 0 && std::fabs(r.f0 - static_cast<float>(charge)) < 0.5f; }
+bool SpawnedRefund(const DE::Rec& r, int32_t charge) { return r.i0 == 1 && std::fabs(r.f0 - static_cast<float>(charge)) < 0.5f; }
+bool SpawnedAny(const DE::Rec&, int32_t) { return true; }
+
+// The battery props this peer did not hold before the step, waited for: 1 once `atLeast` have arrived (their count and the
+// first one's charge in `n` and `charge`), 0 when the bound passed (INVALID said), -1 when the run ended.
+int WaitNewBatteries(Ctx& c, int atLeast, int& n, float& charge) {
     for (int i = 0; i < kEventS * 10; ++i) {
-        if (Aborted()) return Stopped();
-        loose = LooseBatteries(c.key, kBatteryCharge, charged);
-        if (loose == 1 && charged == 1) break;
+        if (Aborted()) return -1;
+        n = NewBatteryProps(c.bat0, &charge);
+        if (n >= atLeast) return 1;
         SleepStep();
     }
-    if (loose != 1 || charged != 1)
-        return Fail("this copy has " + std::to_string(loose) + " loose batteries by the ATV, " + std::to_string(charged) +
-                    " at the unscrewed charge, not 1");
-    return Pass("this copy shows no battery, and the unscrewed one beside the ATV at its charge");
+    if (!Aborted()) End('I', "no new battery prop within " + std::to_string(kEventS) + " s");
+    return 0;
 }
+
+// Exactly one new battery prop at `want`, decided at its arrival: `own` are the ones this peer's own game made (the actor's
+// unscrew leaves none), so the host's prop is the one that brings the count past them; a second is the ghost.
+Result OneNewBattery(Ctx& c, int own, float want) {
+    int n = 0;
+    float charge = -1.f;
+    if (WaitNewBatteries(c, own + 1, n, charge) != 1) return Stopped();
+    if (n != 1) return Fail("this peer holds " + std::to_string(n) + " battery props it did not hold before the step, not 1");
+    if (!(std::fabs(charge - want) < 0.5f))
+        return Fail("the new battery prop's charge is " + std::to_string(charge) + ", not " + std::to_string(want));
+    return Pass("this peer shows the one new battery at its charge");
+}
+
+// The request this client's act opened, and the host's answer to it.
+int WaitAnswered(Ctx& c, uint8_t opcode, DE::Rec& answer, std::string& fail) {
+    bool ungated = false;
+    uint32_t id = 0;
+    if (WaitAsk(c, opcode, ungated, id) != 1) return -1;
+    if (ungated) {
+        fail = "the act ran on this client's copy and no request was opened for it";
+        return 0;
+    }
+    if (WaitRec(c, DE::kAnswer, [&](const DE::Rec& a) { return static_cast<uint32_t>(a.i0) == id; }, answer) != 1) return -1;
+    return 1;
+}
+
+// b1 and b3: the fit. The host decides at its accepted record (its copy holds the charge), the client at the host's answer
+// (its answer state left the copy at the charge), the observer at the first state after it.
+Result Db1(Ctx& c) {
+    DE::Rec r;
+    if (c.me == kClient) {
+        std::string fail;
+        const int w = WaitAnswered(c, op::kBatteryIn, r, fail);
+        if (w < 0) return Stopped();
+        if (!w) return Fail(fail);
+        if (r.i1 != reason::kOk) return Fail("the host refused the fit: reason " + std::to_string(r.i1));
+        if (r.i2 && !DE::AnyBefore(DE::kStateApplied, c.cur[DE::kStateApplied], r.ord, &StateBattery, static_cast<int32_t>(kBatteryCharge)))
+            return Fail("the host's answer did not leave this copy holding the fitted battery");
+        return Pass("the host's answer closed the request and this copy holds the fitted charge");
+    }
+    if (c.me == kHost) {
+        if (WaitRec(c, DE::kAccepted, [](const DE::Rec& a) { return a.i0 == op::kBatteryIn && a.i1 == kClient; }, r) != 1) return Stopped();
+        Fact(c, Num(static_cast<uint32_t>(r.i2), r.f0, r.f1, static_cast<int>(r.f2)));
+        if (!(std::fabs(r.f3 - kBatteryCharge) < 0.5f))
+            return Fail("the host's battery is " + std::to_string(r.f3) + " after the fit, not " + std::to_string(kBatteryCharge));
+        return Pass("the host's copy holds the fitted charge");
+    }
+    std::string t;
+    Facts f;
+    if (!AwaitFact(c, kHost, t) || !Parse(t, f)) return Stopped();
+    if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& a) { return a.i1 == 0 && Ge(static_cast<uint32_t>(a.i0), f.seq); }, r) != 1)
+        return Stopped();
+    if (!(std::fabs(r.f2 - kBatteryCharge) < 0.5f))
+        return Fail("this copy's battery is " + std::to_string(r.f2) + " after the host's state, not " + std::to_string(kBatteryCharge));
+    return Pass("this copy shows the fitted battery's charge");
+}
+
+// b2: the unscrew. The host's copy holds none and the host spawned the one battery prop at the charge it held; the client's
+// own prop is gone (destroyed at its body's end), so the host's is the only new one on every peer.
+Result Db2(Ctx& c) {
+    DE::Rec r;
+    if (c.me == kClient) {
+        std::string fail;
+        const int w = WaitAnswered(c, op::kBatteryOut, r, fail);
+        if (w < 0) return Stopped();
+        if (!w) return Fail(fail);
+        if (r.i1 != reason::kOk) return Fail("the host refused the unscrew: reason " + std::to_string(r.i1));
+        if (r.i2 && !DE::AnyBefore(DE::kStateApplied, c.cur[DE::kStateApplied], r.ord, &StateBattery, -1))
+            return Fail("the host's answer did not leave this copy without a battery");
+        return OneNewBattery(c, c.ownNew, kBatteryCharge);
+    }
+    if (c.me == kHost) {
+        if (WaitRec(c, DE::kAccepted, [](const DE::Rec& a) { return a.i0 == op::kBatteryOut && a.i1 == kClient; }, r) != 1) return Stopped();
+        Fact(c, Num(static_cast<uint32_t>(r.i2), r.f0, r.f1, static_cast<int>(r.f2)));
+        if (r.f3 >= 0.f) return Fail("the host's copy still holds a battery after accepting the unscrew");
+        if (!DE::AnyBefore(DE::kBatterySpawned, c.cur[DE::kBatterySpawned], r.ord, &SpawnedUnscrew, static_cast<int32_t>(kBatteryCharge)))
+            return Fail("the host accepted the unscrew and spawned no battery at the charge its copy held");
+        return OneNewBattery(c, 0, kBatteryCharge);
+    }
+    std::string t;
+    Facts f;
+    if (!AwaitFact(c, kHost, t) || !Parse(t, f)) return Stopped();
+    if (WaitRec(c, DE::kStateApplied, [&](const DE::Rec& a) { return a.i1 == 0 && Ge(static_cast<uint32_t>(a.i0), f.seq); }, r) != 1)
+        return Stopped();
+    if (r.f2 >= 0.f) return Fail("this copy still shows a battery after the host's state");
+    return OneNewBattery(c, 0, kBatteryCharge);
+}
+
+// b0: a fit the host refuses as full gives the battery back, at the charge the client's copy consumed, on every peer.
+Result Db0(Ctx& c) {
+    DE::Rec r;
+    if (c.me == kClient) {
+        std::string fail;
+        const int w = WaitAnswered(c, op::kBatteryIn, r, fail);
+        if (w < 0) return Stopped();
+        if (!w) return Fail(fail);
+        if (r.i1 != reason::kFull)
+            return Fail(r.i1 == reason::kOk ? "the host fitted a second battery" : "refused for reason " + std::to_string(r.i1) + ", not full");
+        return OneNewBattery(c, 0, kRefundCharge);
+    }
+    if (c.me == kHost) {
+        if (WaitRec(c, DE::kRefused, [](const DE::Rec& a) { return a.i0 == op::kBatteryIn; }, r) != 1) return Stopped();
+        if (r.i1 != reason::kFull) return Fail("the fit was refused for reason " + std::to_string(r.i1) + ", not full");
+        if (!DE::AnyBefore(DE::kBatterySpawned, c.cur[DE::kBatterySpawned], r.ord, &SpawnedRefund, static_cast<int32_t>(kRefundCharge)))
+            return Fail("the host refused the fit as full and did not give the battery back at its charge");
+        return OneNewBattery(c, 0, kRefundCharge);
+    }
+    return OneNewBattery(c, 0, kRefundCharge);
+}
+
+// b4: an unscrew the host refuses as not held leaves no battery anywhere: the client's own prop is destroyed at its body's
+// end (final at the answer) and the host spawned none (its refusal comes after any spawn would have been made).
+Result Db4(Ctx& c) {
+    DE::Rec r;
+    if (c.me == kClient) {
+        std::string fail;
+        const int w = WaitAnswered(c, op::kBatteryOut, r, fail);
+        if (w < 0) return Stopped();
+        if (!w) return Fail(fail);
+        if (r.i1 != reason::kNotHeld)
+            return Fail(r.i1 == reason::kOk ? "the host accepted an unscrew of a battery its copy did not hold" : "refused for reason " + std::to_string(r.i1) + ", not not_held");
+        if (NewBatteryProps(c.bat0, nullptr) != 0) return Fail("a battery prop is on this client after the refused unscrew");
+        return Pass("refused: not_held, and this client holds no battery prop");
+    }
+    if (c.me == kHost) {
+        if (WaitRec(c, DE::kRefused, [](const DE::Rec& a) { return a.i0 == op::kBatteryOut; }, r) != 1) return Stopped();
+        if (r.i1 != reason::kNotHeld) return Fail("the unscrew was refused for reason " + std::to_string(r.i1) + ", not not_held");
+        if (DE::AnyBefore(DE::kBatterySpawned, c.cur[DE::kBatterySpawned], r.ord, &SpawnedAny, 0))
+            return Fail("the host spawned a battery for an unscrew it refused");
+        if (NewBatteryProps(c.bat0, nullptr) != 0) return Fail("a battery prop is on the host after the refused unscrew");
+        return Pass("refused: not_held, and the host holds no battery prop");
+    }
+    return Pass("nothing to decide here");
+}
+
+// b6: a forged fit from an empty hand is refused for the hand (no_item) and refunds nothing: a battery minted from no spent
+// one is what the hand judge guards.
+Result Db6(Ctx& c) {
+    DE::Rec r;
+    if (c.me == kClient) {
+        if (WaitRec(c, DE::kAnswer, [&](const DE::Rec& a) { return static_cast<uint32_t>(a.i0) == c.reqId; }, r) != 1) return Stopped();
+        if (r.i1 != reason::kNoItem)
+            return Fail(r.i1 == reason::kOk ? "the host fitted a battery from an empty hand" : "refused for reason " + std::to_string(r.i1) + ", not no_item");
+        return Pass("refused: no_item");
+    }
+    if (c.me == kHost) {
+        if (WaitRec(c, DE::kRefused, [](const DE::Rec& a) { return a.i0 == op::kBatteryIn; }, r) != 1) return Stopped();
+        if (DE::AnyBefore(DE::kBatterySpawned, c.cur[DE::kBatterySpawned], r.ord, &SpawnedAny, 0))
+            return Fail("the host refunded a battery for a fit whose battery was never spent");
+        if (r.i1 != reason::kNoItem) return Fail("the forged fit was refused for reason " + std::to_string(r.i1) + ", not no_item");
+        return Pass("refused: no_item, and no battery refunded");
+    }
+    return Pass("nothing to decide here");
+}
+
 Result D2(Ctx& c) { return DecideRequest(c, op::kRepair); }
 Result D3(Ctx& c) { return DecideRequest(c, op::kFit); }
 Result D4(Ctx& c) { return DecideRequest(c, op::kTakeoff); }
@@ -432,8 +605,11 @@ const Step kSteps[] = {
     {"3", kClient, "a client's module fitted", nullptr, nullptr, &ActFit, &D3, nullptr},
     {"4", kClient, "a client's module taken off", nullptr, nullptr, &ActTake, &D4, nullptr},
     {"b1", kClient, "a client fits a charged battery into an ATV with none", nullptr, &SetupNoBattery, &ActFitBattery, &Db1, nullptr},
-    {"b2", kClient, "a client unscrews the ATV's battery", nullptr, nullptr, &ActUnscrewBattery, &Db2, nullptr},
+    {"b2", kClient, "a client unscrews the ATV's battery, and the host spawns the one battery every peer holds", nullptr, &SnapBatteries, &ActUnscrewBattery, &Db2, nullptr},
     {"b3", kClient, "a client fits the battery back", nullptr, nullptr, &ActFitBattery, &Db1, nullptr},
+    {"b0", kClient, "a client's battery fit the host refuses as full and refunds", nullptr, &SetupFullHost, &ActFitRefused, &Db0, nullptr},
+    {"b4", kClient, "a client's unscrew the host refuses as not held", &PreludeHostEmpty, &SnapBatteries, &ActUnscrewBattery, &Db4, nullptr},
+    {"b6", kClient, "a forged battery fit with an empty hand", &PreludeHostFull, nullptr, &ActForgeBatteryIn, &Db6, nullptr},
     {"5", kClient, "the seated client's lights, brake and turbo", nullptr, nullptr, &ActControls, &D5, nullptr},
     {"6", kClient, "the syncer's horn, tapped (press and release in one block)", nullptr, nullptr, &ActTap, &D6, nullptr},
     {"6h", kClient, "the syncer's horn held", nullptr, nullptr, &ActHold, &D6h, nullptr},

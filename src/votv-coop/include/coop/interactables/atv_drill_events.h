@@ -1,7 +1,7 @@
 // coop/interactables/atv_drill_events.h -- [dev] the decision events of the ATV host path and the ATV riders, for the ATV drills (coop/dev/atv_gate_drill, coop/dev/atv_riders_drill).
 //
 // Each ATV mechanism that a drill judges says, at the point where its outcome is decided, one record: a request opened or
-// not, an answer arriving, a state applied, a block admitted, a request judged, a module refunded, a seat or a rider changed,
+// not, an answer arriving, a state applied, a block admitted, a request judged or refused, a module refunded, a battery spawned, a seat or a rider changed,
 // a body seated, a kerfur riding. The drill reads the records and decides on them, never on a clock; a time bound in the
 // drill can only call a run INVALID. The records are kept only while the `atv_gate_drill` or the `atv_riders_drill` row is on
 // (a static compare at each emit point), 256 per event, newest over oldest.
@@ -19,18 +19,18 @@ namespace coop::atv_drill_events {
 struct Rec {
     uint32_t ord = 0;   // the order this record was made in, across every event
     int32_t i0 = 0, i1 = 0, i2 = 0, i3 = 0;
-    float f0 = 0.f, f1 = 0.f, f2 = 0.f;
+    float f0 = 0.f, f1 = 0.f, f2 = 0.f, f3 = 0.f;
 };
 
 enum Event : int {
     kAsked,        // CLIENT: a request opened for the player's act. i0 op, i1 reqId, f0 amount
     kUngated,      // CLIENT: an act's POST ran and no request was opened for it. i0 op
     kAnswer,       // CLIENT: the host's answer. i0 reqId, i1 reason, i2 closed the last open id, f0 fuel, f1 health, f2 module count
-    kStateApplied, // CLIENT: a host state written onto the copy. i0 stateSeq, i1 source (0 state, 1 answer, 2 adoption), i2 module count, f0 fuel, f1 health
+    kStateApplied, // CLIENT: a host state written onto the copy. i0 stateSeq, i1 source (0 state, 1 answer, 2 adoption), i2 module count, f0 fuel, f1 health, f2 the copy's battery after it
     kBlock,        // a condition block's vitals rule. i0 from the host, i1 ack matched, f0 copy fuel before, f1 after, f2 the block's own
     kControls,     // a block's brake, lights, turbo and horn bits taken. i0 mask changed, i1 mask now equal to the block's (the horn: its replay ran), i2 mask this block made the copy change (the horn: its replay ran), f0 the block's control bits
-    kAccepted,     // HOST: a request applied. i0 op, i1 slot, i2 stateSeq after, f0 fuel, f1 health, f2 module count
-    kPublished,    // HOST: a state sent to every client. i0 stateSeq, i1 module count, f0 fuel, f1 health
+    kAccepted,     // HOST: a request applied. i0 op, i1 slot, i2 stateSeq after, f0 fuel, f1 health, f2 module count, f3 battery
+    kPublished,    // HOST: a state sent to every client. i0 stateSeq, i1 module count, f0 fuel, f1 health, f2 battery
     kRefund,       // HOST: a duplicate fit's module. i0 spawned
     kStateGated,   // CLIENT: a state arrived while the open-request gate was shut. i0 stateSeq, i1 applied anyway, f0 the state's fuel, f1 the copy's fuel after
     kUnadopted,    // CLIENT: a state arrived for an ATV with no copy. i0 stateSeq, i1 kept, i2 KeyTag
@@ -45,6 +45,8 @@ enum Event : int {
     kMirrorCancel, // CLIENT: the game's own call on a kerfur mirror was cancelled. i0 (0 getOffCar, 1 tryToOccupyCar), i1 eid
     kRiderFact,    // HOST: the kerfur's own seat. i0 KeyTag, i1 eid (0 at the getOffCar PRE), i2 1 at the sitOnCar POST, f0 at that POST the kerfur's distance to sitarrow (cm, -1 when unread)
     kRideCleared,  // CLIENT: the rider subscriber's npc_ride::Clear for an eid returned. i0 eid, i1 KeyTag, i2 what still held after it (1 a ride row kept, 2 the pose held by the ride owner, 4 the mirror attached to an actor)
+    kBatterySpawned, // HOST: a battery prop spawned for a request. i0 kind (0 the unscrew's, 1 a refused fit's refund), i1 the actor's object slot, f0 its charge
+    kRefused,      // HOST: a request answered with a refusal. i0 op, i1 reason, i2 slot
     kEventCount
 };
 
@@ -62,7 +64,7 @@ int32_t KeyTag(const std::wstring& key);
 
 // Record one event (a no-op while the row is off).
 void Note(Event e, int32_t i0 = 0, int32_t i1 = 0, int32_t i2 = 0, float f0 = 0.f, float f1 = 0.f, float f2 = 0.f,
-          int32_t i3 = 0);
+          int32_t i3 = 0, float f3 = 0.f);
 
 // How many of `e` were recorded; a cursor taken now reads only what follows.
 uint32_t Count(Event e);

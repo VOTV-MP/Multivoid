@@ -98,7 +98,8 @@ void ApplyState(const std::wstring& key, void* atv, const Payload& p, int source
     }
     NoteAppliedStateSeq(key, p.stateSeq);
     ++g_n.applied;
-    DE::Note(DE::kStateApplied, static_cast<int32_t>(p.stateSeq), source, p.moduleCount, A::GetFuel(atv), A::GetHealth(atv));
+    DE::Note(DE::kStateApplied, static_cast<int32_t>(p.stateSeq), source, p.moduleCount, A::GetFuel(atv), A::GetHealth(atv),
+             A::GetBattery(atv));
 }
 
 // [dev] The drill's fixture: the next state for this ATV is held, not applied, until the copy builds its next condition
@@ -213,7 +214,9 @@ void FillState(const std::wstring& key, const Vitals& v, uint8_t opcode, Payload
     out.fuel = v.fuel;
     out.health = v.health;
     out.battery = v.battery;
-    out.flags = v.flags;
+    // Red battery_publish_off: the host's states carry no battery, so a copy keeps the charge it had.
+    static const bool s_batteryOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "battery_publish_off";
+    out.flags = s_batteryOff ? static_cast<uint8_t>(v.flags & ~coop::net::kAtvHostBattery) : v.flags;
     out.moduleCount = v.count;
     std::memcpy(out.modules, v.modules, sizeof(out.modules));
     out.stateSeq = CurrentStateSeq(key);
@@ -229,7 +232,7 @@ bool PublishIfChanged(const std::wstring& key, void* atv, const Vitals& before) 
     s->SendReliable(coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
     ++g_n.published;
     coop::atv_host_judge::OnStatePublished(key);
-    DE::Note(DE::kPublished, static_cast<int32_t>(p.stateSeq), now.count, 0, now.fuel, now.health);
+    DE::Note(DE::kPublished, static_cast<int32_t>(p.stateSeq), now.count, 0, now.fuel, now.health, now.battery);
     UE_LOGI("atv_host: '%ls' state #%u published -- fuel %.1f health %.1f battery %.1f modules %hs%s%s", key.c_str(),
             p.stateSeq, now.fuel, now.health, now.battery, ModulesText(now).c_str(), (now.flags & coop::net::kAtvHostEmpty) ? " empty" : "",
             (now.flags & coop::net::kAtvHostBroken) ? " broken" : "");

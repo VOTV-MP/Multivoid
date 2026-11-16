@@ -200,7 +200,11 @@ sg::Verdict OnPre(const sg::Call& call) {
 uint32_t Request(const std::wstring& key, uint8_t opcode, float amount, uint8_t module) {
     // Red atv_gate_off: the client's rows ask nothing, so the verb runs on its copy ungated.
     static const bool s_gateOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "atv_gate_off";
-    const uint32_t id = s_gateOff ? 0u : H::Ask(key, opcode, amount, module);
+    // Reds battery_in_off and battery_out_off: the battery fit's, or the unscrew's, row asks nothing.
+    static const bool s_batteryInOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "battery_in_off";
+    static const bool s_batteryOutOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "battery_out_off";
+    const bool off = s_gateOff || (s_batteryInOff && opcode == op::kBatteryIn) || (s_batteryOutOff && opcode == op::kBatteryOut);
+    const uint32_t id = off ? 0u : H::Ask(key, opcode, amount, module);
     if (id) DE::Note(DE::kAsked, opcode, static_cast<int32_t>(id), 0, amount);
     else DE::Note(DE::kUngated, opcode);
     return id;

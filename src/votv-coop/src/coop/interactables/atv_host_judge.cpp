@@ -56,6 +56,7 @@ bool RefundOff() { static const bool on = Arm("atv_refund_off"); return on; }   
 bool ParkOff() { static const bool on = Arm("atv_park_off"); return on; }         // a request is judged before its world is ready
 bool SpawnOff() { static const bool on = Arm("battery_spawn_off"); return on; }   // an accepted unscrew spawns no battery
 bool BatteryRefundOff() { static const bool on = Arm("battery_refund_off"); return on; }   // a refused battery fit is not refunded
+bool BatteryJudgeOff() { static const bool on = Arm("battery_judge_off"); return on; }   // a battery fit is not judged against the hand
 
 constexpr float kMax = 100.f;      // a full tank, full health
 constexpr float kReachCm = 800.f;  // a sender's puppet from its ATV, when it is not seated in it
@@ -119,6 +120,7 @@ void Answer(N::Session& s, uint8_t slot, const Payload& req, uint8_t reason, voi
         ++g_n.refused[reason < kReasons ? reason : kReasons - 1];
         UE_LOGI("atv_host: slot %u's op %u on '%ls' refused -- %s", static_cast<unsigned>(slot),
                 static_cast<unsigned>(req.op), key.c_str(), ReasonName(reason));
+        DE::Note(DE::kRefused, req.op, reason, slot);
     }
 }
 
@@ -152,6 +154,12 @@ void Refund(void* atv, uint8_t module) {
     DE::Note(DE::kRefund, 1);
 }
 
+// [dev] The drill's record of a battery prop the host spawned (kind 0 the unscrew's, 1 a refund), at the charge it was given.
+void NoteBatterySpawned(int32_t kind, void* actor, float charge) {
+    DE::Note(DE::kBatterySpawned, kind, ue_wrap::reflection::InternalIndexOf(actor), 0,
+             std::fmin(std::fmax(charge, 0.f), kMax));
+}
+
 // A battery fit the host would not make is given back: a battery prop at the request's charge (the client's copy consumed
 // a real battery of that charge), 120 cm above the ATV as the module's is, spawned the way the ATV's own unscrew spawns
 // one. The charge is bounded as the accepted fit bounds it.
@@ -162,11 +170,13 @@ void RefundBattery(void* atv, float charge) {
         UE_LOGW("atv_host: the ATV's place is unreadable -- the refused battery fit is not refunded");
         return;
     }
-    if (!A::SpawnBattery({at.X, at.Y, at.Z + 120.f}, {}, {1.f, 1.f, 1.f}, 1, charge)) {
+    void* const born = A::SpawnBattery({at.X, at.Y, at.Z + 120.f}, {}, {1.f, 1.f, 1.f}, 1, charge);
+    if (!born) {
         UE_LOGW("atv_host: the refunded battery did not spawn");
         return;
     }
     ++g_n.refunded;
+    NoteBatterySpawned(1, born, charge);
 }
 
 bool WellFormed(const Payload& p) {
@@ -190,7 +200,7 @@ void Applied(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& 
     if (DE::On()) {
         H::Vitals after;
         if (H::ReadVitals(atv, after))
-            DE::Note(DE::kAccepted, p.op, slot, static_cast<int32_t>(H::CurrentStateSeq(key)), after.fuel, after.health, after.count);
+            DE::Note(DE::kAccepted, p.op, slot, static_cast<int32_t>(H::CurrentStateSeq(key)), after.fuel, after.health, after.count, 0, after.battery);
     }
     ++g_n.accepted[p.op < 8 ? p.op : 0];
     UE_LOGI("atv_host: slot %u %s '%ls' on the host", static_cast<unsigned>(slot), what, key.c_str());
@@ -259,7 +269,7 @@ uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& k
 // none, so the bound is the field's range, as the refuel's is the tank's room. The hand judge comes first (a request with
 // no battery held is refused and refunded nothing); kFull is the only refusal after it, and it gives the battery back.
 uint8_t BatteryIn(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    if (!JudgeOff() && !coop::hand_spend::Spend(slot, kBatteryClass, 1)) return why::kNoItem;
+    if (!JudgeOff() && !BatteryJudgeOff() && !coop::hand_spend::Spend(slot, kBatteryClass, 1)) return why::kNoItem;
     if (v.battery >= 0.f) {
         RefundBattery(atv, p.amount);
         return why::kFull;
@@ -282,10 +292,12 @@ uint8_t BatteryOut(N::Session& s, uint8_t slot, const Payload& p, const std::wst
     if (!SpawnOff()) {
         ue_wrap::FVector at{}, scale{1.f, 1.f, 1.f};
         ue_wrap::FRotator rot{};
-        if (!A::GetUnscrewSpawnTransform(atv, at, rot, scale) || !A::SpawnBattery(at, rot, scale, 0, v.battery)) {
+        void* const born = A::GetUnscrewSpawnTransform(atv, at, rot, scale) ? A::SpawnBattery(at, rot, scale, 0, v.battery) : nullptr;
+        if (!born) {
             UE_LOGW("atv_host: the unscrewed battery of '%ls' did not spawn -- the unscrew is refused", key.c_str());
             return why::kNotReady;
         }
+        NoteBatterySpawned(0, born, v.battery);
     }
     {
         H::ApplyScope applying;
