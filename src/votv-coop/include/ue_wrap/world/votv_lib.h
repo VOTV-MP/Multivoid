@@ -27,7 +27,7 @@ namespace ue_wrap::votv_lib {
 // player's call passes null; lib_C tests it for int_objects and calls its
 // `stepped`, which mainPlayer_C implements as an empty event. Returns false
 // until lib_C resolves. Game thread (ProcessEvent).
-bool CharacterStep(void* character, float volume);
+bool CharacterStep(void* character, float volume, bool* groundHit = nullptr);
 
 // Dispatch lib_C::addGloss(name, level, worldContext): the signal glossary of the machine's own profile gains
 // `name` at `level`, or raises it (lib.cpp:4143-4175, its save_main through getMainSave). False until lib_C
