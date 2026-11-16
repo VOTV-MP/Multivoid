@@ -16,7 +16,9 @@ host-authoritative except the kinds either range may send, a destroy and a conve
 **No passive mint.** A client's census walk tracks a keyed prop by its key but mints no element: keyed
 identity is host-authored by construction, a save-loaded prop adopts the host's id by key, and a
 client-born prop is minted at its express seam, which broadcasts in the same breath. A passive
-census mint once produced about two thousand zombie double rows per join. The one bind owner
+census mint once produced about two thousand zombie double rows per join. The keyless trash lineage (a
+chip pile, a garbage clump) is the same: a client mints no id for its own loaded native, which binds the
+host's id directly, and the join sweep finds the unbound ones by its own walk. `[?]` The one bind owner
 (`coop/element/identity_create`) carries the guards: the host rejects a wire row over a live
 host-local actor, a client dissolves its provisional row on the host's word, and one actor is one
 row. On the host, a peer's spawn resolving onto a host-authoritative actor is handed back: the
