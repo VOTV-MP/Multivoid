@@ -1,8 +1,13 @@
 // coop/net/join_wire.h -- the Join payload's bytes: one encoder and one walker, with no game
 // behind them. The DLL's handshake and the load peer both send a Join through EncodeJoin, and the
-// host's version gate reads one through ExtractJoinVersionFields, so the chain is written and read
-// in this file pair only (the handshake's own field-by-field apply keeps its separate walk of the
-// first fields, which stores them into the roster).
+// host's version gate reads one through ExtractJoinVersionFields. The handshake's own field-by-field
+// apply of the first fields (HandleJoinMessage, which stores them into the roster) is a third reader.
+//
+// THE THREE MUST AGREE, field for field: EncodeJoin, the walker below and HandleJoinMessage's apply.
+// A field added or removed is changed in all three together. When the guid field was deleted, one
+// walker still consumed two length-prefixed fields where one remained, read the flags byte as a
+// length, ran off the end and refused every Join with "version field missing" on both peers; the
+// pose stream then never started. The failure is loud but names the wrong field.
 //
 // The chain: [u32 eid][u8 nicklen][nick UTF-8][u8 skinlen][skin][u8 prefs flags][u8 has][r][g][b]
 // [u8 gamelen][game][sha256 32][u8 build flags][u8 keylen][game build key].

@@ -368,6 +368,8 @@ bool HandleJoinMessage(net::Session& session,
         coop::roster_ledger::InstallRow(0, coop::roster_ledger::kHostPlayerNo,
                                         /*bornGeneration=*/0, /*originContext=*/0);
     }
+    // This walk is one of three readers of the Join chain that must agree field for field with
+    // coop::net::EncodeJoin and ExtractJoinVersionFields (coop/net/join_wire.h): change a field in all three.
     uint32_t senderElementId = 0;
     std::memcpy(&senderElementId, msg.payload, 4);
     const uint8_t* nickStart = msg.payload + 4;
