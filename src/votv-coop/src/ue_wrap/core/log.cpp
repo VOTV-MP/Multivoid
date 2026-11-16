@@ -350,10 +350,10 @@ void Write(Level level, const char* fmt, ...) {
         std::fflush(g_file);
         g_lastFlushMs = ::GetTickCount64();
     } else {
-        const ULONGLONG now = ::GetTickCount64();
-        if (now - g_lastFlushMs >= kFlushIntervalMs) {
+        const ULONGLONG nowMs = ::GetTickCount64();
+        if (nowMs - g_lastFlushMs >= kFlushIntervalMs) {
             std::fflush(g_file);
-            g_lastFlushMs = now;
+            g_lastFlushMs = nowMs;
         }
     }
     ::LeaveCriticalSection(&g_lock);
