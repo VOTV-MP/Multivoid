@@ -86,8 +86,9 @@ bool HostRejoin(const std::wstring& key) {
 }
 
 // CLIENT, second life, step b5: the first host state applied to this life's copy of the DRILL ATV (its key's tag, never
-// another ATV's: step 10's second ATV is in the world too) leaves it at the battery the host marked. The host's value is its
-// copy's battery when the client was back; it drains, so the two agree within kBatterySame.
+// another ATV's: step 10's second ATV is in the world too) CARRIES the battery and leaves the copy at the battery the host
+// marked. The carry is the mechanism: the rejoined world is the host's live save, which already holds the battery, so the
+// value alone matches even when the connect state drops it (battery_join_off). The host's value drains, so within kBatterySame.
 bool DecideB5(const std::wstring& key) {
     std::string t;
     if (!AwaitMark("atv_bat2", t, kRejoinS)) return false;
@@ -101,6 +102,11 @@ bool DecideB5(const std::wstring& key) {
     DE::Rec r;
     const int32_t tag = DE::KeyTag(key);
     if (WaitRec(c, DE::kStateApplied, [tag](const DE::Rec& a) { return a.i3 == tag; }, r) != 1) return false;
+    if (r.f3 == 0.f) {
+        UE_LOGI("atv-drill: step b5 FAIL: the rejoined copy's first host state carried no battery");
+        End('F', "step b5 (the rejoined copy's battery) on the client: its first host state carried no battery");
+        return false;
+    }
     if (!(std::fabs(r.f2 - host) <= kBatterySame)) {
         UE_LOGI("atv-drill: step b5 FAIL: the rejoined copy's battery is %.1f after its first host state, the host's is %.1f", r.f2, host);
         End('F', "step b5 (the rejoined copy's battery) on the client: " + std::to_string(r.f2) + " after its first host state, the host's is " + std::to_string(host));

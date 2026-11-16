@@ -99,7 +99,7 @@ void ApplyState(const std::wstring& key, void* atv, const Payload& p, int source
     NoteAppliedStateSeq(key, p.stateSeq);
     ++g_n.applied;
     DE::Note(DE::kStateApplied, static_cast<int32_t>(p.stateSeq), source, p.moduleCount, A::GetFuel(atv), A::GetHealth(atv),
-             A::GetBattery(atv), DE::On() ? DE::KeyTag(key) : 0);
+             A::GetBattery(atv), DE::On() ? DE::KeyTag(key) : 0, (p.flags & coop::net::kAtvHostBattery) ? 1.f : 0.f);
 }
 
 // [dev] The drill's fixture: the next state for this ATV is held, not applied, until the copy builds its next condition

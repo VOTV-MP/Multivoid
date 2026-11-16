@@ -26,7 +26,7 @@ enum Event : int {
     kAsked,        // CLIENT: a request opened for the player's act. i0 op, i1 reqId, f0 amount
     kUngated,      // CLIENT: an act's POST ran and no request was opened for it. i0 op
     kAnswer,       // CLIENT: the host's answer. i0 reqId, i1 reason, i2 closed the last open id, f0 fuel, f1 health, f2 module count
-    kStateApplied, // CLIENT: a host state written onto the copy. i0 stateSeq, i1 source (0 state, 1 answer, 2 adoption), i2 module count, f0 fuel, f1 health, f2 the copy's battery after it, i3 KeyTag
+    kStateApplied, // CLIENT: a host state written onto the copy. i0 stateSeq, i1 source (0 state, 1 answer, 2 adoption), i2 module count, f0 fuel, f1 health, f2 the copy's battery after it, i3 KeyTag, f3 1 when the state carried the battery
     kBlock,        // a condition block's vitals rule. i0 from the host, i1 ack matched, f0 copy fuel before, f1 after, f2 the block's own
     kControls,     // a block's brake, lights, turbo and horn bits taken. i0 mask changed, i1 mask now equal to the block's (the horn: its replay ran), i2 mask this block made the copy change (the horn: its replay ran), f0 the block's control bits
     kAccepted,     // HOST: a request applied. i0 op, i1 slot, i2 stateSeq after, f0 fuel, f1 health, f2 module count, f3 battery
