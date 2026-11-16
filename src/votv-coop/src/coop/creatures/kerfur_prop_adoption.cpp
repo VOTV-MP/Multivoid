@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -123,7 +124,16 @@ void ResolvePending() {
     // A candidate is used only by a pending entry of its exact class, so the walk is each pending class's own
     // instances, from the object index; the whole array (about 30 ms a pass, five passes a second) only while the
     // index trails the engine.
-    const bool indexed = ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0;
+    // A scan that may fresh-spawn below (the load tail quiesced, or an entry timed out) acts on a miss, and that "no
+    // twin" must be true now: Backlog() is zero only as of the last budgeted drain, so the index is drained whole
+    // first (object_index.h: DrainAll answers a miss, never a tick; until then a scan drains nothing extra). A drain
+    // that cannot run leaves the scan on the whole array.
+    bool mayDecideMiss = coop::join_membership_sweep::HasLoadTailQuiesced();
+    for (const Pending& e : g_pending)
+        if (!mayDecideMiss && MsSince(e.armedAt) >= kAdoptTimeoutMs) mayDecideMiss = true;
+    const bool drained = !mayDecideMiss || ue_wrap::object_index::DrainAll() != SIZE_MAX;
+    const bool indexed =
+        drained && ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0;
     if (indexed) {
         CandSink sink{&cands, &tracked};
         std::vector<void*> walked;
