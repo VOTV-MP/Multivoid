@@ -48,6 +48,15 @@ bool CallCheckActive(void* chipper);
 // The button's box (`button_del`), or null. Game thread.
 void* ButtonComponent(void* chipper);
 
+// The ubergraph entry that resumes the intake after the overlap's Delay(0): the body reads `ac` and `comp`, asks canChip
+// and, on a pass, sets `process` and destroys the prop. A cooked offset: it moves with a game update.
+inline constexpr int32_t kIntakeResumeEntry = 554;
+
+// The intake's own state: `process` (set when the body took a prop, until the chip ends), `actor` and `comp` (what the
+// last begin-overlap named, as the body left them; a pointer is not validated). False as Read. Cheap enough for a watch
+// on every body of the class: the offsets are cached. Game thread.
+bool ReadIntake(void* chipper, bool& process, void*& actor, void*& comp);
+
 // A player's press of the button as the game runs it: actionOptionIndex(player, a hit naming button_del, 4). False
 // when the chipper has no button or the call did not run. Game thread.
 bool CallPress(void* chipper, void* player);

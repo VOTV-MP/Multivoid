@@ -21,7 +21,6 @@
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
-#include "coop/interactables/woodchipper_feed.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -295,19 +294,8 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         net::WoodchipperPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.active > 1 || p.op > net::kWoodchipperOpFeed || !std::isfinite(p.fuel)) {
+        if (p.active > 1 || p.op > net::kWoodchipperOpActiveOnly || !std::isfinite(p.fuel)) {
             UE_LOGW("event_feed: woodchipper message malformed -- dropping");
-            break;
-        }
-        if (p.op == net::kWoodchipperOpFeed) {
-            // A client's feed: the payload, then the fed prop's key.
-            if (!intent || msg.payloadLen < sizeof(net::WoodchipperPayload) + sizeof(net::WoodchipperFeedTail)) {
-                UE_LOGW("event_feed: woodchipper feed malformed -- dropping");
-                break;
-            }
-            net::WoodchipperFeedTail t{};
-            std::memcpy(&t, msg.payload + sizeof(net::WoodchipperPayload), sizeof(t));
-            ::coop::woodchipper_feed::OnFeed(msg.senderPeerSlot, p, t);
             break;
         }
         if (intent) ::coop::woodchipper_sync::OnIntent(msg.senderPeerSlot, p);

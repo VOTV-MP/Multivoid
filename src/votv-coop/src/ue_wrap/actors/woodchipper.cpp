@@ -29,8 +29,14 @@ struct Layout {
     int32_t activeOff = -1;
     uint8_t activeMask = 0;
     int32_t buttonOff = -1;
+    int32_t processOff = -1;
+    uint8_t processMask = 0;
+    int32_t acOff = -1;
+    int32_t compOff = -1;
+    bool intakeOk = false;
     bool ok = false;
     bool warned = false;
+    bool intakeWarned = false;
 };
 Layout g_layout;
 
@@ -62,6 +68,28 @@ bool EnsureLayout() {
                 g_layout.fuelOff, g_layout.activeOff, g_layout.buttonOff);
     }
     return g_layout.ok;
+}
+
+// The intake's three fields, read off the same class; asked only by the intake reader.
+bool EnsureIntakeLayout() {
+    if (!EnsureLayout()) return false;
+    if (g_layout.intakeOk) return true;
+    void* cls = ChipperClass();
+    g_layout.acOff = R::FindPropertyOffset(cls, L"ac");
+    g_layout.compOff = R::FindPropertyOffset(cls, L"comp");
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (R::FindBoolProperty(cls, L"process", off, mask) && off >= 0 && mask != 0) {
+        g_layout.processOff = off;
+        g_layout.processMask = mask;
+    }
+    g_layout.intakeOk = g_layout.acOff >= 0 && g_layout.compOff >= 0 && g_layout.processOff >= 0;
+    if (!g_layout.intakeOk && !g_layout.intakeWarned) {
+        g_layout.intakeWarned = true;
+        UE_LOGE("woodchipper: woodchipper_C did not resolve `ac`, `comp` or `process` (%d, %d, %d) -- the host's intake flip "
+                "is off", g_layout.acOff, g_layout.compOff, g_layout.processOff);
+    }
+    return g_layout.intakeOk;
 }
 
 }  // namespace
@@ -125,6 +153,15 @@ void* ButtonComponent(void* chipper) {
     void* button = nullptr;
     std::memcpy(&button, static_cast<const uint8_t*>(chipper) + g_layout.buttonOff, sizeof(button));
     return button && R::IsLive(button) ? button : nullptr;
+}
+
+bool ReadIntake(void* chipper, bool& process, void*& actor, void*& comp) {
+    if (!IsChipper(chipper) || !R::IsLive(chipper) || !EnsureIntakeLayout()) return false;
+    const uint8_t* b = static_cast<const uint8_t*>(chipper);
+    process = (b[g_layout.processOff] & g_layout.processMask) != 0;
+    std::memcpy(&actor, b + g_layout.acOff, sizeof(actor));
+    std::memcpy(&comp, b + g_layout.compOff, sizeof(comp));
+    return true;
 }
 
 bool CallPress(void* chipper, void* player) {

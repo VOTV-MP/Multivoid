@@ -512,6 +512,10 @@ Community commits are adopted with their **original authorship preserved**
 - **The log's date** ([#164](https://github.com/VOTV-MP/Multivoid/pull/164)): a line's stamp is the local time of day alone, so the log now says its date and UTC
   offset in its header and again where either changes. Kept as written; on top, the change is also seen at a
   daylight-saving fall-back, whose hour repeats.
+- **The woodchipper eats a client's prop** ([#98](https://github.com/VOTV-MP/Multivoid/pull/98)): a prop a client held or threw into a
+  woodchipper was refused, because the host's copy of a prop a client drives does not simulate; now the host's chipper
+  takes it as the game's would. Kept as written. On top: no client message is needed (the host sets its copy simulating
+  for the chipper's own intake check, and back if it is not taken), and a drill with a held arm, a thrown arm and a red.
 
 ### ElvardFIC and AquaFishhh
 

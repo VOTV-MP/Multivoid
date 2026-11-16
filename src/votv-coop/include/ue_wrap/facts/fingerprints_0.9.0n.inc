@@ -550,6 +550,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"woodchipper_c", L"actionoptionindex", L"woodchipper_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x3c97b9362ed80bebull},
     {L"woodchipper_c", L"bndevt__eat_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"woodchipper_c.bndevt__eat_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0xa3bf3877588011a1ull},
     {L"woodchipper_c", L"checkactive", L"woodchipper_c.checkactive", 0x6a2d5d90ab51fa2dull, 0xc4f922e9868588a3ull},
+    {L"woodchipper_c", L"executeubergraph_woodchipper", L"woodchipper_c.executeubergraph_woodchipper", 0xd3c93c9d2749b427ull, 0xf6e3855e8f3a0b2eull},
     {L"woodchipper_c", L"gascanfuel", L"woodchipper_c.gascanfuel", 0xcf57aad04d5e8bb9ull, 0x2bf050f64cfe9e0cull},
     {L"woodchipper_c", L"receivetick", L"woodchipper_c.receivetick", 0x6082ffdfa2cda429ull, 0x896e4edea6c66566ull},
     {nullptr, nullptr, nullptr, 0, 0},
