@@ -33,6 +33,12 @@ void Install(bool isClient);
 // is every ambient spawn the world makes for itself. Game thread.
 bool BirthIsPlayerAuthored();
 
+// An ATV's unscrewPanel is starting on this client (`unscrewFn`, the watched body), and whether it is the battery's
+// branch (no tire looked at, a battery fitted). The battery it spawns is then a player's birth while that body runs: the
+// unscrew runs only on the unscrewing player's game. A tire's branch is not, since its wheel is still on the host's ATV.
+// Called from coop/interactables/atv_gate's pre callback. Game thread.
+void NoteAtvUnscrew(void* unscrewFn, bool batteryBranch);
+
 // Session teardown: report both columns of the caller tally -- the menu's calls, which crossed as
 // intents, and every other caller's, which stayed local -- and zero it. The watch and the resolved
 // UFunctions stay: they name the game's own classes, not this session's world. Game thread.
