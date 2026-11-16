@@ -27,6 +27,7 @@
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
+#include "coop/items/wall_preview_sync.h"  // a wall builder's aiming preview
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
@@ -233,6 +234,14 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::WallPreview: {
+        // Any peer to the host, the host to all (coop/items/wall_preview_sync). Exact length.
+        if (msg.payloadLen != sizeof(net::WallPreviewPayload)) break;
+        net::WallPreviewPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ::coop::wall_preview_sync::OnPreview(msg.senderPeerSlot, p);
         break;
     }
     case net::ReliableKind::PlantState:
