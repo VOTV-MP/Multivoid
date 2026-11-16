@@ -194,7 +194,8 @@ bool HostDriveSeated() {
         const bool read = ReadRoot(at);
         if (read) movedCm = std::sqrt((at.X - start.X) * (at.X - start.X) + (at.Y - start.Y) * (at.Y - start.Y));
         if (movedCm >= kDriveCm) return 1;
-        // The throttle's first seconds moved the root nowhere: the ATV is held (a wall, a rock), not slow; said at once.
+        // The throttle's first seconds moved the root nowhere: the ATV is held (a wall, a rock), not slow; said at once. The window
+        // starts at DriveBack's return, after the key went down and the fuel fell (it exposes no key-down), so it only errs late.
         if (read && !probed && now - driveStart >= std::chrono::seconds(kProbeS)) {
             probed = true;
             const float probeCm = std::sqrt((at.X - probeRoot.X) * (at.X - probeRoot.X) + (at.Y - probeRoot.Y) * (at.Y - probeRoot.Y));

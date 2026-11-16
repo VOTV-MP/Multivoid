@@ -21,6 +21,8 @@ namespace coop::atv_rider_watch {
 // client does nothing.
 void SeedRider(coop::atv_sync::AtvEntry& e);
 bool SeedWaiting(const std::wstring& key);
+// The entry under `key` exited (its ATV is gone or the session ended): its wait is dropped. Game thread.
+void ForgetSeedWait(const std::wstring& key);
 
 // Store the session and register the watches; asked again each call until each watch settles live or dead. Idempotent.
 void Install(coop::net::Session* session);

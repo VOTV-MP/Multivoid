@@ -11,6 +11,7 @@
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/element/mirror_defer.h"
+#include "coop/element/mirror_managers.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_seat.h"
@@ -20,6 +21,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <atomic>
 #include <cstdint>
@@ -77,6 +79,20 @@ void HostKerfurSteps(const coop::atv_seat_table::Change& c) {
     }
 }
 
+// The riders drill's record of what still held for the rider's eid once the ride owner's Clear returned: a ride row, the
+// owner's hold on the mirror's pose, and an attach parent of the mirror. Read here, at the stamp apply that cleared the rider.
+void NoteRideCleared(uint32_t eid, const std::wstring& key) {
+    int32_t held = 0;
+    if (coop::npc_ride::HasRow(eid)) held |= 1;
+    if (coop::npc_ride::HoldsPose(eid)) held |= 2;
+    coop::element::Npc* const npc = coop::element::NpcMirrors().Get(eid);
+    void* const actor = npc ? npc->GetActor() : nullptr;
+    void* parent = nullptr;
+    if (actor && R::IsLiveByIndex(actor, npc->GetInternalIdx()) && ue_wrap::engine::GetAttachParentActor(actor, parent) && parent)
+        held |= 4;
+    DE::Note(DE::kRideCleared, static_cast<int32_t>(eid), DE::KeyTag(key), held);
+}
+
 // The body subscriber, on every peer: a slot other than this peer's own that takes the seat is seated, and one that leaves it
 // is let go. The host's own seat appears on a client as slot 0, so a client seats the host's body by the same rule.
 void OnSeatChange(const coop::atv_seat_table::Change& c) {
@@ -96,7 +112,10 @@ void OnSeatChange(const coop::atv_seat_table::Change& c) {
     if (s->role() == coop::net::Role::Host) { HostKerfurSteps(c); return; }
     // The rider subscriber, on a client: the host's kerfur rides the ATV its stamp names, on this copy too.
     if (s->role() != coop::net::Role::Client || c.riderBefore == c.riderAfter) return;
-    if (c.riderBefore != 0 && !s_redReleaseRide) coop::npc_ride::Clear(c.riderBefore, *c.key);
+    if (c.riderBefore != 0 && !s_redReleaseRide) {
+        coop::npc_ride::Clear(c.riderBefore, *c.key);
+        if (DE::On()) NoteRideCleared(c.riderBefore, *c.key);
+    }
     if (c.riderAfter != 0 && !s_redMirrorRide) coop::npc_ride::Set(c.riderAfter, *c.key);
 }
 

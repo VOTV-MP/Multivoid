@@ -223,6 +223,11 @@ void SeedRider(coop::atv_sync::AtvEntry& e) {
     coop::atv_seat_table::SetRider(e, eid, kerfur, "seeded");
 }
 
+void ForgetSeedWait(const std::wstring& key) {
+    g_seedWait.erase(std::remove_if(g_seedWait.begin(), g_seedWait.end(), [&](const SeedWait& w) { return w.key == key; }),
+                     g_seedWait.end());
+}
+
 bool SeedWaiting(const std::wstring& key) {
     for (const SeedWait& w : g_seedWait)
         if (w.key == key) return true;

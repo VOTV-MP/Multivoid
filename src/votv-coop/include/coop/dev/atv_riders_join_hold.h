@@ -4,10 +4,11 @@
 // own ready edges (the birth, the bind) are what apply it. Off in every other run, and once released for the life.
 // Both NPC mirror bind routes wait: the adoption scan (coop/creatures/npc_adoption asks BindHeld) and the fresh spawn
 // (coop/creatures/npc_mirror asks ParkSpawn, which keeps the payload and marks its eid in bind_wait, and DropParked at the
-// eid's destroy). The release replays the parked payloads through npc_mirror::OnEntitySpawn on the game thread. A payload whose
-// bind_wait mark is gone at the replay (a world change or the session's end cleared it) is dropped, not replayed. Read by
-// coop/player/puppet_drive, coop/creatures/npc_adoption and coop/creatures/npc_mirror; released by the drill's thread. The
-// holds are atomics; the parked payloads are game-thread only.
+// eid's destroy). The release replays the parked payloads through npc_mirror::OnEntitySpawn on the game thread. The parked
+// payloads go where bind_wait's marks go: Clear is called beside bind_wait::Clear (a world change, the session's end). A
+// payload whose mark is gone at the replay is dropped, not replayed. Read by coop/player/puppet_drive,
+// coop/creatures/npc_adoption and coop/creatures/npc_mirror; released by the drill's thread. The holds are atomics; the parked
+// payloads are game-thread only.
 
 #pragma once
 
@@ -31,9 +32,14 @@ bool BindHeld();
 // marked in bind_wait. True when parked (the caller returns), false when nothing is held. The spawn is deferred, never
 // refused. Game thread.
 bool ParkSpawn(const coop::net::EntitySpawnPayload& payload);
-// Drops the parked spawn of `eid` (its EntityDestroy arrived while it waited) and gives its bind_wait mark up; true when one
-// was parked. Game thread.
+// Drops the parked spawn of `eid` (its EntityDestroy arrived while it waited, or after the release and before the replay ran)
+// and gives its bind_wait mark up. True when one was parked and no mirror stands for the eid: the caller returns, the spawn
+// never happens. False when none was parked, or a mirror stands (a re-announced spawn made it after the release): the
+// caller's normal destroy runs. Game thread.
 bool DropParked(uint32_t eid);
+
+// The parked payloads are forgotten (the world changed or the session ended: their marks were cleared). Game thread.
+void Clear();
 
 void ReleaseBirth();
 // Lets the binds go and posts the replay of the parked spawns to the game thread. Any thread.

@@ -127,14 +127,13 @@ bool AwaitMark(const std::string& name, std::string& out, int boundS, const char
     return PollFn(("the signal '" + name + "'").c_str(), boundS, [&] { return PS::Peek(name.c_str(), out) ? 1 : 0; });
 }
 
-bool Barrier(const char* name, int boundS, const std::string& text, std::string* texts) {
-    PS::Mark((std::string(name) + "_" + RoleName(g_me)).c_str(), text);
+bool Barrier(const char* name, int boundS) {
+    PS::Mark((std::string(name) + "_" + RoleName(g_me)).c_str());   // the one-argument mark writes "x": Peek refuses an empty file
     std::string t;
     const std::string ctx = std::string("barrier ") + name;
     for (int r = 0; r < kRoles; ++r) {
         if (r == g_me) continue;
         if (!AwaitMark(std::string(name) + "_" + RoleName(static_cast<Role>(r)), t, boundS, ctx.c_str())) return false;
-        if (texts) texts[r] = t;
     }
     return true;
 }
@@ -198,8 +197,7 @@ bool RunHost() {
     cur = Snap();
     if (!Barrier("arm6") || !LeaveHost(cur)) return false;
     cur = Snap();
-    std::string place;
-    if (!HostKerfurPlace(place) || !Barrier("arm8", kBarrierS, place) || !RagdollWatch(kHost, cur)) return false;
+    if (!Barrier("arm8") || !RagdollWatch(kHost, cur)) return false;
     cur = Snap();
     if (!Barrier("arm7") || !HostSits(cur)) return false;
     cur = Snap();
@@ -230,8 +228,7 @@ bool RunDriver() {
     // the rejoin: the wait spans the observer's leaving, restart, boot and join.
     if (!AwaitMark("o2_s5", t, kRejoinS + kSignalS) || !Barrier("arm6") || !DriverLeave() || !LeaveWatch(kDriver, cur)) return false;
     cur = Snap();
-    std::string marks[kRoles];
-    if (!Barrier("arm8", kBarrierS, "", marks) || !JudgeUnseatPlacement(marks[kHost]) || !DriverRagdoll()) return false;
+    if (!Barrier("arm8") || !DriverRagdoll()) return false;
     cur = Snap();
     if (!Barrier("arm7") || !WatchHostSeat(kDriver, cur)) return false;
     cur = Snap();
@@ -245,10 +242,7 @@ bool ObserverLateSteps() {
     Cur cur = Snap();
     if (!Barrier("arm6") || !LeaveWatch(kObserver, cur)) return false;
     cur = Snap();
-    std::string marks[kRoles];
-    if (!Barrier("arm8", kBarrierS, "", marks) || !JudgeUnseatPlacement(marks[kHost]) ||
-        !RagdollWatch(kObserver, cur))
-        return false;
+    if (!Barrier("arm8") || !RagdollWatch(kObserver, cur)) return false;
     cur = Snap();
     if (!Barrier("arm7") || !WatchHostSeat(kObserver, cur)) return false;
     cur = Snap();

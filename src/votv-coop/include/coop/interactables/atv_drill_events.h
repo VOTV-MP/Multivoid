@@ -44,6 +44,7 @@ enum Event : int {
     kInvite,       // HOST: the kerfur steps of a client's seat edge. i0 KeyTag, i1 (1 invited, 0 released, 2 turned back), i2 kerfur count
     kMirrorCancel, // CLIENT: the game's own call on a kerfur mirror was cancelled. i0 (0 getOffCar, 1 tryToOccupyCar), i1 eid
     kRiderFact,    // HOST: the kerfur's own seat. i0 KeyTag, i1 eid (0 at the getOffCar PRE), i2 1 at the sitOnCar POST, f0 at that POST the kerfur's distance to sitarrow (cm, -1 when unread)
+    kRideCleared,  // CLIENT: the rider subscriber's npc_ride::Clear for an eid returned. i0 eid, i1 KeyTag, i2 what still held after it (1 a ride row kept, 2 the pose held by the ride owner, 4 the mirror attached to an actor)
     kEventCount
 };
 

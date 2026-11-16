@@ -6,6 +6,7 @@
 #include "net_pump_world_ready_internal.h"  // co-located private header (src tree, not include/)
 
 #include "coop/dev/announce_hold.h"  // the pre-announce drill arms hold this client's announce
+#include "coop/dev/atv_riders_join_hold.h"  // Clear: the riders drill's parked spawns go with the world
 #include "coop/session/join_progress.h"
 #include "coop/net/fake_link_steps.h"  // NoteOrigin: the joiner's `wr` origin
 #include "coop/net/protocol.h"
@@ -209,6 +210,7 @@ const char* TickWorldReadyAnnounce(coop::net::Session& session, void* localNow, 
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // drop the stale prop-kerfur pending set
                 coop::roomba_sync::OnClientWorldReady();  // the cleaners bound and the states held for the old world go
                 coop::element::bind_wait::Clear("the world changed");  // the messages held for the old world's binds
+                coop::dev::atv_riders_join_hold::Clear();  // and the riders drill's parked spawns, whose marks that just cleared
                 coop::props::bracket_position_wait::Reset();  // and the spawns a bracket of the old world kept
                 coop::event_fire_sync::OnClientWorldReady();  // the fires queued in the join window replay now
                 coop::daily_task_sync::OnClientWorldReady();  // a task kept from the world left behind goes

@@ -80,7 +80,14 @@ bool ParkSpawn(const coop::net::EntitySpawnPayload& payload) {
     if (!BindHeld()) return false;
     UE_ASSERT_GAME_THREAD("atv_riders_join_hold::ParkSpawn");  // no-mutex: g_parked is GT-only
     for (Parked& held : g_parked) {
-        if (held.payload.elementId == payload.elementId) { held.payload = payload; return true; }
+        if (held.payload.elementId != payload.elementId) continue;
+        held.payload = payload;
+        // The host's connect broadcast sends the set again: a mark cleared since the first park (Clear) is taken anew.
+        if (!coop::element::bind_wait::IsDeferred(payload.elementId)) {
+            coop::element::bind_wait::MarkDeferred(payload.elementId, "the riders drill holds its bind");
+            held.ours = true;
+        }
+        return true;
     }
     const bool ours = !coop::element::bind_wait::IsDeferred(payload.elementId);
     coop::element::bind_wait::MarkDeferred(payload.elementId, "the riders drill holds its bind");
@@ -94,11 +101,18 @@ bool DropParked(uint32_t eid) {
     UE_ASSERT_GAME_THREAD("atv_riders_join_hold::DropParked");
     for (size_t i = 0; i < g_parked.size(); ++i) {
         if (g_parked[i].payload.elementId != eid) continue;
+        // Erased, so the replay (posted by the release, not yet run) skips it: no mirror is made for a destroyed entity. A
+        // mirror that a re-announced spawn made directly after the release is not this payload's: the normal destroy takes it.
         g_parked.erase(g_parked.begin() + static_cast<std::ptrdiff_t>(i));
         coop::element::bind_wait::GiveUp(eid, "destroyed while the riders drill held its bind");
-        return true;
+        return coop::element::NpcMirrors().Get(eid) == nullptr;
     }
     return false;
+}
+
+void Clear() {
+    UE_ASSERT_GAME_THREAD("atv_riders_join_hold::Clear");
+    g_parked.clear();
 }
 
 void ReleaseBirth() { H().birth.store(false, std::memory_order_release); }

@@ -100,6 +100,7 @@
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_tool_flags.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
+#include "coop/dev/atv_riders_join_hold.h"  // Clear: the riders drill's parked spawns go with the session
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
 #include "coop/save/join_window_baseline.h"  // the connect edge's removes and position corrections
@@ -620,6 +621,7 @@ DisconnectStats DisconnectAll() {
     coop::trash_clump_pose_stream::OnDisconnect();  // drop all client per-eid carry drives
     coop::prop_drive_host::OnDisconnect();  // drop the host's driven-prop set and the client syncers' table (prop_syncer_host)
     coop::element::bind_wait::Clear("disconnect");  // the messages waiting for a bind go with the session
+    coop::dev::atv_riders_join_hold::Clear();  // and the riders drill's parked spawns, whose marks that just cleared
     coop::props::bracket_position_wait::Reset();  // and the spawns waiting for a bracket that will not close
     coop::prop_drive_stream::OnDisconnect();  // every driven prop here gets its physics back
     coop::prop_park::OnDisconnect();  // after both receivers gave their props back: the holds a park still has

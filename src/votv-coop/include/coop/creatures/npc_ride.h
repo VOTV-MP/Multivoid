@@ -45,6 +45,9 @@ void OnRevealed(uint32_t eid);
 // rotation and movement are not written. A memory test, no engine call.
 bool HoldsPose(uint32_t eid);
 
+// True while a row for `eid` is stored, whether or not it holds the pose (the riders drill reads it after a Clear).
+bool HasRow(uint32_t eid);
+
 // The session ended: every row is dropped; the mirrors are destroyed by the teardown. Game thread.
 void OnDisconnect();
 

@@ -14,10 +14,8 @@
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -68,11 +66,13 @@ bool LeaveHost(const Cur& cur) {
 }
 
 // On a client: the kerfur's ride ends and, on the observer, the driver's body is released; on the driver also its own dismount
-// ran the game's getOffCar on the riding mirror and the gate cancelled it.
+// ran the game's getOffCar on the riding mirror and the gate cancelled it. The release is judged on the state the rider
+// subscriber left when the stamp's apply cleared the rider (DE::kRideCleared), read at that event and never later: the eid has
+// no ride row, its pose is not held by the ride owner, and the mirror is attached to nothing.
 bool LeaveWatch(Role me, const Cur& cur) {
     const int32_t tag = Tag();
     const uint32_t eid = g_eid;
-    bool off = false, body = me != kObserver;
+    bool off = false, body = me != kObserver, released = false;
     return PollFn("the driver's leaving on a client", kEventS, [&]() -> int {
         const auto seats = Recs(cur, DE::kSeatChange);
         if (SeatSilent(seats)) return -1;
@@ -113,57 +113,27 @@ bool LeaveWatch(Role me, const Cur& cur) {
                     }
                     body = true;
                 }
-        if (off && body) {
-            StepPass(6, me == kObserver ? "the kerfur mirror got off and the driver's body was released"
-                                        : "the kerfur mirror got off by the host's word, after the game's own getOffCar was cancelled");
+        const auto cleared = Recs(cur, DE::kRideCleared);
+        if (!released)
+            if (const DE::Rec* r = Find(cleared, [&](const DE::Rec& x) {
+                    return static_cast<uint32_t>(x.i0) == eid && x.i1 == tag;
+                })) {
+                released = true;
+                if (r->i2 != 0) {
+                    std::string held;
+                    if (r->i2 & 1) held += "the ride row is kept";
+                    if (r->i2 & 2) held += std::string(held.empty() ? "" : ", ") + "its pose is still held by the ride owner";
+                    if (r->i2 & 4) held += std::string(held.empty() ? "" : ", ") + "the mirror is still attached to an actor";
+                    Fail(6, "unseat_latch_off", "the rider's seat ended and the kerfur mirror is not released: " + held);
+                    return -1;
+                }
+            }
+        if (off && body && released) {
+            StepPass(6, "the kerfur mirror is released: no ride row, its pose is the stream's, attached to nothing");
             return 1;
         }
         return 0;
     });
-}
-
-bool HostKerfurPlace(std::string& text) {
-    const KerfurRead k = ReadKerfur(g_eid);
-    if (!k.exists || !k.located) {
-        Invalid("the host's kerfur location does not read at the arm8 barrier");
-        return false;
-    }
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), "%.1f %.1f %.1f", static_cast<double>(k.at[0]), static_cast<double>(k.at[1]),
-                  static_cast<double>(k.at[2]));
-    text = buf;
-    return true;
-}
-
-bool JudgeUnseatPlacement(const std::string& hostPlace) {
-    float host[3] = {0.f, 0.f, 0.f};
-    const char* p = hostPlace.c_str();
-    bool parsed = !hostPlace.empty();
-    for (float& v : host) {
-        char* end = nullptr;
-        v = std::strtof(p, &end);
-        if (end == p) { parsed = false; break; }
-        p = end;
-    }
-    if (!parsed || *p != '\0') {
-        Invalid("the host's arm8 mark carries '" + hostPlace + "', not a location");
-        return false;
-    }
-    const KerfurRead k = ReadKerfur(g_eid);
-    if (!k.exists || !k.located) {
-        Invalid("the kerfur mirror's location does not read at the arm8 barrier");
-        return false;
-    }
-    const float dx = k.at[0] - host[0], dy = k.at[1] - host[1], dz = k.at[2] - host[2];
-    const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
-    if (k.attached || cm > kUnseatPlacedCm) {
-        Fail(6, "unseat_hold",
-             "the kerfur mirror is " + Num("%.0f", cm) + " cm from the host's kerfur after its unseat (attached=" +
-                 (k.attached ? "1" : "0") + ")");
-        return false;
-    }
-    StepPass(6, "the kerfur mirror stands " + Num("%.0f", cm) + " cm from the host's kerfur, free of any attach");
-    return true;
 }
 
 // ---- step 8: the driver ragdolls while seated ----

@@ -5,6 +5,7 @@
 
 #include "coop/dev/atv_riders_arm.h"
 #include "coop/interactables/atv_drill_events.h"
+#include "coop/interactables/atv_rider_watch.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/net/session.h"
 
@@ -89,6 +90,7 @@ void SetRider(AtvEntry& e, uint32_t eid, void* actor, const char* why) {
 }
 
 void Exit(AtvEntry& e, const char* why) {
+    coop::atv_rider_watch::ForgetSeedWait(e.key);   // the seed's wait for this entry ends with it, red or not
     static const bool s_redExit = coop::dev::atv_riders_arm::Is("exit_seat_off");   // the riders drill's red: no exit is announced
     if (s_redExit) return;
     SetSeat(e, 0xFF, 0, why, false);

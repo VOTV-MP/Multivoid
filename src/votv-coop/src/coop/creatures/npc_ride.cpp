@@ -210,6 +210,8 @@ bool HoldsPose(uint32_t eid) {
     return it != g_rows.end() && LiveLatch(it->second) != nullptr;
 }
 
+bool HasRow(uint32_t eid) { return g_rows.count(eid) > 0; }
+
 // A native ATV copy outlives the session and the mirrors are destroyed after this runs: each live ATV is told to forget the
 // kerfur it was seated with (no engine call on the mirror) so its own dismount never reaches a destroyed one.
 void OnDisconnect() {
