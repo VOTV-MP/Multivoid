@@ -16,7 +16,8 @@
 namespace coop::dev::traffic_census {
 namespace {
 
-constexpr int kKinds = 256;
+constexpr int kStreamTypes = 256;        // the whole uint8_t MsgType space
+constexpr int kReliableKinds = 1 << 16;  // the whole uint16_t ReliableKind space: no kind is past the table
 constexpr uint64_t kFlushMs = 10000;
 constexpr int kRowsPerLine = 10;
 
@@ -27,7 +28,7 @@ struct Row {
 };
 
 int g_enabled = -1;
-Row g_stream[kKinds], g_reliable[kKinds];
+Row g_stream[kStreamTypes], g_reliable[kReliableKinds];
 uint64_t g_firstTick = 0, g_lastFlushTick = 0;
 uint64_t g_totalBytes = 0, g_totalPackets = 0;
 
@@ -39,10 +40,10 @@ void Note(Row& r, uint32_t bytes) {
     g_totalBytes += bytes;
 }
 
-void FlushTable(Row* rows, char tag, unsigned sinceS) {
+void FlushTable(Row* rows, int count, char tag, unsigned sinceS) {
     std::string line;
     int n = 0;
-    for (int i = 0; i < kKinds; ++i) {
+    for (int i = 0; i < count; ++i) {
         Row& r = rows[i];
         if (r.packets == r.loggedPackets) continue;
         r.loggedPackets = r.packets;
@@ -66,11 +67,11 @@ bool Enabled() {
 }
 
 void NoteStream(unsigned msgType, uint32_t bytes) {
-    if (msgType < kKinds) Note(g_stream[msgType], bytes);
+    if (msgType < kStreamTypes) Note(g_stream[msgType], bytes);
 }
 
 void NoteReliable(unsigned kind, uint32_t bytes) {
-    if (kind < kKinds) Note(g_reliable[kind], bytes);
+    if (kind < kReliableKinds) Note(g_reliable[kind], bytes);
 }
 
 void Tick() {
@@ -85,8 +86,8 @@ void Tick() {
     coop::net::net_stats::Snapshot w;
     coop::net::net_stats::Get(w);
     UE_LOGI("[TRAFFIC] t=%us WIRE in=%.0f/%.1f out=%.0f/%.1f", sinceS, w.inBps, w.inPktps, w.outBps, w.outPktps);
-    FlushTable(g_stream, 'S', sinceS);
-    FlushTable(g_reliable, 'R', sinceS);
+    FlushTable(g_stream, kStreamTypes, 'S', sinceS);
+    FlushTable(g_reliable, kReliableKinds, 'R', sinceS);
 }
 
 }  // namespace coop::dev::traffic_census
