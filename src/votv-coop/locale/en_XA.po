@@ -268,6 +268,9 @@ msgstr "[[%s (without passwords)]]"
 msgid "%s (you)"
 msgstr "[[%s (you)]]"
 
+msgid "(Q closes it too)"
+msgstr "[[(Q closes it too)]]"
+
 msgid "(Unstuck lifts you 1.5 m straight up)"
 msgstr "[[(Unstuck lifts you 1.5 m straight up)]]"
 
@@ -448,6 +451,9 @@ msgstr "[[Click to mute your mic]]"
 
 msgid "Clock"
 msgstr "[[Clock]]"
+
+msgid "Close it"
+msgstr "[[Close it]]"
 
 #, c-format
 msgid "Code %s -- include it in a bug report"

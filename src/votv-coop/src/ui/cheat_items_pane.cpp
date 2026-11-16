@@ -123,7 +123,14 @@ void RenderItems() {
         if (ImGui::Checkbox(l10n::Label(l10n::T("The game's spawn menu (Q) in story mode"), "spawn_menu_q"), &on))
             SM::SetEnabled(on);
         ImGui::SameLine();
-        if (ImGui::SmallButton(l10n::Label(l10n::T("Open it now"), "spawn_menu_open"))) SM::OpenNow();
+        // One button, two states: what opened the menu also closes it.
+        if (SM::IsMenuOpen()) {
+            if (ImGui::SmallButton(l10n::Label(l10n::T("Close it"), "spawn_menu_open"))) SM::CloseNow();
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", l10n::T("(Q closes it too)"));
+        } else if (ImGui::SmallButton(l10n::Label(l10n::T("Open it now"), "spawn_menu_open"))) {
+            SM::OpenNow();
+        }
     }
 
     ImGui::Separator();

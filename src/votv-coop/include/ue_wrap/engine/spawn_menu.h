@@ -10,9 +10,9 @@
 // block bails; and its flying branch quits the game when that key file does not match.
 //
 // So this opens the menu itself, on the widget the game already created: honour the activeInterface
-// guard, set the widget visible through the NATIVE UWidget::SetVisibility, run the widget's own
-// opened(), then SetInputMode_GameAndUIEx and show the cursor so it is clickable. No asset edit
-// (RULE 3), and no gamemode flip -- that branch drives weapons, flight, the backrooms, save paths.
+// guard, show the widget through the NATIVE UWidget::SetVisibility, run its own opened(), then set
+// GameAndUI input with the cursor. The game's close, on the Q release, sits behind the same guard,
+// so this closes it too. No asset edit (RULE 3), and no gamemode flip (weapons, flight, saves).
 
 #pragma once
 
@@ -39,5 +39,15 @@ bool Close(void* localPlayer);
 // open state. Self-correcting if the game closed the menu via its own path. The dev
 // Q-key watcher calls this and injects `localPlayer`. GAME THREAD ONLY.
 bool Toggle(void* localPlayer);
+
+// Close(), unless the menu's own search box holds the keyboard: a Q pressed there is a letter
+// of the search, the case the game's own close block skips too. Toggle's dismiss half, and what
+// a key press calls. Returns false when it left the menu up. GAME THREAD ONLY.
+bool CloseUnlessTyping(void* localPlayer);
+
+// An Open() here has not been followed by a Close(): the menu this layer put up is still up.
+// Any thread. The game's own Q release cannot close it in story mode (the same isBuoyant guard
+// as its open), so whoever opens it owes the player a way out while this is true.
+bool IsOpen();
 
 }  // namespace ue_wrap::spawn_menu

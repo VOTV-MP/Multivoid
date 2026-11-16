@@ -327,6 +327,10 @@ msgstr ""
 msgid "%s (you)"
 msgstr ""
 
+#: src/ui/cheat_items_pane.cpp
+msgid "(Q closes it too)"
+msgstr ""
+
 #: src/ui/player_tools_pane.cpp
 msgid "(Unstuck lifts you 1.5 m straight up)"
 msgstr ""
@@ -559,6 +563,10 @@ msgstr ""
 
 #: src/ui/cheat_world_pane.cpp
 msgid "Clock"
+msgstr ""
+
+#: src/ui/cheat_items_pane.cpp
+msgid "Close it"
 msgstr ""
 
 #: src/ui/end_reason_dialog.cpp

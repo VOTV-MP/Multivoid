@@ -9,6 +9,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/world/world_singleton.h"
 
+#include <atomic>
 #include <cstdint>
 
 namespace ue_wrap::spawn_menu {
@@ -37,6 +38,30 @@ int ReadVis(void* widget) {
     if (g_visOff == -2) g_visOff = R::FindPropertyOffset(R::ClassOf(widget), L"Visibility");
     if (g_visOff < 0) return -3;
     return *reinterpret_cast<const uint8_t*>(reinterpret_cast<const uint8_t*>(widget) + g_visOff);
+}
+
+// A visibility byte that draws: Visible, HitTestInvisible or SelfHitTestInvisible.
+bool Shown(int vis) { return vis == 0 || vis == 3 || vis == 4; }
+
+// Open() ran and no Close() has since. Written on the game thread, read by the key watcher.
+std::atomic<bool> g_open{false};
+
+// The menu's search box holds the keyboard: a Q typed there is a letter of the search.
+bool SearchHasKeyboard(void* widget) {
+    static int32_t sBoxOff = -2;
+    if (sBoxOff == -2) sBoxOff = R::FindPropertyOffset(R::ClassOf(widget), L"textbox_search");
+    if (sBoxOff < 0) return false;
+    void* box = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(widget) + sBoxOff);
+    if (!box) return false;
+    static void* sHasFocusFn = nullptr;
+    if (!sHasFocusFn) {
+        void* widgetCls = R::FindClass(L"Widget");
+        sHasFocusFn = widgetCls ? R::FindFunction(widgetCls, L"HasKeyboardFocus") : nullptr;
+    }
+    if (!sHasFocusFn) return false;
+    ue_wrap::ParamFrame f(sHasFocusFn);
+    if (!f.valid() || !ue_wrap::Call(box, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
 }
 
 }  // namespace
@@ -92,11 +117,13 @@ bool Open(void* localPlayer) {
     if (sSetVisFn) {
         ue_wrap::ParamFrame f(sSetVisFn);
         if (f.valid()) {
-            f.Set<uint8_t>(L"InVisibility", 0);  // ESlateVisibility::Visible
+            // SelfHitTestInvisible, the value the game's own open block sets: the menu's buttons take
+            // clicks and its full-screen root passes the rest to the world.
+            f.Set<uint8_t>(L"InVisibility", 4);
             ue_wrap::Call(widget, f);
         }
     } else if (g_visOff >= 0) {
-        *(reinterpret_cast<uint8_t*>(widget) + g_visOff) = 0;  // fallback: raw byte (may not render)
+        *(reinterpret_cast<uint8_t*>(widget) + g_visOff) = 4;  // fallback: raw byte (may not render)
         UE_LOGW("spawn_menu::Open: native UWidget::SetVisibility unresolved -- raw byte fallback (Slate may not render)");
     }
     // opened() on the widget's own class, through the memoised lookup: it holds the answer by slot
@@ -130,12 +157,16 @@ bool Open(void* localPlayer) {
     }
 
     const int visAfter = ReadVis(widget);
-    UE_LOGI("spawn_menu::Open: native SetVisibility(Visible) + opened() + GameAndUI input -- "
-            "visibility %d -> %d (0=Visible)", visBefore, visAfter);
+    g_open.store(true, std::memory_order_release);
+    UE_LOGI("spawn_menu::Open: native SetVisibility + opened() + GameAndUI input -- "
+            "visibility %d -> %d (4=SelfHitTestInvisible)", visBefore, visAfter);
     return true;
 }
 
+bool IsOpen() { return g_open.load(std::memory_order_acquire); }
+
 bool Close(void* localPlayer) {
+    g_open.store(false, std::memory_order_release);
     // (1) THE LOAD-BEARING UN-STICK: restore SetInputMode_GameOnly + hide the cursor. Open() leaves
     // the player in GameAndUI/cursor mode (spawn_menu.cpp Open() @ SetInputMode_GameAndUIEx + cursor);
     // without this the world interaction/use trace stays dead. Do it FIRST and unconditionally (even
@@ -196,8 +227,14 @@ bool Toggle(void* localPlayer) {
     // Decide from GROUND TRUTH (the live Visibility byte), never a cached open-flag -- so a Q press
     // does the right thing even if the game closed the menu via its own path.
     void* widget = FindSpawnMenuWidget();
-    if (widget && ReadVis(widget) == 0) return Close(localPlayer);  // currently Visible -> dismiss
+    if (widget && Shown(ReadVis(widget))) return CloseUnlessTyping(localPlayer);  // drawn -> dismiss
     return Open(localPlayer);                                       // collapsed / not-yet-created -> open
+}
+
+bool CloseUnlessTyping(void* localPlayer) {
+    void* widget = FindSpawnMenuWidget();
+    if (widget && Shown(ReadVis(widget)) && SearchHasKeyboard(widget)) return false;
+    return Close(localPlayer);
 }
 
 }  // namespace ue_wrap::spawn_menu
