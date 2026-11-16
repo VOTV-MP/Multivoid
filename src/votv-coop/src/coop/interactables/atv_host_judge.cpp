@@ -168,8 +168,7 @@ void Refund(uint8_t slot, const Payload& p, const ue_wrap::FVector& at) {
 
 // [dev] The drill's record of a battery prop the host spawned (kind 0 the unscrew's, 1 a refund), at the charge it was given.
 void NoteBatterySpawned(int32_t kind, void* actor, float charge) {
-    DE::Note(DE::kBatterySpawned, kind, ue_wrap::reflection::InternalIndexOf(actor), 0,
-             std::fmin(std::fmax(charge, 0.f), kMax));
+    DE::Note(DE::kBatterySpawned, kind, ue_wrap::reflection::InternalIndexOf(actor), 0, A::ClampCharge(charge));
 }
 
 // A battery fit the host would not make is given back: a battery prop at the request's charge (the client's copy consumed
@@ -219,7 +218,8 @@ uint8_t SpendHeld(uint8_t slot, const Payload& p) {
 bool WellFormed(const Payload& p) {
     switch (p.op) {
     case op::kRefuel: return p.reqId != 0 && std::isfinite(p.amount) && p.amount > 0.f && p.amount <= kMax;
-    case op::kBatteryIn: return p.reqId != 0 && std::isfinite(p.amount) && p.amount >= 0.f && p.amount <= kMax;
+    // A battery's charge may stand just past full (the game's solar charge does not clamp it): every use of it is ClampCharge's.
+    case op::kBatteryIn: return p.reqId != 0 && std::isfinite(p.amount) && p.amount >= 0.f;
     case op::kRepair:
     case op::kFit:
     case op::kTakeoff:
@@ -301,7 +301,7 @@ uint8_t BatteryIn(N::Session& s, uint8_t slot, const Payload& p, const std::wstr
     if (v.battery >= 0.f) return why::kFull;
     {
         H::ApplyScope applying;
-        A::SetBattery(atv, std::fmin(std::fmax(p.amount, 0.f), kMax));
+        A::SetBattery(atv, A::ClampCharge(p.amount));
         A::CallUpdBattery(atv);
     }
     Applied(s, slot, p, key, atv, v, "fitted a battery into");

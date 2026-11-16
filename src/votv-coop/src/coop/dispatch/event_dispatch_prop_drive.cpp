@@ -36,6 +36,7 @@
 #include "coop/world/spill_sync.h"
 #include "coop/world/sus_hole_intent.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/devices/atv.h"   // ClampCharge: a host state's battery
 
 #include <cmath>
 #include <cstring>
@@ -329,11 +330,15 @@ bool HandlePropDriveEvent(net::Session& session,
             UE_LOGW("event_feed: ATV host state malformed -- dropping");
             break;
         }
-        // The battery is -1 (none fitted) or a charge 0..100; any other value is not read, the state's other fields are.
-        if ((p.flags & net::kAtvHostBattery) &&
-            !(std::isfinite(p.battery) && (p.battery == -1.f || (p.battery >= 0.f && p.battery <= 100.f)))) {
-            UE_LOGW("event_feed: ATV host state carries a battery outside -1 or 0..100 -- its battery is not read");
-            p.flags = static_cast<uint8_t>(p.flags & ~net::kAtvHostBattery);
+        // The battery is -1 (none fitted) or a finite charge of 0 or more, brought into the field's range (the game's solar
+        // charge leaves it a fraction past 100); any other value is not read, the state's other fields are.
+        if (p.flags & net::kAtvHostBattery) {
+            if (std::isfinite(p.battery) && (p.battery == -1.f || p.battery >= 0.f)) {
+                if (p.battery >= 0.f) p.battery = ue_wrap::atv::ClampCharge(p.battery);
+            } else {
+                UE_LOGW("event_feed: ATV host state carries a battery that is neither -1 nor a charge -- its battery is not read");
+                p.flags = static_cast<uint8_t>(p.flags & ~net::kAtvHostBattery);
+            }
         }
         ::coop::atv_host_sync::OnState(p);
         break;

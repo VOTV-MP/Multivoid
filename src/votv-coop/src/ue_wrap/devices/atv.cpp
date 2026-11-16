@@ -299,6 +299,8 @@ bool SetBattery(void* atv, float v) {
 
 bool CallUpdBattery(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updBattery"); }
 
+float ClampCharge(float v) { return std::fmin(std::fmax(v, 0.f), 100.f); }
+
 void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale, uint8_t collision, float charge) {
     // The prop's class and its `battery` offset, resolved once and again when a world reload has re-created the class.
     static CachedObjRef s_batteryCls;
@@ -317,7 +319,7 @@ void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale
     void* const actor = engine::BeginDeferredSpawn(cls, loc, rot, collision, &scale);
     if (!actor) return nullptr;
     const int32_t idx = R::InternalIndexOf(actor);
-    const float clamped = std::fmin(std::fmax(charge, 0.f), 100.f);
+    const float clamped = ClampCharge(charge);
     std::memcpy(static_cast<uint8_t*>(actor) + off, &clamped, sizeof(clamped));
     if (!engine::FinishDeferredSpawn(actor, loc, rot, &scale)) {
         // No caller holds the begun actor (the result is null) and the engine would keep it.

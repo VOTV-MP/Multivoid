@@ -94,8 +94,11 @@ bool  BatteryResolved();
 float GetBattery(void* atv);
 bool  SetBattery(void* atv, float v);
 bool  CallUpdBattery(void* atv);
+// A charge brought into the field's range 0..100: the game's own solar charge leaves `battery` a fraction above 100, so a value
+// just past full is a charge, and one well past it is the field's top. NaN reads as 0. Callers keep kNoBattery (-1) apart.
+float ClampCharge(float v);
 
-// A battery prop (`prop_atvcarbattery_C`) of charge `charge` (clamped 0..100), spawned the way the ATV's own unscrewPanel
+// A battery prop (`prop_atvcarbattery_C`) of charge `charge` (ClampCharge), spawned the way the ATV's own unscrewPanel
 // spawns it: BeginDeferredSpawn at the transform, `battery` written on the begun actor, FinishDeferredSpawn at the same
 // transform, so its BeginPlay already reads the charge. `collision` is the game's ESpawnActorCollisionHandlingMethod byte.
 // The actor, or nullptr when the class or its `battery` field does not resolve or the spawn failed (a begun actor whose
