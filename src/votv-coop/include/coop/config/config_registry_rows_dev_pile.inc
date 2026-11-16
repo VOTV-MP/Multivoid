@@ -1,4 +1,4 @@
-// coop/config/config_registry_rows_dev_pile.inc -- the [dev] row of the pile deferral drill.
+// coop/config/config_registry_rows_dev_pile.inc -- the [dev] rows of the pile drills.
 // Included by config_registry_rows_dev.inc after the coffee rows, before the ATV rows, as _dev_octa.inc is. The entry
 // forms are config_registry_rows.inc's.
 
@@ -23,3 +23,8 @@ CFG_INT(trash_hold_red, "trash_hold_red", "dev", 0, 0, 1, "VOTVCOOP_TRASH_HOLD_R
     "Drill red (the joining client, with pile_defer_drill=check on both peers): 1 turns the join's load catch off, so "
     "a save-loaded clump in flight is no longer held at its saved pose and settles off its key again; the drill must "
     "then FAIL on orphans. 0 = the catch holds as designed.")
+
+CFG_FLAG(sweep_bound_count_off, "sweep_bound_count_off", "dev", false, "VOTVCOOP_SWEEP_BOUND_COUNT_OFF",
+    "Drill red (the joining client, with pile_orphan_drill=1 on both peers): 1 stops the join sweep counting a bound "
+    "mirror native as claimed for its class, so the completeness floor keeps the chip pile the host no longer has and "
+    "the drill must FAIL on it. 0 = a bound native counts, as designed.")

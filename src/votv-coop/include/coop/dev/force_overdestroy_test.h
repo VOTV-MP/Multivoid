@@ -25,4 +25,10 @@ bool HostSkipChipPileExpression();
 // absent from any shipped config. Latched and logged once.
 bool FloorDisabledForTest();
 
+// True when `[dev] sweep_bound_count_off=1`: the CLIENT's claim sweep does not count a bound mirror
+// native as claimed for its class, so the floor's numerator reads as when bound piles went uncounted
+// and the floor keeps every orphan pile of a class the host still has. The red arm of the orphan
+// drill (pile_orphan_drill). Dev-only, ini-gated, RULE-2-exempt. Latched and logged once.
+bool BoundCountDisabledForTest();
+
 }  // namespace coop::dev::force_overdestroy_test

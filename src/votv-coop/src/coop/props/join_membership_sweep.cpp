@@ -202,7 +202,17 @@ static void RunDivergenceSweep_(void* localPlayer) {
     std::unordered_map<std::wstring, int> claimedByClass;  // Phase 0: claimed count per class (floor numerator)
     std::unordered_map<std::wstring, int> keylessSkippedByClass;
     for (const auto& pr : propPairs) {
-        if (pr.mirror) continue;                                    // host-driven mirror -> not a save divergence (automatic kerfur exemption)
+        if (pr.mirror) {
+            // Host-driven mirror -> not a save divergence (automatic kerfur exemption). A bound save
+            // native is the host's entity this client holds, so it counts as claimed for its class:
+            // the floor below compares the host's census with what is really bound. The count is one
+            // per bound native, so a stale bound mirror (the host destroyed the pile after its census,
+            // its PropDestroy in flight) covers one failed expression in that comparison; not fixed here.
+            if (pr.actor && !coop::dev::force_overdestroy_test::BoundCountDisabledForTest() &&
+                coop::prop_element_tracker::IsBoundMirrorNative(pr.actor))
+                ++claimedByClass[R::ClassNameOf(pr.actor)];
+            continue;
+        }
         if (!pr.actor) continue;
         if (!R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;  // dead (no deref) -- the reaper owns it
         ++inClass;
