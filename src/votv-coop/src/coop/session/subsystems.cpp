@@ -66,6 +66,7 @@
 #include "coop/element/bind_wait.h"  // OnSlotLeft / Clear: the messages held for a deferred bind
 #include "coop/props/bracket_position_wait.h"  // Reset: the wait goes with the session
 #include "coop/element/death_seam.h"  // an element's end of play, handed to the lanes that subscribed
+#include "coop/element/registry.h"  // ReportBandPeaksAtSessionEnd
 #include "coop/props/host_spawn_watcher.h"  // HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/props/prop_throw.h"        // the game's own throw, seen at throwShit and numbered
@@ -643,6 +644,7 @@ DisconnectStats DisconnectAll() {
     // buffer, an unarmed map and no such file, and clears its own per-slot streams.
     coop::save_transfer::OnDisconnect();
     coop::save_notice::OnDisconnect();  // drop the save count and the once-said latch
+    coop::element::Registry::Get().ReportBandPeaksAtSessionEnd();  // the drains above freed their ids: say each id band's peak
     // Every pin on a world-scoped object is session-scoped, so after a full teardown the
     // world-scoped pin count must be zero. A non-zero answer names the module still anchoring the
     // departing world's Outer chain, the condition that makes the next map load in this process

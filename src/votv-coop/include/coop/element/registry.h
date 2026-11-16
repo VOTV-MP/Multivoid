@@ -10,7 +10,9 @@
 #pragma once
 
 #include "coop/element/element.h"
+#include "coop/player/slot_count.h"  // kMaxPeers: the band count
 
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <mutex>
@@ -107,6 +109,14 @@ public:
     size_t HostCount() const;
     size_t LocalCount() const;
 
+    // The live ids per band and their peak, said as one `element bands:` line: the host range and each
+    // peer band that held an id. The peak is of the ids this process's table held, so a client's own
+    // band reads its own mints, and the host's table also reads each client's band (the mirrors of what
+    // that client minted). Said from the allocation that moved a peak, at most once a minute, and here
+    // once at the session's end, which then restarts the peaks from the live counts. No line when no
+    // id was ever held.
+    void ReportBandPeaksAtSessionEnd();
+
     // Copy the (actor, id, internal index, mirror flag) tuple of every allocated Element of the
     // type, under the mutex. The mutex protects the C++ Element lifetime only: the actor pointer is
     // a raw UObject* the garbage collector can free independently (a mass purge marks thousands of
@@ -149,6 +159,18 @@ private:
     // Which peer-range band m_localFree holds: 0 is the pre-slot band, 1..kMaxPeers-1 the client's
     // slot band after SetLocalPeerBand. The host stays on 0, since it never calls AllocLocalId.
     uint8_t m_activeBand = 0;
+
+    // Ids held in m_byId by range, minted here or bound as a mirror: slot 0 the host range, 1 + band
+    // the peer bands, by the id's own band, so a pre-slot id freed after the band switch still counts
+    // against band 0. Guarded by m_mutex with the table they count.
+    static constexpr size_t kBandStats = 1u + coop::players::kMaxPeers;
+    uint32_t m_bandLive[kBandStats] = {};
+    uint32_t m_bandPeak[kBandStats] = {};
+    bool     m_bandPeakMoved = false;   // a peak rose since the last line
+    std::chrono::steady_clock::time_point m_bandLastLog = std::chrono::steady_clock::now();
+    void NoteHeld_(ElementId id);       // m_mutex held: an id entered the table
+    void NoteReleased_(ElementId id);   // m_mutex held: an id left the table
+    void LogBandPeaks_() const;         // m_mutex held
 
     // Pre-populate the host list with the whole host range and the local list with the pre-slot
     // band, once at construction.

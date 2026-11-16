@@ -11,6 +11,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"       // IsLiveByIndex (LivePropActor)
 
+#include <cstdio>
+
 namespace coop::element {
 
 namespace {
@@ -50,6 +52,22 @@ constexpr ElementId BandEnd(uint8_t band) {
     return (band + 1u == kPeerBandCount) ? kMaxElements
                                          : BandBase(band) + kSlotBandSize;
 }
+
+// The slot of the per-range counters an id belongs to: 0 the host range, 1 + band for the peer
+// range (the last band absorbs the remainder, as BandEnd does).
+constexpr size_t BandStatOf(ElementId id) {
+    if (id < kHostRangeSize) return 0;
+    uint32_t band = (id - kHostRangeSize) / kSlotBandSize;
+    if (band >= kPeerBandCount) band = kPeerBandCount - 1;
+    return 1u + band;
+}
+// The ids a counter slot can hold: the host range less the invalid id 0, or one band.
+constexpr uint32_t BandStatCap(size_t stat) {
+    return stat == 0 ? kHostRangeSize - 1
+                     : BandEnd(static_cast<uint8_t>(stat - 1)) - BandBase(static_cast<uint8_t>(stat - 1));
+}
+// How often a moved peak is said from the allocation that moved it.
+constexpr auto kBandLogEvery = std::chrono::seconds(60);
 }  // namespace
 
 // The latch flipper in element.cpp.
@@ -140,6 +158,7 @@ ElementId Registry::AllocHostId(Element* e) {
         return kInvalidId;
     }
     m_byId[id] = e;
+    NoteHeld_(id);
     e->SetId_(id);
     if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // actor set before id -> reverse here
     return id;
@@ -164,6 +183,7 @@ ElementId Registry::AllocLocalId(Element* e) {
         return kInvalidId;
     }
     m_byId[id] = e;
+    NoteHeld_(id);
     e->SetId_(id);
     if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // actor set before id -> reverse here
     return id;
@@ -177,6 +197,7 @@ void Registry::FreeId(ElementId id) {
         return;
     }
     m_byId[id] = nullptr;
+    NoteReleased_(id);
     // FIFO reuse: push the freed id to the front (bottom) of the stack, not the back. Allocation
     // pops the back, so a freed id is only re-issued after the entire never-allocated pool above
     // it is exhausted, which defers reuse by hours of normal allocation, long enough for every
@@ -210,6 +231,7 @@ bool Registry::RegisterMirror(ElementId id, Element* e) {
         return false;
     }
     m_byId[id] = e;
+    NoteHeld_(id);
     e->SetId_(id);
     e->SetMirror_(true);
     if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // mirror actor often set before Install
@@ -228,6 +250,7 @@ void Registry::UnregisterMirror(ElementId id) {
         return;
     }
     m_byId[id] = nullptr;
+    NoteReleased_(id);
     // Intentionally no free-stack push: the id is in the host's allocation space and was never
     // popped from this peer's free stack.
 }
@@ -284,6 +307,49 @@ size_t Registry::LocalCount() const {
     const size_t bandCapacity = BandEnd(m_activeBand) - BandBase(m_activeBand);
     return m_localFree.size() >= bandCapacity ? 0
                                               : bandCapacity - m_localFree.size();
+}
+
+void Registry::NoteHeld_(ElementId id) {
+    const size_t s = BandStatOf(id);
+    if (++m_bandLive[s] > m_bandPeak[s]) {
+        m_bandPeak[s] = m_bandLive[s];
+        m_bandPeakMoved = true;
+    }
+    if (!m_bandPeakMoved) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_bandLastLog < kBandLogEvery) return;
+    LogBandPeaks_();
+    m_bandPeakMoved = false;
+    m_bandLastLog = now;
+}
+
+void Registry::NoteReleased_(ElementId id) {
+    const size_t s = BandStatOf(id);
+    if (m_bandLive[s] > 0) --m_bandLive[s];
+}
+
+void Registry::LogBandPeaks_() const {
+    // The host range always, a peer band only once it held an id. 17 entries at most, 20 bytes each.
+    char line[512];
+    int n = std::snprintf(line, sizeof line, "host=%u/%u", m_bandPeak[0], BandStatCap(0));
+    for (size_t s = 1; s < kBandStats && n > 0 && static_cast<size_t>(n) < sizeof line; ++s) {
+        if (m_bandPeak[s] == 0) continue;
+        n += std::snprintf(line + n, sizeof line - static_cast<size_t>(n), " b%u=%u/%u",
+                           static_cast<unsigned>(s - 1), m_bandPeak[s], BandStatCap(s));
+    }
+    UE_LOGI("element bands: peak live %s", line);
+}
+
+void Registry::ReportBandPeaksAtSessionEnd() {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    bool used = false;
+    for (size_t s = 0; s < kBandStats; ++s) used = used || m_bandPeak[s] > 0;
+    if (used) LogBandPeaks_();
+    // The next session's peaks start from what this process still holds (the host range outlives a
+    // client's departure).
+    for (size_t s = 0; s < kBandStats; ++s) m_bandPeak[s] = m_bandLive[s];
+    m_bandPeakMoved = false;
+    m_bandLastLog = std::chrono::steady_clock::now();
 }
 
 size_t Registry::SnapshotActorsByType(ElementType t,
