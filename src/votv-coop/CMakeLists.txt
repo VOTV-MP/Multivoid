@@ -243,9 +243,10 @@ target_compile_definitions(coop-net PRIVATE
 target_link_libraries(coop-net PUBLIC nlohmann_json::nlohmann_json GameNetworkingSockets::static
     ws2_32 bcrypt crypt32 winhttp)
 
-# coop-net-closure: a client start linked against coop-net and nothing else (dev only, never shipped).
-add_executable(coop-net-closure loadpeer/main.cpp)
-target_link_libraries(coop-net-closure PRIVATE coop-net)
+# multivoid-loadpeer: a client that holds a seat on a host with no game behind it, linked against coop-net
+# and nothing else (dev only, never shipped; its source is loadpeer/).
+add_executable(multivoid-loadpeer loadpeer/main.cpp)
+target_link_libraries(multivoid-loadpeer PRIVATE coop-net)
 
 add_library(votv-coop SHARED ${VOTVCOOP_SOURCES})
 
@@ -377,13 +378,13 @@ if (MSVC)
     # parallelism (`cmake --build --parallel`) runs PROJECTS side by side, and this target is one
     # project of ~800 sources, which without /MP compile one after another on a single core.
     target_compile_options(votv-coop PRIVATE /MP)
-    # The net library and its probe: the DLL's runtime and flags (the library's sources are the DLL's
+    # The net library and the load peer: the DLL's runtime and flags (the library's sources are the DLL's
     # own files), so a unit compiles the same in either.
-    set_property(TARGET coop-net coop-net-closure PROPERTY MSVC_RUNTIME_LIBRARY
+    set_property(TARGET coop-net multivoid-loadpeer PROPERTY MSVC_RUNTIME_LIBRARY
         "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(coop-net PRIVATE /W4 /permissive- /EHa /utf-8 /we4129 /MP)
-    target_compile_options(coop-net-closure PRIVATE /W4 /permissive- /EHa /utf-8)
-    target_link_options(coop-net-closure PRIVATE /OPT:REF)
+    target_compile_options(multivoid-loadpeer PRIVATE /W4 /permissive- /EHa /utf-8)
+    target_link_options(multivoid-loadpeer PRIVATE /OPT:REF)
     # /MAP emits main.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
     # name by grepping the linker map -- no IDA needed. The .map lands in
