@@ -37,6 +37,7 @@ void* g_unscrewFn       = nullptr;   // ATV_C::unscrewPanel -- the battery an un
 bool  g_unscrewBattery  = false;     // the unscrew now starting is the battery's branch
 ue_wrap::CachedObjRef g_unscrewBorn;  // the battery prop that branch's body spawned on this client, until its POST takes it
 ue_wrap::CachedObjRef g_batteryCls;   // prop_atvcarbattery_C, found again when a world reload has re-created it
+void* g_pryEndFn        = nullptr;   // pryingCrowbar_C::End -- the crowbar a pry hands back
 bool  g_watchInstalled  = false;
 
 // The negative arm, and it is the half a run cannot otherwise see. Catching every menu spawn and
@@ -52,6 +53,7 @@ unsigned g_verbFromOther = 0;   // ... by anything else (lib_C::replaceProp, com
 R::FName g_menuSpawnName{0, 0};   // "spawn"
 R::FName g_toolUberName{0, 0};    // "ExecuteUbergraph_tool_spawn"
 R::FName g_sawUberName{0, 0};     // "ExecuteUbergraph_prop_hacksaw"
+R::FName g_pryEndName{0, 0};      // "End"
 
 // Is `fn` a function named `name` whose owner (a UFunction's Outer is its declaring class) is
 // called `className`? Both compares are allocation-free: the FName pair is two ints, and the
@@ -122,6 +124,8 @@ void Install(bool isClient) {
         g_toolUberName = ue_wrap::fname_utils::StringToFName(L"ExecuteUbergraph_tool_spawn");
     if (g_sawUberName.ComparisonIndex == 0)
         g_sawUberName = ue_wrap::fname_utils::StringToFName(L"ExecuteUbergraph_prop_hacksaw");
+    if (g_pryEndName.ComparisonIndex == 0)
+        g_pryEndName = ue_wrap::fname_utils::StringToFName(L"End");
 
     ue_wrap::facts::Resolved gamemodeSpawn;
     if (!g_gamemodeSpawnFn) {
@@ -197,6 +201,16 @@ bool BirthIsPlayerAuthored(void* born) {
     if (g_unscrewBattery && g_unscrewFn && born && R::IsLive(born) && sg::IsBodyActive(g_unscrewFn)) {
         if (!g_batteryCls.Alive()) g_batteryCls.Set(ue_wrap::object_index::ClassByName(L"prop_atvcarbattery_C"));
         if (g_batteryCls.Raw() && R::ClassOf(born) == g_batteryCls.Raw()) g_unscrewBorn.Set(born);
+    }
+    // A pry's end: the crowbar the player's own crowbar became when the pry began (its begin destroyed the held one)
+    // comes back as a new crowbar, freed from the board, dropped at it, or put back in the hand. The pry runs only on
+    // the prying player's game, so without this the crowbar is gone for every other player.
+    if (caller == g_pryEndFn) return true;
+    if (!g_pryEndFn && FunctionIs(const_cast<void*>(caller), g_pryEndName, L"pryingCrowbar_C")) {
+        g_pryEndFn = const_cast<void*>(caller);
+        UE_LOGI("prop_spawn_authoring: a prying crowbar's End is the calling frame -- the crowbar a pry hands back is "
+                "a player's");
+        return true;
     }
     return false;
 }
