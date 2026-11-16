@@ -188,6 +188,7 @@ private:
     // The peer slot this body is, set at the end of a successful Spawn; kPeerIdUnknown for a puppet no session owns.
     // The ragdoll stops and the pose guard name the seat owner's slot by it.
     uint8_t slot_ = players::kPeerIdUnknown;
+    uint32_t stepsPlayed_ = 0, stepMisses_ = 0;   // the stride's lib_C::step calls, and those that found no ground
 
     // The GUObjectArray InternalIndex of actor_, captured in Spawn's before-finish callback while the
     // puppet was known live; valid() checks IsLiveByIndex, never plain IsLive. A mass GC purge can free the puppet without

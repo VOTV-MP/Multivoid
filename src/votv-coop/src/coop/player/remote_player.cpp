@@ -632,9 +632,17 @@ void RemotePlayer::ApplyToEngine() {
         // default step's volume is the skin layer's call: a replace-mode variant mutes it to 0, and
         // lib step still runs its trace, water and friction side effects.
         if (footsteps_.StepDue(curPos_, curSpeed_, !inAir)) {
+            bool ground = false;
             ue_wrap::votv_lib::CharacterStep(
                 actor_, coop::skin_effects::DefaultStepVolume(
-                            actor_, coop::puppet_footsteps::Stride::kStepVolume));
+                            actor_, coop::puppet_footsteps::Stride::kStepVolume), &ground);
+            // A step whose trace found no ground is silent. The first step, every 25th and every 25th miss are said.
+            const bool sayMiss = !ground && (stepMisses_++ % 25) == 0;
+            const bool sayStep = (stepsPlayed_++ % 25) == 0;
+            if (sayMiss || sayStep)
+                UE_LOGI("puppet_footsteps: slot %u stepped at (%.0f,%.0f,%.0f), ground %s (%u steps, %u silent)",
+                        static_cast<unsigned>(slot_), curPos_.X, curPos_.Y, curPos_.Z, ground ? "hit" : "missed",
+                        stepsPlayed_, stepMisses_);
             coop::skin_effects::OnStep(actor_, curPos_);
         }
     }

@@ -43,7 +43,7 @@ void* Fn(const wchar_t* name) {
 
 }  // namespace
 
-bool CharacterStep(void* character, float volume) {
+bool CharacterStep(void* character, float volume, bool* groundHit) {
     void* fn = character ? Fn(L"step") : nullptr;
     if (!fn) return false;
     // Signature: step(ACharacter* Character, float Z_offset, AActor* callActor, float Volume, float
@@ -61,8 +61,14 @@ bool CharacterStep(void* character, float volume) {
     f.Set<float>(L"speedVolume", 400.0f);
     f.Set<void*>(L"AudioComponent", nullptr);
     f.Set<void*>(L"__WorldContext", character);
-    // OutHit stays zeroed in the frame; the BP writes it, we ignore it.
-    return ue_wrap::Call(g_libCdo.Raw(), f);
+    // OutHit stays zeroed in the frame; the BP writes its ground trace's hit there. Its first byte's bit 0 is
+    // bBlockingHit: whether the trace found the ground the step's cue was picked from.
+    const bool ran = ue_wrap::Call(g_libCdo.Raw(), f);
+    if (groundHit) {
+        uint8_t first = 0;
+        *groundHit = ran && f.GetRaw(L"OutHit", &first, 1) && (first & 1u) != 0;
+    }
+    return ran;
 }
 
 bool AddGloss(const std::wstring& name, int32_t level, void* worldContext) {
