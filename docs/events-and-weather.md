@@ -206,6 +206,19 @@ its player pressed stop) sends its transition for the host to canonicalise
 (`coop/world/alarm_sync`). The radar terminal's own beeps are per-viewer by design and have no
 lane.
 
+### The basement flood
+
+A burst pipe (`burstWaterPipe_C`, placed in the basement) keeps one bit, `damaged`: its `State` turns its spray, sound and
+tick on, its tick raises the basement's flood volume (`waterVolume_basementFlooder_C`, whose height between its two ends
+is the level its `getLevel`/`setLevel` read and write), and a toolbox's `toolboxFix` mends it. Each copy ran it alone, so
+a flood never reached a client and a client's repair never reached the host (Ghezra/Multivoid#40). The host owns both: a
+client's pipes run no tick and take no damage of their own, the host sends a pipe whose bit changed and the level as it
+moves (four reads a second, and every pipe and level to a joiner), and a client applies them through the pipe's `State`
+and the volume's `setLevel` and `updateWaterData`. A client's repair runs on its copy and is asked of the host, which
+mends its pipe only for a living sender in reach with a toolbox in the hand (`coop/world/flood_sync`) `[V]`
+(`coop/dev/flood_probe`: the host's burst reached the client in the same second, the level rose on both, and the
+client's repair mended the host's pipe and both levels fell together).
+
 ### Emails and the daily task
 
 Every email producer funnels through one gamemode function into the save's list; the host owns
@@ -250,6 +263,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
+| the basement's pipes and flood | the host | a client's pipe ticks refused; the bit and the level sent as they change; a client's repair asked |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
 
 ## Wire messages
@@ -265,6 +279,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | `UfoEvent` | the host to all; the host to one joiner | a UFO's rolled path (a ball's turn and ends, a boo's flight spline), or the Midas take-off |
 | `AlarmState` | either role | the alarm's active flag |
 | `EmailAppend`, `EmailDelete`, `TaskNewState` | the host to all; either role; the host to all | an email; a deletion; the task |
+| `FloodState`, `FloodIntent` | the host to all; a client to the host | a pipe's `damaged` or the flood's level; a client's repair |
 
 ## Late join
 
@@ -311,4 +326,5 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
+| the basement flood | `coop/world/flood_sync`; `coop/dev/flood_probe` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
