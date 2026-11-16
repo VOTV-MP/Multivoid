@@ -60,7 +60,8 @@ constexpr ULONGLONG kFlushIntervalMs = 1000;
 ULONGLONG g_lastFlushMs = 0;
 // The line stamps are the local clock's time of day alone, so the file says which day and which offset from UTC they
 // are: once in its header and again on the line where either changes (midnight, a daylight-saving shift). Under g_lock.
-int g_clockHour = -1;      // the local hour of the last line; the date and offset are looked at when it changes
+int g_clockHour = -1;      // the last line's local hour and DST flag (hour * 2 + isdst): the date and offset are
+                           // looked at when it changes, so a DST fall-back's repeated hour is a change too
 long g_clockKey = -1;      // the date and offset last written, as one number
 
 // The local date and its offset from UTC, as "YYYY-MM-DD UTC+HH:MM", and the pair as one number.
@@ -155,7 +156,7 @@ void EnsureOpen() {
             localtime_s(&tm, &now);
             char clock[48] = {};
             g_clockKey = ClockOf(now, tm, clock, sizeof(clock));
-            g_clockHour = tm.tm_hour;
+            g_clockHour = tm.tm_hour * 2 + (tm.tm_isdst > 0 ? 1 : 0);
             std::fprintf(g_file, "clock %s (each line's stamp is this local time of day)\n", clock);
         }
         g_opened = true;
@@ -332,8 +333,8 @@ void Write(Level level, const char* fmt, ...) {
 
     ::EnterCriticalSection(&g_lock);
     // A new local hour may be a new date or a new offset (midnight, a daylight-saving shift): said in a line of its own.
-    if (tm.tm_hour != g_clockHour) {
-        g_clockHour = tm.tm_hour;
+    if (tm.tm_hour * 2 + (tm.tm_isdst > 0 ? 1 : 0) != g_clockHour) {
+        g_clockHour = tm.tm_hour * 2 + (tm.tm_isdst > 0 ? 1 : 0);
         char clock[48] = {};
         const long key = ClockOf(now, tm, clock, sizeof(clock));
         if (key != g_clockKey) {
