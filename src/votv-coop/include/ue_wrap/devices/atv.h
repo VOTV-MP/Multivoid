@@ -95,6 +95,13 @@ float GetBattery(void* atv);
 bool  SetBattery(void* atv, float v);
 bool  CallUpdBattery(void* atv);
 
+// A battery prop (`prop_atvcarbattery_C`) of charge `charge` (clamped 0..100), spawned the way the ATV's own unscrewPanel
+// spawns it: BeginDeferredSpawn at the transform, `battery` written on the begun actor, FinishDeferredSpawn at the same
+// transform, so its BeginPlay already reads the charge. `collision` is the game's ESpawnActorCollisionHandlingMethod byte.
+// The actor, or nullptr when the class or its `battery` field does not resolve or the spawn failed (a begun actor whose
+// finish failed is destroyed). Game thread.
+void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale, uint8_t collision, float charge);
+
 // The fitted modules: the live `Modules` array, one byte per module VALUE (the game's enum_physicalModules; each is the
 // value `physModToActor` maps to the module's prop class). ReadModules copies at most `cap` into `out` and returns how
 // many the ATV holds (it may exceed `cap`), or -1 when unreadable. WriteModules writes the array into its own buffer when

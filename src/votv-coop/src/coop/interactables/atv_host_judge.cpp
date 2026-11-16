@@ -54,6 +54,7 @@ bool JudgeOff() { static const bool on = Arm("atv_judge_off"); return on; }     
 bool DupOff() { static const bool on = Arm("atv_dup_module"); return on; }        // a duplicate fit is allowed
 bool RefundOff() { static const bool on = Arm("atv_refund_off"); return on; }     // a refused fit is not refunded
 bool ParkOff() { static const bool on = Arm("atv_park_off"); return on; }         // a request is judged before its world is ready
+bool BatteryRefundOff() { static const bool on = Arm("battery_refund_off"); return on; }   // a refused battery fit is not refunded
 
 constexpr float kMax = 100.f;      // a full tank, full health
 constexpr float kReachCm = 800.f;  // a sender's puppet from its ATV, when it is not seated in it
@@ -150,6 +151,23 @@ void Refund(void* atv, uint8_t module) {
     DE::Note(DE::kRefund, 1);
 }
 
+// A battery fit the host would not make is given back: a battery prop at the request's charge (the client's copy consumed
+// a real battery of that charge), 120 cm above the ATV as the module's is, spawned the way the ATV's own unscrew spawns
+// one. The charge is bounded as the accepted fit bounds it.
+void RefundBattery(void* atv, float charge) {
+    if (BatteryRefundOff()) return;
+    ue_wrap::FVector at{};
+    if (!ue_wrap::engine::TryGetActorLocation(atv, at)) {
+        UE_LOGW("atv_host: the ATV's place is unreadable -- the refused battery fit is not refunded");
+        return;
+    }
+    if (!A::SpawnBattery({at.X, at.Y, at.Z + 120.f}, {}, {1.f, 1.f, 1.f}, 1, charge)) {
+        UE_LOGW("atv_host: the refunded battery did not spawn");
+        return;
+    }
+    ++g_n.refunded;
+}
+
 bool WellFormed(const Payload& p) {
     switch (p.op) {
     case op::kRefuel: return p.reqId != 0 && std::isfinite(p.amount) && p.amount > 0.f && p.amount <= kMax;
@@ -237,10 +255,14 @@ uint8_t Fit(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& k
 // A battery fitted: the playerUsedOn branch's own body is battery := the held battery's charge, the battery prop spent,
 // then the game's updBattery; refused while one is fitted ("Battery is equipped"). The client's copy ran it with its own
 // battery, so the charge is the one its battery held; the host's copy of that battery is the hand mirror, which carries
-// none, so the bound is the field's range, as the refuel's is the tank's room.
+// none, so the bound is the field's range, as the refuel's is the tank's room. The hand judge comes first (a request with
+// no battery held is refused and refunded nothing); kFull is the only refusal after it, and it gives the battery back.
 uint8_t BatteryIn(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
     if (!JudgeOff() && !coop::hand_spend::Spend(slot, kBatteryClass, 1)) return why::kNoItem;
-    if (v.battery >= 0.f) return why::kFull;
+    if (v.battery >= 0.f) {
+        RefundBattery(atv, p.amount);
+        return why::kFull;
+    }
     {
         H::ApplyScope applying;
         A::SetBattery(atv, std::fmin(std::fmax(p.amount, 0.f), kMax));

@@ -20,6 +20,7 @@
 #include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <string>
@@ -296,6 +297,26 @@ bool SetBattery(void* atv, float v) {
 }
 
 bool CallUpdBattery(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updBattery"); }
+
+void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale, uint8_t collision, float charge) {
+    void* const cls = R::FindClass(L"prop_atvcarbattery_C");
+    const int32_t off = cls ? R::FindPropertyOffset(cls, L"battery") : -1;
+    if (off < 0) {
+        UE_LOGW("atv: prop_atvcarbattery_C or its battery field does not resolve -- no battery prop is spawned");
+        return nullptr;
+    }
+    void* const actor = engine::BeginDeferredSpawn(cls, loc, rot, collision, &scale);
+    if (!actor) return nullptr;
+    const int32_t idx = R::InternalIndexOf(actor);
+    const float clamped = std::fmin(std::fmax(charge, 0.f), 100.f);
+    std::memcpy(static_cast<uint8_t*>(actor) + off, &clamped, sizeof(clamped));
+    if (!engine::FinishDeferredSpawn(actor, loc, rot, &scale)) {
+        // No caller holds the begun actor (the result is null) and the engine would keep it.
+        if (R::IsLiveByIndex(actor, idx)) engine::DestroyActor(actor);
+        return nullptr;
+    }
+    return actor;
+}
 
 int ReadModules(void* atv, uint8_t* out, int cap) {
     if (!atv || g_modulesOff < 0) return -1;
