@@ -37,7 +37,8 @@ namespace PC = ue_wrap::power_control;
 namespace sg = ue_wrap::script_gate;
 using coop::net::PowerPanelPayload;
 
-static_assert(coop::net::kMaxPeers <= 4, "PowerPanelPayload::ack holds four slots");
+static_assert(sizeof(PowerPanelPayload::ack) / sizeof(uint16_t) == coop::net::kMaxPeers,
+              "PowerPanelPayload::ack holds one slot per peer");
 
 constexpr uint8_t kMaskBits = 0x1F;
 constexpr uint8_t kCalcBit = 0x08;       // press_calc: the virus lockout's end switches the servers with it

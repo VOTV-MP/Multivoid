@@ -12,7 +12,7 @@ namespace coop::boot_selftests {
 void RunOnce() {
     // The join beacon's Draining cases, the nickname arbiter's suffix and collision rows (a suffix
     // displacing stem characters at the cap, a variant colliding with a name another player holds:
-    // four peers with chosen names to stage), the nickname's trims, and the novelty cap's
+    // several peers with chosen names to stage), the nickname's trims, and the novelty cap's
     // diverse-alphabet peer (its first draft passed by construction above a budget of 32): none of
     // them is staged by a LAN drill.
     static const bool kJoinDrainingOk = coop::join_beacon::RunDrainingSelftest();

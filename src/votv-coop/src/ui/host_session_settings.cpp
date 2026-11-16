@@ -463,7 +463,7 @@ void DoHost() {
                         : coop::session::Reachability::Brokered,
         !hideFromBrowser};
     coop::net::Refusal refused;
-    const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, /*playersMax=*/4,
+    const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, sm::kLobbyPlayersMax,
                                            g_shownMasterUrl, mode, &refused);
     // The password is never logged: a log line is the easiest place for it to end up in a
     // screenshot.

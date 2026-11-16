@@ -29,8 +29,8 @@ namespace coop::net {
 class SendAdmission {
 public:
     // Headroom kept free for the unreliable streams and the probe pair. The worst realistic
-    // concurrent unreliable load is ~1.2 KB per 16 ms tick (three peers of voice frames plus their
-    // poses), so 64 KB is about 30x margin. A buffer too small to give that away yields a quarter
+    // concurrent unreliable load is ~0.4 KB a peer per 16 ms tick (voice frames plus poses), under
+    // 3 KB with seven, so 64 KB is over 20x margin. A buffer too small to give that away yields a quarter
     // of itself instead, which keeps the rule from starving a drill-pinned buffer outright.
     static constexpr int kReserve = 64 * 1024;
     static constexpr int kMaxReserveFraction = 4;

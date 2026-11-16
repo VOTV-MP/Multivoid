@@ -19,6 +19,9 @@
 
 namespace coop::session_manager {
 
+// The player count a hosted lobby advertises to the server browser: the session's player cap, the host included.
+inline constexpr int kLobbyPlayersMax = static_cast<int>(coop::net::kMaxPeers);
+
 // The mod's version identity is a pair: GameTarget names the VOTV cook this build targets, compiled
 // in from the header generated out of coop/version.h.in; the build number is kProtocolVersion,
 // which moves exactly when compatibility moves. DisplayVersion is the composite the menu shows.

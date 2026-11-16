@@ -126,8 +126,8 @@ EndReason AcceptPolicy(ISteamNetworkingSockets* sockets, HSteamNetConnection hCo
 }  // namespace
 
 // --- the pending (unadmitted) band ---
-// session.h says why it is a band and not a per-slot flag: three seats, and an unadmitted socket
-// holding one would let three silent sockets lock the lobby.
+// session.h says why it is a band and not a per-slot flag: the seats are few, and an unadmitted socket
+// holding one would let as many silent sockets lock the lobby.
 
 int Session::ParkPending(uint32_t hConn) {
     for (int i = 0; i < kMaxPending; ++i) {

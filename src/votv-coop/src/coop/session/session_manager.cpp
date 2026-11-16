@@ -59,7 +59,7 @@ struct DeferredAnnounce {
     std::string name;
     std::string world;
     bool locked = false;
-    int playersMax = 4;
+    int playersMax = kLobbyPlayersMax;
     int directPort = 0;
 };
 std::mutex g_deferredMu;
@@ -392,7 +392,7 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
                 Announcer().Host(masterUrl, name, world,
-                                 /*locked=*/false, /*playersMax=*/4, 8000);
+                                 /*locked=*/false, kLobbyPlayersMax, 8000);
             if (info.ok) {
                 Announcer().SetListed(false); // the hide-from-list flag, immediately
                 // Seed the UI mirror too, or the scoreboard's "Show in server browser" tick reads

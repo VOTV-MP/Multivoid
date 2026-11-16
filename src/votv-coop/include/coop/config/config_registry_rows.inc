@@ -174,7 +174,7 @@ CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 36000
 // The host's connection cap at the accept edge (coop/net/connect_history): MTA's join-flood
 // numbers, four per thirty seconds per address and then thirty seconds of refusal. Filed under
 // [net] because it is a host policy on inbound connections; the refusal carries MV-H29.
-CFG_INT(net_connect_cap, "net.connect_cap", "net", 4, 0,
+CFG_INT(net_connect_cap, "net.connect_cap", "net", 8, 0,
     ::coop::net::connect_history::History::kMaxStamps, "VOTVCOOP_NET_CONNECT_CAP",
     "Host: connections one address may open per window before it is refused for one window "
     "(0 = no cap). On the internet lane no address is known when a connection arrives, so it "

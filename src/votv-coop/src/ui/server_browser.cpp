@@ -156,7 +156,7 @@ void Render() {
             // Open the save picker (native loadSlots list + New Game); on confirm it
             // calls HostWithSave -> the harness loads the chosen world then hosts. (The
             // old immediate HostLobby-on-the-current-world path is gone, RULE 2.)
-            ui::host_save_picker::Open(g_hostName, g_hostLocked, /*playersMax=*/4);
+            ui::host_save_picker::Open(g_hostName, g_hostLocked, coop::session_manager::kLobbyPlayersMax);
         }
         ImGui::SameLine(0.0f, S(24.0f));
         if (ui::menu_sfx::Button("Refresh")) sm::Refresh();

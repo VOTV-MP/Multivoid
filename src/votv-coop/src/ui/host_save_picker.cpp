@@ -50,7 +50,7 @@ std::wstring g_conflictSlot;
 // Lobby host params captured from the server browser on Open().
 std::string g_hostName = "My VOTV Server";
 bool g_hostLocked = false;
-int  g_hostMax = 4;
+int  g_hostMax = sm::kLobbyPlayersMax;
 // Connection selector: 0 = AUTOMATIC (P2P/ICE -- direct when the NAT allows it,
 // relay automatically otherwise; nothing to configure), 1 = DIRECT (LanDirect UDP
 // listen; needs the port forwarded, and friends join through Direct Connect or the
@@ -145,7 +145,7 @@ void DoHostNew() {
 void Open(const std::string& hostName, bool locked, int playersMax) {
     g_hostName = hostName.empty() ? std::string("My VOTV Server") : hostName;
     g_hostLocked = locked;
-    g_hostMax = playersMax > 0 ? playersMax : 4;
+    g_hostMax = playersMax > 0 ? playersMax : sm::kLobbyPlayersMax;
     g_selected = -1;
     g_conflictSlot.clear();
     // RESOLVED ON OPEN, NEVER IN Render(). `ResolveInt` reaches `ReadIniValue`, which
