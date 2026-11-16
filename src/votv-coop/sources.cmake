@@ -333,6 +333,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/weather_redsky.cpp
     src/coop/world/weather_badsun.cpp
     src/coop/config/config.cpp
+    src/coop/config/config_player.cpp
     src/coop/text/utf8_codec.cpp
     src/coop/text/case_fold.cpp
     src/coop/text/repertoire.cpp

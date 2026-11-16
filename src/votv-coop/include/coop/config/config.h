@@ -8,7 +8,7 @@
 #pragma once
 
 #include "coop/config/config_registry.h"
-#include "coop/net/session.h"
+#include "coop/net/session_config.h"
 
 #include <functional>
 #include <string>

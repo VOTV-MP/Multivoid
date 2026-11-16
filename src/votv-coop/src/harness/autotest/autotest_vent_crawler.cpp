@@ -19,6 +19,7 @@
 #include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/net/session.h"
 
 #include "coop/dev/director/director.h"
 #include "coop/player/players_registry.h"

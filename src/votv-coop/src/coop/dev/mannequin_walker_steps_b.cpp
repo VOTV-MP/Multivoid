@@ -13,6 +13,7 @@
 #include "harness/session_runtime.h"
 
 #include "coop/config/config.h"
+#include "coop/net/session.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/creatures/walker_target.h"
 #include "coop/dev/mannequin_walker_geometry.h"

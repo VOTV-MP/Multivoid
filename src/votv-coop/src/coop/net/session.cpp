@@ -12,7 +12,6 @@
 
 #include "coop/dev/traffic_census.h"
 #include "coop/dev/wire_census.h"
-#include "coop/element/element.h"
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
 #include "coop/player/players_registry.h"
 #include "ice_config.h"         // co-located: TickTurnCredential

@@ -3,6 +3,7 @@
 #include "coop/dev/lightswitch_probe.h"
 
 #include "coop/config/config.h"
+#include "coop/net/session.h"
 #include "harness/session_runtime.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
