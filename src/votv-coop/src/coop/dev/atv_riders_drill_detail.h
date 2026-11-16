@@ -1,5 +1,5 @@
 // coop/dev/atv_riders_drill_detail.h -- private to the ATV riders drill: the verdict, the waits and the record cursor
-// (atv_riders_drill.cpp), and the reads and the steps that judge them (atv_riders_drill_steps.cpp, atv_riders_drill_late.cpp). Every read hops to the game
+// (atv_riders_drill.cpp), and the reads and the steps that judge them (atv_riders_drill_steps.cpp, atv_riders_drill_late.cpp, atv_riders_drill_drive.cpp). Every read hops to the game
 // thread for the engine; every step is called from the drill's own thread and returns false when the run ended (a verdict was
 // said here or on another peer) or the step could not be reached.
 #pragma once
@@ -9,6 +9,8 @@
 #include "coop/interactables/atv_drill_events.h"
 
 #include "harness/autotest/peer_signal.h"
+
+#include "ue_wrap/core/types.h"
 
 #include <cstdint>
 #include <functional>
@@ -88,6 +90,7 @@ struct BodyRead {
     float offsetCm = -1.f;
 };
 BodyRead ReadBody(uint8_t slot);   // the puppet of `slot` against the ATV under g_key
+bool ReadRoot(ue_wrap::FVector& out);   // the ATV root under g_key; false when it does not read
 
 // The kerfur's distance to the ATV's sitarrow, its offset from the ATV's root, and the sitarrow component's own offset from the
 // root (cm, world axes). The reads are the copy's own: on the host the kerfur is the game's, on a client the mirror.
