@@ -40,6 +40,25 @@ the commit that ships the change.
 | Hint toasts, tutorial tips, the per-viewer HUD | local to the machine; the HUD reads shared state, it is not itself replicated |
 | A bite of a food in another player's hand | the holder's own: its count reaches the others with the food's condition, and its hunger and effects stay the holder's. A world food has one author, the host ([props.md](props.md)) |
 
+## Game fixes
+
+Corrections to the game's own code. Each machine applies them to itself while it is in a session.
+A fix names the function body it corrects by its fingerprint
+([bytecode-fingerprint.md](bytecode-fingerprint.md)) and stays off on any other body, so a game
+build that rewrites the function is left alone.
+
+| Fix | Game | What the game does | What the mod does |
+|---|---|---|---|
+| A disc ejected from the PC keeps its edits (`coop/gamefix/disc_eject_fix`) | 0.10.0 | the PC's eject restores the disc from the snapshot taken at the insert and no longer writes the edited rows and the remaining writes onto it: rows moved off a floppy are back on it, rows moved onto a zip drive are gone | writes both onto the ejected disc, as 0.9.0n's eject did `[V]` |
+| Food and drink give their energy (`coop/gamefix/food_sleep_fix`) | 0.10.0 | `addFood` adds an eat's sleep gain to its own parameter, so the player's sleep stays where it was | adds the gain to the player's sleep as the call ends, by 0.9.0n's arithmetic `[V]` |
+
+`[V]`: `coop/dev/disc_eject_drill` (`VOTVCOOP_DISC_EJECT_DRILL=host|client|zip|nofix`, both peers) seeds a
+disc of three rows and 20 writes, inserts it, drops a row, adds one, spends a write and ejects: the disc
+reads the edited rows and 19 writes on both peers with the host acting, the client acting and a zip drive,
+and reads as it went in with the fix off. `coop/dev/food_sleep_drill` (`VOTVCOOP_FOOD_SLEEP_DRILL=on|nofix`,
+each peer on its own player) calls `addFood` with sleep 20 from sleep 40: 60 with no coffee tolerance, 50
+with tolerance 0.5, 40 after a refused eat, on both peers; 40 each time with the fix off.
+
 ## Rules for classifying a new item
 
 1. **Replicate authoritative state; re-derive the rest.** Animation, physics and rendering are
@@ -52,4 +71,5 @@ the commit that ships the change.
 5. **Every lane answers the late join.** A peer that joins mid-event, mid-download or mid-drive
    sees the current state; a lane is not done until that answer exists.
 6. **Per-peer things stay per-peer.** Own vitals, own inventory, own view.
-7. **Four players, about a hundred active entities** is the scale everything is sized for.
+7. **Eight players is the cap; four players and about a hundred active entities is the scale everything was
+   sized and measured for.** More than four players has not been measured.

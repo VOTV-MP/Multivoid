@@ -218,7 +218,7 @@ bool Session::Start(const Config& cfg, Refusal* why) {
 
     // The nickname arbiter's self-test, the same discipline: its policy is a pure function, and its
     // interesting cases (a suffix displacing stem characters at the cap, a variant colliding with a
-    // name another player holds) would need four peers with chosen names to stage.
+    // name another player holds) would need several peers with chosen names to stage.
     static const bool kNickArbiterOk = coop::nickname_arbiter::RunNicknameArbiterSelftest();
     (void)kNickArbiterOk;
 

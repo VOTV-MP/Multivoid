@@ -423,12 +423,12 @@ void Tick(coop::net::Session& session) {
         // both flags atomically.
         const bool slotConnected = session.IsSlotReady(slot);
         // Only the connect half lives here. Teardown is driven by the ledger row transition,
-        // because a falling edge is wrong twice: on a client it never rises for slots 1-3 (a client
+        // because a falling edge is wrong twice: on a client it never rises for a client slot (a client
         // only fills peerConns_[0]), and on the host a fast replacement (ready to ready across one
         // tick) has no edge, so the successor would inherit. The row transition compares values and
         // sees both.
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
-            // Host side (slots 1..3): the replay fires on the joiner's ClientWorldReady, not here;
+            // Host side (a client slot): the replay fires on the joiner's ClientWorldReady, not here;
             // a menu-mode joiner is connected 30-60 s before it has a world. Client side (slot 0):
             // announce the flashlight, request the save transfer, open our world-ready send gate
             // (subsystems::ClientConnectEdge).

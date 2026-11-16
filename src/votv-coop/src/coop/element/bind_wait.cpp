@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"  // rows::bind_wait_red, bind_wait_mark_unknown
 #include "coop/element/element.h"         // the row's actor and its cached slot
 #include "coop/element/registry.h"        // Registry: a row awaiting its re-bind
+#include "coop/player/players_registry.h" // kMaxPeers: the pool's size
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"      // IsLiveByIndex
@@ -20,8 +21,9 @@ namespace coop::element::bind_wait {
 namespace {
 
 constexpr size_t kMaxHoldsPerEid = 64;
-constexpr size_t kMaxHeldBytes   = 1024 * 1024;
-constexpr size_t kMaxSlotBytes   = 256 * 1024;   // one client slot's share of it; slot 0 (the host) may use all
+constexpr size_t kMaxSlotBytes   = 256 * 1024;   // one client slot's share of the pool; slot 0 (the host) may use all
+// The pool holds a share for every slot of a full session, so no client's share is another's.
+constexpr size_t kMaxHeldBytes   = kMaxSlotBytes * coop::players::kMaxPeers;
 
 struct Held {
     uint16_t kind;

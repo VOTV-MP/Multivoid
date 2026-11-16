@@ -228,7 +228,7 @@ void SetJoinAnnounced(int slot, bool announced) {
 
 LinkFacts DisplayLink(int slot) {
     UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::DisplayLink)");
-    // LocalPeerId is 0 on the host and 1..3 on a client (0xFF until assigned, which
+    // LocalPeerId is 0 on the host and a client slot on a client (0xFF until assigned, which
     // is out of range and so falls through to the row's own facts).
     const int localSlot = static_cast<int>(coop::players::Registry::Get().LocalPeerId());
     if (slot == 0 && localSlot > 0 && localSlot < kMaxSlots) {
@@ -294,7 +294,7 @@ void RegisterPerSlotClear(PerSlotClearFn fn, void* self) {
 
 void ReconcileFromSession(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::ReconcileFromSession)");
-    // HOST ONLY. A client's slots 1..3 carry permanently-zero generations (only
+    // HOST ONLY. A client's client slots carry permanently-zero generations (only
     // the host mints), so reconciling there would erase exactly the rows the
     // wire just delivered.
     if (session.role() != coop::net::Role::Host) return;

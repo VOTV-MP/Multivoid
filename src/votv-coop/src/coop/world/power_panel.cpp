@@ -36,7 +36,8 @@ namespace PC = ue_wrap::power_control;
 namespace sg = ue_wrap::script_gate;
 using coop::net::PowerPanelPayload;
 
-static_assert(coop::net::kMaxPeers <= 4, "PowerPanelPayload::ack holds four slots");
+static_assert(sizeof(PowerPanelPayload::ack) / sizeof(uint16_t) == coop::net::kMaxPeers,
+              "PowerPanelPayload::ack holds one slot per peer");
 static_assert(coop::net::kMaxPeers <= 8, "the owed canonicals are one bit a slot");
 
 constexpr uint8_t kMaskBits = 0x1F;

@@ -13,7 +13,7 @@
 | **Current build** | the newest `.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name and the in-game banner carry the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
-| **Players** | up to **4** (host + 3) |
+| **Players** | up to **8** (host + 7) |
 | **Platform** | Windows · UE4.27 · LAN + Internet |
 | **Website** | [multivoid.dev](https://multivoid.dev) |
 | **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — chat about the project, ask questions, report bugs |
@@ -23,7 +23,7 @@
 
 ## What works today
 
-- **LAN and Internet sessions** — one host, up to three clients; direct IP or the built-in
+- **LAN and Internet sessions** — one host, up to seven clients; direct IP or the built-in
   **server browser** backed by the official master server (NAT traversal via signaling + TURN).
   Lobbies advertise `game + build`; a mismatched peer is refused before joining, and old cohorts
   keep playing together — updates are never forced.

@@ -22,7 +22,7 @@
 #include "coop/net/send_rate_control.h"    // what each peer's link measures out at
 #include "coop/net/session_config.h"      // Role, Topology, Config: what a session starts with
 #include "coop/net/stream_refusals.h"      // refused pose packets, said once per streak
-#include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
+#include "coop/player/players_registry.h"  // kMaxPeers (host + 7 clients = 8)
 
 #include <array>
 #include <atomic>
@@ -37,7 +37,7 @@
 
 namespace coop::net {
 
-// kMaxPeers (the host + 3 clients) is coop::players::kMaxPeers; the alias sizes this header's
+// kMaxPeers (the host + 7 clients) is coop::players::kMaxPeers; the alias sizes this header's
 // arrays.
 inline constexpr uint8_t kMaxPeers = coop::players::kMaxPeers;
 
@@ -538,7 +538,7 @@ private:
     // --- Pending (unadmitted) connections ---
     // A connection GNS accepted but that has not yet proved itself holds no player seat: it lives
     // here, its user data `kPendingTag | index`, outside the [1, kMaxPeers) range the drain site
-    // validates. So three silent sockets cannot lock the three seats, and every IsSlotReady
+    // validates. So silent sockets cannot lock the client seats, and every IsSlotReady
     // consumer inherits the gate unchanged.
     static constexpr int64_t  kPendingTag   = 0x7000'0000LL;
 

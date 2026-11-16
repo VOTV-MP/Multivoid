@@ -39,7 +39,7 @@ ActorIdent IdentOf(void* actor, int32_t idx) {
 // from the host range), so band 0 is only ever consumed by a client's pre-slot allocations.
 constexpr uint32_t kPeerBandCount = coop::players::kMaxPeers;
 constexpr uint32_t kSlotBandSize  =
-    (kMaxElements - kHostRangeSize) / kPeerBandCount;  // 32768/4 = 8192
+    (kMaxElements - kHostRangeSize) / kPeerBandCount;  // 32768/8 = 4096
 
 // The [base, end) of the band for a band index (0 is pre-slot, 1 and up are client slots).
 // The last band absorbs any remainder so the union exactly covers the peer range.
@@ -150,7 +150,7 @@ ElementId Registry::AllocLocalId(Element* e) {
     const ActorIdent ai = IdentOf(e->GetActor(), e->GetInternalIdx());
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_localFree.empty()) {
-        UE_LOGW("element::Registry: peer range exhausted (32768 active elements); "
+        UE_LOGW("element::Registry: active peer band exhausted (every id of the band is live); "
                 "AllocLocalId returning kInvalidId -- this indicates an Element lifetime bug");
         return kInvalidId;
     }
