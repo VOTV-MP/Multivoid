@@ -406,6 +406,29 @@ bool UnscrewBattery(const std::wstring& key, std::string& why) {
     return ran;
 }
 
+int LooseBatteries(const std::wstring& key, float charge, int& withCharge) {
+    int n = 0;
+    withCharge = 0;
+    OnGt([&] {
+        void* atv = Atv(key);
+        ue_wrap::FVector at{};
+        if (!atv || !ue_wrap::engine::TryGetActorLocation(atv, at)) return;
+        for (void* o : R::FindObjectsByClass(kBatteryClass)) {
+            if (!o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__") ||
+                coop::hand_item::IsHandAxisActor(o))
+                continue;
+            ue_wrap::FVector p{};
+            if (!ue_wrap::engine::TryGetActorLocation(o, p)) continue;
+            const float dx = p.X - at.X, dy = p.Y - at.Y, dz = p.Z - at.Z;
+            if (dx * dx + dy * dy + dz * dz > 400.f * 400.f) continue;
+            ++n;
+            float v = 0.f;
+            if (ReadFloat(o, L"battery", v) && std::fabs(v - charge) < 0.5f) ++withCharge;
+        }
+    });
+    return n;
+}
+
 bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why) {
     bool ok = false;
     OnGt([&] {

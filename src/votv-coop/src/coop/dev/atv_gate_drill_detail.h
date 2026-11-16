@@ -72,6 +72,8 @@ float ReadBattery(const std::wstring& key);
 bool SetLocalBattery(const std::wstring& key, float charge);
 bool FitBattery(const std::wstring& key, float charge, std::string& why);
 bool UnscrewBattery(const std::wstring& key, std::string& why);
+// The loose batteries within 4 m of the ATV on this copy (no hand and no hand mirror), and how many carry `charge`.
+int LooseBatteries(const std::wstring& key, float charge, int& withCharge);
 
 // A fitted module's value on this peer's copy (the first), or -1.
 int FirstModule(const std::wstring& key);
