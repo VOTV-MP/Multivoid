@@ -7,12 +7,14 @@
 
 #include "ue_wrap/core/reflection.h"
 
+#include <cstring>
 #include <mutex>
 #include <string>
 
 namespace coop::atv_drill_events {
 namespace {
 
+constexpr const wchar_t* kBatteryClass = L"prop_atvcarbattery_C";
 constexpr uint32_t kRing = 256;   // a block at 20 Hz through a whole act (a 5 s drive is 100) before the decision reads
 
 struct Ring {
@@ -51,8 +53,17 @@ void NotePoseApplied(const std::wstring& key, void* actor, bool host, uint32_t r
 }
 
 void NoteMirrorBound(const std::wstring& cls, void* actor) {
-    if (!On() || cls != L"prop_atvcarbattery_C") return;
+    if (!On() || cls != kBatteryClass) return;
     Note(kBatteryBound, ue_wrap::reflection::InternalIndexOf(actor));
+}
+
+void NoteRecordLanded(void* actor) {
+    namespace R = ue_wrap::reflection;
+    if (!On() || R::ClassNameOf(actor) != kBatteryClass) return;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(actor), L"battery");
+    float charge = -1.f;
+    if (off >= 0) std::memcpy(&charge, static_cast<const uint8_t*>(actor) + off, sizeof(charge));
+    Note(kBatteryCharged, R::InternalIndexOf(actor), 0, 0, charge);
 }
 
 uint32_t Count(Event e) {

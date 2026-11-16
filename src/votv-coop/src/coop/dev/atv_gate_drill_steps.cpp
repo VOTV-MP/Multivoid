@@ -242,17 +242,24 @@ bool SpawnedUnscrew(const DE::Rec& r, int32_t charge) { return r.i0 == 0 && std:
 bool SpawnedRefund(const DE::Rec& r, int32_t charge) { return r.i0 == 1 && std::fabs(r.f0 - static_cast<float>(charge)) < 0.5f; }
 bool SpawnedAny(const DE::Rec&, int32_t) { return true; }
 
-// Exactly one new battery prop at `want`, decided at its arrival and counted once there: on the host the record of its own
-// spawn (of `kind`), on every other peer the prop lane's bind of that prop. The count is every live battery this peer did
-// not hold before the step, so a prop this peer's own game made and never destroyed (the client's ghost) is counted with it.
+// Exactly one new battery prop at `want`, counted once at its arrival: on the host the record of its own spawn (of `kind`),
+// on every other peer the prop lane's bind of that prop. The count is every live battery this peer did not hold before the
+// step, so a prop this peer's own game made and never destroyed (the client's ghost) is counted with it. The charge is the
+// host's own prop's at once; a mirror takes it only from its save record, which lands after the bind (or before it, when the
+// record was parked first), so the charge is decided at the record's land (kBatteryCharged, by the bound actor's slot).
 Result OneNewBattery(Ctx& c, float want, int32_t kind) {
     const bool host = c.me == kHost;
     DE::Rec r;
     if (WaitRec(c, host ? DE::kBatterySpawned : DE::kBatteryBound, [&](const DE::Rec& a) { return !host || a.i0 == kind; }, r) != 1)
         return Stopped();
     float charge = -1.f;
-    const int n = NewBatteryProps(c.bat0, &charge);
+    const int n = NewBatteryProps(c.bat0, host ? &charge : nullptr);
     if (n != 1) return Fail("this peer holds " + std::to_string(n) + " battery props it did not hold before the step, not 1");
+    if (!host) {
+        DE::Rec landed;
+        if (WaitRec(c, DE::kBatteryCharged, [&](const DE::Rec& a) { return a.i0 == r.i0; }, landed) != 1) return Stopped();
+        charge = landed.f0;
+    }
     if (!(std::fabs(charge - want) < 0.5f))
         return Fail("the new battery prop's charge is " + std::to_string(charge) + ", not " + std::to_string(want));
     return Pass("this peer shows the one new battery at its charge");

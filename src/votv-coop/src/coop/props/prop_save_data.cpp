@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/dev/food_clock_probe.h"   // [dev] the food catch-up's two clocks, read at these seams
+#include "coop/interactables/atv_drill_events.h"   // NoteRecordLanded: the ATV drill's battery charge event
 #include "coop/props/disc_record_ceiling.h"
 #include "coop/props/prop_birth_ledger.h"          // the host birth path's traffic ledger
 #include "coop/props/prop_record_gates.h"          // a class's say over who writes its record and when it lands
@@ -284,6 +285,7 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!SR::ApplyRecord(actor, rec, load)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
+    coop::atv_drill_events::NoteRecordLanded(actor);   // [dev] the ATV drill's charge of a battery mirror; one compare with the row off
     // The author's record has LANDED, so the host may publish this key again, and does so here, from
     // what it now holds: a peer that became ready while the key was awaited was declined by its join
     // seed then. Not at its arrival: a record that arrives before the host's actor is indexed is

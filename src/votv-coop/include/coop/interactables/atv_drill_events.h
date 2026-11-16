@@ -48,6 +48,7 @@ enum Event : int {
     kBatterySpawned, // HOST: a battery prop spawned for a request. i0 kind (0 the unscrew's, 1 a refused fit's refund), i1 the actor's object slot, f0 its charge
     kRefused,      // HOST: a request answered with a refusal. i0 op, i1 reason, i2 slot
     kBatteryBound, // a prop_atvcarbattery_C mirror bound by the prop lane (a client's arrival of a host-spawned battery). i0 the actor's object slot
+    kBatteryCharged, // a save record applied onto a prop_atvcarbattery_C (a client's mirror takes the charge only from it). i0 the actor's object slot, f0 its charge after
     kEventCount
 };
 
@@ -63,6 +64,10 @@ void NotePoseApplied(const std::wstring& key, void* actor, bool host, uint32_t r
 // The prop lane bound a mirror of class `cls` to `actor` (kBatteryBound when the class is the battery prop's). A no-op while
 // the module is off; the class compare and the actor's slot are read only when it is on.
 void NoteMirrorBound(const std::wstring& cls, void* actor);
+
+// The save-record lane applied a record onto `actor` (kBatteryCharged when it is a battery prop). A no-op while the module is
+// off; the class and the charge are read only when it is on. Game thread.
+void NoteRecordLanded(void* actor);
 
 // A number that names an ATV key in a record (kUnadopted, kAdopted), the same on every peer.
 int32_t KeyTag(const std::wstring& key);
