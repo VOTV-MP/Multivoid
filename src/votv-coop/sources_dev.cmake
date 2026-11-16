@@ -307,8 +307,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/puppet_reg_probe.cpp
     src/coop/dev/pi0_selftest.cpp
-    src/coop/dev/traffic_census.cpp
-    src/coop/dev/wire_census.cpp
     src/coop/dev/perf_probe.cpp
     src/coop/dev/input_focus_probe.cpp
     src/coop/dev/leak_probe.cpp
