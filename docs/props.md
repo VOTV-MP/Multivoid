@@ -107,7 +107,7 @@ performs (`coop/props/prop_drop_intent`):
 - **Births the client cannot avoid.** A reel ejected from a caddy, a module or a drive taken from
   a rack, an item extracted from a container all materialise on the client first; they go
   through the same door, class-checked at the host, born asleep where the class needs it.
-- **Births a player asked for.** The sandbox spawn menu and the toolgun. These cannot be named by
+- **Births a player asked for.** The sandbox spawn menu, the toolgun and the battery an ATV's unscrew hands back. These cannot be named by
   class -- the menu is the whole catalog, and the world's own spawners, morphs and impacts mint
   those same classes per peer, so a class test would double the world. They are admitted on
   AUTHORSHIP instead: the birth seam asks whether a player's own spawn verb is on the stack, which

@@ -104,10 +104,13 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
   hand) and an unscrew (`unscrewPanel`'s battery branch, which drops the battery as a prop with its charge) run on the
   client's copy and are asked of the host: op 5 with the charge the copy took, op 7 for the unscrew. The host fits only
   into an ATV with none (`full` otherwise) and only from a hand that last held a battery, takes out only a fitted one,
-  writes `battery` and runs the game's `updBattery`; the unscrewed battery is the client's own birth, carried by the
-  prop lane. Every host state carries the charge with a flag that it read, and a client writes it when it differs, with
-  `updBattery`. The rig's ATV drill fits, unscrews and fits back from a client on three peers (steps b1 to b3); before
-  this the host and the third peer kept no battery while the client's copy ran on its own (Trello #71).
+  writes `battery` and runs the game's `updBattery`. The battery the client's unscrew drops is that player's birth while
+  the body runs its battery branch (`coop/props/prop_spawn_authoring`), so the host spawns it at its charge for every
+  peer; a tire's branch stays local, its wheel still on the host's ATV. Every host state carries the charge with a flag
+  that it read, and a client writes it when it differs, with `updBattery`. The rig's ATV drill fits, unscrews and fits
+  back from a client on three peers (steps b1 to b3, b2 with one loose battery at its charge on every copy); before
+  this the host and the third peer kept no battery while the client's copy ran on its own (Trello #71), and the
+  unscrewed battery stayed on the client alone (Trello #52).
 - **Lights, brake, turbo and the horn.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights
   0x20, turbo 0x40, horn 0x80) at each block build. The host takes them from an admitted block (the block's sender must be
   the ATV's syncer) and runs the ATV's own light, brake and turbo bodies on its copy for each bit that changed; its re-send

@@ -28,6 +28,8 @@ constexpr int kGateTag = 0x53504157;  // 'SPAW'
 void* g_gamemodeSpawnFn = nullptr;   // mainGamemode_C::spawnPropThroughGamemode -- watched
 void* g_menuSpawnFn     = nullptr;   // ui_spawnmenu_C::spawn -- the caller that makes it a player's
 void* g_toolUberFn      = nullptr;   // tool_spawn_C::ExecuteUbergraph_tool_spawn -- the toolgun
+void* g_unscrewFn       = nullptr;   // ATV_C::unscrewPanel -- the battery an unscrew hands back (atv_gate's watch)
+bool  g_unscrewBattery  = false;     // the unscrew now starting is the battery's branch
 bool  g_watchInstalled  = false;
 
 // The negative arm, and it is the half a run cannot otherwise see. Catching every menu spawn and
@@ -154,7 +156,15 @@ bool BirthIsPlayerAuthored() {
                 "are a player's");
         return true;
     }
+    // An ATV's battery unscrewed: its unscrewPanel (a custom event, so the calling frame is the ATV's whole ubergraph)
+    // spawns the battery at the panel. Admitted while that body runs and only on its battery branch.
+    if (g_unscrewBattery && g_unscrewFn && sg::IsBodyActive(g_unscrewFn)) return true;
     return false;
+}
+
+void NoteAtvUnscrew(void* unscrewFn, bool batteryBranch) {
+    g_unscrewFn = unscrewFn;
+    g_unscrewBattery = batteryBranch;
 }
 
 void Reset() {

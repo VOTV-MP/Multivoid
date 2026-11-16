@@ -10,6 +10,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_spawn_authoring.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -172,6 +173,16 @@ sg::Verdict OnPre(const sg::Call& call) {
         pd.heldBefore = HeldActor();
     }
     if (!H::ReadVitals(call.object, pd.before)) return Unread(2, "a verb whose ATV's vitals are not readable");
+    // A client's unscrew of the battery: the battery prop its body spawns crosses as this player's birth.
+    if (row == kUnscrew && client) {
+        const int32_t tOff = R::FindPropertyOffset(R::ClassOf(call.object), L"lookAtTire");
+        const int32_t sOff = R::FindPropertyOffset(R::ClassOf(call.object), L"lookAtTireSocket");
+        const auto* o = static_cast<const uint8_t*>(call.object);
+        const bool battery = pd.before.battery >= 0.f && tOff >= 0 && sOff >= 0 &&
+                             *reinterpret_cast<const int32_t*>(o + tOff) < 0 &&
+                             *reinterpret_cast<const int32_t*>(o + sOff) < 0;
+        coop::prop_spawn_authoring::NoteAtvUnscrew(call.function, battery);
+    }
     pd.obj = call.object;
     pd.valid = true;
     return sg::Verdict::Run;
@@ -253,8 +264,8 @@ void OnPost(const sg::Call& call) {
         }
         break;
     case kUnscrew:
-        // The panel's unscrew took the battery out (a tire's takes none): the battery prop its body spawned is this
-        // client's birth, which the prop lane carries.
+        // The panel's unscrew took the battery out (a tire's takes none): the battery prop its body spawned crossed as
+        // this player's birth (coop/props/prop_spawn_authoring), which the host spawns for every peer.
         if (pd.before.battery >= 0.f && now.battery < 0.f && Request(key, op::kBatteryOut, 0.f, 0))
             UE_LOGI("atv_gate: this player unscrewed the battery of '%ls' -- the host takes it out", key.c_str());
         break;
