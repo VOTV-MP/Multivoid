@@ -11,7 +11,7 @@
 //   f32 locY; i64 date; then name, id, object and signal as UTF-16LE; with bit3, u32 bytes + PNG.
 //
 // A row's cross-peer identity, which SavedSignalDelete keys on, is the FNV-1a 64 of the blob up to the
-// strings' end with the image bit zeroed and its three FName leaves (object, signal, image name) lower-cased: a row
+// strings' end with the image bit zeroed and its two FName leaves (object, signal) lower-cased: a row
 // shares it with its photo or without, and whatever case each peer's engine renders those names in.
 
 #pragma once

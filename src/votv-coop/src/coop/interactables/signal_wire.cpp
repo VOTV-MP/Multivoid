@@ -23,9 +23,9 @@ size_t PrefixSize(const std::vector<uint8_t>& b) {
     return end < b.size() ? end : b.size();
 }
 
-// The object, signal and image-name leaves of a photo-free prefix, folded to lower case in place. They are FNames,
-// and an FName renders in whichever spelling this process registered first, so two peers can render one name in
-// two cases; the row is the same row, and its identity must not tell them apart.
+// The object and signal leaves of a photo-free prefix (the name and id before them are FStrings), folded to lower case
+// in place. They are FNames, and an FName renders in whichever spelling this process registered first, so two peers can
+// render one name in two cases; the row is the same row, and its identity must not tell them apart.
 void FoldNameLeaves(std::vector<uint8_t>& prefix) {
     if (prefix.size() < kHeadSize) return;
     for (size_t at = kHeadSize + 2 * (static_cast<size_t>(prefix[5]) + prefix[6]); at + 1 < prefix.size(); at += 2) {
