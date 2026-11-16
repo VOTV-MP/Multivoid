@@ -342,6 +342,13 @@ static void RunDivergenceSweep_(void* localPlayer) {
         coop::pile_spawn_bind::CollectLiveTrashNatives(natives);
         for (void* a : natives) {
             if (coop::prop_element_tracker::IsBoundMirrorNative(a)) continue;
+            // Any host-expressed mirror is the host's, save native or not (a mirror a convert or a carry
+            // registered): the row walk never doomed a mirror row, and neither does this.
+            if (const auto meid = coop::element::Registry::Get().EidForActor(a);
+                meid != coop::element::kInvalidId) {
+                const coop::element::Element* mel = coop::element::Registry::Get().Get(meid);
+                if (mel && mel->IsMirror()) continue;
+            }
             ++inClass;
             const std::wstring acls = R::ClassNameOf(a);
             if (g_claimedActors.count(a)) { ++claimedCount; ++claimedByClass[acls]; continue; }

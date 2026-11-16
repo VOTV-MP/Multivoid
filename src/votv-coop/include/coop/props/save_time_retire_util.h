@@ -41,11 +41,10 @@ constexpr float kExactMatchR2Cm = 1.0f;
 // registry's actor-to-eid reverse is still live when the seam runs synchronously inside the
 // DestroyActor on the next line. The same hazard is documented in registry_reaper.cpp.
 //
-// Unmarked, a joining client broadcasts a PropDestroy carrying its OWN client-band eid for
-// every level-pile twin it retires -- identities the host never heard of, which it parks as
-// destroy-before-load and expires -- in the join minute, when the send buffer is already
-// refusing spawns. The mark is what prop_lifecycle::DestroyLocalProp uses, and the seam
-// asks for it. It must PRECEDE the destroy, because the seam fires inside it.
+// Unmarked, the seam would read a retired twin's key or eid and broadcast a PropDestroy for an
+// entity the host never heard of (it parks it as destroy-before-load and expires it) in the
+// join minute, when the send buffer is already refusing spawns. The mark is what
+// prop_lifecycle::DestroyLocalProp uses, and the seam asks for it. It must PRECEDE the destroy, because the seam fires inside it.
 // UnmarkKnownKeyedProp stays as tracker hygiene.
 inline void UnmarkAndDestroy(void* actor) {
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);

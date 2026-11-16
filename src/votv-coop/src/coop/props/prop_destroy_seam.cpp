@@ -156,9 +156,9 @@ void DestroySeamBody(void* self, HandView handView) {
     // episode; the local destroy already ran, so this peer's world is unaffected. Client-scoped;
     // the role guard is defence in depth on a shared seam. The suppression covers keyless
     // destroys too: inside its own load a client generates no events, it is being torn down and
-    // rebuilt, and a joining client otherwise broadcasts one eid-only clump destroy per level
-    // pile, each with a client-band eid the host never saw, which the host parks and expires in
-    // the same minute its send buffer is full. The window is the load episode or the reconcile
+    // rebuilt, and a keyless one that carries an eid (a bound host id, or a client's own birth) would
+    // otherwise be broadcast for an entity the host parks and expires in the same minute its send
+    // buffer is full (a client's unbound level pile carries no eid and returns above). The window is the load episode or the reconcile
     // window, of any kind: a junk broadcast costs more than a suppressed destroy, which the
     // bracket re-expresses. A keyed suppression in the reconcile window alone warns with a rate
     // latch, since it is the trace if a player's genuine destroy vanished.
