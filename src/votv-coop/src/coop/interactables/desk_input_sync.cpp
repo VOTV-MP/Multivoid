@@ -30,6 +30,39 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 constexpr auto kPoll = std::chrono::milliseconds(250);
 Clock::time_point g_nextPoll{};
 
+// The two dials (frequency 0, polarity 1): whether this peer's own turn holds the dial's offset (OwnsDialOffset).
+// `local` from this peer's own speed edge until another peer's speed arrives; `settling` from its own stop, with the
+// offset it sent, until the host's stream shows it or `untilMs`.
+struct DialOwn {
+    bool local = false;
+    bool settling = false;
+    float sent = 0.f;
+    uint64_t untilMs = 0;
+};
+DialOwn g_dial[2];
+uint32_t g_sentBy[static_cast<int>(DeskInputField::Count)] = {};       // dev::Counts
+uint32_t g_receivedBy[static_cast<int>(DeskInputField::Count)] = {};
+
+// The dial handoff off (dev.desk_dial_fast_off): the speeds at the poll, no dial kept, no stopped offset sent.
+bool DialFastOff() {
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::desk_dial_fast_off);
+    return s_off;
+}
+constexpr uint64_t kDialHandoffMs = 1500;   // the longest a stopped dial waits for the host's stream to show its offset
+constexpr float kFrOffsetMax = 1000.f;      // calculate_download clamps DL_FrFilterOffset to 0..1000
+constexpr float kPoOffsetWrap = 360.f;      // and wraps DL_poFilterOffset modulo 360
+constexpr float kDialSettleEps = 0.05f;     // a streamed offset this near the sent one shows it
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+}
+
+float WrapPolarity(float v) {
+    v = std::fmod(v, kPoOffsetWrap);
+    return v < 0.f ? v + kPoOffsetWrap : v;
+}
+
 // The per-field poll baseline. Primed on first sight / adopt / every wire
 // apply (field-granular) -- a wire-caused change never reads as a local edge.
 CD::Scalars g_baseline;
@@ -114,6 +147,7 @@ void SendDelta(coop::net::Session* s, DeskInputField field,
     p.boolVal = bv ? 1 : 0;
     p.floatVal = fv;
     p.intVal = iv;
+    if (p.field < static_cast<uint8_t>(DeskInputField::Count)) ++g_sentBy[p.field];
     if (s->role() == coop::net::Role::Host)
         s->SendReliable(coop::net::ReliableKind::DeskInput, &p, sizeof(p));
     else
@@ -148,6 +182,8 @@ bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     case DeskInputField::RemapMin:        sc.remapMin = p.floatVal; break;
     case DeskInputField::RemapMax:        sc.remapMax = p.floatVal; break;
     case DeskInputField::VisualizerMode:  sc.visualizerMode = p.boolVal != 0; break;
+    case DeskInputField::FrFilterOffset:  sc.dlFrFilterOffset = p.floatVal; break;
+    case DeskInputField::PoFilterOffset:  sc.dlPoFilterOffset = p.floatVal; break;
     default: return false;
     }
     return true;
@@ -172,6 +208,8 @@ uint32_t PaintersFor(DeskInputField f) {
     case DeskInputField::FrFilterSpeed:
     case DeskInputField::PoFilterSpeed:
     case DeskInputField::PlaySelectIndex:
+    case DeskInputField::FrFilterOffset:   // painted by the desk's own tick
+    case DeskInputField::PoFilterOffset:
     case DeskInputField::VisualizerMode:   // drawn by ApplyVisualizerMode
     case DeskInputField::CooldownCharge:  return CD::kPaintNone;
     default:                              return CD::kPaintNone;
@@ -192,6 +230,33 @@ bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
         !ApplyVisualizerModeOrDefer(p.boolVal != 0))
         return false;
     return true;
+}
+
+// The two dial speeds, every tick rather than at the poll: a scroll's speed edge leaves at once, and a nudge shorter
+// than the poll is not lost between two reads. A stop of this peer's own turn also sends where the offset stopped,
+// which the host takes, so its download and every other peer settle where this peer's dial did.
+void PollDials(coop::net::Session* s) {
+    CD::Scalars cur;
+    if (!g_primed || !CD::ReadScalars(cur)) return;
+    const float speeds[2] = {cur.dlFrFilterSpeed, cur.dlPoFilterSpeed};
+    float* const base[2] = {&g_baseline.dlFrFilterSpeed, &g_baseline.dlPoFilterSpeed};
+    const float offsets[2] = {cur.dlFrFilterOffset, cur.dlPoFilterOffset};
+    const DeskInputField speedField[2] = {DeskInputField::FrFilterSpeed, DeskInputField::PoFilterSpeed};
+    const DeskInputField offsetField[2] = {DeskInputField::FrFilterOffset, DeskInputField::PoFilterOffset};
+    for (int k = 0; k < 2; ++k) {
+        if (speeds[k] == *base[k] || !std::isfinite(speeds[k])) continue;
+        SendDelta(s, speedField[k], speeds[k], 0, false);
+        *base[k] = speeds[k];
+        DialOwn& d = g_dial[k];
+        d.local = true;
+        d.settling = false;
+        if (speeds[k] == 0.f && std::isfinite(offsets[k])) {
+            SendDelta(s, offsetField[k], offsets[k], 0, false);
+            d.settling = true;
+            d.sent = offsets[k];
+            d.untilMs = NowMs() + kDialHandoffMs;
+        }
+    }
 }
 
 // The one poll: diff the INPUT fields against the baseline; ship deltas.
@@ -282,6 +347,7 @@ void Install(coop::net::Session* session) {
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
+    if (!DialFastOff() && s->connected() && CD::EnsureResolved() && CD::Instance()) PollDials(s);
     const auto now = Clock::now();
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPoll;
@@ -306,6 +372,7 @@ void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     if (!s) return;
     if (wire.field >= static_cast<uint8_t>(DeskInputField::Count)) return;
     if (!std::isfinite(wire.floatVal)) return;
+    ++g_receivedBy[wire.field];
     // The remap bounds are clamped to the range updRemap clamps to (the way a wire codec clamps a field
     // to its range): the echo-prime below then stores what the desk will hold, and a peer's out-of-range
     // value cannot read as a local edge on the next poll and bounce back through the host.
@@ -313,6 +380,13 @@ void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     if (p.field == static_cast<uint8_t>(DeskInputField::RemapMin) ||
         p.field == static_cast<uint8_t>(DeskInputField::RemapMax))
         p.floatVal = CD::ClampRemap(p.floatVal);
+    // A dial's stopped offset is held to the range the desk's own tick holds it to.
+    if (p.field == static_cast<uint8_t>(DeskInputField::FrFilterOffset))
+        p.floatVal = p.floatVal < 0.f ? 0.f : (p.floatVal > kFrOffsetMax ? kFrOffsetMax : p.floatVal);
+    if (p.field == static_cast<uint8_t>(DeskInputField::PoFilterOffset)) p.floatVal = WrapPolarity(p.floatVal);
+    // Another peer turning a dial owns it from here: this peer's own turn of it is over.
+    if (p.field == static_cast<uint8_t>(DeskInputField::FrFilterSpeed)) g_dial[0] = DialOwn{};
+    if (p.field == static_cast<uint8_t>(DeskInputField::PoFilterSpeed)) g_dial[1] = DialOwn{};
 
     // CoordIsPing is NEVER applied to the machine. The native ping FSM is a latent
     // tick machine gated on that flag, so a raw write here woke a phantom parallel sim
@@ -340,6 +414,25 @@ void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     // same GT task -- the next poll never reads this apply as a local edge.
     if (g_primed) PatchScalar(p, g_baseline);
     else { g_baseline = sc; g_primed = true; }
+}
+
+bool OwnsDialOffset(int dial, float hostOffset) {
+    if (dial < 0 || dial > 1 || DialFastOff()) return false;
+    DialOwn& d = g_dial[dial];
+    if (!d.local) return false;
+    const float speed = dial == 0 ? g_baseline.dlFrFilterSpeed : g_baseline.dlPoFilterSpeed;
+    if (speed != 0.f) return true;   // turning: this peer's own integration is the dial
+    if (!d.settling) {
+        d.local = false;
+        return false;
+    }
+    float gap = std::fabs(hostOffset - d.sent);
+    if (dial == 1 && gap > kPoOffsetWrap * 0.5f) gap = kPoOffsetWrap - gap;   // across the polarity's wrap
+    if (gap <= kDialSettleEps || NowMs() >= d.untilMs) {
+        d = DialOwn{};   // the host's stream shows where this peer stopped, or it waited long enough
+        return false;
+    }
+    return true;
 }
 
 bool ApplyVisualizerModeOrDefer(bool spectrogram) {
@@ -435,7 +528,17 @@ void OnPeerLeft(int slot) {
     UE_LOGI("desk_input: ping attribution cleared -- setter slot %d left mid-ping", slot);
 }
 
+namespace dev {
+void Counts(uint32_t* sent, uint32_t* received) {
+    for (int i = 0; i < static_cast<int>(DeskInputField::Count); ++i) {
+        if (sent) sent[i] = g_sentBy[i];
+        if (received) received[i] = g_receivedBy[i];
+    }
+}
+}  // namespace dev
+
 void OnDisconnect() {
+    for (DialOwn& d : g_dial) d = DialOwn{};
     // No session-end machine clear either: nothing wire-writes the flag, and a local
     // organic ping ends itself natively.
     g_baseline = {};

@@ -28,8 +28,15 @@ namespace coop::desk_input_sync {
 
 void Install(coop::net::Session* session);
 
-// Game thread, per pump tick (internally throttled to the 250 ms poll).
+// Game thread, per pump tick: the two dial speeds every tick, the rest at the 250 ms poll.
 void Tick();
+
+// The signal desk's two dials, frequency (0) and polarity (1): whether this peer's own turn of the dial owns its
+// offset on this desk now -- from its own speed edge while that speed is not 0, then, once it stops and this peer has
+// sent where the offset stopped, until the host's stream shows that offset (`hostOffset`, the streamed value) or
+// a second and a half has passed. desk_sim_sync keeps this peer's own integration of such a dial's offset and match,
+// so the dial answers the turning hand at once rather than a round trip later. Game thread.
+bool OwnsDialOffset(int dial, float hostOffset);
 
 // Wire appliers (event feed drain; GT).
 void OnDeskInput(const coop::net::DeskInputPayload& p, uint8_t senderSlot);
@@ -79,5 +86,10 @@ void AttributePrimedRun(uint8_t slot);
 void SeedPingAttributionFromMachine();
 
 void OnDisconnect();
+
+namespace dev {   // the dial probe reads them; compiled always
+// The DeskInput deltas this peer sent and received this session, by field (DeskInputField::Count of each).
+void Counts(uint32_t* sent, uint32_t* received);
+}  // namespace dev
 
 }  // namespace coop::desk_input_sync

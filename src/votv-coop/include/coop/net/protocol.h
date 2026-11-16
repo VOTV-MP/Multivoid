@@ -4265,7 +4265,11 @@ enum class DeskInputField : uint8_t {
     RemapMin = 14,       // float   remapValue.X, the signal view's lower bound (+ updRemap)
     RemapMax = 15,       // float   remapValue.Y, its upper bound (+ updRemap)
     VisualizerMode = 16, // bool    visualizerMode, graph or spectrogram (+ setCanvas, endCanvas)
-    Count = 17,
+    FrFilterOffset = 17, // float   DL_FrFilterOffset, where a peer's own turn of the frequency dial stopped
+                         //         (desk_input_sync's dial handoff); the host clamps it to 0..1000 and its sim
+                         //         stream carries it on
+    PoFilterOffset = 18, // float   DL_poFilterOffset, the same for the polarity dial (wrapped into 0..360)
+    Count = 19,
 };
 
 struct DeskInputPayload {
