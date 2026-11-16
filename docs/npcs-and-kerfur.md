@@ -196,6 +196,17 @@ joiner gets every key inside its snapshot (`coop/props/dingus_sync`, `ue_wrap/ac
 stand-in for an element datum (MTA keeps it on the element and sends it whole at the join): the record lane carries no
 dingus, and carving it out of the food claim would move a food class's ownership off the food lane. Not shared: a dingus
 found while in a hand, the action that toggles its music, and the hand mirror of a held found dingus.
+An Omega's outfit is its `drip`, the list_kerfurdrip rows it wears, which its `updateDrip` builds into meshes; the
+equipItem of a held item adds a row and the equipment screen's `unequipItem` spawns the item back and removes it. Each
+copy ran these alone, so a hat or the maid outfit one player put on was seen by nobody else (Ghezra/Multivoid#38). The
+host reads its Omegas' outfits twice a second and sends a changed one, and every one to a joiner (`KerfurDressState`);
+a client writes it and runs `updateDrip`. A client's put-on runs on its copy and is told to the host, a take-off is
+refused on its copy and asked of it (`KerfurDressIntent`); the host adds the row, or runs its own `unequipItem`, whose item
+is born on the host, for a living sender within 200 cm, and answers a refusal with its outfit. A pat runs where it is
+picked; the `actionName` seat reports it, and every other copy plays the montage's `pat` section and the meow, without
+the pat's own stop or count (`coop/creatures/kerfur_dress_sync`, `ue_wrap/actors/kerfur_dress`). `[V]` (`coop/dev/kdress_probe`,
+`VOTVCOOP_KDRESS_PROBE=client|host`: the bucket and the maid outfit put on and taken off by a client and by the host
+show on both copies within a second, and the pat plays its montage on the other copy.)
 
 ## Who owns what
 
@@ -223,6 +234,7 @@ found while in a hand, the action that toggles its music, and the hand mirror of
 | `KerfurCommand` | a client to the host | a radial verb with the sender's request number, which the host runs serving the sender |
 | `DingusReport` | a client to the host | the save key of a dingus the client's own `touch` found; the host judges the sender and the key |
 | `DingusFound` | the host to all and to a joiner | a dingus's save key: it is found, so each peer marks its copies under it |
+| `KerfurDressState`, `KerfurDressIntent` | the host to all; a client to the host | an Omega's outfit rows or a pat to show; a client's put-on, take-off or pat |
 | `KerfurCommandAnswer` | the host to the requester | the host's refusal of a command (busy, gone, murderous, out of reach, queue full, not an Omega, unavailable) or its wait for a body of the sender, as an enum the client words itself |
 
 ## Late join
@@ -232,13 +244,13 @@ adopts the save-loaded twins by class and creates the rest. A kerfur prop is ado
 and pose after the load tail settles; a kerfur turned on during the window arrives as a character
 whose spawn names the off-prop to retire. The roach infestation is re-sent as pages. A stalker
 that another peer owns keeps announcing itself, so a joiner picks it up on its next keepalive. A
-wisp in flight is transient and owes nothing.
+wisp in flight is transient and owes nothing. Every Omega's outfit is sent to the joiner at its ready edge.
 
 ## Known limits
 
 | Limit | Evidence |
 |---|---|
-| The Omega's take-object, pat, equipment, kill and sit-on-the-ATV verbs are not synced | `[V]` `coop/creatures/kerfur_command`, the verb table |
+| The Omega's take-object, kill and sit-on-the-ATV verbs are not synced; its outfit and pat are (`kerfur_dress_sync`) | `[V]` `coop/creatures/kerfur_command`, the verb table |
 | The Omega's floppy state is not synced, so a relayed get-reports diverges on its result; its accessories and carried object likewise | `[V]` no lane under `coop/creatures` carries them |
 | Only one stalker class is owned per peer so far | `[V]` `coop/creatures/owner_entity_sync`, the member table |
 | The conversion is detected by a poll, five times a second, not at the verb | `[V]` `coop/creatures/kerfur_convert`; the lane reads the result rather than the call, because a peer's own conversion has already happened by the time any watch of ours runs |
@@ -259,7 +271,7 @@ wisp in flight is transient and owes nothing.
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
 | the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `harness/autotest/autotest_orb.cpp` (`orb_drill`) |
 | roaches | `coop/creatures/roach_sync` |
-| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
+| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player`, `coop/creatures/kerfur_dress_sync` with `ue_wrap/actors/kerfur_dress` |
 | the dingus | `coop/props/dingus_sync` with `dingus_judge`; `ue_wrap/actors/dingus` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |
-| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it) |
+| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it), `coop/dev/kdress_probe` (an Omega's outfit and pat) |

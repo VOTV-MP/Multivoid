@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 313;
+inline constexpr uint16_t kProtocolVersion = 314;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1580,6 +1580,12 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL: an Omega's `drip` rows when they change
+    // and every one to a joiner (op 0), and a pat to show (op 3, sent on past its patter). CLIENT->HOST: its player put an
+    // item on (op 1) or took one off (op 2) an Omega, or patted one (op 3); the host judges and runs it on its copy. Not
+    // pre-world. KerfurDressPayload.
+    KerfurDressState = 272,
+    KerfurDressIntent = 273,
 };
 
 #pragma pack(push, 1)
@@ -2426,6 +2432,17 @@ struct FloodPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
+// KerfurDressState / KerfurDressIntent. An Omega by its NPC element id; `names` holds `count` row names of
+// list_kerfurdrip, ASCII, each NUL-terminated, back to back (op 0: the whole outfit; ops 1 and 2: one row; op 3: none).
+inline constexpr uint8_t kKerfurDressOutfit = 0, kKerfurDressEquip = 1, kKerfurDressUnequip = 2, kKerfurDressPat = 3;
+struct KerfurDressPayload {
+    uint32_t elementId;   // 4 -- the Omega's NPC element id (the host's)
+    uint8_t  op;          // 1 -- kKerfurDress*
+    uint8_t  count;       // 1 -- how many names follow
+    uint8_t  _pad[2];     // 2 -- zero
+    char     names[216];  // 216
+};
+static_assert(sizeof(KerfurDressPayload) == 224, "KerfurDressPayload must be 224 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

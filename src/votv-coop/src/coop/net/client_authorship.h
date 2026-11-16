@@ -126,6 +126,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::DroneFlyIntent:
     case ReliableKind::WoodchipperIntent:
     case ReliableKind::FloodIntent:
+    case ReliableKind::KerfurDressIntent:
     case ReliableKind::AtvRequest:
     case ReliableKind::UpgradeIntent:
     case ReliableKind::WindowStroke:
@@ -207,6 +208,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::TurbineState:
     case ReliableKind::WoodchipperState:
     case ReliableKind::FloodState:
+    case ReliableKind::KerfurDressState:
     case ReliableKind::AtvHostState:
     case ReliableKind::SkySignalState:
     case ReliableKind::EmailAppend:
