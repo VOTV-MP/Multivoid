@@ -125,6 +125,7 @@
 #include "coop/dev/badsun_drill.h"  // [dev] a peer's own Bad Sun copy against its own clock, measured
 #include "coop/dev/event_relay_drill.h"  // [dev] the host's creature event in a client's count, read through the relay
 #include "coop/dev/creature_hit_drill.h"  // [dev] a parked creature's hit delivered to a client, a client's hit on it judged by the host
+#include "coop/dev/hunt_drill.h"  // [dev] the hunters go for the nearest player (the host spawns each and samples whom it hunts)
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
@@ -169,6 +170,7 @@ void Install(coop::net::Session& session) {
     coop::dev::badsun_drill::Install(&session);  // [dev] the Bad Sun drill (no-op unless badsun_drill is set)
     coop::dev::event_relay_drill::Install(&session);  // [dev] the creature event relay drill (no-op unless event_relay_drill is on)
     coop::dev::creature_hit_drill::Install(&session);  // [dev] the creature hit drill (no-op unless creature_hit_drill is set)
+    coop::dev::hunt_drill::Install(&session);  // [dev] the hunters drill (no-op unless hunt_drill is set)
     coop::dev::hostile_drill::Install(&session);  // [dev] the receive-boundary drill (no-op unless hostile_drill is set)
     coop::dev::fire_ignite_drill::Install(&session);  // [dev] the salt rocket ignite drill (no-op unless fire_ignite_drill is set)
     coop::dev::cord_drill::Install(&session);  // [dev] the cord drill (no-op unless cord_drill is set)
@@ -213,6 +215,7 @@ void EndSession() {
     coop::dev::badsun_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::event_relay_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its krampus
     coop::dev::creature_hit_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its creature
+    coop::dev::hunt_drill::OnDisconnect();  // [dev] the hunters drill starts again with the next session
     coop::dev::hostile_drill::OnDisconnect();  // [dev] back to WaitArm; a rejoin re-arms
     coop::dev::world_roll_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
@@ -339,6 +342,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::badsun_drill::Tick();  // [dev] the Bad Sun drill's phases (a single enum read when off)
     coop::dev::event_relay_drill::Tick();  // [dev] the creature event relay drill's steps (a single bool read when off)
     coop::dev::creature_hit_drill::Tick();  // [dev] the creature hit drill's steps (a single enum read when off)
+    coop::dev::hunt_drill::Tick();  // [dev] the hunters drill's steps (a single enum read when off)
     coop::dev::hostile_drill::Tick();  // [dev] the receive-boundary drill's arm/judge (a single enum read when off)
     coop::dev::world_roll_drill::Tick();  // [dev] the world roll drill's arms (a single enum read when off)
     coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)

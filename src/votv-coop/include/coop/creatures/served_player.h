@@ -7,12 +7,12 @@
 // plain kerfur's GetPlayerCharacter(0) and GetPlayerPawn(0), the Omega's GetPlayerPawn(0) and the disc
 // insert's lib.getMainPlayer(), told at the script-body gate by the variable the insert writes; the natives
 // by post-hooks whose source is the calling robot. Each seam is armed only while a record needs it, and a
-// robot is recorded only while all its seams can answer. Which read is which, and which stay the host's:
-// docs/coop-dispatch-visibility.md. A walking mannequin going for a client is served the same way, for its tick's
-// read of the player's ragdoll and its hit: coop/creatures/walker_target records it against its target. This module
-// writes nothing on the puppet: its hand is written only by kerfur_disc_carry, for the span of a get_reports that
-// carries the client's disc. A get_reports with no disc finds the hand empty and gets the game's own refusal hint,
-// which the host routes to that client. Game thread.
+// robot is recorded only while all its seams can answer (which read is which: docs/coop-dispatch-visibility.md).
+// A walking mannequin (coop/creatures/walker_target) and a hunter the host's creature rows name
+// (coop/creatures/hunt_target) are served the same way; a hunter's rows add two seams, getMainPlayer and
+// GetPlayerCameraManager (a puppet has no camera manager, so that read answers the body).
+// This module writes nothing on the puppet: its hand is written only by kerfur_disc_carry, for a get_reports
+// that carries the client's disc. Game thread.
 
 #pragma once
 
@@ -27,6 +27,8 @@ enum Seam : uint8_t {
     kPlayerCharacter = 1 << 0,  // GameplayStatics::GetPlayerCharacter, a native post-hook
     kPlayerPawn      = 1 << 1,  // GameplayStatics::GetPlayerPawn, a native post-hook
     kMainPlayer      = 1 << 2,  // the Omega's disc-insert lib_C::getMainPlayer calls, a script-body gate watch
+    kMainPlayerAny   = 1 << 3,  // every lib_C::getMainPlayer call the creature makes (a hunter's: its ragdoll test, its hit)
+    kCameraManager   = 1 << 4,  // GameplayStatics::GetPlayerCameraManager, a native post-hook, answered with the body
 };
 
 // On a host, install the two post-hooks disarmed and resolve the gate watch once, retiring it until a record
@@ -50,6 +52,10 @@ void Unserve(void* robot);
 
 // The slot a live `robot` serves, or 0 (the host, no record, or a dead robot's).
 uint8_t ServedSlot(void* robot);
+
+// How many player-0 reads this process has answered with a served client (all seams): what a drill compares to show that a
+// creature's Blueprint really asked through a seam. Game thread.
+unsigned long long AnsweredCount();
 
 // Drop dead robots' records and arm each seam while a record needs it. Every pump tick; nothing to do on a
 // client. Game thread.

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 #include <cstdint>
 
 namespace coop::net {
@@ -49,6 +51,9 @@ void Tick();
 void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot);
 void OnPoseMsg(const coop::net::OwnerEntityPosePayload& p, int senderPeerSlot);
 void OnDestroyMsg(const coop::net::OwnerEntityDestroyPayload& p, int senderPeerSlot);
+
+// The live mirrors of member class `classId` this peer shows (a drill's read). Game thread.
+size_t MirrorCount(uint8_t classId);
 
 // A peer left: destroy every mirror keyed to its slot (DisconnectSlot fanout).
 void OnPeerLeftSlot(int slot);

@@ -2,6 +2,7 @@
 
 #include "coop/creatures/creature_hit.h"
 
+#include "coop/creatures/hunt_gray.h"
 #include "coop/creatures/npc_mirror_brain.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
@@ -25,6 +26,7 @@ bool IsCreature(void* actor) {
 
 bool IsDelivered(void* actor) {
     if (ue_wrap::ambient_creature::IsWalker(actor)) return true;  // a prop, not an Npc, and its copy's timers are off
+    if (coop::hunt_gray::IsController(actor)) return true;        // the Grays' punch: a level actor whose copy never punches
     return IsCreature(actor) && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor));
 }
 
