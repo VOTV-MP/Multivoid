@@ -33,6 +33,10 @@ FVector GetComponentLocation(void* component);
 // world origin, an ordinary position the caller must not mistake for a place. Game thread.
 bool TryGetComponentLocation(void* component, FVector& out);
 
+// USceneComponent::K2_GetComponentScale: the component's world scale. False on a null component or a call that failed,
+// `out` then the unit scale (a scale a spawn transform can carry). Game thread.
+bool TryGetComponentWorldScale(void* component, FVector& out);
+
 // USceneComponent::RelativeLocation, read raw at the sdk_profile.h offset: the Blueprint-authored
 // value, stable once construction has run, where K2_GetComponentLocation is unsettled mid-init.
 // (0,0,0) on null.

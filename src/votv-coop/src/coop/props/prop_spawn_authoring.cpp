@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_spawn_authoring.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/fname_utils.h"     // StringToFName -- the two verb names, once
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
@@ -31,6 +32,8 @@ void* g_toolUberFn      = nullptr;   // tool_spawn_C::ExecuteUbergraph_tool_spaw
 void* g_sawUberFn       = nullptr;   // prop_hacksaw_C::ExecuteUbergraph_prop_hacksaw -- the hacksaw's cut
 void* g_unscrewFn       = nullptr;   // ATV_C::unscrewPanel -- the battery an unscrew hands back (atv_gate's watch)
 bool  g_unscrewBattery  = false;     // the unscrew now starting is the battery's branch
+ue_wrap::CachedObjRef g_unscrewBorn;  // the battery prop that branch's body spawned on this client, until its POST takes it
+void* g_batteryCls      = nullptr;   // prop_atvcarbattery_C
 bool  g_watchInstalled  = false;
 
 // The negative arm, and it is the half a run cannot otherwise see. Catching every menu spawn and
@@ -141,7 +144,7 @@ void Install(bool isClient) {
     g_watchInstalled = true;
 }
 
-bool BirthIsPlayerAuthored() {
+bool BirthIsPlayerAuthored(void* born) {
     // The menu: is the gamemode's spawn verb running on this thread, entered from the menu's own
     // spawn()? The gate answers from the RAII scope it pushes around the body, so the window
     // cannot outlive the body on any exit path, and an inner watched body belonging to some other
@@ -176,14 +179,26 @@ bool BirthIsPlayerAuthored() {
         return true;
     }
     // An ATV's battery unscrewed: its unscrewPanel (a custom event, so the calling frame is the ATV's whole ubergraph)
-    // spawns the battery at the panel. Admitted while that body runs and only on its battery branch.
-    if (g_unscrewBattery && g_unscrewFn && sg::IsBodyActive(g_unscrewFn)) return true;
+    // spawns the battery at the panel. That birth is no player's: the host spawns the battery every peer shares, so this
+    // client's own prop is only recorded here, for the POST of that body to destroy.
+    if (g_unscrewBattery && g_unscrewFn && born && R::IsLive(born) && sg::IsBodyActive(g_unscrewFn)) {
+        if (!g_batteryCls) g_batteryCls = R::FindClass(L"prop_atvcarbattery_C");
+        if (g_batteryCls && R::ClassOf(born) == g_batteryCls) g_unscrewBorn.Set(born);
+    }
     return false;
 }
 
-void NoteAtvUnscrew(void* unscrewFn, bool batteryBranch) {
+void NoteAtvUnscrewBranch(void* unscrewFn, bool batteryBranch) {
     g_unscrewFn = unscrewFn;
     g_unscrewBattery = batteryBranch;
+    g_unscrewBorn.Reset();
+}
+
+void* TakeAtvUnscrewBattery() {
+    void* const born = g_unscrewBorn.Get();
+    g_unscrewBorn.Reset();
+    g_unscrewBattery = false;
+    return born;
 }
 
 void Reset() {
@@ -195,6 +210,8 @@ void Reset() {
                 g_verbFromOther == 0 ? " -- this run never exercised the rejection" : "");
     g_verbFromMenu = 0;
     g_verbFromOther = 0;
+    g_unscrewBattery = false;
+    g_unscrewBorn.Reset();
     // The tally is per session; the watch and the resolved UFunctions are NOT. They name the
     // game's own classes, which outlive any session in this process, and the gate is already
     // session-gated, so a watch costs nothing while nobody is connected. Retiring and re-adding it

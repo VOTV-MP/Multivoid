@@ -54,6 +54,7 @@ bool JudgeOff() { static const bool on = Arm("atv_judge_off"); return on; }     
 bool DupOff() { static const bool on = Arm("atv_dup_module"); return on; }        // a duplicate fit is allowed
 bool RefundOff() { static const bool on = Arm("atv_refund_off"); return on; }     // a refused fit is not refunded
 bool ParkOff() { static const bool on = Arm("atv_park_off"); return on; }         // a request is judged before its world is ready
+bool SpawnOff() { static const bool on = Arm("battery_spawn_off"); return on; }   // an accepted unscrew spawns no battery
 bool BatteryRefundOff() { static const bool on = Arm("battery_refund_off"); return on; }   // a refused battery fit is not refunded
 
 constexpr float kMax = 100.f;      // a full tank, full health
@@ -272,10 +273,20 @@ uint8_t BatteryIn(N::Session& s, uint8_t slot, const Payload& p, const std::wstr
     return why::kOk;
 }
 
-// A battery unscrewed: unscrewPanel's battery branch is battery := -1, then updBattery. The battery prop its body spawned
-// is the client's birth, which the prop lane carries, so the host spawns none.
+// A battery unscrewed: unscrewPanel's battery branch spawns the battery prop at the panel with the copy's charge, then is
+// battery := -1 and updBattery. The client's copy ran it and destroyed its own prop at the end of that body, so the prop that
+// exists is the host's: spawned here at the host copy's charge, at the point the game's own unscrew uses, and crossing to
+// every peer as any host spawn does. The spawn comes first: one that fails refuses the request and changes nothing.
 uint8_t BatteryOut(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
     if (v.battery < 0.f) return why::kNotHeld;
+    if (!SpawnOff()) {
+        ue_wrap::FVector at{}, scale{1.f, 1.f, 1.f};
+        ue_wrap::FRotator rot{};
+        if (!A::GetUnscrewSpawnTransform(atv, at, rot, scale) || !A::SpawnBattery(at, rot, scale, 0, v.battery)) {
+            UE_LOGW("atv_host: the unscrewed battery of '%ls' did not spawn -- the unscrew is refused", key.c_str());
+            return why::kNotReady;
+        }
+    }
     {
         H::ApplyScope applying;
         A::SetBattery(atv, ue_wrap::atv::kNoBattery);

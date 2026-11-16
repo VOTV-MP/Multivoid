@@ -31,13 +31,20 @@ void Install(bool isClient);
 // calling frame (ue_wrap::ufunction_hook::CurrentCallerFrame) and this thread's open menu
 // bracket, both of which mean nothing outside one. False when neither verb is on the stack, which
 // is every ambient spawn the world makes for itself. Game thread.
-bool BirthIsPlayerAuthored();
+// `born` is the actor that callback is looking at: while an ATV's unscrew of its battery runs (below), the battery prop it
+// spawns is recorded and still reported as no player's birth. Game thread.
+bool BirthIsPlayerAuthored(void* born);
 
 // An ATV's unscrewPanel is starting on this client (`unscrewFn`, the watched body), and whether it is the battery's
-// branch (no tire looked at, a battery fitted). The battery it spawns is then a player's birth while that body runs: the
-// unscrew runs only on the unscrewing player's game. A tire's branch is not, since its wheel is still on the host's ATV.
-// Called from coop/interactables/atv_gate's pre callback. Game thread.
-void NoteAtvUnscrew(void* unscrewFn, bool batteryBranch);
+// branch (no tire looked at, a battery fitted). That branch spawns a battery prop on this client's game alone, which the
+// host's own spawn replaces, so it is recorded as it is born (BirthIsPlayerAuthored) and never crosses. A tire's branch
+// spawns a wheel, which is not recorded. Clears any record a body without a POST left. Called from
+// coop/interactables/atv_gate's pre callback. Game thread.
+void NoteAtvUnscrewBranch(void* unscrewFn, bool batteryBranch);
+
+// The unscrewPanel body ended: the battery prop it spawned on this client (null when it spawned none or it is gone), and the
+// record and the branch cleared. Called from coop/interactables/atv_gate's post callback. Game thread.
+void* TakeAtvUnscrewBattery();
 
 // Session teardown: report both columns of the caller tally -- the menu's calls, which crossed as
 // intents, and every other caller's, which stayed local -- and zero it. The watch and the resolved

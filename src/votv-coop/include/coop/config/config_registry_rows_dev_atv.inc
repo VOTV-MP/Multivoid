@@ -73,7 +73,7 @@ CFG_FLAG(atv_eject_red, "atv_eject_red", "dev", false, "VOTVCOOP_ATV_EJECT_RED",
     "skipped, a client syncer's is consumed), so both arms of the ATV eject drill must fail.")
 CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "off|green|atv_gate_off|atv_ack_off|atv_judge_off|atv_dup_module|atv_refund_off|atv_publish_off|atv_joiner_rows_off|"
-    "atv_bits_off|atv_gate_hold_off|atv_park_off|battery_refund_off",
+    "atv_bits_off|atv_gate_hold_off|atv_park_off|battery_refund_off|battery_spawn_off|local_destroy_off",
     "VOTVCOOP_ATV_GATE_DRILL",
     "Drill (BOTH peers, plus a third client as observer): the client, the host and the observer do each act a player does "
     "at an ATV -- a refuel, a repair, a module fitted and taken off, the seat, lights, brake, turbo and horn, a drive -- and "
@@ -86,7 +86,8 @@ CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "published), atv_joiner_rows_off (a state for an unadopted ATV dropped), atv_bits_off (a block's control bits "
     "ignored, horn included), atv_gate_hold_off (a state applies while the "
     "open-request gate is shut), atv_park_off (a request is judged before its sender's world is ready), "
-    "battery_refund_off (a refused battery fit is not refunded). MUTATES the ATV.")
+    "battery_refund_off (a refused battery fit is not refunded), battery_spawn_off (the host spawns no battery on an "
+    "accepted unscrew), local_destroy_off (a client keeps the battery prop its own unscrew spawned). MUTATES the ATV.")
 CFG_ENUM(atv_riders_drill, "atv_riders_drill", "dev", "off",
     "off|on|drive_control|seat_announce_off|body_attach_off|invite_off|rider_stamp_off|mirror_ride_off|mirror_invite_off|"
     "resend_rider_off|birth_seat_off|bind_ride_off|reveal_ride_off|release_seat_off|release_ride_off|getoff_cancel_off|"

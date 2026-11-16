@@ -10,6 +10,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_spawn_authoring.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -133,6 +134,8 @@ sg::Verdict OnPre(const sg::Call& call) {
     Pend& pd = g_pend[row];
     pd.valid = false;
     g_rowFn[row] = call.function;
+    // No battery branch of an earlier body is carried into this one, whichever way this PRE returns.
+    if (row == kUnscrew) coop::prop_spawn_authoring::NoteAtvUnscrewBranch(call.function, false);
     if (H::Applying()) return sg::Verdict::Run;
     const Who role = RoleNow();
     if (role == Who::None) return sg::Verdict::Run;
@@ -172,17 +175,19 @@ sg::Verdict OnPre(const sg::Call& call) {
         if (!A::ModuleByName(call.object, name, pd.value)) return Unread(1, "a take-off whose module the ATV does not name");
         pd.heldBefore = HeldActor();
     }
-    if (!H::ReadVitals(call.object, pd.before)) return Unread(2, "a verb whose ATV's vitals are not readable");
-    // A client's unscrew of the battery: the battery prop its body spawns crosses as this player's birth.
+    // A client's unscrew of the battery: the battery prop its body spawns on this game alone is recorded as it is born, and
+    // destroyed at the POST (the host spawns the one every peer shares). Said before the vitals read, so an act whose
+    // vitals do not read still has its prop recorded.
     if (row == kUnscrew && client) {
         const int32_t tOff = R::FindPropertyOffset(R::ClassOf(call.object), L"lookAtTire");
         const int32_t sOff = R::FindPropertyOffset(R::ClassOf(call.object), L"lookAtTireSocket");
         const auto* o = static_cast<const uint8_t*>(call.object);
-        const bool battery = pd.before.battery >= 0.f && tOff >= 0 && sOff >= 0 &&
+        const bool battery = A::GetBattery(call.object) >= 0.f && tOff >= 0 && sOff >= 0 &&
                              *reinterpret_cast<const int32_t*>(o + tOff) < 0 &&
                              *reinterpret_cast<const int32_t*>(o + sOff) < 0;
-        coop::prop_spawn_authoring::NoteAtvUnscrew(call.function, battery);
+        coop::prop_spawn_authoring::NoteAtvUnscrewBranch(call.function, battery);
     }
+    if (!H::ReadVitals(call.object, pd.before)) return Unread(2, "a verb whose ATV's vitals are not readable");
     pd.obj = call.object;
     pd.valid = true;
     return sg::Verdict::Run;
@@ -203,9 +208,23 @@ uint32_t Request(const std::wstring& key, uint8_t opcode, float amount, uint8_t 
 
 bool Has(const H::Vitals& v, uint8_t m) { return std::find(v.modules, v.modules + v.count, m) != v.modules + v.count; }
 
+// The unscrew's body ended on this client: the battery prop it spawned here is destroyed, without a PropDestroy to any peer
+// (it is a local birth no peer knows). The host's own spawn of the battery, on its accept of the request, is the one prop
+// every peer holds. Run before every other return of the POST: the prop exists whether or not a request was opened.
+void DestroyUnscrewBorn() {
+    void* const born = coop::prop_spawn_authoring::TakeAtvUnscrewBattery();
+    if (!born) return;
+    // Red local_destroy_off: the client keeps the prop its own body spawned.
+    static const bool s_keepOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "local_destroy_off";
+    if (s_keepOff) return;
+    coop::prop_lifecycle::DestroyLocalProp(born, false);
+    UE_LOGI("atv_gate: the battery prop this client's unscrew spawned is destroyed here -- the host's is the shared one");
+}
+
 void OnPost(const sg::Call& call) {
     const int row = call.tag - kTagBase;
     if (row < 0 || row >= kRowCount) return;
+    if (row == kUnscrew) DestroyUnscrewBorn();
     Pend& pd = g_pend[row];
     if (!pd.valid || pd.obj != call.object) return;
     pd.valid = false;
@@ -264,8 +283,8 @@ void OnPost(const sg::Call& call) {
         }
         break;
     case kUnscrew:
-        // The panel's unscrew took the battery out (a tire's takes none): the battery prop its body spawned crossed as
-        // this player's birth (coop/props/prop_spawn_authoring), which the host spawns for every peer.
+        // The panel's unscrew took the battery out (a tire's takes none): the host takes it out of its copy and spawns the
+        // battery prop every peer holds; the prop this body spawned was destroyed at the top of this POST.
         if (pd.before.battery >= 0.f && now.battery < 0.f && Request(key, op::kBatteryOut, 0.f, 0))
             UE_LOGI("atv_gate: this player unscrewed the battery of '%ls' -- the host takes it out", key.c_str());
         break;

@@ -197,6 +197,11 @@ bool GetSitArrowLocation(void* atv, FVector& loc);
 // Game thread.
 bool GetCameraLocation(void* atv, FVector& loc);
 
+// Where the ATV's own unscrew of its battery spawns the battery prop: the world transform of its `Billboard4` component
+// (what `getUnscrewSpawn` returns with no tire looked at). False on null, an unresolved ATV_C or component, or an
+// unreadable transform. Game thread.
+bool GetUnscrewSpawnTransform(void* atv, FVector& loc, FRotator& rot, FVector& scale);
+
 // The ATV's rider: the kerfur its own `sittingKerfuro` names, or null when the field is empty, names a dead object, or does
 // not resolve. Game thread.
 void* GetSittingKerfur(void* atv);

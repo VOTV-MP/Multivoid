@@ -561,7 +561,7 @@ struct Field {
     }
 };
 Field g_camera{L"Camera"}, g_sitarrow{L"sitarrow"}, g_playerHit{L"playerHit"}, g_sittingKerfuro{L"sittingKerfuro"},
-    g_allKerfuros{L"allKerfuros"};
+    g_allKerfuros{L"allKerfuros"}, g_billboard4{L"Billboard4"};
 
 void* ReadObj(void* atv, int32_t off) {
     if (!atv || off < 0) return nullptr;
@@ -596,6 +596,16 @@ bool GetCameraLocation(void* atv, FVector& loc) {
     if (!atv || !R::IsLive(atv)) return false;
     void* camera = ReadObj(atv, g_camera.Get());
     return camera && engine::TryGetComponentLocation(camera, loc);
+}
+
+bool GetUnscrewSpawnTransform(void* atv, FVector& loc, FRotator& rot, FVector& scale) {
+    if (!atv || !R::IsLive(atv)) return false;
+    // getUnscrewSpawn returns `Billboard4` when no tire is looked at, and unscrewPanel's battery arm spawns at that
+    // component's world transform. It is read here directly: calling the game's function would answer with a wheel
+    // whenever this copy's own player looks at a tire.
+    void* const panel = ReadObj(atv, g_billboard4.Get());
+    return panel && engine::TryGetComponentLocation(panel, loc) && engine::TryGetComponentWorldRotation(panel, rot) &&
+           engine::TryGetComponentWorldScale(panel, scale);
 }
 
 void* GetSittingKerfur(void* atv) {

@@ -315,6 +315,7 @@ inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";
 // K2_GetComponentRotation and the mirror is driven with K2_SetWorldRotation
 // (Engine.hpp:17941/17950).
 inline constexpr const wchar_t* GetComponentRotationFn = L"K2_GetComponentRotation";
+inline constexpr const wchar_t* GetComponentScaleFn = L"K2_GetComponentScale";
 inline constexpr const wchar_t* SetWorldRotationFn = L"K2_SetWorldRotation";
 inline constexpr const wchar_t* SetRelativeScale3DFn = L"SetRelativeScale3D";
 inline constexpr const wchar_t* RelativeRotationProp = L"RelativeRotation";
