@@ -14,7 +14,7 @@ namespace coop::dev::atv_riders_arm {
 // The row's value, resolved on the call.
 inline std::string Value() { return coop::config::ResolveEnum(::coop::config_registry::rows::atv_riders_drill); }
 
-// The row names `value` (a red, or `on` / `join`).
+// The row names `value` (a red, or `on`).
 inline bool Is(const char* value) { return Value() == value; }
 
 }  // namespace coop::dev::atv_riders_arm

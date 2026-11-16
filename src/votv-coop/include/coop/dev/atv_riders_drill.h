@@ -1,6 +1,6 @@
 // coop/dev/atv_riders_drill.h -- [dev] the ATV riders drill: a client's body seated in an ATV and the host's kerfur riding it,
 // shown on every peer, each step decided by an event (coop/interactables/atv_drill_events.h), never by a clock.
-// One drill thread per peer, armed by a value of the `atv_riders_drill` row on EVERY peer: `on` and `join` are the green run and
+// One drill thread per peer, armed by a value of the `atv_riders_drill` row on EVERY peer: `on` is the green run and
 // `drive_control` is the green run with the host's kerfur kept off the ATV in step 7, so the host's own drive is measured
 // without it; each other value is a red, read only by the module whose mechanism it turns off. Three peers: the host, the observer in
 // slot 1 (mp.py's first client, which leaves and rejoins) and the driver in slot 2 (mp.py --observer's client). The peers order

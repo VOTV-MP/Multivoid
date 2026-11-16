@@ -5,8 +5,10 @@
 
 #include "atv_riders_drill_detail.h"
 
-#include "atv_seat.h"   // co-located private header: the game's own seat verb
+#include "atv_gate_drill_detail.h"   // co-located private header of the gate drill: ChooseAtv
+#include "atv_seat.h"                // co-located private header: the game's own seat verb
 
+#include "coop/creatures/npc_sync.h"
 #include "coop/dev/atv_riders_arm.h"
 #include "coop/dev/atv_riders_join_hold.h"
 #include "coop/dev/spawn_npc.h"
@@ -14,8 +16,10 @@
 #include "coop/element/mirror_managers.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/atv_sync.h"
+#include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/save/save_transfer.h"
 #include "coop/session/net_pump.h"
 
 #include "ue_wrap/actors/kerfur.h"
@@ -212,39 +216,37 @@ bool WorldUp() {
 
 // ---- the host: the fixture, steps 1, 2 and 4 ----
 
-// The kerfur the host's seat edge invites: one spawned 200 cm beside the ATV (a runtime spawn, so a rejoined observer takes the
-// reveal route), or for `join` and `bind_ride_off` the world's own (the adoption route). Its eid is posted, 0 for the world's.
-bool HostFixture() {
-    uint32_t eid = 0;
-    const bool spawn = !coop::dev::atv_riders_arm::Is("join") && !coop::dev::atv_riders_arm::Is("bind_ride_off");
-    if (spawn) {
-        void* kerfur = nullptr;
-        bool placed = false;
-        OnGt([&] {
-            FVector at{};
-            FRotator rot{};
-            void* atv = AD::Atv(g_key);
-            placed = atv && ue_wrap::atv::GetRootTransform(atv, at, rot);
-            if (placed) kerfur = coop::dev::spawn_npc::SpawnAt(L"kerfurOmega_C", {at.X + 200.f, at.Y, at.Z + 60.f});
-        });
-        if (!placed || !kerfur) {
-            Invalid("the kerfur was not spawned beside the ATV");
-            return false;
-        }
-        if (!PollFn("the kerfur's element id", kEventS, [&] {
-                OnGt([&] { eid = coop::element::Registry::Get().EidForActor(kerfur); });
-                return eid != coop::element::kInvalidId ? 1 : 0;
-            }))
-            return false;
-        UE_LOGI("atv-riders: the host's kerfur %p is eid %u", kerfur, eid);
-    } else {
-        bool any = false;
-        OnGt([&] { any = !K::AllKerfurs().empty(); });
-        if (!any) {
-            Invalid("the world holds no kerfur of its own (join and bind_ride_off take the save's)");
-            return false;
-        }
+// The kerfur step 0 spawned, 0 when step 0 did not run.
+static uint32_t g_firstJoinEid = 0;
+
+// Spawns a kerfur 200 cm beside the ATV under g_key and waits for its element id.
+static bool SpawnKerfurBesideAtv(uint32_t& eid) {
+    void* kerfur = nullptr;
+    bool placed = false;
+    OnGt([&] {
+        FVector at{};
+        FRotator rot{};
+        void* atv = AD::Atv(g_key);
+        placed = atv && ue_wrap::atv::GetRootTransform(atv, at, rot);
+        if (placed) kerfur = coop::dev::spawn_npc::SpawnAt(L"kerfurOmega_C", {at.X + 200.f, at.Y, at.Z + 60.f});
+    });
+    if (!placed || !kerfur) {
+        Invalid("the kerfur was not spawned beside the ATV");
+        return false;
     }
+    if (!PollFn("the kerfur's element id", kEventS, [&] {
+            OnGt([&] { eid = coop::element::Registry::Get().EidForActor(kerfur); });
+            return eid != coop::element::kInvalidId ? 1 : 0;
+        }))
+        return false;
+    UE_LOGI("atv-riders: the host's kerfur %p is eid %u", kerfur, eid);
+    return true;
+}
+
+// The kerfur the host's seat edge invites: step 0's when that ran, else one spawned beside the ATV. Its eid is posted.
+bool HostFixture() {
+    uint32_t eid = g_firstJoinEid;
+    if (eid == 0 && !SpawnKerfurBesideAtv(eid)) return false;
     PS::Mark("kerfur-eid", std::to_string(eid));
     return true;
 }
@@ -474,6 +476,105 @@ bool DriverDrive() {
     AD::DriveOff(g_key);
     PS::Mark("drive-off");
     return arrived;
+}
+
+// ---- step 0: the reveal route, on the driver's first join ----
+
+// The host's side. The join window is read as the state the host keeps for the slot (the world taken, not yet ready): the
+// save transfer announces it to no subscriber, so the drill thread polls it as the six join drills of coop/dev do.
+bool HostFirstJoin() {
+    if (!PollFn("the driver's join window (its world taken, not yet ready)", kJoinS, [&]() -> int {
+            int state = 0;   // 1 the window is open, -1 the driver's world was ready before the host saw it open
+            OnGt([&] {
+                const coop::net::Session* s = coop::npc_sync::GetSession();
+                if (!s) return;
+                if (s->IsSlotWorldReady(kSlotC)) state = -1;
+                else if (coop::save_transfer::WorldTakenFor(kSlotC)) state = 1;
+            });
+            if (state < 0) Invalid("step 0: the driver's world was ready before the host saw its join window");
+            return state;
+        }))
+        return false;
+    g_key = coop::dev::atv_gate_drill::detail::ChooseAtv();
+    if (g_key.empty()) {
+        Invalid("the world holds no ATV a route from the host reaches");
+        return false;
+    }
+    UE_LOGI("atv-riders: step 0: the driver's join window is open, the host's ATV key='%ls'", g_key.c_str());
+    uint32_t eid = 0;
+    if (!SpawnKerfurBesideAtv(eid)) return false;
+    g_firstJoinEid = eid;
+    const Cur cur = Snap();
+    int invited = -1;
+    if (!SitLocal(invited)) {
+        Invalid("step 0: the host's seat verb did not seat the host");
+        return false;
+    }
+    const int32_t tag = Tag();
+    if (!PollFn("the host's kerfur's seat in the join window", kRideS, [&]() -> int {
+            const auto facts = Recs(cur, DE::kRiderFact);
+            const DE::Rec* f = Find(facts, [&](const DE::Rec& r) { return r.i0 == tag && r.i2 == 1; });
+            if (!f) return 0;
+            if (static_cast<uint32_t>(f->i1) != eid) {
+                Invalid("step 0: the host's seat took the kerfur eid " + std::to_string(f->i1) + ", not the spawned " +
+                        std::to_string(eid));
+                return -1;
+            }
+            return 1;
+        }))
+        return false;
+    UE_LOGI("atv-riders: step 0: the host sits with its kerfur eid %u; waiting for the driver's reveal", eid);
+    std::string t, why;
+    if (!AwaitMark("s0_done", t, kJoinS, "the driver decides at its reveal")) return false;
+    if (!AD::Brake(g_key, why) || !AD::Leave(g_key, why)) {
+        Invalid(why);
+        return false;
+    }
+    g_eid = eid;
+    return PollFn("the host's kerfur, off the ATV", kEventS, [&]() -> int {
+        const KerfurRead k = ReadKerfur(eid);
+        return k.exists && !k.parentIsAtv ? 1 : 0;
+    });
+}
+
+// The driver's side, decided at the reveal from its own ride records and reads: the host's kerfur is the one the ride owner has a
+// record for. Hidden at its bind (read when first bound, or a held-hidden record) is the reveal route; a mirror bound shown is
+// not reached.
+bool DriverFirstJoin() {
+    const Cur zero{};
+    uint32_t eid = 0;
+    KerfurRead k;
+    if (!PollFn("the host's kerfur mirror and its ride row", kJoinS, [&]() -> int {
+            if (!eid) {
+                const auto rides = Recs(zero, DE::kRide);
+                if (const DE::Rec* r = Find(rides, [](const DE::Rec& x) { return x.i1 >= 1 && x.i1 <= 3; }))
+                    eid = static_cast<uint32_t>(r->i0);
+            }
+            if (!eid) return 0;
+            k = ReadKerfur(eid);
+            return k.exists ? 1 : 0;
+        }))
+        return false;
+    const auto rideOf = [eid](int code) {
+        return [eid, code](const DE::Rec& r) { return static_cast<uint32_t>(r.i0) == eid && r.i1 == code; };
+    };
+    if (!k.hidden && !Find(Recs(zero, DE::kRide), rideOf(3))) {
+        Invalid("step 0: the reveal route not reached (the kerfur mirror bound after the lift)");
+        return false;
+    }
+    if (k.hidden && !PollFn("the kerfur mirror's reveal", kJoinS, [&]() -> int {
+            k = ReadKerfur(eid);
+            return !k.hidden ? 1 : 0;
+        }))
+        return false;
+    if (!Find(Recs(zero, DE::kRide), rideOf(1))) {
+        Fail(0, coop::dev::atv_riders_arm::Is("reveal_ride_off") ? "reveal_ride_off" : "",
+             "the kerfur mirror was shown, a ride row was stored for it and no ride was issued");
+        return false;
+    }
+    StepPass(0, "the kerfur mirror, hidden at its bind, rides from the reveal");
+    PS::Mark("s0_done");
+    return true;
 }
 
 // ---- step 5: the observer's second life ----

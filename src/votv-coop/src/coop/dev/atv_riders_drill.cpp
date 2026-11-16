@@ -1,9 +1,11 @@
 // coop/dev/atv_riders_drill.cpp -- the sequencer of the ATV riders drill; see coop/dev/atv_riders_drill.h. The verdict, the waits
 // and the record cursor are here, the reads and the steps are atv_riders_drill_steps.cpp.
 //
-// The run, in the order the peers do it (the steps keep the numbers of the design, and run 1 2 4 3 5 6 8 7 9: step 4's
+// The run, in the order the peers do it (the steps keep the numbers of the design, and run 0 1 2 4 3 5 6 8 7 9: step 4's
 // events come with the first block after the kerfur's seat, so its red must fail before step 3's drive, and step 8 needs the
 // driver seated, which step 7's host seat takes):
+//   0 the host sits in the driver's first join window and the driver's hidden kerfur mirror rides at its reveal (the values
+//     on, bind_ride_off and reveal_ride_off only)
 //   1 the driver sits: the body is attached on the host and the observer      2 the host's kerfur rides on every peer
 //   4 the observer takes the host's re-sent blocks with the rider's word      3 the driver drives 600 cm; both stay seated, rigid
 //   5 the observer leaves and rejoins mid-ride: the stamp comes first, the birth and the bind apply it
@@ -162,6 +164,7 @@ using namespace detail;
 bool ClientArrive(Role me) {
     std::string t;
     if (!WorldUp()) return false;
+    if (me == kDriver && FirstJoinRuns() && !DriverFirstJoin()) return false;
     PS::Mark(me == kObserver ? "o_ready" : "c_ready");
     if (!AwaitMark("atv-key", t, kSignalS)) return false;
     g_key.assign(t.begin(), t.end());
@@ -176,8 +179,9 @@ bool ClientArrive(Role me) {
 
 bool RunHost() {
     std::string t, why;
+    if (FirstJoinRuns() && !HostFirstJoin()) return false;
     if (!AwaitMark("c_ready", t, kJoinS) || !AwaitMark("o_ready", t, kJoinS)) return false;
-    g_key = coop::dev::atv_gate_drill::detail::ChooseAtv();
+    if (g_key.empty()) g_key = coop::dev::atv_gate_drill::detail::ChooseAtv();   // step 0 chose it when it ran
     if (g_key.empty()) {
         Invalid("the world holds no ATV a route from the host reaches");
         return false;

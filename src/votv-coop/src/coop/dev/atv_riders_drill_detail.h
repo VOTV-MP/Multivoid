@@ -128,8 +128,20 @@ bool JudgeRemoteSeat(uint8_t slot, int step);
 
 // ---- the steps, in the order the drill runs them ----
 
+// Step 0, the reveal route, on the driver's first join (the values on, bind_ride_off and reveal_ride_off). In the driver's join
+// window, the host's world taken for it and its world not yet ready (save_transfer::WorldTakenFor), the host spawns the kerfur
+// beside the ATV and sits, so its game seats the kerfur; the driver's mirror is born hidden in the join's snapshot, stores the ride
+// row, and rides at the reveal. The driver decides at the reveal and marks `s0_done`; the host then gets off and waits for its
+// kerfur to leave the ATV. Every other value skips the step.
+inline bool FirstJoinRuns() {
+    namespace A = coop::dev::atv_riders_arm;
+    return A::Is("on") || A::Is("bind_ride_off") || A::Is("reveal_ride_off");
+}
+bool HostFirstJoin();
+bool DriverFirstJoin();
+
 // Host
-bool HostFixture();    // the kerfur beside the ATV (a kerfur of the save's own for `join`); posts `kerfur-eid`
+bool HostFixture();    // the kerfur beside the ATV (step 0's when that ran); posts `kerfur-eid`
 bool HostRide(const Cur& cur);       // steps 1, 2 and 4 on the host
 bool HostDrive();                    // step 3 on the host
 bool HostRejoin();                   // waits the observer's leaving and return; names the key and the rider again
