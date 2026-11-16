@@ -107,13 +107,13 @@ performs (`coop/props/prop_drop_intent`):
 - **Births the client cannot avoid.** A reel ejected from a caddy, a module or a drive taken from
   a rack, an item extracted from a container all materialise on the client first; they go
   through the same door, class-checked at the host, born asleep where the class needs it.
-- **Births a player asked for.** The sandbox spawn menu and the toolgun. These cannot be named by
-  class -- the menu is the whole catalog, and the world's own spawners, morphs and impacts mint
-  those same classes per peer, so a class test would double the world. They are admitted on
-  AUTHORSHIP instead: the birth seam asks whether a player's own spawn verb is on the stack, which
-  is a fact only that instant holds, since the VM still has the calling Blueprint frame there
-  (`coop/props/prop_spawn_authoring`). Such a birth crosses as an ordinary drop intent and is NOT
-  slept on the host -- it was dropped at the player's aim and must fall there as it falls here.
+- **Births a player asked for.** The sandbox spawn menu, the toolgun, and the crowbar a pry hands back (its begin
+  destroys the held one and its end spawns a new one on the prying player's game only). These cannot be named by class
+  -- the menu is the whole catalog, and the world's own spawners, morphs and impacts mint those same classes per peer,
+  so a class test would double the world. They are admitted on AUTHORSHIP instead: the birth seam asks whether a
+  player's own spawn verb is on the stack, which is a fact only that instant holds, since the VM still has the calling
+  Blueprint frame there (`coop/props/prop_spawn_authoring`). Such a birth crosses as an ordinary drop intent and is
+  NOT slept on the host -- it was dropped at the player's aim and must fall there as it falls here.
 
 Any other keyed prop a client creates is dropped at that door and never reaches the host: that is
 the world's own churn, which every peer produces for itself.
