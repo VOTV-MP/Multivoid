@@ -28,6 +28,7 @@ using coop::dev::atv_drive::kReachCm;
 using coop::dev::atv_drive::Me;
 using coop::dev::atv_drive::OnGt;
 using coop::dev::atv_drive::PressAtv;
+using coop::dev::atv_drive::ReadFloat;
 using coop::dev::atv_drive::ReadVitals;
 using coop::dev::atv_drive::Vitals;
 

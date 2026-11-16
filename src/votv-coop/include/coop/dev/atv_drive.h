@@ -37,6 +37,9 @@ void* Atv(const std::wstring& key);
 // A function with no parameters, or one key parameter left zero, called as the engine calls it. Game thread.
 bool CallByName(void* obj, const wchar_t* name);
 
+// The float property `name` of `o` read into `v`; false when `o` is null or its class has no such property. Game thread.
+bool ReadFloat(void* o, const wchar_t* name, float& v);
+
 // The director walks the player beside the ATV; false with `why` set when it did not arrive.
 bool WalkToAtv(const std::wstring& key, std::string& why);
 
