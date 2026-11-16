@@ -3,6 +3,7 @@
 #include "ue_wrap/core/gc_pin.h"
 #include "coop/session/shutdown.h"
 
+#include "coop/element/registry.h"  // ReportBandPeaksAtSessionEnd
 #include "coop/input/game_window_proc.h"
 #include "coop/net/session.h"
 #include "ui/overlay_backend.h"
@@ -107,6 +108,7 @@ void DoShutdown() {
             g_session, coop::input::game_window_proc::Hwnd());
 
     if (g_session) g_session->Stop();
+    coop::element::Registry::Get().ReportBandPeaksAtSessionEnd();  // quitting skips the teardown, so DisconnectAll never says it
     ::Sleep(100);  // let detached pollers observe g_shuttingDown
     ue_wrap::game_thread::Uninstall();
     ue_wrap::uobject_listeners::Uninstall();
