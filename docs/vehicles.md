@@ -99,14 +99,14 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
   are asked of the host the same way, by the module's value. The host fits one its copy does not hold and takes off one
   it does, writes its `Modules` and runs `updUpgrades`. A fit's module must be of the class the sender's hand last held,
   once per item. Any refusal after that hand check (a duplicate, the sender out of reach or not alive, the ATV gone) is refunded
-  with that module's prop, at the ATV or, when it is gone, at the sender.
+  with that module's prop, above the ATV or, when it is gone, above the sender.
   A copy that is adopted holding no state of the host's asks for it (request op 6), and the host answers with its state.
 - **The battery.** `battery` is a charge, -1 with none fitted. A fit (`playerUsedOn` with a `prop_atvcarbattery_C` in
   hand) and an unscrew (`unscrewPanel`'s battery branch, which drops the battery as a prop with its charge) run on the
   client's copy and are asked of the host: op 5 with the charge the copy took, op 7 for the unscrew. The host fits only
   into an ATV with none and only from a hand that last held a battery (`no_item` otherwise, and nothing is refunded);
   once that check has passed, any refusal of the fit (`full`, out of reach, not alive, the ATV gone) is refunded with a
-  battery prop at the request's charge, beside the ATV or at the sender when it is gone; the host holds no number for the
+  battery prop at the request's charge, above the ATV or above the sender when it is gone; the host holds no number for the
   battery the sender held, so the charge is the sender's claim, kept within 0..100. It takes out only a fitted battery (`not_held` otherwise), and spawns the battery prop itself, at its own copy's
   charge and at the ATV's `Billboard4`, where the game's own unscrew spawns it; a spawn that fails refuses the request
   and changes nothing. The client's own copy of the unscrew spawns a battery too: it is recorded as it is born

@@ -59,6 +59,7 @@ bool BatteryRefundOff() { static const bool on = Arm("battery_refund_off"); retu
 bool BatteryJudgeOff() { static const bool on = Arm("battery_judge_off"); return on; }   // a battery fit is not judged against the hand
 
 constexpr float kMax = 100.f;      // a full tank, full health
+constexpr float kRefundLiftCm = 120.f;   // a refund spawns this far above the ATV, or above the sender's pawn when the ATV is gone
 constexpr float kReachCm = 800.f;  // a sender's puppet from its ATV, when it is not seated in it
 // A sender's item acts are served at {4, 4} a second (the chipper's pour and the cremator lever's bound), from a queue of 8.
 constexpr N::IntentBudget kBudget{4.0f, 4.0f};
@@ -136,17 +137,17 @@ bool InReach(uint8_t slot, void* atv) {
     return dx * dx + dy * dy + dz * dz <= kReachCm * kReachCm;
 }
 
-// The spawn place of a refund: 120 cm above the ATV, or, when the ATV is gone, at the sender's pawn (its puppet's actor,
-// read as InReach reads it).
+// The spawn place of a refund: 120 cm above the ATV, or, when the ATV is gone, 120 cm above the sender's pawn (its puppet's
+// actor, read as InReach reads it), so the prop never appears inside the pawn's capsule.
 bool RefundPlace(uint8_t slot, void* atv, ue_wrap::FVector& at) {
-    if (atv) {
-        if (!ue_wrap::engine::TryGetActorLocation(atv, at)) return false;
-        at.Z += 120.f;
-        return true;
+    void* body = atv;
+    if (!atv) {
+        coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+        body = rp && rp->valid() ? rp->GetActor() : nullptr;
     }
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
-    void* const body = rp && rp->valid() ? rp->GetActor() : nullptr;
-    return body && ue_wrap::engine::TryGetActorLocation(body, at);
+    if (!body || !ue_wrap::engine::TryGetActorLocation(body, at)) return false;
+    at.Z += kRefundLiftCm;
+    return true;
 }
 
 // A fit the host would not make is given back: the module's prop at `at`, as the take-off hands one over.
