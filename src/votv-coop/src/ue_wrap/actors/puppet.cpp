@@ -395,21 +395,31 @@ void DriveKerfurBodyYaw(void* npcActor, float yaw) {
 // memory access stays inside ue_wrap; coop/ callers see only the typed API.
 static constexpr size_t kUMovementComponent_Velocity = 0xC4;
 
+namespace {
+
+// The character's CharacterMovement component, live, or null (a dead actor, a missing or dying component): the one
+// read every CMC accessor below goes through.
+void* LiveCmc(void* actor) {
+    if (!actor || !R::IsLive(actor)) return nullptr;
+    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
+    return (cmc && R::IsLive(cmc)) ? cmc : nullptr;
+}
+
+}  // namespace
+
 void DriveCharacterMovement(void* puppetActor,
                             const FVector& worldVelocity,
                             bool inAir) {
-    if (!puppetActor || !R::IsLive(puppetActor)) return;
-    void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return;
+    void* cmc = LiveCmc(puppetActor);
+    if (!cmc) return;
     WriteAt<FVector>(cmc, kUMovementComponent_Velocity, worldVelocity);
     const uint8_t mm = inAir ? P::off::kMOVE_Falling : uint8_t{1};  // MOVE_Walking
     WriteAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode, mm);
 }
 
 void DriveSprintWalkSpeed(void* puppetActor, bool sprinting) {
-    if (!puppetActor || !R::IsLive(puppetActor)) return;
-    void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return;
+    void* cmc = LiveCmc(puppetActor);
+    if (!cmc) return;
     // MaxWalkSpeed, for footstep-loudness parity. lib_C::step scales the step sound by
     // clamp(CMC.MaxWalkSpeed / speedVolume, 0.5, 2) with speedVolume defaulting to 400 -- it reads
     // the SETTING, not Velocity. A parked puppet CMC never runs mainPlayer's updateSpeed, so
@@ -430,25 +440,22 @@ void DriveSprintWalkSpeed(void* puppetActor, bool sprinting) {
 }
 
 bool ReadCharacterIsFalling(void* actor) {
-    if (!actor || !R::IsLive(actor)) return false;
-    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return false;
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
     const uint8_t mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
     return mode == P::off::kMOVE_Falling;
 }
 
 bool ReadCharacterIsWalking(void* actor, bool& walking) {
-    if (!actor || !R::IsLive(actor)) return false;
-    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return false;
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
     walking = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode) == P::off::kMOVE_Walking;
     return true;
 }
 
 bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity) {
-    if (!actor || !R::IsLive(actor)) return false;
-    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return false;
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
     mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
     velocity = ReadAt<FVector>(cmc, kUMovementComponent_Velocity);
     return true;
@@ -464,12 +471,9 @@ void DisableCharacterTicks(void* actor) {
 }
 
 void DisableMovementTick(void* actor) {
-    if (!actor || !R::IsLive(actor)) return;
     // CMC tick off, to stop gravity and velocity integration so the networked SetActorLocation
     // drive is authoritative; we own CMC velocity and movement mode.
-    if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
-        if (R::IsLive(cmc)) E::SetComponentTickEnabled(cmc, false);
-    }
+    if (void* cmc = LiveCmc(actor)) E::SetComponentTickEnabled(cmc, false);
 }
 
 bool SetBurningFlame(void* mainPlayerActor, bool on) {
