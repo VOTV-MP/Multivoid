@@ -11,8 +11,6 @@
 
 #pragma once
 
-#include "ue_wrap/core/types.h"
-
 #include <cstdint>
 #include <string>
 
@@ -25,12 +23,9 @@ void SetResolver(Resolver fn);
 // What the owner did for an eid, told to the observer after each outcome: the mirror taken off its ride, riding, or held
 // (no mirror bound yet, the mirror hidden, no ATV to sit on or a sit that did not attach, a class that is no kerfur).
 // `sitarrowCm` is the kerfur's distance to the ATV's `sitarrow` at a ride; `wasAttached` at an off says the mirror was still
-// attached to an ATV when the clear began. kPlaced is told at the first pose the stream applies to the mirror after an off:
-// `placedCm` is the mirror's distance to the streamed position it was just written to. Null = no call and none of the reads.
-// Game thread.
-enum Outcome : int { kOff = 0, kRides = 1, kHeldUnbound = 2, kHeldHidden = 3, kHeldNoAtv = 4, kRefusedClass = 5, kPlaced = 6 };
-using Observer = void (*)(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached,
-                          float placedCm);
+// attached to an ATV when the clear began. Null = no call and none of the reads. Game thread.
+enum Outcome : int { kOff = 0, kRides = 1, kHeldUnbound = 2, kHeldHidden = 3, kHeldNoAtv = 4, kRefusedClass = 5 };
+using Observer = void (*)(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached);
 void SetObserver(Observer fn);
 
 // The kerfur `eid` rides the ATV under `key`. Level-wise: the same answer again is cheap and safe.
@@ -50,11 +45,7 @@ void OnRevealed(uint32_t eid);
 // rotation and movement are not written. A memory test, no engine call.
 bool HoldsPose(uint32_t eid);
 
-// The stream wrote the mirror of `eid` at `streamed` (the pose drive, after its location write). While an observer is set and
-// the mirror was just unseated, the first such write is told to it as kPlaced; otherwise one emptiness test. Game thread.
-void OnPoseApplied(uint32_t eid, void* actor, const ue_wrap::FVector& streamed);
-
-// The session ended: every row is dropped; the mirrors are destroyed by the teardown.
+// The session ended: every row is dropped; the mirrors are destroyed by the teardown. Game thread.
 void OnDisconnect();
 
 }  // namespace coop::npc_ride

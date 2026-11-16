@@ -54,7 +54,6 @@ struct Pending {
 };
 
 std::vector<Pending> g_pending;
-std::vector<coop::net::EntitySpawnPayload> g_heldSpawns;   // fresh-spawn payloads parked while the riders drill holds binds
 std::chrono::steady_clock::time_point g_lastScan{};
 bool g_snapshotDelivered = false;
 bool g_ghostSwept        = false;
@@ -275,41 +274,13 @@ void ArmAdoption(uint32_t eid, const std::wstring& classW, void* actorClass,
             eid, classW.c_str());
 }
 
-bool HoldFreshSpawn(const coop::net::EntitySpawnPayload& payload) {
-    UE_ASSERT_GAME_THREAD("npc_adoption::HoldFreshSpawn");  // no-mutex: g_heldSpawns is GT-only
-    if (!coop::dev::atv_riders_join_hold::BindHeld()) return false;
-    for (coop::net::EntitySpawnPayload& held : g_heldSpawns) {
-        if (held.elementId == payload.elementId) { held = payload; return true; }
-    }
-    g_heldSpawns.push_back(payload);
-    UE_LOGI("npc-adopt: fresh spawn eid=%u held until the riders drill releases the binds", payload.elementId);
-    return true;
-}
-
-bool DropHeldSpawn(uint32_t eid) {
-    UE_ASSERT_GAME_THREAD("npc_adoption::DropHeldSpawn");
-    for (size_t i = 0; i < g_heldSpawns.size(); ++i) {
-        if (g_heldSpawns[i].elementId != eid) continue;
-        g_heldSpawns.erase(g_heldSpawns.begin() + static_cast<std::ptrdiff_t>(i));
-        return true;
-    }
-    return false;
-}
-
 void Tick() {
     UE_ASSERT_GAME_THREAD("npc_adoption::Tick");  // no-mutex: g_pending + latches are GT-only
     auto* s = coop::npc_sync::GetSession();
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only
 
-    // (0) The ATV riders drill's hold keeps a rejoined observer's binds back until its first applied ATV stamp: the parked
-    // fresh spawns are replayed once it lets go, the adoption scan below runs under the same hold.
-    if (!g_heldSpawns.empty() && !coop::dev::atv_riders_join_hold::BindHeld()) {
-        std::vector<coop::net::EntitySpawnPayload> replay;
-        replay.swap(g_heldSpawns);
-        for (const coop::net::EntitySpawnPayload& p : replay) coop::npc_mirror::OnEntitySpawn(p);
-    }
-
-    // (1) Resolve pending adoptions (throttled; only while entries exist).
+    // (1) Resolve pending adoptions (throttled; only while entries exist). The ATV riders drill's hold keeps a rejoined
+    // observer's scan back until its first applied ATV stamp.
     if (!g_pending.empty() && !coop::dev::atv_riders_join_hold::BindHeld() && MsSince(g_lastScan) >= kPollIntervalMs) {
         g_lastScan = std::chrono::steady_clock::now();
         ResolvePending();
@@ -368,7 +339,6 @@ void OnClientWorldReady() {
     // re-sweeps.
     coop::npc_mirror::PruneDeadClientMirrors();
     g_pending.clear();
-    g_heldSpawns.clear();
     g_snapshotDelivered = false;
     g_ghostSwept = false;
     coop::kerfur_census::Reset();  // DIAGNOSTIC: re-census the new world
@@ -377,7 +347,6 @@ void OnClientWorldReady() {
 void OnSessionEnd() {
     UE_ASSERT_GAME_THREAD("npc_adoption::OnSessionEnd");
     g_pending.clear();
-    g_heldSpawns.clear();
     g_snapshotDelivered = false;
     g_ghostSwept = false;
     coop::kerfur_census::Reset();  // DIAGNOSTIC

@@ -105,8 +105,8 @@ void OnBodyOutcome(uint8_t slot, int outcome, const std::wstring& key, float off
     DE::Note(DE::kBodySeat, slot, outcome, DE::KeyTag(key), offsetCm, onAtv ? 1.f : 0.f, collision ? 1.f : 0.f);
 }
 
-void OnRideOutcome(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached, float placedCm) {
-    DE::Note(DE::kRide, static_cast<int32_t>(eid), outcome, DE::KeyTag(key), sitarrowCm, wasAttached ? 1.f : 0.f, placedCm);
+void OnRideOutcome(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached) {
+    DE::Note(DE::kRide, static_cast<int32_t>(eid), outcome, DE::KeyTag(key), sitarrowCm, wasAttached ? 1.f : 0.f);
 }
 
 // The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted,

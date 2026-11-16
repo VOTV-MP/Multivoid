@@ -30,7 +30,7 @@ inline constexpr const char* kTag = "atv-riders";
 inline constexpr uint8_t kSlotH = 0, kSlotO = 1, kSlotC = 2;   // the host, the observer that rejoins, the driver
 inline constexpr float kRigidCm = 5.f;                         // a body's or a kerfur's drift from its seat, at most
 inline constexpr float kDriveCm = 600.f;                       // the host's ATV has moved this far from where the drive began
-inline constexpr float kPlacedCm = 50.f;                       // an unseated mirror's next pose puts it this near the streamed position
+inline constexpr float kUnseatPlacedCm = 150.f;               // an unseated mirror stands at most this far from the host's kerfur (the stream's lag)
 
 inline constexpr int kJoinS = 480;     // a peer's boot, join and world load
 inline constexpr int kSignalS = 240;   // a step of another peer
@@ -39,7 +39,9 @@ inline constexpr int kRideS = 240;     // the host's kerfur walks to the ATV and
 inline constexpr int kDriveS = 180;    // the ATV's drive to its 600 cm
 inline constexpr int kRejoinS = 480;   // the observer's restart, boot and join
 inline constexpr int kEventS = 60;     // a decision event of one step
-inline constexpr int kBarrierS = 60;   // a barrier between peers that are up and past the step before it
+// A barrier between peers that are up and past the step before it. The skew at a barrier is the gap between the peers' previous
+// steps, not measured: a peer later than this ends the run INVALID, never with a wrong verdict.
+inline constexpr int kBarrierS = 60;
 
 enum Role : int { kHost = 0, kObserver = 1, kDriver = 2, kRoles = 3 };
 const char* RoleName(Role r);
@@ -61,8 +63,9 @@ void StepPass(int step, const std::string& what);
 bool ParseMark(const std::string& text, const char* what, uint32_t& out);   // a peer's number mark; malformed: INVALID, false
 // Waits for a peer's mark, saying first what it waits for and for how long (`ctx` names the wait's frame, e.g. a barrier).
 bool AwaitMark(const std::string& name, std::string& out, int boundS, const char* ctx = nullptr);
-// This peer marks `name`; waits for the other two, who are already up and past the step before (kBarrierS).
-bool Barrier(const char* name, int boundS = kBarrierS);
+// This peer marks `name` (with `text`); waits for the other two, who are already up and past the step before (kBarrierS). When
+// `texts` is given (an array of kRoles), each other peer's mark text is stored at its role.
+bool Barrier(const char* name, int boundS = kBarrierS, const std::string& text = {}, std::string* texts = nullptr);
 
 // Polls `fn` each step: 1 done, 0 not yet, -1 stop (a verdict was said). False when the run ended, `fn` stopped it or the bound
 // passed (INVALID said, with `atBound`'s text after the bound's own when one is given).
@@ -96,6 +99,9 @@ bool ReadRoot(ue_wrap::FVector& out);   // the ATV root under g_key; false when 
 // root (cm, world axes). The reads are the copy's own: on the host the kerfur is the game's, on a client the mirror.
 struct KerfurRead {
     bool exists = false, parentIsAtv = false, hidden = false;
+    bool attached = false;                 // attached to any actor
+    bool located = false;                  // `at` read
+    float at[3] = {0.f, 0.f, 0.f};         // its world location
     float sitarrowCm = -1.f;
     float off[3] = {0.f, 0.f, 0.f}, sitOff[3] = {0.f, 0.f, 0.f};
 };
@@ -133,6 +139,11 @@ bool HostRide(const Cur& cur);       // steps 1, 2 and 4 on the host
 bool HostDrive();                    // step 3 on the host
 bool HostRejoin();                   // waits the observer's leaving and return; names the key and the rider again
 bool LeaveHost(const Cur& cur);      // step 6
+// Step 6's placement, judged against the host at the `arm8` barrier. The host writes its kerfur's world location as the barrier's
+// mark text (HostKerfurPlace says it, INVALID when it does not read); a client, when its barrier has read that text, judges its
+// kerfur mirror (JudgeUnseatPlacement): not attached, within kUnseatPlacedCm of the host's kerfur, else FAIL `unseat_hold`.
+bool HostKerfurPlace(std::string& text);
+bool JudgeUnseatPlacement(const std::string& hostPlace);
 bool HostSits(const Cur& cur);       // step 7: the host sits (its kerfur came off a client's ride first), then the two reads
 bool HostDriveSeated();              // step 7's second leg on the host: its own 600 cm drive in reverse, then the read at its end
 // The control run (`drive_control`): step 7 is the green until the host sits, but the host's kerfur takes no seat, so leg B

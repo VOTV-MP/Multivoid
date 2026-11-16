@@ -19,8 +19,6 @@
 #include <cstdint>
 #include <string>
 
-namespace coop::net { struct EntitySpawnPayload; }
-
 namespace coop::npc_adoption {
 
 // Record a pending adoption for a save-persisted EntitySpawn (called from npc_mirror::OnEntitySpawn
@@ -31,15 +29,6 @@ namespace coop::npc_adoption {
 void ArmAdoption(uint32_t eid, const std::wstring& classW, void* actorClass,
                  float locX, float locY, float locZ,
                  float rotPitch, float rotYaw, float rotRoll);
-
-// A fresh-spawn EntitySpawn (no local twin) waits while the ATV riders drill holds a rejoined observer's binds
-// (coop/dev/atv_riders_join_hold): its payload is parked, once per eid, and Tick() replays it through
-// npc_mirror::OnEntitySpawn at the release. True when parked (the caller returns), false when nothing is held. The spawn is
-// deferred, never refused. Game thread.
-bool HoldFreshSpawn(const coop::net::EntitySpawnPayload& payload);
-
-// Drops the parked spawn of `eid` (its EntityDestroy arrived while it waited); true when one was parked. Game thread.
-bool DropHeldSpawn(uint32_t eid);
 
 // Per net-pump tick driver (called from npc_mirror::TickClientNpcs). Two jobs, both NO-OP once
 // converged (single integer compares -> zero steady-state cost):

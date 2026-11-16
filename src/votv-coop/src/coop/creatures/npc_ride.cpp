@@ -35,7 +35,6 @@ struct Row {
 };
 
 std::unordered_map<uint32_t, Row> g_rows;
-std::unordered_map<uint32_t, std::wstring> g_placeWatch;   // eid -> the ATV key it was unseated from, until its next pose (observer only)
 Resolver g_resolve = nullptr;
 Observer g_observer = nullptr;
 
@@ -48,7 +47,7 @@ void Notify(uint32_t eid, int outcome, const Row& row, void* actor, void* atv, b
         const float dx = at.X - seat.X, dy = at.Y - seat.Y, dz = at.Z - seat.Z;
         sitarrowCm = std::sqrt(dx * dx + dy * dy + dz * dz);
     }
-    g_observer(eid, outcome, row.key, sitarrowCm, wasAttached, 0.f);
+    g_observer(eid, outcome, row.key, sitarrowCm, wasAttached);
 }
 
 // The live mirror actor of `eid`, or null.
@@ -77,7 +76,6 @@ void Unseat(uint32_t eid, Row& row, const wchar_t* keyText, void* actor) {
     if (actor && row.atvAttached) {
         K::UnseatWithoutCar(actor);
         if (live) ue_wrap::atv::ForgetSittingKerfur(live, actor);
-        if (g_observer) g_placeWatch[eid] = row.key;
         UE_LOGI("npc_ride: eid %u off %ls (unseat without car)", eid, keyText);
     } else {
         if (!actor && live && row.kerfur) ue_wrap::atv::ForgetSittingKerfur(live, row.kerfur);
@@ -164,7 +162,6 @@ void SetObserver(Observer fn) { g_observer = fn; }
 void Set(uint32_t eid, const std::wstring& key) {
     UE_ASSERT_GAME_THREAD("npc_ride::Set");
     if (eid == 0u) return;
-    g_placeWatch.erase(eid);   // a new ride ends the wait for the pose after the last unseat
     Row& row = g_rows[eid];
     if (row.key != key) {
         row.key = key;
@@ -178,6 +175,12 @@ void Clear(uint32_t eid, const std::wstring& key) {
     UE_ASSERT_GAME_THREAD("npc_ride::Clear");
     const auto it = g_rows.find(eid);
     if (it == g_rows.end() || it->second.key != key) return;
+    static const bool s_redLatch = coop::dev::atv_riders_arm::Is("unseat_latch_off");   // the riders drill's red: the unseat leaves the latch set
+    if (s_redLatch) {
+        Row kept = it->second;   // the unseat clears this copy; the row stays and keeps holding the mirror's pose
+        Unseat(eid, kept, key.c_str(), LiveMirrorActor(eid));
+        return;
+    }
     Row row = std::move(it->second);
     g_rows.erase(it);
     Unseat(eid, row, key.c_str(), LiveMirrorActor(eid));
@@ -207,31 +210,15 @@ bool HoldsPose(uint32_t eid) {
     return it != g_rows.end() && LiveLatch(it->second) != nullptr;
 }
 
-void OnPoseApplied(uint32_t eid, void* actor, const ue_wrap::FVector& streamed) {
-    if (g_placeWatch.empty()) return;
-    const auto it = g_placeWatch.find(eid);
-    if (it == g_placeWatch.end()) return;
-    const std::wstring key = std::move(it->second);
-    g_placeWatch.erase(it);
-    if (!g_observer) return;
-    float placedCm = -1.f;   // -1: the location did not read
-    ue_wrap::FVector at{};
-    if (actor && E::TryGetActorLocation(actor, at)) {
-        const float dx = at.X - streamed.X, dy = at.Y - streamed.Y, dz = at.Z - streamed.Z;
-        placedCm = std::sqrt(dx * dx + dy * dy + dz * dz);
-    }
-    g_observer(eid, kPlaced, key, 0.f, false, placedCm);
-}
-
 // A native ATV copy outlives the session and the mirrors are destroyed after this runs: each live ATV is told to forget the
 // kerfur it was seated with (no engine call on the mirror) so its own dismount never reaches a destroyed one.
 void OnDisconnect() {
+    UE_ASSERT_GAME_THREAD("npc_ride::OnDisconnect");
     for (const auto& kv : g_rows) {
         void* const live = LiveLatch(kv.second);
         if (live && kv.second.kerfur) ue_wrap::atv::ForgetSittingKerfur(live, kv.second.kerfur);
     }
     g_rows.clear();
-    g_placeWatch.clear();
 }
 
 }  // namespace coop::npc_ride

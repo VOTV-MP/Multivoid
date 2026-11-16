@@ -161,10 +161,14 @@ KerfurRead ReadKerfur(uint32_t eid) {
         k.hidden = coop::mirror_defer::HideInfoOf(eid, hide);
         void* atv = AD::Atv(g_key);
         void* parent = nullptr;
-        k.parentIsAtv = atv && E::GetAttachParentActor(actor, parent) && parent == atv;
+        const bool parentRead = E::GetAttachParentActor(actor, parent);
+        k.attached = parentRead && parent != nullptr;
+        k.parentIsAtv = atv && parentRead && parent == atv;
         FVector at{}, seat{}, root{};
         FRotator rot{};
-        if (atv && E::TryGetActorLocation(actor, at) && ue_wrap::atv::GetSitArrowLocation(atv, seat)) k.sitarrowCm = Dist(at, seat);
+        k.located = E::TryGetActorLocation(actor, at);
+        if (k.located) k.at[0] = at.X, k.at[1] = at.Y, k.at[2] = at.Z;
+        if (atv && k.located && ue_wrap::atv::GetSitArrowLocation(atv, seat)) k.sitarrowCm = Dist(at, seat);
         if (atv && k.sitarrowCm >= 0.f && ue_wrap::atv::GetRootTransform(atv, root, rot)) {
             k.off[0] = at.X - root.X, k.off[1] = at.Y - root.Y, k.off[2] = at.Z - root.Z;
             k.sitOff[0] = seat.X - root.X, k.sitOff[1] = seat.Y - root.Y, k.sitOff[2] = seat.Z - root.Z;

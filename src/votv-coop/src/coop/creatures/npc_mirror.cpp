@@ -20,6 +20,7 @@
 #include "coop/creatures/kerfur_reconcile.h"  // ArmPendingRetireByEid
 #include "coop/creatures/npc_mirror_brain.h"  // PrepareBirth / SetUpPresentation: a parked family's mirror has its brain off
 #include "coop/props/join_membership_sweep.h"  // TickClientReconcile
+#include "coop/dev/atv_riders_join_hold.h"  // ParkSpawn / DropParked: the riders drill's bind hold
 #include "coop/dev/kerfur_census.h"  // the one-shot kerfur census
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
@@ -264,7 +265,7 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                                         payload.rotPitch, payload.rotYaw, payload.rotRoll);
         return;
     }
-    if (coop::npc_adoption::HoldFreshSpawn(payload)) return;   // parked, replayed when the drill's hold lets go
+    if (coop::dev::atv_riders_join_hold::ParkSpawn(payload)) return;   // parked, replayed when the drill's hold lets go
     SpawnFreshNpcMirror(classW, actorClass, payload.elementId,
                         payload.locX, payload.locY, payload.locZ,
                         payload.rotPitch, payload.rotYaw, payload.rotRoll,
@@ -493,8 +494,8 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
         coop::element::bind_wait::GiveUp(payload.elementId, "destroyed while its class was loading");
         return;
     }
-    // A spawn parked by the riders drill's bind hold ends here: it is never spawned.
-    if (coop::npc_adoption::DropHeldSpawn(payload.elementId)) {
+    // A spawn parked by the riders drill's bind hold ends here (its bind_wait mark is given up): it is never spawned.
+    if (coop::dev::atv_riders_join_hold::DropParked(payload.elementId)) {
         UE_LOGI("npc-sync[client OnDestroy]: eid=%u -- its spawn was held and is dropped; it will never spawn",
                 payload.elementId);
         return;

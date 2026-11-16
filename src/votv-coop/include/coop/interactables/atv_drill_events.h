@@ -39,7 +39,7 @@ enum Event : int {
     kPoseApplied,  // a pose block corrected the copy. i0 KeyTag, i1 role (0 the host, applying the syncing client's block; 1 a client, taking a placed block), i2 the actor's object slot, f0 the block's riderEid, f1 1 when it came from the ATV's syncer
     kSeatChange,   // a seat or rider change of an entry was announced. i0 occupantBefore<<8|occupantAfter, i1 riderAfter, i2 subscribers that ran, i3 KeyTag, f0 riderBefore
     kBodySeat,     // a body owner's outcome for a slot. i0 slot, i1 (0 released, 1 attached, 2 held no body, 3 resolve failed), i2 KeyTag, f0 the body's distance from the ATV root (cm, at an attach), f1 isOnAtv (0/1), f2 collision (0/1)
-    kRide,         // a ride owner's outcome for an eid. i0 eid, i1 (0 off, 1 rides, 2 held unbound, 3 held hidden, 4 held no atv, 5 refused class, 6 the first pose applied after an off), i2 KeyTag, f0 the kerfur's distance to sitarrow (cm, at a ride), f1 at an off: the mirror was still attached when the clear began (1/0), f2 at a 6: the mirror's distance to the host's streamed position after that pose (cm)
+    kRide,         // a ride owner's outcome for an eid. i0 eid, i1 (0 off, 1 rides, 2 held unbound, 3 held hidden, 4 held no atv, 5 refused class), i2 KeyTag, f0 the kerfur's distance to sitarrow (cm, at a ride), f1 at an off: the mirror was still attached when the clear began (1/0)
     kStampBuilt,   // HOST: a block was built. i0 KeyTag, i1 riderEid, i2 1 = the re-send of a syncer's block
     kInvite,       // HOST: the kerfur steps of a client's seat edge. i0 KeyTag, i1 (1 invited, 0 released, 2 turned back), i2 kerfur count
     kMirrorCancel, // CLIENT: the game's own call on a kerfur mirror was cancelled. i0 (0 getOffCar, 1 tryToOccupyCar), i1 eid

@@ -202,7 +202,6 @@ bool Npc::ApplyToEngine() {
     // same class spawned at the same place) -- no mesh-offset reconstruction (unlike RemotePlayer).
     const bool moved = E::SetActorLocation(actor, curPos_);
     const bool turned = E::SetActorRotation(actor, ue_wrap::FRotator{0.f, curYaw_, 0.f});
-    if (moved) coop::npc_ride::OnPoseApplied(GetId(), actor, curPos_);
     if (refreshesFloor_ && moved) RefreshFloor(actor);
     // Drive the mirror's OWN CMC so its AnimBP reads the right Velocity + MovementMode (the native
     // locomotion path -- the same fields the host NPC's possessed CMC carries). Reconstruct planar
