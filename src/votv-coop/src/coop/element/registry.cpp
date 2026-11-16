@@ -328,9 +328,20 @@ void Registry::NoteReleased_(ElementId id) {
     if (m_bandLive[s] > 0) --m_bandLive[s];
 }
 
-void Registry::LogBandPeaks_() const {
+void Registry::LogBandPeaks_() {
+    // Said only when some live or peak number differs from the last line, so a repeated leave or a
+    // quit after a session's end stays silent.
+    bool changed = false;
+    for (size_t s = 0; s < kBandStats; ++s) {
+        changed = changed || m_bandLive[s] != m_bandShownLive[s] || m_bandPeak[s] != m_bandShownPeak[s];
+    }
+    if (!changed) return;
+    for (size_t s = 0; s < kBandStats; ++s) {
+        m_bandShownLive[s] = m_bandLive[s];
+        m_bandShownPeak[s] = m_bandPeak[s];
+    }
     // Each entry reads live/peak/cap, so a drain after a peak shows. The host range always, a peer
-    // band only once it held an id. 17 entries at most, 30 bytes each.
+    // band only once it held an id. 1 + kMaxPeers entries at most, under 24 bytes each.
     char line[512];
     int n = std::snprintf(line, sizeof line, "host=%u/%u/%u", m_bandLive[0], m_bandPeak[0], BandStatCap(0));
     for (size_t s = 1; s < kBandStats && n > 0 && static_cast<size_t>(n) < sizeof line; ++s) {

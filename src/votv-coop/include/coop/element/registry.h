@@ -114,7 +114,7 @@ public:
     // band reads its own mints, and the host's table also reads each client's band (the mirrors of what
     // that client minted). Said from the allocation that moved a peak, at most once a minute, and here
     // once at the session's end, which then restarts the peaks from the live counts. No line when no
-    // id was ever held.
+    // id was ever held, and none when no number changed since the last line.
     void ReportBandPeaksAtSessionEnd();
 
     // Copy the (actor, id, internal index, mirror flag) tuple of every allocated Element of the
@@ -170,7 +170,10 @@ private:
     std::chrono::steady_clock::time_point m_bandLastLog = std::chrono::steady_clock::now();
     void NoteHeld_(ElementId id);       // m_mutex held: an id entered the table
     void NoteReleased_(ElementId id);   // m_mutex held: an id left the table
-    void LogBandPeaks_() const;         // m_mutex held
+    // The numbers of the last line said, so an unchanged state is not said again.
+    uint32_t m_bandShownLive[kBandStats] = {};
+    uint32_t m_bandShownPeak[kBandStats] = {};
+    void LogBandPeaks_();               // m_mutex held
 
     // Pre-populate the host list with the whole host range and the local list with the pre-slot
     // band, once at construction.
