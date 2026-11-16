@@ -1,4 +1,5 @@
-// coop/dev/traffic_census.h -- [dev] what this peer receives, by kind, in packets and wire bytes (env VOTVCOOP_TRAFFIC_CENSUS=1).
+// coop/dev/traffic_census.h -- [dev] what this peer receives, by kind, in packets and wire bytes (the dev row
+// traffic_census, env twin VOTVCOOP_TRAFFIC_CENSUS; DEV diagnostic).
 //
 // Purpose: the measurement a traffic optimisation is judged against. Each inbound packet is counted at Session::HandleMessage,
 // after the slot check: a stream packet under its MsgType, a reliable under its ReliableKind, each with the datagram's full

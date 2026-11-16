@@ -207,6 +207,8 @@ CFG_ENUM(remover_drill, "remover_drill", "dev", "off", "off|granted|withheld", "
 #include "coop/config/config_registry_rows_dev_chat.inc"
 CFG_FLAG(wire_census, "wire_census", "dev", false, "VOTVCOOP_WIRE_CENSUS",
     "Developer: log the wire census every second (the wirewindow probe).")
+CFG_FLAG(traffic_census, "traffic_census", "dev", false, "VOTVCOOP_TRAFFIC_CENSUS",
+    "Developer: log what this peer receives, by kind in packets and bytes, every ten seconds.")
 CFG_FLAG(ban_drill, "ban_drill", "dev", false, "VOTVCOOP_BAN_DRILL",
     "Ban drill (host only): when a client has finished joining, ban slot 1 once through the "
     "moderation verb and report whether the ban was stored and the seat closed. It writes the "

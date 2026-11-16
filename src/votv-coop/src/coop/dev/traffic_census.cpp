@@ -2,6 +2,8 @@
 
 #include "coop/dev/traffic_census.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/net_stats.h"
 #include "ue_wrap/core/log.h"
 
@@ -9,7 +11,6 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 
 namespace coop::dev::traffic_census {
@@ -60,7 +61,7 @@ void FlushTable(Row* rows, char tag, unsigned sinceS) {
 }  // namespace
 
 bool Enabled() {
-    if (g_enabled < 0) g_enabled = std::getenv("VOTVCOOP_TRAFFIC_CENSUS") ? 1 : 0;
+    if (g_enabled < 0) g_enabled = coop::config::ResolveFlag(::coop::config_registry::rows::traffic_census) ? 1 : 0;
     return g_enabled == 1;
 }
 
