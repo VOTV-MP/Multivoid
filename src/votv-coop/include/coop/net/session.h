@@ -78,7 +78,9 @@ public:
 
     // False when the session did not start; `why` then holds the reason a player can read, which
     // is CouldNotStart with no detail when the failing site names nothing of its own.
-    bool Start(const Config& cfg, Refusal* why = nullptr);
+    // `hooks` are the game-side calls (coop/net/net_hooks.h), stored with the config before the net
+    // thread exists: a null member is a call that does nothing, and none of them is the load peer's.
+    bool Start(const Config& cfg, const NetHooks& hooks, Refusal* why = nullptr);
     // Returns once the session is stopped: a second caller, on any thread, waits for the first stop
     // to finish rather than returning while it still lingers. Start and Stop share one lock, which no
     // holder keeps while it waits on another thread that would need it.
@@ -351,10 +353,6 @@ public:
     // checks in CGame::Packet_PlayerJoinData (CGame.cpp:1956, :1973).
     using BanCheckFn = bool (*)(const char* playerId, const char* address, char* whyOut, int whyLen);
     void SetBanCheck(BanCheckFn fn) { banCheck_ = fn; }
-
-    // The game-side calls the session makes (coop/net/net_hooks.h), set once before Start spawns the
-    // net thread, for every role; a null member is a call that does nothing.
-    void SetHooks(const NetHooks& hooks) { hooks_ = hooks; }
 
     // Host: disconnect the client at peerSlot with no linger; `code` and `reason` reach the peer's
     // status callback, the code as the transport's application end reason. Runs the slot's
@@ -788,7 +786,7 @@ private:
     // the net thread.
     BanCheckFn banCheck_ = nullptr;
 
-    // The game-side calls (SetHooks); every member null until set. Read on the net thread.
+    // The game-side calls (Start's argument), stored beside cfg_ before the net thread exists.
     NetHooks hooks_{};
 
     // Client: what the host or the transport said when the link ended (the end reason decoded, and

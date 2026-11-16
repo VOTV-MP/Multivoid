@@ -11,7 +11,7 @@ int main() {
     coop::net::Config cfg;
     cfg.role = coop::net::Role::Client;
     coop::net::Refusal why{};
-    const bool ok = session.Start(cfg, &why);
+    const bool ok = session.Start(cfg, {}, &why);
     session.Stop();
     return ok ? 0 : 1;
 }

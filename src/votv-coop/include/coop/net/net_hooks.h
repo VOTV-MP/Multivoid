@@ -1,9 +1,8 @@
 // coop/net/net_hooks.h -- the game-side calls a session makes, as function pointers the host
-// program sets (Session::SetHooks). The net layer reaches no engine object: what it needs from the
+// program passes to Session::Start. The net layer reaches no engine object: what it needs from the
 // game (the host's own player element, the host's pose ledger, the drive-merge counter) is a hook,
-// and a null hook is "nothing to do", which is every hook of a program with no game behind it. The
-// precedent is Session::SetBanCheck. Set before Session::Start, for every role, and not changed
-// while a session runs.
+// and a null hook is "nothing to do", which is every hook of a program with no game behind it. They
+// are stored with the session's config, for every role, before the net thread exists.
 
 #pragma once
 

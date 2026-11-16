@@ -108,7 +108,7 @@ void Session::OnConnStatusChanged(void* info) {
     if (self) self->HandleConnStatusChanged(info);
 }
 
-bool Session::Start(const Config& cfg, Refusal* why) {
+bool Session::Start(const Config& cfg, const NetHooks& hooks, Refusal* why) {
     std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
     if (why) *why = Refusal{EndReason::CouldNotStart, {}};
     if (running_.load()) {
@@ -128,6 +128,7 @@ bool Session::Start(const Config& cfg, Refusal* why) {
         return false;
     }
     cfg_ = cfg;
+    hooks_ = hooks;
     net_stats::ResetSession();  // a new session's traffic totals start at zero
     // The measured-rate controller, unless the drill has pinned a fixed rate -- that knob is an
     // instrument, and an instrument that the controller overrides measures the controller.

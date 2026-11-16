@@ -63,7 +63,6 @@
 #include "coop/props/container_act_host.h"
 #include "coop/creatures/kerfur_command_wire.h"
 #include "coop/props/prop_act_host.h"
-#include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/trash_morph_gate.h"
@@ -74,9 +73,9 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/local_grants.h"
 #include "coop/session/net_pump.h"
-#include "coop/session/player_handshake.h"
 #include "coop/session/server_settings_sync.h"
 #include "coop/text/utf8_codec.h"
+#include "coop/session/session_hooks.h"
 #include "coop/session/session_manager.h"
 #include "coop/session/shutdown.h"
 #include "coop/server_profile/server_profile.h"
@@ -115,8 +114,6 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
-namespace cfg = coop::config;
-
 // The single networking session; off until a scenario or a menu action starts it.
 coop::net::Session g_session;
 
@@ -125,14 +122,6 @@ coop::net::Session g_session;
 bool BanCheck(const char* playerId, const char* address, char* whyOut, int whyLen) {
     return coop::ban_list::IsBanned(playerId, address, whyOut, whyLen);
 }
-
-// The session's game-side calls (Session::SetHooks): what the net layer asks of the game it runs in.
-uint32_t HostElementId() { return coop::players::Registry::Get().LocalPlayerElementId(); }
-static_assert(coop::net::kNoHostElementId == coop::element::kInvalidId, "the registry's no-element value");
-void ClientPose(coop::net::Session& s, int slot, float x, float y, float z, uint32_t stamp24) {
-    coop::movement_ledger::OnClientPose(s, slot, ue_wrap::FVector{x, y, z}, stamp24);
-}
-void DriveMerged(uint32_t eid) { coop::prop_drive_stream::dev::NoteMerged(eid); }
 
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
@@ -371,7 +360,6 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // And the trash morph gate's three verbs: a joiner's pile loads with the save, and the watch is
     // by class and name, so no pile runs a morph unjudged. Idempotent across Stop/Start.
     coop::trash_morph_gate::Install(&g_session);
-    g_session.SetHooks({&HostElementId, &ClientPose, &DriveMerged});   // every role, before Start
     if (netCfg.role == coop::net::Role::Host) {
         // Snapshot the canonical save before coop injects state (host only; clients are
         // save-blocked); synchronous, so it completes before Start.
@@ -394,7 +382,7 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // The client's connecting state is not raised here but by the browser connect actions, so the
     // loading screen is browser-join only; the env and autotest client boot reaches this function
     // directly and shows nothing.
-    const bool ok = g_session.Start(netCfg, why);
+    const bool ok = g_session.Start(netCfg, coop::session_hooks::Game(), why);
     // A session that never ran never stops, so the stop listener will not end its layer; a Start
     // refused because a session already runs must not end that one's.
     if (!ok && !g_session.running()) coop::server_settings_sync::OnSessionEnd();

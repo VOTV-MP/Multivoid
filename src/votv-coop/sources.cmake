@@ -186,6 +186,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/window_stroke_sync.cpp
     src/coop/interactables/grime_sync.cpp
     src/coop/session/boot_selftests.cpp
+    src/coop/session/session_hooks.cpp
     src/coop/session/player_handshake.cpp
     src/coop/session/player_handshake_prefs.cpp
     src/coop/session/player_handshake_nick.cpp
