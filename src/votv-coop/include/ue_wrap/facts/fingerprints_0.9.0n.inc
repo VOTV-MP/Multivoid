@@ -105,6 +105,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"atv_c", L"upgradetake", L"atv_c.upgradetake", 0xc302dbda6bf6e002ull, 0xaf1269b8742aa9b2ull},
     {L"audiocomponent", L"play", L"audiocomponent.play", 0xa6e73efb698bac63ull, 0xcbf29ce484222325ull},
     {L"badsun_c", L"remove", L"badsun_c.remove", 0x6a2d5d90ab51fa2dull, 0x00da73bc06856b90ull},
+    {L"blackfog_c", L"spawnghost", L"blackfog_c.spawnghost", 0x6a2d5d90ab51fa2dull, 0x922c3f3109167e8aull},
     {L"baocoin_c", L"bndevt__baocoin_collect_k2node_componentboundevent_1_componentbeginoverlapsignature__delegatesignature", L"baocoin_c.bndevt__baocoin_collect_k2node_componentboundevent_1_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x7aab1d014bd75c55ull},
     {L"basecleaner_trashbits_c", L"receivebeginplay", L"basecleaner_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0xf0dee50834ff2714ull},
     {L"basewindow_c", L"cleansponge", L"basewindow_c.cleansponge", 0xfc4ecccfadebd9d3ull, 0x4b904ddf15774f68ull},

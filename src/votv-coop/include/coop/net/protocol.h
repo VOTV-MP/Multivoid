@@ -4531,6 +4531,7 @@ inline constexpr uint8_t kFogActive      = 0x01;  // host has a live rolling-fog
 inline constexpr uint8_t kSuperFogActive = 0x02;  // host has a live AsuperFog_C
 inline constexpr uint8_t kPermanentFog   = 0x04;  // host's permanentFog gamerule (re-arms the scheduler)
 inline constexpr uint8_t kWindValid      = 0x08;  // the wind fields were read from a live host wind actor; the client applies wind only when set
+inline constexpr uint8_t kBlackFogActive = 0x10;  // host has a live AblackFog_C (the black fog event)
 }  // namespace fog_flags2
 
 // The red sky (RedSky): the receiver runs the same gamemode toggle (spawnRedSky) when its sky differs.
