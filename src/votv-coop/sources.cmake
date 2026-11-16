@@ -379,6 +379,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/registry_reaper.cpp
     src/coop/session/pause_guard.cpp
     src/coop/session/connect_replay.cpp
+    src/coop/session/session_gate_hold.cpp
     src/coop/session/subsystems.cpp
     src/coop/session/desk_subsystems.cpp
     src/coop/session/world_ready_answer.cpp
