@@ -108,7 +108,7 @@ void CollectTied(void* hook, coop::players::SlotMask holders) {
     for (void* p : {a, b}) {
         if (!p) continue;
         if (const int at = NextIndex(p); at >= 0) {
-            holders.ForEach([&](int slot) { g_nextHolders[static_cast<size_t>(at)].Set(slot); });
+            g_nextHolders[static_cast<size_t>(at)].Add(holders);
             continue;
         }
         if (const ue_wrap::CachedObjRef* known = Known(p)) {
@@ -123,7 +123,7 @@ void CollectTied(void* hook, coop::players::SlotMask holders) {
 }
 
 // The set holding a client's own hook's owner slot, from the mirror's key.
-coop::players::SlotMask PlayerBit(uint8_t slot) {
+coop::players::SlotMask PlayerSlots(uint8_t slot) {
     coop::players::SlotMask m;
     if (slot < coop::players::kMaxPeers) m.Set(slot);
     return m;
@@ -135,12 +135,12 @@ void TickPropClaims() {
     g_next.clear();
     g_nextHolders.clear();
     for (const Owned& o : OwnedHooks())
-        if (void* h = o.ref.Get()) CollectTied(h, PlayerBit(0));
+        if (void* h = o.ref.Get()) CollectTied(h, PlayerSlots(0));
     for (const Adopted& a : AdoptedHooks())
         if (void* h = a.ref.Get()) CollectTied(h, {});
     for (const auto& kv : Mirrors())
         if (kv.second.bitten)
-            if (void* h = kv.second.ref.Get()) CollectTied(h, kv.second.anchored ? coop::players::SlotMask{} : PlayerBit(SlotOf(kv.first)));
+            if (void* h = kv.second.ref.Get()) CollectTied(h, kv.second.anchored ? coop::players::SlotMask{} : PlayerSlots(SlotOf(kv.first)));
     if (g_worldGen == ue_wrap::world_identity::Generation())
         for (const WorldHook& w : g_world)
             if (R::IsLiveByIndex(w.actor, w.idx)) CollectTied(w.actor, {});

@@ -242,14 +242,14 @@ void SendEnds(coop::net::Session& s) {
 
 void HostPass(coop::net::Session& s) {
     const coop::players::SlotMask connected = ConnectedSlots(s);
-    g_censusSlots.ForEach([&](int slot) { if (!connected.Has(slot)) g_censusSlots.Clear(slot); });
+    g_censusSlots.Keep(connected);
     bool again = false;
     int sends = 0;
 
     for (auto it = g_known.begin(); it != g_known.end();) {
         void* obj = it->first;
         Known& k = it->second;
-        k.pendingSlots.ForEach([&](int slot) { if (!connected.Has(slot)) k.pendingSlots.Clear(slot); });  // a joiner that left is owed nothing
+        k.pendingSlots.Keep(connected);  // a joiner that left is owed nothing
         ++it;
         if (!k.placed && !ReadPlace(obj, k)) {
             again = true;

@@ -74,7 +74,7 @@ void CaptureJoinSnapshot(int peerSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // HOST: a join stream was cancelled / the slot disconnected -- drop the slot's
-// snapshot and scrub its bit out of every pending exclude-mask (slot reuse).
+// snapshot and clear its slot out of every pending exclude set (slot reuse).
 void CancelJoinSnapshot(int peerSlot);
 
 // Aggregate teardown.

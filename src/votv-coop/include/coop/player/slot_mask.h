@@ -16,9 +16,8 @@ namespace coop::players {
 
 static_assert(kMaxPeers <= 32, "SlotMask holds 32 slots; a wider ceiling widens its storage");
 
-struct SlotMask {
-    uint32_t bits = 0;
-
+class SlotMask {
+public:
     constexpr void Set(int slot) {
         if (InRange(slot)) bits |= 1u << slot;
     }
@@ -32,6 +31,10 @@ struct SlotMask {
     constexpr bool None() const { return bits == 0; }
     constexpr void ClearAll() { bits = 0; }
 
+    // Whole-set operations, in place: Keep is the intersection with `other`, Add the union.
+    constexpr void Keep(SlotMask other) { bits &= other.bits; }
+    constexpr void Add(SlotMask other) { bits |= other.bits; }
+
     // The set slots, ascending. The callback may change the set; the walk reads a copy.
     template <typename Fn>
     void ForEach(Fn&& fn) const {
@@ -41,6 +44,8 @@ struct SlotMask {
     }
 
 private:
+    uint32_t bits = 0;
+
     static constexpr bool InRange(int slot) {
         const bool ok = slot >= 0 && slot < kMaxPeers;
         assert(ok && "SlotMask: slot outside [0, kMaxPeers)");

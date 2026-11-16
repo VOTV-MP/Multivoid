@@ -171,7 +171,7 @@ void HostTick(coop::net::Session& s) {
     bool held = false;
     for (auto it = g_trees.begin(); it != g_trees.end();) {
         Tree& t = it->second;
-        t.pendingSlots.ForEach([&](int slot) { if (!connected.Has(slot)) t.pendingSlots.Clear(slot); });  // a joiner that left is owed nothing
+        t.pendingSlots.Keep(connected);  // a joiner that left is owed nothing
         if (t.dirty && !SendTree(s, it->first, t)) held = true;
         ++it;
     }
