@@ -115,6 +115,10 @@ void DriveSprintWalkSpeed(void* puppetActor, bool sprinting);
 // null or dead actor or CMC.
 bool ReadCharacterIsFalling(void* actor);
 
+// True iff `actor` is an ACharacter whose bIsCrouched is set (the crouch its own Crouch made). False on a null or dead
+// actor, or a class without the bit.
+bool ReadCharacterIsCrouched(void* actor);
+
 // Whether `actor`'s CMC reports MOVE_Walking (not falling, swimming, flying or none): the state the game's
 // save test names "not in mid air". False, `walking` untouched, on a null or dead actor or CMC.
 bool ReadCharacterIsWalking(void* actor, bool& walking);

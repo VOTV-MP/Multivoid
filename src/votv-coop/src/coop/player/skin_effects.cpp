@@ -508,14 +508,14 @@ void OnStep(void* bodyActor, const ue_wrap::FVector& pos) {
 }
 
 void TickStride(void* bodyActor, const ue_wrap::FVector& pos, float speedCmS,
-                bool grounded) {
+                bool grounded, bool crouched) {
     auto it = g_rigs.find(bodyActor);
     if (it == g_rigs.end()) return;
     Rig& r = it->second;
     // A cheap effect-presence check before the gate, so bodies without step effects cost a map
     // find only.
     if (!r.stepSound && !r.stepEmitter) return;
-    if (r.stride.StepDue(pos, speedCmS, grounded))
+    if (r.stride.StepDue(pos, speedCmS, grounded, crouched))
         StepFx(bodyActor, pos, /*localBody=*/true);
 }
 

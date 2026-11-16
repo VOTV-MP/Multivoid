@@ -631,7 +631,8 @@ void RemotePlayer::ApplyToEngine() {
         // step and the skin step effects (two accumulators drift apart into doubled steps). The
         // default step's volume is the skin layer's call: a replace-mode variant mutes it to 0, and
         // lib step still runs its trace, water and friction side effects.
-        if (footsteps_.StepDue(curPos_, curSpeed_, !inAir)) {
+        const bool crouched = (curStateBits_ & coop::net::kStateBitCrouched) != 0;
+        if (footsteps_.StepDue(curPos_, curSpeed_, !inAir, crouched)) {
             bool ground = false;
             ue_wrap::votv_lib::CharacterStep(
                 actor_, coop::skin_effects::DefaultStepVolume(

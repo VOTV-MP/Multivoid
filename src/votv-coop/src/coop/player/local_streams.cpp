@@ -116,6 +116,8 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     if (ue_wrap::puppet::ReadCharacterIsFalling(local)) {
         out.stateBits |= coop::net::kStateBitInAir;
     }
+    // The crouch bit: a crouched player's own steps come at twice the rate (its graph's x2.0), so a puppet's do too.
+    if (ue_wrap::puppet::ReadCharacterIsCrouched(local)) out.stateBits |= coop::net::kStateBitCrouched;
     // The ragdoll bit: isRagdoll is the AnimBP gate every ragdoll cause flips (the C key, an
     // exhaustion faint, a KO), synced as a display flag so the puppet flops on the other screens; a
     // death is excluded by `dead`. One wrapper read.
@@ -438,7 +440,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
           // sample it just read.
           coop::skin_effects::TickStride(
               local, ue_wrap::FVector{mine.x, mine.y, mine.z}, mine.speed,
-              (mine.stateBits & coop::net::kStateBitInAir) == 0);
+              (mine.stateBits & coop::net::kStateBitInAir) == 0,
+              (mine.stateBits & coop::net::kStateBitCrouched) != 0);
       }
     }
 
