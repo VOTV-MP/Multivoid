@@ -5,6 +5,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/player/slot_mask.h"
 #include "coop/world/fuse_tower_kind.h"
 #include "coop/world/fuse_tower_ops.h"  // the acknowledgements, and my untaken claims
 
@@ -27,8 +28,6 @@ namespace R  = ue_wrap::reflection;
 using coop::net::FuseTowerPayload;
 using coop::net::FuseTowerRow;
 using coop::net::kFuseTowers;
-
-static_assert(coop::net::kMaxPeers <= 8, "the owed rows are one bit a slot");
 
 // A client brings a panel to the host's with its own retract; a retract that left the panel idle (a montage
 // that would not start) is asked again no sooner than this.
@@ -101,7 +100,7 @@ bool SameRows(const FuseTowerPayload& a, const FuseTowerPayload& b) {
 FuseTowerPayload g_lastSent{};
 bool     g_haveSent = false;
 bool     g_acksDirty = false;
-uint8_t  g_owed = 0;
+coop::players::SlotMask g_owed;
 coop::roster_ledger::PerSlotState<bool> g_answerOwed;  // a refusal's answer, owed to this slot alone; leaves with it
 uint64_t g_broadcasts = 0;
 
@@ -149,13 +148,13 @@ void HostPayAnswers(coop::net::Session* s) {
 }
 
 void HostServeOwed(coop::net::Session* s) {
-    if (!g_owed || !Towers()) return;
+    if (g_owed.None() || !Towers()) return;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        if (g_owed & (1u << slot)) {
+        if (g_owed.Has(slot)) {
             HostSendRows(s, slot);
             UE_LOGI("fuse_tower: host sent slot %d every tower's row at its world-ready", slot);
         }
-    g_owed = 0;
+    g_owed.ClearAll();
 }
 
 // ---- a client ------------------------------------------------------------------------------------------------
@@ -350,9 +349,9 @@ void AdmitRows(FuseTowerPayload& p) {
 void QueueConnectBroadcastForSlot(int slot) {
     auto* s = Connected();
     if (!s || s->role() != coop::net::Role::Host || slot <= 0 || slot >= coop::net::kMaxPeers) return;
-    g_owed = static_cast<uint8_t>(g_owed | (1u << slot));
+    g_owed.Set(slot);
     HostServeOwed(s);
-    if (g_owed & (1u << slot)) UE_LOGI("fuse_tower: slot %d's rows wait for the host's towers to resolve", slot);
+    if (g_owed.Has(slot)) UE_LOGI("fuse_tower: slot %d's rows wait for the host's towers to resolve", slot);
 }
 
 void HostSendNow() {
@@ -405,7 +404,7 @@ void OnDisconnect() {
     g_rows = FuseTowerPayload{};
     g_haveSent = g_acksDirty = g_haveRows = g_rowsWaiting = g_applying = false;
     for (bool& w : g_sizeWarned) w = false;
-    g_owed = 0;
+    g_owed.ClearAll();
     for (int slot = 0; slot < g_answerOwed.size(); ++slot) g_answerOwed[slot] = false;
     g_broadcasts = g_applied = 0;
     for (Edges& e : g_edges) e = Edges{};
