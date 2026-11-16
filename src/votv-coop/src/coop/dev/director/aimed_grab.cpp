@@ -98,7 +98,10 @@ GrabState AimedGrab::Tick() {
         }
         // The bounds' centre: a lying prop's origin can sit at the floor's surface.
         ue_wrap::FVector centre{}, extent{};
-        if (!E::GetActorBounds(prop, /*onlyColliding=*/true, centre, extent) && !E::TryGetActorLocation(prop, centre)) {
+        const bool bounds = E::GetActorBounds(prop, /*onlyColliding=*/true, centre, extent);
+        // Bounds wider than any hand-held prop take in a component left elsewhere (a glowstick's hook, which stays at
+        // the world origin until it sticks): its location is the aim then.
+        if ((!bounds || extent.X > 300.f || extent.Y > 300.f || extent.Z > 300.f) && !E::TryGetActorLocation(prop, centre)) {
             why_ = "the prop has neither bounds nor a location to aim at";
             return GrabState::Failed;
         }
