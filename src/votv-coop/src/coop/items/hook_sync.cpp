@@ -11,6 +11,7 @@
 #include "coop/net/wire_key_util.h"           // WireKeyFromString: the bite descriptor
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/slot_mask.h"
 #include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor: the host's own eid
 #include "coop/props/remote_prop.h"           // ResolveMirrorEidByActor: the eid a client's copy carries
 
@@ -120,7 +121,7 @@ bool     g_parkInstalled = false;
 bool     g_parkRefused   = false;   // the interceptor table refused: NO mirrors, for the session
 uint64_t g_lastDriverMs  = 0;
 bool     g_saidOwnedFull = false;   // one line, not one per driver tick
-uint8_t  g_saidSlotFull  = 0;       // one line per slot, bit-per-slot
+coop::players::SlotMask g_saidSlotFull;   // one line per slot
 std::atomic<uint32_t> g_tickOffThread{0};  // tripwire: see OnHookReceiveTickPre
 
 bool Finite3(float a, float b, float c) {
@@ -476,8 +477,8 @@ void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
     auto it = Mirrors().find(key);
     if (it == Mirrors().end() || !it->second.ref.Alive()) {
         if (MirrorsForSlot(slot) >= kMaxMirrorsPerSlot) {
-            if (!(g_saidSlotFull & (1u << (slot & 7u)))) {
-                g_saidSlotFull |= static_cast<uint8_t>(1u << (slot & 7u));
+            if (!g_saidSlotFull.Has(slot)) {
+                g_saidSlotFull.Set(slot);
                 UE_LOGW("hook_sync: slot %u is at the %zu-mirror ceiling -- refusing to spawn "
                         "another. One peer must not be able to walk its sequence and make every "
                         "other peer spawn actors.", (unsigned)slot, kMaxMirrorsPerSlot);
@@ -600,7 +601,7 @@ void OnPeerLeftSlot(int slot) {
         if (a) E::DestroyActor(a);
         ++dropped;
     }
-    g_saidSlotFull = static_cast<uint8_t>(g_saidSlotFull & ~(1u << (slot & 7u)));
+    g_saidSlotFull.Clear(slot);
     coop::hook_anchor::OnPeerLeftSlot(slot);
     coop::hook_retrieve::OnPeerLeftSlot(slot);
     if (dropped) UE_LOGI("hook_sync: slot %d left -- %zu owner-phase mirrors dropped", slot, dropped);
@@ -622,7 +623,7 @@ void OnDisconnect() {
     OwnedHooks().clear();
     detail::ResetPropClaims();
     g_saidOwnedFull = false;
-    g_saidSlotFull  = 0;
+    g_saidSlotFull.ClearAll();
 
     // THE PARK AND THE WRAPPER GO BACK TOO. A Blueprint class dies on world unload and its address
     // can be recycled, so a registration left against one would have the table judging whatever
