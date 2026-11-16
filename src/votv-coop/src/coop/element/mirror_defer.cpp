@@ -48,6 +48,10 @@ std::unordered_map<uint32_t, HiddenRec> g_hidden;
 // is: do not re-hide on the idempotent re-spawn return, for any mirror kind.
 std::unordered_set<uint32_t> g_revealed;
 bool g_armed = false;
+// The dev hold of the lift and the quiescence reveal (SetLiftHold), and which of the two waits on it.
+LiftHold g_liftHold = nullptr;
+bool g_liftWaiting = false;
+bool g_quiescenceWaiting = false;
 
 // The reveal listeners: a plain fixed array, game thread only.
 constexpr int kMaxRevealListeners = 2;
@@ -141,6 +145,7 @@ void Arm() {
     revealed.reserve(g_hidden.size());
     for (auto& kv : g_hidden) { RevealRec(kv.second); revealed.push_back(kv.first); }
     g_armed = true;
+    g_liftWaiting = g_quiescenceWaiting = false;
     g_hidden.clear();
     g_revealed.clear();
     NotifyRevealed(revealed);
@@ -156,6 +161,7 @@ void Reset() {
     revealed.reserve(g_hidden.size());
     for (auto& kv : g_hidden) { RevealRec(kv.second); revealed.push_back(kv.first); }
     g_armed = false;
+    g_liftWaiting = g_quiescenceWaiting = false;
     g_hidden.clear();
     g_revealed.clear();
     NotifyRevealed(revealed);
@@ -197,6 +203,11 @@ bool HideInfoOf(uint32_t eid, HideInfo& out) {
 void RevealConfirmedAtLift() {
     UE_ASSERT_GAME_THREAD("mirror_defer::RevealConfirmedAtLift");
     if (!g_armed) return;
+    if (g_liftHold && g_liftHold()) {
+        g_liftWaiting = true;
+        UE_LOGI("mirror_defer: lift-reveal WAITS on the dev hold (%zu hidden mirror(s))", g_hidden.size());
+        return;
+    }
     std::vector<uint32_t> revealed;
     for (auto it = g_hidden.begin(); it != g_hidden.end();) {
         if (it->second.hold) { ++it; continue; }  // local twin still visible -> wait for quiescence
@@ -214,6 +225,11 @@ void RevealConfirmedAtLift() {
 void RevealAllSurvivorsAtQuiescence() {
     UE_ASSERT_GAME_THREAD("mirror_defer::RevealAllSurvivorsAtQuiescence");
     if (!g_armed) return;
+    if (g_liftHold && g_liftHold()) {
+        g_quiescenceWaiting = true;
+        UE_LOGI("mirror_defer: quiescence-reveal WAITS on the dev hold (%zu hidden mirror(s))", g_hidden.size());
+        return;
+    }
     std::vector<uint32_t> revealed;
     revealed.reserve(g_hidden.size());
     for (auto& kv : g_hidden) { RevealRec(kv.second); revealed.push_back(kv.first); }
@@ -222,6 +238,26 @@ void RevealAllSurvivorsAtQuiescence() {
     UE_LOGI("mirror_defer: quiescence-reveal -- %zu held/tail mirror(s) shown; deferred-hide window "
             "CLOSED (steady-state spawns now visible immediately)", revealed.size());
     NotifyRevealed(revealed);
+}
+
+void SetLiftHold(LiftHold held) {
+    UE_ASSERT_GAME_THREAD("mirror_defer::SetLiftHold");
+    g_liftHold = held;
+}
+
+void ResumeHeldLift() {
+    UE_ASSERT_GAME_THREAD("mirror_defer::ResumeHeldLift");
+    if (!g_liftHold || g_liftHold()) return;
+    const bool lift = g_liftWaiting, quiescence = g_quiescenceWaiting;
+    g_liftWaiting = g_quiescenceWaiting = false;
+    if (lift) {
+        UE_LOGI("mirror_defer: the dev hold ended -- the waiting lift-reveal runs now");
+        RevealConfirmedAtLift();
+    }
+    if (quiescence) {
+        UE_LOGI("mirror_defer: the dev hold ended -- the waiting quiescence-reveal runs now");
+        RevealAllSurvivorsAtQuiescence();
+    }
 }
 
 }  // namespace coop::mirror_defer

@@ -3,6 +3,7 @@
 #include "coop/creatures/npc_ride.h"
 
 #include "coop/dev/atv_riders_arm.h"
+#include "coop/dev/atv_riders_join_hold.h"
 #include "coop/element/mirror_defer.h"
 #include "coop/element/mirror_managers.h"
 
@@ -189,12 +190,15 @@ void Clear(uint32_t eid, const std::wstring& key) {
 void OnMirrorBound(uint32_t eid) {
     UE_ASSERT_GAME_THREAD("npc_ride::OnMirrorBound");
     static const bool s_redBind = coop::dev::atv_riders_arm::Is("bind_ride_off");   // the riders drill's red: a bind applies no ride
-    if (s_redBind) return;
     const auto it = g_rows.find(eid);
-    if (it == g_rows.end()) return;
-    it->second.atvAttached = nullptr;  // a new actor is not attached
-    it->second.kerfur = nullptr;
-    Reconcile(eid, it->second);
+    if (!s_redBind && it != g_rows.end()) {
+        it->second.atvAttached = nullptr;  // a new actor is not attached
+        it->second.kerfur = nullptr;
+        Reconcile(eid, it->second);
+    }
+    // After the row is applied or held: the drill's hold of the join's reveals ends at the bind of the kerfur it named, and the
+    // reveal that runs then applies a ride held while the mirror was hidden.
+    coop::dev::atv_riders_join_hold::OnKerfurBound(eid);
 }
 
 void OnRevealed(uint32_t eid) {

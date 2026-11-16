@@ -5,6 +5,7 @@
 #include "coop/creatures/npc_ride.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/dev/atv_riders_arm.h"
+#include "coop/dev/atv_riders_join_hold.h"
 #include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_rider_watch.h"
 #include "coop/interactables/atv_seat_table.h"
@@ -126,6 +127,9 @@ void OnBodyOutcome(uint8_t slot, int outcome, const std::wstring& key, float off
 
 void OnRideOutcome(uint32_t eid, int outcome, const std::wstring& key, float sitarrowCm, bool wasAttached) {
     DE::Note(DE::kRide, static_cast<int32_t>(eid), outcome, DE::KeyTag(key), sitarrowCm, wasAttached ? 1.f : 0.f);
+    // The drill's step 0 names the kerfur its lift hold waits for from the first row that rides, waits or is hidden.
+    if (outcome == coop::npc_ride::kRides || outcome == coop::npc_ride::kHeldUnbound || outcome == coop::npc_ride::kHeldHidden)
+        coop::dev::atv_riders_join_hold::NoteRideEid(eid, outcome != coop::npc_ride::kHeldUnbound);
 }
 
 // The host retired an NPC element, on whichever thread its body ran: the table is the game thread's, so the work is posted on
@@ -153,6 +157,7 @@ void Install(coop::net::Session* session) {
     // The riders drill's red `reveal_ride_off`: the reveal listener is not registered.
     static const bool s_redReveal = arm::Is("reveal_ride_off");
     if (!s_redReveal) coop::mirror_defer::OnReveal(&coop::npc_ride::OnRevealed);
+    coop::dev::atv_riders_join_hold::InstallLiftHold();   // the riders drill's step 0: the driver's lift waits for the kerfur's bind
     if (DE::On()) {
         coop::puppet_seat::SetObserver(&OnBodyOutcome);
         coop::npc_ride::SetObserver(&OnRideOutcome);

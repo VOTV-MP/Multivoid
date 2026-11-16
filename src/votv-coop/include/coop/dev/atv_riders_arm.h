@@ -17,4 +17,7 @@ inline std::string Value() { return coop::config::ResolveEnum(::coop::config_reg
 // The row names `value` (a red, or `on`).
 inline bool Is(const char* value) { return Value() == value; }
 
+// The row runs step 0, the reveal route on the driver's first join: the values on, bind_ride_off and reveal_ride_off.
+inline bool RunsFirstJoin() { return Is("on") || Is("bind_ride_off") || Is("reveal_ride_off"); }
+
 }  // namespace coop::dev::atv_riders_arm

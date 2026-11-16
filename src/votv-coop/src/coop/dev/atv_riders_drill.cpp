@@ -164,7 +164,13 @@ using namespace detail;
 bool ClientArrive(Role me) {
     std::string t;
     if (!WorldUp()) return false;
-    if (me == kDriver && FirstJoinRuns() && !DriverFirstJoin()) return false;
+    if (me == kDriver && coop::dev::atv_riders_arm::RunsFirstJoin()) {
+        // The step's verdict is said, so the hold of the join's lift ends here whatever it was: a join that never saw the
+        // kerfur bind completes.
+        const bool decided = DriverFirstJoin();
+        coop::dev::atv_riders_join_hold::ReleaseLift();
+        if (!decided) return false;
+    }
     PS::Mark(me == kObserver ? "o_ready" : "c_ready");
     if (!AwaitMark("atv-key", t, kSignalS)) return false;
     g_key.assign(t.begin(), t.end());
@@ -179,7 +185,7 @@ bool ClientArrive(Role me) {
 
 bool RunHost() {
     std::string t, why;
-    if (FirstJoinRuns() && !HostFirstJoin()) return false;
+    if (coop::dev::atv_riders_arm::RunsFirstJoin() && !HostFirstJoin()) return false;
     if (!AwaitMark("c_ready", t, kJoinS) || !AwaitMark("o_ready", t, kJoinS)) return false;
     if (g_key.empty()) g_key = coop::dev::atv_gate_drill::detail::ChooseAtv();   // step 0 chose it when it ran
     if (g_key.empty()) {
@@ -290,7 +296,10 @@ DWORD WINAPI Thread(LPVOID /*arg*/) {
         }
         role = slot == detail::kSlotO ? detail::kObserver : detail::kDriver;
     }
-    if (!PS::Begin(kTag)) return 0;
+    if (!PS::Begin(kTag)) {
+        coop::dev::atv_riders_join_hold::ReleaseLift();   // a drill that does not run holds nothing
+        return 0;
+    }
     detail::g_me = role;
     UE_LOGI("atv-riders: the %s starts (%s)", detail::RoleName(role), coop::dev::atv_riders_arm::Value().c_str());
     if (role == detail::kHost) RunHost();

@@ -132,11 +132,8 @@ bool JudgeRemoteSeat(uint8_t slot, int step);
 // window, the host's world taken for it and its world not yet ready (save_transfer::WorldTakenFor), the host spawns the kerfur
 // beside the ATV and sits, so its game seats the kerfur; the driver's mirror is born hidden in the join's snapshot, stores the ride
 // row, and rides at the reveal. The driver decides at the reveal and marks `s0_done`; the host then gets off and waits for its
-// kerfur to leave the ATV. Every other value skips the step.
-inline bool FirstJoinRuns() {
-    namespace A = coop::dev::atv_riders_arm;
-    return A::Is("on") || A::Is("bind_ride_off") || A::Is("reveal_ride_off");
-}
+// kerfur to leave the ATV. Every other value skips the step (coop/dev/atv_riders_arm.h RunsFirstJoin). The driver's lift of the
+// join window is held until the kerfur's mirror is bound (coop/dev/atv_riders_join_hold), so the mirror is born hidden.
 bool HostFirstJoin();
 bool DriverFirstJoin();
 

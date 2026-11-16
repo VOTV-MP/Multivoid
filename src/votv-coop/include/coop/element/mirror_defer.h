@@ -72,4 +72,15 @@ void RevealConfirmedAtLift();
 // nothing can stay stuck hidden (a swept ghost is dead -> liveness-gated, skipped).
 void RevealAllSurvivorsAtQuiescence();
 
+// A dev hold of the two reveals above (the ATV riders drill's step 0): while `held` answers true, the lift and the
+// quiescence reveal do not run; each says so and waits. `held` is asked at those two calls and at ResumeHeldLift, on the
+// game thread. Null (the default) holds nothing and costs one pointer test. The window stays armed while a reveal waits, so a
+// mirror bound meanwhile is hidden too.
+using LiftHold = bool (*)();
+void SetLiftHold(LiftHold held);
+
+// The event that ends a hold: runs, in their order, the lift and the quiescence reveal that waited, once `held` answers false.
+// A no-op while it still answers true, or when nothing waited. Game thread.
+void ResumeHeldLift();
+
 }  // namespace coop::mirror_defer
