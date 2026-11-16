@@ -206,6 +206,18 @@ its player pressed stop) sends its transition for the host to canonicalise
 (`coop/world/alarm_sync`). The radar terminal's own beeps are per-viewer by design and have no
 lane.
 
+### Sounds played at a place
+
+`PlaySoundAtLocation` is a local one-shot, so a sound a Blueprint plays at a place on one machine is heard there alone:
+a player's melee hit (`mainPlayer_C::attack`, the struck material's impact sound) and the vent knocker's knocks
+(`kocker_C::knock`, an event actor on the host alone) reached no other player (Ghezra/Multivoid#41, #39). A pre hook on
+that call sends the sound, place, volume, pitch and attenuation when the calling function is on the lane's list: a
+player's own, from the machine whose player ran it, or the host's world, from the host (`SoundAt`; the host plays a
+client's and relays it). A receiver loads the assets by path and plays the same sound there; its own play has no
+Blueprint caller, so nothing echoes (`coop/world/sound_relay`) `[V]` (`coop/dev/hit_probe`: a client's three crowbar
+hits and the host's played on the other peer in the same second, and the host's knocks on the client). Whether a
+client's puppet in the vent trips the host's knocker is not measured `[?]`.
+
 ### Emails and the daily task
 
 Every email producer funnels through one gamemode function into the save's list; the host owns
@@ -265,6 +277,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | `UfoEvent` | the host to all; the host to one joiner | a UFO's rolled path (a ball's turn and ends, a boo's flight spline), or the Midas take-off |
 | `AlarmState` | either role | the alarm's active flag |
 | `EmailAppend`, `EmailDelete`, `TaskNewState` | the host to all; either role; the host to all | an email; a deletion; the task |
+| `SoundAt` | either role, relayed by the host | a sound's and attenuation's paths, place, volume and pitch |
 
 ## Late join
 
@@ -311,4 +324,5 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
+| sounds played at a place | `coop/world/sound_relay`; `coop/dev/hit_probe` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

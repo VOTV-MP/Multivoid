@@ -22,6 +22,7 @@
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/world/sound_relay.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -294,6 +295,16 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::roomba_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::SoundAt: {
+        if (msg.payloadLen < sizeof(net::SoundAtPayload)) {
+            UE_LOGW("event_feed: a SoundAt too short from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::SoundAtPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ::coop::sound_relay::OnSoundAt(msg.senderPeerSlot, p);
         break;
     }
     case net::ReliableKind::WoodchipperState:

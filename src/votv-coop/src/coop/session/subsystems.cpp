@@ -133,6 +133,7 @@
 #include "coop/player/puppet_events.h"  // RunSelftest
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
+#include "coop/world/sound_relay.h"   // a player's own sounds at a place
 #include "coop/props/glowstick_sync.h"   // a glowstick stuck to a surface, on every peer
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_gate.h"
@@ -306,6 +307,7 @@ void Install(coop::net::Session& session) {
     coop::props::prop_record_refresh::Install(&session);  // drive box + reel case republish their own record
     coop::vent_crawler_sync::Install(&session);  // the crawl's start, for a client's sounds
     coop::props::prop_can_state::Install(&session);  // a canned food's lid and contents: its record on a change
+    coop::sound_relay::Install(&session);       // a player's own sounds at a place (a melee hit)
     coop::desk_short_sync::Install(&session);  // the base computer's short circuit is the host's
     coop::world_sound_sync::Install(&session);  // the sky's two sounds, a faucet's click
     coop::atv_riders::Install(&session);  // a remote driver's body in the seat, the kerfurs a client's seat calls
@@ -505,6 +507,7 @@ DisconnectStats DisconnectAll() {
     coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
     coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
     coop::hand_record_sync::OnDisconnect();  // the hands' records and half-assemblies
+    coop::sound_relay::OnDisconnect();
     coop::desk_short_sync::OnDisconnect();
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero

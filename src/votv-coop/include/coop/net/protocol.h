@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 300;
+inline constexpr uint16_t kProtocolVersion = 301;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1477,6 +1477,10 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+    // A sound the game played at a place on one machine alone (coop/world/sound_relay): a melee hit's impact sound. Its
+    // player's machine sends it; the host plays a client's and relays it to the other clients. Not pre-world.
+    // SoundAtPayload.
+    SoundAt = 275,
 };
 
 #pragma pack(push, 1)
@@ -2283,6 +2287,17 @@ struct RoombaPayload {
     uint8_t  pad[3];  // zero
 };
 static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
+
+// SoundAt. The Sound and the attenuation as object paths ("/Game/audio/x.x", ASCII, NUL-padded; an empty attenuation
+// plays with none), the place, the volume and the pitch, as the original call passed them.
+struct SoundAtPayload {
+    char  sound[96];         // 96
+    char  attenuation[64];   // 64
+    float loc[3];            // 12
+    float volume;            // 4
+    float pitch;             // 4
+};
+static_assert(sizeof(SoundAtPayload) == 180, "SoundAtPayload must be 180 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

@@ -208,6 +208,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"gameplaystatics", L"getplayercharacter", L"gameplaystatics.getplayercharacter", 0x98c11fce09bfb1ddull, 0xcbf29ce484222325ull},
     {L"gameplaystatics", L"getplayerpawn", L"gameplaystatics.getplayerpawn", 0x4ddfb31ada312992ull, 0xcbf29ce484222325ull},
     {L"gameplaystatics", L"playsound2d", L"gameplaystatics.playsound2d", 0x087ba1a63e425c2aull, 0xcbf29ce484222325ull},
+    {L"gameplaystatics", L"playsoundatlocation", L"gameplaystatics.playsoundatlocation", 0x4e5ed3f11cb50f93ull, 0xcbf29ce484222325ull},
     {L"generator_c", L"actionoptionindex", L"generator_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0xd7c4ca2ffff9f0daull},
     {L"generator_c", L"adddamage", L"generator_c.adddamage", 0xe50b54b843ee9d53ull, 0xc6fdb6b3db953179ull},
     {L"generator_c", L"break", L"generator_c.break", 0x6a2d5d90ab51fa2dull, 0x9033fb02c9c36c5aull},

@@ -121,6 +121,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PackTrashIntent:
     case ReliableKind::DroneFlyIntent:
     case ReliableKind::WoodchipperIntent:
+    case ReliableKind::SoundAt:
     case ReliableKind::AtvRequest:
     case ReliableKind::UpgradeIntent:
     case ReliableKind::WindowStroke:
