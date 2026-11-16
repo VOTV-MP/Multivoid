@@ -329,6 +329,12 @@ bool HandlePropDriveEvent(net::Session& session,
             UE_LOGW("event_feed: ATV host state malformed -- dropping");
             break;
         }
+        // The battery is -1 (none fitted) or a charge 0..100; any other value is not read, the state's other fields are.
+        if ((p.flags & net::kAtvHostBattery) &&
+            !(std::isfinite(p.battery) && (p.battery == -1.f || (p.battery >= 0.f && p.battery <= 100.f)))) {
+            UE_LOGW("event_feed: ATV host state carries a battery outside -1 or 0..100 -- its battery is not read");
+            p.flags = static_cast<uint8_t>(p.flags & ~net::kAtvHostBattery);
+        }
         ::coop::atv_host_sync::OnState(p);
         break;
     }
