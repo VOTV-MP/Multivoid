@@ -9,7 +9,9 @@
 // hand last held, once per item, and one the host copy does not hold (else `duplicate`), a take-off one it does. Applied
 // by writing the host copy as the verbs' own bodies do, published through atv_host_sync, and EVERY request is answered
 // to its sender alone: the verdict, the host copy's state (flagged absent when there is none) and its sequence. A fit
-// refused as a duplicate is refunded as the module's prop at the ATV. A sync (op kSync) is answered and applies nothing.
+// refused as a duplicate is refunded as the module's prop at the ATV. A battery fit refused as full, after the hand check, is
+// refunded as a battery prop at the request's charge; an accepted unscrew spawns the battery prop at the ATV's own unscrew point,
+// at the host copy's charge. A sync (op kSync) is answered and applies nothing.
 // Game thread. Overview: docs/vehicles.md.
 
 #pragma once

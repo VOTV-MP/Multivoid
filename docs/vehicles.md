@@ -103,14 +103,18 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
 - **The battery.** `battery` is a charge, -1 with none fitted. A fit (`playerUsedOn` with a `prop_atvcarbattery_C` in
   hand) and an unscrew (`unscrewPanel`'s battery branch, which drops the battery as a prop with its charge) run on the
   client's copy and are asked of the host: op 5 with the charge the copy took, op 7 for the unscrew. The host fits only
-  into an ATV with none (`full` otherwise) and only from a hand that last held a battery, takes out only a fitted one,
-  writes `battery` and runs the game's `updBattery`. The battery the client's unscrew drops is that player's birth while
-  the body runs its battery branch (`coop/props/prop_spawn_authoring`), so the host spawns it at its charge for every
-  peer; a tire's branch stays local, its wheel still on the host's ATV. Every host state carries the charge with a flag
-  that it read, and a client writes it when it differs, with `updBattery`. The rig's ATV drill fits, unscrews and fits
-  back from a client on three peers (steps b1 to b3, b2 with one loose battery at its charge on every copy); before
-  this the host and the third peer kept no battery while the client's copy ran on its own (Trello #71), and the
-  unscrewed battery stayed on the client alone (Trello #52).
+  into an ATV with none and only from a hand that last held a battery (`no_item` otherwise, and nothing is refunded);
+  once that check has passed, a fit refused as `full` is refunded with a battery prop at the request's charge beside the
+  ATV. It takes out only a fitted battery (`not_held` otherwise), and spawns the battery prop itself, at its own copy's
+  charge and at the ATV's `Billboard4`, where the game's own unscrew spawns it; a spawn that fails refuses the request
+  and changes nothing. The client's own copy of the unscrew spawns a battery too: it is recorded as it is born
+  (`coop/props/prop_spawn_authoring`) and destroyed at the end of the unscrew body with no destroy sent, so the host's
+  prop is the one every peer holds; a tire's branch is not touched. The host then writes `battery` and runs the game's
+  `updBattery`. Every host state carries the charge with a flag that it read, a joiner gets it in its connect state, and
+  a client writes it when it differs, with `updBattery`. The rig's ATV drill decides each step on events, counting
+  battery props by actor: b1 a fit, b2 an unscrew (one new battery on every peer), b3 a fit back, b0 a refused fit
+  refunded, b4 a refused unscrew spawning nothing, b6 a forged fit refunding nothing, b5 the rejoined copy's charge.
+  `[?]` built to the design, not yet run.
 - **Lights, brake, turbo and the horn.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights
   0x20, turbo 0x40, horn 0x80) at each block build. The host takes them from an admitted block (the block's sender must be
   the ATV's syncer) and runs the ATV's own light, brake and turbo bodies on its copy for each bit that changed; its re-send

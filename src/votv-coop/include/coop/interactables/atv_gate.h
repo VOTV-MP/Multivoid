@@ -11,6 +11,7 @@
 //   - the honk key's press and release on the copy a player sits in set the horn's level and latch the syncer's next block
 //     carries (atv_sync.h NoteHorn); our own replay of a horn is no press (atv_host_sync::Applying).
 // A take-off the host refuses leaves the client with a module prop its own upgradeTake made: it is destroyed at the answer.
+// A client's unscrew of the battery spawns a prop on its own game: destroyed at that body's POST, no destroy sent.
 // Game thread.
 
 #pragma once
