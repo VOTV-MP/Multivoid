@@ -202,6 +202,11 @@ bool GetCameraLocation(void* atv, FVector& loc);
 // unreadable transform. Game thread.
 bool GetUnscrewSpawnTransform(void* atv, FVector& loc, FRotator& rot, FVector& scale);
 
+// Whether the ATV's player looks at a tire: its `lookAtTire` or `lookAtTireSocket` index is set (the panel's unscrew then
+// takes the tire's branch; with neither set it takes the battery's). False, with `atTire` unwritten, on null, a dead ATV or a
+// field that does not resolve. Game thread.
+bool ReadTireLook(void* atv, bool& atTire);
+
 // The ATV's rider: the kerfur its own `sittingKerfuro` names, or null when the field is empty, names a dead object, or does
 // not resolve. Game thread.
 void* GetSittingKerfur(void* atv);

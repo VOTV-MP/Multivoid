@@ -570,7 +570,8 @@ struct Field {
     }
 };
 Field g_camera{L"Camera"}, g_sitarrow{L"sitarrow"}, g_playerHit{L"playerHit"}, g_sittingKerfuro{L"sittingKerfuro"},
-    g_allKerfuros{L"allKerfuros"}, g_billboard4{L"Billboard4"};
+    g_allKerfuros{L"allKerfuros"}, g_billboard4{L"Billboard4"}, g_lookAtTire{L"lookAtTire"},
+    g_lookAtTireSocket{L"lookAtTireSocket"};
 
 void* ReadObj(void* atv, int32_t off) {
     if (!atv || off < 0) return nullptr;
@@ -615,6 +616,14 @@ bool GetUnscrewSpawnTransform(void* atv, FVector& loc, FRotator& rot, FVector& s
     void* const panel = ReadObj(atv, g_billboard4.Get());
     return panel && engine::TryGetComponentLocation(panel, loc) && engine::TryGetComponentWorldRotation(panel, rot) &&
            engine::TryGetComponentWorldScale(panel, scale);
+}
+
+bool ReadTireLook(void* atv, bool& atTire) {
+    const int32_t tireOff = g_lookAtTire.Get(), socketOff = g_lookAtTireSocket.Get();
+    if (!atv || !R::IsLive(atv) || tireOff < 0 || socketOff < 0) return false;
+    const auto* const o = static_cast<const uint8_t*>(atv);
+    atTire = *reinterpret_cast<const int32_t*>(o + tireOff) >= 0 || *reinterpret_cast<const int32_t*>(o + socketOff) >= 0;
+    return true;
 }
 
 void* GetSittingKerfur(void* atv) {

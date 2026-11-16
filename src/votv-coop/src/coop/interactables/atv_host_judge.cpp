@@ -491,10 +491,10 @@ void OnDisconnect() {
     for (uint32_t n : g_n.accepted) accepted += n;
     for (uint32_t n : g_n.refused) refused += n;
     if (accepted || refused || g_n.parked || g_n.noKey)
-        UE_LOGI("atv_host: session end -- host requests accepted=%u (refuel %u repair %u fit %u takeoff %u) refused=%u "
-                "parked=%u refunded=%u; no key=%u", accepted, g_n.accepted[op::kRefuel],
-                g_n.accepted[op::kRepair], g_n.accepted[op::kFit], g_n.accepted[op::kTakeoff], refused, g_n.parked,
-                g_n.refunded, g_n.noKey);
+        UE_LOGI("atv_host: session end -- host requests accepted=%u (refuel %u repair %u fit %u takeoff %u battery in %u "
+                "battery out %u) refused=%u parked=%u refunded=%u; no key=%u", accepted, g_n.accepted[op::kRefuel],
+                g_n.accepted[op::kRepair], g_n.accepted[op::kFit], g_n.accepted[op::kTakeoff],
+                g_n.accepted[op::kBatteryIn], g_n.accepted[op::kBatteryOut], refused, g_n.parked, g_n.refunded, g_n.noKey);
     g_n = Counts{};
     g_refusals.Clear();
     g_holdKey.clear();
