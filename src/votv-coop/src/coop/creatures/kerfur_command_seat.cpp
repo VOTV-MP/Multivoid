@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_command.h"
+#include "coop/creatures/kerfur_dress_sync.h"
 #include "coop/creatures/served_player.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kPeerIdHost
@@ -16,6 +17,7 @@
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
+#include <cwchar>
 #include <string>
 
 namespace coop::kerfur_command_seat {
@@ -48,15 +50,20 @@ bool GateOff() {
 sg::Verdict OnActionNamePre(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || !s->connected()) return sg::Verdict::Run;  // single player is untouched
-    const bool isClient = s->role() == coop::net::Role::Client;
-    if (isClient ? GateOff() : coop::served_player::ServedSlot(c.object) == coop::players::kPeerIdHost)
-        return sg::Verdict::Run;
     const int32_t off = g_nameOff.Of(c.function);
     if (off < 0 || !c.locals) return sg::Verdict::Run;
     // An FString frame is {Data, Num, Max}; a length no action name has is not read.
     const int32_t num = *reinterpret_cast<const int32_t*>(c.locals + off + sizeof(void*));
     if (num <= 1 || num > kMaxNameChars) return sg::Verdict::Run;
     const std::wstring name = ue_wrap::field_io::ReadFStringAt(c.locals, off);
+    // A pat runs where it is picked, either role; every other player is shown it (kerfur_dress_sync).
+    if (_wcsicmp(name.c_str(), L"pat") == 0) {
+        coop::kerfur_dress_sync::OnLocalPat(c.object);
+        return sg::Verdict::Run;
+    }
+    const bool isClient = s->role() == coop::net::Role::Client;
+    if (isClient ? GateOff() : coop::served_player::ServedSlot(c.object) == coop::players::kPeerIdHost)
+        return sg::Verdict::Run;
     if (!coop::kerfur_command::TryRecordMenuCommand(c.object, name, isClient)) return sg::Verdict::Run;
     UE_LOGI("kerfur_command_seat: %s '%ls' on kerfur %p taken at the seat, %s", isClient ? "client" : "host",
             name.c_str(), c.object, c.callerFunction ? "from a Blueprint call" : "from a reflected call");
