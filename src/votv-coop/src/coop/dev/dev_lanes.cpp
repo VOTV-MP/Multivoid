@@ -141,6 +141,7 @@
 #include "coop/dev/flood_drill.h"   // [dev] the basement flood is the host's on every peer: burst, mend, far, join
 #include "coop/dev/basedmove_drill.h"   // [dev] what a client riding the cargo lift does to the host's lift, measured
 #include "coop/dev/kdress_drill.h"   // [dev] an Omega's outfit and its pat: put-on, take-off, pat, birth and join judged on both peers
+#include "coop/dev/hit_probe.h"   // [dev] a player's melee hit on the floor, its sound logged on both
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
 #include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
 #include "coop/dev/miner_drill.h"  // [dev] the mining rig drill: use, claim, record and join, judged by the host
@@ -510,6 +511,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::flood_drill::Tick(&session);  // [dev] the basement flood drill (a latched enum read when off)
     coop::dev::basedmove_drill::Tick(&session);  // [dev] the based-movement drill (a latched bool read when off)
     coop::dev::kdress_drill::Tick(&session);  // [dev] the Omega outfit drill (a latched enum read when off)
+    coop::dev::hit_probe::Tick(&session);  // [dev] the melee hit sound (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)
