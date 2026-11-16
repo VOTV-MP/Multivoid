@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/player/slot_count.h"  // kMaxPeers
 
 #include <atomic>
 #include <cstdint>
