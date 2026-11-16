@@ -22,7 +22,7 @@
 #include "coop/net/send_rate_control.h"    // what each peer's link measures out at
 #include "coop/net/session_config.h"      // Role, Topology, Config: what a session starts with
 #include "coop/net/stream_refusals.h"      // refused pose packets, said once per streak
-#include "coop/player/slot_count.h"  // kMaxPeers
+#include "coop/player/slot_mask.h"   // kMaxPeers, SlotMask
 
 #include <array>
 #include <atomic>
@@ -186,8 +186,8 @@ public:
     bool TakeRemoteTrashCarryBatch(std::vector<TrashClumpPoseSnapshot>& out);
     bool TakeRemotePropDriveBatch(std::vector<PropDriveRow>& out);
 
-    // Host: each client slot's driven-prop rows since the last take, into out[slot]; the bits of the slots with rows.
-    uint32_t TakeRemotePropDriveBatches(std::vector<PropDriveRow> (&out)[kMaxPeers]);
+    // Host: each client slot's driven-prop rows since the last take, into out[slot]; the slots with rows.
+    coop::players::SlotMask TakeRemotePropDriveBatches(std::vector<PropDriveRow> (&out)[kMaxPeers]);
 
     // Game thread: queue a reliable message to every connected client (host) or to the host
     // (client). False on an oversize payload or no peer. `skipSlot` skips one slot (-1: none): MTA pSkip.
@@ -484,10 +484,10 @@ private:
         return (host_.*stream).Take(out);
     }
     template <class S, class T>
-    uint32_t TakeOrigins(S OriginStreams::*stream, T (&out)[kMaxPeers]) {   // slots 1.., one lock; the slots with data
-        uint32_t got = 0; std::lock_guard<std::mutex> lk(remoteMutex_);
+    coop::players::SlotMask TakeOrigins(S OriginStreams::*stream, T (&out)[kMaxPeers]) {   // slots 1.., one lock; the slots with data
+        coop::players::SlotMask got; std::lock_guard<std::mutex> lk(remoteMutex_);
         for (int slot = 1; connected() && slot < kMaxPeers; ++slot)
-            if ((origin_[slot].*stream).Take(out[slot])) got |= 1u << slot;
+            if ((origin_[slot].*stream).Take(out[slot])) got.Set(slot);
         return got;
     }
 

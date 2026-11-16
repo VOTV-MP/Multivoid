@@ -34,7 +34,7 @@ bool Session::TakeRemotePropDriveBatch(std::vector<PropDriveRow>& out) {
     return TakeHost(&HostStreams::propDrive, out);
 }
 
-uint32_t Session::TakeRemotePropDriveBatches(std::vector<PropDriveRow> (&out)[kMaxPeers]) {
+coop::players::SlotMask Session::TakeRemotePropDriveBatches(std::vector<PropDriveRow> (&out)[kMaxPeers]) {
     return TakeOrigins(&OriginStreams::propDrive, out);
 }
 
