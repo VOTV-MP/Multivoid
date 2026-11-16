@@ -209,7 +209,23 @@ Result DecideBattery(Ctx& c, float want, const char* what) {
     return Pass(std::string("this copy shows ") + what);
 }
 Result Db1(Ctx& c) { return DecideBattery(c, kBatteryCharge, "the fitted battery's charge"); }
-Result Db2(Ctx& c) { return DecideBattery(c, -1.f, "no battery"); }
+// b2 also needs the battery the unscrew handed back, once, on every copy, with its charge: the unscrew runs only on the
+// client's game, so a battery that did not cross is on that copy alone.
+Result Db2(Ctx& c) {
+    const Result r = DecideBattery(c, -1.f, "no battery");
+    if (r.out != Out::Pass) return r;
+    int loose = 0, charged = 0;
+    for (int i = 0; i < kEventS * 10; ++i) {
+        if (Aborted()) return Stopped();
+        loose = LooseBatteries(c.key, kBatteryCharge, charged);
+        if (loose == 1 && charged == 1) break;
+        SleepStep();
+    }
+    if (loose != 1 || charged != 1)
+        return Fail("this copy has " + std::to_string(loose) + " loose batteries by the ATV, " + std::to_string(charged) +
+                    " at the unscrewed charge, not 1");
+    return Pass("this copy shows no battery, and the unscrewed one beside the ATV at its charge");
+}
 Result D2(Ctx& c) { return DecideRequest(c, op::kRepair); }
 Result D3(Ctx& c) { return DecideRequest(c, op::kFit); }
 Result D4(Ctx& c) { return DecideRequest(c, op::kTakeoff); }
