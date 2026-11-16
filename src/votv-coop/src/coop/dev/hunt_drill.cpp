@@ -16,6 +16,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/creatures/hunt_target.h"
 #include "coop/creatures/hunt_target_rule.h"
+#include "coop/creatures/owner_entity_sync.h"
 #include "coop/creatures/served_player.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dev/spawn_npc.h"
@@ -25,6 +26,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/session/net_pump.h"
 #include "coop/session/teleport_client.h"
 
 #include "ue_wrap/core/asset_load.h"
@@ -41,6 +43,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace coop::dev::hunt_drill {
@@ -65,7 +68,11 @@ constexpr Arm kArms[] = {
     {"krampus", L"npc_krampus_C", L"/Game/objects/npc/npc_krampus.npc_krampus_C", false, false, false},
     {"follower", L"npc_arirFollower_C", L"/Game/objects/npc/npc_arirFollower.npc_arirFollower_C", true, false, false},
     {"gray", nullptr, nullptr, false, true, false},
+    // Not a hunter: the Shadow Figura is each peer's own (coop/creatures/owner_entity_sync). The host makes one and the
+    // client judges that it is shown a copy of it.
+    {"figura", L"figura_C", L"/Game/objects/figura.figura_C", false, false, false},
 };
+constexpr uint8_t kFiguraClassId = 1;  // owner_entity_sync's member table
 
 constexpr long long kWatchMs = 40000, kGrayWatchMs = 15000, kBoundMs = 60000, kAdoptBoundMs = 150000, kSampleMs = 1000, kGrayCallMs = 3000;
 constexpr float kSpawnCm = 600.f;
@@ -280,6 +287,45 @@ void RunTick(const Arm& arm) {
     To(Step::Done);
 }
 
+bool IsFigura(const Arm& arm) { return std::strcmp(arm.name, "figura") == 0; }
+
+// The Figura arm. The host makes a Figura beside the players once the client's puppet is live; the client, from its own
+// world-ready edge, waits for a copy of it and says the verdict.
+void FiguraTick(const Arm& arm, coop::net::Session& s) {
+    const long long now = NowMs();
+    if (g.step == Step::Wait) {
+        if (s.role() == coop::net::Role::Host ? (s.IsSlotWorldReady(1) && coop::prop_snapshot::IsBracketClosed(1))
+                                              : coop::net_pump::HasAnnouncedWorldReady())
+            To(Step::WaitPuppet);
+        return;
+    }
+    if (s.role() != coop::net::Role::Host) {
+        const size_t copies = coop::owner_entity_sync::MirrorCount(kFiguraClassId);
+        if (copies > 0) {
+            Verdict(true, "figura", "the host's Figura is shown here as %zu parked copy(ies), %lld ms after this join", copies,
+                    now - g.stepMs);
+            To(Step::Done);
+        } else if (now - g.stepMs >= kAdoptBoundMs) {
+            Verdict(false, "figura", "reason=no copy of the host's Figura was shown here in %lld s", kAdoptBoundMs / 1000);
+            To(Step::Done);
+        }
+        return;
+    }
+    void* puppet = LivePuppet();
+    ue_wrap::FVector at{};
+    if (!puppet || !PlaceAt(puppet, at, g.d0Host, g.d0Pup)) {
+        if (now - g.stepMs >= kBoundMs) {
+            Verdict(false, "figura", "reason=slot 1's puppet never became live");
+            To(Step::Done);
+        }
+        return;
+    }
+    void* figura = LoadClassAndSpawn(arm.cls, arm.path, at);
+    UE_LOGI("[HUNT] the host made a Figura %p at (%.0f, %.0f, %.0f); the client says the verdict", figura, at.X, at.Y, at.Z);
+    if (!figura) Verdict(false, "figura", "reason=the Figura was not made");
+    To(Step::Done);
+}
+
 }  // namespace
 
 
@@ -289,7 +335,9 @@ void Tick() {
     const Arm* arm = ArmOf();
     if (!arm) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->running() || s->role() != coop::net::Role::Host || g.step == Step::Done) return;
+    if (!s || !s->running() || g.step == Step::Done) return;
+    if (IsFigura(*arm)) return FiguraTick(*arm, *s);
+    if (s->role() != coop::net::Role::Host) return;
     if (!g_staged && PL::Registry::Get().Local()) {
         g_staged = true;
         const bool moved = coop::teleport_client::ApplyLocally({kStageX, kStageY, kStageZ, 0.f, 0.f, 0.f});

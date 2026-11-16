@@ -21,6 +21,8 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"                  // DisableCharacterTicks (the npc-mirror park)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
+#include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/facts/function_row.h"
@@ -28,6 +30,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cwchar>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -49,6 +52,10 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // stalker-entity member; every row is per-peer-owned + cross-peer mirrored.
 constexpr const wchar_t* kOwnerEntityClasses[] = {
     L"eyer_C",   // classId 0: the night "Eyes" stalker (ticker_eyers)
+    // classId 1: the Shadow Figura (mainGamemode.CustomEvent_3). Bound to ONE player: it spawns on a 200 m ring about that
+    // peer's pawn, its `target` is that peer's camera, and it walks to the camera and ends when within 1.75 m of it (its 0.1 s
+    // `CustomEvent_0` timer), so it stays per peer and the others are shown a parked copy.
+    L"figura_C",
 };
 constexpr size_t kOwnerEntityClassCount =
     sizeof(kOwnerEntityClasses) / sizeof(kOwnerEntityClasses[0]);
@@ -102,6 +109,9 @@ constexpr size_t kMaxOwned = 8;   // eyers are rare singletons; runaway backstop
 struct Mirror {
     void*   actor;
     int32_t idx;
+    long long bornMs = 0;
+    bool    lateCleared = false;  // the timer its begin play arms a second in was cleared too
+    uint8_t classId = 0;
 };
 std::unordered_map<uint32_t, Mirror> g_mirrors;  // key = (slot << 16) | seq
 
@@ -115,6 +125,31 @@ int SlotOfKey(uint32_t key) { return static_cast<int>(key >> 16); }
 float YawOfQuat(float qx, float qy, float qz, float qw) {
     constexpr float kRadToDeg = 57.29577951308232f;
     return std::atan2(2.f * (qw * qz + qx * qy), 1.f - 2.f * (qy * qy + qz * qz)) * kRadToDeg;
+}
+
+// A mirror ends when its owner's eyer does. The class arms its own ends on timers: `despawn` (not on screen for a
+// moment), `del` (the viewer came near, or day broke; armed a second after the begin play) and `addAnger` (the stare).
+// K2_ClearTimer(Object, FunctionName) is the inverse of the graph's K2_SetTimerDelegate; the blink is left running.
+// The Figura arms one: the 0.1 s `CustomEvent_0`, which reads the LOCAL camera and destroys the actor within 1.75 m of it.
+void ClearMirrorTimers(void* actor, uint8_t classId) {
+    static void* sCdo = nullptr;
+    static void* sFn = nullptr;
+    if (!sCdo) sCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
+    if (sCdo && !sFn) sFn = R::FindFunction(R::ClassOf(sCdo), L"K2_ClearTimer");
+    if (!sCdo || !sFn) return;
+    static const wchar_t* const kEyerTimers[] = {L"despawn", L"del", L"addAnger"};
+    static const wchar_t* const kFiguraTimers[] = {L"CustomEvent_0"};
+    const wchar_t* const* names = classId == 1 ? kFiguraTimers : kEyerTimers;
+    const size_t nameCount = classId == 1 ? sizeof(kFiguraTimers) / sizeof(kFiguraTimers[0]) : sizeof(kEyerTimers) / sizeof(kEyerTimers[0]);
+    for (size_t ni = 0; ni < nameCount; ++ni) {
+        const wchar_t* name = names[ni];
+        ue_wrap::ParamFrame f(sFn);
+        if (!f.valid()) continue;
+        f.Set<void*>(L"Object", actor);
+        const int32_t num = static_cast<int32_t>(std::wcslen(name)) + 1;
+        struct { const wchar_t* data; int32_t n; int32_t m; } fs{name, num, num};
+        if (f.SetRaw(L"FunctionName", &fs, sizeof(fs))) ue_wrap::Call(sCdo, f);
+    }
 }
 
 void DestroyMirrorActor(void* actor, int32_t idx) {
@@ -168,6 +203,66 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
                 kOwnerEntityClasses[classId], o.seq, o.x, o.y, o.z);
     } else {
         UE_LOGW("owner_entity: announce send FAILED for seq=%u (keepalive re-announces)", o.seq);
+    }
+}
+
+// A member spawned from inside a Blueprint graph (the black fog's ghosts, the night ticker's eyer: an EX_CallMath
+// BeginDeferred, which no ProcessEvent observer sees). Caught at the native seam, where the actor is not placed yet,
+// so it waits here for the next tick to be read and announced.
+struct PendingOwn {
+    void*   actor;
+    int32_t idx;
+};
+std::vector<PendingOwn> g_pendingOwn;
+
+void OnSpawnNative(void* /*context*/, void* /*source*/, void* spawned) {
+    if (!spawned || !GT::IsGameThread()) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    if (coop::prop_echo_suppress::InMirrorSpawnScope()) return;  // our own mirror spawn
+    if (ClassIdOf(R::ClassOf(spawned)) < 0) return;
+    if (g_pendingOwn.size() >= kMaxOwned) return;
+    g_pendingOwn.push_back({spawned, R::InternalIndexOf(spawned)});
+}
+
+// The tick's first step: each waiting member that is still alive and not owned yet (the ProcessEvent observer owns a
+// spawn that came its way) is read where its spawn finished and announced.
+void AdoptPendingOwn(coop::net::Session* s, long long now) {
+    if (g_pendingOwn.empty()) return;
+    std::vector<PendingOwn> pending;
+    pending.swap(g_pendingOwn);
+    for (const PendingOwn& pe : pending) {
+        if (!R::IsLiveByIndex(pe.actor, pe.idx)) continue;
+        bool known = false;
+        for (const Owned& o : g_owned) known = known || o.actor == pe.actor;
+        const int classId = known ? -1 : ClassIdOf(R::ClassOf(pe.actor));
+        if (classId < 0) continue;
+        if (g_owned.size() >= kMaxOwned) {
+            UE_LOGW("owner_entity: owned cap %zu hit -- NOT broadcasting this '%ls' spawn", kMaxOwned,
+                    kOwnerEntityClasses[classId]);
+            continue;
+        }
+        ue_wrap::FVector loc{};
+        ue_wrap::FRotator rot{};
+        if (!E::TryGetActorLocation(pe.actor, loc)) continue;
+        E::TryGetActorRotation(pe.actor, rot);
+        Owned o{};
+        o.seq = g_nextSeq++;
+        if (g_nextSeq == 0) g_nextSeq = 1;
+        o.classId = static_cast<uint8_t>(classId);
+        o.actor = pe.actor;
+        o.idx = pe.idx;
+        o.x = loc.X; o.y = loc.Y; o.z = loc.Z;
+        o.yaw = rot.Yaw;
+        o.lastAnnounceMs = now;
+        g_owned.push_back(o);
+        coop::net::OwnerEntitySpawnPayload p{};
+        p.seq = o.seq; p.classId = o.classId;
+        p.x = o.x; p.y = o.y; p.z = o.z; p.yaw = o.yaw;
+        const bool sent = s->SendReliable(coop::net::ReliableKind::OwnerEntitySpawn, &p, sizeof(p));
+        UE_LOGI("owner_entity: OWN '%ls' spawned from a graph seq=%u at (%.0f,%.0f,%.0f) -- %s",
+                kOwnerEntityClasses[classId], o.seq, o.x, o.y, o.z,
+                sent ? "announced" : "announce send FAILED (the keepalive re-announces)");
     }
 }
 
@@ -229,8 +324,12 @@ void Install(coop::net::Session* session) {
         return;
     }
     g_observerArmed = true;
-    UE_LOGI("owner_entity: armed (%zu member class(es); eyer_C classId=0) -- per-peer owned, "
-            "cross-peer mirrored", kOwnerEntityClassCount);
+    const bool native = ue_wrap::ufunction_hook::InstallPostHook(g_beginDeferredFn, &OnSpawnNative);
+    if (!native)
+        UE_LOGW("owner_entity: the native spawn seam did not install -- a member a Blueprint graph spawns (the black "
+                "fog's eyes, the night's) stays on the peer that rolled it");
+    UE_LOGI("owner_entity: armed (%zu member class(es); eyer_C classId=0, figura_C classId=1) -- per-peer owned, "
+            "cross-peer mirrored; graph spawns %s", kOwnerEntityClassCount, native ? "seen" : "NOT seen");
 }
 
 void Tick() {
@@ -242,6 +341,7 @@ void Tick() {
     if (now - sLastMs < kTickPeriodMs) return;
     sLastMs = now;
 
+    AdoptPendingOwn(s, now);
     // OWNER: death-watch + keepalive re-announce + pose stream.
     for (size_t i = 0; i < g_owned.size();) {
         Owned& o = g_owned[i];
@@ -287,8 +387,12 @@ void Tick() {
 
     // RECEIVER: prune mirrors whose actor the engine reclaimed (world change).
     for (auto it = g_mirrors.begin(); it != g_mirrors.end();) {
-        if (!R::IsLiveByIndex(it->second.actor, it->second.idx)) it = g_mirrors.erase(it);
-        else ++it;
+        if (!R::IsLiveByIndex(it->second.actor, it->second.idx)) { it = g_mirrors.erase(it); continue; }
+        if (!it->second.lateCleared && now - it->second.bornMs >= 1500) {
+            it->second.lateCleared = true;
+            ClearMirrorTimers(it->second.actor, it->second.classId);
+        }
+        ++it;
     }
 }
 
@@ -385,6 +489,14 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
         // standing at the wire transform must not be overlap-killed by the
         // killsphere during that one frame.
         E::SetActorEnableCollision(spawned, false);
+        // A mirror lives as long as its owner's eyer does: the class's own daylight end (its `del` timer) is the
+        // owner's to run, and the black fog's eyes are born by day.
+        {
+            int32_t off = -1;
+            uint8_t mask = 0;
+            if (R::FindBoolProperty(cls, L"ignoreDaySpawn", off, mask) && off >= 0)
+                *(static_cast<uint8_t*>(spawned) + off) |= mask;
+        }
         ue_wrap::ParamFrame finish(finishFn);
         if (!finish.valid()) return;
         finish.Set<void*>(L"Actor", spawned);
@@ -397,7 +509,8 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
     // PARK the mirror: no AI (actor + CMC ticks off -> no isLooking/anger/dash
     // loop). Collision was already dropped pre-Finish (F-4).
     ue_wrap::puppet::DisableCharacterTicks(spawned);
-    g_mirrors[key] = Mirror{spawned, R::InternalIndexOf(spawned)};
+    ClearMirrorTimers(spawned, p.classId);
+    g_mirrors[key] = Mirror{spawned, R::InternalIndexOf(spawned), NowMs(), false, p.classId};
     UE_LOGI("owner_entity: mirror '%ls' materialized for slot=%d seq=%u at (%.0f,%.0f,%.0f) "
             "(brain-parked, collision-off)",
             kOwnerEntityClasses[p.classId], senderPeerSlot, p.seq, p.x, p.y, p.z);
@@ -437,6 +550,13 @@ void OnDestroyMsg(const coop::net::OwnerEntityDestroyPayload& p, int senderPeerS
     g_mirrors.erase(it);
     UE_LOGI("owner_entity: mirror slot=%d seq=%u destroyed (owner announced death)",
             slot, p.seq);
+}
+
+size_t MirrorCount(uint8_t classId) {
+    size_t n = 0;
+    for (const auto& kv : g_mirrors)
+        if (kv.second.classId == classId && R::IsLiveByIndex(kv.second.actor, kv.second.idx)) ++n;
+    return n;
 }
 
 void OnPeerLeftSlot(int slot) {
@@ -479,6 +599,7 @@ void OnDisconnect() {
     }
     g_mirrors.clear();
     g_owned.clear();
+    g_pendingOwn.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
 

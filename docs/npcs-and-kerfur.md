@@ -47,7 +47,11 @@ behaviour loop reads the local player. Suppressing them on clients would delete 
 and rolling them on the host would anchor them to the wrong player. So each peer keeps its native
 roll, owns the entity it rolled, and broadcasts it so every other peer renders a display mirror
 (`coop/creatures/owner_entity_sync`). The first member is the night stalker, the eyes that watch
-from the dark.
+from the dark. The second is the Shadow Figura (`figura_C`), which the game mode spawns on a ring about
+player 0 and walks to that player's camera: each peer rolls and owns its own, and a copy on another peer
+has the 0.1 s timer that ends it near the local camera cleared, so only its owner's ends it. `[V]`
+`coop/dev/hunt_drill` (`VOTVCOOP_HUNT_DRILL=figura`, both peers): the host made a Figura and the client
+was shown one parked copy of it.
 
 ### The host's hunters
 
@@ -225,7 +229,7 @@ wisp in flight is transient and owes nothing.
 |---|---|
 | The Omega's take-object, pat, equipment, kill and sit-on-the-ATV verbs are not synced | `[V]` `coop/creatures/kerfur_command`, the verb table |
 | The Omega's floppy state is not synced, so a relayed get-reports diverges on its result; its accessories and carried object likewise | `[V]` no lane under `coop/creatures` carries them |
-| Only one stalker class is owned per peer so far | `[V]` `coop/creatures/owner_entity_sync`, the member table |
+| Two classes are owned per peer so far, the eyer and the Shadow Figura | `[V]` `coop/creatures/owner_entity_sync`, the member table |
 | The tentacle ball still hunts the host alone: its reads are not served, since a lone ball could not be staged for a run | `[V]` `coop/creatures/hunt_target`, the rows |
 | The conversion is detected by a poll, five times a second, not at the verb | `[V]` `coop/creatures/kerfur_convert`; the lane reads the result rather than the call, because a peer's own conversion has already happened by the time any watch of ours runs |
 | Three ambient spawner families (bp7, the bush and the tick) are neither mirrored nor refused, so each peer grows its own | `[V]` they appear in no lane under `coop/creatures` and in no row of `coop/world/spawn_authority` |
