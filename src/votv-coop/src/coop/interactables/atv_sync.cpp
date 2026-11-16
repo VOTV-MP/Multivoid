@@ -132,7 +132,7 @@ constexpr uint64_t kOwedRetryMinMs = 1000;
 constexpr uint64_t kOwedRetryMaxMs = 32000;
 uint64_t    g_owedNextMs[coop::players::kMaxPeers] = {};
 uint64_t    g_owedIntervalMs[coop::players::kMaxPeers] = {};
-const char* g_owedSaid[coop::players::kMaxPeers] = {};   // the reason last logged for the slot's bit
+const char* g_owedSaid[coop::players::kMaxPeers] = {};   // the reason last logged for the slot's retry
 
 void ClearOwed(int slot) {
     g_setOwed.Clear(slot);
