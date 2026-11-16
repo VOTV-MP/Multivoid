@@ -323,6 +323,18 @@ void OnDisconnect() {
     Reset();
 }
 
+void CollectLiveTrashNatives(std::vector<void*>& out) {
+    out.clear();
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        if (!ue_wrap::prop::IsTrashActor(o)) continue;                 // what the index holds: piles and clumps at rest
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+        out.push_back(o);
+    }
+}
+
 void LogCensus() {
     // ALWAYS log when the index was built this bracket, even at zero orphans: the summary line is
     // the proof the census ran, and a clean join binds every indexed candidate, which would
@@ -336,12 +348,9 @@ void LogCensus() {
     struct Seen { float x, y, z; bool bound; };
     std::vector<Seen> seen;
     int totalLive = 0, bound = 0, unread = 0;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsTrashActor(o)) continue;                 // what the index holds: piles and clumps at rest
-        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+    std::vector<void*> natives;
+    CollectLiveTrashNatives(natives);
+    for (void* o : natives) {
         ++totalLive;
         const bool isBound = coop::prop_element_tracker::IsBoundMirrorNative(o);
         if (isBound) ++bound;

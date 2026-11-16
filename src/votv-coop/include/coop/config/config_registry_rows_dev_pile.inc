@@ -28,3 +28,8 @@ CFG_FLAG(sweep_bound_count_off, "sweep_bound_count_off", "dev", false, "VOTVCOOP
     "Drill red (the joining client, with pile_orphan_drill=1 on both peers): 1 stops the join sweep counting a bound "
     "mirror native as claimed for its class, so the completeness floor keeps the chip pile the host no longer has and "
     "the drill must FAIL on it. 0 = a bound native counts, as designed.")
+
+CFG_FLAG(sweep_fresh_universe_off, "sweep_fresh_universe_off", "dev", false, "VOTVCOOP_SWEEP_FRESH_UNIVERSE_OFF",
+    "Drill red (the joining client, with pile_orphan_drill=1 on both peers): 1 stops the join sweep walking the "
+    "native piles and clumps no host eid owns, so nothing finds an orphan and the drill must FAIL on the pile and the "
+    "clump the host no longer has. 0 = the sweep walks them, as designed.")

@@ -149,13 +149,13 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // keyless trash lineage (a chip pile or a garbage clump at rest, eid-expressed), plus the
     // wire-suppressed intermediate the client already destroys on sight while connected. Any other
     // keyless actor (a pre-Init Aprop_C) is outside it and never swept.
-    // The candidates are the client's own local Prop elements from the registry, never a
+    // The keyed candidates are the client's own local Prop elements from the registry, never a
     // GUObjectArray scan: deletion by tracked membership, as MTA's CElementGroup iterates its
     // member list rather than the world. So a host-driven mirror is excluded at the source (a
     // kerfur prop mirror is never a save-load divergence), and a keyless transient is never a local
-    // element. The >50% valve stays: an incomplete host bracket leaves most of the loaded world
-    // unclaimed, and that is an incomplete snapshot, not a divergence. One registry snapshot, no
-    // per-actor mutex.
+    // element. The trash lineage has no row on a client and comes from its own walk (below). The
+    // >50% valve stays: an incomplete host bracket leaves most of the loaded world unclaimed, and
+    // that is an incomplete snapshot, not a divergence. One registry snapshot, no per-actor mutex.
     std::vector<coop::element::Registry::ActorIdPair> propPairs;
     coop::element::Registry::Get().SnapshotActorsByType(
         coop::element::ElementType::Prop, propPairs);
@@ -182,7 +182,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         for (wchar_t c : w) s.push_back(static_cast<char>(c & 0xFF));
         return s;
     };
-    int inClass = 0;        // live, non-mirror, LOCAL Prop Elements (the membership universe)
+    int inClass = 0;        // live, non-mirror, LOCAL Prop Elements plus the unbound native trash (the membership universe)
     int claimedCount = 0;
     int sparedCount = 0;    // see Spared
     void* handAxis[1 + coop::players::kMaxPeers];
@@ -215,6 +215,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         }
         if (!pr.actor) continue;
         if (!R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;  // dead (no deref) -- the reaper owns it
+        if (ue_wrap::prop::IsTrashActor(pr.actor)) continue;        // the fresh trash walk below owns every pile and clump, row or none
         ++inClass;
         void* a = pr.actor;
         // The class is read before the claimed check: the completeness floor counts claims per
@@ -222,16 +223,6 @@ static void RunDivergenceSweep_(void* localPlayer) {
         const std::wstring acls = R::ClassNameOf(a);
         if (g_claimedActors.count(a)) { ++claimedCount; ++claimedByClass[acls]; continue; }  // host-expressed / self-claimed -> converged, keep
         if (Spared(a, acls, onHandAxis(a))) { ++sparedCount; continue; }
-        if (ue_wrap::prop::IsTrashActor(a)) {          // a pile or a clump at rest: expressible on the eid lane
-            // A body the load hold froze and no row bound by now: the host never bound it, so the host's
-            // world does not have it, whatever the class count says. It leaves the floor's reckoning.
-            if (coop::trash_native_hold::IsHeld(a)) { heldUnbound.push_back(a); continue; }
-            if (ue_wrap::prop::IsGarbageClump(a)) ++unheldClumps;
-            doomed.push_back(a);
-            doomedClass.push_back(acls);
-            ++doomedByClass[acls];
-            continue;
-        }
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(a);
         if (key.empty() || key == L"None") {
             ++keylessSkippedByClass[acls];  // defensive tripwire: a tracked keyless non-pile should not exist post-quiescence
@@ -336,6 +327,30 @@ static void RunDivergenceSweep_(void* localPlayer) {
         if (idxUniverse > 0 || idxEvicted > 0) {
             UE_LOGI("join_membership_sweep: keyed index-half -- %d element-less keyed in universe "
                     "(%d claimed, %d stale entries evicted)", idxUniverse, idxClaimed, idxEvicted);
+        }
+    }
+    // The trash half. A chip pile or a garbage clump at rest is keyless and rides the eid lane, and a
+    // client mints no id for the host's, so no row names the unbound ones: they come from a fresh walk of
+    // the object array (never the bracket's bind index, whose stored indices a purge churns), the one
+    // CollectLiveTrashNatives the orphan census shares. Judged as element rows were: a bound mirror native is
+    // the host's own and counted above, a claimed one is converged, the spared are skipped, a body the load
+    // hold froze and no eid bound is held for the post-floor doom, the rest are doomed under the class floor,
+    // which spares a pile whose host eid is still binding (the reconcile ran before this sweep and no
+    // expression lands after it).
+    if (!coop::dev::force_overdestroy_test::FreshUniverseDisabledForTest()) {
+        std::vector<void*> natives;
+        coop::pile_spawn_bind::CollectLiveTrashNatives(natives);
+        for (void* a : natives) {
+            if (coop::prop_element_tracker::IsBoundMirrorNative(a)) continue;
+            ++inClass;
+            const std::wstring acls = R::ClassNameOf(a);
+            if (g_claimedActors.count(a)) { ++claimedCount; ++claimedByClass[acls]; continue; }
+            if (Spared(a, acls, onHandAxis(a))) { ++sparedCount; continue; }
+            if (coop::trash_native_hold::IsHeld(a)) { heldUnbound.push_back(a); continue; }
+            if (ue_wrap::prop::IsGarbageClump(a)) ++unheldClumps;
+            doomed.push_back(a);
+            doomedClass.push_back(acls);
+            ++doomedByClass[acls];
         }
     }
     // A row still in deadKeyedRows is a wire identity whose actor churn-died with no same-key
@@ -488,8 +503,8 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // The orphan census, read-only: the native level chipPiles no arriving expression bound within 1
     // cm. The bracket is drained before the sweep fires (Begin, every PropSpawn and Complete are
     // FIFO on one lane; Complete only arms), so a leftover is real host drift: the host moved or
-    // collected the pile since the save the client loaded. The registry doom above misses these (a
-    // level native enters the Prop registry lazily), and a player can grab one through the real
+    // collected the pile since the save the client loaded. The trash walk above dooms the ones the
+    // floor lets go, so this reports what survived it, and a player can grab one through the real
     // interaction system with no GrabIntent sent. Each orphan is banded by its distance to the
     // nearest bound pile, so a removal threshold comes from measured drift. This diverges from
     // MTA, which removes only by id (Packet_EntityRemove): a chipPile is keyless and level-placed,

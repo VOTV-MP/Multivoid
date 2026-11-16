@@ -21,6 +21,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace coop::pile_spawn_bind {
 
@@ -72,5 +73,11 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
 // if the index was never built this bracket. Reads this module's own build-time count + dark-probe
 // gate -- it reports on THIS module's bind outcome, so it lives here. Game-thread only.
 void LogCensus();
+
+// Every live native trash actor (a chip pile or a garbage clump, CDOs out) from a FRESH walk of the
+// object array, appended to `out` after it is cleared. The one walk the orphan census and the join
+// sweep's universe share; it reads no bracket state, so it answers whether or not the bind index was
+// built. COLD: once per join. Game thread only.
+void CollectLiveTrashNatives(std::vector<void*>& out);
 
 }  // namespace coop::pile_spawn_bind
