@@ -8,6 +8,7 @@
 
 #include "ue_wrap/actors/kerfur.h"   // the kerfur's own ATV functions (InviteKerfurs, ReleaseKerfurs)
 #include "ue_wrap/actors/save_record.h"  // ReadArr / ReplaceArray -- the Modules and allKerfuros arrays
+#include "ue_wrap/core/cached_obj_ref.h"  // the battery prop class, found again after a world reload
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/component_calls.h"  // CallParamlessNamed -- the ATV's own parameterless functions
@@ -299,9 +300,17 @@ bool SetBattery(void* atv, float v) {
 bool CallUpdBattery(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updBattery"); }
 
 void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale, uint8_t collision, float charge) {
-    void* const cls = R::FindClass(L"prop_atvcarbattery_C");
-    const int32_t off = cls ? R::FindPropertyOffset(cls, L"battery") : -1;
-    if (off < 0) {
+    // The prop's class and its `battery` offset, resolved once and again when a world reload has re-created the class.
+    static CachedObjRef s_batteryCls;
+    static int32_t s_batteryPropOff = -1;
+    if (!s_batteryCls.Alive()) {
+        void* const found = object_index::ClassByName(L"prop_atvcarbattery_C");
+        s_batteryCls.Set(found);
+        s_batteryPropOff = found ? R::FindPropertyOffset(found, L"battery") : -1;
+    }
+    void* const cls = s_batteryCls.Get();
+    const int32_t off = s_batteryPropOff;
+    if (!cls || off < 0) {
         UE_LOGW("atv: prop_atvcarbattery_C or its battery field does not resolve -- no battery prop is spawned");
         return nullptr;
     }

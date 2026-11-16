@@ -179,8 +179,15 @@ sg::Verdict OnPre(const sg::Call& call) {
     // destroyed at the POST (the host spawns the one every peer shares). Said before the vitals read, so an act whose
     // vitals do not read still has its prop recorded.
     if (row == kUnscrew && client) {
-        const int32_t tOff = R::FindPropertyOffset(R::ClassOf(call.object), L"lookAtTire");
-        const int32_t sOff = R::FindPropertyOffset(R::ClassOf(call.object), L"lookAtTireSocket");
+        static R::InstanceOffset sLookTire{L"lookAtTire"}, sLookSocket{L"lookAtTireSocket"};
+        const int32_t tOff = sLookTire.Of(call.object);
+        const int32_t sOff = sLookSocket.Of(call.object);
+        static bool s_said = false;
+        if ((tOff < 0 || sOff < 0) && !s_said) {
+            s_said = true;
+            UE_LOGW("atv_gate: the ATV's lookAtTire fields do not resolve -- an unscrew's own battery prop is not recorded "
+                    "on this client (said once)");
+        }
         const auto* o = static_cast<const uint8_t*>(call.object);
         const bool battery = A::GetBattery(call.object) >= 0.f && tOff >= 0 && sOff >= 0 &&
                              *reinterpret_cast<const int32_t*>(o + tOff) < 0 &&

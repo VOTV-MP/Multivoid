@@ -38,7 +38,7 @@ bool BirthIsPlayerAuthored(void* born);
 // An ATV's unscrewPanel is starting on this client (`unscrewFn`, the watched body), and whether it is the battery's
 // branch (no tire looked at, a battery fitted). That branch spawns a battery prop on this client's game alone, which the
 // host's own spawn replaces, so it is recorded as it is born (BirthIsPlayerAuthored) and never crosses. A tire's branch
-// spawns a wheel, which is not recorded. Clears any record a body without a POST left. Called from
+// spawns a wheel, which is not recorded. A record a body without a POST left is destroyed here, with no destroy sent. Called from
 // coop/interactables/atv_gate's pre callback. Game thread.
 void NoteAtvUnscrewBranch(void* unscrewFn, bool batteryBranch);
 
@@ -46,7 +46,7 @@ void NoteAtvUnscrewBranch(void* unscrewFn, bool batteryBranch);
 // record and the branch cleared. Called from coop/interactables/atv_gate's post callback. Game thread.
 void* TakeAtvUnscrewBattery();
 
-// Session teardown: report both columns of the caller tally -- the menu's calls, which crossed as
+// Session teardown: a battery prop still recorded is destroyed (no destroy sent); report both columns of the caller tally -- the menu's calls, which crossed as
 // intents, and every other caller's, which stayed local -- and zero it. The watch and the resolved
 // UFunctions stay: they name the game's own classes, not this session's world. Game thread.
 void Reset();
