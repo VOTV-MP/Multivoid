@@ -34,6 +34,7 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // Registry::Local / LocalPeerId / kMaxPeers
 #include "coop/player/roster_ledger.h"      // SubscribeSlotReplaced: a departed peer must not hold an ATV
+#include "coop/player/slot_mask.h"
 #include "coop/session/net_pump.h"          // HasAnnouncedWorldReady: a client sends no request before it
 
 #include "ue_wrap/devices/atv.h"
@@ -122,12 +123,11 @@ uint32_t g_trapStampsSeen    = 0;   // host blocks received whose payload carrie
 // A block refused at the door of OnReliable (an empty key, a non-finite pose): said once per window, not per packet.
 coop::net::RefusalTally g_blockRefusals{"atv_sync"};
 
-// HOST: the slots owed the set edge (bit = slot). A snapshot that withheld the edge sets its slot's bit; the owed
+// HOST: the slots owed the set edge. A snapshot that withheld the edge sets its slot; the owed
 // poll in Tick clears it once the edge goes, a new replay for the slot or the slot's departure clears it too.
 // Each owed slot retries on its own interval (1 s, doubled after a retry that did not send the edge, up to 32 s) and
-// says why a retry withheld once per reason; clearing the bit resets all three.
-uint32_t g_setOwed = 0;
-static_assert(coop::players::kMaxPeers <= 32, "g_setOwed holds one bit per slot");
+// says why a retry withheld once per reason; clearing the slot resets all three.
+coop::players::SlotMask g_setOwed;
 constexpr uint64_t kOwedRetryMinMs = 1000;
 constexpr uint64_t kOwedRetryMaxMs = 32000;
 uint64_t    g_owedNextMs[coop::players::kMaxPeers] = {};
@@ -135,7 +135,7 @@ uint64_t    g_owedIntervalMs[coop::players::kMaxPeers] = {};
 const char* g_owedSaid[coop::players::kMaxPeers] = {};   // the reason last logged for the slot's bit
 
 void ClearOwed(int slot) {
-    g_setOwed &= ~(1u << slot);
+    g_setOwed.Clear(slot);
     g_owedNextMs[slot] = 0;
     g_owedIntervalMs[slot] = 0;
     g_owedSaid[slot] = nullptr;
@@ -143,7 +143,7 @@ void ClearOwed(int slot) {
 // Arming starts the first retry a second away, never at the next Tick. `said` is the reason the snapshot already
 // logged, so the first retry does not repeat it.
 void ArmOwed(int slot, uint64_t nowMs, const char* said) {
-    g_setOwed |= 1u << slot;
+    g_setOwed.Set(slot);
     g_owedIntervalMs[slot] = kOwedRetryMinMs;
     g_owedNextMs[slot] = nowMs + kOwedRetryMinMs;
     g_owedSaid[slot] = said;
@@ -465,9 +465,9 @@ namespace {
 // that can be incomplete, so the host holds the edge as a debt
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:195-297).
 void PollOwedSetEdges(coop::net::Session* s, uint64_t nowMs) {
-    if (!g_setOwed) return;
+    if (g_setOwed.None()) return;
     for (int slot = 0; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
-        if (!(g_setOwed & (1u << slot)) || nowMs < g_owedNextMs[slot] || !s->IsSlotWorldReady(slot)) continue;
+        if (!g_setOwed.Has(slot) || nowMs < g_owedNextMs[slot] || !s->IsSlotWorldReady(slot)) continue;
         const SetSent r = SendSetToSlot(s, slot, /*withPoses*/ false);
         if (r.edge) {
             ClearOwed(slot);

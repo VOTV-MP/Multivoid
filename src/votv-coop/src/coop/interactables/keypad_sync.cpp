@@ -6,6 +6,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"          // WireKeyFromString / StringFromWireKey / FnvKey
 #include "coop/player/players_registry.h"    // coop::players::kMaxPeers
+#include "coop/player/slot_mask.h"
 #include "coop/text/utf8_codec.h"            // the password's UTF-8 bytes on the wire
 
 #include "ue_wrap/core/log.h"
@@ -56,8 +57,8 @@ Clock::time_point g_nextRetry{};
 // written at that chain's end instead, the tail's setActive (OnClientChainEnd).
 std::unordered_map<std::wstring, coop::net::KeypadSyncPayload> g_parked;
 
-// Joiners whose snapshot waited for the index to be current, one bit a slot.
-uint32_t g_snapshotOwed = 0;
+// Joiners whose snapshot waited for the index to be current.
+coop::players::SlotMask g_snapshotOwed;
 
 // The verb the lane is running on a keypad right now.
 struct Mark { void* lock = nullptr; Verb verb = Verb::SetActive; };
@@ -286,11 +287,11 @@ void Install(coop::net::Session* session) {
 void Tick() {
     if (!PL::EnsureResolved()) return;
     RegisterWithScanHub();
-    if (g_snapshotOwed && IndexCurrent()) {
-        const uint32_t owed = g_snapshotOwed;
-        g_snapshotOwed = 0;
+    if (g_snapshotOwed.Any() && IndexCurrent()) {
+        const coop::players::SlotMask owed = g_snapshotOwed;
+        g_snapshotOwed.ClearAll();
         for (int slot = 0; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
-            if (owed & (1u << slot)) QueueConnectBroadcastForSlot(slot);
+            if (owed.Has(slot)) QueueConnectBroadcastForSlot(slot);
     }
     if (g_pending.empty() || !IndexCurrent()) return;
     const Clock::time_point now = Clock::now();
@@ -344,7 +345,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
     if (!IndexCurrent()) {
         // Mid-transition: owed, and sent by Tick once the hub has a current pass.
-        g_snapshotOwed |= 1u << peerSlot;
+        g_snapshotOwed.Set(peerSlot);
         UE_LOGI("keypad: connect-snapshot for slot %d waits for a current index", peerSlot);
         return;
     }
@@ -372,7 +373,7 @@ void OnDisconnect() {
     g_typedSent = g_typedApplied = 0;
     g_pending.clear();
     g_parked.clear();
-    g_snapshotOwed = 0;
+    g_snapshotOwed.ClearAll();
     g_mark = Mark{};
 }
 

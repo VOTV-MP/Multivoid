@@ -11,6 +11,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/slot_mask.h"
 #include "coop/props/prop_key_index.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -89,8 +90,7 @@ std::unordered_map<std::wstring, LinkId> g_broadcast;
 uint32_t g_tableGen = 0;
 bool g_tableSeeded = false;
 // Joiners owed the seed, by slot; it waits for the listing of the current world.
-uint32_t g_seedOwed = 0;
-static_assert(coop::net::kMaxPeers <= 32, "g_seedOwed is a bit per slot");
+coop::players::SlotMask g_seedOwed;
 struct Rate { uint64_t windowStart = 0; int count = 0; };
 Rate g_rate[coop::net::kMaxPeers];
 // The slot whose claim the host is applying, -1 otherwise: the broadcast of the change that apply makes skips it, as
@@ -400,11 +400,11 @@ bool SendSeed(coop::net::Session* s, int slot) {
 }
 
 void DrainSeeds(coop::net::Session* s) {
-    if (!g_seedOwed) return;
+    if (g_seedOwed.None()) return;
     for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-        if (!(g_seedOwed & (1u << slot))) continue;
-        if (!s->IsSlotWorldReady(slot)) { g_seedOwed &= ~(1u << slot); continue; }  // gone before its seed
-        if (SendSeed(s, slot)) g_seedOwed &= ~(1u << slot);
+        if (!g_seedOwed.Has(slot)) continue;
+        if (!s->IsSlotWorldReady(slot)) { g_seedOwed.Clear(slot); continue; }  // gone before its seed
+        if (SendSeed(s, slot)) g_seedOwed.Clear(slot);
     }
 }
 
@@ -713,7 +713,7 @@ DrillView ReadForDrill() {
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = detail::Connected();
     if (!detail::IsHost(s) || peerSlot <= 0 || peerSlot >= static_cast<int>(coop::net::kMaxPeers)) return;
-    g_seedOwed |= 1u << peerSlot;
+    g_seedOwed.Set(peerSlot);
     DrainSeeds(s);
 }
 
@@ -724,7 +724,7 @@ void OnDisconnect() {
     g_props.clear(); g_foundProps.clear();
     g_indexGen = 0;
     g_broadcast.clear(); g_tableGen = 0; g_tableSeeded = false;
-    g_seedOwed = 0;
+    g_seedOwed.ClearAll();
     for (Rate& r : g_rate) r = Rate{};
     g_seeded = false;
     g_nextSeq = 1;

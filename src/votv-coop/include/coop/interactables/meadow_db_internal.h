@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "coop/player/slot_mask.h"
+
 #include <cstdint>
 #include <vector>
 
@@ -18,8 +20,8 @@ struct Pending {
     uint64_t hash = 0;
     bool     isDelete = false;
     uint64_t bornOp = 0;                 // vs a join snapshot's opAt (mask criterion)
-    uint32_t excludeMask = 0;            // slots the seed already covered
-    uint32_t sentMask = 0;               // slots already delivered (masked retry)
+    coop::players::SlotMask excludeMask;   // slots the seed already covered
+    coop::players::SlotMask sentMask;      // slots already delivered (masked retry)
     std::vector<uint8_t> blob;           // append: serialized row (sans image)
 };
 

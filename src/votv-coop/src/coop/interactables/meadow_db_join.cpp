@@ -11,6 +11,7 @@
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/player/slot_mask.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/desk/meadow_store.h"
@@ -37,7 +38,7 @@ SlotSnap g_snap[coop::net::kMaxPeers];
 // Joiners whose world-ready came while this host's database was away, and the pen's length then: their seed
 // runs once the database is back, before the pen drains, with only the lines that came before they were
 // ready -- the session relayed every later one to them as it came.
-uint32_t g_seedOwed = 0;
+coop::players::SlotMask g_seedOwed;
 size_t   g_owedUpTo[coop::net::kMaxPeers] = {};
 
 // The pen's lines a joiner's seed forwards: those the session relayed to the peers ready when they came,
@@ -100,7 +101,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     }
     g_seededOnce[peerSlot] = true;
     if (I::DatabaseAway()) {
-        g_seedOwed |= 1u << peerSlot;
+        g_seedOwed.Set(peerSlot);
         g_owedUpTo[peerSlot] = meadow_db_park::Parked();
         UE_LOGI("meadow_db: the seed for slot %d waits for this host's database, away (%zu line(s) parked)",
                 peerSlot, g_owedUpTo[peerSlot]);
@@ -124,11 +125,10 @@ void SeedSlot(int peerSlot, size_t forwardUpTo) {
     // The mask criterion: a pending born before the snapshot has its effect inside the save the
     // joiner loaded, so the retry must skip this slot; younger pendings deliver through the retry
     // and stay out of the seed.
-    const uint32_t bit = 1u << peerSlot;
     std::vector<I::Pending>& waiting = I::Waiting();
     std::map<uint64_t, int32_t> unmaskedNet;
     for (auto& p : waiting) {
-        if (p.bornOp <= snap.opAt) p.excludeMask |= bit;
+        if (p.bornOp <= snap.opAt) p.excludeMask.Set(peerSlot);
         else unmaskedNet[p.hash] += p.isDelete ? -1 : 1;
     }
 
@@ -191,13 +191,12 @@ void CancelJoinSnapshot(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
     g_snap[peerSlot] = SlotSnap{};
     g_seededOnce[peerSlot] = false;
-    g_seedOwed &= ~(1u << peerSlot);
+    g_seedOwed.Clear(peerSlot);
     g_owedUpTo[peerSlot] = 0;
     I::ForgetSlot(static_cast<uint8_t>(peerSlot));
-    const uint32_t bit = 1u << peerSlot;
     for (auto& p : I::Waiting()) {
-        p.excludeMask &= ~bit;   // slot reuse must not inherit stale excludes
-        p.sentMask &= ~bit;
+        p.excludeMask.Clear(peerSlot);   // slot reuse must not inherit stale excludes
+        p.sentMask.Clear(peerSlot);
     }
 }
 
@@ -206,23 +205,23 @@ namespace internal {
 void ResetJoinSeeds() {
     for (auto& sn : g_snap) sn = SlotSnap{};
     for (auto& so : g_seededOnce) so = false;
-    g_seedOwed = 0;
+    g_seedOwed.ClearAll();
 }
 
 bool HasOwedSeeds() {
-    return g_seedOwed != 0;
+    return g_seedOwed.Any();
 }
 
 void RunOwedSeeds() {
-    const uint32_t owed = g_seedOwed;
-    g_seedOwed = 0;
+    const coop::players::SlotMask owed = g_seedOwed;
+    g_seedOwed.ClearAll();
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        if (owed & (1u << slot)) SeedSlot(slot, g_owedUpTo[slot]);
+        if (owed.Has(slot)) SeedSlot(slot, g_owedUpTo[slot]);
 }
 
 void DropOwedSeeds() {
-    if (g_seedOwed) UE_LOGW("meadow_db: a new database -- the seeds owed to joiners are dropped with it");
-    g_seedOwed = 0;
+    if (g_seedOwed.Any()) UE_LOGW("meadow_db: a new database -- the seeds owed to joiners are dropped with it");
+    g_seedOwed.ClearAll();
 }
 
 }  // namespace internal
