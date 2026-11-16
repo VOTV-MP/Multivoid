@@ -7,6 +7,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/component_calls.h"  // SetActive (the body's flame)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/reflected_offset.h"
 
@@ -444,6 +445,14 @@ bool ReadCharacterIsFalling(void* actor) {
     if (!cmc) return false;
     const uint8_t mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
     return mode == P::off::kMOVE_Falling;
+}
+
+bool ReadCharacterIsCrouched(void* actor) {
+    if (!actor || !R::IsLive(actor)) return false;
+    static int32_t sOff = -2;
+    static uint8_t sMask = 0;
+    if (sOff == -2 && !R::FindBoolProperty(R::ClassOf(actor), L"bIsCrouched", sOff, sMask)) sOff = -1;
+    return sOff >= 0 && (static_cast<const uint8_t*>(actor)[sOff] & sMask) != 0;
 }
 
 bool ReadCharacterIsWalking(void* actor, bool& walking) {

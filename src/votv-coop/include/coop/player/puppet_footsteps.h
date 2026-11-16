@@ -27,12 +27,13 @@ struct Stride {
     // Native constants, read off mainPlayer's ubergraph: a 150 cm stride, a |v| > 10 cm/s move
     // gate, and 0.75 applied to the accumulated distance while running. The run TEST is ours -- the
     // graph reads its run input, which the wire pose does not carry, so speed stands in for it at
-    // the same 400 cm/s lib_C::step normalizes volume against. The graph's crouch x2.0 and water
-    // x0.5 are omitted: stateBits carry only InAir and Ragdoll today.
+    // the same 400 cm/s lib_C::step normalizes volume against. The graph's crouch x2.0 is the wire's
+    // crouch bit (a crawl in a vent steps every 75 cm); its water x0.5 is omitted.
     static constexpr float kStrideCm     = 150.f;
     static constexpr float kMinSpeedCmS  = 10.f;
     static constexpr float kRunSpeedCmS  = 400.f;
     static constexpr float kRunFactor    = 0.75f;
+    static constexpr float kCrouchFactor = 2.0f;
     // Teleport/connect-snap guard: a per-frame displacement this large is a
     // warp, not locomotion -- drop the sample (re-prime from the new spot).
     static constexpr float kMaxSampleCm  = 200.f;
@@ -46,7 +47,7 @@ struct Stride {
     // lib_C::step (CharacterStep) AND the skin step FX (skin_effects::OnStep) together, so they
     // cannot drift apart; the local body's skin_effects::TickStride runs its own instance over the
     // wire-pose samples. One stride emitter either way.
-    bool StepDue(const ue_wrap::FVector& pos, float speedCmS, bool grounded) {
+    bool StepDue(const ue_wrap::FVector& pos, float speedCmS, bool grounded, bool crouched = false) {
         if (!grounded || speedCmS <= kMinSpeedCmS) {
             // Idle or airborne: drop the accumulator and unprime, so the next moving sample
             // re-primes from the new spot. The graph zeroes its own lastStep at this same gate.
@@ -65,7 +66,7 @@ struct Stride {
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
         last_ = pos;
         if (d > kMaxSampleCm) return false;  // warp -- not a stride
-        accum_ += d * (speedCmS > kRunSpeedCmS ? kRunFactor : 1.0f);
+        accum_ += d * (crouched ? kCrouchFactor : (speedCmS > kRunSpeedCmS ? kRunFactor : 1.0f));
         if (accum_ >= kStrideCm) {
             accum_ = 0.f;
             return true;

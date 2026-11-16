@@ -75,6 +75,6 @@ void OnStep(void* bodyActor, const ue_wrap::FVector& pos);
 // stack the exact double the mode exists to avoid; the visual burst still
 // fires. Game thread.
 void TickStride(void* bodyActor, const ue_wrap::FVector& pos, float speedCmS,
-                bool grounded);
+                bool grounded, bool crouched = false);
 
 }  // namespace coop::skin_effects

@@ -38,7 +38,12 @@ in place (`coop/player/puppet_body_yaw`): standing, the body yaw holds and the h
 and the body turns only once the camera leads beyond the head's reach; moving, the body
 rate-follows the streamed yaw. Footsteps (`coop/player/puppet_footsteps`): the puppet's own tick
 is off, so the mod reproduces the game's stride accumulator and dispatches the game's own step
-function, which does the ground trace, the per-material cue and the world reactions.
+function, which does the ground trace, the per-material cue and the world reactions. The pose's
+crouch bit (`kStateBitCrouched`) doubles the stride as the game's own does for a crouch, so a player
+crawling a vent steps every 75 cm on every peer; the body itself stays standing, since the game has
+no crouched pose for it.
+`[V]` (`coop/dev/vent_probe`: a crouched host crawling the vent knocker's duct stepped 26 times in
+17 s on the client, every step on its ground.)
 
 A relayed packet names its sender's occupancy of the slot: the host numbers each occupancy and
 stamps the number into everything it relays, and a client refuses an older occupancy's packets and

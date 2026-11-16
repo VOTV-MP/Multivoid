@@ -1573,6 +1573,7 @@ namespace match_form { constexpr uint8_t kNone = 0; constexpr uint8_t kPile = 1;
 inline constexpr uint8_t kStateBitInAir   = 0x01;
 inline constexpr uint8_t kStateBitRagdoll = 0x02;  // the source is ragdolled (faint, manual, knock-out), not dead
 inline constexpr uint8_t kStateBitBurning = 0x04;  // the source's body is on fire (its burningTime runs), display only
+inline constexpr uint8_t kStateBitCrouched = 0x08; // the source is crouched (ACharacter::bIsCrouched): its steps come twice as often
 
 // The game's vital scalars (food, sleep, the default max health) top out at 100. health is
 // normalised by the peer's own max health before quantisation; food and sleep by this.
