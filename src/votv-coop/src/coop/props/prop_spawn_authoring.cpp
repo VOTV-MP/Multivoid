@@ -158,11 +158,16 @@ bool BirthIsPlayerAuthored() {
                 "are a player's");
         return true;
     }
-    // The hacksaw's cut: its tick spawns the scrap of the prop it saws, then destroys the prop. The saw runs only
-    // where it is held, so the scrap is this player's doing and none of the other peers' games makes it; the
-    // prop's destroy crosses by the destroy seam.
+    // The hacksaw's cut: its tick spawns the scrap of the prop it saws, then destroys the prop. The saw runs only where
+    // it is held, so the scrap is this player's doing and no other peer's game makes it; the prop's destroy crosses by
+    // the destroy seam. It is a granted act's consequence: the client's saw asked the host first (coop/props/hacksaw_cut)
+    // and runs this tick only after the grant. MTA would have the server make the product (a request judged and answered
+    // by the server alone, reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3338-3367); here the derivation
+    // (the drop from the prop's material, the amount from its mesh volume) lives mid-ubergraph with no entry point, so
+    // the saw that holds that state runs it and the host judges the births it sends. A class a world reloaded is a new
+    // function, so a miss of the latch is asked by name again.
     if (caller == g_sawUberFn) return true;
-    if (!g_sawUberFn && FunctionIs(const_cast<void*>(caller), g_sawUberName, L"prop_hacksaw_C")) {
+    if (FunctionIs(const_cast<void*>(caller), g_sawUberName, L"prop_hacksaw_C")) {
         g_sawUberFn = const_cast<void*>(caller);
         UE_LOGI("prop_spawn_authoring: the hacksaw's ubergraph is the calling frame -- the scrap of its cut is a "
                 "player's");

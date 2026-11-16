@@ -1,5 +1,7 @@
 // coop/props/container_contents_io.cpp -- see coop/props/container_contents_io.h.
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_slice_wire.h"
 
@@ -58,9 +60,19 @@ WriteResult WriteRecords(uint32_t eid, void* inv, const std::vector<SR::SaveReco
         UE_LOGW("container_contents: eid=%u -- alloc of %d records failed; leaving contents", eid, n);
         return WriteResult::Refused;
     }
-    for (int32_t i = 0; i < n; ++i)
-        SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride,
-                            recs[i], load);
+    // The container gaps drill's nested red: a nested container's carried contents are not written, so it is born empty.
+    static const bool s_nestOff = coop::config::ResolveFlag(coop::config_registry::rows::nest_record_off);
+    for (int32_t i = 0; i < n; ++i) {
+        const SR::SaveRecord* r = &recs[i];
+        SR::SaveRecord stripped;
+        if (s_nestOff && r->nestedCarried) {
+            stripped = *r;
+            stripped.nested.clear();
+            stripped.nestedCarried = false;
+            r = &stripped;
+        }
+        SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride, *r, load);
+    }
     // The previous buffer is orphaned: freeing the nested sub-arrays, minted FStrings and signal
     // rows recursively is far more crash-prone than leaking them, and the engine never double-frees
     // a buffer it has lost. inventory::ApplyToSaveObject orphans the same way once per join; this

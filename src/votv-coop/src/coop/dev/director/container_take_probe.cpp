@@ -126,7 +126,7 @@ bool ContainerRecordName(void* container, int32_t slotIdx, std::wstring& name) {
     SR::Arr slice;
     if (!ContainerSliceArr(container, slice) || slotIdx < 0 || slotIdx >= slice.num) return false;
     SR::SaveRecord rec;
-    SR::ReadSaveRecord(slice.data + static_cast<size_t>(slotIdx) * SR::kSaveStride, rec);
+    SR::ReadSaveRecord(slice.data + static_cast<size_t>(slotIdx) * SR::kSaveStride, rec, /*withImage=*/false);   // only its name is read
     return SR::RecordName(rec, name);
 }
 // The local player's own carried records that are X by class and name (not the container's, not another peer's copy);

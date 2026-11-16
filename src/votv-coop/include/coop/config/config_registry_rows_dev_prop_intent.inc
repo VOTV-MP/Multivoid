@@ -35,3 +35,21 @@ CFG_FLAG(nametag_client_runs, "nametag_client_runs", "dev", false, "VOTVCOOP_NAM
 CFG_FLAG(nametag_no_join_replay, "nametag_no_join_replay", "dev", false, "VOTVCOOP_NAMETAG_NO_JOIN_REPLAY",
     "Developer (the host): the host does not name, at a joiner's connect, the tags put on since its save was cut (the "
     "nametag drill's window red: the joiner's copy stays untagged).")
+CFG_FLAG(garbage_state_off, "garbage_state_off", "dev", false, "VOTVCOOP_GARBAGE_STATE_OFF",
+    "Developer (a client): the host's state of a garbage container is received and resolved but not applied: the copy's "
+    "list, flags and glue stay as they were (the container gaps drill's garbage red).")
+CFG_FLAG(nest_record_off, "nest_record_off", "dev", false, "VOTVCOOP_NEST_RECORD_OFF",
+    "Developer (a client): a container slice's carried contents of a nested container are not written, so the nested "
+    "container is born empty (the container gaps drill's nested red).")
+CFG_FLAG(photo_record_off, "photo_record_off", "dev", false, "VOTVCOOP_PHOTO_RECORD_OFF",
+    "Developer (any peer): a prop's record is applied with its signals' photos left out (the container gaps drill's photo "
+    "red).")
+CFG_FLAG(break_request_off, "break_request_off", "dev", false, "VOTVCOOP_BREAK_REQUEST_OFF",
+    "Developer (a client): a lethal hit on a container the client authors runs there instead of asking the host (the "
+    "container gaps drill's break red).")
+CFG_FLAG(hacksaw_request_off, "hacksaw_request_off", "dev", false, "VOTVCOOP_HACKSAW_REQUEST_OFF",
+    "Developer (a client): a prop its hacksaw cuts is cut there instead of asked of the host (the hacksaw drill's "
+    "red).")
+CFG_FLAG(sawn_refuse_all, "sawn_refuse_all", "dev", false, "VOTVCOOP_SAWN_REFUSE_ALL",
+    "Developer (the host): every cut a client asks of the host is refused, with the reason that its call did not run, so "
+    "the client's saw answers with the game's own hint and ends its cut (the hacksaw drill's refused arm).")

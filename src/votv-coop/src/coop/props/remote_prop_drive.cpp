@@ -81,6 +81,12 @@ int DrivingSlotOf(void* actor, int except) {
     return -1;
 }
 
+bool IsDrivenBy(void* actor, int slot) {
+    UE_ASSERT_GAME_THREAD("remote_prop::IsDrivenBy");
+    if (!actor || slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
+    return g_drives[slot].actor == actor;
+}
+
 void RefuseHold(int slot, uint16_t holdGen) {
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::RefuseHold)");
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || holdGen == 0) return;

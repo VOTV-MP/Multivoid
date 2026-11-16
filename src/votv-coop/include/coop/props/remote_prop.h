@@ -79,6 +79,10 @@ bool IsActorDrivenByOtherThan(void* actor, int slot);
 // excludes none). Game thread.
 int DrivingSlotOf(void* actor, int except = -1);
 
+// Whether the drive of `slot` itself moves `actor` (the question DrivingSlotOf cannot answer when two slots drive one).
+// Game thread.
+bool IsDrivenBy(void* actor, int slot);
+
 // The host refused hold `holdGen` of the peer in `slot` (coop/props/prop_hold_claim): the hold
 // closes, its release moves nothing, and its drive ends if one started. A copy that no other drive
 // moves goes back to physics where that drive left it, whether or not this peer's player holds it (a

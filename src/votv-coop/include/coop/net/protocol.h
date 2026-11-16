@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 296;
+inline constexpr uint16_t kProtocolVersion = 297;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1455,14 +1455,19 @@ enum class ReliableKind : uint16_t {
     // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
     // RoombaPayload.
     RoombaIntent = 246,
-    // HOST->ALL: a garbage container's contents (the keys of the props its itemsInside lists, the first
-    // kGarbageBinKeys of them) and whether it can be held and collected, when any changes, and every container again
-    // at the ready edge. A client's copy writes the flags and glues the props as the container's own glue does. Not
-    // relayed, not pre-world. GarbageBinPayload.
+    // HOST->ALL: a garbage container's contents (the keys of the props its itemsInside lists) and whether it can be held
+    // and collected, when any changes, and every container again to a joiner at its ready edge. A client's copy writes the
+    // flags and the list and glues the props as the container's own glue does, once every listed prop is here. A chunked
+    // blob on the Default lane (a body past the blob ceiling is logged on the host and not sent). Host-authored: refused
+    // at a client from any slot but 0 and dropped on the host; never relayed; not pre-world. See kGarbageBinVersion.
     GarbageBinState = 262,
     // CLIENT->HOST: a container this client authors (it holds it, threw it or syncs it) took a lethal impact or fire
-    // here, which the client cancelled, or its hacksaw cut it (sawn). The host breaks its own copy by the same lethal
-    // call, or as the saw does, so the spill is the host's. Never relayed. ContainerBreakPayload.
+    // here, which the client cancelled: op 1, the request; the host breaks its own copy by the same lethal call, so
+    // the spill is the host's. Or the client's hacksaw is about to complete a cut (sawn): op 1 asks the host to
+    // GRANT it. HOST->the requester alone: op 2, the host's refusal with its reason; op 3, a granted cut: the host records
+    // it and breaks its copy when that client's destroy of the prop arrives, and the client's saw runs the rest. CLIENT->HOST,
+    // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
+    // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
 };
 
@@ -2341,25 +2346,34 @@ struct DeskShortPayload {
 };
 static_assert(sizeof(DeskShortPayload) == 4, "DeskShortPayload must be 4 bytes");
 
-// A garbage container's state (GarbageBinState).
-inline constexpr size_t kGarbageBinKeys = 5;
+// A garbage container's state (GarbageBinState), a chunked blob (blob_chunks) on the Default lane, little-endian:
+// [u8 version][u8 key length][key][u8 flags][u16 count][count x ([u8 length][key])]. The container's key and each listed
+// prop's key are ASCII, 1 to 31 chars; the list is every keyed prop its itemsInside holds, in its order. A receiver reads
+// every length from the body and refuses what does not add up to it exactly, a version it does not know, a flag outside
+// the two, a listed key equal to the container's own, and a key listed twice.
+inline constexpr uint8_t kGarbageBinVersion = 1;
 inline constexpr uint8_t kGarbageBinCanHold = 0x01, kGarbageBinCanCollect = 0x02;
-struct GarbageBinPayload {
-    WireKey key;                     // 32 -- the container's Key
-    uint8_t flags;                   // 1 -- kGarbageBin*: propData's canHold and canCollect
-    uint8_t count;                   // 1 -- how many props its itemsInside lists (more than `keys` past the cap)
-    uint8_t keys;                    // 1 -- how many of `items` are filled
-    uint8_t _pad;                    // 1 -- zero
-    WireKey items[kGarbageBinKeys];  // 160 -- the listed props' Keys, in the list's order
-};
-static_assert(sizeof(GarbageBinPayload) == 196, "GarbageBinPayload must be 196 bytes");
 
-// A client's break of a container it authors (ContainerBreakRequest).
+// A client's break of a container it authors, or its saw's cut of a prop (ContainerBreakRequest, op 1), the host's refusal
+// of it (op 2) or its grant of a cut (op 3), and the client's withdrawal of a grant its cut did not use (op 4).
+inline constexpr uint8_t kContainerBreakAsk      = 1;   // CLIENT->HOST: break this container, or grant this cut
+inline constexpr uint8_t kContainerBreakRefused  = 2;   // HOST->the requester: not broken or not granted, with a reason
+inline constexpr uint8_t kContainerBreakGranted  = 3;   // HOST->the requester: the cut may run (sawn 1, reason 0)
+inline constexpr uint8_t kContainerBreakWithdrawn = 4;   // CLIENT->HOST: the granted cut ended without its destroy (sawn 1, fire 0, reason 0)
+// The reason of an op 2. Zero on an op 1, an op 3 and an op 4.
+inline constexpr uint8_t kContainerBreakNotFound = 1;      // the host holds no live prop of that key (gone, or already granted)
+inline constexpr uint8_t kContainerBreakNotAuthor   = 2;   // the sender neither syncs nor holds it
+inline constexpr uint8_t kContainerBreakNoSaw       = 3;   // a cut, with no hacksaw in the sender's applied hand
+inline constexpr uint8_t kContainerBreakOutOfReach  = 4;   // the container is not within the sender's reach
+inline constexpr uint8_t kContainerBreakTooFast     = 5;   // the sender is past its budget, or its queue of requests is full
+inline constexpr uint8_t kContainerBreakNotReady    = 6;   // the sender's world was not ready
+inline constexpr uint8_t kContainerBreakNotTaken    = 7;   // the host's call did not run
 struct ContainerBreakPayload {
-    WireKey key;       // 32 -- the container's Key
-    uint8_t fire;      // 1 -- a fireDamage (1) or an impactDamage (0)
-    uint8_t sawn;      // 1 -- 1: the hacksaw's cut, which the host makes as the saw does (broken, then destroyed)
-    uint8_t _pad[2];   // 2 -- zero
+    WireKey key;       // 32 -- the container's Key, or for a cut the sawn prop's
+    uint8_t op;        // 1 -- kContainerBreakAsk, kContainerBreakRefused, kContainerBreakGranted or kContainerBreakWithdrawn
+    uint8_t fire;      // 1 -- a fireDamage (1) or an impactDamage (0); the request's, echoed by a refusal
+    uint8_t sawn;      // 1 -- 1: the hacksaw's cut, which the host grants and the client's own saw then runs; always 1 on an op 3 and an op 4
+    uint8_t reason;    // 1 -- kContainerBreak* on an op 2; 0 on an op 1, an op 3 and an op 4
 };
 static_assert(sizeof(ContainerBreakPayload) == 36, "ContainerBreakPayload must be 36 bytes");
 

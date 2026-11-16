@@ -161,9 +161,13 @@ bool DeNestedAt(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r, int dep
     if (!r.nestedCarried) return true;
     uint32_t nc;
     if (depth >= kMaxNestDepth || !RdU32(b, o, nc) || nc > kMaxRecords || !Feasible(nc, b, o)) return false;
-    r.nested.resize(nc);
-    for (uint32_t i = 0; i < nc; ++i)
-        if (!DeSave(b, o, r.nested[i]) || !DeNestedAt(b, o, r.nested[i], depth + 1)) return false;
+    // Children are read first and kept as they parse: a count the bytes cannot fill allocates only what parsed, never nc
+    // records at once (a record is hundreds of bytes in memory and a few on the wire).
+    for (uint32_t i = 0; i < nc; ++i) {
+        SaveRecord child;
+        if (!DeSave(b, o, child) || !DeNestedAt(b, o, child, depth + 1)) return false;
+        r.nested.push_back(std::move(child));
+    }
     return true;
 }
 

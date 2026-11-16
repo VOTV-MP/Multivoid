@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "ue_wrap/actors/container_inventory.h"
 #include "ue_wrap/actors/save_record.h"
 
 #include <cstdint>
@@ -60,7 +61,8 @@ bool DeSave(const std::vector<uint8_t>& b, size_t& o, ue_wrap::save_record::Save
 // A record's carried container contents (SaveRecord::nested), apart from the record grammar above, which stored player
 // profiles are written in: u8 carried, then u32 count and that many records, each followed by its own carried tail,
 // kMaxNestDepth deep at most (a deeper one is refused on read). Only a container slice writes it.
-inline constexpr int kMaxNestDepth = 3;
+// The depth is the sender's own (ue_wrap::container_inventory), so what is written and what is refused on read cannot drift.
+using ue_wrap::container_inventory::kMaxNestDepth;
 void SerNested(std::vector<uint8_t>& b, const ue_wrap::save_record::SaveRecord& r);
 bool DeNested(const std::vector<uint8_t>& b, size_t& o, ue_wrap::save_record::SaveRecord& r);
 

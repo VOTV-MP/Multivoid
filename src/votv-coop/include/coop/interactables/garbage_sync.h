@@ -5,11 +5,10 @@
 // physics-handle grab for the bags and bins, and collect-and-morph for trashBitsPile, where the
 // pile destroys itself and spawns N individual items at the player.
 //
-// Per-class state -- itemsInside, the amounts, the types -- is NOT broadcast, and that is the piece
-// still unbuilt. It is fine right up until a client's blueprint walks a stale itemsInside array
-// left by a per-peer-divergent spawner roll, dereferences a freed actor and crashes. What IS built
-// are the two client-side guards Install() puts in: the container's blueprint body is cancelled,
-// and the garbage spawners are cancelled, leaving the host's rolls the only ones.
+// A garbage container's itemsInside is the host's and reaches every peer (coop/interactables/garbage_bin_sync). A client
+// that authored it itself would walk a stale array left by a per-peer-divergent spawner roll, dereference a freed actor
+// and crash. So Install() puts in two client-side guards: the container's blueprint body is cancelled, and the garbage
+// spawners are cancelled, leaving the host's rolls the only ones.
 
 #pragma once
 
@@ -20,10 +19,10 @@ namespace coop::garbage_sync {
 // Install both client-side guards. Idempotent, and retried until the classes load, on independent
 // latches so one success does not pre-empt the other's retry.
 //
-// The container guard PRE-intercepts Aprop_openContainer_C::ReceiveTick and checkPickup and cancels
+// The container guard PRE-intercepts Aprop_openContainer_C::ReceiveTick alone and cancels
 // the blueprint body when the actor's class is prop_garbageContainer_C -- a pointer compare against
 // the class resolved once at install, which allocates nothing on a tick path. Local pickup still
-// works for the picker; the other peer just does not see the container's internal state update.
+// works for the picker; the container's contents and pickup flags come from the host (garbage_bin_sync).
 //
 // The spawner guard cancels event_trashPiles' overlap, arirTrasher's trash and the base
 // cleaner's BeginPlay on a client, so the host's rolls are the only ones -- named at the class

@@ -331,7 +331,7 @@ void Install(coop::net::Session& session) {
     coop::atv_riders::Install(&session);  // a remote driver's body in the seat, the kerfurs a client's seat calls
     coop::garbage_bin_sync::Install(&session);  // what a garbage container holds, and its pickup, are the host's
     coop::props::container_break::Install(&session);  // a container a client breaks breaks on the host
-    coop::props::hacksaw_cut::Install(&session);  // a container a client saws breaks on the host
+    coop::props::hacksaw_cut::Install();  // a client's saw asks the host before its cut completes
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
@@ -424,6 +424,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::props::container_act_host::OnPeerGone(static_cast<uint8_t>(slot));  // a record it held in escrow goes back
     coop::kerfur_command_wire::OnPeerGone(static_cast<uint8_t>(slot));  // a kerfur command it had half sent
     coop::prop_nametag::OnPeerGone(static_cast<uint8_t>(slot));  // a nametag it had half sent
+    coop::garbage_bin_sync::OnPeerGone(static_cast<uint8_t>(slot));  // a replay it was still owed
     coop::kerfur_command_answer::OnPeerGone(static_cast<uint8_t>(slot));  // a consumed-held answer it was owed
     coop::prop_act_host::OnPeerGone(static_cast<uint8_t>(slot));  // a take or use it had reserved
     coop::signal_sync::OnDisconnectSlot(slot);
@@ -697,9 +698,9 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_short"}; coop::desk_short_sync::Tick(); }  // the desk short watch resolves its names, and the host serves the requests (an empty inbox costs one size check)
-    coop::garbage_bin_sync::Tick();  // the garbage containers' poll and apply
-    coop::props::container_break::Tick();  // a client's container breaks, and the host's
-    coop::props::hacksaw_cut::Tick();  // a saw's cut never spans two ticks
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:garbage_bin"}; coop::garbage_bin_sync::Tick(); }  // the garbage containers: the host flushes the marks its watch made and replays to a joiner, a client applies the host's lists
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:container_break"}; coop::props::container_break::Tick(); }  // a client's break and cut requests, and the host's judgments
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hacksaw_cut"}; coop::props::hacksaw_cut::Tick(); }  // a saw's cut is forgotten at a world change
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list

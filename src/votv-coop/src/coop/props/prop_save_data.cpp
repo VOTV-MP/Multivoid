@@ -2,8 +2,11 @@
 
 #include "coop/props/prop_save_data.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/food_clock_probe.h"   // [dev] the food catch-up's two clocks, read at these seams
 #include "coop/props/disc_record_ceiling.h"
+#include "coop/props/prop_birth_ledger.h"          // the host birth path's traffic ledger
 #include "coop/props/prop_record_gates.h"          // a class's say over who writes its record and when it lands
 #include "coop/items/save_record_wire.h"
 #include "coop/net/blob_chunks.h"
@@ -19,7 +22,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
 #include <map>
 #include <set>
 #include <utility>
@@ -136,65 +138,6 @@ coop::blob_chunks::Assembler g_asmCanonical;
 coop::blob_chunks::Assembler g_asmIntent;
 uint32_t g_blobSeq = 1;
 
-// The host birth path's traffic ledger. That path publishes for EVERY prop the host gives birth to
-// at runtime, not only discs, so what it costs is measured rather than assumed: one line a minute
-// with the window and the session so far (a rig peer is killed, not disconnected, so the running
-// total is what survives), and the session again at teardown.
-struct BirthTally { uint64_t records = 0; uint64_t bytes = 0; };
-struct BirthLedger {
-    BirthTally total;
-    std::map<std::wstring, BirthTally> byClass;
-    uint64_t declined  = 0;   // a covered birth the publisher sent nothing for
-    uint64_t uncovered = 0;   // a birth whose class carries no save state of its own
-};
-BirthLedger g_birthWindow;
-BirthLedger g_birthSession;
-uint64_t g_birthWindowStartMs = 0;
-uint64_t g_birthSessionStartMs = 0;
-constexpr uint64_t kBirthReportMs = 60000;
-
-std::string TopClasses(const BirthLedger& l) {
-    std::vector<std::pair<std::wstring, BirthTally>> v(l.byClass.begin(), l.byClass.end());
-    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
-        return a.second.bytes > b.second.bytes;
-    });
-    std::string out;
-    for (size_t i = 0; i < v.size() && i < 5; ++i) {
-        char row[160];
-        std::snprintf(row, sizeof(row), "%s%ls %llu/%lluB", i ? ", " : "", v[i].first.c_str(),
-                      static_cast<unsigned long long>(v[i].second.records),
-                      static_cast<unsigned long long>(v[i].second.bytes));
-        out += row;
-    }
-    return out.empty() ? std::string("none") : out;
-}
-
-void ReportBirthLedger(const char* when, const BirthLedger& l, uint64_t spanMs) {
-    const double secs = spanMs > 0 ? static_cast<double>(spanMs) / 1000.0 : 1.0;
-    UE_LOGI("prop_save_data: HOST BIRTH RECORDS %s (%.0f s) -- %llu sent, %llu B (%.1f B/s, %.1f "
-            "records/min), %llu declined, %llu births with no save state of their own; top by "
-            "bytes: %s", when, secs, static_cast<unsigned long long>(l.total.records),
-            static_cast<unsigned long long>(l.total.bytes),
-            static_cast<double>(l.total.bytes) / secs,
-            static_cast<double>(l.total.records) * 60.0 / secs,
-            static_cast<unsigned long long>(l.declined),
-            static_cast<unsigned long long>(l.uncovered), TopClasses(l).c_str());
-}
-
-// Host only, from Drive: the minute's line and the running session line under it.
-void TickBirthLedger(uint64_t now) {
-    if (!PT::SessionIsHost()) return;
-    if (!g_birthWindowStartMs) { g_birthWindowStartMs = g_birthSessionStartMs = now; return; }
-    if (now - g_birthWindowStartMs < kBirthReportMs) return;
-    // A minute with no host birth says nothing, and the session line under it has not moved.
-    const bool quiet = !g_birthWindow.total.records && !g_birthWindow.declined && !g_birthWindow.uncovered;
-    if (quiet) { g_birthWindowStartMs = now; return; }
-    ReportBirthLedger("last minute", g_birthWindow, now - g_birthWindowStartMs);
-    ReportBirthLedger("session so far", g_birthSession, now - g_birthSessionStartMs);
-    g_birthWindow = BirthLedger{};
-    g_birthWindowStartMs = now;
-}
-
 std::vector<uint8_t> BuildBody(const std::wstring& key, const SR::SaveRecord& rec) {
     std::vector<uint8_t> body;
     body.push_back(kBodyVersion);
@@ -219,6 +162,10 @@ bool ParseBody(const std::vector<uint8_t>& body, std::wstring& key, SR::SaveReco
     // container_inventory::AttachNested): carried ones would give the prop's container items of the sender's choosing.
     rec.nested.clear();
     rec.nestedCarried = false;
+    // The container gaps drill's photo red: the record is applied with its signals' photos left out.
+    static const bool s_photoOff = coop::config::ResolveFlag(coop::config_registry::rows::photo_record_off);
+    if (s_photoOff)
+        for (auto& s : rec.signals) s.image.clear();
     // The body ADDRESSES a prop by the head key and CARRIES a record whose own key field the
     // game's loadData would write onto that prop. If the two disagree the message is asking to
     // rename one prop to another's identity, so it is refused whole rather than reconciled.
@@ -384,21 +331,7 @@ bool LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
 
 bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
               const SR::SaveRecord& rec, size_t* bytesOut = nullptr) {
-    std::vector<uint8_t> body = BuildBody(key, rec);
-    if (body.size() > coop::disc_record::MaxBodyBytes()) {
-        // Its signals' photos are what a record carries in bulk: past the cap, it goes with fewer, the biggest
-        // dropped first, and the receiver keeps its own of those (save_record's ApplyRecord).
-        SR::SaveRecord bare = rec;
-        const size_t full = body.size();
-        size_t dropped = 0;
-        while (body.size() > coop::disc_record::MaxBodyBytes() && SR::DropLargestPhoto(bare)) {
-            ++dropped;
-            body = BuildBody(key, bare);
-        }
-        if (dropped > 0 && body.size() <= coop::disc_record::MaxBodyBytes())
-            UE_LOGW("prop_save_data: record for key '%ls' is %zu B with its photos, over the %zu cap -- sent without "
-                    "%zu of them (%zu B)", key.c_str(), full, coop::disc_record::MaxBodyBytes(), dropped, body.size());
-    }
+    const std::vector<uint8_t> body = BuildBody(key, rec);
     if (bytesOut) *bytesOut = body.size();
     if (body.size() > coop::disc_record::MaxBodyBytes()) {
         UE_LOGW("prop_save_data: record for key '%ls' is %zu B, over the %zu cap -- REFUSED, not "
@@ -525,26 +458,17 @@ bool Publish(coop::net::Session* s, void* actor, const std::wstring& key, size_t
 bool PublishHostBirth(coop::net::Session* s, void* actor) {
     if (!s || !actor || !PT::SessionIsHost()) return false;
     if (!Covers(actor)) {
-        ++g_birthWindow.uncovered;
-        ++g_birthSession.uncovered;
+        coop::prop_birth_ledger::NoteUncovered();
         return false;
     }
     size_t bytes = 0;
     if (!Publish(s, actor, ue_wrap::prop::GetInteractableKeyString(actor), &bytes)) {
         // Declined, not lost: the author's own record is still owed (a birth from a client's
         // intent), no peer is in the world yet, or the transport refused and the retry holds it.
-        ++g_birthWindow.declined;
-        ++g_birthSession.declined;
+        coop::prop_birth_ledger::NoteDeclined();
         return false;
     }
-    const std::wstring cls = R::ClassNameOf(actor);
-    for (BirthLedger* l : {&g_birthWindow, &g_birthSession}) {
-        l->total.records += 1;
-        l->total.bytes += bytes;
-        BirthTally& t = l->byClass[cls];
-        t.records += 1;
-        t.bytes += bytes;
-    }
+    coop::prop_birth_ledger::NoteSent(R::ClassNameOf(actor), bytes);
     return true;
 }
 
@@ -762,16 +686,11 @@ void Drive() {
     const auto now = std::chrono::steady_clock::now();
     g_asmCanonical.Sweep(now, std::chrono::seconds(30));
     g_asmIntent.Sweep(now, std::chrono::seconds(30));
-    TickBirthLedger(nowMs);
+    coop::prop_birth_ledger::Tick(nowMs);
 }
 
 void OnDisconnect() {
-    if (g_birthSessionStartMs &&
-        (g_birthSession.total.records || g_birthSession.declined || g_birthSession.uncovered))
-        ReportBirthLedger("SESSION", g_birthSession, NowMs() - g_birthSessionStartMs);
-    g_birthWindow = BirthLedger{};
-    g_birthSession = BirthLedger{};
-    g_birthWindowStartMs = g_birthSessionStartMs = 0;
+    coop::prop_birth_ledger::OnDisconnect(NowMs());
     g_parkCursor.clear();
     g_applyBudget = kAppliesPerFrame;
     g_nextSweepMs = 0;

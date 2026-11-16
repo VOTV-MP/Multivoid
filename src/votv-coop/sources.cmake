@@ -291,6 +291,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_spawn_authoring.cpp
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_save_data.cpp
+    src/coop/props/prop_birth_ledger.cpp
     src/coop/props/prop_nametag.cpp
     src/coop/props/disc_record_ceiling.cpp
     src/coop/props/prop_record_gates.cpp
@@ -740,6 +741,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_sky_tp.cpp
     src/harness/autotest/autotest_roomba.cpp
     src/harness/autotest/autotest_container_gaps.cpp
+    src/harness/autotest/autotest_container_gaps_bin.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp

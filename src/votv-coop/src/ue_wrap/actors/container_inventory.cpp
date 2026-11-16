@@ -15,6 +15,8 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace ue_wrap::container_inventory {
 namespace {
@@ -249,19 +251,19 @@ void AttachAt(SR::SaveRecord& r, int depth) {
 void* g_placedSave = nullptr;
 std::unordered_map<std::wstring, int32_t> g_placed;
 
-// GObjStack grown by one zeroed struct_mObject, as Array_Add grows it: the elements are moved to a new engine buffer
-// (a TArray moves bitwise) and the old one is left to the engine's own lifetime, as save_record's writers leave theirs.
+// GObjStack grown by one zeroed struct_mObject, as Array_Add grows it: the elements move bitwise (what they point to
+// stays), into the array's own slack when its Max holds one more, else into a new engine buffer, and the replaced buffer is
+// released through the engine's allocator, which owns it (ReplaceArray). No slot pointer is held across a placement.
 int32_t AppendStackSlot(void* save) {
     const SR::Arr stack = SR::ReadArr(save, g_offGObjStack);
     if (stack.num < 0) return -1;
     const size_t n = static_cast<size_t>(stack.num);
-    void* buf = SR::AllocZeroed(n + 1, static_cast<size_t>(SR::kMxStride));
-    if (!buf) return -1;
-    if (n > 0 && stack.data) std::memcpy(buf, stack.data, n * static_cast<size_t>(SR::kMxStride));
-    SR::WriteArrHeader(save, g_offGObjStack, buf, static_cast<int32_t>(n + 1));
+    const size_t stride = static_cast<size_t>(SR::kMxStride);
+    std::vector<uint8_t> grown((n + 1) * stride, 0);
+    if (n > 0 && stack.data) std::memcpy(grown.data(), stack.data, n * stride);
+    if (!SR::ReplaceArray(save, g_offGObjStack, grown.data(), static_cast<int32_t>(n + 1), stride)) return -1;
     return static_cast<int32_t>(n);
 }
-
 }  // namespace
 
 void AttachNested(SR::SaveRecord& r) { AttachAt(r, 0); }
@@ -276,7 +278,8 @@ bool PlaceNested(SR::SaveRecord& r, SR::ClassLoad load) {
     }
     // The nested containers' own contents first: each placement can grow GObjStack, which moves every slot, so no
     // slot is held across one. They are then written flat, naming the slots they were given.
-    std::vector<SR::SaveRecord> children = r.nested;
+    std::vector<SR::SaveRecord> children = std::move(r.nested);   // consumed: the caller wrote a copy of its own
+    r.nested.clear();
     for (auto& c : children) {
         if (c.nestedCarried) PlaceNested(c, load);
         c.nestedCarried = false;

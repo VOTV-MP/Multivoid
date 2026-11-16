@@ -17,8 +17,11 @@
 
 namespace coop::props::prop_record_wire {
 
-// One record's bytes, at most: 16 times the largest record measured on the wire.
-inline constexpr size_t kMaxRecordBytes = 4096;
+// One record's bytes, at most: 32 KB, the room of the one signal photo a record can carry (8.7 to 23.3 KB measured) and the
+// record around it (16 times the largest record without a photo is 4 KB). Receive cost: the declared length is held to it
+// before any DeSave, and a sender's container act requests queue two deep and are served at a budget, so one sender
+// holds 64 KB of them at most.
+inline constexpr size_t kMaxRecordBytes = 32768;
 // The longest prop name a request may carry (the game's own are short): a longer one is refused before any engine call.
 inline constexpr size_t kMaxPutNameChars = 128;
 

@@ -115,8 +115,10 @@ void WriteFNameField(void* dst, const std::wstring& leaf);
 // ---- The record codec ------------------------------------------------------------------------
 
 // Read one Fstruct_save at `base` into `rec`. Pure field reads + FName::ToString / FString copy
-// (no UFunction dispatch). `rec` is overwritten field-by-field; pass a fresh record.
-void ReadSaveRecord(const void* base, SaveRecord& rec);
+// (no UFunction dispatch). `rec` is overwritten field-by-field; pass a fresh record. A signal's photo (its PNG, 8.7 to
+// 23 KB) is copied into the record unless `withImage` is false: a caller that reads a record only to name it or compare
+// its other fields leaves it.
+void ReadSaveRecord(const void* base, SaveRecord& rec, bool withImage = true);
 
 // Write one Fstruct_save into the ZEROED 0x100 slot at `base`, constructing engine-OWNED
 // TArrays via reflection::EngineAlloc (FNames interned, FStrings engine-minted, UClasses
@@ -128,20 +130,14 @@ void ReadSaveRecord(const void* base, SaveRecord& rec);
 // `load` governs how every class leaf (the record's own class and its `classes` group) resolves
 // (see ClassLoad). A record that carries its container's contents (SaveRecord::nestedCarried) has them written into a
 // slot of this machine's GObjStack first, under the same `load`, and its index set to it.
+// A signal's photo (its `image`, the PNG the laptop shows) rides its record both ways; a record that does not fit a
+// transport's bound is refused whole by that transport, never cut: half a record through loadData is worse than none.
 void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassLoad load);
 
 // Resolves every class the record names (its own class, its `classes` leaves and its carried contents') under `load`,
 // the loads a write would make. False when one answered Pending (the load budget of this tick is spent): a caller that
 // can wait does so and writes once this answers true, when the write finds every class loaded. Game thread.
 bool ClassesReady(const SaveRecord& r, ClassLoad load);
-
-// A signal's photo (its `image`, the PNG the laptop shows) rides its record both ways: ReadSaveRecord reads it and
-// WriteSaveRecord writes it into engine memory. A record past a transport's ceiling travels with fewer photos rather
-// than not at all: LargestPhoto names the biggest one `r` carries (its bytes, 0 for none, and its row), and
-// DropLargestPhoto clears it, so a sender that repeats it until the record fits drops the fewest, the biggest first.
-// ApplyRecord keeps a photo the receiver's copy holds for a row that arrives without one.
-size_t LargestPhoto(const SaveRecord& r, size_t* row = nullptr);
-bool DropLargestPhoto(SaveRecord& r);
 
 // ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
 //

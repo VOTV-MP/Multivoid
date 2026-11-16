@@ -81,8 +81,9 @@ void ClearInventoryIndex(save_record::SaveRecord& r);
 // one, only has its index cleared. PlaceNested writes carried contents into a slot of this machine's GObjStack and
 // sets `r`'s index to it: the slot this machine gave the same container key before while it stands, else a new one
 // appended, as the container's own Init appends one when it has none. Appending moves every slot of the array, so a
-// caller that writes a carried record must take any slot pointer after the write. False, `r` unchanged, when nothing
-// is carried or the save slot or its array do not resolve. The player inventory's records never carry: its apply
+// caller that writes a carried record must take any slot pointer after the write. False when nothing is carried or the save
+// slot or its array do not resolve. `r` is consumed: its nested records move into the slot's records, so a caller writes a
+// copy it does not need again. The player inventory's records never carry: its apply
 // writes into a save object before the world stands. `load` is the load mode of its writes (ClassLoad, save_record.h).
 // Game thread.
 inline constexpr int kMaxNestDepth = 3;
