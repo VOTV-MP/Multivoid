@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 297;
+inline constexpr uint16_t kProtocolVersion = 298;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1469,6 +1469,17 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+
+    // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
+    // host runs only while its setting net.allow_player_cheats is on. The host judges everything (the setting, the
+    // sender, the item, the target, the event's risk, a rate) and the world is written by the host alone; a client never
+    // acts on its own request. Answered by CheatResult to that client alone. Never relayed. Late join: none (a request
+    // carries no state). Pre-world: held until the sender's world is up. CheatRequestPayload.
+    CheatRequest = 276,
+
+    // Host to one client: what the host did with its CheatRequest (CheatReason). Never relayed. Late join: none. Trust:
+    // from the host alone. CheatResultPayload.
+    CheatResult = 277,
 };
 
 #pragma pack(push, 1)
@@ -2868,6 +2879,57 @@ struct RemoverResultPayload {
     uint8_t  _pad[3];    // 3 -- zeroed
 };
 static_assert(sizeof(RemoverResultPayload) == 8, "RemoverResultPayload must be 8 bytes");
+
+// What a player's cheat request asks for (CheatRequest). Append-only.
+enum class CheatOp : uint8_t {
+    SpawnItem = 1,  // `count` props named `name`, in front of the sender (`target` 0xFF) or at the player in slot `target`
+    Points    = 2,  // `amount` credits added (or removed, when negative) on the host's balance
+    Event     = 3,  // the game event named `name`
+};
+
+// Why the host did what it did with a CheatRequest (CheatResult). Ok and the notices the player sees are told to the
+// player; the rest are the host's own count.
+enum class CheatReason : uint8_t {
+    Ok          = 0,  // the host did it
+    Off         = 1,  // the host's setting net.allow_player_cheats is off
+    NotReady    = 2,  // the sender's world is not up, or the host's world, or the target has no place yet
+    Rate        = 3,  // too many requests in a moment
+    BadRequest  = 4,  // a shape the host refuses: an unknown op, a count or amount out of bounds, a name that is not text
+    UnknownItem = 5,  // the host's game lists no such prop, or its class does not load
+    UnknownEvent = 6, // the host's game has no such event
+    Refused     = 7,  // an event or item the host does not offer a player (story and save progression)
+    NoTarget    = 8,  // the named target is not a player in the session
+    Failed      = 9,  // the host ran it and the game refused or nothing came of it
+    Count       = 10,
+};
+
+inline constexpr size_t kCheatNameMax = 64;
+inline constexpr int    kCheatMaxCount = 10;           // items one request may spawn
+inline constexpr int    kCheatMaxPoints = 100000;      // credits one request may add or remove (absolute)
+inline constexpr uint8_t kCheatInFront = 0xFF;         // `target`: in front of the sender
+
+// A client's cheat request (CheatRequest). `id` is the client's own and pairs the answer; `name` is ASCII, NUL-padded:
+// a prop name from the host's own list, or an event name from its table.
+struct CheatRequestPayload {
+    uint32_t id;                  // 4  -- the client's request number, echoed in the answer
+    int32_t  amount;              // 4  -- Points: the credits, signed
+    uint8_t  op;                  // 1  -- CheatOp
+    uint8_t  count;               // 1  -- SpawnItem: how many (1..kCheatMaxCount)
+    uint8_t  target;              // 1  -- SpawnItem: kCheatInFront, or the slot of the player to spawn at
+    uint8_t  _pad;                // 1  -- zeroed
+    char     name[kCheatNameMax]; // 64 -- NUL-padded ASCII
+};
+static_assert(sizeof(CheatRequestPayload) == 76, "CheatRequestPayload must be 76 bytes");
+static_assert(sizeof(CheatRequestPayload) <= 256 - 20 - 8, "CheatRequestPayload must fit one reliable datagram");
+
+// The host's answer to a CheatRequest, to the sender alone.
+struct CheatResultPayload {
+    uint32_t id;      // 4 -- the request's id
+    uint8_t  op;      // 1 -- the request's CheatOp
+    uint8_t  reason;  // 1 -- CheatReason
+    uint16_t done;    // 2 -- SpawnItem: how many were spawned; otherwise 0
+};
+static_assert(sizeof(CheatResultPayload) == 8, "CheatResultPayload must be 8 bytes");
 
 // A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
 // closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element

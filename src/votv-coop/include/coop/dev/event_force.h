@@ -33,10 +33,6 @@ BoxStatus StatusFor(const char* eventName);
 // ~1 Hz -- safe to call every rendered frame while the events tab is open.
 void RequestRefresh();
 
-// Extra native-gate note for NON-box rows (agrav/bedEvent/signals/...), or
-// nullptr. Static text mined from the eventer RE; shown in the row tooltip.
-const char* GateNote(const char* eventName);
-
 // Arm + complete the event NOW. Arms through the SAME seam as the fire button (HostFire -> the
 // native eventer dispatch, whose runEvent watch broadcasts it; clients replay per policy), then
 // drives the box's OWN BeginOverlap handler with the local player pawn as OtherActor -- the

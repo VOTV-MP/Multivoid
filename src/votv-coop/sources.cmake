@@ -47,6 +47,12 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_tool_flags.cpp
     src/coop/props/prop_tool_park.cpp
     src/coop/props/remover_request.cpp
+    src/coop/cheats/balance_readout.cpp
+    src/coop/cheats/cheat_request.cpp
+    src/coop/cheats/self_teleport.cpp
+    src/coop/cheats/cheat_run.cpp
+    src/coop/cheats/item_catalog.cpp
+    src/coop/cheats/item_spawn.cpp
     src/coop/props/toolgun_sight.cpp
     src/coop/props/remote_prop.cpp
     src/coop/props/remote_prop_drive.cpp
@@ -82,6 +88,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_intent.cpp
     src/coop/dispatch/event_dispatch_prop_drive.cpp
     src/coop/dispatch/event_dispatch_requester_feedback.cpp
+    src/coop/dispatch/event_dispatch_cheat.cpp
     src/coop/dispatch/event_dispatch_kerfur_command.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
@@ -505,6 +512,14 @@ set(VOTVCOOP_SOURCES
     src/ui/overlay_backend_vk_frame.cpp
     src/ui/dev_menu.cpp
     src/ui/dev_panes.cpp
+    src/ui/cheat_access_pane.cpp
+    src/ui/cheat_economy_pane.cpp
+    src/ui/cheat_entities_pane.cpp
+    src/ui/cheat_events_pane.cpp
+    src/ui/cheat_items_pane.cpp
+    src/ui/cheat_player_picker.cpp
+    src/ui/cheat_world_pane.cpp
+    src/ui/player_tools_pane.cpp
     src/ui/skins_panel.cpp
     src/ui/admin_panel.cpp
     src/ui/bug_report_pane.cpp

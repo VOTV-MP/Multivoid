@@ -754,4 +754,6 @@ bool DevProbeClientRefusal() {
 
 unsigned ReplayCount() { return g_replays.load(std::memory_order_relaxed); }
 
+unsigned HostFireCount() { return g_hostFireSeq; }
+
 }  // namespace coop::event_fire_sync

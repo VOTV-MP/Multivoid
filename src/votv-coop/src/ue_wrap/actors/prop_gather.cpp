@@ -584,4 +584,26 @@ bool VolumeOfName(const std::wstring& name, float& out, bool& valid) {
     return true;
 }
 
+bool ListNames(std::vector<std::wstring>& out) {
+    UE_ASSERT_GAME_THREAD("prop_gather::ListNames");
+    out.clear();
+    void* const gm = world_singleton::Gamemode();
+    if (!gm) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(gm), L"propRenderer");
+    if (off < 0) return false;
+    void* const renderer = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(gm) + off);
+    if (!renderer || !R::IsLive(renderer)) return false;
+    const int32_t names = R::FindPropertyOffset(R::ClassOf(renderer), L"Names");
+    if (names < 0) return false;
+    const save_record::Arr arr = save_record::ReadArr(renderer, names);
+    if (arr.num <= 0) return false;
+    out.reserve(static_cast<size_t>(arr.num));
+    for (int32_t i = 0; i < arr.num; ++i) {
+        R::FName n{};
+        std::memcpy(&n, arr.data + static_cast<size_t>(i) * sizeof(R::FName), sizeof n);
+        out.push_back(R::ToString(n));
+    }
+    return true;
+}
+
 }  // namespace ue_wrap::prop_gather

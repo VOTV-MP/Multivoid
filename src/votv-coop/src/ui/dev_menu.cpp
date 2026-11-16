@@ -5,6 +5,7 @@
 
 #include "l10n/l10n.h"
 
+#include "coop/cheats/cheat_request.h"  // PlayersMayCheat -- the Player tools' cheat subs
 #include "coop/dev/dev_gate.h"
 #include "coop/permissions/grants_core.h"
 #include "coop/session/local_grants.h"
@@ -20,6 +21,7 @@
 #include "ui/net_stats_panel.h"
 #include "ui/scale.h"
 #include "ui/bug_report_pane.h"
+#include "ui/cheat_panes.h"
 #include "ui/server_settings_pane.h"
 #include "ui/skins_panel.h"
 
@@ -39,12 +41,35 @@ using ui::scale::S;
 
 // One control in the content pane. `render` draws its own ImGui widget(s) so an
 // item can be a button, a checkbox reflecting live state, a slider, etc. `dev`
-// hides it unless the dev switch is on; `host` hides it unless the local peer
-// is the HOST of a live coop session (a ROLE gate, not a dev gate -- the
-// Administration category).
+// hides it unless the dev switch is on.
 struct Item { void (*render)(); bool dev; };
-struct Sub  { const char* name; std::vector<Item> items; bool dev; bool host = false; };
-struct Cat  { const char* name; std::vector<Sub> subs;  bool dev; bool host = false; };
+
+// Who a category or a sub is offered to: a ROLE gate, not a dev gate. Any: everyone. HostRole: the host of a live
+// session (Administration, the host's switch for its players). Authority: the host or a solo game -- whoever writes
+// the world (Host tools). Client: a player in someone else's game (Player tools). ClientCheats: a client whose host
+// lets players use the cheat tools. The host's and a solo player's view never holds a client's gate, so the two cheat
+// panels are never on screen together.
+enum class Gate : uint8_t { Any, HostRole, Authority, Client, ClientCheats };
+
+struct Sub  { const char* name; std::vector<Item> items; bool dev; Gate gate = Gate::Any; };
+struct Cat  { const char* name; std::vector<Sub> subs;  bool dev; Gate gate = Gate::Any; };
+
+// What this peer is, read once per frame and asked of every gate.
+struct Viewer { bool dev, hostRole, authority, client, clientCheats; };
+
+bool Offered(Gate g, const Viewer& v) {
+    switch (g) {
+        case Gate::Any: return true;
+        case Gate::HostRole: return v.hostRole;
+        case Gate::Authority: return v.authority;
+        case Gate::Client: return v.client;
+        case Gate::ClientCheats: return v.clientCheats;
+    }
+    return false;
+}
+
+bool Offered(const Cat& c, const Viewer& v) { return (!c.dev || v.dev) && Offered(c.gate, v); }
+bool Offered(const Sub& sub, const Viewer& v) { return (!sub.dev || v.dev) && Offered(sub.gate, v); }
 
 // Skins: the model browser. Its own panel file -- the tiles and the preview cache live in
 // ui/skins_panel.cpp; this is just the tree hook.
@@ -204,36 +229,42 @@ void RenderWorldRules() { ui::world_rules_panel::Render(); }
 // A player entry's name is marked for translation and shown translated (the drawer's Name below); a
 // developer entry's name stays English. Either way the name itself is the selection key RequestSelect
 // compares and the widget's id, so neither ever depends on the language.
-// Organized by the GAME'S OWN DOMAINS: Player (the person) ; World (the simulation
-// state: rules/weather/clock/economy) ; Content (the game's spawnable/triggerable
-// content: entities + events) ; Network ; Administration ; Cosmetics ; Report a bug
-// (the bug-report form) -- there is no catch-all category, per the folder-concept
-// rule. Network subs are placeholders.
+// Organized by who uses it and then by the GAME'S OWN DOMAINS: Host tools (the host's cheats: items, economy,
+// events, entities, the world) ; Player tools (a client's own tools, and the same cheats when the host allows them) ;
+// World (the rules in force) ; Network ; Administration ; Cosmetics ; Report a bug (the bug-report form) ; and the
+// developer's diagnostics under Player -- there is no catch-all category, per the folder-concept rule. Network subs
+// are placeholders.
 const std::vector<Cat>& Tree() {
     static const std::vector<Cat> kTree = {
+        // The developer's diagnostics: hidden unless [dev] devkeys is on. What a host or a player uses is below.
         { "Player", {
-            { "Movement", { { &ui::dev_panes::RenderTeleportClients, true }, { &ui::dev_panes::RenderFreecam, true } }, true },
-            { "Vitals",   { { &ui::dev_panes::RenderRestoreVitals, true } }, true },
-            { "HUD",      { { &ui::dev_panes::RenderPosHud, true }, { &ui::dev_panes::RenderObjectOverlay, true }, { &ui::dev_panes::RenderRagdollBones, true } }, true },
+            { "Vitals", { { &ui::dev_panes::RenderStaminaLow, true } }, true },
+            { "HUD",    { { &ui::dev_panes::RenderObjectOverlay, true }, { &ui::dev_panes::RenderRagdollBones, true } }, true },
         }, true },
+        // The host's tools (and a solo player's): the panes that write the shared world. Not a dev category: the host
+        // sees it with no switch. A client never sees this category.
+        { L10N_MARK("Host tools"), {
+            { L10N_MARK("Items"),     { { &ui::cheat_panes::RenderItems, false } }, false },
+            { L10N_MARK("Economy"),   { { &ui::cheat_panes::RenderEconomy, false } }, false },
+            { L10N_MARK("Events"),    { { &ui::cheat_panes::RenderEvents, false } }, false },
+            { L10N_MARK("Entities"),  { { &ui::cheat_panes::RenderEntities, false } }, false },
+            { L10N_MARK("World"),     { { &ui::cheat_panes::RenderWorld, false } }, false },
+            { L10N_MARK("Myself"),    { { &ui::cheat_panes::RenderMyself, false } }, false },
+            { L10N_MARK("Player cheats"), { { &ui::cheat_panes::RenderPlayerCheats, false } }, false, Gate::HostRole },
+        }, false, Gate::Authority },
+        // A client's tools: its own body and the local tools the host grants always; the same Items, Economy and
+        // Events panes as the host's when the host lets players use cheats (each use is a request the host runs).
+        { L10N_MARK("Player tools"), {
+            { L10N_MARK("Myself"),    { { &ui::cheat_panes::RenderMyself, false } }, false },
+            { L10N_MARK("Items"),     { { &ui::cheat_panes::RenderItems, false } }, false, Gate::ClientCheats },
+            { L10N_MARK("Economy"),   { { &ui::cheat_panes::RenderEconomy, false } }, false, Gate::ClientCheats },
+            { L10N_MARK("Events"),    { { &ui::cheat_panes::RenderEvents, false } }, false, Gate::ClientCheats },
+        }, false, Gate::Client },
         { L10N_MARK("World"), {
-            // Rules is for EVERYONE (host+clients+solo): a read-only view of the
-            // world rules this peer runs under (mainGameInstance.gameRules) +
-            // gamemode. Non-dev, non-host.
+            // Rules is for EVERYONE (host+clients+solo): a read-only view of the world rules this peer runs under
+            // (mainGameInstance.gameRules) + gamemode.
             { L10N_MARK("Rules"),    { { &RenderWorldRules, false } }, false },
-            { "Weather",  { { &ui::dev_panes::RenderSnow, true } }, true },
-            { "Clock",    { { &ui::dev_panes::RenderSetClock, true } }, true },
-            { "Economy",  { { &ui::dev_panes::RenderGivePoints, true } }, true },
         }, false },
-        { "Content", {
-            // The game's spawnable/triggerable content. Entities = creature/entity
-            // test spawns (the owner-entity eyer included); Props = prop-content
-            // tools, the Q spawn-menu unlock among them, which is its own subsection
-            // because it spawns PROPS rather than entities; Events = the event board.
-            { "Entities", { { &ui::dev_panes::RenderSpawnNpc, true } }, true },
-            { "Props",    { { &ui::dev_panes::RenderSpawnMenuUnlock, true } }, true },
-            { "Events",   { { &ui::dev_panes::RenderEvents, true } }, true },
-        }, true },
         { L10N_MARK("Network"), {
             // Stats is for EVERYONE (the overlay toggle + live session readout);
             // Session stays a dev placeholder, hidden for regular players.
@@ -242,9 +273,9 @@ const std::vector<Cat>& Tree() {
         }, false },
         { L10N_MARK("Administration"), {
             // HOST-role-gated (not dev): online/offline/banned player admin.
-            { L10N_MARK("Players"), { { &RenderAdminPlayers, false } }, false, true },
-            { L10N_MARK("Server settings"), { { &ui::server_settings_pane::Render, false } }, false, true },
-        }, false, true },
+            { L10N_MARK("Players"), { { &RenderAdminPlayers, false } }, false, Gate::HostRole },
+            { L10N_MARK("Server settings"), { { &ui::server_settings_pane::Render, false } }, false, Gate::HostRole },
+        }, false, Gate::HostRole },
         { L10N_MARK("Cosmetics"), {
             { L10N_MARK("Skins"),     { { &RenderSkins, false } }, false },
             { L10N_MARK("Nameplate"), { { &RenderNameplatePref, false } }, false },
@@ -313,23 +344,25 @@ void RequestSelect(const char* category, const char* sub) {
 
 void Render() {
     const bool devMode = DevMode();
-    const bool isHost  = coop::roster::LocalIsHost();  // lock-free, render-thread safe
+    const bool authority = ::coop::dev_gate::Allowed();   // the host or a solo game (lock-free, render-thread safe)
+    const Viewer viewer{devMode, coop::roster::LocalIsHost(), authority, !authority,
+                        !authority && ::coop::cheats::PlayersMayCheat()};
     const auto& tree = Tree();
 
     if (g_wantSelect.exchange(false, std::memory_order_acq_rel)) {
         for (const auto& cat : tree) {
-            if (g_wantCat != cat.name || (cat.dev && !devMode) || (cat.host && !isHost)) continue;
+            if (g_wantCat != cat.name || !Offered(cat, viewer)) continue;
             for (const auto& sub : cat.subs) {
-                if (g_wantSub != sub.name || (sub.dev && !devMode) || (sub.host && !isHost)) continue;
+                if (g_wantSub != sub.name || !Offered(sub, viewer)) continue;
                 g_selCat = &cat;
                 g_selSub = &sub;
             }
         }
     }
 
-    // A host-gated selection must not linger after the role drops (session stop /
-    // becoming a client): reset the pane back to the picker.
-    if (!isHost && g_selCat && (g_selCat->host || (g_selSub && g_selSub->host))) {
+    // A gated selection must not linger after the role drops (session stop, becoming a client, the host turning the
+    // cheats off): reset the pane back to the picker.
+    if (g_selCat && (!Offered(*g_selCat, viewer) || (g_selSub && !Offered(*g_selSub, viewer)))) {
         g_selCat = nullptr;
         g_selSub = nullptr;
     }
@@ -352,28 +385,30 @@ void Render() {
     ImGui::BeginChild("##nav", ImVec2(S(185.f), 0), ImGuiChildFlags_Borders);
     bool firstCat = true;
     for (const auto& cat : tree) {
-        if (cat.dev && !devMode) continue;
-        if (cat.host && !isHost) continue;
+        if (!Offered(cat, viewer)) continue;
         if (!firstCat) ImGui::Spacing();
         firstCat = false;
         ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0.18f, 0.20f, 0.25f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.30f, 0.38f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.30f, 0.35f, 0.45f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.55f, 0.82f, 1.00f, 1.00f));
+        ImGui::PushID(&cat);   // two entries may share a name (a category and a sub), never an id
         const bool open = ImGui::TreeNodeEx(l10n::Label(Name(cat.name, cat.dev), cat.name),
             ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen |
             ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+        ImGui::PopID();
         ImGui::PopStyleColor(4);
         if (!open) continue;
         ImGui::Indent(S(14.0f));
         for (const auto& sub : cat.subs) {
-            if (sub.dev && !devMode) continue;
-            if (sub.host && !isHost) continue;
+            if (!Offered(sub, viewer)) continue;
             const bool selected = (g_selSub == &sub);
+            ImGui::PushID(&sub);
             if (ImGui::Selectable(l10n::Label(Name(sub.name, sub.dev), sub.name), selected)) {
                 g_selCat = &cat;
                 g_selSub = &sub;
             }
+            ImGui::PopID();
         }
         ImGui::Unindent(S(14.0f));
     }

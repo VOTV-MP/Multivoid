@@ -73,6 +73,24 @@ void Restore() {
     UE_LOGI("restore_vitals: Restore triggered (local apply + peer broadcast)");
 }
 
+void RestoreFor(int slot) {
+    if (!coop::dev_gate::Allowed()) {
+        UE_LOGW("restore_vitals: REFUSED -- dev features are disabled while connected as a client");
+        return;
+    }
+    if (slot == 0) {
+        GT::Post([] { ApplyLocally(); });
+        UE_LOGI("restore_vitals: the host's own vitals restored");
+        return;
+    }
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->SendReliableToSlot(slot, coop::net::ReliableKind::RestoreVitals, nullptr, 0)) {
+        UE_LOGW("restore_vitals: the restore for slot %d was not sent (not connected, or the slot is empty)", slot);
+        return;
+    }
+    UE_LOGI("restore_vitals: vitals restored for slot %d", slot);
+}
+
 void SetStaminaLow() {
     // The host's grant (coop/session/local_grants) decides.
     if (!coop::session::local_grants::Has(coop::permissions::grants::Projected::Stamina)) {

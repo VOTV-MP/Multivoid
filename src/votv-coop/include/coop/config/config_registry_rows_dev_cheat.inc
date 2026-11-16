@@ -1,0 +1,10 @@
+// coop/config/config_registry_rows_dev_cheat.inc -- the [dev] row of the cheat tools drill. Included by
+// config_registry_rows_dev.inc where the row stood, so it keeps its place in every expansion of the list. The entry
+// forms are config_registry_rows.inc's.
+
+CFG_ENUM(cheat_drill, "cheat_drill", "dev", "off", "off|on", "VOTVCOOP_CHEAT_DRILL",
+    "Drill (BOTH peers): the host's and the players' cheat tools. The host spawns two crowbars, adds points and fires an "
+    "event through the panels' calls and the client must see each; with net.allow_player_cheats off the client's three "
+    "requests are all refused and move nothing; with it on the client's points, crowbars and event run on the host and "
+    "mirror here, a story event and an unlisted prop are refused; reset, the next request is refused again. Each peer first "
+    "opens the F1 panes it is offered. Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict.")

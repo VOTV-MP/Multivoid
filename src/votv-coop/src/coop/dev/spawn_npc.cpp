@@ -247,7 +247,7 @@ void Init() {
         (::GetEnvironmentVariableW(L"VOTVCOOP_SPAWN_TRIGGER", probe, 8) > 0);
     if (!wantWatch) {
         UE_LOGI("spawn_npc: file watcher off (no VOTVCOOP_SPAWN_TRIGGER) -- "
-                "spawn via the F1 menu (Content > Entities)");
+                "spawn via the F1 menu (Host tools > Entities)");
         return;
     }
     if (!::coop::config::MasterEnabled()) {

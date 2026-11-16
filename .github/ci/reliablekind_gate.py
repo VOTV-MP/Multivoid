@@ -82,7 +82,7 @@ ROW_VALUES = ("Client", "Host")
 EDGE_SHAPE = re.compile(r"if\s*\(\s*cfg_\.role\s*==\s*Role::Host\s*\)\s*\{\s*const\s+ClientAuthorship\s+(\w+)\s*=\s*"
                         r"AuthorshipOf\(\s*static_cast<ReliableKind>\(\s*rh\.kind\s*\)\s*\)\s*;\s*if\s*\(")
 
-# The nine family dispatchers. Each Handle*Event returns true iff msg.kind is in its
+# The family dispatchers. Each Handle*Event returns true iff msg.kind is in its
 # family, so its own switch IS the membership declaration (SyncRouter consolidation,
 # 2026-06-28) -- which is exactly why parsing these case labels is parsing the truth
 # and not a parallel list that can drift from it.
@@ -98,6 +98,7 @@ FAMILY_FILES = [
     "src/coop/dispatch/event_dispatch_cremator.cpp",
     "src/coop/dispatch/event_dispatch_cargo_lift.cpp",
     "src/coop/dispatch/event_dispatch_requester_feedback.cpp",
+    "src/coop/dispatch/event_dispatch_cheat.cpp",
     "src/coop/dispatch/event_dispatch_kerfur_command.cpp",
 ]
 # event_feed's own top-level switch: the handful of specials that are disjoint from every
