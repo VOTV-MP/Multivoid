@@ -8,6 +8,8 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -24,6 +26,12 @@ namespace GT = ue_wrap::game_thread;
 namespace E  = ue_wrap::engine;
 
 UE_FACT_FN(kRowSpawnFog, "weather_fog", L"daynightCycle_C", L"spawnFog", Declared);
+// The black fog's eyes: its timer spawns eyer_C creatures round the world, shared-world content a client's copy of the
+// fog must not make (refused at the script gate on a client).
+UE_FACT_FN(kRowSpawnGhost, "weather_fog", L"blackFog_C", L"spawnGhost", Declared);
+namespace sg = ue_wrap::script_gate;
+constexpr int kGhostTag = 0x42464731;  // 'BFG1'
+bool g_ghostWatch = false;
 
 // Resolved once. spawnFog spawns the fog controller into the cycle's fog slot and drives the
 // height-fog density; SetFogDensity pushes the final density into the cycle's height-fog
@@ -70,6 +78,15 @@ void*     g_superFogActor   = nullptr;
 int32_t   g_superFogIdx     = -1;
 long long g_lastSuperScanMs = 0;
 
+// The black fog (blackFog_C): a host roll whose actor fades in, holds about three minutes, fades out and destroys
+// itself, its post-process, whispers and thumps all round the local camera. So a client runs its own copy from the
+// host's start edge and drops it at the host's end edge. HOST: the live actor, cached, rescanned every 2 s.
+void*     g_blackFogActor = nullptr;
+int32_t   g_blackFogIdx   = -1;
+long long g_lastBlackScanMs = 0;
+// CLIENT: the host's black fog as last applied, for its edges.
+bool      g_lastHostBlack = false;
+
 long long NowMs() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
@@ -89,6 +106,32 @@ bool HostHasSuperFog() {
     return false;
 }
 
+// The live black fog, never the class default; null when none.
+void* LiveBlackFog() {
+    for (void* bf : R::FindObjectsByClass(P::name::BlackFogClass))
+        if (bf && R::IsLive(bf) && !R::NameStartsWith(R::NameOf(bf), L"Default__")) return bf;
+    return nullptr;
+}
+
+bool HostHasBlackFog() {
+    if (g_blackFogActor && R::IsLiveByIndex(g_blackFogActor, g_blackFogIdx)) return true;
+    g_blackFogActor = nullptr;
+    g_blackFogIdx   = -1;
+    const long long now = NowMs();
+    if (now - g_lastBlackScanMs < 2000) return false;
+    g_lastBlackScanMs = now;
+    if (void* bf = LiveBlackFog()) {
+        g_blackFogActor = bf;
+        g_blackFogIdx   = R::InternalIndexOf(bf);
+        return true;
+    }
+    return false;
+}
+
+sg::Verdict OnSpawnGhostPre(const sg::Call&) {
+    return g_isClient.load(std::memory_order_acquire) ? sg::Verdict::Cancel : sg::Verdict::Run;
+}
+
 // Compute the host's active-fog bits from the live cycle. All reads are cheap: the fog slot
 // is a pointer read, super fog goes through the cache, the permanent flag is a bool read.
 uint8_t ComputeHostFogBits(void* cycle) {
@@ -101,6 +144,8 @@ uint8_t ComputeHostFogBits(void* cycle) {
         f2 |= kSuperFogActive;
     if (*reinterpret_cast<bool*>(b + P::off::AdaynightCycle_permanentFog))
         f2 |= kPermanentFog;
+    if (HostHasBlackFog())
+        f2 |= kBlackFogActive;
     return f2;
 }
 
@@ -119,6 +164,7 @@ bool Install(bool isHost) {
     // different role, and the interceptor is gated at runtime on it, so it goes inert on the
     // host without re-registration.
     g_isClient.store(!isHost, std::memory_order_release);
+    if (!g_ghostWatch && sg::WatchName(kRowSpawnGhost, kGhostTag, &OnSpawnGhostPre, nullptr)) g_ghostWatch = true;
     if (g_installed) return true;
 
     void* cls = R::FindClass(P::name::DaynightCycleClass);
@@ -224,6 +270,25 @@ void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload) {
                 payload.fogAlpha, payload.fogStrength, payload.finalFogDensity);
     }
 
+    // The black fog: the client's own copy from the host's start edge (or a join while it runs) to its end edge. Its
+    // own clock fades it out about when the host's does; a copy that ended first is not made again before the next
+    // start edge. Spawned past the births catch, as the rolling fog's mirror is.
+    const bool hostBlack = (payload.flags2 & kBlackFogActive) != 0;
+    if (hostBlack && !g_lastHostBlack && !LiveBlackFog()) {
+        void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/blackFog.blackFog_C");
+        if (!cls) cls = R::FindClass(P::name::BlackFogClass);
+        g_spawnFogEchoSuppress.store(true, std::memory_order_release);
+        void* const bf = cls ? E::SpawnActor(cls, E::GetCameraLocation()) : nullptr;
+        g_spawnFogEchoSuppress.store(false, std::memory_order_release);
+        UE_LOGI("weather_fog: host BLACK FOG -> this client's own black fog %s", bf ? "spawned" : "NOT spawned");
+    } else if (!hostBlack && g_lastHostBlack) {
+        if (void* bf = LiveBlackFog()) {
+            E::DestroyActor(bf);
+            UE_LOGI("weather_fog: host BLACK FOG ended -> this client's black fog destroyed");
+        }
+    }
+    g_lastHostBlack = hostBlack;
+
     // Super fog: clear-only (destroy a stray when the host has none). The spawn is deferred: the
     // super-fog actor owns a UFO encounter, and its spawn was not reliably reproducible in the
     // probe. A bounded loop, since the by-class find returns one.
@@ -302,6 +367,10 @@ void OnDisconnect() {
     g_superFogActor   = nullptr;  // session-scoped; a reconnect re-scans
     g_superFogIdx     = -1;
     g_lastSuperScanMs = 0;
+    g_blackFogActor   = nullptr;
+    g_blackFogIdx     = -1;
+    g_lastBlackScanMs = 0;
+    g_lastHostBlack   = false;
     g_haveHostFog       = false;  // the next session re-learns the host's fog state
     g_lastHostFogActive = false;
     g_lastReconcileMs   = 0;

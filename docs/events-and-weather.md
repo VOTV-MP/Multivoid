@@ -78,7 +78,11 @@ wire half is `[V]` (the lane's drill: a spawn, a refused client spawn, the end, 
 stale copy, each with its red), the day cycle's midnight route `[V]`, and the cheat menu's `[RD]` (its
 handler needs a Sandbox or flying world). The black fog and the rolling fog the clock rolls
 funnel through the engine's finish-spawning call, where a client-side catch destroys any birth
-the host did not command (`coop/world/weather_event_births`).
+the host did not command (`coop/world/weather_event_births`). The black fog's whole show plays round the local
+camera and runs on its own clock for about three minutes, so the host's weather state carries whether one lives: a
+client spawns its own copy at the host's start, or at a join while it runs, and destroys it at the host's end; the
+eyes its timer spawns stay the host's, a client's copy refused them (`coop/world/weather_fog`) `[V]` (`coop/dev/blackfog_probe`:
+the client's fog began and ended in the same second as the host's).
 
 Fireflies are the one peer-symmetric weather: the spawner rolls a ring around the local camera,
 so every peer keeps its own and shares each spawn, and the union is fireflies near everyone
@@ -287,7 +291,8 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given); its black hole and its light ride SkyState | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
 | The alien sounds are each player's own: the event is replayed, and each peer's three noisers walk around its own player, sound and leave when that player sees one. A player does not hear the noisers around another. A joiner whose world is up while the host's noisers are out is sent the event once at its ready edge (the join snapshot, one row for the three noisers) and gets noisers of its own | `[?]` `harness/autotest/autotest_world_sound.cpp`: three noisers on each peer, and on a rejoined client (the rewritten drill has not run yet) |
 | A harvest's sound is the harvester's alone: no other peer plays it | `[RD]` the harvest half of #104 waits for the host to perform every harvest (#115): the host's own `growingPlant_C::harvestSound` call then sends an EventCue id 102 at the plant |
-| A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
+| A joiner who arrives during a black fog gets a whole one, from its fade-in | `[?]` `coop/world/weather_fog` |
+| The eyes a black fog spawns on the host are not mirrored to clients | `[V]` `coop/dev/blackfog_probe` (host 4, client 0) |
 | The flesh rain is rolled by every peer's own hour pulse and is not mirrored (the sky eye and the jellyfish are not: `SkyState` carries the eye, the world-actor lane the host's fish, and a client's own `setEye` and path spawn are refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
