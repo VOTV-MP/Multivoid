@@ -153,6 +153,7 @@
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
 #include "coop/dev/world_roll_drill.h"  // [dev] the day's world rolls: the host's crosses, a client's own is refused
 #include "coop/dev/perf_probe.h"
+#include "coop/dev/crowbarpry_probe.h"   // [dev] a client pries a board, its crowbar logged on both
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/walk_timer.h"
@@ -431,6 +432,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pause_quit_drill::Tick(&session);  // [dev] the pause-quit drill (a latched read when off)
     coop::dev::vidcam_hint_drill::Tick(&session);  // [dev] the video camera hint drill (a latched read when off)
     coop::dev::pause_menu_probe::Tick(&session);  // [dev] the pause-menu probe (a latched read when off)
+    coop::dev::crowbarpry_probe::Tick(&session);  // [dev] the crowbar pry (a latched read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::rack_birth_drill::Tick();  // [dev] the rack birth drill (a latched read when off)
     coop::dev::burn_revive_drill::Tick();  // [dev] the burn revive drill (a latched read when off)
