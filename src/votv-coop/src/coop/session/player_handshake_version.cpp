@@ -17,6 +17,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/game_build/game_build.h"
+#include "coop/net/join_wire.h"
 #include "coop/net/session.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/session/join_progress.h"
@@ -32,67 +33,6 @@
 
 namespace coop::player_handshake {
 namespace {
-
-// Pure pre-pass over the Join payload chain (eid, nick, skin, flags, colour, game, build claim, game
-// build): extracts the game-target field, the nick (for the host feed line), the build claim (a pointer
-// into the payload and the official bit) and the game build's key, WITHOUT any side effects.
-// Returns false on a malformed chain -- any length prefix overrunning the payload -- fail-closed,
-// because both peers are the same build by the header prologue, so a well-formed Join always
-// carries the full chain.
-//
-// THIS IS THE SECOND WALKER OF THAT CHAIN, and the two must agree field for field;
-// HandleJoinMessage in player_handshake.cpp is the other; it stops after the colour, so the game
-// target and the build claim are read only here. When the guid field was deleted from the
-// Join, this walker still consumed TWO length-prefixed fields where one remained, read the flags
-// byte as a length, ran off the end and refused every Join with "version field missing" -- on BOTH
-// peers, with the pose stream then never starting. A field added or removed here must be changed in
-// both, and the failure is loud but names the wrong field.
-bool ExtractJoinVersionFields(const uint8_t* payload, size_t len,
-                              std::string* outGame, std::wstring* outNick, bool* outNickGiven,
-                              const uint8_t** outSha, bool* outOfficial, std::string* outGameBuild) {
-    size_t off = 4;  // [u32 senderElementId] (caller already checked len >= 4)
-    // [u8 nicklen][nick]
-    if (off + 1 > len) return false;
-    {
-        const size_t n = payload[off];
-        if (off + 1 + n > len) return false;
-        if (n > 0 && outNick) {
-            *outNick = FromUtf8(payload + off + 1, static_cast<int>(n));
-            *outNickGiven = true;
-        }
-        off += 1 + n;
-    }
-    // [u8 skinlen][skin] -- no guid field precedes it any more; the host derives the guid from the
-    // proved key instead.
-    {
-        if (off + 1 > len) return false;
-        const size_t n = payload[off];
-        if (off + 1 + n > len) return false;
-        off += 1 + n;
-    }
-    // [u8 flags] + [u8 has][r][g][b]
-    if (off + 1 + 4 > len) return false;
-    off += 1 + 4;
-    // [u8 gamelen][game]
-    if (off + 1 > len) return false;
-    const size_t n = payload[off];
-    if (off + 1 + n > len || n > 23) return false;
-    outGame->assign(reinterpret_cast<const char*>(payload + off + 1), n);
-    off += 1 + n;
-    // [sha256 32][u8 flags] -- the build claim; bit 0 = the build verified its own release signature.
-    if (off + coop::build_trust::kShaBytes + 1 > len) return false;
-    *outSha = payload + off;
-    *outOfficial = (payload[off + coop::build_trust::kShaBytes] & 1) != 0;
-    off += coop::build_trust::kShaBytes + 1;
-    // [u8 len][game build key] -- required, and of the reader's shape before anything compares or shows it.
-    if (off + 1 > len) return false;
-    const size_t k = payload[off];
-    if (off + 1 + k > len || k > ue_wrap::game_build::kKeyMax) return false;
-    const std::string key(reinterpret_cast<const char*>(payload + off + 1), k);
-    if (!coop::game_build::KeyShapeOk(key)) return false;
-    *outGameBuild = key;
-    return true;
-}
 
 // The kind of a refusal and the values its sentence names, beside the English verdict string: the
 // verdict is also the wire reason, the dedup key and the log line, so the host's feed line is
@@ -205,8 +145,17 @@ bool ValidateJoinVersionOrRefuse(coop::net::Session& session, int senderSlot,
     std::string verdict;
     RefuseLine feedLine;
     net::EndReason code = net::EndReason::GameVersionRefused;
-    if (!ExtractJoinVersionFields(payload, payloadLen, &peerGame, &refuseNick, &nickGiven,
-                                  &peerSha, &peerOfficial, &peerGameBuild)) {
+    // The walk is coop::net's, the one reader of the chain beside the handshake's own apply of its first
+    // fields. A fail-closed refusal also covers a key that has not a key's shape, before anything compares
+    // or shows it.
+    std::string joinNickBytes;
+    const bool walked = coop::net::ExtractJoinVersionFields(payload, payloadLen, &peerGame, &joinNickBytes,
+                                                            &nickGiven, &peerSha, &peerOfficial,
+                                                            &peerGameBuild);
+    if (nickGiven) refuseNick = FromUtf8(reinterpret_cast<const uint8_t*>(joinNickBytes.data()),
+                                         static_cast<int>(joinNickBytes.size()));
+    if (!walked || !coop::game_build::KeyShapeOk(peerGameBuild)) {
+        peerGameBuild.clear();
         verdict = "malformed join (version field missing)";
         feedLine.kind = RefuseKind::Malformed;
     } else {

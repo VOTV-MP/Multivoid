@@ -759,6 +759,7 @@ set(VOTVCOOP_NET_SOURCES
     src/coop/net/master_slots.cpp
     src/coop/net/blob_chunks.cpp
     src/coop/net/session_voice.cpp
+    src/coop/net/join_wire.cpp
     src/ue_wrap/core/log.cpp
     src/ue_wrap/core/paths.cpp
     src/ue_wrap/core/hot_path_guard.cpp
