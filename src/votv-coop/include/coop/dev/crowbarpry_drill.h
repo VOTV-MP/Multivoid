@@ -1,7 +1,7 @@
 // coop/dev/crowbarpry_drill.h -- [dev] a client pries a board with a crowbar; the crowbar the pry hands back is judged
 // on the host (`[dev] crowbarpry_drill=open|hand` on both peers, the client also prop_birth_key_probe=1).
 //
-// The HOST spawns the fixture itself: a board (prop_pryablePlank_C, held static as a stuck board is) in front of the
+// The HOST spawns the fixture itself: a wall-attachable pryable (prop_baseroomsign_C, else prop_torchHolder_C) in front of the
 // client's puppet. The CLIENT waits for its copy, takes a crowbar into the hand, and runs the game's own activatePrying
 // on the board, then ends the shown prying crowbar's End as the game's own callers do (opened, or given up).
 // open: the board comes free and the crowbar the pry hands back must exist on the host. The host says

@@ -54,6 +54,9 @@ constexpr float    kPryerNearCm  = 150.f;    // a prying crowbar belongs to the 
 constexpr float    kHostNearCm   = 600.f;    // a host crowbar born within this of the board is the pry's
 constexpr uint64_t kBoundMs      = 90000;    // every wait that ends on no event says INVALID after this
 
+// The wall-attachable pryables the pak has (prop_wallAttachable_pryable_C), in the order the host tries them.
+constexpr const wchar_t* kBoardClasses[] = {L"prop_baseroomsign_C", L"prop_torchHolder_C"};
+
 enum class Arm { Off, Open, Hand };
 
 Arm ArmOf() {
@@ -103,9 +106,9 @@ int Hidden(void* a) {
 
 bool KeyReads(const std::wstring& k) { return !k.empty() && k != L"None"; }
 
-// A board stuck the game's way: comp_wallAttachable::init(prop, arrow), the call a placed board's loadData makes, sets
-// the component's `prop`, which prop_stick_sync's unstick watch reads (no prop, nothing crosses). In the open no wall can
-// hold the board, so it is then held static as a stuck one is (comp_wallAttachable::unstick refuses one that is not).
+// A sign wired the game's way: comp_wallAttachable::init(prop, arrow), the call a placed sign's loadData makes, sets the
+// component's `prop`, which prop_stick_sync's unstick watch reads (no prop, nothing crosses). It is the repair when the sign's
+// own BeginPlay has not run it; the sign's static state is its own and is only read here.
 // False when a step failed; the log names the step (the property read, the function, the frame, the call).
 bool StickBoard(void* board) {
     const int32_t co = R::FindPropertyOffset(R::ClassOf(board), L"comp_wallAttachable");
@@ -114,7 +117,6 @@ bool StickBoard(void* board) {
     void* arrow = nullptr;
     if (co >= 0) std::memcpy(&comp, static_cast<const uint8_t*>(board) + co, sizeof(comp));
     if (so >= 0) std::memcpy(&arrow, static_cast<const uint8_t*>(board) + so, sizeof(arrow));
-    if (!PR::IsStatic(board)) PR::CallSetPropProps(board, true, false, false, false);
     const auto stop = [&](const char* step) {
         UE_LOGW("[CROWBARPRY] StickBoard stops at: %s (board class '%ls', comp_wallAttachable offset %d -> %p, stick offset "
                 "%d -> %p)", step, R::ClassNameOf(board).c_str(), co, comp, so, arrow);
@@ -141,6 +143,7 @@ FVector g_plankAt{};
 std::vector<void*> g_crowbarsBefore;   // pointer identity: the crowbars the world had when the board was spawned
 uint64_t g_hostMs = 0;
 bool g_foundLogged = false;
+bool g_sawStatic = false;   // the sign was seen static on the host before the pry: only then is "free" a fact
 
 void HostSay(Outcome o, const char* why) {
     g_host = HostStep::Done;
@@ -164,13 +167,18 @@ bool ClientBody(coop::net::Session& s, FVector& at, FVector& fwd) {
 void HostWaitClient(coop::net::Session& s) {
     FVector at{}, fwd{};
     if (!ClientBody(s, at, fwd)) return;
-    void* cls = R::FindClass(L"prop_pryablePlank_C");
-    if (!cls) { HostSay(Outcome::Invalid, "prop_pryablePlank_C is not loaded"); return; }
     g_plankAt = {at.X + fwd.X * kAheadCm, at.Y + fwd.Y * kAheadCm, at.Z};
-    void* plank = E::SpawnActor(cls, g_plankAt);
-    if (!plank) { HostSay(Outcome::Invalid, "the board did not spawn"); return; }
+    // A wall-attachable pryable: the sign, else the torch holder. (prop_pryablePlank_C is not one: its open is a plain
+    // setPropProps on itself, which no lane carries.)
+    void* plank = nullptr;
+    for (const wchar_t* name : kBoardClasses) {
+        if (void* cls = R::FindClass(name)) plank = E::SpawnActor(cls, g_plankAt);
+        if (plank) break;
+    }
+    if (!plank) { HostSay(Outcome::Invalid, "neither prop_baseroomsign_C nor prop_torchHolder_C spawned"); return; }
     const bool held = StickBoard(plank);
     g_plank.Set(plank);
+    g_sawStatic = false;
     g_crowbarsBefore = All(L"prop_crowbar_C");
     g_hostMs = Now();
     g_foundLogged = false;
@@ -194,6 +202,7 @@ void* NewCrowbar() {
 void HostWatch() {
     void* const plank = g_plank.Get();
     if (!plank) { HostSay(Outcome::Invalid, "the board is gone"); return; }
+    if (PR::IsStatic(plank)) g_sawStatic = true;
     void* const crowbar = NewCrowbar();
     if (ArmOf() == Arm::Hand) {
         // A given-up pry leaves no world crowbar: one here is the birth the hand's own copy must not have made.
@@ -207,6 +216,8 @@ void HostWatch() {
     }
     if (crowbar) {
         const bool freed = !PR::IsStatic(plank);
+        // A sign never seen static on the host proves nothing by being free: the run says so rather than pass on it.
+        if (!g_sawStatic) { HostSay(Outcome::Invalid, "the sign was never static on the host, so its freeing is unjudged (it needs the static hold)"); return; }
         if (!g_foundLogged) {
             g_foundLogged = true;
             UE_LOGI("[CROWBARPRY] host: the pry's crowbar '%ls' is here, the board is %s", PR::GetInteractableKeyString(crowbar).c_str(),
@@ -259,7 +270,9 @@ bool HandHoldsCrowbar() {
 void ClientFind(void* me) {
     FVector mine{};
     if (!E::TryGetActorLocation(me, mine)) return;
-    void* const board = NearestTo(L"prop_pryablePlank_C", mine, kClientNearCm);
+    void* board = nullptr;
+    for (const wchar_t* name : kBoardClasses)
+        if (void* b = NearestTo(name, mine, kClientNearCm)) { board = b; break; }
     if (!board || !KeyReads(PR::GetInteractableKeyString(board))) {
         if (Now() - g_clientMs > kBoundMs) ClientSay(Outcome::Invalid, "client: no board bound within %s of the client", "500 cm");
         return;

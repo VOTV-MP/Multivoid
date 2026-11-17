@@ -405,7 +405,7 @@ CFG_ENUM(pry_drill, "pry_drill", "dev", "off", "off|host|client|join",
     "print every pryable they have and every change of one.")
 CFG_ENUM(crowbarpry_drill, "crowbarpry_drill", "dev", "off", "off|open|hand",
     "VOTVCOOP_CROWBARPRY_DRILL",
-    "Drill (BOTH peers, the client also takes prop_birth_key_probe=1): a client pries a board the host spawned beside "
+    "Drill (BOTH peers, the client also takes prop_birth_key_probe=1): a client pries a wall-attachable sign the host spawned beside "
     "it with the game's own activatePrying and ends the pry. open: the pry opens, the board comes free and the crowbar "
     "the pry hands back must exist on the host (the host says PASS; the client says FAIL when that crowbar's birth is "
     "not sent). hand: the pry is given up, the crowbar goes back into the hand and no world crowbar may reach the host "
