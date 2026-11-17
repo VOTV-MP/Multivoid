@@ -83,14 +83,24 @@ A carried trash clump is driven to the puppet's hand on
 the host each tick (`coop/player/puppet_carry_drive`); a held physics prop is on the props lane.
 
 The mirror is spawned from the class alone, so it showed the class's defaults: a held can opened and eaten
-from was full and shut to the others, an extinguisher's charge full. The hand's owner reads its hand item's
-record through the item's own `getData` when the item or its state changes (the hold transform left out), at
-most four times a second, and sends it chunked (`HandRecord`): a client's to the host, which checks the
-sender's hand holds that class and sends it on, the host's to everyone, every hand's to a joiner. Each peer
-writes it into its mirror through the item's own `loadData`, the leaf state only, and again when the mirror is
-made anew (`coop/player/hand_record_sync`) `[V]` (`coop/dev/item_trip_probe`: a can held opened with 3 of 4
-left read the same on the other peer's mirror, either player holding it, with one record sent; an
-extinguisher's mirror followed its charge from 1.000 to 0.900 through a spray).
+from was full and shut to the others. The hand's owner reads its hand item's record through the item's own
+`getData` when its hold changes (the game's `updateHold`, watched at the script gate) or a held can's `init`
+runs, and sends it chunked (`HandRecord`) once its hand lane has announced the item, the hold transform left
+out: a client's to the host, which parks it as bytes (the newest per sender, within a 4 KB lane ceiling, a record
+that arrives while the hand state it follows is owed waits for it), decodes it once the sender's pacing token is
+taken, and refuses it, counted per reason and never stored or relayed, when it is keyless, not finite, past the
+lane's field bounds, or of a class the sender's applied hand does not hold (a class the sender held a moment ago
+is an honest race and dropped silently). Every class its `classes[]` names must resolve to a class in the host's
+class index: one the index has not drained yet waits under the index's window, one that resolves to none is
+refused (an order box's record names its items' classes, so no blanket refusal of `classes[]` stands: the five
+drill arms hold a can, whose record names none) `[?]`. The host stores its own copy and sends that on to every
+other world-ready peer, the host's to everyone, every hand's to a joiner (a send the joiner's link refused is owed
+to it); the host clears a
+record when the hand empties or changes class and sends an empty one, so the next item is not shown it. Each peer
+writes it into its mirror through the item's own `loadData`, the leaf state only (a client waits for a class the
+record names to load, inside the per-tick budget), and again when the mirror is made anew (`coop/player/hand_record_sync`) `[?]` (a state changed in the hand of another class, an
+extinguisher's charge, is not announced and shows the record of the hold). The two-peer drill is
+`coop/dev/hand_record_drill` (`hand_record_drill=can|hand|joiner|forge|hostile|keyless|oversize|bounds|nonfinite|box`, the host's one verdict, three red arms).
 
 ### Name, colour and nameplate
 

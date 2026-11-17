@@ -783,6 +783,8 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_world_sound.inc"
 // The prop-properties tool's red arms: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_prop_props.inc"
+// The held item's record drill and its red arms: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_hand_record.inc"
 // The disc drills' rows: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_disc.inc"
 // The equipment drill's rows: their own file, one concept.

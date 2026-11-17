@@ -128,7 +128,7 @@
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
-#include "coop/dev/item_trip_probe.h"  // [dev] an item's state across a trip into the inventory and back, logged on both
+#include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
 #include "coop/dev/order_probe.h"  // who writes the order queue, and what the drone delivers, per peer
 #include "coop/dev/bind_wait_selftest.h"  // [dev] the bind wait's rules on stated inputs
 #include "coop/dev/pile_late_load.h"   // [dev] the late-load seam: one save-loaded clump kept aside until its row defers
@@ -252,6 +252,7 @@ void EndSession() {
     coop::dev::equip_drill::OnDisconnect();  // [dev] the drill's run belongs to one session
     coop::dev::hook_retrieve_drill::OnDisconnect();  // [dev] the cups and the hook belong to one session
     coop::dev::nametag_drill::OnDisconnect();  // [dev] the cup and the item belong to one session
+    coop::dev::hand_record_drill::OnDisconnect();  // [dev] the steps and the marks belong to one session
     coop::dev::drone_call_drill::OnDisconnect();  // [dev] the console, the legs and the host's watch belong to one world
     coop::dev::dronesack_drill::OnDisconnect();  // [dev] the sack, the crate and the records belong to one session
     coop::dev::container_writer_probe::OnDisconnect();  // [dev] the readings belong to one world
@@ -450,7 +451,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
-    coop::dev::item_trip_probe::Tick(&session);  // [dev] an item's trip into the inventory and back (a latched read when off)
+    coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)
     coop::dev::grime_drill::Tick(&session);  // [dev] the grime drill's legs (a latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive: the host's broadcast refill and each peer's own food and sleep (latched reads when off)
 }

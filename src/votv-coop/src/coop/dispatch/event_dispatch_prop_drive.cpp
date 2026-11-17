@@ -242,6 +242,10 @@ bool HandlePropDriveEvent(net::Session& session,
     }
     case net::ReliableKind::HandRecord: {
         // Any peer to the host, the host to all (coop/player/hand_record_sync); chunked.
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: HandRecord from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) break;
         net::BlobChunkPayload c{};
         std::memcpy(&c, msg.payload, sizeof(c));

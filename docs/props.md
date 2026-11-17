@@ -54,7 +54,7 @@ and `foods` in its record, and the can opener, enough impact damage and eating c
 `Init`. `Init` also runs for changes that touch neither, so every class's `init` is watched at the script gate, and a
 can publishes only when the two differ from what this peer last knew, a can it has not seen comparing with its class's
 defaults (`coop/props/prop_can_state`). A record landing here updates what is known and does not go back; a new actor
-under a known Key, as a hand's drop makes, is adopted, never sent as its defaults. `[V]`
+under a known Key, as a hand's drop makes, is adopted and never published as a change; the host publishes nothing for the host's copy of a client's drop until that client's record lands. `[V]`
 `harness/autotest/autotest_can_state.cpp`: two cans, each opened on one peer and eaten from on the other, read the
 same `opened`, `foods` and mesh on both peers after every step, with one record per change; the client walks to the
 host first, every step waits on the can's state, and the host judges the client's rows (`can-drill: VERDICT`). The

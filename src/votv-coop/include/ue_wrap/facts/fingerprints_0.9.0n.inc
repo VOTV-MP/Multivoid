@@ -322,6 +322,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"mainplayer_c", L"throwshit", L"mainplayer_c.throwshit", 0xb0d2feba9a6d77d8ull, 0xc01be8c58510e205ull},
     {L"mainplayer_c", L"timerholdflashlight", L"mainplayer_c.timerholdflashlight", 0x6a2d5d90ab51fa2dull, 0x760d7e465c2c5551ull},
     {L"mainplayer_c", L"updateflashlight", L"mainplayer_c.updateflashlight", 0x6a2d5d90ab51fa2dull, 0x730f5fa3202142acull},
+    {L"mainplayer_c", L"updatehold", L"mainplayer_c.updatehold", 0x844e844b5760042dull, 0xd2b154514d8e1d88ull},
     {L"mainplayer_c", L"useselectedaction", L"mainplayer_c.useselectedaction", 0x6a2d5d90ab51fa2dull, 0x1020fb0295b51e67ull},
     {L"midasufotest_c", L"runtrigger", L"midasufotest_c.runtrigger", 0xce1a7ca786fd2555ull, 0xc91eb168c323e5d2ull},
     {L"mushroommaster_c", L"spawn", L"mushroommaster_c.spawn", 0x6a2d5d90ab51fa2dull, 0xcda8e5571000d622ull},
