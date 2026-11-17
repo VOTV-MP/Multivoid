@@ -6,7 +6,9 @@
 #include "ue_wrap/engine/engine.h"      // GetController -- the local player's PlayerController for input mode
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
@@ -16,8 +18,14 @@ namespace ue_wrap::spawn_menu {
 
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
+namespace sg = ue_wrap::script_gate;
 
 namespace {
+
+// The game closes this menu with a native SetVisibility(Collapsed) reached only from the Q input event's
+// release, so that event's body ending is the engine's own signal that the menu may be gone.
+UE_FACT_FN(kRowQRelease, "spawn_menu", L"mainPlayer_C", L"InpActEvt_spawnmenu_K2Node_InputActionEvent_3", Declared);
+constexpr int kTagQRelease = 0x534D4E55;  // 'SMNU'
 
 // The widget's visibility byte, which Open() drives: the offset is the class's layout, the same in
 // every world.
@@ -43,8 +51,31 @@ int ReadVis(void* widget) {
 // A visibility byte that draws: Visible, HitTestInvisible or SelfHitTestInvisible.
 bool Shown(int vis) { return vis == 0 || vis == 3 || vis == 4; }
 
-// Open() ran and no Close() has since. Written on the game thread, read by the key watcher.
+// Open() ran and neither Close() nor the game's own close has since. Written on the game thread, read by the key
+// watcher.
 std::atomic<bool> g_open{false};
+
+// After the game's Q release ran: when the widget is no longer drawn the game closed it, so the open this layer
+// owes a close for is over and the key watcher can end. Read once, at the event.
+void OnQRelease(const sg::Call&) {
+    if (!g_open.load(std::memory_order_acquire)) return;
+    if (Shown(ReadVis(FindSpawnMenuWidget()))) return;
+    g_open.store(false, std::memory_order_release);
+    UE_LOGI("spawn_menu: the game closed the menu itself -- no close is owed");
+}
+
+// Hold the gate and watch the game's close, once. A solo game holds no gate, so the menu takes its own hold the
+// first time it opens. Game thread.
+void ArmCloseWatch() {
+    static bool sArmed = false;
+    if (sArmed) return;
+    sArmed = true;
+    sg::Acquire("the spawn menu");
+    if (!sg::WatchName(kRowQRelease, kTagQRelease, nullptr, &OnQRelease))
+        UE_LOGE("spawn_menu: the watch on %ls::%ls was refused -- the menu stays owed a close until Q is pressed",
+                kRowQRelease.Class(), kRowQRelease.Name());
+    sg::ResolvePendingNames();
+}
 
 // The menu's search box holds the keyboard: a Q typed there is a letter of the search.
 bool SearchHasKeyboard(void* widget) {
@@ -157,6 +188,7 @@ bool Open(void* localPlayer) {
     }
 
     const int visAfter = ReadVis(widget);
+    ArmCloseWatch();
     g_open.store(true, std::memory_order_release);
     UE_LOGI("spawn_menu::Open: native SetVisibility + opened() + GameAndUI input -- "
             "visibility %d -> %d (4=SelfHitTestInvisible)", visBefore, visAfter);
@@ -209,12 +241,6 @@ bool Close(void* localPlayer) {
             }
         } else if (g_visOff >= 0) {
             *(reinterpret_cast<uint8_t*>(widget) + g_visOff) = 1;  // fallback: raw byte
-        }
-        // (3) Symmetric content teardown if the widget exposes one. Absence is fine: the memoised
-        // lookup holds a miss as a miss while the class lives.
-        if (void* closedFn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"closed")) {
-            ue_wrap::ParamFrame f(closedFn);
-            if (f.valid()) ue_wrap::Call(widget, f);
         }
     }
 

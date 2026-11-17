@@ -29,8 +29,8 @@ bool Open(void* localPlayer);
 // Close the spawn menu for `localPlayer`: the INVERSE of Open(). Restores
 // SetInputMode_GameOnly + hides the mouse cursor (the load-bearing un-stick -- Open()
 // leaves the player in GameAndUI/cursor mode, so without a close the player can no longer
-// interact with the world), then collapses the widget + runs its closed() teardown if
-// present. Reproduces vanilla's close block (ExecuteUbergraph_mainPlayer @11555) natively.
+// interact with the world), then collapses the widget (the widget has no closing function of
+// its own). Reproduces vanilla's close block (ExecuteUbergraph_mainPlayer @11555) natively.
 // Idempotent + safe to call when already closed. GAME THREAD ONLY.
 bool Close(void* localPlayer);
 
@@ -45,9 +45,11 @@ bool Toggle(void* localPlayer);
 // a key press calls. Returns false when it left the menu up. GAME THREAD ONLY.
 bool CloseUnlessTyping(void* localPlayer);
 
-// An Open() here has not been followed by a Close(): the menu this layer put up is still up.
-// Any thread. The game's own Q release cannot close it in story mode (the same isBuoyant guard
-// as its open), so whoever opens it owes the player a way out while this is true.
+// An Open() here has not been followed by a Close() or by the game's own close: the menu this
+// layer put up is still up. Any thread. The game's own Q release cannot close it in story mode
+// (the same isBuoyant guard as its open), so whoever opens it owes the player a way out while
+// this is true. When the game does close it, a watch on the Q release event reads the widget's
+// visibility once and ends the debt.
 bool IsOpen();
 
 }  // namespace ue_wrap::spawn_menu
