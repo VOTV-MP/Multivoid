@@ -487,6 +487,7 @@ is mirrored by the balance lane; an event is broadcast by the event watch.
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
 | `CheatRequest`, `CheatResult` | a client to the host; the host to that client | one cheat a player asks for (spawn props, change the points, fire an event) and what the host did with it |
+| `AtvPartIntent` | a client to the host | one piece of work on an ATV's wheels or spare, which the host judges and runs on its copy ([vehicles.md](vehicles.md)) |
 
 ## Late join
 

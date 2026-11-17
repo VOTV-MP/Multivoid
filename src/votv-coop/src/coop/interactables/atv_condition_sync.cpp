@@ -249,14 +249,14 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     const bool groupHealth = std::fabs(in.health - ex.health) > kHealthEps;
 
     if (!applyPresence && presenceDiffers) {
-        // The KNOWN-BROKEN direction, counted and visible (CRUTCHES row; (b2) asserts it):
-        // a client syncer's presence claim is not consumed -- its paired wheel-prop birth
-        // cannot travel, so consuming the mask would persist an item loss on the host.
+        // Counted and visible: a client syncer's presence claim is not consumed. A wheel its copy
+        // lost to damage has no prop the host could carry, and a wheel it unbolts is asked of the
+        // host instead (atv_part_intent), so consuming the mask would persist an item loss.
         const auto n = g_presenceSkipped.fetch_add(1, std::memory_order_relaxed) + 1;
         if (n == 1 || n % 100 == 0)
             UE_LOGW("atv_condition: presence from a client syncer DIFFERS (mask %02X vs expressed %02X) "
-                    "-- skipped by the authority rule, x%llu (KNOWN divergence until the "
-                    "act-as-host tire-eject intent lane)",
+                    "-- skipped by the authority rule, x%llu (a wheel knocked off a client "
+                    "syncer's copy stays on the host's)",
                     p.tiresMask, ex.mask, n);
     }
 

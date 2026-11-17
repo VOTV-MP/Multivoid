@@ -5,9 +5,9 @@
 // zero, so an overwrite cannot race an irreversible act.
 //
 // AUTHORITY: accumulators apply from the syncer the host assigned, PRESENCE (tiresMask, hasSpare)
-// only from the host's own copy, never a client syncer's re-sent block, because a client-authored
-// eject ships a mask bit whose paired prop_atvWheel_C birth cannot travel, so applying it would turn
-// a retained-wheel divergence into host-PERSISTED item loss. docs/vehicles.md carries it as a limit.
+// only from the host's own copy, never a client syncer's re-sent block, because a client's part
+// births cannot travel, so applying it would turn a retained-part divergence into host-PERSISTED
+// item loss. A client's own wheel and spare work is the host's to run (atv_part_intent).
 //
 // EDGES: change groups run against a LAST-EXPRESSED baseline, seeded from the ACTOR at first
 // apply and advanced only when a verb runs. Against the last packet, slow drift starves

@@ -462,6 +462,10 @@ registry recycled that id. `[V]`
   asks with `AtvSeat` (sit or leave) and `AtvTakeover` (a grab), each judged and answered with `AtvAnswer`; the
   host's own player is judged by the same table. The three are never aliased: the host's index row (the birth
   owner), the occupant, the syncer. `[?]`
+- **Authority: the wheels and the spare are the host's.** Which tyres are on and whether the spare is change on the host's
+  copy alone. A client's wheel unbolt, fit, stow or spare take is cancelled at the script gate and asked with `AtvPartIntent`;
+  the host judges it and runs it, the wheel's birth crosses as the host's, and presence follows in `AtvState`
+  (`coop/interactables/atv_part_intent`). The battery's fit and unscrew are `AtvRequest`'s (`coop/interactables/atv_gate`). `[?]`
 - **Expression: the syncer's stamped stream.** The syncer streams `AtvState`; a client's reaches the host alone,
   which applies only its syncer's blocks and re-sends each, marked and stamped with the seat and the syncer, to
   every other client. The host's own copy streams while it syncs. Every machine follows the stamp, yielding to

@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 304;
+inline constexpr uint16_t kProtocolVersion = 305;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1489,6 +1489,14 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+
+    // Client to host: this client's work on an ATV's wheels or spare (atv_part's op): a wheel unbolted, a held wheel
+    // fitted or stowed as the spare, the spare taken. The client's own body is cancelled; the host judges the sender
+    // (world ready, the ATV known and synced by the host, within reach, the tool or the part in its hand, the ATV's own
+    // state) and runs the change on its copy, so the part's birth and the presence in AtvState cross as the host's. A
+    // refused fit or stow is refunded as a prop beside the sender. Never relayed; not pre-world. Late join: none, a
+    // request is an act. AtvPartIntentPayload.
+    AtvPartIntent = 274,
 
     // Any peer to all (a client's through the host's relay), and host to a joiner at its connect replay: the steps
     // of one kitchen oven's repair that come before its wiring, as a mask of the four screws out and the lid off.
@@ -3621,6 +3629,28 @@ struct AtvAnswerPayload {
 };
 static_assert(sizeof(AtvAnswerPayload) == 40, "AtvAnswerPayload must be 40 bytes");
 static_assert(sizeof(AtvAnswerPayload) <= 256 - 20 - 8, "AtvAnswerPayload must fit in one reliable datagram");
+
+// A client's work on an ATV's wheels or spare (AtvPartIntent). The scalars are the wheel the sender's hand held, read
+// on its machine as it sent: a fitted or stowed wheel's three. The host clamps them to the game's domains. The
+// battery is not here: its fit and unscrew are AtvRequest's (atv_host_op::kBatteryIn, kBatteryOut).
+namespace atv_part {
+constexpr uint8_t kRemoveWheel = 0;    // the wrench's last step on a fitted wheel: `index`
+constexpr uint8_t kFitWheel = 1;       // the held wheel into the empty socket `index`
+constexpr uint8_t kStowSpare = 2;      // the held wheel into the spare box
+constexpr uint8_t kTakeSpare = 3;      // the spare out of its box
+constexpr uint8_t kOpCount = 4;
+}  // namespace atv_part
+struct AtvPartIntentPayload {
+    WireKey key;         // 32 -- the ATV's Key
+    uint8_t op;          // 1  -- an atv_part op; anything else is malformed
+    uint8_t index;       // 1  -- kRemoveWheel, kFitWheel: the wheel, 0..3; else 0
+    int8_t  fixes;       // 1  -- kFitWheel, kStowSpare: the wheel's repair countdown; else 0
+    uint8_t pad;         // 1  -- zero
+    float   durability;  // 4  -- kFitWheel, kStowSpare: the wheel's durability; else 0
+    float   dirt;        // 4  -- kFitWheel, kStowSpare: the wheel's dirt; else 0
+};
+static_assert(sizeof(AtvPartIntentPayload) == 44, "AtvPartIntentPayload must be 44 bytes");
+static_assert(sizeof(AtvPartIntentPayload) <= 256 - 20 - 8, "AtvPartIntentPayload must fit in one reliable datagram");
 
 // The drone's state (DroneState): transform, activity, effect bits and the dust anchor.
 struct DroneStatePayload {

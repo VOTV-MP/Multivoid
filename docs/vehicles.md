@@ -76,6 +76,27 @@ turn a divergence into an item loss the host persists. The mirror's own accrual 
 overwrite never races an irreversible act. The battery is the host's (below); each copy drains
 its own between the host's states.
 
+### Parts
+
+A wrench or power tool unbolts a wheel, which leaves as a prop; a held wheel goes back into a
+socket or the spare box, and the spare comes out of its box by the radial option. Each of these
+changes presence, so on a client the body that would make the change is cancelled at the script gate
+and asked of the host with `AtvPartIntent` (`coop/interactables/atv_part_intent`): `unscrewPanel`
+for a looked-at wheel, `putTire` for a fit, `playerUsedOn` for the spare's stow, and
+`actionOptionIndex` for the spare's take. A fit or stow destroys the wheel in the client's hand as
+the body would and carries its scalars. The host judges the sender's world, the ATV by its key, that
+the host itself syncs it, the reach, the tool or the wheel its hand held last (one hand state gives
+one wheel) and the ATV's own state. An unbolt then runs the game's own `unscrewPanel` on the host's
+copy with the look fields set for the call; a fit or stow writes the fields the body writes and runs
+its reducer; the spare is born as a wheel prop beside the sender. The wheel's birth crosses as the
+host's and presence follows in `AtvState`. A refused fit or stow gives the wheel back as a prop
+beside the sender. The battery is not here: its fit and unscrew are the host's by `AtvRequest`
+(below), and this lane lets a battery's `unscrewPanel` and `playerUsedOn` run for that one.
+`coop/dev/atv_part_drill` (`VOTVCOOP_ATV_PART_DRILL=wheel`, both peers): the client, a wrench in its
+hand, unbolts a wheel and fits a held one back; both peers should hold the same tyre mask and wheel
+props after each, and the host should run both asked changes and refuse none. `[?]` built on this
+tree, not yet run; the spare's stow and take have no drill.
+
 ### What the host owns beyond the rig
 
 The rig's pose stays with the peer driving it. Everything else the ATV keeps is the host's copy's, and a client submits
@@ -214,7 +235,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | lights, brake, turbo, the horn | the syncer | the syncer's copy's bools and the horn key's level ride its block's `stateBits`; the host applies each change and re-sends |
 | the kerfur passenger | the host | its kerfur's own sit, called for a client's seat too on the seat's edge; the stamp names it and a client's mirror rides the ATV the stamp names |
 | the driver's body in the seat | the host's seat table | each peer attaches a seated peer's body to the ATV once |
-| tyre and spare presence | the host | consumed from the host's own copy only |
+| tyre, spare and battery presence | the host | consumed from the host's own copy only; a client's unbolt, fit, stow, insert and spare take are asked of the host |
 | a runtime ATV's identity | the host | its game key, announced |
 
 ## Wire messages
@@ -225,6 +246,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvSeat`, `AtvTakeover` | a client to the host | a sit in or leave of the driver's seat; a grab of the ATV |
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
+| `AtvPartIntent` | a client to the host | one piece of work on an ATV's wheels or spare: a wheel unbolted, a held wheel fitted or stowed as the spare, the spare taken; with the held wheel's scalars |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
 | `AtvHostState` | the host to all | an ATV's fuel, health, battery, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
@@ -254,7 +276,9 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | While driving, the mirror trails the syncer: the correction is a bounded velocity bias, and the cut to the syncer's pose happens only past a speed-scaled error or when the error stops shrinking | `[V]` `coop/interactables/atv_corrector` |
 | A client drives for one round trip before the host's answer can refuse its sit or grab; a refused sit dismounts, a refused grab drops, and the blocks it streamed meanwhile are dropped and counted, never applied | `[?]` `coop/interactables/atv_authority`, built to the design and not yet run |
 | At a hand-back to the host the old syncer's last blocks may still be in flight; the host drops and counts them, and the stamp moves every client to the host's copy | `[?]` `coop/interactables/atv_authority`, `coop/interactables/atv_sync` |
-| A client's tyre eject is refused by the arbiter, so the host keeps the wheel and the peers disagree until the eject intent lane exists | `[V]` `coop/interactables/atv_condition_sync`, by design |
+| A wheel knocked off by damage on a client syncer's copy is not consumed, so the host keeps the wheel and the peers disagree | `[V]` `coop/interactables/atv_condition_sync`, by design |
+| A client's wheel or spare work is refused while a client syncs the ATV (it is driven or carried, or not yet handed back): presence reaches the clients only from the host's own copy while the host syncs. The refused ask shows the client nothing but its wheel given back | `[?]` `coop/interactables/atv_part_intent` |
+| The spare a client takes is born as a prop beside it, not into its hotbar; an unbolt the host runs for a client plays the game's 2D sounds on the host | `[?]` `coop/interactables/atv_part_intent` |
 | The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
 | Not synced: the radio | `[V]` nothing under `coop/interactables/atv_*` carries them |
 | A client's refuel or repair is the rise its copy shows, which the host takes as is within the 100 ceiling and the reach; the gas can's own fuel after a pour is not carried. A refused take-off of a module the host does not have leaves its author's module in the world | `[V]` `coop/interactables/atv_host_sync` |
@@ -268,6 +292,7 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | the seat and syncer table, and the host's judgements | `coop/interactables/atv_authority` |
 | the corrector, the hit guard and the damage gate | `coop/interactables/atv_corrector`, `coop/interactables/atv_hit_guard`, `coop/interactables/atv_damage_gate` |
 | condition | `coop/interactables/atv_condition_sync`, `ue_wrap/devices/atv_condition` |
+| a client's part work | `coop/interactables/atv_part_intent`, `ue_wrap/devices/atv_parts`, `coop/dev/atv_part_drill` |
 | the engine wrapper | `ue_wrap/devices/atv` |
 | the seat | `coop/interactables/device_occupancy` |
 | fuel, health, modules | `coop/interactables/atv_host_sync` |
