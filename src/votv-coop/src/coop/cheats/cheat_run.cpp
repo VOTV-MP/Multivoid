@@ -54,6 +54,18 @@ bool IsExplosive(const std::string& name) {
     return false;
 }
 
+// The class a prop would spawn as is judged by its name too: prop_<name>_C of a list name. A class named otherwise is
+// tested whole.
+bool ClassOpenToPlayers(const std::wstring& className) {
+    std::string name;
+    for (const wchar_t c : className) name.push_back(c > 0 && c < 0x80 ? static_cast<char>(c) : '?');
+    constexpr std::string_view kPre = "prop_", kSuf = "_C";
+    if (name.size() > kPre.size() + kSuf.size() && name.compare(0, kPre.size(), kPre) == 0 &&
+        name.compare(name.size() - kSuf.size(), kSuf.size(), kSuf) == 0)
+        name = name.substr(kPre.size(), name.size() - kPre.size() - kSuf.size());
+    return !IsExplosive(name);
+}
+
 // The red arm: a player's request is judged open without the check (dev row cheat_open_check_off).
 bool OpenCheckOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::cheat_open_check_off);
@@ -63,7 +75,13 @@ bool OpenCheckOff() {
 Outcome RunSpawn(const Request& r, int senderSlot) {
     const int maxCount = senderSlot == 0 ? kHostMaxCount : coop::net::kCheatMaxCount;
     if (r.count < 1 || r.count > maxCount) return Done(CheatReason::BadRequest);
-    if (senderSlot != 0 && !OpenCheckOff() && !ItemOpenToPlayers(r.name)) return Done(CheatReason::Refused);
+    if (senderSlot != 0 && !OpenCheckOff()) {
+        // By its name, and by the class the name spawns as: a list row can name another prop's class.
+        std::wstring spawnClass;
+        if (!ItemOpenToPlayers(r.name) ||
+            (coop::cheats::item_spawn::SpawnClassName(r.name, spawnClass) && !ClassOpenToPlayers(spawnClass)))
+            return Done(CheatReason::Refused);
+    }
     // Where: in front of the asker, or at a player who is in the session. The asker's own body is its slot.
     const bool inFront = r.target == coop::net::kCheatInFront;
     const int slot = inFront ? senderSlot : r.target;

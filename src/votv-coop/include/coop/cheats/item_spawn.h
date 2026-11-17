@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace coop::cheats::item_spawn {
@@ -19,6 +20,11 @@ enum class Result : unsigned char {
     NoPlace,      // the body to place them by has no place yet (no such player, no pose, no world)
     Failed,       // the class loaded and the spawns came to nothing
 };
+
+// The name of the class `name` would be spawned as: its own class, or the class the game's list row names. False for a
+// name the game does not list, a list not filled yet, and a row that names no class (a plain prop). The host's judge
+// tests it against the explosives, so a row that names an explosive's class is refused whatever its name. Game thread.
+bool SpawnClassName(std::string_view name, std::wstring& className);
 
 // Spawn `count` props named `name` beside the player in `slot` (0 = the host's own body): when `inFront`, 2 m ahead
 // of where that player looks, else at the player. `spawned` gets how many came into the world. Game thread.
