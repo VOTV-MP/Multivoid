@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -430,6 +431,25 @@ static void RunDivergenceSweep_(void* localPlayer) {
                 UE_LOGW("join_membership_sweep: completeness FLOOR kept %d unclaimed '%ls' -- host census %d, "
                         "claimed only %d this bracket (INCOMPLETE snapshot, NOT a divergence)",
                         v, c.c_str(), hostHas, claimedOfC);
+            }
+            // Which host expressions the floor is waiting on: the keyless mirror rows that hold no live actor here.
+            // Read-only, cold (once per join, only when the floor kept something).
+            {
+                std::vector<coop::element::Prop*> rows;
+                coop::element::PropMirrors().Snapshot(rows);
+                int unbound = 0;
+                char firstEids[96] = "";
+                size_t used = 0;
+                for (coop::element::Prop* p : rows) {
+                    if (!p || !p->IsMirror() || !p->GetName().empty()) continue;
+                    void* ra = p->GetActor();
+                    if (ra && R::IsLiveByIndex(ra, p->GetInternalIdx())) continue;
+                    if (++unbound <= 6 && used + 12 < sizeof(firstEids))
+                        used += static_cast<size_t>(std::snprintf(firstEids + used, sizeof(firstEids) - used, " %u",
+                                                                  static_cast<unsigned>(p->GetId())));
+                }
+                UE_LOGI("join_membership_sweep: %d keyless host row(s) hold no live actor on this client (first eids:%s)",
+                        unbound, firstEids);
             }
             UE_LOGW("join_membership_sweep: completeness floor KEPT %zu of %zu doomed actor(s) across %zu class(es) "
                     "(top: %d x '%ls') -- the host under-expressed these classes; the unclaimed locals SURVIVE",
