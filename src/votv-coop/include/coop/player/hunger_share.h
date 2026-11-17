@@ -19,8 +19,8 @@
 
 namespace coop::hunger_share {
 
-// Once per process, idempotent, a retry pump: subscribe to the roster and the rule, register the two
-// watches. Game thread.
+// Idempotent, called by the session's install pass on every pump tick: subscribes to the roster and the rule
+// once, and registers each of the two watches until the gate has taken it. Game thread.
 void Install();
 
 // Each game tick: finish arming the watches and retry a write the player was not up for. A bool check

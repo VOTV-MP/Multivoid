@@ -51,6 +51,11 @@ bool FieldFromId(uint8_t id, Field* out);
 // readiness first.
 bool Read(Field f, float* out);
 
+// The object the Pawn rows read and write: the gamemode's own `mainPlayer`, live. Null with no gamemode or
+// no live pawn. The pointer is as live as the game keeps it; a caller holding it across ticks wraps it in a
+// CachedObjRef. Game thread only.
+void* LocalPawn();
+
 // Write `v` by the row's rule (a Bool row stores v != 0). False, having written nothing, for
 // f >= Count, a ReadOnly row, a non-finite `v`, or when the owner, the property or (Strength,
 // Agility) the pawn and its updateStrAgl do not resolve -- every one resolved before the store.

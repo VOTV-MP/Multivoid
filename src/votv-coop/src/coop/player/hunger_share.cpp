@@ -4,9 +4,11 @@
 
 #include "coop/config/config.h"
 #include "coop/net/net_clock.h"
+#include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
@@ -43,7 +45,10 @@ uint64_t g_nextMs = 0;
 bool  g_subscribed = false;
 bool  g_bodyWatched = false;
 bool  g_ranoutWatched = false;
-bool  g_armed = false;  // both watches live or settled dead
+bool  g_bodySettled = false;    // each watch live or dead for good, its outcome said once
+bool  g_ranoutSettled = false;
+bool  g_armed = false;          // both settled
+ue_wrap::CachedObjRef g_begun;  // the body a begin announced and the write has not yet landed on
 
 bool Near(float a, float b) { return std::fabs(a - b) < kSame; }
 
@@ -58,6 +63,15 @@ Put PutRate(float want) {
     return Put::Applied;
 }
 
+// A new body is done once the pawn the write lands on IS that body: the gamemode's `mainPlayer` may still be the
+// old live one when the begin is announced, and a write there would leave the new body at the game's 1.
+void SettleBegun() {
+    if (!g_begun.Raw()) return;
+    if (!g_begun.Alive()) { g_begun.Reset(); return; }
+    if (V::LocalPawn() == g_begun.Raw()) g_begun.Reset();
+    else g_pending = true;
+}
+
 bool RuleOn() { return coop::config::ResolveFlag(::coop::config_registry::rows::net_hunger_shared); }
 
 // The rate this player's hunger runs at now, written on the player.
@@ -67,6 +81,7 @@ void Apply() {
     const float rate = on ? RateFor(players) : 1.0f;
     const Put res = PutRate(kBase * rate);
     g_pending = res == Put::NoPlayer;
+    SettleBegun();
     // One line per change of what is applied, for a drill to read on each peer.
     if (res != Put::Applied || (players == g_saidPlayers && on == g_saidOn)) return;
     g_saidPlayers = players;
@@ -78,8 +93,11 @@ void Apply() {
 void OnSlotReplaced(int, const coop::roster_ledger::Row&, const coop::roster_ledger::Row&) { Apply(); }
 void OnRuleChanged() { Apply(); }
 
-void OnBodyBegun(const sg::Call&) {
-    // The new body is not the gamemode's `mainPlayer` yet at its own begin: the write waits for the next tick.
+void OnBodyBegun(const sg::Call& call) {
+    // The new body is not the gamemode's `mainPlayer` yet at its own begin: the write waits until it is. A
+    // puppet is a mainPlayer_C too, registered before its begin, and is not this player's body.
+    if (!call.object || coop::players::Registry::Get().IsPuppet(call.object)) return;
+    g_begun.Set(call.object);
     g_pending = true;
     g_nextMs = 0;
 }
@@ -95,9 +113,9 @@ bool Settled(const ue_wrap::facts::Function& row, int tag, const char* what) {
 
 void Arm() {
     sg::ResolvePendingNames();
-    const bool body = Settled(kRowBodyBegin, kTagBody, "new-body");
-    const bool ranout = Settled(kRowRanout, kTagRanout, "effect-end");
-    if (body && ranout) {
+    if (!g_bodySettled) g_bodySettled = Settled(kRowBodyBegin, kTagBody, "new-body");
+    if (!g_ranoutSettled) g_ranoutSettled = Settled(kRowRanout, kTagRanout, "effect-end");
+    if (g_bodySettled && g_ranoutSettled) {
         g_armed = true;
         UE_LOGI("hunger_share: watching a new player body and the end of an effect (script-gate name watches)");
     }

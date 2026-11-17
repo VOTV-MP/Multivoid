@@ -328,8 +328,8 @@ on the props lane.
 
 With the host's rule `net.hunger_shared` (Slower hunger in larger groups; off by default) each player's hunger runs at
 players^-0.44 of the game's rate, 74% for two and 54% for four, written on each peer's own player through the game's own
-hunger multiplier, `mainPlayer_C::foodDraining` (`coop/player/hunger_share`); stamina and sleep are untouched `[V]` on the
-0.10.0 port: with the rule set on the host alone, host and client each logged 74% for two players.
+hunger multiplier, `mainPlayer_C::foodDraining` (`coop/player/hunger_share`); stamina and sleep are untouched `[V]` on
+0.9.0n (a rig run): with the rule on, host and client each logged 74% for two players; with it off, 100%.
 
 ### Roster and moderation
 
