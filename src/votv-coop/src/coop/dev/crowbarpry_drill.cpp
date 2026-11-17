@@ -108,7 +108,7 @@ bool KeyReads(const std::wstring& k) { return !k.empty() && k != L"None"; }
 
 // A sign wired the game's way: comp_wallAttachable::init(prop, arrow), the call a placed sign's loadData makes, sets the
 // component's `prop`, which prop_stick_sync's unstick watch reads (no prop, nothing crosses). It is the repair when the sign's
-// own BeginPlay has not run it; the sign's static state is its own and is only read here.
+// own BeginPlay has not run it; it does not touch the static state (the host holds that, see HostWaitClient).
 // False when a step failed; the log names the step (the property read, the function, the frame, the call).
 bool StickBoard(void* board) {
     const int32_t co = R::FindPropertyOffset(R::ClassOf(board), L"comp_wallAttachable");
@@ -176,6 +176,9 @@ void HostWaitClient(coop::net::Session& s) {
         if (plank) break;
     }
     if (!plank) { HostSay(Outcome::Invalid, "neither prop_baseroomsign_C nor prop_torchHolder_C spawned"); return; }
+    // A stuck sign is held static (comp_wallAttachable::unstick refuses one that is not, and a pry on a loose one was refused); in the open no
+    // wall holds it, so the host holds it the game's way and the spawn record carries the flag to the client.
+    PR::CallSetPropProps(plank, true, false, false, false);
     const bool held = StickBoard(plank);
     g_plank.Set(plank);
     g_sawStatic = false;
