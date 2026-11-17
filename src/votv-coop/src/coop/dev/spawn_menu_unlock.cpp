@@ -175,8 +175,10 @@ void SetEnabled(bool on) {
                 "connected as a client");
         return;
     }
-    if (on) EnsureThread();
+    // Stored before the thread starts: a thread that starts first can read the toggle off and end, leaving it on with no
+    // watcher.
     g_enabled.store(on, std::memory_order_release);
+    if (on) EnsureThread();
     UE_LOGI("spawn_menu_unlock: Q-key spawn menu %s", on ? "ENABLED (story mode)" : "disabled");
 }
 

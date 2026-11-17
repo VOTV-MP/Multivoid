@@ -151,13 +151,13 @@ void Route(Request r) {
             // drop it unanswered.
             const uint64_t now = coop::net::NowMs();
             const bool settled = coop::net_pump::IsWorldSettled();
-            if (!settled || !g_mirror.TakeN(coop::cheats::kRequestBudget, now, CostOf(r.op, r.count))) {
+            if (!settled || !g_mirror.TakeN(coop::cheats::kMirrorBudget, now, CostOf(r.op, r.count))) {
                 st.reason = settled ? CheatReason::Rate : CheatReason::NotReady;
                 SetStatus(st);
                 UE_LOGW("cheats: the request for %s was not sent (%s)", Describe(r).c_str(), ReasonName(st.reason));
                 return;
             }
-            g_fullAtMs.store(g_mirror.FullAtMs(coop::cheats::kRequestBudget, now), std::memory_order_release);
+            g_fullAtMs.store(g_mirror.FullAtMs(coop::cheats::kMirrorBudget, now), std::memory_order_release);
             st.pending = true;
             uint32_t id = 0;
             if (SendRequest(*s, r, &id)) {
@@ -397,7 +397,7 @@ bool CanAsk(int count) {
     if (coop::dev_gate::Allowed()) return true;   // the host, or a solo game: the cheat runs at once
     if (!coop::net_pump::IsWorldSettled()) return false;
     // The mirror holds the burst less what is still owed: it is full at g_fullAtMs and refills linearly until then.
-    const coop::net::IntentBudget& b = coop::cheats::kRequestBudget;
+    const coop::net::IntentBudget& b = coop::cheats::kMirrorBudget;
     const uint64_t now = coop::net::NowMs();
     const uint64_t fullAt = g_fullAtMs.load(std::memory_order_acquire);
     const float owed = fullAt > now ? static_cast<float>(fullAt - now) * b.perSecond / 1000.0f : 0.0f;

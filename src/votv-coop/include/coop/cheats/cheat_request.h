@@ -10,8 +10,9 @@
 // The panels call SpawnItem, AddPoints and FireEvent from the render thread; every engine touch is posted to the game
 // thread. A request draws from a per-player bucket (coop/cheats/cheat_limits: ten tokens, three more a second; one
 // token a request, one per prop for a spawn; a request the host refuses pays its first token too); one past it is
-// dropped without work, answered Rate once and logged once per ten seconds. A client keeps a bucket of the same size and offers no request it would not cover (CanAsk). A
-// request from a sender whose world is not marked ready is dropped without work or answer.
+// dropped without work, answered Rate once and logged once per ten seconds. A client keeps a bucket of the same size,
+// refilled a tenth slower, and offers no request it would not cover (CanAsk). A request from a sender whose world is
+// not marked ready is dropped without work or answer.
 
 #pragma once
 
