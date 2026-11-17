@@ -32,7 +32,8 @@ void RenderPlayerCheats() {
     if (on)
         ImGui::TextUnformatted(l10n::T("Your players now see Items, Economy and Events under Player tools. Each use is "
                                        "a request you check and run: it is logged on your machine and shown in your "
-                                       "chat. Story events and anything that moves players stay yours alone."));
+                                       "chat. Players are offered only the safe events and no explosives; story events "
+                                       "and anything that moves players stay yours alone."));
     else
         ImGui::TextUnformatted(l10n::T("Players see only their own tools (teleport to you, unstuck, what you grant)."));
     ImGui::PopTextWrapPos();

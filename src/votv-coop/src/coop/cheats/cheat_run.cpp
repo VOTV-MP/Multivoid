@@ -12,7 +12,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/world/economy.h"
 
+#include <cctype>
 #include <cstring>
+#include <string_view>
 
 namespace coop::cheats {
 namespace {
@@ -32,9 +34,37 @@ const ET::EventInfo* FindEvent(const std::string& name) {
 
 Outcome Done(CheatReason r, int done = 0) { return Outcome{r, done}; }
 
+// The props a player may not spawn: the ones that explode. The game has no family to test: each is a direct child of
+// prop_C (prop_drive_explosive of prop_drive_C), and no function they share is called to blow them. The list is the
+// props of the game's decompiled Blueprints that exist to detonate: each spawns the game's explosion actor as its own
+// act (a search for objects/misc/explosion*) and is a bomb, grenade, mine, rocket or the like by name. Left out on
+// purpose: a prop that explodes only when misused (a battery, a lemonade, a vending machine), the gas can (fuel), the
+// poop and soap grenades (they react to a blast), and the sticky launcher (it fires the bomb). Lower case, as the
+// item catalog matches names.
+constexpr std::string_view kExplosiveItems[] = {
+    "bombbarrel", "bombbottle", "bombbox", "pipebomb", "stickybomb", "drive_explosive", "grenade", "grenade_a",
+    "landmine", "rocket", "saltrocket", "explotano", "explodvehicle", "wirecomponent_dynamite", "flaregren",
+    "crystal_explode", "comet",
+};
+
+bool IsExplosive(const std::string& name) {
+    std::string lower = name;
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (const std::string_view e : kExplosiveItems)
+        if (lower == e) return true;
+    return false;
+}
+
+// The red arm: a player's request is judged open without the check (dev row cheat_open_check_off).
+bool OpenCheckOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::cheat_open_check_off);
+    return off;
+}
+
 Outcome RunSpawn(const Request& r, int senderSlot) {
     const int maxCount = senderSlot == 0 ? kHostMaxCount : coop::net::kCheatMaxCount;
     if (r.count < 1 || r.count > maxCount) return Done(CheatReason::BadRequest);
+    if (senderSlot != 0 && !OpenCheckOff() && IsExplosive(r.name)) return Done(CheatReason::Refused);
     // Where: in front of the asker, or at a player who is in the session. The asker's own body is its slot.
     const bool inFront = r.target == coop::net::kCheatInFront;
     const int slot = inFront ? senderSlot : r.target;
@@ -64,7 +94,7 @@ Outcome RunPoints(const Request& r, int senderSlot) {
 Outcome RunEvent(const Request& r, int senderSlot) {
     const ET::EventInfo* ev = FindEvent(r.name);
     if (!ev) return Done(CheatReason::UnknownEvent);
-    if (senderSlot != 0 && ev->risk == ET::Risk::Dangerous) return Done(CheatReason::Refused);
+    if (senderSlot != 0 && !OpenCheckOff() && !OpenToPlayers(*ev)) return Done(CheatReason::Refused);
     return Done(ET::Trigger(*ev) ? CheatReason::Ok : CheatReason::Failed);
 }
 
@@ -82,10 +112,8 @@ Outcome Run(const Request& r, int senderSlot) {
     return Done(CheatReason::BadRequest);
 }
 
-bool EventOpenToPlayers(const char* eventName) {
-    if (!eventName) return false;
-    const ET::EventInfo* ev = FindEvent(eventName);
-    return ev && ev->risk != ET::Risk::Dangerous;
+bool OpenToPlayers(const ET::EventInfo& ev) {
+    return ev.risk == ET::Risk::Safe && ev.cat != ET::Category::Story;
 }
 
 }  // namespace coop::cheats

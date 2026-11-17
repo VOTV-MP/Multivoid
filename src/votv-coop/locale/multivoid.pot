@@ -2390,7 +2390,7 @@ msgid "Your player id %s"
 msgstr ""
 
 #: src/ui/cheat_access_pane.cpp
-msgid "Your players now see Items, Economy and Events under Player tools. Each use is a request you check and run: it is logged on your machine and shown in your chat. Story events and anything that moves players stay yours alone."
+msgid "Your players now see Items, Economy and Events under Player tools. Each use is a request you check and run: it is logged on your machine and shown in your chat. Players are offered only the safe events and no explosives; story events and anything that moves players stay yours alone."
 msgstr ""
 
 #: src/ui/cheat_events_pane.cpp

@@ -21,9 +21,10 @@
 namespace coop::dev::event_trigger {
 
 enum class Risk : uint8_t {
-    Safe = 0,       // cosmetic/prop/self-terminating -- good first sync tests
-    Caution = 1,    // spawns hostiles / touches a synced subsystem
-    Dangerous = 2,  // story/save progression or player relocation -- Ctrl+click
+    Safe = 0,       // cosmetic/prop/self-terminating -- the only risk a player may fire on the host
+                    // (coop/cheats/cheat_run OpenToPlayers: Safe and not a Story category)
+    Caution = 1,    // spawns hostiles / touches a synced subsystem -- the host's alone
+    Dangerous = 2,  // story/save progression or player relocation -- the host's alone, Ctrl+click
 };
 
 // STRICT, CLOSED category set. Every event maps to exactly one; the menu groups by this.

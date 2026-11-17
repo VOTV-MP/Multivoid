@@ -1480,8 +1480,8 @@ enum class ReliableKind : uint16_t {
 
     // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
     // host runs only while its setting net.allow_player_cheats is on. The host judges everything (the setting, the
-    // sender, the item, the target, the event's risk, a rate) and the world is written by the host alone; a client never
-    // acts on its own request. Answered by CheatResult to that client alone. Never relayed. Late join: none (a request
+    // sender, the item, the target, what a player may fire or spawn, a rate) and the world is written by the host
+    // alone; a client never acts on its own request. Answered by CheatResult to that client alone. Never relayed. Late join: none (a request
     // carries no state). Pre-world: held until the sender's world is up. CheatRequestPayload.
     CheatRequest = 276,
 
@@ -2899,13 +2899,14 @@ enum class CheatOp : uint8_t {
 // player; the rest are the host's own count.
 enum class CheatReason : uint8_t {
     Ok          = 0,  // the host did it
-    Off         = 1,  // the host's setting net.allow_player_cheats is off
+    Off         = 1,  // the host's setting net.allow_player_cheats is off, or the host withheld the sender's right
     NotReady    = 2,  // the sender's world is not up, or the host's world, or the target has no place yet
     Rate        = 3,  // too many requests in a moment
     BadRequest  = 4,  // a shape the host refuses: an unknown op, a count or amount out of bounds, a name that is not text
     UnknownItem = 5,  // the host's game lists no such prop, or its class does not load
     UnknownEvent = 6, // the host's game has no such event
-    Refused     = 7,  // an event or item the host does not offer a player (story and save progression)
+    Refused     = 7,  // an event or item the host does not offer a player: an event that is not Safe or is a story
+                      // event, or a prop that explodes
     NoTarget    = 8,  // the named target is not a player in the session
     Failed      = 9,  // the host ran it and the game refused or nothing came of it
     Count       = 10,

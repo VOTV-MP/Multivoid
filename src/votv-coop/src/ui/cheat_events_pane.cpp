@@ -76,7 +76,7 @@ void RenderEvents() {
     bool haveCat = false;
     for (const auto& ev : ET::Events()) {
         const bool danger = ev.risk == ET::Risk::Dangerous;
-        if (!authority && !CH::EventOpenToPlayers(ev.name)) continue;
+        if (!authority && !CH::OpenToPlayers(ev)) continue;
         const char* catName = l10n::T(ET::CategoryName(ev.cat));
         const char* mech = l10n::T(ev.mechanism);
         if (filter[0] && !ContainsI(ev.name, filter) && !ContainsI(catName, filter) && !ContainsI(ev.time, filter) &&
