@@ -90,8 +90,8 @@ CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "battery_refund_off (a refused battery fit is not refunded), battery_spawn_off (the host spawns no battery on an "
     "accepted unscrew), local_destroy_off (a client keeps the battery prop its own unscrew spawned), battery_in_off and "
     "battery_out_off (the client's battery fit, or unscrew, row asks nothing), battery_publish_off (the host's states carry "
-    "no battery), battery_judge_off (a battery fit is not judged against the hand, so a forged one is refunded a battery), battery_join_off (the state a joiner is sent "
-    "carries no battery). "
+    "no battery), battery_judge_off (a battery fit is not judged against the hand, so a forged one is refunded a battery), battery_join_off (the connect replay and every "
+    "answer carry no battery; the live publish keeps it). "
     "The battery steps: b1 a fit, b2 an unscrew (the host spawns the one battery every peer holds), b3 a fit back, b0 a fit "
     "the host refuses as full and refunds, b4 an unscrew it refuses as not held, b6 a forged fit with an empty hand, b5 the "
     "rejoined copy's battery. MUTATES the ATV.")

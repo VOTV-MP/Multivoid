@@ -402,8 +402,6 @@ void QueueConnectBroadcastForSlot(int slot) {
     coop::net::Session* s = Live();
     if (!s || s->role() != coop::net::Role::Host) return;
     if (A::EnsureResolved()) {
-        // Red battery_join_off: the state a joiner is sent carries no battery (the live publish keeps it).
-        static const bool s_joinOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "battery_join_off";
         std::vector<Indexed> atvs;
         coop::atv_sync::ForEachIndexed(&Collect, &atvs);
         for (const Indexed& x : atvs) {
@@ -411,13 +409,18 @@ void QueueConnectBroadcastForSlot(int slot) {
             if (!ReadVitals(x.actor, v)) continue;
             Payload p{};
             FillState(x.key, v, op::kState, p);
-            if (s_joinOff) p.flags = static_cast<uint8_t>(p.flags & ~coop::net::kAtvHostBattery);
+            DropBatteryForJoinRed(p);
             s->SendReliableToSlot(slot, coop::net::ReliableKind::AtvHostState, &p, sizeof(p));
             ++g_n.replayed;
         }
     }
     // The slot is world-ready: its parked requests are served.
     coop::atv_host_judge::OnSlotReady(slot);
+}
+
+void DropBatteryForJoinRed(coop::net::AtvHostPayload& p) {
+    static const bool s_joinOff = coop::config::ResolveEnum(::coop::config_registry::rows::atv_gate_drill) == "battery_join_off";
+    if (s_joinOff) p.flags = static_cast<uint8_t>(p.flags & ~coop::net::kAtvHostBattery);
 }
 
 void OnDisconnect() {

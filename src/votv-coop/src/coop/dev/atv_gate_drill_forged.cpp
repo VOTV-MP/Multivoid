@@ -4,8 +4,9 @@
 //   16 the host PARKS the request until the sender's world is ready and answers it after: decided on the host's park events
 //      (a request answered while the slot is not ready, FAIL; answered after a park, PASS).
 // The marks: client left, rejoin_up, atv_bat2 (the host copy's battery), atv_key2 (the host's key), req16_sent, rejoin_c_done.
-// Step b5 is the client's: the first host state of the drill ATV applied after the rejoin leaves the copy at the battery the
-// host marked. Its red, battery_join_off, strips the battery from the state a joiner is sent, so b5 FAILs at that apply.
+// Step b5 is the client's: the first host state of the drill ATV applied after the rejoin CARRIES the battery and leaves the
+// copy at the battery the host marked. Its red, battery_join_off, strips the battery from the connect replay and from every
+// answer (the joiner's first applied state is one of them), so b5 FAILs at that apply.
 
 #include "atv_gate_drill_detail.h"
 

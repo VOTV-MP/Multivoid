@@ -120,4 +120,10 @@ void NoteBlockBuilt(const std::wstring& key);
 // with no copy here, has been decided on: kept for the copy's adoption, or dropped by the red atv_joiner_rows_off. Game thread.
 bool UnadoptedDecidedForDrill(const std::wstring& key);
 
+// [dev] HOST, the ATV drill's red battery_join_off: no state sent to ONE slot carries the battery -- the connect replay, and
+// every answer. A joiner's first applied state comes by either: its own open request holds the copy's state, so the replay
+// is gated and the answer to that request (sent with the host's state even on a refusal) is applied first. The live
+// publish keeps the battery. Clears the flag in `p` when the red runs.
+void DropBatteryForJoinRed(coop::net::AtvHostPayload& p);
+
 }  // namespace coop::atv_host_sync

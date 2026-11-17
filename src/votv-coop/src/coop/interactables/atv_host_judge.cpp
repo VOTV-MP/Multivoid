@@ -110,8 +110,12 @@ void Answer(N::Session& s, uint8_t slot, const Payload& req, uint8_t reason, voi
     const std::wstring key = N::StringFromWireKey(req.key);
     H::Vitals v;
     const bool carries = atv && reason != why::kGone && H::ReadVitals(atv, v);
-    if (carries) H::FillState(key, v, op::kAnswer, a);
-    else a.flags = N::kAtvHostNoState;
+    if (carries) {
+        H::FillState(key, v, op::kAnswer, a);
+        H::DropBatteryForJoinRed(a);  // the red: an answer is a joiner's first state as often as the replay is
+    } else {
+        a.flags = N::kAtvHostNoState;
+    }
     a.key = req.key;
     a.op = op::kAnswer;
     a.reqId = req.reqId;
