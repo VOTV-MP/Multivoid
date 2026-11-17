@@ -1,10 +1,13 @@
 // ue_wrap/actors/prop_keys.cpp -- the keys of the keyed interactables: a prop's is a direct field, a trash
 // pile's is the actor_save key field, and a chip pile's or clump's comes from the GetKey blueprint function
-// through ProcessEvent, cached per class. See ue_wrap/actors/prop.h.
+// through ProcessEvent, cached per class; a building piece's is the actor_save key as well. See
+// ue_wrap/actors/prop.h.
 
 #include "ue_wrap/actors/prop.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/class_reask.h"
+#include "ue_wrap/core/game_thread.h"   // IsDefinitelyOffGameThread: where a root may resolve
 #include "ue_wrap/core/object_index.h"  // ClassByName, the trash base in one lookup
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -39,6 +42,30 @@ inline void* ActorSaveCls() {
     return c;
 }
 
+// The four building-piece roots, resolved on the game thread and published; a root not loaded yet is asked again
+// by the latch (on a class-set move and through the load window after it), never cached as absent. A class that
+// never loads costs nothing once its window has run out. Another thread reads the published pointers only, so
+// GetInteractableKey stays callable from a script-gate observer on a worker. UClasses are process-scoped, as the
+// trash bases in prop.cpp are, so a published root is kept for good.
+constexpr const wchar_t* kPieceRootNames[] = {L"nail_C", L"customWall_C", L"customWall_unfinished_C", L"poster_C"};
+constexpr int kPieceRootCount = static_cast<int>(sizeof(kPieceRootNames) / sizeof(kPieceRootNames[0]));
+std::atomic<void*> g_pieceRoot[kPieceRootCount];
+std::atomic<bool>  g_pieceRootsAll{false};
+class_reask::Latch g_pieceLatch;  // game thread only
+
+void ResolvePieceRoots() {
+    if (g_pieceRootsAll.load(std::memory_order_acquire)) return;
+    if (game_thread::IsDefinitelyOffGameThread()) return;  // the class index is the game thread's: answer from what is published
+    if (!g_pieceLatch.Due()) return;
+    bool all = true;
+    for (int i = 0; i < kPieceRootCount; ++i) {
+        if (g_pieceRoot[i].load(std::memory_order_acquire)) continue;
+        if (void* cls = object_index::ClassByName(kPieceRootNames[i])) g_pieceRoot[i].store(cls, std::memory_order_release);
+        else all = false;
+    }
+    if (all) g_pieceRootsAll.store(true, std::memory_order_release);
+}
+
 // The per-class GetKey cache, under a mutex: observers on a parallel-anim worker would race the
 // game thread, and lookups are per spawn or destroy.
 std::mutex g_getKeyFnMutex;
@@ -64,6 +91,14 @@ R::FName CallGetKeyUFunction(void* obj) {
 }
 }  // namespace
 
+bool IsClassBuildPiece(void* cls) {
+    if (!cls) return false;
+    ResolvePieceRoots();
+    for (int i = 0; i < kPieceRootCount; ++i)
+        if (WalksToBase(cls, g_pieceRoot[i].load(std::memory_order_acquire))) return true;
+    return false;
+}
+
 R::FName GetInteractableKey(void* obj) {
     if (!obj) return R::FName{0, 0};
     if (IsDescendantOfProp(obj)) {
@@ -74,6 +109,8 @@ R::FName GetInteractableKey(void* obj) {
     if (WalksToBase(cls, TrashBitsPileClass())) {
         return ReadField<R::FName>(obj, kAactorSaveKeyOff);
     }
+    // A building piece: the same actor_save field.
+    if (IsClassBuildPiece(cls)) return ReadField<R::FName>(obj, kAactorSaveKeyOff);
     // The chip pile and the clump: the blueprint function.
     if (WalksToBase(cls, GarbageClumpClass()) || WalksToBase(cls, ChipPileClass())) {
         return CallGetKeyUFunction(obj);

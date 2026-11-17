@@ -8,7 +8,7 @@
 // world load (the gamemode's pre-delete and respawn of every save object), the destroy seam
 // must not broadcast the keyed-prop destroys the load churn issues; they are local net-zero
 // rebuild churn, on the wire only the destroy half fires, and broadcasting it made the host
-// destroy most of its authoritative copies by key on a bare join. The probe counts the load-tail population (keyless props, allowlisted NPCs, the
+// destroy most of its authoritative copies by key on a bare join. The probe counts the load-tail population (keyless props and building pieces, allowlisted NPCs, the
 // chipPile field) at 5 Hz; a stable count for the required scans means the async load pass
 // has drained, and an absolute ceiling bounds a pathological load, the announce firing
 // anyway, loudly. The latch is a serially reused session (the join load, a travel re-seed,

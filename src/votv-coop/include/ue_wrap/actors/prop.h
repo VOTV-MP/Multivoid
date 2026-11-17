@@ -100,20 +100,27 @@ bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b);
 bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
 
 // The per-class Key reader for keyed interactables: an Aprop_C reads its own Key FName, a
-// trashBitsPile the Aactor_save_C one, and a chipPile or clump has no native
+// trashBitsPile or a building piece the Aactor_save_C one, and a chipPile or clump has no native
 // field and answers only through the BP GetKey UFunction, resolved and cached per class and
 // dispatched through ProcessEvent. NAME_None on failure. Game thread for the dispatch branch.
 reflection::FName GetInteractableKey(void* obj);
 std::wstring GetInteractableKeyString(void* obj);
 
 // The Aactor_save_C::key field for any descendant of that class, and only for one. The
-// three-lineage reader above returns {0,0} for everything else, which ToString renders "None",
+// reader above returns {0,0} for every class outside its lineages, which ToString renders "None",
 // byte-identical to a keyless actor; Acremator_C and Adish_C derive from Aactor_save_C and carry a
 // key that reader reported as None. A separate function rather than a fourth branch: the reader has
 // 33 call sites in the prop lanes. Class-gated, since AtriggerBase_C derives from AActor and keeps
 // its key at another offset. "" when `obj` is not an actor_save descendant; a field read, any
 // thread.
 std::wstring GetActorSaveKeyString(void* obj);
+
+// The building pieces: nail_C, customWall_C, customWall_unfinished_C and poster_C with their subclasses, the
+// actor_save_C children a player builds or hangs. Each of the four roots is resolved on the game thread, asked
+// again while it is not loaded (class_reask::Latch), and published to an atomic; another thread is answered from
+// what is published. A piece is not a keyed interactable: no family test above accepts it. GetInteractableKey
+// reads its actor_save key. False for null.
+bool IsClassBuildPiece(void* cls);
 
 // Where a class keeps its key FIELD: prop_C's lineage its own `key`, trashBitsPile_C's lineage
 // actor_save_C's. None for every other class, the chip pile and the garbage clump included: they have

@@ -115,19 +115,27 @@ void ReconLowerGT_(const char* why) {
     }
 }
 
-// Load-tail population census: two populations whose sum settles exactly when the async load pass
-// finishes materialising the world -- the allowlisted NPCs, and the keyless in-universe props that
-// have not minted a key yet. Live chipPiles count unconditionally, because a join-time world reload
+// Load-tail population census: the populations whose sum settles exactly when the async load pass
+// finishes materialising the world -- the allowlisted NPCs, and the keyless in-universe props and
+// building pieces that have not minted a key yet. Live chipPiles count unconditionally, because a join-time world reload
 // drops the field and the async reload climbs it back, so the gate refuses to quiesce through
 // either half of that reload, including the window where the purge has started but is not yet
 // flagged. One GUObjectArray walk, pure pointer-compare class filters before any key or name read,
 // throttled and only while a session is open. Stability is about population CHANGE, not membership:
 // a claimed still-keyless actor contributes a constant term that cannot block the latch.
-// One object's term of the census, its class already told: (a) an allowlisted NPC, or (b) a keyed interactable.
-int TailTerm_(void* obj, bool npc) {
+// What a class counts as in the census: an allowlisted NPC, a keyed interactable, or a building piece.
+enum class TailKind : uint8_t { Npc, Keyed, Piece };
+
+// One object's term of the census, its class already told: (a) an allowlisted NPC, (b) a keyed interactable, or (c) a
+// building piece, settled once its actor_save key reads (a piece is not an Aprop_C).
+int TailTerm_(void* obj, TailKind kind) {
     if (!R::IsLive(obj)) return 0;
     if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return 0;  // CDO (alloc-free)
-    if (npc) return 1;
+    if (kind == TailKind::Npc) return 1;
+    if (kind == TailKind::Piece) {
+        const std::wstring pkey = ue_wrap::prop::GetInteractableKeyString(obj);
+        return (pkey.empty() || pkey == L"None") ? 1 : 0;
+    }
     // (b') The chipPile field, counted even mid-purge.
     if (ue_wrap::prop::IsChipPile(obj)) return 1;
     if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(obj))) return 0;
@@ -136,8 +144,8 @@ int TailTerm_(void* obj, bool npc) {
 }
 
 struct TailWalk_ {
-    int  unsettled;
-    bool npc;
+    int      unsettled;
+    TailKind kind;
 };
 
 int CountLoadTailUnsettled_() {
@@ -146,16 +154,17 @@ int CountLoadTailUnsettled_() {
     // probe needs ten in a row: the stutter a joiner felt once its loading screen dropped). While the index
     // trails the engine its membership is not the array's, and the array is walked as before.
     if (ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0) {
-        TailWalk_ walk{0, false};
+        TailWalk_ walk{0, TailKind::Keyed};
         ue_wrap::object_index::ForEachClass([](void* ctx, void* cls, void* /*anyInstance*/) {
             TailWalk_* w = static_cast<TailWalk_*>(ctx);
             // (a) before (b), as the array walk tests them: an unresolved allowlist degrades to prop-only.
-            if (coop::npc_sync::IsAllowlistedClass(cls)) w->npc = true;
-            else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) w->npc = false;
+            if (coop::npc_sync::IsAllowlistedClass(cls)) w->kind = TailKind::Npc;
+            else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) w->kind = TailKind::Keyed;
+            else if (ue_wrap::prop::IsClassBuildPiece(cls)) w->kind = TailKind::Piece;
             else return;
             ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
                 TailWalk_* inner = static_cast<TailWalk_*>(c);
-                inner->unsettled += TailTerm_(obj, inner->npc);
+                inner->unsettled += TailTerm_(obj, inner->kind);
             }, w);
         }, &walk);
         return walk.unsettled;
@@ -166,10 +175,11 @@ int CountLoadTailUnsettled_() {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
-        // (a) The allowlisted-NPC load tail, then (b) the keyless-prop load tail. Lineage tests first, so the
-        // name and liveness reads run only for the few that pass.
-        if (coop::npc_sync::IsAllowlistedClass(cls)) unsettled += TailTerm_(obj, true);
-        else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) unsettled += TailTerm_(obj, false);
+        // (a) The allowlisted-NPC load tail, then (b) the keyless-prop load tail, then (c) the building pieces.
+        // Lineage tests first, so the name and liveness reads run only for the few that pass.
+        if (coop::npc_sync::IsAllowlistedClass(cls)) unsettled += TailTerm_(obj, TailKind::Npc);
+        else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) unsettled += TailTerm_(obj, TailKind::Keyed);
+        else if (ue_wrap::prop::IsClassBuildPiece(cls)) unsettled += TailTerm_(obj, TailKind::Piece);
     }
     return unsettled;
 }
@@ -402,7 +412,6 @@ void Reset() {
 }
 
 bool InEpisode() { return g_inEpisode.load(std::memory_order_relaxed); }
-
 // ---- The reconcile window; see the header block ----
 
 void RaiseReconcileForReload() {
