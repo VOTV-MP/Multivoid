@@ -310,7 +310,9 @@ void ClientArmTick(coop::net::Session& s) {
             void* const local = coop::players::Registry::Get().Local();
             ue_wrap::FVector at{};
             if (!local || !ue_wrap::engine::TryGetActorLocation(local, at)) { ClientInvalid(A, "this player's place does not read"); return; }
-            if (at.Z < g.liftStartZ + kLiftCm * 0.5f) { ClientInvalid(A, "the lift did not move the body"); return; }
+            // Measured at the read: a body that has already fallen some of the way is judged on where Unstuck lands it,
+            // and one that fell back to within the minimum drop of its start was never lifted high enough to prove it.
+            if (at.Z < g.liftStartZ + kMinDropCm) { ClientInvalid(A, "the lift did not hold the body 100 cm above its start"); return; }
             g.liftedZ = at.Z;
             g.crowbars = static_cast<int>(SL::Outcomes().landed);
             g.fires = SL::Outcomes().refused;

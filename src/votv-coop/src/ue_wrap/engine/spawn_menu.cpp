@@ -82,7 +82,7 @@ void OnQRelease(const sg::Call&) {
 
 // The widget belongs to the world that was current: a world change destroys it with no Q release to say so, so the open
 // is forgotten here, and with it the gate hold.
-void OnWorldChange() {
+void OnWorldChange() noexcept {
     if (!g_open.load(std::memory_order_acquire)) return;
     SetOpen(false);
     UE_LOGI("spawn_menu: the world changed -- the menu is gone with it, no close is owed");

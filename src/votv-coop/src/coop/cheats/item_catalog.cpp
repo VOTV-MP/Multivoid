@@ -36,6 +36,7 @@ std::shared_ptr<const std::vector<std::string>> g_names;   // guarded by g_mutex
 std::atomic<uint32_t> g_builtGen{0};
 std::atomic<uint32_t> g_askedGen{0};   // the generation RequestRefresh last posted a read for
 bool g_watched = false;                // game thread: the watch on the fill is registered
+bool g_watchLive = false;              // game thread: it was accepted, so a fill can end a wait for the list
 bool g_held = false;                   // game thread: this catalog holds the script gate, for the world it waits on
 
 // Game thread only: the lower-cased name to the list's own spelling.
@@ -87,18 +88,30 @@ bool Refresh() {
 // The watch's post callback runs inside a Blueprint frame: the read waits for the game thread's next task.
 void OnFilled(const sg::Call&) { GT::Post([] { Refresh(); }); }
 
+// A world change ends the wait for the list of the world that went: the gate is given back, and the next ask of the new
+// world takes it again if that world's list is not filled either.
+void OnWorldChange() noexcept {
+    if (!g_held) return;
+    g_held = false;
+    sg::Release("the item catalog");
+}
+
 // Watch the fill (registered once) and hold the gate until this world's list is read. A coop session holds the gate
 // for its life; a solo game does not, so the catalog holds it from the first ask of each world until the read, which
-// gives it back (Refresh). Game thread.
+// gives it back (Refresh), or until the world changes. With the watch refused no fill can end the wait, so no hold is
+// taken. Game thread.
 void Arm() {
     if (!g_watched) {
         g_watched = true;
-        if (!sg::WatchName(kRowFilled, kTag, nullptr, &OnFilled))
+        g_watchLive = sg::WatchName(kRowFilled, kTag, nullptr, &OnFilled);
+        if (!g_watchLive)
             UE_LOGE("cheats: the watch on %ls::%ls was refused -- the list is read only when it is asked for",
                     kRowFilled.Class(), kRowFilled.Name());
         sg::ResolvePendingNames();
+        if (!WI::AddWorldChangeListener(&OnWorldChange))
+            UE_LOGE("cheats: the world-change list is full -- the catalog's gate hold ends only at its next read");
     }
-    if (!g_held) {
+    if (g_watchLive && !g_held) {
         g_held = true;
         sg::Acquire("the item catalog");
     }

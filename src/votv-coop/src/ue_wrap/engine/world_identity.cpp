@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"  // the drill measures the SHIPPED predicate
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -256,6 +257,7 @@ void* CurrentWorld() {
 uint32_t Generation() { return g_generation.load(std::memory_order_relaxed); }
 
 bool AddWorldChangeListener(WorldChangeFn fn) {
+    UE_ASSERT_GAME_THREAD("world_identity::AddWorldChangeListener");
     if (!fn) return false;
     for (int i = 0; i < g_listenerCount; ++i)
         if (g_listeners[i] == fn) return true;

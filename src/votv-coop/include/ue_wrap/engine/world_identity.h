@@ -61,9 +61,10 @@ uint32_t Generation();
 // task that bumped Generation, after the bump and before any caller reads the new world. For a holder of something
 // that belongs to one world and must forget it at once, where Generation is a poll. It runs with the refresh's
 // re-entrancy brake held, so it may call into the engine but must not wait on the world being resolved. A plain
-// function, not a closure; at most kMaxWorldChangeListeners, none removed. Registering one twice is one entry. False
-// when the list is full. Game thread.
-using WorldChangeFn = void (*)();
+// function, not a closure, and it must not throw (noexcept: a throw would skip the other listeners of this edge, whose
+// refresh clock has already moved on); at most kMaxWorldChangeListeners, none removed. Registering one twice is one
+// entry. False when the list is full. Game thread.
+using WorldChangeFn = void (*)() noexcept;
 inline constexpr int kMaxWorldChangeListeners = 8;
 bool AddWorldChangeListener(WorldChangeFn fn);
 
