@@ -46,7 +46,7 @@ bool Session::KickClaimed(int peerSlot, uint32_t hConn, EndReason code, const ch
           if (it->senderPeerSlot == peerSlot) it = reliableInbox_.erase(it);
           else ++it;
       } }
-    // A client's slots 1..3 are the other players as the host relayed them, and they end with the
+    // A client's slots 1 to kMaxPeers-1 are the other players as the host relayed them, and they end with the
     // link: leaving the host resets every slot and empties the whole inbox, as its close does.
     if (cfg_.role == Role::Client && peerSlot == 0) {
         { std::lock_guard<std::mutex> lk(remoteMutex_);

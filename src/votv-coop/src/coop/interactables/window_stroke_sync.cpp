@@ -34,7 +34,7 @@ UE_FACT_FN(kRowK2DrawMaterial, "window_stroke_sync", L"Canvas", L"K2_DrawMateria
 // A sponge dabs every 0.25 s, so these bounds are minutes of wiping, never reached in play.
 constexpr size_t kMaxQueued = 256;
 constexpr auto kInboundTtl = std::chrono::seconds(20);
-// Dabs replayed per tick. A peer wiping flat out produces four a second, a full session thirty-two;
+// Dabs replayed per tick. A peer wiping flat out produces four a second, a full session of sixteen sixty-four;
 // eight a tick is several hundred a second, so a backlog drains in well under a second and no frame
 // pays for more than eight canvas draws.
 constexpr int kDrainPerTick = 8;

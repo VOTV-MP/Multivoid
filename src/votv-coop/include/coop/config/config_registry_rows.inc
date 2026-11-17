@@ -279,6 +279,9 @@ CFG_LABEL(net_allow_other_builds, L10N_MARK("Allow other builds"))
 CFG_ENUM(net_max_players, "net.max_players", "net", "2", "2|4|8|16", "VOTVCOOP_NET_MAX_PLAYERS",
     L10N_MARK("How many players this server seats, you included. Applies to the next joins; players already in "
     "stay, and a lower number never removes anyone."))
+// Server-scope and live, but not replicated: nothing in a session reads the limit on a client (the browser
+// gets it from the master, and the host's admission reads it), so no row is sent. MTA tells its joined clients
+// the new maximum (CStaticFunctionDefinitions.cpp:10483); replicate this row when a client-side reader exists.
 CFG_ROWFLAGS(net_max_players, kRowServer | kRowLive)
 CFG_LABEL(net_max_players, L10N_MARK("Player limit"))
 CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
