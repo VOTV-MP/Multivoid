@@ -248,6 +248,9 @@ enum class Speedup { Host, Everyone, Never };
 // The row's session value: host = the host's own sleep speeds the world up (the game's, as in single player);
 // everyone = it does only while every connected player is asleep; never = no one's sleep does.
 Speedup ReadSpeedup() {
+    // [dev] The red arm of the sleep speed-up drill, latched once: the host ignores the row and acts as `host`.
+    static const bool ruleOff = coop::config::ResolveFlag(coop::config_registry::rows::sleep_speedup_rule_off);
+    if (ruleOff) return Speedup::Host;
     const std::string v = coop::config::ResolveEnum(coop::config_registry::rows::world_sleep_speedup);
     return v == "host" ? Speedup::Host : v == "never" ? Speedup::Never : Speedup::Everyone;
 }

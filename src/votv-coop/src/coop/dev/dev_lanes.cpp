@@ -4,7 +4,7 @@
 #include "coop/dev/dev_lanes.h"
 #include "coop/dev/director/director.h"  // EndWalks: a drill's walks end with their session
 
-#include "coop/dev/sleepall_probe.h"   // [dev] the host, then a client, asleep; the world's dilation logged
+#include "coop/dev/sleep_speedup_drill.h"  // [dev] whose sleep speeds the world up, one arm per value of the host's row
 #include "coop/dev/atv_probe.h"
 #include "coop/dev/blackout_drill.h"  // [dev] a blackout on both peers, for the lanes' dev probe
 #include "coop/dev/client_model_probe.h"  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
@@ -213,6 +213,7 @@ void EndSession() {
     coop::dev::rollover_watch::OnDisconnect();  // [dev] the per-world arm and the session's watch totals
     coop::dev::midnight_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::sleep_drill::OnDisconnect();  // [dev] back to the first phase, the host's nightmare chance restored
+    coop::dev::sleep_speedup_drill::OnDisconnect();  // [dev] back to the first phase, the host's nightmare chance restored
     coop::dev::badsun_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::event_relay_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its krampus
     coop::dev::creature_hit_drill::OnDisconnect();  // [dev] the client's steps back to the first; the host keeps its creature
@@ -449,8 +450,8 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi0_selftest::Tick(&session);  // [dev] a cleared Player Element keeps its id, once (latched read when off)
     coop::dev::pi1_selftest::Tick(&session);  // [dev] the substrate primitives' selftest, once (latched read when off)
     coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
-    coop::dev::pi3_drill::Tick(&session);
-    coop::dev::sleepall_probe::Tick(&session);   // [dev] sleeping with world.sleep_speedup (a latched read when off)  // [dev] the puppet-identity verb drill (a latched read when off)
+    coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
+    coop::dev::sleep_speedup_drill::Tick(&session);  // [dev] whose sleep speeds the world up (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)

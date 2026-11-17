@@ -338,7 +338,8 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat
     "falls inside the join, and both peers print their dishes' hash digest; equal is a pass. Run it on a "
     "fresh host world; every refused step is logged and ends the arm as invalid.")
 CFG_ENUM(sleep_drill, "sleep_drill", "dev", "off", "off|host_asleep|client_rest|beside", "VOTVCOOP_SLEEP_DRILL",
-    "Drill (BOTH peers), once a client's join is over: what a host's sleep and a client's rest do. "
+    "Drill (BOTH peers), once a client's join is over: what a host's sleep and a client's rest do. Run the host "
+    "with world.sleep_speedup=host (--host-config): the default's host rests at 1 while the client is awake. "
     "host_asleep: the host sets its need to 80 and sleeps natively and says the world's dilation it "
     "reads (20); the client reads its own world's dilation (1) and its clock for 10 s, and the clock "
     "must run at 0.9 of the native rate. client_rest: the host sleeps and prints its real seconds; "
@@ -795,6 +796,8 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_vidcam.inc"
 // The nightmare lane's drill, staging and red arms: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_nightmare.inc"
+// The sleep speed-up setting's drill and red arm: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_sleep_speedup.inc"
 // The level-visit lane's drill and red arms: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_level_visit.inc"
 // The cargo lift drill's rows: their own file, one concept.
