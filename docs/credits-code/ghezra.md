@@ -293,3 +293,9 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   up for players still awake. Now the host chooses: only when everyone sleeps (the default), whenever the host sleeps, or
   never. Kept as written: the rule that no awake player is sped up. On top: the three-way host setting, its speed declared
   on every sleep, wake, join, leave and setting change rather than read each tick, and a drill with a red for each mode.
+
+- **The crowbar a pry hands back** ([#161](https://github.com/VOTV-MP/Multivoid/pull/161)): a client's pry destroyed the
+  crowbar in its hand and spawned a new one on its own game only, so the crowbar was gone for every other player. Now that
+  birth is a player's own and crosses to the host like a drop. Kept as written; on top, the pry and the toolgun are asked
+  by name again after a world reload, and the probe became a drill with a red (an open pry, a pry given up, a rejoin and a
+  host reload). The plank a pry frees and a pry's host grant are packages of their own.
