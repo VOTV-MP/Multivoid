@@ -149,6 +149,12 @@ void NoteCaptured(int peerSlot) {
             sp.cls.c_str(), sp.at.X, sp.at.Y, sp.at.Z, sc.cls.c_str(), sc.at.X, sc.at.Y, sc.at.Z, peerSlot);
 }
 
+void NoteNoSweep() {
+    if (!Armed() || g_done) return;
+    g_done = true;
+    V::Say(kTag, V::Outcome::Invalid, "the join sweep never ran: no snapshot bracket arrived, so there is nothing to judge");
+}
+
 void NoteSweepBegin() {
     if (!Armed() || g_done) return;
     std::string text;

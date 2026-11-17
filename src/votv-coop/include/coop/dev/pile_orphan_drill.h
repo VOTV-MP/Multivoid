@@ -30,6 +30,9 @@ void NoteCaptured(int peerSlot);
 // CLIENT, join_membership_sweep: the sweep is about to adjudicate. Reads the staging signal and checks the natives exist.
 void NoteSweepBegin();
 
+// CLIENT, join_membership_sweep: the lost-bracket backstop declared quiescence and no sweep ran. Says INVALID.
+void NoteNoSweep();
+
 // CLIENT, join_membership_sweep: the sweep has run (`aborted`: the >50% valve stopped it). Judges.
 void NoteSweepDone(bool aborted);
 

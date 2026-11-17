@@ -586,6 +586,7 @@ void TickClientReconcile() {
                     kBracketFlakeMs / 1000);
             // The flake also shortens the reconcile window to the bound the header promises.
             coop::world_load_episode::NoteBracketFlake();
+            coop::dev::pile_orphan_drill::NoteNoSweep();  // [dev] the orphan drill's INVALID: no sweep to judge (a latched bool read when off)
         }
         return;  // zero cost when disarmed (the steady state)
     }
