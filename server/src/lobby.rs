@@ -39,8 +39,9 @@ pub const RL_CREATE: (Duration, usize) = (Duration::from_secs(60), 10);
 pub const RL_JOIN: (Duration, usize) = (Duration::from_secs(60), 20);
 pub const RL_MUTATE: (Duration, usize) = (Duration::from_secs(60), 240);
 // GET /v1/lobbies: the 5 s snapshot cache bounds the work, this bounds the bytes an address can pull.
-// An open browser fetches every 5 s (12 a minute), so 120 leaves room for ten players behind one address.
-pub const RL_BROWSE: (Duration, usize) = (Duration::from_secs(60), 120);
+// An open browser fetches every 5 s (12 a minute), so 240 leaves room for twenty players behind one
+// address: a full lobby of MAX_PLAYERS, each with a browser open, and a few more.
+pub const RL_BROWSE: (Duration, usize) = (Duration::from_secs(60), 240);
 
 // A lobby's seats: the mod's peer ceiling (kMaxPeers); a host's own limit is its net.max_players row.
 pub const MAX_PLAYERS: i64 = 16;
