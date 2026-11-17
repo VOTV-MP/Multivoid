@@ -1337,6 +1337,11 @@ msgstr ""
 msgid "The game is shutting down."
 msgstr ""
 
+#: src/ui/end_reason_dialog.cpp
+#, c-format
+msgid "The host allows %d players."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "The host banned you."
 msgstr ""
@@ -1552,6 +1557,10 @@ msgstr ""
 
 #: src/ui/server_settings_pane.cpp
 msgid "This server has no settings to change here."
+msgstr ""
+
+#: src/ui/server_browser_actions.cpp
+msgid "This server is full."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp

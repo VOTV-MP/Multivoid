@@ -35,6 +35,9 @@ struct LobbyRow {
     bool proved = false;
     int  playersCur = 0;
     int  playersMax = 0;
+    // The master's count says the host has no seat left (its own admission decides; a row a heartbeat
+    // old can be wrong either way). A host that sent no limit (0) is never called full.
+    bool Full() const { return playersMax > 0 && playersCur >= playersMax; }
     int  ageSec = 0;        // seconds since the host's last heartbeat
     int  proto = 0;         // the host's protocol version (0: a host that predates the field; the wire-level mismatch close stays the backstop)
     // An admission gate stands behind this: a joiner proves knowledge of the lobby password

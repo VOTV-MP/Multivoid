@@ -1076,6 +1076,10 @@ msgstr "[[The game is closing.]]"
 msgid "The game is shutting down."
 msgstr "[[The game is shutting down.]]"
 
+#, c-format
+msgid "The host allows %d players."
+msgstr "[[The host allows %d players.]]"
+
 msgid "The host banned you."
 msgstr "[[The host banned you.]]"
 
@@ -1244,6 +1248,9 @@ msgstr "[[This server admits only the official Multivoid build. Install the offi
 
 msgid "This server has no settings to change here."
 msgstr "[[This server has no settings to change here.]]"
+
+msgid "This server is full."
+msgstr "[[This server is full.]]"
 
 msgid "This server needs a password, and nothing told this machine which host it was dialling."
 msgstr "[[This server needs a password, and nothing told this machine which host it was dialling.]]"
