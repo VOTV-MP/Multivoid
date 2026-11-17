@@ -614,7 +614,7 @@ bool HandleStateEvent(net::Session& session,
         coop::server_settings_sync::HandleServerSetting(msg);
         break;
     case net::ReliableKind::PermissionGrants:
-        // This machine's own local dev grants, from the host; the module checks length and count,
+        // This machine's own projected grants, from the host; the module checks length and count,
         // and a client's copy is refused at the host's receive edge. coop::session::grants_sync.
         coop::session::grants_sync::HandleGrants(session, msg);
         break;

@@ -1012,8 +1012,8 @@ enum class ReliableKind : uint16_t {
     // from any other slot is dropped. CommandReplyPayload.
     CommandReply = 167,
 
-    // host -> one client, not relayed, the host trusted: this machine's local dev grants
-    // (coop/session/grants_sync); a late joiner gets them at its proof
+    // host -> one client, not relayed, the host trusted: this machine's projected grants, the rights the host
+    // projects to it (coop/session/grants_sync); a late joiner gets them at its proof
     PermissionGrants = 168,
 
     // Host to one client: set one row of that player's stat table, add a status effect or remove one. The owner
@@ -1479,11 +1479,12 @@ enum class ReliableKind : uint16_t {
     ContainerBreakRequest = 263,
 
     // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
-    // host runs only while its setting net.allow_player_cheats is on. The host judges everything (the setting, the
-    // sender, the item, the target, what a player may fire or spawn, a rate) and the world is written by the host
-    // alone; a client never acts on its own request. Answered by CheatResult to that client alone. Never relayed. Late join: none (a request
-    // carries no state). Pre-world: not sent (the client's menu offers none before its world is announced); one that
-    // arrives is dropped by the host without work or answer. CheatRequestPayload.
+    // host runs only while its setting net.allow_player_cheats is on and the sender holds the right
+    // multivoid.dev.local.cheats (the host may withhold it from a player). The host judges everything (the setting,
+    // the sender's right, the item, the target, what a player may fire or spawn, a rate) and the world is written by
+    // the host alone; a client never acts on its own request. Answered by CheatResult to that client alone. Never
+    // relayed. Late join: none (a request carries no state). Pre-world: not sent (the client's menu offers none before
+    // its world is announced); one that arrives is dropped by the host without work or answer. CheatRequestPayload.
     CheatRequest = 276,
 
     // Host to one client: what the host did with its CheatRequest (CheatReason). Never relayed. Late join: none. Trust:
@@ -4057,7 +4058,7 @@ static_assert(sizeof(CommandReplyPayload) == 204, "CommandReplyPayload must be 2
 static_assert(sizeof(CommandReplyPayload) <= 256 - 20 - 8,
               "CommandReplyPayload must fit in one reliable datagram");
 
-// PermissionGrantsPayload -- the receiving machine's own local dev grants (PermissionGrants). Host to one
+// PermissionGrantsPayload -- the receiving machine's own projected grants (PermissionGrants). Host to one
 // client. `count` is the number of projected nodes the host's table holds, `bits` one bit per node in table
 // order (coop/permissions/grants_core.h); a client whose own table has another count refuses the message.
 struct PermissionGrantsPayload {

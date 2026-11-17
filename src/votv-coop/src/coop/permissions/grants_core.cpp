@@ -9,6 +9,8 @@ const Entry kProjected[static_cast<size_t>(Projected::Count)] = {
     {"multivoid.dev.local.hud", "The position readout.", false},
     {"multivoid.dev.local.overlay", "The object and ragdoll overlays.", false},
     {"multivoid.dev.local.stamina", "Set your own stamina low.", false},
+    // A product right, not a developer tool: it sits under the dev.local prefix because that prefix names this table,
+    // the rights the host projects to a machine as one bit each, and the cheat tools are projected the same way.
     // Granted unless the host withholds it; it counts only while the host's net.allow_player_cheats is on.
     {"multivoid.dev.local.cheats", "Use the host's cheat tools while the host allows players to.", true},
 };

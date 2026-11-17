@@ -65,7 +65,7 @@ int64_t NowMs() {
 }
 
 // The level-placed boxes, held across refreshes (game thread): a box lives as long as its world, so the refresh reads
-// the held actor and walks the object array only for one it does not hold, and at most once per world.
+// the held actor and walks the object array only for one it does not hold, until a walk of the world finds a box.
 ue_wrap::CachedObjRef g_boxRef[kBoxCount];
 uint32_t g_walkedGen = 0;   // the world generation of the last walk that found a box
 

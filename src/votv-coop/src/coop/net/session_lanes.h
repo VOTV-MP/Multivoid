@@ -216,7 +216,7 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     // ready, and the receiver only fills the config layer's session values and, for an announced
     // row, prints one chat line, touching no world.
     case ReliableKind::ServerSetting:
-    // The machine's own local dev grants: the receiver fills one atomic word, touching no world.
+    // The machine's own projected grants: the receiver fills one atomic word, touching no world.
     case ReliableKind::PermissionGrants:
     // A command's answer is a private text line; the receiver touches no world.
     case ReliableKind::CommandReply:

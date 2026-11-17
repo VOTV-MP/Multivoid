@@ -3,8 +3,8 @@
 // grants_drill_expect; env VOTVCOOP_GRANTS_DRILL, VOTVCOOP_GRANTS_DRILL_EXPECT; BOTH peers).
 //
 // What each arm expects, per peer:
-//   grant     the client holds the position readout alone; the host holds all four
-//   none      the client holds none; the host holds all four
+//   grant     the client holds the position readout alone; the host holds all five
+//   none      the client holds none; the host holds all five
 //   hostdeny  the client holds none; the host holds all but the position readout
 // The rig's permission fixtures (the host's server folder) make the arm true; the drill only reads.
 // A client judges once per session, when its grants for that session are in. The host judges when
