@@ -56,7 +56,7 @@ coop::net::SleepPeerState PeerState(int slot);
 // A slot's rest state changed as this peer knows it: the host's own polled state (slot 0), a client's report the host
 // applied, the host's relay a client took, and a leaver set back to awake. The state itself changed, not only its bed.
 // A subscriber runs inside the receive (or the poll), so it only records or does a few engine calls. Each function is
-// registered once (nightmare_roll's hide, sleep_rest's host rule); a fixed few fit. Game thread.
+// registered once, at install (nightmare_roll's hide, sleep_rest's host rule); there is no cap. Game thread.
 using PeerRestFn = void (*)(int slot, coop::net::SleepPeerState state);
 void SubscribePeerRest(PeerRestFn fn);
 

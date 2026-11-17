@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace coop::sleep_sync {
 namespace {
@@ -52,9 +53,11 @@ WireKey        g_sentBed{};
 
 bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; }
 
-constexpr size_t kMaxPeerRestSubscribers = 4;
-PeerRestFn g_onPeerRest[kMaxPeerRestSubscribers] = {};
-size_t     g_onPeerRestCount = 0;
+// The subscribers, registered at install (construct on first use, as roster_ledger's are).
+std::vector<PeerRestFn>& PeerRestSubscribers() {
+    static std::vector<PeerRestFn> v;
+    return v;
+}
 
 // Every write of a slot's state goes through here: the table, and the subscribers when the state itself changed (a
 // bed that changed under the same state is not an edge).
@@ -63,7 +66,7 @@ void SetPeerState(int slot, SleepPeerState state, const WireKey& bed) {
     g_state[slot] = state;
     g_bed[slot] = bed;
     if (!edge) return;
-    for (size_t i = 0; i < g_onPeerRestCount; ++i) g_onPeerRest[i](slot, state);
+    for (PeerRestFn fn : PeerRestSubscribers()) fn(slot, state);
 }
 
 // Two beds are the same name: the length and the bytes inside it, whatever sits past them.
@@ -364,10 +367,9 @@ void OnDisconnectForSlot(int slot) {
 
 void SubscribePeerRest(PeerRestFn fn) {
     if (!fn) return;
-    for (size_t i = 0; i < g_onPeerRestCount; ++i)
-        if (g_onPeerRest[i] == fn) return;  // a per-session install runs again: once per function
-    if (g_onPeerRestCount < kMaxPeerRestSubscribers) g_onPeerRest[g_onPeerRestCount++] = fn;
-    else UE_LOGE("sleep_sync: more than %zu peer-rest subscribers -- one is not told", kMaxPeerRestSubscribers);
+    for (PeerRestFn existing : PeerRestSubscribers())
+        if (existing == fn) return;  // a per-session install runs again: once per function
+    PeerRestSubscribers().push_back(fn);
 }
 
 SleepPeerState PeerState(int slot) {
