@@ -106,7 +106,7 @@ bool KeyReads(const std::wstring& k) { return !k.empty() && k != L"None"; }
 // A board stuck the game's way: comp_wallAttachable::init(prop, arrow), the call a placed board's loadData makes, sets
 // the component's `prop`, which prop_stick_sync's unstick watch reads (no prop, nothing crosses). In the open no wall can
 // hold the board, so it is then held static as a stuck one is (comp_wallAttachable::unstick refuses one that is not).
-// False when the board has no component or the call did not run.
+// False when a step failed; the log names the step (the property read, the function, the frame, the call).
 bool StickBoard(void* board) {
     const int32_t co = R::FindPropertyOffset(R::ClassOf(board), L"comp_wallAttachable");
     const int32_t so = R::FindPropertyOffset(R::ClassOf(board), L"stick");
@@ -114,14 +114,22 @@ bool StickBoard(void* board) {
     void* arrow = nullptr;
     if (co >= 0) std::memcpy(&comp, static_cast<const uint8_t*>(board) + co, sizeof(comp));
     if (so >= 0) std::memcpy(&arrow, static_cast<const uint8_t*>(board) + so, sizeof(arrow));
-    void* const fn = comp ? R::FindDispatchFunctionCached(R::ClassOf(comp), L"init") : nullptr;
-    bool ok = false;
-    if (fn && arrow) {
-        ue_wrap::ParamFrame f(fn);
-        ok = f.valid() && f.Set<void*>(L"prop", board) && f.Set<void*>(L"arrow", arrow) && ue_wrap::Call(comp, f);
-    }
     if (!PR::IsStatic(board)) PR::CallSetPropProps(board, true, false, false, false);
-    return ok;
+    const auto stop = [&](const char* step) {
+        UE_LOGW("[CROWBARPRY] StickBoard stops at: %s (board class '%ls', comp_wallAttachable offset %d -> %p, stick offset "
+                "%d -> %p)", step, R::ClassNameOf(board).c_str(), co, comp, so, arrow);
+        return false;
+    };
+    if (co < 0 || !comp) return stop(co < 0 ? "the board has no comp_wallAttachable property" : "comp_wallAttachable reads null");
+    if (so < 0 || !arrow) return stop(so < 0 ? "the board has no stick property" : "stick reads null");
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(comp), L"init");
+    if (!fn) return stop("init does not resolve on the component's class");
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid()) return stop("init's frame is invalid");
+    if (!f.Set<void*>(L"prop", board)) return stop("init has no param 'prop'");
+    if (!f.Set<void*>(L"arrow", arrow)) return stop("init has no param 'arrow'");
+    if (!ue_wrap::Call(comp, f)) return stop("the init call was refused");
+    return true;
 }
 
 // ---- the host ----------------------------------------------------------------------------------------
