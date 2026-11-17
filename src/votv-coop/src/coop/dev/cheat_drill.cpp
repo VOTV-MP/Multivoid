@@ -7,6 +7,7 @@
 #include "coop/commands/command_sync.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "cheat_drill_shared.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -24,10 +25,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace coop::dev::cheat_drill {
-namespace {
 
 namespace DC = coop::dev::drill_chat;
 namespace CH = coop::cheats;
@@ -35,12 +36,56 @@ namespace R  = ue_wrap::reflection;
 using coop::net::CheatReason;
 using coop::net::CheatOp;
 
-constexpr const char* kTag = "[CHEAT-DRILL]";
-constexpr const wchar_t* kCrowbarClass = L"prop_crowbar_C";
+namespace detail {
+
+State g;
+Result g_results[16];
+int g_nResults = 0;
+
+uint64_t Now() { return ::GetTickCount64(); }
+void Next() { ++g.step; g.stepAt = Now(); g.sent = false; }
+bool Timed(uint64_t bound) { return Now() - g.stepAt > bound; }
+bool Seen(const char* line) { return DC::SeenHas(line); }
+
+int Crowbars() {
+    int n = 0;
+    for (void* o : R::FindObjectsByClass(L"prop_crowbar_C"))
+        if (o && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__")) ++n;
+    return n;
+}
+
+bool Points(int32_t* out) { return ue_wrap::economy::ReadPoints(out); }
+
+void CloseMenu() {
+    if (!g.menuOpen) return;
+    ui::imgui_overlay::SetVisible(false);
+    g.menuOpen = false;
+}
+
+// The run's ending, said the moment it is known: a FAIL is decided by an event (a wrong answer, a wrong count), and the
+// peer is told at once so it runs no later arm; a time bound only says INVALID (the run proved nothing), also said.
+void End(const char* role, const char* word, const std::string& why) {
+    if (std::strcmp(word, "PASS") == 0) UE_LOGI("%s %s PASS -- %s", kTag, role, why.c_str());
+    else if (std::strcmp(word, "FAIL") == 0) UE_LOGE("%s %s FAIL -- %s", kTag, role, why.c_str());
+    else UE_LOGW("%s %s INVALID -- %s", kTag, role, why.c_str());
+    if (std::strcmp(word, "PASS") != 0) DC::Say(std::string("cheatdrill ") + word + " " + role);
+    CloseMenu();
+    CH::SetResultObserver(nullptr);
+    g.done = true;
+}
+void Verdict(const char* role, bool pass, const std::string& why) { End(role, pass ? "PASS" : "FAIL", why); }
+void Invalid(const char* role, const std::string& why) { End(role, "INVALID", why); }
+void ClientFail(const char* arm, const std::string& why) { Verdict("client", false, std::string(arm) + ": " + why); }
+void ClientInvalid(const char* arm, const std::string& why) { Invalid("client", std::string(arm) + ": " + why); }
+
+}  // namespace detail
+
+namespace {
+
+using namespace detail;
+
 constexpr uint64_t kPaneBoundMs = 90000;    // a pane's first frame; the ask is repeated every kPaneAskMs (a frame can be late to a window the OS has not drawn)
 constexpr uint64_t kPaneAskMs = 4000;
-constexpr uint64_t kSyncBoundMs = 180000;   // a peer waiting on the other's line
-constexpr uint64_t kEffectBoundMs = 30000;  // a cheat's effect reaching a count
 constexpr int kSpawnCount = 2;
 constexpr int kHostPoints = 777;
 constexpr int kClientPoints = 321;
@@ -53,77 +98,24 @@ bool Enabled() {
     return on;
 }
 
-uint64_t Now() { return ::GetTickCount64(); }
-
-// ---- reads ----------------------------------------------------------------------------------------------------
-
-int Crowbars() {
-    int n = 0;
-    for (void* o : R::FindObjectsByClass(kCrowbarClass))
-        if (o && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__")) ++n;
-    return n;
-}
-
 // The game's list is filled and read whole: a world's prop list runs to hundreds.
 bool ItemsListed() {
     const auto names = CH::item_catalog::Names();
     return names && names->size() > 100;
 }
 
-bool Points(int32_t* out) { return ue_wrap::economy::ReadPoints(out); }
-
 bool OwnJoinOver() {
     return coop::net_pump::HasAnnouncedWorldReady() &&
            coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
 }
 
-// ---- shared state ----------------------------------------------------------------------------------------------
-
 struct Pane { const char* cat; const char* sub; };
 
-struct State {
-    int step = 0;
-    uint64_t stepAt = 0;
-    bool done = false;
-    // the pane opener
-    size_t paneIdx = 0;
-    bool paneAsked = false;
-    uint64_t askedAt = 0;
-    bool menuOpen = false;
-    // baselines of the arm in flight
-    int crowbars = 0;
-    int32_t points = 0;
-    unsigned fires = 0;
-    unsigned replays = 0;
-    uint32_t answered[4] = {};
-    bool sent = false;
-    int resultIdx = 0;
-};
-State g;
-
-// The client's results, in the order they arrived.
-struct Result { uint8_t op; uint8_t reason; uint16_t done; };
-Result g_results[16];
-int g_nResults = 0;
 void OnResult(const coop::net::CheatResultPayload& p) {
-    if (g_nResults < 16) g_results[g_nResults++] = {p.op, p.reason, p.done};
-}
-
-void Next() { ++g.step; g.stepAt = Now(); g.sent = false; }
-bool Timed(uint64_t bound) { return Now() - g.stepAt > bound; }
-
-void CloseMenu() {
-    if (!g.menuOpen) return;
-    ui::imgui_overlay::SetVisible(false);
-    g.menuOpen = false;
-}
-
-void Verdict(const char* role, bool pass, const std::string& why) {
-    if (pass) UE_LOGI("%s %s PASS -- %s", kTag, role, why.c_str());
-    else UE_LOGE("%s %s FAIL -- %s", kTag, role, why.c_str());
-    CloseMenu();
-    CH::SetResultObserver(nullptr);
-    g.done = true;
+    // The status line as it stood when this answer arrived: a late answer to an earlier request must leave it alone.
+    const CH::Status st = CH::LastStatus();
+    if (g_nResults < 16)
+        g_results[g_nResults++] = {p.op, p.reason, p.done, p.id, st.pending, static_cast<uint8_t>(st.reason)};
 }
 
 // Open each pane in `list` in turn and wait until the render thread drew it. 1 when all drew, 0 while waiting.
@@ -151,7 +143,7 @@ int OpenPanes(const char* role, const Pane* list, size_t n) {
         g.stepAt = Now();
         return 0;
     }
-    if (Timed(kPaneBoundMs)) { Verdict(role, false, std::string("the pane ") + p.cat + " > " + p.sub + " never drew"); return 0; }
+    if (Timed(kPaneBoundMs)) { Invalid(role, std::string("the pane ") + p.cat + " > " + p.sub + " never drew"); return 0; }
     if (Now() - g.askedAt > kPaneAskMs) {
         ui::imgui_overlay::SetVisible(true);
         ui::dev_menu::RequestSelect(p.cat, p.sub);
@@ -188,6 +180,7 @@ enum class H : int {
     CSay, CWaitArmed, CWaitFire, CWaitPass,
     DSay, DWaitPass, DJudge,
     EOn, EWaitOn, ESay, EWaitPass, EJudge,
+    Arms,
     FOff, FWaitOff, FSay, FWaitPass, FJudge,
     Finish
 };
@@ -196,24 +189,24 @@ constexpr Pane kHostPanes[] = {{"Host tools", "Items"},  {"Host tools", "Economy
                                {"Host tools", "Entities"}, {"Host tools", "World"},  {"Host tools", "Myself"},
                                {"Host tools", "Player cheats"}};
 
-bool Seen(const char* line) { return DC::SeenHas(line); }
-bool ClientFailed() { return DC::SeenHas("cheatdrill FAIL"); }
+bool ClientFailed() { return DC::SeenHas("cheatdrill FAIL client"); }
 
 void HostTick(coop::net::Session* s) {
     namespace EFS = coop::event_fire_sync;
     if (ClientFailed()) { Verdict("host", false, "the client reported a failed arm (its own line has why)"); return; }
+    if (Seen("cheatdrill INVALID client")) { Invalid("host", "the client ended the run INVALID (its own line has why)"); return; }
     switch (static_cast<H>(g.step)) {
     case H::WaitReady: {
         CH::item_catalog::RequestRefresh();
         int32_t p = 0;
         if (!s->IsSlotWorldReady(1) || !ItemsListed() || !Points(&p)) {
             if (g.stepAt == 0) g.stepAt = Now();
-            if (Timed(kSyncBoundMs)) Verdict("host", false, "no client world, item list or balance within the bound");
+            if (Timed(kSyncBoundMs)) Invalid("host", "no client world, item list or balance within the bound");
             return;
         }
         UE_LOGI("%s host ready: %zu items listed, setting is %s", kTag, CH::item_catalog::Names()->size(),
                 CH::PlayersMayCheat() ? "ON (the drill needs it off)" : "off");
-        if (CH::PlayersMayCheat()) { Verdict("host", false, "net.allow_player_cheats starts on; the drill starts from its default"); return; }
+        if (CH::PlayersMayCheat()) { Invalid("host", "net.allow_player_cheats starts on; the drill starts from its default"); return; }
         g.paneIdx = 0;
         g.paneAsked = false;
         Next();
@@ -225,13 +218,13 @@ void HostTick(coop::net::Session* s) {
     case H::Hello: DC::Say("cheatdrill host-ready"); Next(); return;
     case H::WaitHello:
         if (Seen("cheatdrill client-ready")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "the client never said it was ready");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "the client never said it was ready");
         return;
 
     // A: the host's Items call, a crowbar pair that must reach the client.
     case H::ASay: g.crowbars = Crowbars(); DC::Say("cheatdrill A go"); Next(); return;
     case H::AWaitArmed:
-        if (!Seen("cheatdrill A armed")) { if (Timed(kSyncBoundMs)) Verdict("host", false, "A: the client never armed"); return; }
+        if (!Seen("cheatdrill A armed")) { if (Timed(kSyncBoundMs)) Invalid("host", "A: the client never armed"); return; }
         Next();
         return;
     case H::AWaitSpawn:
@@ -241,20 +234,20 @@ void HostTick(coop::net::Session* s) {
             DC::Say("cheatdrill A spawned");
             Next();
         } else if (Timed(kEffectBoundMs)) {
-            Verdict("host", false, "A: the host's own crowbars did not appear: " + std::to_string(Crowbars()) + " vs " +
+            Invalid("host", "A: the host's own crowbars did not appear: " + std::to_string(Crowbars()) + " vs " +
                                        std::to_string(g.crowbars) + " + " + std::to_string(kSpawnCount));
         }
         return;
     case H::AWaitPass:
         if (Seen("cheatdrill A pass")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "A: the client never said the crowbars reached it");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "A: the client never said the crowbars reached it");
         return;
 
     // B: the host's Economy call.
     case H::BSay: Points(&g.points); DC::Say("cheatdrill B go"); Next(); return;
     case H::BWaitArmed:
         if (Seen("cheatdrill B armed")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "B: the client never armed");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "B: the client never armed");
         return;
     case H::BWaitPoints: {
         if (!g.sent) { CH::AddPoints(kHostPoints); g.sent = true; g.stepAt = Now(); return; }
@@ -264,20 +257,20 @@ void HostTick(coop::net::Session* s) {
             DC::Say("cheatdrill B done " + std::to_string(p));
             Next();
         } else if (Timed(kEffectBoundMs)) {
-            Verdict("host", false, "B: the host's balance did not move by " + std::to_string(kHostPoints));
+            Invalid("host", "B: the host's balance did not move by " + std::to_string(kHostPoints));
         }
         return;
     }
     case H::BWaitPass:
         if (Seen("cheatdrill B pass")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "B: the client's balance never matched the host's");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "B: the client's balance never matched the host's");
         return;
 
     // C: the host's Events call.
     case H::CSay: g.fires = EFS::HostFireCount(); DC::Say("cheatdrill C go"); Next(); return;
     case H::CWaitArmed:
         if (Seen("cheatdrill C armed")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "C: the client never armed");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "C: the client never armed");
         return;
     case H::CWaitFire:
         if (!g.sent) { CH::FireEvent(kHostEvent); g.sent = true; g.stepAt = Now(); return; }
@@ -286,12 +279,12 @@ void HostTick(coop::net::Session* s) {
             DC::Say("cheatdrill C fired");
             Next();
         } else if (Timed(kEffectBoundMs)) {
-            Verdict("host", false, std::string("C: the host's watch committed no fire of ") + kHostEvent);
+            Invalid("host", std::string("C: the host's watch committed no fire of ") + kHostEvent);
         }
         return;
     case H::CWaitPass:
         if (Seen("cheatdrill C pass")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "C: the client never replayed the event");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "C: the client never replayed the event");
         return;
 
     // D: with the setting off, the client's three requests change nothing and are answered Off.
@@ -305,13 +298,13 @@ void HostTick(coop::net::Session* s) {
         return;
     case H::DWaitPass:
         if (Seen("cheatdrill D pass")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "D: the client never reported its refusals");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "D: the client never reported its refusals");
         return;
     case H::DJudge: {
         int32_t p = 0;
         Points(&p);
         const uint32_t off = CH::AnsweredFor(1, CheatReason::Off) - g.answered[0];
-        if (off != 3) { if (Timed(10000)) Verdict("host", false, "D: the host answered " + std::to_string(off) + " requests Off, not 3"); return; }
+        if (off != 3) { if (Timed(10000)) Invalid("host", "D: the host answered " + std::to_string(off) + " requests Off, not 3"); return; }
         if (p != g.points || Crowbars() != g.crowbars) {
             Verdict("host", false, "D: a refused request changed the host's world");
             return;
@@ -328,7 +321,7 @@ void HostTick(coop::net::Session* s) {
         return;
     case H::EWaitOn:
         if (CH::PlayersMayCheat()) { UE_LOGI("%s host E: net.allow_player_cheats is on", kTag); Next(); }
-        else if (Timed(15000)) Verdict("host", false, "E: the `set` line did not turn the setting on");
+        else if (Timed(15000)) Invalid("host", "E: the `set` line did not turn the setting on");
         return;
     case H::ESay:
         Points(&g.points);
@@ -342,7 +335,7 @@ void HostTick(coop::net::Session* s) {
         return;
     case H::EWaitPass:
         if (Seen("cheatdrill E sent")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "E: the client never finished its requests");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "E: the client never finished its requests");
         return;
     case H::EJudge: {
         int32_t p = 0;
@@ -357,7 +350,7 @@ void HostTick(coop::net::Session* s) {
                 char buf[200];
                 std::snprintf(buf, sizeof(buf), "E: the host's world did not move by the Oks: balance %d (want %d), crowbars %d (want %d), fires %u (want %u)",
                               p, g.points + kClientPoints, Crowbars(), g.crowbars + kSpawnCount + 1, EFS::HostFireCount(), g.fires + 1);
-                Verdict("host", false, buf);
+                Invalid("host", buf);
             }
             return;
         }
@@ -373,6 +366,11 @@ void HostTick(coop::net::Session* s) {
         return;
     }
 
+    // G..L: the hostile arms, with the setting on and the client's right held (K withholds it, then gives it back).
+    case H::Arms:
+        if (HostArms(*s)) Next();
+        return;
+
     // F: the host resets the setting; the client's next request is answered Off again.
     case H::FOff:
         g.answered[0] = CH::AnsweredFor(1, CheatReason::Off);
@@ -381,16 +379,16 @@ void HostTick(coop::net::Session* s) {
         return;
     case H::FWaitOff:
         if (!CH::PlayersMayCheat()) { UE_LOGI("%s host F: net.allow_player_cheats is back off", kTag); Next(); }
-        else if (Timed(15000)) Verdict("host", false, "F: the `reset` line did not turn the setting off");
+        else if (Timed(15000)) Invalid("host", "F: the `reset` line did not turn the setting off");
         return;
     case H::FSay: DC::Say("cheatdrill F off"); Next(); return;
     case H::FWaitPass:
         if (Seen("cheatdrill F pass")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("host", false, "F: the client never reported its refusal");
+        else if (Timed(kSyncBoundMs)) Invalid("host", "F: the client never reported its refusal");
         return;
     case H::FJudge:
         if (CH::AnsweredFor(1, CheatReason::Off) - g.answered[0] != 1) {
-            if (Timed(10000)) Verdict("host", false, "F: the host did not answer the request Off");
+            if (Timed(10000)) Invalid("host", "F: the host did not answer the request Off");
             return;
         }
         Next();
@@ -412,6 +410,7 @@ enum class C : int {
     CWait, CArm, CWaitReplay,
     DWait, DReqPoints, DReqSpawn, DReqEvent, DPass,
     EWait, EWaitOn, EPanes, EReqPoints, EReqSpawn, EReqAt, EReqEvent, EReqStory, EReqBad, ESent, EWaitMirror,
+    Arms,
     FWait, FWaitOff, FReq, FPass,
     Finish
 };
@@ -419,29 +418,10 @@ enum class C : int {
 constexpr Pane kClientPanesOff[] = {{"Player tools", "Myself"}};
 constexpr Pane kClientPanesOn[] = {{"Player tools", "Items"}, {"Player tools", "Economy"}, {"Player tools", "Events"}};
 
-void ClientFail(const char* arm, const std::string& why) {
-    DC::Say("cheatdrill FAIL");
-    Verdict("client", false, std::string(arm) + ": " + why);
-}
-
-// Send one request through the panel call and wait for its answer: 1 when answered, `r` the answer. 0 while waiting.
-template <class SendFn>
-int Ask(SendFn send, Result* r, const char* arm) {
-    if (!g.sent) {
-        g.resultIdx = g_nResults;
-        send();
-        g.sent = true;
-        g.stepAt = Now();
-        return 0;
-    }
-    if (g_nResults > g.resultIdx) { *r = g_results[g.resultIdx]; return 1; }
-    if (Timed(kEffectBoundMs)) ClientFail(arm, "the host never answered the request");
-    return 0;
-}
-
-void ClientTick() {
+void ClientTick(coop::net::Session& session) {
     namespace EFS = coop::event_fire_sync;
-    if (Seen("cheatdrill FAIL")) { Verdict("client", false, "the host reported a failed arm (its own line has why)"); return; }
+    if (Seen("cheatdrill FAIL host")) { Verdict("client", false, "the host reported a failed arm (its own line has why)"); return; }
+    if (Seen("cheatdrill INVALID host")) { Invalid("client", "the host ended the run INVALID (its own line has why)"); return; }
     Result r{};
     std::string rest;
     switch (static_cast<C>(g.step)) {
@@ -450,12 +430,12 @@ void ClientTick() {
         int32_t p = 0;
         if (g.stepAt == 0) g.stepAt = Now();
         if (!OwnJoinOver() || !ItemsListed() || !Points(&p)) {
-            if (Timed(kSyncBoundMs)) Verdict("client", false, "no world, item list or balance within the bound");
+            if (Timed(kSyncBoundMs)) Invalid("client", "no world, item list or balance within the bound");
             return;
         }
         UE_LOGI("%s client ready: %zu items listed, the host's setting is %s", kTag, CH::item_catalog::Names()->size(),
                 CH::PlayersMayCheat() ? "ON (the drill needs it off)" : "off");
-        if (CH::PlayersMayCheat()) { Verdict("client", false, "the host's setting starts on"); return; }
+        if (CH::PlayersMayCheat()) { Invalid("client", "the host's setting starts on"); return; }
         CH::SetResultObserver(&OnResult);
         Next();
         return;
@@ -471,64 +451,64 @@ void ClientTick() {
         return;
     case C::WaitHost:
         if (Seen("cheatdrill host-ready")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "the host never said it was ready");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "the host never said it was ready");
         return;
     case C::Hello: DC::Say("cheatdrill client-ready"); Next(); return;
 
     case C::AWait:
         if (Seen("cheatdrill A go")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "A: the host never armed");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "A: the host never armed");
         return;
     case C::AArm: g.crowbars = Crowbars(); DC::Say("cheatdrill A armed"); Next(); return;
     case C::AWaitSpawn:
-        if (!Seen("cheatdrill A spawned")) { if (Timed(kSyncBoundMs)) ClientFail("A", "the host never spawned"); return; }
+        if (!Seen("cheatdrill A spawned")) { if (Timed(kSyncBoundMs)) ClientInvalid("A", "the host never spawned"); return; }
         if (Crowbars() == g.crowbars + kSpawnCount) {
             UE_LOGI("%s client A PASS -- the host's %d crowbars appeared here (%d -> %d)", kTag, kSpawnCount, g.crowbars, Crowbars());
             DC::Say("cheatdrill A pass");
             Next();
         } else if (Timed(kEffectBoundMs + kSyncBoundMs / 6)) {
-            ClientFail("A", "the host's crowbars did not appear here: " + std::to_string(Crowbars()) + " vs " + std::to_string(g.crowbars));
+            ClientInvalid("A", "the host's crowbars did not appear here: " + std::to_string(Crowbars()) + " vs " + std::to_string(g.crowbars));
         }
         return;
 
     case C::BWait:
         if (Seen("cheatdrill B go")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "B: the host never armed");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "B: the host never armed");
         return;
     case C::BArm: Points(&g.points); DC::Say("cheatdrill B armed"); Next(); return;
     case C::BWaitPoints: {
-        if (!DC::SeenRestOf("cheatdrill B done ", &rest)) { if (Timed(kSyncBoundMs)) ClientFail("B", "the host never said its balance"); return; }
+        if (!DC::SeenRestOf("cheatdrill B done ", &rest)) { if (Timed(kSyncBoundMs)) ClientInvalid("B", "the host never said its balance"); return; }
         int32_t p = 0;
         if (Points(&p) && p == std::atoi(rest.c_str())) {
             UE_LOGI("%s client B PASS -- the balance here is the host's %d (it was %d)", kTag, p, g.points);
             DC::Say("cheatdrill B pass");
             Next();
         } else if (Timed(kEffectBoundMs * 2)) {
-            ClientFail("B", "the balance here is not the host's " + rest);
+            ClientInvalid("B", "the balance here is not the host's " + rest);
         }
         return;
     }
 
     case C::CWait:
         if (Seen("cheatdrill C go")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "C: the host never armed");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "C: the host never armed");
         return;
     case C::CArm: g.replays = EFS::ReplayCount(); DC::Say("cheatdrill C armed"); Next(); return;
     case C::CWaitReplay:
-        if (!Seen("cheatdrill C fired")) { if (Timed(kSyncBoundMs)) ClientFail("C", "the host never fired"); return; }
+        if (!Seen("cheatdrill C fired")) { if (Timed(kSyncBoundMs)) ClientInvalid("C", "the host never fired"); return; }
         if (EFS::ReplayCount() >= g.replays + 1) {
             UE_LOGI("%s client C PASS -- the host's event %s was replayed here", kTag, kHostEvent);
             DC::Say("cheatdrill C pass");
             Next();
         } else if (Timed(kEffectBoundMs + kSyncBoundMs / 6)) {
-            ClientFail("C", "the host's event was not replayed here (replays " + std::to_string(EFS::ReplayCount()) + ", was " + std::to_string(g.replays) + ")");
+            ClientInvalid("C", "the host's event was not replayed here (replays " + std::to_string(EFS::ReplayCount()) + ", was " + std::to_string(g.replays) + ")");
         }
         return;
 
     // D: three requests, each answered Off.
     case C::DWait:
         if (Seen("cheatdrill D go")) { g_nResults = 0; Next(); }
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "D: the host never armed");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "D: the host never armed");
         return;
     case C::DReqPoints:
         if (!Ask([] { CH::AddPoints(50); }, &r, "D")) return;
@@ -554,11 +534,11 @@ void ClientTick() {
     // E: the setting is on; each request runs on the host.
     case C::EWait:
         if (Seen("cheatdrill E on")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "E: the host never turned the setting on");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "E: the host never turned the setting on");
         return;
     case C::EWaitOn:
         if (CH::PlayersMayCheat()) { UE_LOGI("%s client E: the host's setting arrived: on", kTag); g.paneIdx = 0; g.paneAsked = false; Next(); }
-        else if (Timed(20000)) Verdict("client", false, "E: the host's setting never reached this client");
+        else if (Timed(20000)) Invalid("client", "E: the host's setting never reached this client");
         return;
     case C::EPanes:
         if (OpenPanes("client", kClientPanesOn, 3)) {
@@ -608,7 +588,7 @@ void ClientTick() {
         return;
     case C::ESent: DC::Say("cheatdrill E sent"); Next(); return;
     case C::EWaitMirror: {
-        if (!DC::SeenRestOf("cheatdrill E host-ok ", &rest)) { if (Timed(kSyncBoundMs)) ClientFail("E", "the host never judged its side"); return; }
+        if (!DC::SeenRestOf("cheatdrill E host-ok ", &rest)) { if (Timed(kSyncBoundMs)) ClientInvalid("E", "the host never judged its side"); return; }
         int32_t p = 0;
         const bool mirrored = Points(&p) && p == std::atoi(rest.c_str()) && Crowbars() == g.crowbars + kSpawnCount + 1 &&
                               EFS::ReplayCount() >= g.replays + 1;
@@ -621,19 +601,24 @@ void ClientTick() {
             char buf[200];
             std::snprintf(buf, sizeof(buf), "this client did not mirror the host: balance %d (host %s), crowbars %d (want %d), replays %u (want %u)",
                           p, rest.c_str(), Crowbars(), g.crowbars + kSpawnCount + 1, EFS::ReplayCount(), g.replays + 1);
-            ClientFail("E", buf);
+            ClientInvalid("E", buf);
         }
         return;
     }
 
+    // G..L: the hostile arms, with the setting on and this client's right held until K.
+    case C::Arms:
+        if (ClientArms(session)) Next();
+        return;
+
     // F: the setting reset; the next request is Off.
     case C::FWait:
         if (Seen("cheatdrill F off")) Next();
-        else if (Timed(kSyncBoundMs)) Verdict("client", false, "F: the host never reset the setting");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "F: the host never reset the setting");
         return;
     case C::FWaitOff:
         if (!CH::PlayersMayCheat()) { g_nResults = 0; Next(); }
-        else if (Timed(20000)) Verdict("client", false, "F: the host's reset never reached this client");
+        else if (Timed(20000)) Invalid("client", "F: the host's reset never reached this client");
         return;
     case C::FReq:
         if (!Ask([] { CH::AddPoints(5); }, &r, "F")) return;
@@ -646,7 +631,8 @@ void ClientTick() {
         Next();
         return;
     case C::Finish:
-        if (Seen("cheatdrill done") || Timed(kSyncBoundMs)) Verdict("client", true, "every arm passed");
+        if (Seen("cheatdrill done")) Verdict("client", true, "every arm passed");
+        else if (Timed(kSyncBoundMs)) Invalid("client", "the host never said it was done");
         return;
     }
 }
@@ -656,7 +642,7 @@ void ClientTick() {
 void Tick(coop::net::Session* session) {
     if (!Enabled() || g.done || !session || !session->running()) return;
     if (session->role() == coop::net::Role::Host) HostTick(session);
-    else ClientTick();
+    else ClientTick(*session);
 }
 
 void OnDisconnect() {

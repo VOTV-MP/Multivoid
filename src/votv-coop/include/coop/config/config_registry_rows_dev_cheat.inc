@@ -6,8 +6,11 @@ CFG_ENUM(cheat_drill, "cheat_drill", "dev", "off", "off|on", "VOTVCOOP_CHEAT_DRI
     "Drill (BOTH peers): the host's and the players' cheat tools. The host spawns two crowbars, adds points and fires an "
     "event through the panels' calls and the client must see each; with net.allow_player_cheats off the client's three "
     "requests are all refused and move nothing; with it on the client's points, crowbars and event run on the host and "
-    "mirror here, a story event and an unlisted prop are refused; reset, the next request is refused again. Each peer first "
-    "opens the F1 panes it is offered. Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict.")
+    "mirror here, a story event and an unlisted prop are refused; then the hostile arms (raw requests no panel makes, each "
+    "refused with its reason; a ten-prop request drains the request bucket and the next is answered Rate; eight removals "
+    "against 50000 leave 0; two requests in flight; a withheld right answered Off; Unstuck onto the NavMesh); reset, the "
+    "next request is refused again. Each peer first opens the F1 panes it is offered. Lines tagged [CHEAT-DRILL]; the "
+    "host's PASS, FAIL or INVALID line is the verdict, and a FAIL is said to the peer at once.")
 CFG_FLAG(cheat_node_check_off, "cheat_node_check_off", "dev", false, "VOTVCOOP_CHEAT_NODE_CHECK_OFF",
     "Developer red arm: never set (HOST). 1 makes the host skip the per-player right multivoid.dev.local.cheats when it "
     "judges a cheat request, so a request from a player whose right the host withheld runs, and the cheat drill's "

@@ -10,9 +10,16 @@
 //   E  the host turns the setting on (the `set` line its checkbox submits); the client asks for +321 points, two crowbars
 //      in front of it, one at the host's body and the event arirGraff_5 (each Ok), a story event (Refused) and a prop the
 //      game does not list (UnknownItem): the host's game moved by the Oks and nothing else, and the client's mirrors it.
+//   G..L the hostile arms (coop/dev/cheat_drill_arms): raw requests no panel makes, each refused with its reason; a ten-prop
+//      request drains the bucket and the next is answered Rate; eight removals against 50000 leave 0, one Ok and seven
+//      Failed; two requests in flight keep the status line with the later; a withheld right is answered Off and its
+//      projected bit is clear; Unstuck lands on the NavMesh.
 //   F  the host resets the setting; the client sees it off and its next request is answered Off.
-// Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict, the client's own arms print theirs. The host
-// leaves the setting at its default. Nothing here ships enabled.
+// A FAIL is decided by an event (a wrong answer or count) and said to the peer at once, so no later arm runs; a time
+// bound only says INVALID. Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict, the client's own arms
+// print theirs. Reds, each a [dev] row that removes one mechanism on the HOST (the last on both peers): cheat_node_check_off
+// (G..L's K arm must FAIL), cheat_open_check_off (G must FAIL), cheat_count_cost_off (H must FAIL). The host leaves the
+// setting at its default. Nothing here ships enabled.
 
 #pragma once
 

@@ -86,6 +86,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/chat_drill.cpp
     src/coop/dev/l10n_drill.cpp
     src/coop/dev/cheat_drill.cpp
+    src/coop/dev/cheat_drill_arms.cpp
+    src/coop/dev/cheat_drill_raw.cpp
     src/coop/dev/ban_drill.cpp
     src/coop/dev/bug_report_drill.cpp
     src/coop/dev/grants_drill.cpp

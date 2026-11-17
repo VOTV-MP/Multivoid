@@ -18,4 +18,9 @@ void ToPlayer(int slot);
 // and does not move when no NavMesh lies near.
 void Unstuck();
 
+// How many moves this process landed on the NavMesh and how many it refused for want of one, for the cheat drill to
+// wait on. Any thread.
+struct Landings { unsigned landed; unsigned refused; };
+Landings Outcomes();
+
 }  // namespace coop::cheats::self_teleport

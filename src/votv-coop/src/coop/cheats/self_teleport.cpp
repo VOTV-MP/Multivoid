@@ -13,6 +13,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_nav.h"
 
+#include <atomic>
 #include <cmath>
 
 namespace coop::cheats::self_teleport {
@@ -24,6 +25,9 @@ namespace E = ue_wrap::engine;
 constexpr float kBehindCm = 100.f;
 // How far the NavMesh may be from the wanted point: a point beside a wall slides to the floor on its own side.
 constexpr ue_wrap::FVector kNavExtent{150.f, 150.f, 250.f};
+
+std::atomic<unsigned> g_landed{0};    // the moves that landed, and the ones refused for want of a NavMesh
+std::atomic<unsigned> g_refused{0};
 
 void NoSafePlace() {
     coop::chat_feed::Push(std::string(l10n::T("No safe place to land there.")), coop::chat_feed::Keep::Transient);
@@ -40,6 +44,7 @@ bool LandNear(void* local, const ue_wrap::FVector& want, float yaw) {
         UE_LOGW("cheats: no NavMesh within reach of (%.0f, %.0f, %.0f) -- the player stays where it is", want.X, want.Y,
                 want.Z);
         NoSafePlace();
+        g_refused.fetch_add(1);
         return false;
     }
     ue_wrap::FRotator view{};
@@ -52,6 +57,7 @@ bool LandNear(void* local, const ue_wrap::FVector& want, float yaw) {
     args.rotYaw = yaw;
     args.rotRoll = view.Roll;
     coop::teleport_client::ApplyLocally(args);
+    g_landed.fetch_add(1);
     return true;
 }
 
@@ -85,6 +91,8 @@ void Lift() {
 }
 
 }  // namespace
+
+Landings Outcomes() { return {g_landed.load(), g_refused.load()}; }
 
 void ToPlayer(int slot) { GT::Post([slot] { MoveToPlayer(slot); }); }
 

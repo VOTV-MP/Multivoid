@@ -401,6 +401,13 @@ uint32_t AnsweredFor(int slot, CheatReason reason) {
     return slot >= 1 && slot < coop::players::kMaxPeers && i < kReasons ? g_answered[slot][i] : 0;
 }
 
+// HOST: when the bucket of the sender in `slot` is full again, in net::NowMs's clock (now when it is). The drill waits on it
+// before an arm that needs the whole bucket. Game thread.
+uint64_t RequestBucketFullAtMs(int slot) {
+    if (slot < 1 || slot >= coop::players::kMaxPeers) return 0;
+    return g_bucket[slot].FullAtMs(coop::cheats::kRequestBudget, coop::net::NowMs());
+}
+
 void OnDisconnect() {
     SetStatus(Status{});
     g_observer = nullptr;

@@ -77,6 +77,10 @@ void SetResultObserver(void (*fn)(const coop::net::CheatResultPayload& p));
 // drill reads them against a baseline.
 uint32_t AnsweredFor(int slot, coop::net::CheatReason reason);
 
+// HOST: when the bucket of the sender in `slot` (1..) is full again, in coop::net::NowMs's clock; now when it is full
+// already. The drill waits on it before an arm that needs the whole bucket. Game thread.
+uint64_t RequestBucketFullAtMs(int slot);
+
 // The session ended: the status and the observer start over.
 void OnDisconnect();
 
