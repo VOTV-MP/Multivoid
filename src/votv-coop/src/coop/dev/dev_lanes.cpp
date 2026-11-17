@@ -141,7 +141,8 @@
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/host_settle_drill.h"  // [dev] a join in the host's start-up waits for it
 #include "coop/dev/impact_damage_probe.h"  // [dev] what impactDamage receives, logged per call
-#include "coop/dev/build_probe.h"  // [dev] the nail, wall and poster measured: census, damage routes, brick overlap, keys
+#include "coop/dev/build_probe.h"  // [dev] the nail, wall and poster measured: damage routes, brick overlap
+#include "coop/dev/build_identity_drill.h"  // [dev] the nail, wall and poster pieces carry keys the prop lane reads, across a rejoin
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
@@ -495,6 +496,7 @@ void TickProbes(coop::net::Session& session, bool isConnected, bool isHost) {
     coop::dev::keypad_probe::Install();  // dev-only keypad digit-entry RE probe (ini keypad_probe=1)
     coop::dev::keypad_probe::Tick();  // synthetic inputNumber sequence -> does it append inPassword + flip isAcc
     coop::dev::build_probe::Tick(session);  // [dev] the building probe, with or without a session (a latched read when off)
+    coop::dev::build_identity_drill::Tick(session);  // [dev] the building identity drill (a latched read when off)
 }
 
 }  // namespace coop::dev::dev_lanes

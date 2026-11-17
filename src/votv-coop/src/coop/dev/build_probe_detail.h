@@ -28,26 +28,6 @@ Res Invalid(const char* fmt, ...);
 std::string Narrow(const std::wstring& w);
 std::string ClassOrNull(void* obj);
 
-// ---- build_probe_census.cpp ----
-
-// Every live nail, wall, unfinished wall and poster of the current world, one line each and a summary, from a world
-// whose edge was at `edgeMs` (the net clock). `generation` numbers the worlds this process census saw, from 1.
-void RunCensus(Role role, int generation, uint64_t edgeMs);
-
-// Asks the prop key index again for each piece it did not hold at the census, once its version moved; a piece that
-// began to be held says how long after the edge. Cheap while nothing moved.
-void PollKeyIndex(uint64_t nowMs);
-
-// The keys of this census against the one before, by class and place; one line per piece that changed or went and a
-// summary line. A no-op for the first census.
-void SayKeyDiff(int generation);
-
-// The summary of what the key index never held in this world, said once at the end of the run.
-void SayKeyIndexEnd();
-
-// The level's own wall: the persistent customWall_C the census found, or null while none lives.
-void* LevelWall();
-
 // ---- build_probe_watch.cpp ----
 
 // Registers the four watches on the wall's bodies and the unfinished wall's overlap delegate, retried each second.
@@ -76,6 +56,9 @@ bool ReadInt(void* obj, const wchar_t* name, int32_t& out);
 // place. Game thread.
 void* PlaceOnGround(void* ctx, const wchar_t* classPath, const ue_wrap::FVector& ask, const char* what,
                     ue_wrap::FVector& placed);
+
+// The level's own wall: the customWall_C of the current world's persistent level, or null while none lives.
+void* LevelWall();
 
 // ---- build_probe_damage.cpp ----
 

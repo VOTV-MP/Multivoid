@@ -122,6 +122,10 @@ std::wstring GetActorSaveKeyString(void* obj);
 // reads its actor_save key. False for null.
 bool IsClassBuildPiece(void* cls);
 
+// [dev] false makes GetInteractableKey answer None for a building piece again (the building identity drill's red).
+// On by default; any thread.
+void SetBuildPieceKeyRead(bool on);
+
 // Where a class keeps its key FIELD: prop_C's lineage its own `key`, trashBitsPile_C's lineage
 // actor_save_C's. None for every other class, the chip pile and the garbage clump included: they have
 // no key field and answer only through their blueprint getKey. Class-pure, so a caller may memoise

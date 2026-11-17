@@ -98,11 +98,17 @@ CFG_INT(pause_menu_probe, "pause_menu_probe", "dev", 0, 0, 4, "VOTVCOOP_PAUSE_ME
     "Prints pmprobe lines, then pmprobe DONE or pmprobe FAIL.")
 CFG_ENUM(build_probe, "build_probe", "dev", "off", "off|on", "VOTVCOOP_BUILD_PROBE",
     "Probe (BOTH peers, the same value, the peers' folder VOTVCOOP_CAN_DIR absolute): the nail, the wall and the poster "
-    "measured where the Blueprint dumps stop. At each world-ready edge a census of every nail, wall, unfinished wall and "
-    "poster (class, key, owning level, whether the prop key index holds the key and how long after the edge, claimed "
-    "or not by the join sweep). The host, walked by the director to the level's wall, throws a brick, swings an axe "
-    "and detonates an explosion at it, and logs the damage routes that fired with their callers and the wall's health; "
-    "then both peers spawn an unfinished wall at one place and the client throws a brick into its own, each logging "
-    "whether the overlap delegate fired on its copy. With no session, it saves once at the first world edge and a later "
-    "reload of that save prints the second census and a diff of the keys. Observe only: it cancels nothing. Lines "
-    "tagged build-probe; ends on build-probe: DONE.")
+    "measured where the Blueprint dumps stop. The host, walked by the director to the level's wall, throws a brick, "
+    "swings an axe and detonates an explosion at it, and logs the damage routes that fired with their callers and the "
+    "wall's health; then both peers spawn an unfinished wall at one place and the client throws a brick into its own, "
+    "each logging whether the overlap delegate fired on its copy. Observe only: it cancels nothing. Lines tagged "
+    "build-probe; ends on build-probe: DONE.")
+CFG_ENUM(build_identity_drill, "build_identity_drill", "dev", "off", "off|green|key_read_off|settle_count_off",
+    "VOTVCOOP_BUILD_IDENTITY_DRILL",
+    "Drill (BOTH peers, the same value, the peers' folder VOTVCOOP_CAN_DIR absolute; run with --rejoin and "
+    "--rejoin-env VOTVCOOP_BUILD_IDENTITY_REJOIN=1 on a New Game): the nail, wall and poster pieces carry keys the prop "
+    "lane reads. At each peer's world-ready edge every live piece reads a key (i1); the level wall's and the five "
+    "posters' keys are the same on both peers (i2) and on the rejoined client (i3); the client's load episode ends "
+    "with no piece unsettled (i4). green: judge it. key_read_off: a piece reads keyless again, i1 FAILs. "
+    "settle_count_off: the settle count ignores the key read, i4 FAILs. Lines tagged build-identity; the host ends on "
+    "rig: VERDICT build-identity PASS.")

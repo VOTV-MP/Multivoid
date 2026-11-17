@@ -9,7 +9,6 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
-#include "coop/player/players_registry.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/session/host_world_settle.h"
 #include "coop/session/join_progress.h"
@@ -18,13 +17,9 @@
 
 #include "harness/autotest/peer_signal.h"
 
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/save_to_slot_hook.h"
 #include "ue_wrap/engine/world_identity.h"
-#include "ue_wrap/world/world_singleton.h"
 
 #include <cstdarg>
 #include <cstdint>
@@ -90,25 +85,16 @@ using detail::Role;
 enum class Phase : uint8_t { WaitJoin, Legs, Brick, Finish, Done };
 
 constexpr uint64_t kJoinBoundMs = 300000;   // the host: a client's join is over within this
-constexpr uint64_t kSaveBoundMs = 60000;    // solo: the save's write is reported within this
 
 Phase    g_phase = Phase::WaitJoin;
 bool     g_armed = false;
 int      g_generation = 0;
 void*    g_censusWorld = nullptr;
-uint64_t g_edgeMs = 0;
 uint64_t g_phaseMs = 0;
-bool     g_saveCalled = false, g_saveWritten = false;
-uint32_t g_writes = 0;
 
 bool On() {
     static const bool s = coop::config::ResolveEnum(::coop::config_registry::rows::build_probe) == "on";
     return s;
-}
-
-void OnWritten(void*, const wchar_t* slot) {
-    ++g_writes;
-    UE_LOGI("%s: the engine wrote a world save to slot %ls", detail::kTag, slot ? slot : L"?");
 }
 
 // The role this process has or will have: its running session's, else the one its net.role row names (a host's world
@@ -124,16 +110,13 @@ void To(Phase p, uint64_t now) {
     g_phaseMs = now;
 }
 
-// The edge a census waits for, per role: the host's settled world, the client's announced one, a solo world with
-// no backlog in the object index and a local player.
+// The world's edge, per role: the host's settled world, the client's announced one.
 bool EdgeReached(Role role) {
     if (role == Role::Host) return coop::host_world_settle::Settled();
-    if (role == Role::Client) return coop::net_pump::HasAnnouncedWorldReady();
-    return ue_wrap::object_index::Backlog() == 0 && coop::players::Registry::Get().Local() != nullptr;
+    return role == Role::Client && coop::net_pump::HasAnnouncedWorldReady();
 }
 
 void Finish(Role role) {
-    detail::SayKeyIndexEnd();
     detail::Info("DONE role=%s worlds=%d", detail::RoleName(role), g_generation);
     UE_LOGI("%s: DONE", detail::kTag);
     UE_LOGI("rig: VERDICT %s DONE -- measured, nothing judged", detail::kTag);
@@ -201,37 +184,6 @@ void ClientStep(uint64_t now) {
     }
 }
 
-// A solo world: the game's own save at its first edge, then the second world's census (after the tree's reload scenario)
-// ends the probe.
-void SoloStep(uint64_t now) {
-    if (g_generation >= 2) {
-        if (g_phase != Phase::Done) Finish(Role::Solo);
-        return;
-    }
-    if (g_generation != 1 || g_saveWritten) return;
-    if (!g_saveCalled) {
-        void* gm = ue_wrap::world_singleton::Gamemode();
-        void* fn = gm ? ue_wrap::reflection::FindFunction(ue_wrap::reflection::ClassOf(gm), L"save") : nullptr;
-        if (!fn) return;
-        ue_wrap::ParamFrame f(fn);
-        f.Set<bool>(L"quicksave", false);
-        f.Set<bool>(L"bypassEvent", false);
-        f.Set<bool>(L"overwriteSubsave", false);
-        g_saveCalled = f.valid() && ue_wrap::Call(gm, f);
-        detail::Info("solo: the game's save %s", g_saveCalled ? "called" : "did not run");
-        g_phaseMs = now;
-        return;
-    }
-    if (g_writes > 0) {
-        g_saveWritten = true;
-        detail::Info("solo: saved; the reload of the same save prints the second census");
-    } else if (now - g_phaseMs >= kSaveBoundMs) {
-        detail::Invalid("the save was called and no world save was written within %llu s",
-                        static_cast<unsigned long long>(kSaveBoundMs / 1000));
-        g_phase = Phase::Done;
-    }
-}
-
 }  // namespace
 
 void Tick(coop::net::Session& session) {
@@ -246,22 +198,21 @@ void Tick(coop::net::Session& session) {
             g_phase = Phase::Done;
             return;
         }
-        ue_wrap::save_to_slot_hook::AddWritten(&OnWritten);
         g_phaseMs = now;
         detail::Info("armed role=%s", detail::RoleName(role));
+    }
+    if (role == Role::Solo) {
+        detail::Invalid("the probe's legs run on a host and a client: this process has no role");
+        g_phase = Phase::Done;
+        return;
     }
     detail::InstallWatches();
     if (world != g_censusWorld && EdgeReached(role)) {
         g_censusWorld = world;
         ++g_generation;
-        g_edgeMs = now;
-        detail::RunCensus(role, g_generation, g_edgeMs);
-        detail::SayKeyDiff(g_generation);
     }
-    detail::PollKeyIndex(now);
     if (role == Role::Host) HostStep(session, now);
-    else if (role == Role::Client) ClientStep(now);
-    else SoloStep(now);
+    else ClientStep(now);
 }
 
 void OnDisconnect() {

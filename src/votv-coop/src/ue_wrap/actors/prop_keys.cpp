@@ -51,6 +51,7 @@ constexpr const wchar_t* kPieceRootNames[] = {L"nail_C", L"customWall_C", L"cust
 constexpr int kPieceRootCount = static_cast<int>(sizeof(kPieceRootNames) / sizeof(kPieceRootNames[0]));
 std::atomic<void*> g_pieceRoot[kPieceRootCount];
 std::atomic<bool>  g_pieceRootsAll{false};
+std::atomic<bool>  g_pieceKeyRead{true};
 class_reask::Latch g_pieceLatch;  // game thread only
 
 void ResolvePieceRoots() {
@@ -99,6 +100,8 @@ bool IsClassBuildPiece(void* cls) {
     return false;
 }
 
+void SetBuildPieceKeyRead(bool on) { g_pieceKeyRead.store(on, std::memory_order_release); }
+
 R::FName GetInteractableKey(void* obj) {
     if (!obj) return R::FName{0, 0};
     if (IsDescendantOfProp(obj)) {
@@ -110,7 +113,9 @@ R::FName GetInteractableKey(void* obj) {
         return ReadField<R::FName>(obj, kAactorSaveKeyOff);
     }
     // A building piece: the same actor_save field.
-    if (IsClassBuildPiece(cls)) return ReadField<R::FName>(obj, kAactorSaveKeyOff);
+    if (IsClassBuildPiece(cls))
+        return g_pieceKeyRead.load(std::memory_order_acquire) ? ReadField<R::FName>(obj, kAactorSaveKeyOff)
+                                                              : R::FName{0, 0};
     // The chip pile and the clump: the blueprint function.
     if (WalksToBase(cls, GarbageClumpClass()) || WalksToBase(cls, ChipPileClass())) {
         return CallGetKeyUFunction(obj);

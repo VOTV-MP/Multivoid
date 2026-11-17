@@ -4,6 +4,7 @@
 #include "coop/session/world_load_episode.h"
 
 #include "coop/config/config.h"  // ReadEnv, for the drill switch
+#include "coop/config/config_registry.h"  // the building identity drill's red
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/session/save_replay_watch.h"
@@ -67,6 +68,7 @@ std::chrono::steady_clock::time_point g_probeArmedAt{};      // absolute-ceiling
 std::chrono::steady_clock::time_point g_lastScanAt{};        // {} => not yet scanned this session
 std::chrono::steady_clock::time_point g_quiescedAt{};        // valid while g_quiesced
 int  g_lastUnsettledCount = -1;
+int  g_lastUnsettledPieces = -1;   // the building pieces' part of the last scan; -1 before any scan of this session
 int  g_stableScans        = 0;
 std::string g_probeReason;     // logged at arm + latch
 
@@ -123,6 +125,14 @@ void ReconLowerGT_(const char* why) {
 // flagged. One GUObjectArray walk, pure pointer-compare class filters before any key or name read,
 // throttled and only while a session is open. Stability is about population CHANGE, not membership:
 // a claimed still-keyless actor contributes a constant term that cannot block the latch.
+// The building identity drill's red `settle_count_off`: a piece counts unsettled whatever its key read says, so the
+// settle count ignores the read. Off in every other run.
+bool SettleIgnoresPieceKey_() {
+    static const bool s =
+        coop::config::ResolveEnum(coop::config_registry::rows::build_identity_drill) == "settle_count_off";
+    return s;
+}
+
 // What a class counts as in the census: an allowlisted NPC, a keyed interactable, or a building piece.
 enum class TailKind : uint8_t { Npc, Keyed, Piece };
 
@@ -133,6 +143,7 @@ int TailTerm_(void* obj, TailKind kind) {
     if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return 0;  // CDO (alloc-free)
     if (kind == TailKind::Npc) return 1;
     if (kind == TailKind::Piece) {
+        if (SettleIgnoresPieceKey_()) return 1;
         const std::wstring pkey = ue_wrap::prop::GetInteractableKeyString(obj);
         return (pkey.empty() || pkey == L"None") ? 1 : 0;
     }
@@ -145,6 +156,7 @@ int TailTerm_(void* obj, TailKind kind) {
 
 struct TailWalk_ {
     int      unsettled;
+    int      pieces;  // the part of `unsettled` that is building pieces
     TailKind kind;
 };
 
@@ -154,7 +166,7 @@ int CountLoadTailUnsettled_() {
     // probe needs ten in a row: the stutter a joiner felt once its loading screen dropped). While the index
     // trails the engine its membership is not the array's, and the array is walked as before.
     if (ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0) {
-        TailWalk_ walk{0, TailKind::Keyed};
+        TailWalk_ walk{0, 0, TailKind::Keyed};
         ue_wrap::object_index::ForEachClass([](void* ctx, void* cls, void* /*anyInstance*/) {
             TailWalk_* w = static_cast<TailWalk_*>(ctx);
             // (a) before (b), as the array walk tests them: an unresolved allowlist degrades to prop-only.
@@ -164,13 +176,16 @@ int CountLoadTailUnsettled_() {
             else return;
             ue_wrap::object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t) {
                 TailWalk_* inner = static_cast<TailWalk_*>(c);
-                inner->unsettled += TailTerm_(obj, inner->kind);
+                const int term = TailTerm_(obj, inner->kind);
+                inner->unsettled += term;
+                if (inner->kind == TailKind::Piece) inner->pieces += term;
             }, w);
         }, &walk);
+        g_lastUnsettledPieces = walk.pieces;
         return walk.unsettled;
     }
     const int32_t n = R::NumObjects();
-    int unsettled = 0;
+    int unsettled = 0, pieces = 0;
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
@@ -179,8 +194,13 @@ int CountLoadTailUnsettled_() {
         // Lineage tests first, so the name and liveness reads run only for the few that pass.
         if (coop::npc_sync::IsAllowlistedClass(cls)) unsettled += TailTerm_(obj, TailKind::Npc);
         else if (ue_wrap::prop::IsClassKeyedInteractable(cls)) unsettled += TailTerm_(obj, TailKind::Keyed);
-        else if (ue_wrap::prop::IsClassBuildPiece(cls)) unsettled += TailTerm_(obj, TailKind::Piece);
+        else if (ue_wrap::prop::IsClassBuildPiece(cls)) {
+            const int term = TailTerm_(obj, TailKind::Piece);
+            unsettled += term;
+            pieces += term;
+        }
     }
+    g_lastUnsettledPieces = pieces;
     return unsettled;
 }
 
@@ -191,6 +211,7 @@ void OpenProbeSession_(const char* reason, bool forRequest) {
     g_probeArmedAt = std::chrono::steady_clock::now();
     g_lastScanAt = {};
     g_lastUnsettledCount = -1;
+    g_lastUnsettledPieces = -1;
     g_stableScans = 0;
     g_probeReason = reason ? reason : "?";
     char replay[64] = "";
@@ -403,6 +424,7 @@ void Reset() {
     g_everOpened = false;  // back to vacuous: a reconnect with no world change announces freely
     g_quiesced = false;
     g_lastUnsettledCount = -1;
+    g_lastUnsettledPieces = -1;
     g_stableScans = 0;
     // Session teardown lowers the reconcile window and clears its classifier.
     g_reconRaiseRequested.store(false, std::memory_order_relaxed);
@@ -412,6 +434,8 @@ void Reset() {
 }
 
 bool InEpisode() { return g_inEpisode.load(std::memory_order_relaxed); }
+
+int UnsettledBuildPieces() { return g_lastUnsettledPieces; }
 // ---- The reconcile window; see the header block ----
 
 void RaiseReconcileForReload() {

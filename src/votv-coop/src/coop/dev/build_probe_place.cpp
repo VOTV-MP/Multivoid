@@ -1,14 +1,16 @@
 // coop/dev/build_probe_place.cpp -- the building probe's wall placement: a ground line trace under a point, the wall
-// spawned at its hit and read back, so a wall that did not land where asked is said and never hit or thrown at; see
-// coop/dev/build_probe.h.
+// spawned at its hit and read back, so a wall that did not land where asked is said and never hit or thrown at; and
+// the level's own wall, found by class and level; see coop/dev/build_probe.h.
 
 #include "build_probe_detail.h"
 
 #include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
+#include "ue_wrap/engine/world_identity.h"
 
 #include <cmath>
 
@@ -63,6 +65,30 @@ void* PlaceOnGround(void* ctx, const wchar_t* classPath, const ue_wrap::FVector&
     }
     placed = back;
     return wall;
+}
+
+namespace {
+struct WallFind {
+    void* world;
+    void* wall = nullptr;
+};
+
+void OnWall(void* ctx, void* obj, int32_t) {
+    auto* f = static_cast<WallFind*>(ctx);
+    if (f->wall || ue_wrap::reflection::NameStartsWith(ue_wrap::reflection::NameOf(obj), L"Default__") ||
+        !ue_wrap::reflection::IsLive(obj))
+        return;
+    void* level = ue_wrap::reflection::OuterOf(obj);
+    if (level && ue_wrap::reflection::OuterOf(level) == f->world) f->wall = obj;
+}
+}  // namespace
+
+void* LevelWall() {
+    void* cls = ue_wrap::object_index::ClassByName(L"customWall_C");
+    if (!cls) return nullptr;
+    WallFind f{ue_wrap::world_identity::CurrentWorld()};
+    ue_wrap::object_index::ForEachInstance(cls, &OnWall, &f);
+    return f.wall;
 }
 
 }  // namespace coop::dev::build_probe::detail

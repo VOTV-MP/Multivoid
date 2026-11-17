@@ -93,6 +93,11 @@ long long MsSinceQuiesced();
 // Session teardown: clear the episode, the probe session and the latch. Game thread.
 void Reset();
 
+// How many building pieces (nail, wall, unfinished wall, poster) the most recent load-tail scan counted unsettled,
+// a piece being settled once its actor_save key reads; -1 before a scan of the open session. At the latch it is the
+// last scan's, which the world-ready announce follows. Game thread.
+int UnsettledBuildPieces();
+
 // True while a client world-load episode is in progress; the destroy seam suppresses
 // keyed-prop destroy broadcasts while it holds. Any thread (a relaxed atomic; advisory for
 // the census tag).

@@ -1,16 +1,12 @@
 // coop/dev/build_probe.h -- [dev] the building probe: what the Blueprint dumps cannot say about the nail, the wall and the
 // poster (ini build_probe=on / env VOTVCOOP_BUILD_PROBE on BOTH peers, the peers' folder VOTVCOOP_CAN_DIR, absolute).
 // It judges nothing: its lines are the result, and it ends on `build-probe: DONE`.
-//   census -- at each world-ready edge of this peer: every live nail, wall, unfinished wall and poster, one line each
-//             (class, key, owning level, place, the prop key index's hold and when it began, the join sweep's claim),
-//             a summary line, and a diff of the keys against the census of the world before.
 //   damage -- the HOST, walked by the director to the level's wall, throws a brick, swings an axe and detonates an
 //             explosion at it, then the same at a customWall_C put on the ground beside the host; watches log the routes,
 //             a throw its nearest approach to the wall's box, a swing what its view trace struck, a leg the addDamage targets;
 //             where another actor blocks the view, the host steps to another side of the wall's box (up to 4) first.
 //   brick  -- an unfinished wall on each peer, put on the ground at one place and read back, one brick thrown by the
 //             client into its own; each peer logs its overlap delegate, its brick count and the brick's nearest approach.
-//   keys   -- with no session, one save at the first world edge; the tree's reload scenario then prints the second census.
 // Off, nothing is registered. Game thread.
 #pragma once
 
