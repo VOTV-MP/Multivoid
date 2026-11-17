@@ -6,7 +6,7 @@
 #include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor
 #include "coop/props/pile_spawn_bind.h"  // CollectLiveTrashNatives: the one trash universe
 #include "ue_wrap/engine/engine.h"       // TryGetActorLocation
-#include "ue_wrap/core/reflection.h"   // NumObjects / ObjectAt / IsLive / ClassNameOf
+#include "ue_wrap/core/reflection.h"   // ClassNameOf
 #include "ue_wrap/core/log.h"
 
 #include <algorithm>
@@ -45,13 +45,13 @@ int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes) {
             if (++unexpressed <= 3) {
                 ue_wrap::FVector at{};
                 const bool read = ue_wrap::engine::TryGetActorLocation(o, at);
-                UE_LOGI("snapshot_census: live '%ls' %p holds no Prop Element row, so no expression names it (%.1f,%.1f,%.1f)%s",
+                UE_LOGI("snapshot_census: live '%ls' %p holds no local Prop Element row (a host-owned pile), so no expression names it (%.1f,%.1f,%.1f)%s",
                         R::ClassNameOf(o).c_str(), o, at.X, at.Y, at.Z, read ? "" : " (unread)");
             }
         }
     }
     if (unexpressed > 0)
-        UE_LOGI("snapshot_census: %d live trash actor(s) hold no Prop Element row and are counted anyway", unexpressed);
+        UE_LOGI("snapshot_census: %d live trash actor(s) hold no local Prop Element row and are counted anyway", unexpressed);
 
     // Order by count DESC so the MASS classes (the only ones a wipe is catastrophic for) always
     // make the byte budget; only tiny classes can be omitted (and the >50% valve still covers them).
