@@ -68,6 +68,7 @@ bool g_saidFactor = false;  // a factor other than the pinned one is said once, 
 
 // The rest in progress. The gamemode and the body are held by identity: a world change or a new body ends it.
 bool g_resting = false;
+bool g_hostDeclared = false;  // a host's sleep was declared once since its session began
 ue_wrap::CachedObjRef g_gm;
 ue_wrap::CachedObjRef g_body;
 // Each effect actor the rest dilated, so the end puts back those and not the list as it stands then:
@@ -132,22 +133,23 @@ void DilateEffect(void* effect, void* ctx) {
     EN::SetCustomTimeDilation(effect, *static_cast<const float*>(ctx));
 }
 
-void BeginRest() {
+bool BeginRest() {
     void* const gm = ue_wrap::world_singleton::Gamemode();
     void* const body = CurrentBody();
     if (!gm || !body) {
         // The degrade: no body to dilate, so the world stays at 1 and the sleep runs at 1/20 of the game's speed.
         UE_LOGW("sleep_rest: a rest began with no local body (%p) or gamemode (%p) -- it restores at the world's rate",
                 body, gm);
-        return;
+        return false;
     }
-    if (!EN::SetCustomTimeDilation(body, kNativeSleepDilation)) return;
+    if (!EN::SetCustomTimeDilation(body, kNativeSleepDilation)) return false;
     g_gm.Set(gm);
     g_body.Set(body);
     g_resting = true;
     g_haveFood = g_haveCoffee = false;
     UE_LOGI("sleep_rest: rest begun -- the world stays at 1, the body and the world's effects run at %.0f",
             kNativeSleepDilation);
+    return true;
 }
 
 void EndRest(const char* why) {
@@ -303,9 +305,12 @@ void HostEval() {
     case Want::RestAtOne:
         if (!HoldWorldAt(1.f)) return;
         if (g_resting) return;
-        BeginRest();
-        UE_LOGI("sleep_rest: the host's sleep does not speed the world up now (world.sleep_speedup) -- the world "
-                "stays at 1");
+        if (BeginRest())
+            UE_LOGI("sleep_rest: the host's sleep does not speed the world up now (world.sleep_speedup) -- the world "
+                    "stays at 1");
+        else
+            UE_LOGW("sleep_rest: the host's sleep should rest at 1 (world.sleep_speedup) -- the world is at 1, "
+                    "but no rest began, so the body and the effects run at the world's rate");
         return;
     case Want::GameFactor:
         if (g_resting) EndRest("the host's sleep speeds the world up now (world.sleep_speedup)");
@@ -376,6 +381,11 @@ void Tick() {
     EnsureWatch();
     // A host asleep before its watches were live: the rest it owes is seen now (every later change is an edge).
     if (host && !wasSettled && g_sleepWatch.settled && g_wakeWatch.settled) HostEval();
+    // A host asleep when its session starts running (no edge announces that): declared once per session.
+    if (host && !g_hostDeclared) {
+        g_hostDeclared = true;
+        HostEval();
+    }
     if (!g_resting) return;
     if (!host && !ConnectedClient()) return EndRest("the session left");
     TickRest();
@@ -399,10 +409,11 @@ WatchState Watches() {
 // session that ended: a rest in progress goes back, and a host resting at 1 sleeps on by itself at the game's factor.
 void OnDisconnect() {
     if (HostSession()) return HostEval();
-    if (!g_resting) return;
+    g_hostDeclared = false;  // the next session's start declares the host's sleep again
     auto* s = g_session.load(std::memory_order_acquire);
     const bool host = s && s->role() == coop::net::Role::Host;
-    EndRest("the session ended");
+    if (g_resting) EndRest("the session ended");
+    // A host asleep sleeps on by itself, at the game's factor, whatever the end left the world at.
     if (host && SLP::IsSleeping()) HoldWorldAt(kNativeSleepDilation);
 }
 
