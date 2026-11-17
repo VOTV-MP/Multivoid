@@ -35,6 +35,8 @@ std::atomic<uint64_t> g_synthKeyCounter{0};
 std::mutex g_setKeyFnMutex;
 std::unordered_map<void*, void*> g_setKeyFnByClass;
 
+}  // namespace
+
 void* ResolveSetKeyFn(void* cls) {
     if (!cls) return nullptr;
     std::lock_guard<std::mutex> lk(g_setKeyFnMutex);
@@ -49,8 +51,6 @@ void* ResolveSetKeyFn(void* cls) {
     g_setKeyFnByClass[cls] = fn;
     return fn;
 }
-
-}  // namespace
 
 std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
                                    bool mintForAprop) {

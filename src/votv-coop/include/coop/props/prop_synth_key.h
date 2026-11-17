@@ -47,6 +47,11 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
 // only.
 std::wstring MintFreshKeyForDuplicate(void* self);
 
+// The setKey UFunction that `cls` reaches: the nearest ancestor that declares it, since FindFunction matches the
+// exact owner and a subclass of actor_save (the trash pile, a building piece) takes actor_save's. Cached per
+// starting class, a null included. A caller that writes a key on a class of that lineage calls it. Game thread.
+void* ResolveSetKeyFn(void* cls);
+
 // The key format that mint uses, on its own: `rk_<64-bit-random-hex>`, 19 characters, inside the
 // 31-character wire key field; random rather than the cs_ counter, so a key PERSISTED into a save
 // cannot collide with a later boot's mints. For a caller that re-keys a save RECORD rather than
