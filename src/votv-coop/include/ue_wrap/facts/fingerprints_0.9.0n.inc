@@ -177,6 +177,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"dreamfilldoor_c", L"bndevt__box_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"dreamfilldoor_c.bndevt__box_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0x1507de7d7adea54bull},
     {L"driveslot_c", L"bndevt__driveslot_driveport_play_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", L"driveslot_c.bndevt__driveslot_driveport_play_k2node_componentboundevent_0_componentbeginoverlapsignature__delegatesignature", 0x068571522f5f0453ull, 0xc8859f786ef0a077ull},
     {L"driveslot_c", L"putdrivein", L"driveslot_c.putdrivein", 0x8a0bdc563a9e21b8ull, 0x7a6441ce96a8e16cull},
+    {L"drone_c", L"actionoptionindex", L"drone_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x357eef568e794bf3ull},
     {L"drone_c", L"beginfly", L"drone_c.beginfly", 0x6a2d5d90ab51fa2dull, 0xa83425691dcb1007ull},
     {L"drone_c", L"checkorders", L"drone_c.checkorders", 0x6a2d5d90ab51fa2dull, 0x8e98828e2fe6899cull},
     {L"drone_c", L"compileorder", L"drone_c.compileorder", 0x6a2d5d90ab51fa2dull, 0xfee1d44eca12a841ull},

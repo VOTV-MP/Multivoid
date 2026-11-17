@@ -12,6 +12,7 @@
 #include "coop/props/active_drive.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -37,6 +38,16 @@ namespace sg = ue_wrap::script_gate;
 // pointer across worlds.
 UE_FACT_FN(kRowActionOptionIndex, "drone_call_intent", L"droneConsole_C", L"actionOptionIndex", Declared);
 constexpr int kTagDroneCall = 0x44524f4e;  // 'DRON'
+
+// The drone's own menu: its actionOptionIndex runs action 4 (open the cargo) and action 7 (take the sack off, its
+// dropSack) while it is parked. The sack is the host's: a client's take-off on its stopped copy would hide that copy's
+// sack and drop a sack of its own that no other peer has, the host's drone keeping its sack.
+UE_FACT_FN(kRowDroneAction, "drone_call_intent", L"drone_C", L"actionOptionIndex", Declared);
+constexpr int kTagDroneSack = 0x4452534b;  // 'DRSK'
+constexpr uint8_t kActionSackOff = 7;
+// The drone is a large body the player stands under; its sack hangs below it.
+constexpr float kDroneReachUU = 500.0f;
+bool g_sackWatchInstalled = false;
 
 // The action the console's own switch routes to its faces. Its other cases, 10 and 11, are the
 // lid, which is already a synced door and must keep running locally.
@@ -84,6 +95,32 @@ bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
                     static_cast<unsigned>(slot));
         }
         return false;
+    }
+    if (p.verb == coop::net::drone_verb::kSackOff) {
+        // The drone's own gate, read on the host's copy: parked (canTakeOff) with its sack on.
+        void* const drone = ue_wrap::drone::Find();
+        const uint8_t bits = drone ? ue_wrap::drone::ReadFxBits(drone) : 0;
+        if (!drone || token.Authorize(drone).outcome != coop::element::IntentOutcome::Ok) {
+            ++g_denied;
+            UE_LOGI("[DRONE-CALL] DENY slot=%u's sack off -- the drone is not within its reach",
+                    static_cast<unsigned>(slot));
+            return true;
+        }
+        if (!(bits & ue_wrap::drone::kFxArrived) || !(bits & ue_wrap::drone::kFxHasSack)) {
+            ++g_denied;
+            UE_LOGI("[DRONE-CALL] DENY slot=%u's sack off -- the drone is %s here",
+                    static_cast<unsigned>(slot), !(bits & ue_wrap::drone::kFxArrived) ? "in motion" : "without a sack");
+            return true;
+        }
+        // The host's own copy of the menu's choice: its body checks canTakeOff again and runs dropSack, whose loose
+        // sack and cleared hasSack reach every peer on the prop and drone lanes.
+        ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(drone), L"actionOptionIndex"));
+        const bool ran = f.valid() && f.Set<uint8_t>(L"action", kActionSackOff) && ue_wrap::Call(drone, f);
+        ++g_flown;
+        UE_LOGI("[DRONE-CALL] slot=%u took the drone's sack off -- the host's drone dropped it (ran=%d, hasSack %d)",
+                static_cast<unsigned>(slot), ran ? 1 : 0,
+                (ue_wrap::drone::ReadFxBits(drone) & ue_wrap::drone::kFxHasSack) ? 1 : 0);
+        return true;
     }
     void* consoles[4];
     const int32_t nc = D::LiveConsoles(consoles, static_cast<int32_t>(std::size(consoles)));
@@ -185,16 +222,41 @@ sg::Verdict OnActionPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+// A client's choice on its drone's own menu: the sack's take-off is asked of the host; the cargo's opening runs here.
+sg::Verdict OnDroneActionPre(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client || !call.object) return sg::Verdict::Run;
+    static void*   sFn = nullptr;
+    static int32_t sActionOff = -1;
+    if (call.function != sFn) {
+        sFn = call.function;
+        sActionOff = R::FindParamOffset(call.function, L"action");
+    }
+    if (sActionOff < 0 || *reinterpret_cast<uint8_t*>(call.locals + sActionOff) != kActionSackOff)
+        return sg::Verdict::Run;
+    coop::net::DroneFlyIntentPayload p{};
+    p.verb = coop::net::drone_verb::kSackOff;
+    const bool sent = s->SendReliable(coop::net::ReliableKind::DroneFlyIntent, &p, sizeof(p));
+    if (sent) ++g_sent;
+    UE_LOGI("[DRONE-CALL] CLIENT the drone's sack off is asked of the host (sent=%d); this copy keeps its sack until "
+            "the host's drops", sent ? 1 : 0);
+    return sg::Verdict::Cancel;
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!g_watchInstalled)
         g_watchInstalled = sg::WatchName(kRowActionOptionIndex, kTagDroneCall, &OnActionPre, nullptr);
+    if (!g_sackWatchInstalled)
+        g_sackWatchInstalled = sg::WatchName(kRowDroneAction, kTagDroneSack, &OnDroneActionPre, nullptr);
 }
 
 void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
+    if (!g_sackWatchInstalled)
+        g_sackWatchInstalled = sg::WatchName(kRowDroneAction, kTagDroneSack, &OnDroneActionPre, nullptr);
     if (!g_watchInstalled) {
         g_watchInstalled = sg::WatchName(kRowActionOptionIndex, kTagDroneCall, &OnActionPre, nullptr);
         return;

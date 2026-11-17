@@ -1,18 +1,16 @@
-// coop/interactables/drone_call_intent.h -- the garage console's call/send button, as a client's
-// intent the host presses. Overview: docs/devices.md. Gameplay/network layer (principle 7); the
-// engine is reached through ue_wrap::drone.
+// coop/interactables/drone_call_intent.h -- the garage console's call/send button and the drone's "take the sack off",
+// as a client's intents the host runs. Overview: docs/devices.md. Gameplay/network layer (principle 7).
 //
 // The console's one action option dispatches on what the presser is looking at: its keyboard runs
-// drone.triggerFly(console), the button behind the "drone is active" line, and its other face
-// toggles leaveAfter5min and clicks. The console holds its drone as a LEVEL reference, so every
-// peer's console points at its own drone -- and a client's is a mirror whose flight tick drone_sync
-// suppresses, so a client's press reached a drone that cannot fly and told nobody.
+// drone.triggerFly(console), and its other face toggles leaveAfter5min and clicks. Every peer's console points at its
+// own drone, and a client's is a mirror whose flight tick drone_sync suppresses, so a client's press told nobody. This
+// lane refuses the client's own body at the script-body gate and sends the press; the console, level-baked and keyed by
+// no lane, is the one the host finds the sender standing at (that resolve IS the reach test), its lid re-tested. The
+// presser's machine clicks for the body it cancelled. Nothing to replay on a late join.
 //
-// This lane refuses the client's own body at the script-body gate and sends the press. The
-// console is not named: level-baked and keyed by no lane, it has neither a save key nor an
-// element id, so the host resolves the one the sender stands at -- that resolve IS the reach
-// test -- re-tests the lid, then calls/sends or flips its leaveAfter5min (DroneState carries it) and clicks.
-// The presser's machine clicks for the body it cancelled. Nothing to replay on a late join.
+// The drone's own menu rides the same intent: its "take the sack off" (actionOptionIndex 7, dropSack) on a client's
+// stopped copy would drop a sack no other peer has, so it is refused there and sent as the sack verb; the host runs its
+// own drone's choice for a sender within reach of a parked drone with its sack on.
 
 #pragma once
 

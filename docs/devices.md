@@ -247,32 +247,26 @@ past a bound are refused with a log naming the prop and size, the contents or pr
 
 ### Keypads and locks
 
-A keypad is a typed buffer and a verdict, and the verdict is also the power it hands on to its pair
-and its gated door. The host's copy decides. Every change goes through one of the keypad's own
-verbs -- a digit, an open with its verdict, the scripted guesser, the set-new-code mode, a false
-entry -- and the script-body gate watches them by name (`coop/interactables/keypad_verbs`): before
-each body on the host the verb goes to every client, which runs the same verb on its own copy, so
-the keypad's own chain plays its sounds and lands the same state; after it the state the chain
-settled on goes too -- at the keypad's setActive, its pair's with it and the password in it; at a
-digit or a reset that started no open -- and a joiner gets each keypad's state in its snapshot
-(`coop/interactables/keypad_sync`), handed on to its pair and door where the host's already hold
-it, so a door ends as the host's even when a chain ran after the host's save was taken. A client's
-copy is written to that state whatever its own
-replay met, but one that arrives while the copy's own replayed open, on the keypad or its pair, is
-still in its 0.2 s wait is written at that chain's end, so it never lands under the tail that
-reads the set-new-code mode and writes the pair. On a client every call of those
-verbs is refused but the lane's own; a player's own entries -- a digit, the accept or cancel key,
-the numpad's (told apart by the key, since the numpad's accept passes the copy's own verdict), a
-keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
-copy, judging a submit against its own password. A digit clicked on the keys needs the light's power
-on the presser's own copy, as single player's click does, and a client's copy holds the host's
-light power, since a client applies the host's canonical through the panel's own buttonsVisibility,
-whose tail runs setPower once the panel is enabled and its generators read whole: a client's clicks
-stop in a blackout and come back with the power. The entries run in order, and the next one waits
-while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
-clears its buffer, so none is lost to either wait (a full queue still refuses). A keycard's
-verdict is taken only while the sender holds a keycard. An accept unlocks a door; opening it is
-an ordinary press of the door.
+A keypad is a typed buffer and a verdict, and the verdict is also the power it hands on to its pair and its gated door. The
+host's copy decides. Every change goes through one of the keypad's own verbs -- a digit, an open with its verdict, the
+scripted guesser, the set-new-code mode, a false entry -- and the script-body gate watches them by name
+(`coop/interactables/keypad_verbs`): before each body on the host the verb goes to every client, which runs the same verb on
+its own copy, so the keypad's own chain plays its sounds and lands the same state; after it the state the chain settled on
+goes too -- at the keypad's setActive, its pair's with it and the password in it; at a digit or a reset that started no open
+-- and a joiner gets each keypad's state in its snapshot (`coop/interactables/keypad_sync`), handed on to its pair and door
+where the host's already hold it, so a door ends as the host's even when a chain ran after the host's save was taken. A
+client's copy is written to that state whatever its own replay met, but one that arrives while the copy's own replayed open,
+on the keypad or its pair, is still in its 0.2 s wait is written at that chain's end, so it never lands under the tail that
+reads the set-new-code mode and writes the pair. On a client every call of those verbs is refused but the lane's own; a
+player's own entries -- a digit, the accept or cancel key, the numpad's (told apart by the key, since the numpad's accept
+passes the copy's own verdict), a keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb
+on its copy, judging a submit against its own password. A digit clicked on the keys needs the light's power on the presser's
+own copy, as single player's click does, and a client's copy holds the host's light power, since a client applies the host's
+canonical through the panel's own buttonsVisibility, whose tail runs setPower once the panel is enabled and its generators
+read whole: a client's clicks stop in a blackout and come back with the power. The entries run in order, and the next one
+waits while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that clears its buffer, so
+none is lost to either wait (a full queue still refuses). A keycard's verdict is taken only while the sender holds a keycard.
+An accept unlocks a door; opening it is an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
@@ -422,28 +416,33 @@ generators and puts the kept row back onto the tower after each.
 
 ### The drone
 
-The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host
-streams its transform, stamped with its send time, while it moves and its state as it changes. The client
-stops the drone's tick and physics (a touched body spun between writes) and plays the poses back a little
-behind the host's times, as late as the link needs, so late or bunched poses do not lurch, and the
-cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
-runs on the host only, which is what makes selling into it the one economy path that credits the
-group correctly.
+The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host streams its transform,
+stamped with its send time, while it moves and its state as it changes. The client stops the drone's tick and physics (a
+touched body spun between writes) and plays the poses back a little behind the host's times, as late as the link needs, so late
+or bunched poses do not lurch, and the cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The
+client's stopped drone never runs the host's unhook, which hides the sack it draws, so it shows or hides its copy's sack mesh
+on the host's `hasSack` `[V]` (`coop/dev/droneunhook_probe`). A sack put back reaches the other peers only as the loose sack's
+destroy (the drone's putSackOn, run by its overlap with the sack box on each copy), which on a copy the drone did not take
+scolds and spawns a new sack, so the host's drone hooks a client's sack lying within 3 m of its box and a client's copy goes as
+taken `[V]` (`VOTVCOOP_DRONEUNHOOK_REHOOK`). A client's take-off, the drone's own menu (its actionOptionIndex 7, dropSack), is
+refused on its copy and asked of the host (`DroneFlyIntent`'s sack verb, `coop/interactables/drone_call_intent`), whose drone
+drops the one sack for a sender within 5 m of it parked with its sack on `[V]` (`VOTVCOOP_DRONEUNHOOK_BY=client` with
+`VOTVCOOP_DRONEUNHOOK_REHOOK=floor`: the client took it off, grabbed it, let it fall, grabbed it again and hooked it, each step
+the same on both peers). The drone's sale runs on the host only, which is what makes selling into it the one economy path that
+credits the group correctly.
 
-The garage console calls and sends it. Its one action option dispatches on what the presser is
-looking at -- the keyboard runs the drone's own call-or-send verb, the other face toggles the
-drone's leave timer and clicks -- and the console holds its drone as a level reference, so every peer's
-console points at that peer's own drone. A client's press therefore reached a mirror whose flight
-tick is suppressed: nothing moved and nobody heard about it, which is why only the host could work
-the button. The client now refuses its own body at the script-body gate and sends the press. The
-console carries no identity to name, so the host takes the console of its own world that the sender
-stands at, re-tests its own copy of the lid, then runs the same verb, so the flight starts on the
-machine that owns it and arrives on the stream that already carries it
-(`coop/interactables/drone_call_intent`). A press that reaches the host before it holds the sender's
-body, from a joiner who presses at once, waits for the body rather than being refused, as the
-door-verb, keypad and container lanes wait. The leave-timer face rides the same lane: the host flips
-its own drone's setting, which every peer's copy takes from the drone's state stream, and the console's
-click plays on the presser's machine and on the host.
+The garage console calls and sends it. Its one action option dispatches on what the presser is looking at -- the
+keyboard runs the drone's own call-or-send verb, the other face toggles the drone's leave timer and clicks -- and the
+console holds its drone as a level reference, so every peer's console points at that peer's own drone. A client's
+press therefore reached a mirror whose flight tick is suppressed: nothing moved and nobody heard about it, which is
+why only the host could work the button. The client now refuses its own body at the script-body gate and sends the
+press. The console carries no identity to name, so the host takes the console of its own world that the sender stands
+at, re-tests its own copy of the lid, then runs the same verb, so the flight starts on the machine that owns it and
+arrives on the stream that already carries it (`coop/interactables/drone_call_intent`). A press that reaches the host
+before it holds the sender's body, from a joiner who presses at once, waits for the body rather than being refused, as
+the door-verb, keypad and container lanes wait. The leave-timer face rides the same lane: the host flips its own
+drone's setting, which every peer's copy takes from the drone's state stream, and the console's click plays on the
+presser's machine and on the host.
 
 ### The woodchipper
 

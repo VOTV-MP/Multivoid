@@ -128,6 +128,7 @@
 #include "coop/dev/creature_hit_drill.h"  // [dev] a parked creature's hit delivered to a client, a client's hit on it judged by the host
 #include "coop/dev/hostile_drill.h"  // [dev] the receive boundary: a client forges malformed packets, the host judges
 #include "coop/dev/native_pile_inert_probe.h"
+#include "coop/dev/droneunhook_probe.h"   // [dev] the host unhooks the drone sack, logged on both
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
 #include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
 #include "coop/dev/order_probe.h"  // who writes the order queue, and what the drone delivers, per peer
@@ -452,6 +453,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
     coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
     coop::dev::sleep_speedup_drill::Tick(&session);  // [dev] whose sleep speeds the world up (a latched read when off)
+    coop::dev::droneunhook_probe::Tick(&session);  // [dev] the drone unhook (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)
