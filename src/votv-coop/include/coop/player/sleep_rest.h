@@ -44,7 +44,13 @@ void Tick();
 // read. Game thread.
 bool Resting();
 
-// The session ended: a rest in progress is handed back at factor 1.
+// The sleep and wakeup watches a rest stands on: Pending until both are live, Dead when the gate settled one without
+// it (no rest is carried out then, and the host's sleep stays the game's own). For a drill's precondition. Game thread.
+enum class WatchState { Pending, Live, Dead };
+WatchState Watches();
+
+// The session ended: a client's rest in progress is handed back at factor 1, and a host's sleep takes the game's factor.
+// A host's last client left with the session living on: the host's sleep is declared again with nobody connected.
 void OnDisconnect();
 
 }  // namespace coop::sleep_rest

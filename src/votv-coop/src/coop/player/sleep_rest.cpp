@@ -385,6 +385,16 @@ void Tick() {
 
 bool Resting() { return g_resting; }
 
+WatchState Watches() {
+    const Watch* ws[] = {&g_sleepWatch, &g_wakeWatch};
+    bool pending = false;
+    for (const Watch* w : ws) {
+        if (w->settled && !w->live) return WatchState::Dead;
+        pending = pending || !w->live;
+    }
+    return pending ? WatchState::Pending : WatchState::Live;
+}
+
 // The last client left a host's session, which lives on: the host's sleep is declared again with nobody connected. A
 // session that ended: a rest in progress goes back, and a host resting at 1 sleeps on by itself at the game's factor.
 void OnDisconnect() {

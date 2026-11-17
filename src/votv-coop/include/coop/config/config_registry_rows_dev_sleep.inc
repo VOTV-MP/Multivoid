@@ -14,14 +14,18 @@ CFG_ENUM(sleep_drill, "sleep_drill", "dev", "off", "off|host_asleep|client_rest|
     "hookdrag_selftest=1 and hookdrag_role=client on both peers. The client prints its armed line only. "
     "Every phase ends on a verdict line "
     "([SLEEP-DRILL] <arm> <role> PASS|FAIL), and a phase that does not come is a FAIL after a bound.")
-CFG_FLAG(sleep_speedup_drill, "sleep_speedup_drill", "dev", false, "VOTVCOOP_SLEEP_SPEEDUP_DRILL",
+CFG_ENUM(sleep_speedup_drill, "sleep_speedup_drill", "dev", "off", "off|modes|row_change|leave",
+    "VOTVCOOP_SLEEP_SPEEDUP_DRILL",
     "Drill, whose sleep speeds the world up; set on BOTH peers, with the peers' folder VOTVCOOP_CAN_DIR, needs left "
-    "alone (VOTVCOOP_FILL_NEEDS=0) and a fresh host world. One arm per value of the host's world.sleep_speedup (the "
-    "rig's --host-config). The host sleeps with the client awake and reads the world's dilation at each edge; the "
-    "host says 'rig: VERDICT sleep-speedup PASS|FAIL|INVALID -- <mode>: <what>', and each peer 'DONE'. everyone: the "
-    "world reads 1 while the client is awake, the game's factor once it sleeps, and 1 once it wakes. host: the game's "
-    "factor at once. never: 1 with both asleep. It MUTATES the world (dev writes: the needs, the host's nightmare "
-    "chance).")
+    "alone (VOTVCOOP_FILL_NEEDS=0) and a fresh host world. The host sleeps with the client awake and reads the "
+    "world's dilation at each edge; the host says 'rig: VERDICT sleep-speedup PASS|FAIL|INVALID -- <arm>: <what>', and "
+    "each peer 'DONE'. modes: one arm per value of the host's world.sleep_speedup (the rig's --host-config). everyone: "
+    "the world reads 1 while the client is awake, the game's factor once it sleeps, and 1 once it wakes. host: the "
+    "game's factor at once. never: 1 with both asleep. row_change (the host's row everyone): the host asleep and the "
+    "client awake reads 1, the row set to host for the session reads the game's factor at once, set back to everyone "
+    "it reads 1. leave (the host's row everyone or never): both asleep, the client leaves: everyone reads the game's "
+    "factor, never still reads 1. A dead sleep or wakeup watch is INVALID. It MUTATES the world (dev writes: the "
+    "needs, the host's nightmare chance, the row's session value).")
 CFG_FLAG(sleep_speedup_rule_off, "sleep_speedup_rule_off", "dev", false, "VOTVCOOP_SLEEP_SPEEDUP_RULE_OFF",
     "Developer red arm of the sleep speed-up drill: never set. The host ignores world.sleep_speedup and acts as host, "
     "so its sleep speeds the world up whoever is awake: the everyone and never arms must FAIL at the host's first "
