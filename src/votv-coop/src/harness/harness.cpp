@@ -27,6 +27,7 @@
 #include "coop/save/join_window_baseline.h"
 #include "coop/save/save_transfer.h"
 #include "coop/dev/spawn_menu_unlock.h"
+#include "coop/dev/pile_orphan_drill.h"  // the orphan drill's signal clock, started at boot
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/world_first_check.h"
 #include "coop/session/teleport_client.h"
@@ -509,6 +510,10 @@ void Start() {
     // The sandbox prop-spawn menu (Q) in story mode, under [dev] spawn_menu_unlock=1 or the F1
     // menu; host and local only.
     coop::dev::spawn_menu_unlock::Init();
+
+    // The pile orphan drill's peer-signal clock, at boot: the host writes its staging signal when the joiner's
+    // world is cut, before the joiner has a pawn, and the helper takes only a signal written after its Begin.
+    coop::dev::pile_orphan_drill::Init();
 
     // The other dev features (snow, restore vitals, teleport clients, the position and camera
     // overlay, spawn NPC) are driven from the F1 menu; their SetSession calls ran above.

@@ -106,7 +106,7 @@ const Cand* PickIsolated(const std::vector<Cand>& cs, bool clump) {
 
 }  // namespace
 
-void Install() {
+void Init() {
     if (!Armed() || g_tried) return;
     g_tried = true;
     if (!PS::Begin(kTag)) { g_done = true; return; }   // Begin said INVALID itself

@@ -17,9 +17,10 @@
 
 namespace coop::dev::pile_orphan_drill {
 
-// Once at boot; a latched bool read when off. Starts the peer signal's clock there, since the helper takes only a signal
-// written after it: the host writes right after the capture, which can land before the client's first tick.
-void Install();
+// Once at harness boot; a latched bool read when off. Starts the peer signal's clock there, since the helper takes only a
+// signal written after it: the host writes when the joiner's world is cut, long before the joiner has a pawn, and no pump
+// (the install pump included) runs on a client before its world is up.
+void Init();
 
 // The session ended: a rejoin's client reads and judges again.
 void OnDisconnect();
