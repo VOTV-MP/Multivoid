@@ -146,6 +146,26 @@ const EndReasonInfo& Describe(EndReason code) {
     return kNone;
 }
 
+namespace {
+constexpr char kMaxPlayersKey[] = "max_players=";
+}  // namespace
+
+std::string MaxPlayersDetail(int n) { return kMaxPlayersKey + std::to_string(n); }
+
+bool ReadMaxPlayersDetail(const std::string& detail, int& n) {
+    constexpr size_t kKeyLen = sizeof(kMaxPlayersKey) - 1;
+    if (detail.size() <= kKeyLen || detail.size() > kKeyLen + 3 ||
+        detail.compare(0, kKeyLen, kMaxPlayersKey) != 0)
+        return false;
+    int v = 0;
+    for (size_t i = kKeyLen; i < detail.size(); ++i) {
+        if (detail[i] < '0' || detail[i] > '9') return false;
+        v = v * 10 + (detail[i] - '0');
+    }
+    n = v;
+    return true;
+}
+
 int ToTransportEnd(EndReason code) {
     return k_ESteamNetConnectionEnd_App_Min + static_cast<int>(code);
 }
@@ -210,6 +230,15 @@ bool RunSelftest() {
               "code survives the transport end reason", r.info.id);
     }
     check(Describe(EndReason::None).id[0] == '\0', "None describes as empty", "MV-");
+    {
+        int n = 0;
+        check(ReadMaxPlayersDetail(MaxPlayersDetail(16), n) && n == 16,
+              "the limit's detail reads back", "MV-H21");
+        n = 7;
+        check(!ReadMaxPlayersDetail("max_players=", n) && !ReadMaxPlayersDetail("max_players=2x", n) &&
+                  !ReadMaxPlayersDetail("no seat is free yet", n) && n == 7,
+              "another cause's detail is not read as a limit", "MV-H21");
+    }
     check(FromTransportEnd(k_ESteamNetConnectionEnd_App_Generic) == EndReason::HostClosed,
           "the bare application code reads as a host close", "MV-H28");
     check(FromTransportEnd(0) == EndReason::LinkLost, "an unknown end reads as a lost link",

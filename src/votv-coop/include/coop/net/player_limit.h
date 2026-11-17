@@ -5,6 +5,10 @@
 // threads (which tell the master) never resolve it; they read this atomic. The game thread sets it
 // from the row at boot and again at every change of the row's value: a set, a reset, the session
 // layer's fill at a host's session start and its emptying at the end.
+//
+// The shape is MTA's: a hard ceiling fixed at build time (kMaxPeers) and the host's soft limit under it
+// (CMainConfig.cpp:1062, GetMaxPlayers is the smaller of the two); the soft one only decides who may
+// join next and never removes anyone.
 
 #pragma once
 

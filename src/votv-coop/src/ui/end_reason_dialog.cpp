@@ -63,9 +63,19 @@ void Render() {
         // The code's own sentence first; the site's text under it when it adds something (the
         // two builds, the host's own words), never the same line twice.
         ImGui::TextWrapped("%s", l10n::T(info.text));
-        if (!notice.detail.empty() && notice.detail != info.text) {
+        // A host whose player limit refused the join sends the number as a machine token; the
+        // sentence is written here, in this player's language.
+        std::string detail = notice.detail;
+        int limit = 0;
+        if (notice.code == coop::net::EndReason::HostFull &&
+            coop::net::ReadMaxPlayersDetail(notice.detail, limit)) {
+            char line[160];
+            l10n::Fmt(line, sizeof(line), l10n::T("The host allows %d players."), limit);
+            detail = line;
+        }
+        if (!detail.empty() && detail != info.text) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f, 0.66f, 0.66f, 1.0f));
-            ImGui::TextWrapped("%s", notice.detail.c_str());
+            ImGui::TextWrapped("%s", detail.c_str());
             ImGui::PopStyleColor();
         }
         ImGui::Spacing();

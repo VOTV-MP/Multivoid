@@ -434,8 +434,11 @@ private:
     void SampleLinkRates(uint64_t nowMs);
     void HandleConnStatusChanged(void* info);
     // Host: the lowest empty slot in [1..kMaxPeers-1], or -1 when the seated players, the host
-    // among them, have reached the host's limit (coop/net/player_limit.h) or no slot is empty.
-    int FindFreePeerSlotForClient();
+    // among them, have reached the host's limit (coop/net/player_limit.h) or no slot is empty. A
+    // `rejoin` (an identity that held a seat which was just freed for it) is not held to the limit.
+    int FindFreePeerSlotForClient(bool rejoin);
+    // Host: the players seated now, the host among them.
+    int SeatedPlayers() const;
     // The peer slot that owns hConn, or -1.
     int FindPeerSlotForConn(uint32_t hConn);
     // Per-peer reset, at the slot's disconnect and at session stop; slot 0's covers the host's own
@@ -552,9 +555,10 @@ public:
     // oldest unproved entry (the .cpp says why an arrival outranks it). Net thread.
     int  ParkPending(uint32_t hConn);
     // Promote a pending connection to a seat: the lowest free slot, the user data re-pointed, the
-    // generation minted, the lanes configured. -1 if the lobby is full (the caller closes). Net
-    // thread.
-    int  AdmitPending(int pendingIdx, uint32_t hConn);
+    // generation minted, the lanes configured. -1 if the host's limit is reached or no slot is free
+    // (the caller closes); `rejoin` seats an identity that just lost its seat to its own newer
+    // connection, whatever the limit now says. Net thread.
+    int  AdmitPending(int pendingIdx, uint32_t hConn, bool rejoin);
 
 private:
     // The lanes, the send-buffer mirror, the lanes-configured flag and (host) the AssignPeerSlot
