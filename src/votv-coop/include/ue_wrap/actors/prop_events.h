@@ -23,6 +23,11 @@ bool CallBaseGrabPrelude(void* prop);
 // thread.
 bool CallBaseSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping);
 
+// The prop's own crowbarOpen(pryingCrowbar), the verb a prying crowbar ends in, resolved on the prop's
+// class so an override runs. The crowbar is passed null: a body that kicks the prop along the crowbar's
+// axis kicks it by zero. False if the verb did not dispatch. Game thread.
+bool CallCrowbarOpen(void* prop);
+
 // prop_C's thrown(Player) event, run as a throw runs it, so the Blueprint plays the swing's trail and
 // sound. False for a null prop or player, or when the class or the event did not resolve. Game
 // thread.

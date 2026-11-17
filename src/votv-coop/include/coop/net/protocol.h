@@ -1900,11 +1900,14 @@ static_assert(sizeof(VoiceStatePayload) == 4, "VoiceStatePayload must be 4 bytes
 // and which field the Blueprint set (bit 0 frozen, bit 1 static), or 0 for an unstick. A stick
 // carries the commit-time transform the receiver pre-poses to before replaying the component's own
 // forceStick; an unstick carries the prop's transform and velocity once the unsticking peer's body
-// freed it, which a pry's kick is part of, and the receiver lets its copy go from there.
+// freed it, which a pry's kick is part of, and the receiver lets its copy go from there. kPropStickPried
+// alone is a crowbar's pry of a prop with no wall-attach component (a plank, a radiator): the receiver
+// runs the prop's own crowbarOpen and lets its copy go from the transform and velocity the same way.
+inline constexpr uint8_t kPropStickPried = 4;
 struct PropStickStatePayload {
     WireKey  key;
     uint32_t elementId;
-    uint8_t  flags;      // bit0 = frozen, bit1 = static; 0 = unstuck
+    uint8_t  flags;      // bit0 = frozen, bit1 = static; 0 = unstuck; kPropStickPried = pried
     uint8_t  _pad;       // zeroed
     uint16_t holdGen;    // the sticking peer's hold, which the stick closes; 0 on an unstick
     float locX, locY, locZ;

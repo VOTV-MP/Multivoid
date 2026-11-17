@@ -322,6 +322,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/rest_compare.cpp
     src/coop/dev/drill_ground.cpp
     src/coop/dev/oven_progress_drill.cpp
+    src/coop/dev/pried_drill.cpp
     src/coop/dev/pry_drill.cpp
     src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp

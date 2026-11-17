@@ -13,3 +13,10 @@ CFG_FLAG(oven_merge_off, "oven_merge_off", "dev", false, "VOTVCOOP_OVEN_MERGE_OF
     "Developer red arm of the oven drill: never set. This peer counts a repair-step mask that reaches it "
     "with a bit its screen lacks and does not raise the bit, so the drill's judge on this peer must FAIL at "
     "that arrival.")
+CFG_ENUM(pried_drill, "pried_drill", "dev", "off",
+    "off|plank_host|plank_client|radiator_host|radiator_client",
+    "VOTVCOOP_PRIED_DRILL",
+    "Drill (BOTH peers): a crowbar's pry of a prop with no wall-attach component, by the prop's own "
+    "crowbarOpen with no crowbar. The watching peer names the first stuck prop of the class (a plank, a "
+    "radiator), the acting peer pries it and says where its copy rests, and the watching peer judges its "
+    "own copy. One `[PRIED-DRILL] [H|C] PASS` or `FAIL` line per judge.")
