@@ -50,7 +50,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **SirWilliam** | report | Rejoining a session requires a full relaunch | fixed, unreleased |
 | **thewittyrobin** | report | Doors that never open for the other peer, twice ([#17](https://github.com/VOTV-MP/Multivoid/pull/17), [#18](https://github.com/VOTV-MP/Multivoid/pull/18)). Both proposed mechanisms measured out differently, and both reports are of one real defect: on the public build a door is addressed by a key the game re-mints per process | root-caused, unreleased |
 | [**ElvardFIC**](https://github.com/ElvardFIC) and [**AquaFishhh**](https://github.com/AquaFishhh) | code | The shape of the food lane, from Watchers of the Void: the host as a food's one author, a client's bite as an intent, a held food's condition for the copy others show | food lane |
-| [**petmav**](https://github.com/petmav) | code | The stutter a joiner felt once its loading screen dropped ([#157](https://github.com/VOTV-MP/Multivoid/pull/157)); why a saved signal or a deck selection was refused, said in the log, a signal row whose names two peers spell in different case, and a traffic census by message kind ([#158](https://github.com/VOTV-MP/Multivoid/pull/158)) | 3 commits · unreleased |
+| [**petmav**](https://github.com/petmav) | code | The stutter a joiner felt once its loading screen dropped ([#157](https://github.com/VOTV-MP/Multivoid/pull/157)); why a saved signal or a deck selection was refused, said in the log, a signal row whose names two peers spell in different case, and a traffic census by message kind ([#158](https://github.com/VOTV-MP/Multivoid/pull/158)); the player cap raised past four, with the master's lobby seats to match ([#152](https://github.com/VOTV-MP/Multivoid/pull/152)) | 5 commits · unreleased |
 
 ---
 
@@ -554,6 +554,11 @@ Ghezra's ([#76](https://github.com/VOTV-MP/Multivoid/pull/76)) rewrote it on thi
   a signal row's identity no longer depends on the case two peers' engines spell its names in, and a dev census
   counts what a peer receives by message kind and bytes. Kept as written; on top, the census is a dev setting like
   its sister and counts every message kind.
+- **More than four players** ([#152](https://github.com/VOTV-MP/Multivoid/pull/152)): the player cap went from four to eight, the per-player ack arrays of the
+  power panel, grid and fuse towers with it, and the master's lobby seats to match. Kept as written (its 0.10.0-only
+  scope text left out); on top, it became the start of the player capacity work: the ceiling sixteen, the host's own
+  limit (two by default), a slot-set type for every per-player mask, and a load-peer tool that proved all sixteen
+  seats; its automatic second ATV was not taken (a cheat in the single-player world).
 
 ## Reports and reviews
 

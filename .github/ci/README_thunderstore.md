@@ -28,7 +28,7 @@ browser marks mismatched lobbies before you click.
 
 ## What you get
 
-- **Co-op over LAN or Internet** — one host, up to seven friends; join by direct IP or
+- **Co-op over LAN or Internet** — one host and up to fifteen friends (the host sets the limit, two by default); join by direct IP or
   through the built-in server browser backed by the official master server.
 - **Real remote players** — full body and animations, per-player skins, nameplates with
   live ping, chat, and 3D positional **voice chat**.
