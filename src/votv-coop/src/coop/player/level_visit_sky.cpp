@@ -33,6 +33,14 @@ std::vector<void*> g_hiddenSky;
 std::vector<void*> g_offVolumes;
 ULONGLONG g_skyHeldAtMs = 0;
 
+// A scene component's own bVisible. False when it does not read.
+bool IsVisible(void* comp) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!comp || !R::IsLive(comp) || !R::FindBoolProperty(R::ClassOf(comp), L"bVisible", off, mask) || off < 0) return false;
+    return (static_cast<const uint8_t*>(comp)[off] & mask) != 0;
+}
+
 bool SetComponentVisible(void* comp, bool on) {
     void* fn = comp && R::IsLive(comp) ? R::FindDispatchFunctionCached(R::ClassOf(comp), L"SetVisibility") : nullptr;
     ue_wrap::ParamFrame pf(fn);
@@ -78,8 +86,10 @@ void Hide(void* mapLevel) {
         std::vector<void*> world, inMap;
         InstancesOf(name, true, mapLevel, world, inMap);
         int hidden = 0;
+        // Only what is shown is hidden and remembered: the day-night cycle keeps some of these hidden itself (the sun
+        // at night), and Show must not turn those on.
         for (void* c : world)
-            if (SetComponentVisible(c, false)) { g_hiddenSky.push_back(c); ++hidden; }
+            if (IsVisible(c) && SetComponentVisible(c, false)) { g_hiddenSky.push_back(c); ++hidden; }
         if (!world.empty()) said += L" " + std::wstring(name) + L"=" + std::to_wstring(hidden);
     }
     std::vector<void*> volumes, mapVolumes;
