@@ -24,6 +24,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <array>
 #include <string>
@@ -41,6 +43,7 @@ namespace SR = ue_wrap::save_record;
 namespace sg = ue_wrap::script_gate;
 namespace CI = ue_wrap::container_inventory;
 namespace CR = ue_wrap::class_resolve;
+namespace E  = ue_wrap::engine;
 namespace W  = coop::save_record_wire;
 namespace N  = coop::net;
 
@@ -459,6 +462,10 @@ void TickMirrors() {
         }
         const SR::ClassLoad load = host ? SR::ClassLoad::LookupOnly : SR::ClassLoad::Immediate;
         const bool ok = SR::ApplyRecord(mirror, h.rec, load);
+        // The prop's own loadData turns its physics back on, and a display falls out of the hand between the
+        // view's placings (Ghezra/Multivoid#38, a disc seen hanging and sinking): it is made a display again.
+        E::SetActorSimulatePhysics(mirror, false);
+        E::SetActorEnableCollision(mirror, false);
         h.appliedTo.Set(mirror);
         h.dirty = false;
         ++g_written[s];
