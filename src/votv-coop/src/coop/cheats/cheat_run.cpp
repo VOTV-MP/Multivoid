@@ -5,7 +5,6 @@
 #include "coop/cheats/item_spawn.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
-#include "coop/dev/add_points.h"
 #include "coop/dev/event_trigger.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -83,12 +82,14 @@ Outcome RunPoints(const Request& r, int senderSlot) {
     if (senderSlot != 0 && (r.amount > coop::net::kCheatMaxPoints || r.amount < -coop::net::kCheatMaxPoints))
         return Done(CheatReason::BadRequest);
     int amount = r.amount;
-    // A removal stops at zero: the balance is never taken below what the game's own shop could leave it.
+    // The read, the clamp and the add happen here, in one game-thread step: a burst of removals cannot each read the
+    // same balance. A removal stops at zero (the balance is never taken below what the game's own shop could leave it);
+    // one that would change nothing is Failed, not a done.
     int32_t now = 0;
     if (!ue_wrap::economy::ReadPoints(&now)) return Done(CheatReason::NotReady);
     if (amount < 0 && now + amount < 0) amount = -now;
-    if (amount != 0) coop::dev::add_points::GivePoints(amount);
-    return Done(CheatReason::Ok);
+    if (amount == 0) return Done(CheatReason::Failed);
+    return Done(ue_wrap::economy::AddPoints(amount) ? CheatReason::Ok : CheatReason::Failed);
 }
 
 Outcome RunEvent(const Request& r, int senderSlot) {

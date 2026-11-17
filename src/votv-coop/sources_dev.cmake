@@ -14,7 +14,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/meadow_selftest.cpp
     src/coop/dev/meadow_selftest_rows.cpp
     src/coop/dev/order_probe.cpp
-    src/coop/dev/add_points.cpp
     src/coop/dev/spawn_order_probe.cpp
     src/coop/dev/prop_birth_key_probe.cpp
     src/coop/dev/impact_damage_probe.cpp

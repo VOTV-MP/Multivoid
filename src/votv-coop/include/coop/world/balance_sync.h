@@ -1,7 +1,7 @@
 // coop/world/balance_sync.h -- shared host-authoritative credit balance (saveSlot.Points).
 //
 // The HOST owns the canonical balance. It POLLS Points each game-thread tick -- catching every
-// writer: shop orders, signal-disk sells, task rewards, the +1000 dev button -- and broadcasts
+// writer: shop orders, signal-disk sells, task rewards, the host's cheat points -- and broadcasts
 // BalanceSync on CHANGE, and to a joining client on its connect edge, so every peer MIRRORS the
 // host's balance. The CLIENT writes the host's absolute value directly, with no AddPoints
 // side-effects -- the MTA server-economy shape. SetSession, Tick and the connect edge run on the
@@ -48,11 +48,6 @@ void SendCurrentToSlot(int slot);
 // client's copy at its receive edge. The write itself is Tick's, on the game thread: this stashes
 // the value, and Tick retries the write until the saveSlot resolves.
 void ApplyFromHost(int32_t total);
-
-// Apply a LOCAL credit (the +1000 dev button) on the host or solo, through AddPoints. On a
-// connected CLIENT this REFUSES and logs: there is no client-to-host economy write at all. Safe
-// from the render thread (the menu).
-void CreditLocal(int32_t amount);
 
 // Reset the broadcast dedup on session teardown (so a reconnect re-broadcasts).
 void OnDisconnect();

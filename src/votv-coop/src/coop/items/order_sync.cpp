@@ -313,9 +313,7 @@ bool ResolveOne(net::Session* s, uint8_t slot, Pending& pe) {
         }
         return false;  // retry
     }
-
-    // Charge AFTER the goods are confirmed queued, and synchronously. Deliberately NOT
-    // balance_sync::CreditLocal: its host branch defers through GT::Post, and a deferred debit would
+    // Charge AFTER the goods are confirmed queued, and synchronously: a debit posted to a later frame would
     // let a second order in this same drain pass price against a balance that has not moved yet.
     // The host's next balance poll broadcasts the new value to everyone, so no direct send is needed
     // on the success path.

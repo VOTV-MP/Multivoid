@@ -5,7 +5,6 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "ue_wrap/world/economy.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
 #include <atomic>
@@ -14,7 +13,6 @@
 namespace coop::balance_sync {
 namespace {
 
-namespace GT = ue_wrap::game_thread;
 namespace E  = ue_wrap::economy;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -88,29 +86,6 @@ void ApplyFromHost(int32_t total) {
     // resolves (a connect-edge BalanceSync can arrive before the gamemode is ready).
     g_pendingTotal.store(total, std::memory_order_release);
     g_havePending.store(true, std::memory_order_release);
-}
-
-void CreditLocal(int32_t amount) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    const bool host      = s && s->role() == coop::net::Role::Host;
-    const bool connected = s && s->connected();
-    if (host || !connected) {
-        // Host OR solo (no live session): apply locally. If hosting, the next TickHost
-        // poll sees the new Points and broadcasts it to all clients.
-        GT::Post([amount] { E::AddPoints(amount); });
-        UE_LOGI("balance_sync: local credit %+d (%s)", amount,
-                host ? "host -> will broadcast" : "solo");
-        return;
-    }
-    // A connected CLIENT cannot AUTHOR the shared balance, and that half is deliberate: the lane
-    // that let it -- a delta the host applied through AddPoints with no value bound -- was retired
-    // whole rather than clamped, because the balance is host-authoritative everywhere. Client-side
-    // earning still reaches it, but only where an intent lane forwards the action and the host
-    // re-runs the game's own verb on the authoritative instance, as coingun_collect does for a coin
-    // pickup. A direct credit from here is not that, so it is refused: defence in depth, since
-    // coop::dev_gate already refuses the only caller on a client.
-    UE_LOGW("balance_sync: local credit %+d REFUSED -- a client cannot author the shared "
-            "balance; earning reaches it through an intent lane the host re-runs", amount);
 }
 
 void OnDisconnect() {
