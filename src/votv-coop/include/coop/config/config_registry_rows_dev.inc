@@ -337,19 +337,8 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat
     "the host sets its clock just short of midnight once it has taken a joiner's world, so the midnight "
     "falls inside the join, and both peers print their dishes' hash digest; equal is a pass. Run it on a "
     "fresh host world; every refused step is logged and ends the arm as invalid.")
-CFG_ENUM(sleep_drill, "sleep_drill", "dev", "off", "off|host_asleep|client_rest|beside", "VOTVCOOP_SLEEP_DRILL",
-    "Drill (BOTH peers), once a client's join is over: what a host's sleep and a client's rest do. Run the host "
-    "with world.sleep_speedup=host (--host-config): the default's host rests at 1 while the client is awake. "
-    "host_asleep: the host sets its need to 80 and sleeps natively and says the world's dilation it "
-    "reads (20); the client reads its own world's dilation (1) and its clock for 10 s, and the clock "
-    "must run at 0.9 of the native rate. client_rest: the host sleeps and prints its real seconds; "
-    "when it wakes the client reads its food for 10 s, sleeps from a need of 80 in the nearest bed "
-    "and prints its real seconds, its world's dilation, and its food and need at both ends. The host "
-    "holds its nightmare chance at 0 for the arm. beside: the host sleeps and is held asleep (its need is "
-    "written to 50 every tick) until the hook drag selftest has ended on it, then wakes; run it with "
-    "hookdrag_selftest=1 and hookdrag_role=client on both peers. The client prints its armed line only. "
-    "Every phase ends on a verdict line "
-    "([SLEEP-DRILL] <arm> <role> PASS|FAIL), and a phase that does not come is a FAIL after a bound.")
+// The sleep lane's drills and the sleep speed-up's red arm: their own file, one concept.
+#include "coop/config/config_registry_rows_dev_sleep.inc"
 CFG_ENUM(badsun_drill, "badsun_drill", "dev", "off", "off|clock|midnight|spawn|cheat|join|end|absent_stale", "VOTVCOOP_BADSUN_DRILL",
     "Drill (BOTH peers), the Bad Sun: does a peer's own loaded copy go "
     "active by its own clock. clock, join and end need the save that holds one saved Bad Sun, the slot s_rig_badsun "
@@ -796,8 +785,6 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_vidcam.inc"
 // The nightmare lane's drill, staging and red arms: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_nightmare.inc"
-// The sleep speed-up setting's drill and red arm: their own file, one concept.
-#include "coop/config/config_registry_rows_dev_sleep_speedup.inc"
 // The level-visit lane's drill and red arms: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_level_visit.inc"
 // The cargo lift drill's rows: their own file, one concept.
