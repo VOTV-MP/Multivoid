@@ -433,7 +433,8 @@ private:
     // the round-trip probe each slot owes. See coop/net/send_rate_control.h.
     void SampleLinkRates(uint64_t nowMs);
     void HandleConnStatusChanged(void* info);
-    // Host: the lowest empty slot in [1..kMaxPeers-1], or -1 when full.
+    // Host: the lowest empty slot in [1..kMaxPeers-1], or -1 when the seated players, the host
+    // among them, have reached the host's limit (coop/net/player_limit.h) or no slot is empty.
     int FindFreePeerSlotForClient();
     // The peer slot that owns hConn, or -1.
     int FindPeerSlotForConn(uint32_t hConn);

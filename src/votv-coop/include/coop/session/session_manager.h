@@ -19,9 +19,6 @@
 
 namespace coop::session_manager {
 
-// The player count a hosted lobby advertises to the server browser: the session's player cap, the host included.
-inline constexpr int kLobbyPlayersMax = static_cast<int>(coop::net::kMaxPeers);
-
 // The mod's version identity is a pair: GameTarget names the VOTV cook this build targets, compiled
 // in from the header generated out of coop/version.h.in; the build number is kProtocolVersion,
 // which moves exactly when compatibility moves. DisplayVersion is the composite the menu shows.
@@ -84,7 +81,7 @@ int FetchFailures();
 // start and the heartbeat. Distinct from HostWithSave, which loads a chosen save first; the
 // menu's Host button goes through the picker, and this primitive's one caller is the
 // VOTVCOOP_TEST_HOST_LOBBY probe.
-void HostLobby(const std::string& name, const std::string& world, bool locked, int playersMax);
+void HostLobby(const std::string& name, const std::string& world, bool locked);
 
 // A save selection for the Host-Game picker: an existing slot to load, or a New Game to
 // create; `mode` is the gamemode ordinal (story is 0) for a new save.
@@ -115,7 +112,7 @@ struct SaveChoice {
 // and passed because a re-read is ini file I/O the net thread must not do. `masterUrl` is what the window showed:
 // the announce, whose master is then the lobby's relay, must go where it said.
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
-                  const std::string& password, int playersMax, const std::string& masterUrl,
+                  const std::string& password, const std::string& masterUrl,
                   coop::session::HostMode mode = {}, coop::net::Refusal* refused = nullptr);
 
 // The refusal every session start owes on this build, or None: a game whose script loop could not be hooked

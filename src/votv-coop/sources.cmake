@@ -750,6 +750,7 @@ set(VOTVCOOP_NET_SOURCES
     src/coop/net/fake_link_steps.cpp
     src/coop/net/ice_config.cpp
     src/coop/net/ice_policy.cpp
+    src/coop/net/player_limit.cpp
     src/coop/net/signaling_client.cpp
     src/coop/net/signaling_proof.cpp
     src/coop/net/lobby_proof.cpp

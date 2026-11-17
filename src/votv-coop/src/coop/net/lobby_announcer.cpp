@@ -7,6 +7,7 @@
 #include "coop/net/http_client.h"
 #include "coop/net/lobby_proof.h"
 #include "coop/net/peer_identity.h"  // LocalIdentityString -- the identity joiners dial
+#include "coop/net/player_limit.h"  // Max -- the lobby's players_max
 #include "coop/net/protocol.h"  // kProtocolVersion -- announced for the browser's join gate
 #include "coop/session/shutdown.h"
 #include "coop/version.h"  // kGameTarget -- the announced identity pair's game half
@@ -74,7 +75,7 @@ std::string HostBody(const AnnounceRequest& r, bool listed, const BuildClaim& cl
     // our behalf, and the relay registers only names their holder signed for.
     b["identity"] = coop::net::peer_identity::LocalIdentityString();
     b["locked"] = r.locked;
-    b["players_max"] = r.playersMax;
+    b["players_max"] = player_limit::Max();
     if (r.directPort > 0) {  // DIRECT lobby (see header): master advertises src-ip:port
         b["conn"] = "direct";
         b["direct_port"] = r.directPort;
@@ -244,14 +245,14 @@ LobbyAnnouncer::~LobbyAnnouncer() { Stop(); }
 
 HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& name,
                               const std::string& world,
-                              bool locked, int playersMax, int timeoutMs, int directPort) {
+                              bool locked, int timeoutMs, int directPort) {
     HostInfo info;
     // The generation is read BEFORE our own Stop(), so a Stop() that finishes while that one is
     // still joining and leaving is counted (see `gen` below).
     const uint64_t entryGen = gen_.load();
     Stop();  // retire any prior lobby first (sends /leave, joins) -- on a worker, safe
 
-    const AnnounceRequest req{masterUrl, name, world, locked, playersMax, timeoutMs, directPort};
+    const AnnounceRequest req{masterUrl, name, world, locked, timeoutMs, directPort};
     const BuildClaim claim = ReadBuildClaim();
     if (claim.present)
         UE_LOGI("lobby: announcing the build claim key=%u sha=%.8s", claim.key, claim.sha.c_str());
@@ -426,6 +427,7 @@ void LobbyAnnouncer::HeartbeatLoop() {
         b["sessionId"] = sid;
         b["token"] = tok;
         b["players_cur"] = pc;
+        b["players_max"] = player_limit::Max();  // the host's row, so a change reaches the browser
         b["listed"] = listed;
         if (LobbyLinks (*const linksFn)() = linksFn_.load(std::memory_order_acquire)) {
             const LobbyLinks l = linksFn();

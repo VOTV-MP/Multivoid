@@ -11,6 +11,7 @@
 #include "coop/net/net_clock.h"        // NowMs -- the probe's echo is timed on the net layer's clock
 #include "coop/net/peer_admission.h"   // the identity challenge every peer passes
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
+#include "coop/net/player_limit.h"     // Max -- the number the refusal names
 #include "client_authorship.h"  // co-located private header: which kinds a client may author
 #include "session_lanes.h"      // co-located private header: the admission and relayable kind lists
 #include "ue_wrap/core/log.h"
@@ -139,9 +140,13 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
 
     const int slot = AdmitPending(pendIdx, hConn);
     if (slot < 0) {
-        UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d [%s]", pendIdx,
-                Describe(EndReason::HostFull).id);
-        RetirePending(pendIdx, hConn, EndReason::HostFull, "host full");
+        // The number rides the close's reason, which the joiner's dialog shows under the refusal's
+        // title; the title is one fixed sentence.
+        const std::string why =
+            "the host allows " + std::to_string(player_limit::Max()) + " players";
+        UE_LOGW("net: the seated players reached the host's limit (net.max_players) -- refusing "
+                "PENDING %d [%s]: %s", pendIdx, Describe(EndReason::HostFull).id, why.c_str());
+        RetirePending(pendIdx, hConn, EndReason::HostFull, why.c_str());
         return;
     }
     // The peer's storage guid is derived from the key it proved and published here, on the net

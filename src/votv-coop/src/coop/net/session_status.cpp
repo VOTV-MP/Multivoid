@@ -13,6 +13,7 @@
 #include "connection_tuning.h"            // co-located: TuneConnection, kDefaultSendBufBytes
 #include "coop/net/net_clock.h"           // NowMs, the net layer's one steady clock
 #include "coop/net/peer_admission.h"      // the exchange state a pending entry owns
+#include "coop/net/player_limit.h"        // Max: the seats the host's row offers
 #include "signaling_client.h"             // co-located: DialReport, the rendezvous half of a dial
 #include "ue_wrap/core/log.h"
 
@@ -254,7 +255,7 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
     // minted before the peerConns_ store, so any observer that can see the connection can see who
     // owns it.
     const int slot = FindFreePeerSlotForClient();
-    if (slot < 0) return -1;  // lobby genuinely full of ADMITTED players
+    if (slot < 0) return -1;  // the host's limit of ADMITTED players is reached
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return -1;
     sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
@@ -269,7 +270,7 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
         pendingSinceMs_[pendingIdx].store(0, std::memory_order_release);
     }
     UE_LOGI("net: ADMITTED pending conn 0x%08x -> slot %d (%d/%d seated)",
-            static_cast<unsigned>(hConn), slot, connectedPeerCount(), kMaxPeers - 1);
+            static_cast<unsigned>(hConn), slot, connectedPeerCount(), player_limit::Max() - 1);
     return slot;
 }
 
@@ -277,6 +278,16 @@ int Session::FindFreePeerSlotForClient() {
     // Host: the lowest unoccupied client slot; slot 0 is the host itself. A slot is free when its
     // teardown has finished: the generation clear is that teardown's last per-slot write, so no
     // successor can be seated while a predecessor's state is still being cleared.
+    //
+    // The host's limit (net.max_players) counts SEATED players, the host among them: two is the host
+    // and one friend. It is judged here, at admission, so a join that waited while the limit moved is
+    // judged against the limit of its own admission, and a lower limit never removes a seated player:
+    // it only refuses the next join.
+    int seated = 1;  // the host
+    for (int i = 1; i < kMaxPeers; ++i) {
+        if (peerConns_[i].load() != 0) ++seated;
+    }
+    if (seated >= player_limit::Max()) return -1;
     for (int i = 1; i < kMaxPeers; ++i) {
         if (peerConns_[i].load() == 0 &&
             peerGenBySlot_[i].load(std::memory_order_acquire) == 0) return i;

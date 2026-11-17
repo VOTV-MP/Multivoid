@@ -533,6 +533,9 @@ msgstr ""
 msgid "Host game"
 msgstr "[[Host game]]"
 
+msgid "How many players this server seats, you included. Applies to the next joins; players already in stay, and a lower number never removes anyone."
+msgstr "[[How many players this server seats, you included. Applies to the next joins; players already in stay, and a lower number never removes anyone.]]"
+
 msgid "ID"
 msgstr "[[ID]]"
 
@@ -794,6 +797,9 @@ msgstr ""
 #, c-format
 msgid "Player id %s"
 msgstr "[[Player id %s]]"
+
+msgid "Player limit"
+msgstr "[[Player limit]]"
 
 msgid "Players"
 msgstr "[[Players]]"

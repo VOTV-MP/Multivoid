@@ -660,6 +660,10 @@ msgstr ""
 msgid "Host game"
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "How many players this server seats, you included. Applies to the next joins; players already in stay, and a lower number never removes anyone."
+msgstr ""
+
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
 msgid "ID"
 msgstr ""
@@ -995,6 +999,10 @@ msgstr ""
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
 #, c-format
 msgid "Player id %s"
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Player limit"
 msgstr ""
 
 #: src/ui/dev_menu.cpp

@@ -17,7 +17,7 @@ namespace ui::host_save_picker {
 
 // Open the picker, capturing the lobby host params from the server browser, and kick
 // off a save scan (RefreshAsync). Render-thread call.
-void Open(const std::string& hostName, bool locked, int playersMax);
+void Open(const std::string& hostName, bool locked);
 void Close();
 bool IsOpen();
 

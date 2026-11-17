@@ -59,7 +59,6 @@ struct DeferredAnnounce {
     std::string name;
     std::string world;
     bool locked = false;
-    int playersMax = kLobbyPlayersMax;
     int directPort = 0;
 };
 std::mutex g_deferredMu;
@@ -70,10 +69,9 @@ DeferredAnnounce g_deferred;
 std::atomic<bool> g_hostIsDirect{false};
 
 void ArmDeferredAnnounce(const std::string& masterUrl, const std::string& name,
-                         const std::string& world, bool locked, int playersMax,
-                         int directPort) {
+                         const std::string& world, bool locked, int directPort) {
     std::lock_guard<std::mutex> lk(g_deferredMu);
-    g_deferred = DeferredAnnounce{true, masterUrl, name, world, locked, playersMax, directPort};
+    g_deferred = DeferredAnnounce{true, masterUrl, name, world, locked, directPort};
 }
 
 void DisarmDeferredAnnounce() {
@@ -354,17 +352,17 @@ bool HostRefusedBySubstrate(net::Refusal* out = nullptr) {
 }
 }  // namespace
 
-void HostLobby(const std::string& name, const std::string& world, bool locked, int playersMax) {
+void HostLobby(const std::string& name, const std::string& world, bool locked) {
     if (HostRefusedBySubstrate()) return;
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Host ignored"); return; }
     const std::string masterUrl = slots::Selected().url;
-    std::thread([masterUrl, name, world, locked, playersMax] {
+    std::thread([masterUrl, name, world, locked] {
         // An exception escaping a detached thread is std::terminate; the store(false) is outside
         // the try so g_actionBusy clears on every path.
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
-                Announcer().Host(masterUrl, name, world, locked, playersMax, 8000);
+                Announcer().Host(masterUrl, name, world, locked, 8000);
             if (info.ok && !coop::shutdown::IsShuttingDown()) {
                 const net::Config cfg = LobbyP2PConfig(net::Role::Host, info);
                 QueueStart(cfg);
@@ -392,7 +390,7 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
                 Announcer().Host(masterUrl, name, world,
-                                 /*locked=*/false, kLobbyPlayersMax, 8000);
+                                 /*locked=*/false, 8000);
             if (info.ok) {
                 Announcer().SetListed(false); // the hide-from-list flag, immediately
                 // Seed the UI mirror too, or the scoreboard's "Show in server browser" tick reads
@@ -413,7 +411,7 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
 }
 
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
-                  const std::string& password, int playersMax, const std::string& masterUrl,
+                  const std::string& password, const std::string& masterUrl,
                   coop::session::HostMode mode, net::Refusal* refused) {
     if (refused) *refused = net::Refusal{};
     if (HostRefusedBySubstrate(refused)) return false;
@@ -464,7 +462,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         g_listedState.store(false, std::memory_order_relaxed);
         g_hostIsDirect.store(true, std::memory_order_relaxed);
         ArmDeferredAnnounce(masterUrl, name, choice.newGame ? choice.newName : choice.slot,
-                            locked, playersMax, static_cast<int>(directPort));
+                            locked, static_cast<int>(directPort));
         // Through the same builder as the two fallback lines, so the deliberately unlisted
         // configuration gets the same password wording.
         SetHostStatus(UnlistedDirectStatus(("Hosting '" + name + "' DIRECT").c_str(),
@@ -478,7 +476,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     }
     // `hideFromBrowser` is not captured: the only branch that reads it returned above, before this
     // worker exists.
-    std::thread([masterUrl, choice, name, locked, playersMax, directConnection, lobbyPw] {
+    std::thread([masterUrl, choice, name, locked, directConnection, lobbyPw] {
         // An exception escaping a detached thread is std::terminate; the store(false) is outside
         // the try so g_actionBusy clears on every path.
         try {
@@ -497,7 +495,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             // neither.
             const uint16_t directPort = PlayerListenPort();
             const lobby::HostInfo info =
-                Announcer().Host(masterUrl, name, world, locked, playersMax,
+                Announcer().Host(masterUrl, name, world, locked,
                                  8000, directConnection ? static_cast<int>(directPort) : 0);
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
 
@@ -533,7 +531,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 // (/v1/leave), so a Hide then Show cycle needs something to re-announce from. AUTO
                 // stays un-hideable at host time: the master is a relay game's only rendezvous.
                 if (directConnection)
-                    ArmDeferredAnnounce(masterUrl, name, world, locked, playersMax,
+                    ArmDeferredAnnounce(masterUrl, name, world, locked,
                                         static_cast<int>(directPort));
                 SetHostStatus(directConnection
                     ? "Hosting '" + name + "' DIRECT -- listed (UDP port must be forwarded!)"
@@ -613,7 +611,7 @@ void SetListed(bool listed) {
                     return;
                 }
                 const lobby::HostInfo info = Announcer().Host(
-                    d.masterUrl, d.name, d.world, d.locked, d.playersMax, 8000, d.directPort);
+                    d.masterUrl, d.name, d.world, d.locked, 8000, d.directPort);
                 if (!info.ok) {
                     UE_LOGW("session_manager: deferred announce FAILED (master unreachable) "
                             "-- the lobby stays hidden and joinable by IP");
@@ -638,7 +636,7 @@ void SetListed(bool listed) {
                 const bool rearm = PeekDeferredAnnounce(d);
                 Announcer().Stop();       // POST /v1/leave + stop the heartbeat: record GOES
                 if (rearm) ArmDeferredAnnounce(d.masterUrl, d.name, d.world, d.locked,
-                                               d.playersMax, d.directPort);
+                                               d.directPort);
                 UE_LOGI("session_manager: DIRECT lobby retracted (/v1/leave) -- the master no "
                         "longer holds a record for it%s",
                         rearm ? "; re-armed for a later Show" : "");

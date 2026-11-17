@@ -273,6 +273,11 @@ CFG_FLAG(net_allow_other_builds, "net.allow_other_builds", "net", false, "VOTVCO
     "already in stay."))
 CFG_ROWFLAGS(net_allow_other_builds, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(net_allow_other_builds, L10N_MARK("Allow other builds"))
+CFG_ENUM(net_max_players, "net.max_players", "net", "2", "2|4|8|16", "VOTVCOOP_NET_MAX_PLAYERS",
+    L10N_MARK("How many players this server seats, you included. Applies to the next joins; players already in "
+    "stay, and a lower number never removes anyone."))
+CFG_ROWFLAGS(net_max_players, kRowServer | kRowLive)
+CFG_LABEL(net_max_players, L10N_MARK("Player limit"))
 CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
     L10N_MARK("Let a player's clip through the world take them to the backrooms and the game's two secret maps, each "
     "player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until "

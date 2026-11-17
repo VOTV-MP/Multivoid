@@ -416,6 +416,10 @@ pub fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Val
     };
     let now = Instant::now();
     let lo = state.lobbies.get_mut(&sid).expect("just authed");
+    // The host's own limit (its net.max_players row), which it may change while the lobby lives; a
+    // mod that does not send it keeps the one the lobby was created with. Set before the count and the
+    // links are clamped against it.
+    lo.players_max = as_int(body, "players_max", lo.players_max).clamp(1, MAX_PLAYERS);
     let pc = as_int(body, "players_cur", lo.players_cur);
     lo.players_cur = pc.clamp(0, lo.players_max);
     if body_has(body, "listed") {

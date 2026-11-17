@@ -11,6 +11,7 @@
 
 #include "coop/net/connect_history.h"  // History::kMaxStamps, the cap row's upper bound
 #include "coop/net/protocol.h"  // kDefaultPort (row defaults ALIAS the one owning constant)
+#include "coop/player/slot_count.h"  // kMaxPeers, the bound of the player-limit row's choices
 #include "ue_wrap/core/log.h"
 
 #include <array>
@@ -294,6 +295,28 @@ constexpr bool ValidateRows() {
     return true;
 }
 static_assert(ValidateRows(), "config registry row table is incoherent (default/range/token/font-role)");
+
+// The player-limit row offers only choices a session can seat: every token is a whole number from 1
+// to the ceiling (kMaxPeers), so a raise of the ceiling is the only way a larger choice appears.
+constexpr bool MaxPlayersChoicesFit() {
+    const char* p = kRows[RowIndex_net_max_players].tokens;
+    long cur = 0;
+    bool any = false;
+    for (;; ++p) {
+        if (*p >= '0' && *p <= '9') {
+            cur = cur * 10 + (*p - '0');
+            any = true;
+        } else if (*p == '|' || *p == '\0') {
+            if (!any || cur < 1 || cur > coop::players::kMaxPeers) return false;
+            cur = 0;
+            any = false;
+            if (*p == '\0') return true;
+        } else {
+            return false;
+        }
+    }
+}
+static_assert(MaxPlayersChoicesFit(), "net.max_players offers a choice above the player ceiling (kMaxPeers)");
 
 }  // namespace
 
