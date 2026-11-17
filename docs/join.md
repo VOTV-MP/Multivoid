@@ -40,7 +40,7 @@ one (MV-H31), unless the host allows other builds.
 Before any of that, at the accept edge, the host applies two policies that cost no handshake and
 no seat. First, an address the host ended for sending more than a player can is refused for ten minutes (`MV-H32`; the
 identity it proved is refused the same way at its proof). Then a per-address connection cap in the shape of MTA's join-flood
-protection, four connections per thirty seconds by default and then thirty seconds of refusal
+protection, sixteen connections per thirty seconds by default (a full lobby behind one address) and then thirty seconds of refusal
 (`MV-H29`; the numbers are the `net.connect_cap` and `net.connect_window_s` settings, and 0
 turns the cap off). On the internet lane no address is known when a connection arrives, because
 no route exists yet, so such an arrival is counted at its identity proof instead: by the address

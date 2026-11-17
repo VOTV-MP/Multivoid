@@ -171,10 +171,13 @@ CFG_INT(net_novelty_budget, "net.novelty_budget", "net", 512, 0, 100000, nullptr
     "A text field that would exceed it is refused whole.")
 CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 3600000, nullptr,
     "Length of the novelty budget window, in milliseconds.")
-// The host's connection cap at the accept edge (coop/net/connect_history): MTA's join-flood
-// numbers, four per thirty seconds per address and then thirty seconds of refusal. Filed under
-// [net] because it is a host policy on inbound connections; the refusal carries MV-H29.
-CFG_INT(net_connect_cap, "net.connect_cap", "net", 8, 0,
+// The host's connection cap at the accept edge (coop/net/connect_history): MTA's join-flood window,
+// thirty seconds per address and then thirty seconds of refusal, but not its four (CGame.cpp:163): an
+// MTA address is one player, while a LAN party or a NAT puts a whole lobby behind one address, so a
+// full session of sixteen opens fifteen connections inside one window. The default is the most the
+// history keeps per address (kMaxStamps, 16), which is the player ceiling. Filed under [net] because
+// it is a host policy on inbound connections; the refusal carries MV-H29.
+CFG_INT(net_connect_cap, "net.connect_cap", "net", 16, 0,
     ::coop::net::connect_history::History::kMaxStamps, "VOTVCOOP_NET_CONNECT_CAP",
     "Host: connections one address may open per window before it is refused for one window "
     "(0 = no cap). On the internet lane no address is known when a connection arrives, so it "

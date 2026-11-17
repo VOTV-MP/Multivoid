@@ -343,7 +343,7 @@ keeps a seen-players file for the administration panel. A nickname is never a ba
 key: anyone can type any name.
 The kicked or banned player lands at the menu with a modal saying which, under a stable code
 ([join.md](join.md) lists them). Beside the ban check, the accept edge caps how many
-connections one address may open in a window (four per thirty seconds by default, a host
+connections one address may open in a window (sixteen per thirty seconds by default, a host
 setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 
 The host's moderation is a set of commands -- `/kick`, `/ban`, `/banid`, `/unban`, `/tphere`, `/cremate` --
