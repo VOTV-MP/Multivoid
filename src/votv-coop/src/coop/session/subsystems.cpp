@@ -113,6 +113,7 @@
 #include "coop/session/join_beacon.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/atv_part_intent.h"  // a client's work on an ATV's wheels, spare and battery
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/items/coingun_sync.h"
@@ -269,6 +270,7 @@ void Install(coop::net::Session& session) {
     coop::sky_sync::Install(&session);  // host-authoritative night-sky orientation, moon phase and eye
     coop::subsystems::power::Install(session);
     coop::atv_sync::Install(&session);  // ATV body pose (the syncer the host assigned streams a keyed pose)
+    coop::atv_part_intent::Install(&session);  // a client's wheel, spare and battery work: the four ATV_C watches
     coop::drone_sync::Install(&session);  // delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
@@ -539,6 +541,7 @@ DisconnectStats DisconnectAll() {
     coop::time_sync::OnDisconnect();
     coop::sky_sync::OnDisconnect();
     coop::subsystems::power::OnDisconnect();
+    coop::atv_part_intent::OnDisconnect();  // the session's part counters, the senders' budgets
     coop::atv_sync::OnDisconnect();
     coop::atv_riders::OnDisconnect();  // after the lane's end, so the seat table's exits reached the riders' subscribers
     coop::drone_sync::OnDisconnect();

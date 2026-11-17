@@ -31,7 +31,7 @@ namespace {
 // idle gate cannot drift from the struct silently.
 constexpr size_t kCondOff = offsetof(coop::net::AtvStatePayload, tiresDurability);
 constexpr size_t kCondBytes = sizeof(coop::net::AtvStatePayload) - kCondOff;
-static_assert(kCondBytes == 68, "the condition block must be 68 bytes (and AtvEntry::lastSentCond with it)");
+static_assert(kCondBytes == 72, "the condition block must be 72 bytes (and AtvEntry::lastSentCond with it)");
 
 // Change-edge quanta -- purely visual, not correctness bounds. Dirt domain is
 // 0..1 (a 1% step is invisible in the shader lerp); health domain 0..100 drives smoke
@@ -40,7 +40,7 @@ constexpr float kDirtEps = 0.01f;
 constexpr float kHealthEps = 0.5f;
 
 std::atomic<unsigned long long> g_applied{0}, g_updTires{0}, g_updDirt{0}, g_updSpare{0},
-    g_updHealth{0}, g_presenceSkipped{0}, g_deferred{0}, g_invalid{0};
+    g_updHealth{0}, g_updBattery{0}, g_presenceSkipped{0}, g_deferred{0}, g_invalid{0};
 
 void PayloadToSnapshot(const coop::net::AtvStatePayload& p, AC::Snapshot& s) {
     for (int i = 0; i < 4; ++i) {
@@ -57,6 +57,7 @@ void PayloadToSnapshot(const coop::net::AtvStatePayload& p, AC::Snapshot& s) {
     s.mask = p.tiresMask;
     s.hasSpare = p.hasSpare != 0;
     s.spareFixes = p.spareFixes;
+    s.battery = p.battery;
 }
 
 // Fuel and health are the host's copy's (atv_host_sync.h). HOST taking a client syncer's block: the lower of the host's
@@ -119,6 +120,27 @@ bool DirtGroupChanged(const AC::Snapshot& in, const AC::Snapshot& expressed) {
     return std::fabs(in.bodyDirt - expressed.bodyDirt) > kDirtEps;
 }
 
+// The battery field against the copy as it stands now, not against the expressed baseline: the tick of
+// a copy that owns it drains it, and the host's own part work changes it between blocks. The charge
+// is whoever syncs the ATV's; whether a battery is fitted changes only from the host's own copy
+// (`applyPresence`), as the tyres' presence does. updBattery runs when the back lights' test (a
+// charge above zero) changes.
+void ApplyBattery(void* actor, float in, bool applyPresence) {
+    float live = -1.f;
+    if (!AC::ReadBattery(actor, live) || in == live) return;
+    if (!applyPresence && (in >= 0.f) != (live >= 0.f)) {
+        const auto n = g_presenceSkipped.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n == 1 || n % 100 == 0)
+            UE_LOGW("atv_condition: a client syncer's block says the battery is %s where this copy has it %s "
+                    "-- skipped by the authority rule, x%llu", in >= 0.f ? "fitted" : "out",
+                    live >= 0.f ? "fitted" : "out", n);
+        return;
+    }
+    AC::WriteBattery(actor, in);
+    if ((in > 0.f) != (live > 0.f) && AC::CallVerb(actor, AC::Verb::UpdBattery))
+        g_updBattery.fetch_add(1, std::memory_order_relaxed);
+}
+
 }  // namespace
 
 void FillPayload(void* actor, coop::net::AtvStatePayload& p) {
@@ -153,6 +175,7 @@ void FillPayload(void* actor, coop::net::AtvStatePayload& p) {
     p.tiresMask = s.mask;
     p.hasSpare = s.hasSpare ? 1 : 0;
     p.spareFixes = s.spareFixes;
+    p.battery = s.battery;
     p.tiresValid = 1;
 }
 
@@ -197,14 +220,15 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     AC::Snapshot in;
     PayloadToSnapshot(p, in);
 
-    // The 13 floats reach engine fields and the HOST SAVE raw, and a NaN
+    // The block's floats reach engine fields and the HOST SAVE raw, and a NaN
     // would ALSO disable this lane's own edges forever (fabs(NaN-x)>eps is false) -- values
     // poison while no verb re-derives. Non-finite is the same symmetric garbage filter the
     // rest of the wire uses: refuse the BLOCK as tiresValid=0 does, keep the packet's pose half.
     {
         const float* fs[] = { &in.dur[0], &in.dur[1], &in.dur[2], &in.dur[3],
                               &in.dirt[0], &in.dirt[1], &in.dirt[2], &in.dirt[3],
-                              &in.bodyDirt, &in.spareDur, &in.spareDirt, &in.fuel, &in.health };
+                              &in.bodyDirt, &in.spareDur, &in.spareDirt, &in.fuel, &in.health,
+                              &in.battery };
         for (const float* f : fs) {
             if (!std::isfinite(*f)) {
                 g_invalid.fetch_add(1, std::memory_order_relaxed);
@@ -228,6 +252,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
         for (int i = 0; i < 4; ++i) { c100(in.dur[i]); c01(in.dirt[i]); }
         c01(in.bodyDirt); c100(in.spareDur); c01(in.spareDirt); c100(in.fuel);
         if (in.health < -1.f) in.health = -1.f; else if (in.health > 100.f) in.health = 100.f;
+        if (in.battery < 0.f) in.battery = -1.f; else if (in.battery > 100.f) in.battery = 100.f;
     }
     const bool vitalFell = ApplyVitalsRule(actor, key, fromHost, p, in);
 
@@ -249,14 +274,14 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     const bool groupHealth = std::fabs(in.health - ex.health) > kHealthEps;
 
     if (!applyPresence && presenceDiffers) {
-        // The KNOWN-BROKEN direction, counted and visible (CRUTCHES row; (b2) asserts it):
-        // a client syncer's presence claim is not consumed -- its paired wheel-prop birth
-        // cannot travel, so consuming the mask would persist an item loss on the host.
+        // Counted and visible: a client syncer's presence claim is not consumed. A wheel its copy
+        // lost to damage has no prop the host could carry, and a part it unbolts is asked of the
+        // host instead (atv_part_intent), so consuming the mask would persist an item loss.
         const auto n = g_presenceSkipped.fetch_add(1, std::memory_order_relaxed) + 1;
         if (n == 1 || n % 100 == 0)
             UE_LOGW("atv_condition: presence from a client syncer DIFFERS (mask %02X vs expressed %02X) "
-                    "-- skipped by the authority rule, x%llu (KNOWN divergence until the "
-                    "act-as-host tire-eject intent lane)",
+                    "-- skipped by the authority rule, x%llu (a wheel knocked off a client "
+                    "syncer's copy stays on the host's)",
                     p.tiresMask, ex.mask, n);
     }
 
@@ -266,6 +291,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
         AC::WritePresence(actor, in.mask, in.hasSpare);
     if (vitalFell) RunoutEdge(actor, key);   // the host's copy lost fuel or health to a client's block
     g_applied.fetch_add(1, std::memory_order_relaxed);
+    ApplyBattery(actor, in.battery, applyPresence);
 
     if (!(groupTires || groupDirt || groupSpare || groupHealth)) return;
 

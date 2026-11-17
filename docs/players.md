@@ -426,6 +426,7 @@ host. A setting that holds a password is never set or shown by command.
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
+| `AtvPartIntent` | a client to the host | one piece of work on an ATV's wheels, spare or battery, which the host judges and runs on its copy ([vehicles.md](vehicles.md)) |
 
 ## Late join
 

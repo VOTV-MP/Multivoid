@@ -114,7 +114,7 @@ struct AtvEntry {
     void* condExpressedActor  = nullptr;  // reseed when the entry repoints to a new actor
     // Idle-syncer change gate, condition half: the payload's condition block as of the last
     // ACTUAL send. Pose-only gating would make a parked host eject wait out the 2 s keepalive.
-    uint8_t lastSentCond[68] = {};
+    uint8_t lastSentCond[72] = {};
     bool    haveLastSentCond = false;
     int      restReplaces = 0;     // re-places of a mirror whose syncer is at rest, WITHIN one
                                    // episode (see lastRestPlaceMs).

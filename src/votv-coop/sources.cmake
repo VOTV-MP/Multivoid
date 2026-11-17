@@ -82,6 +82,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_intent.cpp
     src/coop/dispatch/event_dispatch_prop_drive.cpp
     src/coop/dispatch/event_dispatch_requester_feedback.cpp
+    src/coop/dispatch/event_dispatch_atv_part.cpp
     src/coop/dispatch/event_dispatch_kerfur_command.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
@@ -146,6 +147,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/atv_runtime_mirror.cpp
     src/coop/interactables/atv_spawn_park.cpp
     src/coop/interactables/atv_condition_sync.cpp
+    src/coop/interactables/atv_part_intent.cpp
     src/coop/interactables/atv_corrector.cpp
     src/coop/interactables/atv_hit_guard.cpp
     src/coop/interactables/atv_damage_gate.cpp

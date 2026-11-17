@@ -280,7 +280,7 @@ enum class ReliableKind : uint16_t {
     // syncer's block goes to the host alone, which applies it and re-sends it to every other client
     // stamped with the host's seat and syncer; the host's own copy goes out while it drives or carries,
     // and at 5 Hz on change while it syncs an idle ATV. A receiver keeps simulating and is corrected
-    // toward the wire; presence fields (tires, spare) are taken from the host's own copy only. Keyed by
+    // toward the wire; presence fields (tires, spare, a fitted battery) are taken from the host's own copy only. Keyed by
     // the ATV's Key; never relayed; the host snapshots every ATV's stamped block to a joiner.
     // AtvStatePayload.
     AtvState = 37,
@@ -1474,6 +1474,14 @@ enum class ReliableKind : uint16_t {
     // joiner at its connect replay: the canonical pair of masks. The host refuses an edit its own desk does not allow
     // and answers the author with the canonical. Never relayed. DeskPanelStatePayload.
     DeskPanelState = 273,
+
+    // Client to host: this client's work on an ATV's wheels, spare or battery (atv_part's op): a wheel or the battery
+    // unbolted, a held wheel fitted or stowed as the spare, a held battery put in, the spare taken. The client's own
+    // body is cancelled; the host judges the sender (world ready, the ATV known and synced by the host, within reach,
+    // the tool or the part in its hand, the ATV's own state) and runs the change on its copy, so the part's birth and
+    // the presence in AtvState cross as the host's. A refused fit, stow or insert is refunded as a prop beside the
+    // sender. Never relayed; not pre-world. Late join: none, a request is an act. AtvPartIntentPayload.
+    AtvPartIntent = 274,
 
     // Any peer to all (a client's through the host's relay), and host to a joiner at its connect replay: the steps
     // of one kitchen oven's repair that come before its wiring, as a mask of the four screws out and the lid off.
@@ -3438,9 +3446,11 @@ struct AtvStatePayload {
                                   //      ATV (0 until the first). The host: its own copy's current stateSeq, on its re-send
                                   //      of a syncer's block and on every block of its own copy. The host takes a client
                                   //      syncer's fuel and health only from a block whose ackSeq is its current stateSeq.
+    float    battery;             // 4  -- the fitted battery's charge, 0..100, below zero = none fitted. The charge is
+                                  //      the syncer's; whether one is fitted is PRESENCE, the host's own copy only
 };
 static_assert(offsetof(AtvStatePayload, riderEid) == 84, "riderEid must follow adopt at offset 84");
-static_assert(sizeof(AtvStatePayload) == 156, "AtvStatePayload must be 156 bytes");
+static_assert(sizeof(AtvStatePayload) == 160, "AtvStatePayload must be 160 bytes");
 
 // stateBits bit 3: the block is the syncer's, re-sent by the host (a client syncer's pose and condition), not the
 // host's own copy. A receiver applies the pose and condition of such a block to an ATV it does not sync; the host's
@@ -3542,6 +3552,30 @@ struct AtvAnswerPayload {
 };
 static_assert(sizeof(AtvAnswerPayload) == 40, "AtvAnswerPayload must be 40 bytes");
 static_assert(sizeof(AtvAnswerPayload) <= 256 - 20 - 8, "AtvAnswerPayload must fit in one reliable datagram");
+
+// A client's work on an ATV's wheels, spare or battery (AtvPartIntent). The scalars are the part the sender's hand
+// held, read on its machine as it sent: a fitted or stowed wheel's three, a battery's charge in `durability`. The host
+// clamps them to the game's domains.
+namespace atv_part {
+constexpr uint8_t kRemoveWheel = 0;    // the wrench's last step on a fitted wheel: `index`
+constexpr uint8_t kRemoveBattery = 1;  // the wrench's last step on the ATV's body
+constexpr uint8_t kFitWheel = 2;       // the held wheel into the empty socket `index`
+constexpr uint8_t kStowSpare = 3;      // the held wheel into the spare box
+constexpr uint8_t kInsertBattery = 4;  // the held battery into an ATV that has none
+constexpr uint8_t kTakeSpare = 5;      // the spare out of its box
+constexpr uint8_t kOpCount = 6;
+}  // namespace atv_part
+struct AtvPartIntentPayload {
+    WireKey key;         // 32 -- the ATV's Key
+    uint8_t op;          // 1  -- an atv_part op; anything else is malformed
+    uint8_t index;       // 1  -- kRemoveWheel, kFitWheel: the wheel, 0..3; else 0
+    int8_t  fixes;       // 1  -- kFitWheel, kStowSpare: the wheel's repair countdown; else 0
+    uint8_t pad;         // 1  -- zero
+    float   durability;  // 4  -- kFitWheel, kStowSpare: the wheel's durability; kInsertBattery: the charge; else 0
+    float   dirt;        // 4  -- kFitWheel, kStowSpare: the wheel's dirt; else 0
+};
+static_assert(sizeof(AtvPartIntentPayload) == 44, "AtvPartIntentPayload must be 44 bytes");
+static_assert(sizeof(AtvPartIntentPayload) <= 256 - 20 - 8, "AtvPartIntentPayload must fit in one reliable datagram");
 
 // The drone's state (DroneState): transform, activity, effect bits and the dust anchor.
 struct DroneStatePayload {

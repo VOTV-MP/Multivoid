@@ -1,7 +1,7 @@
 // ue_wrap/devices/atv_condition.h -- engine access for the ATV's CONDITION state: the four tires'
-// presence, durability, dirt, fix countdown and type, the spare trio, the body dirt scalar, fuel
-// and health -- plus the game's own per-facet reducers (updTires, updDirt, updSpareTire, updHealth)
-// as callable verbs.
+// presence, durability, dirt, fix countdown and type, the spare trio, the body dirt scalar, fuel,
+// health and the fitted battery's charge -- plus the game's own per-facet reducers (updTires,
+// updDirt, updSpareTire, updHealth, updBattery) as callable verbs.
 //
 // Principle-7 engine-wrapper layer: NO network or coop state, and no authority decisions. The coop
 // half, coop/interactables/atv_condition_sync, decides WHAT to write and WHEN a verb fires; this
@@ -33,12 +33,13 @@ struct Snapshot {
     int8_t  spareFixes = 0;
     int8_t  fixes[4] = {};
     uint8_t types[4] = {};
+    float   battery = -1.f;  // the fitted battery's charge, 0..100; below zero = none fitted
 };
 
-// The game's per-facet reducers, resolvable as verbs. All four are BlueprintCallable.
-enum class Verb : uint8_t { UpdTires, UpdDirt, UpdSpareTire, UpdHealth };
+// The game's per-facet reducers, resolvable as verbs. All five are BlueprintCallable.
+enum class Verb : uint8_t { UpdTires, UpdDirt, UpdSpareTire, UpdHealth, UpdBattery };
 
-// Resolve ATV_C's 13 property offsets and the 4 verb UFunctions. Idempotent, one attempt per
+// Resolve ATV_C's 14 property offsets and the 5 verb UFunctions. Idempotent, one attempt per
 // process, since the class is resident for the game's lifetime. Returns true only if EVERYTHING
 // resolved: the caller treats a partial resolve as "this build cannot run the lane", and the
 // producer then ships tiresValid=0 rather than a zeroed block. The layout:
@@ -48,6 +49,8 @@ enum class Verb : uint8_t { UpdTires, UpdDirt, UpdSpareTire, UpdHealth };
 //   tiresTypes TArray<uint8> -- no runtime writer in ATV_C's bytecode; reducer input only
 //   dirt, fuel, health, spareTire_durability, spareTire_dirt   FloatProperty
 //   spareTire_fixes  IntProperty         hasSpareTire  BoolProperty
+//   battery  FloatProperty -- the tick of the copy that owns it drains it into 0..100; unscrewPanel
+//     writes -1 as it hands the battery out, and the battery prop's insert writes the prop's charge
 //   skipTireUpdate BoolProperty -- no writer and no CDO override, so permanently false; read
 //     anyway, because a true would mean a future external writer exists and the caller must defer
 //     its verbs
@@ -61,13 +64,19 @@ bool Resolved();
 bool Read(void* atv, Snapshot& out);
 
 // Write the ACCUMULATORS (dur/dirt/bodyDirt/spare scalars/fuel/health/fixes/types) from `s`.
-// Never touches tires[] or hasSpareTire -- presence is a separate, authority-gated write.
+// Never touches tires[], hasSpareTire or battery -- presence is a separate, authority-gated write,
+// and the battery's charge carries its presence in its sign.
 // Bounded min(Num,4) per array; false when unresolved/null.
 bool WriteAccumulators(void* atv, const Snapshot& s);
 
 // Write PRESENCE: tires[i] from mask bits (min(Num,4)) and hasSpareTire. The caller gates this
 // on packet authorship (host-only); this function only performs it.
 bool WritePresence(void* atv, uint8_t mask, bool hasSpare);
+
+// The battery field alone: its charge, or a value below zero for none fitted. The caller decides
+// whose value may change whether one is fitted. False when unresolved/null.
+bool ReadBattery(void* atv, float& out);
+bool WriteBattery(void* atv, float charge);
 
 // skipTireUpdate, read at apply time. False return = unresolved/null (treat as flag TRUE and
 // defer -- fail toward not dispatching verbs).

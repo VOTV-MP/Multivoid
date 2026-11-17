@@ -25,13 +25,14 @@ bool g_tried    = false;
 int32_t g_offTires = -1, g_offDur = -1, g_offDirtArr = -1, g_offFixes = -1, g_offTypes = -1;
 int32_t g_offBodyDirt = -1, g_offFuel = -1, g_offHealth = -1;
 int32_t g_offHasSpare = -1, g_offSpareDur = -1, g_offSpareDirt = -1, g_offSpareFixes = -1;
-int32_t g_offSkip = -1;
+int32_t g_offSkip = -1, g_offBattery = -1;
 
-// The four reducer UFunctions, resolved with the offsets in Resolve().
+// The five reducer UFunctions, resolved with the offsets in Resolve().
 void* g_fnUpdTires = nullptr;
 void* g_fnUpdDirt = nullptr;
 void* g_fnUpdSpare = nullptr;
 void* g_fnUpdHealth = nullptr;
+void* g_fnUpdBattery = nullptr;
 
 // FScriptArray head = { void* Data; int32 Num; int32 Max }. Returns Num (clamped view), or -1
 // when the head reads as garbage -- the caller's all-or-nothing contract needs "unreadable"
@@ -77,16 +78,18 @@ bool Resolve() {
     g_offSpareDirt  = R::FindPropertyOffset(cls, L"spareTire_dirt");
     g_offSpareFixes = R::FindPropertyOffset(cls, L"spareTire_fixes");
     g_offSkip       = R::FindPropertyOffset(cls, L"skipTireUpdate");
+    g_offBattery    = R::FindPropertyOffset(cls, L"battery");
     g_fnUpdTires  = R::FindFunction(cls, L"updTires");
     g_fnUpdDirt   = R::FindFunction(cls, L"updDirt");
     g_fnUpdSpare  = R::FindFunction(cls, L"updSpareTire");
     g_fnUpdHealth = R::FindFunction(cls, L"updHealth");
+    g_fnUpdBattery = R::FindFunction(cls, L"updBattery");
     const bool offsOk = g_offTires >= 0 && g_offDur >= 0 && g_offDirtArr >= 0 &&
                         g_offFixes >= 0 && g_offTypes >= 0 && g_offBodyDirt >= 0 &&
                         g_offFuel >= 0 && g_offHealth >= 0 && g_offHasSpare >= 0 &&
                         g_offSpareDur >= 0 && g_offSpareDirt >= 0 && g_offSpareFixes >= 0 &&
-                        g_offSkip >= 0;
-    const bool fnsOk = g_fnUpdTires && g_fnUpdDirt && g_fnUpdSpare && g_fnUpdHealth;
+                        g_offSkip >= 0 && g_offBattery >= 0;
+    const bool fnsOk = g_fnUpdTires && g_fnUpdDirt && g_fnUpdSpare && g_fnUpdHealth && g_fnUpdBattery;
     g_resolved = offsOk && fnsOk;
     if (!g_resolved) {
         UE_LOGE("atv_condition: resolve INCOMPLETE (offsets ok=%d fns ok=%d) -- the condition "
@@ -132,6 +135,7 @@ bool Read(void* atv, Snapshot& out) {
     out.spareDirt  = *reinterpret_cast<float*>(base + g_offSpareDirt);
     out.spareFixes = ClampI8(*reinterpret_cast<int32_t*>(base + g_offSpareFixes));
     out.hasSpare   = *(base + g_offHasSpare) != 0;
+    out.battery    = *reinterpret_cast<float*>(base + g_offBattery);
     return true;
 }
 
@@ -175,6 +179,18 @@ bool WritePresence(void* atv, uint8_t mask, bool hasSpare) {
     return true;
 }
 
+bool ReadBattery(void* atv, float& out) {
+    if (!g_resolved || !atv) return false;
+    out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(atv) + g_offBattery);
+    return true;
+}
+
+bool WriteBattery(void* atv, float charge) {
+    if (!g_resolved || !atv) return false;
+    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(atv) + g_offBattery) = charge;
+    return true;
+}
+
 bool ReadSkipTireUpdate(void* atv, bool& flagOut) {
     if (!g_resolved || !atv) return false;
     flagOut = *(reinterpret_cast<uint8_t*>(atv) + g_offSkip) != 0;
@@ -189,9 +205,10 @@ bool CallVerb(void* atv, Verb v) {
         case Verb::UpdDirt:      fn = g_fnUpdDirt;   break;
         case Verb::UpdSpareTire: fn = g_fnUpdSpare;  break;
         case Verb::UpdHealth:    fn = g_fnUpdHealth; break;
+        case Verb::UpdBattery:   fn = g_fnUpdBattery; break;
     }
     if (!fn) return false;
-    ue_wrap::ParamFrame frame(fn);   // all four are no-param self-calls
+    ue_wrap::ParamFrame frame(fn);   // all five are no-param self-calls
     if (!frame.valid()) return false;
     return ue_wrap::Call(atv, frame);
 }

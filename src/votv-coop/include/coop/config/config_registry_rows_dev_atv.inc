@@ -1,6 +1,6 @@
 // coop/config/config_registry_rows_dev_atv.inc -- the [dev] rows of the ATV lane: its rig probe, the corrector's
 // control arm, the spawn drill and its park, the health drill and its red arm, the eject drill and its red arm, the gate
-// probe and its drill.
+// probe and its drill, the riders drill and the part drill.
 // Included by config_registry_rows_dev.inc after the fire rows, before the PI and NB rows, which stay the last ones,
 // so each row keeps its place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 // The drill's arms: sit, grab, occupied, synced, silent, gate, owner, trap; the red arm's values: back, occupied,
@@ -111,3 +111,10 @@ CFG_ENUM(atv_riders_drill, "atv_riders_drill", "dev", "off",
     "unseat_latch_off (an unseated mirror keeps its row's latch, so its pose stays frozen, 6), "
     "ragdoll_restore_off (a ragdoll's stop restores no seat, 8), exit_seat_off (an ATV's end announces no change, 9). "
     "MUTATES the ATV.")
+CFG_ENUM(atv_part_drill, "atv_part_drill", "dev", "off", "off|wheel|battery",
+    "VOTVCOOP_ATV_PART_DRILL",
+    "Drill, a client's work on an ATV's parts; set on BOTH peers and run with join_at_host=1. The host spawns an ATV "
+    "beside the players and names it. wheel: the client runs the wrench's last step on a wheel, and both peers must "
+    "lose that wheel and gain one wheel prop; then it takes a wheel into its hand and fits it, and both must show the "
+    "wheel on. battery: the same with the battery and the battery prop's insert. The client judges each step against "
+    "both peers' said states, the host its own counters; one `[ATV-PART-DRILL] [H|C] PASS` or `FAIL` line each.")
