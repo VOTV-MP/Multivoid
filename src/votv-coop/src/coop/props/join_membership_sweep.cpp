@@ -206,13 +206,18 @@ static void RunDivergenceSweep_(void* localPlayer) {
     for (const auto& pr : propPairs) {
         if (pr.mirror) {
             // Host-driven mirror -> not a save divergence (automatic kerfur exemption). A bound save
-            // native is the host's entity this client holds, so it counts as claimed for its class:
-            // the floor below compares the host's census with what is really bound. The count is one
-            // per bound native, so a stale bound mirror (the host destroyed the pile after its census,
-            // its PropDestroy in flight) covers one failed expression in that comparison; not fixed here.
+            // native is the host's entity this client holds, so it counts as claimed for its class (the
+            // floor below compares the host's census with what is really bound) and stays in the universe
+            // the >50% valve measures, or a handful of orphans against the unbound few would read as most
+            // of it and abort the sweep. The count is one per bound native, so a stale bound mirror (the
+            // host destroyed the pile after its census, its PropDestroy in flight) covers one failed
+            // expression in that comparison; not fixed here.
             if (pr.actor && !coop::dev::force_overdestroy_test::BoundCountDisabledForTest() &&
-                coop::prop_element_tracker::IsBoundMirrorNative(pr.actor))
+                coop::prop_element_tracker::IsBoundMirrorNative(pr.actor)) {
+                ++inClass;
+                ++claimedCount;
                 ++claimedByClass[R::ClassNameOf(pr.actor)];
+            }
             continue;
         }
         if (!pr.actor) continue;

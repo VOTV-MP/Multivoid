@@ -39,7 +39,7 @@ bool BoundCountDisabledForTest() {
         const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::sweep_bound_count_off);
         if (on) {
             UE_LOGW("force_overdestroy_test: the sweep's bound-native count is OFF for test -- a bound mirror "
-                    "native no longer counts as claimed, so the completeness floor keeps the orphan piles of a "
+                    "native no longer counts as claimed or in the valve's universe, so the completeness floor keeps the orphan piles of a "
                     "class the host still has (the red arm of the orphan drill).");
         }
         return on;
