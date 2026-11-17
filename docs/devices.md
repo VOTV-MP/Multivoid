@@ -416,31 +416,33 @@ generators and puts the kept row back onto the tower after each.
 
 ### The drone
 
-The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host streams its
-transform, stamped with its send time, while it moves and its state as it changes. The client stops the drone's tick and
-physics (a touched body spun between writes) and plays the poses back a little behind the host's times, as late as the link
-needs, so late or bunched poses do not lurch, and the cargo it drops rides the ordinary prop lanes
-(`coop/interactables/drone_sync`). The client's stopped drone never runs the host's unhook, which hides the sack it draws, so
-it shows or hides its copy's sack mesh on the host's `hasSack` `[V]` (`coop/dev/droneunhook_probe`). A sack put back reaches
-the other peers only as the loose sack's destroy (the drone's putSackOn, run by its overlap with the sack box on each copy),
-which on a copy the drone did not take scolds and spawns a new sack, so the host's drone hooks a client's sack lying within 3
-m of its box and a client's copy goes as taken `[V]` (`VOTVCOOP_DRONEUNHOOK_REHOOK`). The drone's sale runs on the host only,
-which is what makes selling into it the one economy path that credits the group correctly.
+The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator, so the host streams its transform,
+stamped with its send time, while it moves and its state as it changes. The client stops the drone's tick and physics (a
+touched body spun between writes) and plays the poses back a little behind the host's times, as late as the link needs, so late
+or bunched poses do not lurch, and the cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The
+client's stopped drone never runs the host's unhook, which hides the sack it draws, so it shows or hides its copy's sack mesh
+on the host's `hasSack` `[V]` (`coop/dev/droneunhook_probe`). A sack put back reaches the other peers only as the loose sack's
+destroy (the drone's putSackOn, run by its overlap with the sack box on each copy), which on a copy the drone did not take
+scolds and spawns a new sack, so the host's drone hooks a client's sack lying within 3 m of its box and a client's copy goes as
+taken `[V]` (`VOTVCOOP_DRONEUNHOOK_REHOOK`). A client's take-off, the drone's own menu (its actionOptionIndex 7, dropSack), is
+refused on its copy and asked of the host (`DroneFlyIntent`'s sack verb, `coop/interactables/drone_call_intent`), whose drone
+drops the one sack for a sender within 5 m of it parked with its sack on `[V]` (`VOTVCOOP_DRONEUNHOOK_BY=client` with
+`VOTVCOOP_DRONEUNHOOK_REHOOK=floor`: the client took it off, grabbed it, let it fall, grabbed it again and hooked it, each step
+the same on both peers). The drone's sale runs on the host only, which is what makes selling into it the one economy path that
+credits the group correctly.
 
-The garage console calls and sends it. Its one action option dispatches on what the presser is
-looking at -- the keyboard runs the drone's own call-or-send verb, the other face toggles the
-drone's leave timer and clicks -- and the console holds its drone as a level reference, so every peer's
-console points at that peer's own drone. A client's press therefore reached a mirror whose flight
-tick is suppressed: nothing moved and nobody heard about it, which is why only the host could work
-the button. The client now refuses its own body at the script-body gate and sends the press. The
-console carries no identity to name, so the host takes the console of its own world that the sender
-stands at, re-tests its own copy of the lid, then runs the same verb, so the flight starts on the
-machine that owns it and arrives on the stream that already carries it
-(`coop/interactables/drone_call_intent`). A press that reaches the host before it holds the sender's
-body, from a joiner who presses at once, waits for the body rather than being refused, as the
-door-verb, keypad and container lanes wait. The leave-timer face rides the same lane: the host flips
-its own drone's setting, which every peer's copy takes from the drone's state stream, and the console's
-click plays on the presser's machine and on the host.
+The garage console calls and sends it. Its one action option dispatches on what the presser is looking at -- the
+keyboard runs the drone's own call-or-send verb, the other face toggles the drone's leave timer and clicks -- and the
+console holds its drone as a level reference, so every peer's console points at that peer's own drone. A client's
+press therefore reached a mirror whose flight tick is suppressed: nothing moved and nobody heard about it, which is
+why only the host could work the button. The client now refuses its own body at the script-body gate and sends the
+press. The console carries no identity to name, so the host takes the console of its own world that the sender stands
+at, re-tests its own copy of the lid, then runs the same verb, so the flight starts on the machine that owns it and
+arrives on the stream that already carries it (`coop/interactables/drone_call_intent`). A press that reaches the host
+before it holds the sender's body, from a joiner who presses at once, waits for the body rather than being refused, as
+the door-verb, keypad and container lanes wait. The leave-timer face rides the same lane: the host flips its own
+drone's setting, which every peer's copy takes from the drone's state stream, and the console's click plays on the
+presser's machine and on the host.
 
 ### The woodchipper
 

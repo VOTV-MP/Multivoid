@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 300;
+inline constexpr uint16_t kProtocolVersion = 301;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -4209,7 +4209,10 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 namespace drone_verb {
 constexpr uint8_t kCall = 0;        // the keyboard's call/send
 constexpr uint8_t kLeaveTimer = 1;  // the leave timer face, a toggle on the host
-constexpr uint8_t kMax = kLeaveTimer;
+// The drone's own menu, "take the sack off" (its actionOptionIndex 7): run on the host's drone for a sender within 5 m
+// of it parked with its sack on; the loose sack and the cleared hasSack reach every peer on the prop and drone lanes.
+constexpr uint8_t kSackOff = 2;
+constexpr uint8_t kMax = kSackOff;
 }  // namespace drone_verb
 struct DroneFlyIntentPayload {
     uint8_t verb;        // 1 -- drone_verb::k*
