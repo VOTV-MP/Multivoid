@@ -7,6 +7,7 @@
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
+#include "coop/interactables/atv_passenger.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
@@ -175,6 +176,40 @@ bool HandleStateEvent(net::Session& session,
         net::AtvAnswerPayload aap{};
         std::memcpy(&aap, msg.payload, sizeof(aap));
         coop::atv_sync::OnAnswer(aap);
+        break;
+    }
+    case net::ReliableKind::AtvPassengerAnswer: {
+        // HOST->CLIENT: the host's verdict on this client's AtvPassengerRequest, with the seat it holds on that ATV.
+        // Host-authored (client_authorship.h); the host relays none. coop::atv_passenger::OnAnswer.
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: AtvPassengerAnswer dropped (role, or sender slot %d is not the host)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AtvPassengerAnswerPayload)) {
+            UE_LOGW("event_feed: AtvPassengerAnswer payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvPassengerAnswerPayload));
+            break;
+        }
+        net::AtvPassengerAnswerPayload pap{};
+        std::memcpy(&pap, msg.payload, sizeof(pap));
+        coop::atv_passenger::OnAnswer(pap);
+        break;
+    }
+    case net::ReliableKind::AtvPassengerTable: {
+        // HOST->CLIENT: one ATV's passenger table. Host-authored (client_authorship.h); the host relays none.
+        // coop::atv_passenger::OnTable.
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: AtvPassengerTable dropped (role, or sender slot %d is not the host)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::AtvPassengerTablePayload)) {
+            UE_LOGW("event_feed: AtvPassengerTable payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvPassengerTablePayload));
+            break;
+        }
+        net::AtvPassengerTablePayload ptp{};
+        std::memcpy(&ptp, msg.payload, sizeof(ptp));
+        coop::atv_passenger::OnTable(ptp);
         break;
     }
     case net::ReliableKind::AtvSpawn: {

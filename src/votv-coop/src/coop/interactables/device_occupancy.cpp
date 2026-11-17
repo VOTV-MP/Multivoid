@@ -5,6 +5,7 @@
 #include "coop/comms/peer_action_feed.h"  // the busy-notice chat line (AnnounceDirect)
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/interactables/atv_passenger.h"  // the use press at an occupied ATV boards a passenger seat
 #include "coop/interactables/atv_sync.h"  // IsOccupiedByOther -> ATV seating deny gate
 #include "coop/interactables/desk_input_sync.h"  // PingActiveSlot, the desk FSM-hold
 #include "coop/net/session.h"
@@ -283,19 +284,30 @@ void OnUseInputPre(void* self, void*, void*) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
+    // A passenger's use press leaves its seat: the press is spent, so the aim is cleared for this dispatch and nothing
+    // the player was looking at answers it.
+    if (coop::atv_passenger::LocalIsPassenger()) {
+        coop::atv_passenger::LeaveFromUse();
+        DS::ClearAimForDispatch(self);
+        return;
+    }
+
     // Only the local player processes input (puppets are unpossessed), so `self` is the local
     // pawn by construction.
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
     if (!aimed) return;
 
-    // The ATV occupancy gate: if another peer is already seated on this ATV, deny seating.
+    // The ATV occupancy gate: if another peer is already seated on this ATV, the game's sit verb is not run (the aim
+    // is cleared for this dispatch). The press boards a free passenger seat instead; when it cannot (full seats, full
+    // hands) it is denied as every press at an occupied ATV was.
     if (ue_wrap::atv::EnsureResolved() && ue_wrap::atv::IsAtv(aimed)) {
         uint8_t holder = 0xFF;
         if (coop::atv_sync::IsOccupiedByOther(aimed, &holder)) {
+            const bool boarded = coop::atv_passenger::BoardFromUse(aimed);
             g_memoName = L"the ATV";
             g_memoKey = L"atv";
             g_memoLastTick = coop::net_pump::TickSerial() + kMemoFreshTicks;
-            if (DS::ClearAimForDispatch(self)) {
+            if (DS::ClearAimForDispatch(self) && !boarded) {
                 g_denyPending = true;
                 g_denyKey = L"atv";
                 g_denyHolder = holder;

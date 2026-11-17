@@ -18,6 +18,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/atv_riders_arm.h"
 #include "coop/interactables/atv_authority.h"
+#include "coop/interactables/atv_passenger.h"
 #include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/interactables/atv_damage_gate.h"
@@ -420,6 +421,8 @@ SetSent SendSetToSlot(coop::net::Session* s, int peerSlot, bool withPoses) {
             ++r.poses;
         }
     }
+    // The passenger tables follow the poses, so a joiner seats the riders its copies already hold.
+    if (withPoses) coop::atv_passenger::SendTablesToSlot(*s, peerSlot);
     // The edge, behind the AtvSpawns on the same lane. Withheld whenever the walk cannot be taken as complete -- an
     // announce that did not go, or one of the reasons above.
     const char* withheld = r.spawns != static_cast<int>(held.size()) ? "an AtvSpawn was not sent" : incomplete;

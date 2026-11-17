@@ -3,7 +3,8 @@
 ## Purpose
 
 The ATV, the game's one vehicle: a five-body physics rig with a seat that takes the player's
-pawn, a parts economy of modules, tyres and a spare, and accumulators for fuel, dirt and health.
+pawn, three passenger seats the mod adds beside it, a parts economy of modules, tyres and a spare, and
+accumulators for fuel, dirt and health.
 How the peer driving it and the peers watching it share one rig, why a watching peer runs the
 rig natively instead of freezing it, what condition travels, and what is still open.
 
@@ -47,6 +48,70 @@ the seat. A client acts at once on its local sit or grab and yields to the answe
 dismounts through the game's own dismount, a refused grab drops. Every machine follows the host's
 stamp, the seat and the syncer on each `AtvState` the host sends. `[?]` Built to this design; no
 two-peer run has judged it yet.
+
+### The passenger seats
+
+The game's ATV seats one player, and sitting possesses the rig. So that more than one player rides, the mod adds
+three passenger seats (`coop/interactables/atv_passenger`, `ue_wrap/devices/atv_passenger`). A passenger does not
+possess anything: its own player stays possessed and is attached to the rig's root body at a seat, its movement mode
+None so no key moves it, its collision off so it cannot push the rig, its camera and mouse-look its own, and the
+driver's controls untouched. The engine moves an attached body with the rig each frame, so a passenger rides it
+instead of trailing a stream behind it.
+
+**Boarding.** The use key at an ATV whose driver's seat another player holds, which was denied before, boards the
+first free passenger seat when the sit verb's own gates pass (empty hands, not falling). The press is a
+PRE observer on the player's use input (`coop/interactables/device_occupancy`), the seam that already denied it: the
+game's sit verb is not run (the aim is cleared for that dispatch), so the trunk's open option, the driver's seat on an
+empty ATV and the grav-hand grab are untouched. A press with every seat taken, or a hand that is full, is denied as before.
+
+**Leaving.** The use key again (the press is spent: nothing else answers it), or the jump key (Space, read as a key edge
+while the window is the game's and no text field has the keyboard). The player is put beside the ATV: the seat's own
+side first, then the other side and the rear, the first spot with no wall between it and the rig, ground under it
+(found by a trace down) and headroom, else the NavMesh point nearest the rig. A leave also happens by itself when the
+ATV's health reaches zero or its actor goes, when the player dies or is ragdolled, when anything detaches the body or
+moves it more than 1.5 m from its seat (every teleport of the body runs through
+`teleport_client::ApplyLocally`, which leaves the seat first), and at a world change or the session's end.
+
+**Seats.** Three offsets in the rig's root space (X forward, Y right, Z up, cm) of the rider's capsule centre, the position a
+pose stream carries, so every machine seats a rider at the same place. They are measured on the game's ATV (the drill's `geom` lines:
+the rig's bounds, its components, and a trace down over a grid): behind the driver's seat, whose top is at z 71, the rig has a flat rear
+deck at z 56 to 62 from x -40 to -130 and wider than y +-60, and a seated body's centre rides 19 above what it sits on (the driver's is
+at 90), so the three seats are abreast across the deck, 19 above its surface: (-80, 0, 75), (-80, -45, 80) and (-80, 45, 80). The
+The driver leaving ejects nobody: the driver's
+seat and the passenger table are separate state.
+
+**The table is the host's.** `AtvEntry::passengerSlot[3]` holds the peer slot in each passenger seat, written on the
+host by judgement and on a client by the host's `AtvPassengerTable`. A client acts at once on its own boarding, at the
+seat its own table copy shows free, and asks the host with `AtvPassengerRequest`; the host judges in this order: the
+sender's world ready, the request well formed, the ATV known, a leave from a rider (frees its seat, takes no token), then
+a board: the sender's body alive and present, a pace (four boards, one more each second), the sender seated nowhere else (a
+driver's seat and a passenger seat both count, so a driver or a rider asking again is refused, and a passenger's driver sit is
+refused too), a free seat, and within reach of the ATV by the movement ledger's accepted position. Every judged request is answered with
+`AtvPassengerAnswer` carrying the seat the sender now holds there; a refused board makes the client leave beside the ATV, and the
+client's table copy follows the answer. The host's own player is judged by the same table at the press, without the reach test or the
+pace. The table is sent to every world-ready client when it changed and to a joiner after its ATV state at the connect replay (a table
+that reaches a client before its ATV's row waits for the row). A departure frees that slot's seats, and the host's once-a-second pass
+takes out a rider whose body is dead, or whose accepted position stays more than 15 m from its seat for two seconds (a machine that
+left the rig and could not say so; a client's copy of the rig trails the host's, so the bound is wide, and a teleport the rider's own
+machine saw has sent its leave already).
+
+**The remote view.** A remote rider's body is seated by the bodies' one owner (`coop/player/puppet_seat`), which seats a remote
+driver too: seat index 1 to 3 of an ATV resolves to the passenger seat's place (`atv_seat_table::ResolveSeat`), the body is attached
+to this machine's copy of the ATV once, its collision off and its AnimBP in the seat pose, and nothing writes it per frame.
+`coop/interactables/atv_passenger` tells the owner a slot's seat when the table's answer for that slot changed, and clears it when
+the table no longer names the slot; the body then follows the pose stream
+again. The pose stream itself is unchanged: a rider's own body is attached to its copy, so it streams the seat's position, at
+speeds up to the ATV's turbo, which the movement ledger already trusts (its 10 000 cm/s bound); the board is the one
+discontinuity, a hop of the distance to the seat, which the ledger charges as a short debt it repays in milliseconds, and which
+only logs (it is measure-only).
+
+`[V]` the passenger drill (`coop/dev/atv_passenger_drill`): a client boards through the real use key and holds seat 0 on both tables,
+the host's puppet of it attached to the host's copy; the host drives and the client's body stays within a few centimetres of the seat
+on its own copy and the puppet on the host's; the driver leaves and the passenger stays; the client leaves beside the ATV, on the
+ground; the host's own player rides the client's ATV the same way, its puppet seated on the client's copy; a second boarding, left by
+a teleport of the body; and the host's refusals of a duplicate board, a board with every seat taken and a board out of reach by its
+counters. `[?]` Not driven: three players (a third machine's puppet seat, and the connect replay of a table to a joiner, which a two-peer
+drill cannot reach), a passenger's death or an ATV's explosion with riders aboard.
 
 ### The stream
 
@@ -187,6 +252,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | the pose while driven or carried | the syncer | a twenty-hertz stream; a client's reaches the host, which re-sends it stamped |
 | the pose while idle | the host | five hertz on change, a keepalive floor |
 | the seat | the host | a judged request, answered, stamped to every client |
+| the passenger seats (three) | the host | a judged request, answered, the table sent to every client and replayed to a joiner |
 | the syncer | the host | assigned on a sit or a grab, taken back at rest, out of range or on silence |
 | collision damage, the accumulators, wheel torque | the tick owner, the syncer's machine | a mirror's impulses are zeroed |
 | every route to an ATV's damage and death (the two blast verbs, the explosion) | the tick owner | a copy that does not own the tick cancels them at the script gate; the owner takes every blast that reaches it |
@@ -208,6 +274,9 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvSeat`, `AtvTakeover` | a client to the host | a sit in or leave of the driver's seat; a grab of the ATV |
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
+| `AtvPassengerRequest` | a client to the host | a board of the first free passenger seat, or a leave of the one held |
+| `AtvPassengerAnswer` | the host to the asking client | the verdict on one request, with the seat the sender holds on that ATV |
+| `AtvPassengerTable` | the host to every ready client; a joiner at its replay | one ATV's passenger table: the slot in each of the three seats |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
 | `AtvHostState` | the host to all | an ATV's fuel, health, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
@@ -242,6 +311,7 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | Not synced: the radio | `[V]` nothing under `coop/interactables/atv_*` carries them |
 | A client's refuel or repair is the rise its copy shows, which the host takes as is within the 100 ceiling and the reach; the gas can's own fuel after a pour is not carried. A refused take-off of a module the host does not have leaves its author's module in the world | `[V]` `coop/interactables/atv_host_sync` |
 | A seated driver's head does not follow its look, and its flashlight and steps are still; a riding kerfur and the driver's body share the ATV, the driver at the ATV's `playerHit` and the kerfur at its `sitarrow`. A client's mirror rides the ATV the stamp names, not the nearest one | `[?]` `coop/player/puppet_seat`, `coop/creatures/npc_ride` |
+| The jump key that leaves a passenger seat is Space whatever the game's rebinding. A remote passenger's body shows the driver's seat pose, the only one the AnimBP has. The seat offsets were measured by trace and bounds on the ATV of the 0.10 preview and are not re-measured here | `[?]` `coop/interactables/atv_passenger` |
 
 ## Code map
 
@@ -257,3 +327,4 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | lights, brake, turbo, the horn (the block's bits taken and applied, the syncer's latch) | `coop/interactables/atv_stream_gates` (`TakeControls`) |
 | the riders: the driver's body, the kerfur passenger | `coop/interactables/atv_riders`, `coop/player/puppet_seat`, `coop/interactables/atv_rider_watch`, `coop/interactables/atv_seat_table`, the mirror's ride in `coop/creatures/npc_ride` |
 | tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `coop/dev/atv_gate_drill` (the row `atv_gate_drill=green\|<red>`: each act a player does at an ATV, every outcome decided by an event of `coop/interactables/atv_drill_events`); `coop/dev/atv_riders_drill` (the row `atv_riders_drill=on\|drive_control\|<red>`: three peers and a rejoin, the driver's body and the host's kerfur shown on every peer, a red for each owner and each seam of the riders); the smoke run with the ATV scenario enabled |
+| the passenger seats | `coop/interactables/atv_passenger` (this machine's rider, the table's wire, the remote riders' seats told to `coop/player/puppet_seat`), `coop/interactables/atv_authority` (the table and its judgements), `ue_wrap/devices/atv_passenger` (the seat offsets, the local body's attach, the exit spot), `coop/dev/atv_passenger_drill` |

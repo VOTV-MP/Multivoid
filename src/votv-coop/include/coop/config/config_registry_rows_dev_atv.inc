@@ -1,6 +1,6 @@
 // coop/config/config_registry_rows_dev_atv.inc -- the [dev] rows of the ATV lane: its rig probe, the corrector's
 // control arm, the spawn drill and its park, the health drill and its red arm, the eject drill and its red arm, the gate
-// probe and its drill.
+// probe and its drill, the riders drill and the passenger drill.
 // Included by config_registry_rows_dev.inc after the fire rows, before the PI and NB rows, which stay the last ones,
 // so each row keeps its place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 // The drill's arms: sit, grab, occupied, synced, silent, gate, owner, trap; the red arm's values: back, occupied,
@@ -111,3 +111,9 @@ CFG_ENUM(atv_riders_drill, "atv_riders_drill", "dev", "off",
     "unseat_latch_off (an unseated mirror keeps its row's latch, so its pose stays frozen, 6), "
     "ragdoll_restore_off (a ragdoll's stop restores no seat, 8), exit_seat_off (an ATV's end announces no change, 9). "
     "MUTATES the ATV.")
+CFG_ENUM(atv_passenger_drill, "atv_passenger_drill", "dev", "off", "off|on", "VOTVCOOP_ATV_PASSENGER_DRILL",
+    "Drill (BOTH peers): the ATV's passenger seats. The host spawns an ATV and drives it; the client boards through the use key "
+    "and must hold passenger seat 0 on both tables, ride the rig through a drive within a tolerance (its puppet on the host "
+    "sitting at the seat), stay seated when the driver leaves, and leave beside the ATV; a second boarding, then the host's "
+    "refusals of a duplicate board (already seated), a board with every seat taken and a board out of reach, each judged by "
+    "the host's counters. Lines tagged [ATVPASS-DRILL]; the host's PASS or FAIL line is the verdict.")

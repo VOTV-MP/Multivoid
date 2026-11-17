@@ -50,7 +50,8 @@ void Exit(coop::atv_sync::AtvEntry& e, const char* why);
 // The live actor filed under `key` (null when there is none) and its index; looked up at each call.
 void* ResolveAtv(const std::wstring& key, int32_t& atvIdx);
 
-// The seat transform of seat `seatIndex` of the ATV under `key`: index 0 is the driver's, any other index is false.
+// The seat transform of seat `seatIndex` of the ATV under `key`: index 0 is the driver's, 1 to 3 the passenger seats'
+// (coop/interactables/atv_passenger), any other index is false.
 bool ResolveSeat(const std::wstring& key, uint8_t seatIndex, void*& atv, int32_t& atvIdx, ue_wrap::FVector& loc,
                  ue_wrap::FRotator& rot);
 

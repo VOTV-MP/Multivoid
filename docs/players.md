@@ -61,6 +61,17 @@ and slaves the body's pelvis velocity to the streamed ragdoll pose so the flop t
 the puppet stays attached as the anchor for the nameplate and the recovery hand-off
 (`coop/player/remote_player_ragdoll`).
 
+### Riding an ATV
+
+An ATV has the driver's seat and three passenger seats on its rear deck. Pressing the use
+key at an ATV another player is driving boards the first free passenger seat, with empty hands, as the driver's seat asks; pressing it
+again, or the jump key, leaves, and the player is put on the ground beside the ATV. A rider keeps its own mouse-look and cannot walk
+or push the rig; every machine shows it sitting on the deck of its own copy of the ATV, riding with it. A driver getting out does not
+put the passengers out. A rider also leaves when the ATV is destroyed, when it dies or is knocked down, and when it is teleported.
+The seats and the host's table of them are on the vehicles page
+([vehicles.md](vehicles.md)); the rider's body is the local player's own, so its pose stream is unchanged and the movement ledger
+reads the ATV's speeds as it always did.
+
 ### What the player holds and toggles
 
 The item in a player's hand is player state, not a world entity: the game destroys and respawns
@@ -412,6 +423,7 @@ host. A setting that holds a password is never set or shown by command.
 | sleep | each peer sleeps natively; each peer reports its rest state, the host relays it and its own sleeping flag; a client's nightmare roll is the mod's, at the host's pace | |
 | inventory | that peer; the host stores it | never on the wire as gameplay |
 | roster, kick, ban | the host | rows asserted as state; a ban by id and address at the identity proof |
+| a passenger seat of an ATV | the host | a judged request, the table sent to every client ([vehicles.md](vehicles.md)) |
 
 ## Wire messages
 
@@ -426,6 +438,7 @@ host. A setting that holds a password is never set or shown by command.
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
 | `TeleportClient` | host to one peer | a placement; the administration action, not the join |
+| `AtvPassengerRequest`, `AtvPassengerAnswer`, `AtvPassengerTable` | a client to the host; the host to that client; the host to every client | boarding or leaving an ATV's passenger seat, the host's verdict, and who sits in each of an ATV's three seats ([vehicles.md](vehicles.md)) |
 
 ## Late join
 

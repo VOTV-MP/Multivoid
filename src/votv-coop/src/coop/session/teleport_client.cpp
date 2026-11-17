@@ -1,3 +1,4 @@
+#include "coop/interactables/atv_passenger.h"
 #include "coop/session/teleport_client.h"
 
 #include "coop/config/config.h"
@@ -68,6 +69,10 @@ bool ApplyLocally(const ApplyArgs& args) {
         UE_LOGW("teleport_client: no local mainPlayer_C found (not in gameplay?)");
         return false;
     }
+    // A passenger of an ATV leaves its seat where it is first: an attached body is not teleported out of its seat, and the
+    // host's table must not keep seating it on a rig it is not on. Every teleport of this body comes here (the cheat
+    // panels', Unstuck, the host's /tphere).
+    coop::atv_passenger::LeaveLocal("this body was teleported", /*place*/false);
     const ue_wrap::FVector  loc{args.locX, args.locY, args.locZ};
     const ue_wrap::FRotator rot{args.rotPitch, args.rotYaw, args.rotRoll};
 

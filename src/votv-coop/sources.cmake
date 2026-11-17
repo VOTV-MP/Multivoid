@@ -143,6 +143,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/atv_stream_gates.cpp
     src/coop/interactables/atv_authority.cpp
     src/coop/interactables/atv_body.cpp
+    src/coop/interactables/atv_passenger.cpp
     src/coop/interactables/atv_index.cpp
     src/coop/interactables/atv_runtime_mirror.cpp
     src/coop/interactables/atv_spawn_park.cpp
