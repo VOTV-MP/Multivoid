@@ -49,7 +49,7 @@ bool CloseUnlessTyping(void* localPlayer);
 // layer put up is still up. Any thread. The game's own Q release cannot close it in story mode
 // (the same isBuoyant guard as its open), so whoever opens it owes the player a way out while
 // this is true. When the game does close it, a watch on the Q release event reads the widget's
-// visibility once and ends the debt.
+// visibility once and ends the debt; a world change ends it too, the widget going with the world.
 bool IsOpen();
 
 }  // namespace ue_wrap::spawn_menu

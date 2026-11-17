@@ -3,6 +3,7 @@
 #include "ue_wrap/engine/spawn_menu.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/engine/engine.h"      // GetController -- the local player's PlayerController for input mode
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -79,11 +80,21 @@ void OnQRelease(const sg::Call&) {
     UE_LOGI("spawn_menu: the game closed the menu itself -- no close is owed");
 }
 
-// Watch the game's close, registered once. Game thread.
+// The widget belongs to the world that was current: a world change destroys it with no Q release to say so, so the open
+// is forgotten here, and with it the gate hold.
+void OnWorldChange() {
+    if (!g_open.load(std::memory_order_acquire)) return;
+    SetOpen(false);
+    UE_LOGI("spawn_menu: the world changed -- the menu is gone with it, no close is owed");
+}
+
+// Watch the game's close and the world's change, registered once. Game thread.
 void ArmCloseWatch() {
     static bool sArmed = false;
     if (sArmed) return;
     sArmed = true;
+    if (!ue_wrap::world_identity::AddWorldChangeListener(&OnWorldChange))
+        UE_LOGE("spawn_menu: the world-change list is full -- a menu left open across a world change stays owed a close");
     if (!sg::WatchName(kRowQRelease, kTagQRelease, nullptr, &OnQRelease))
         UE_LOGE("spawn_menu: the watch on %ls::%ls was refused -- the menu stays owed a close until Q is pressed",
                 kRowQRelease.Class(), kRowQRelease.Name());
