@@ -35,6 +35,7 @@ struct Entry {
     bool         containerExtract = false;
 };
 std::unordered_map<void*, Entry> g_live;  // enqueued, not yet drained
+std::map<std::wstring, std::string> g_lastExit;  // the newest exit's verdict, by the class of the entry
 
 // Every keyed-prop birth seen, with the class and the key as read at the birth: the DESTROY line's
 // side table. A world's teardown does not pass K2_DestroyActor, so nothing erases the entries of a
@@ -176,6 +177,7 @@ void NoteDrainExit(void* actor, const char* verdict, int tries, const std::wstri
 
     Entry e;
     if (auto it = g_live.find(actor); it != g_live.end()) { e = it->second; g_live.erase(it); }
+    if (!e.cls.empty()) g_lastExit[e.cls] = v;
     // A Key that was there at the seam and is a DIFFERENT one at the exit is the case a flag hides:
     // the identity was not ready, it was merely occupied.
     const bool seamKeyChanged = !e.seamKey.empty() && !key.empty() && e.seamKey != key;
@@ -193,6 +195,13 @@ void NoteDrainExit(void* actor, const char* verdict, int tries, const std::wstri
 
     g_dirty = true;
 }
+
+std::string LastExitOf(const std::wstring& cls) {
+    const auto it = g_lastExit.find(cls);
+    return it == g_lastExit.end() ? std::string() : it->second;
+}
+
+void ForgetExitOf(const std::wstring& cls) { g_lastExit.erase(cls); }
 
 void Tick() {
     if (!IsEnabled() || !g_dirty) return;

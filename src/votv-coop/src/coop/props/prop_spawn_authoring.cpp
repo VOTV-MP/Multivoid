@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_spawn_authoring.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/props/prop_lifecycle.h"      // DestroyLocalProp -- a ghost the unscrew left, destroyed with no broadcast
 
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -205,13 +207,16 @@ bool BirthIsPlayerAuthored(void* born) {
     // A pry's end: the crowbar the player's own crowbar became when the pry began (its begin destroyed the held one)
     // comes back as a new crowbar, freed from the board, dropped at it, or put back in the hand. The pry runs only on
     // the prying player's game, so without this the crowbar is gone for every other player.
-    if (caller == g_pryEndFn) return true;
+    // The drill's red arm: the pry's End is not admitted as a player's birth (a developer knob, off).
+    static const bool s_pryUnadmitted =
+        coop::config::ResolveFlag(coop::config_registry::rows::crowbarpry_authorship_off);
+    if (caller == g_pryEndFn) return !s_pryUnadmitted;
     // A reloaded world re-creates pryingCrowbar_C, so a miss of the latch is asked by name again.
     if (FunctionIs(const_cast<void*>(caller), g_pryEndName, L"pryingCrowbar_C")) {
         g_pryEndFn = const_cast<void*>(caller);
         UE_LOGI("prop_spawn_authoring: a prying crowbar's End is the calling frame -- the crowbar a pry hands back is "
                 "a player's");
-        return true;
+        return !s_pryUnadmitted;
     }
     return false;
 }
