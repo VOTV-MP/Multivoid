@@ -1,10 +1,12 @@
 // coop/cheats/cheat_request.h -- the cheat controls' one entry: a panel asks for a cheat and this module runs it where
 // the authority is. On the host, or in a solo game, the cheat runs at once (coop/cheats/cheat_run). On a client it is
 // sent to the host as a CheatRequest, which the host judges and runs or refuses, answering with CheatResult; the
-// client never writes the world itself, and a request is only taken while the host's setting
-// net.allow_player_cheats is on. MTA's shape: a client's command is a request the server checks and runs
-// (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp, the command handler). The host logs every request a
-// player makes, with the player's name and what came of it, and says in its chat what a player did.
+// client never writes the world itself. A request is taken only while the host's master setting
+// net.allow_player_cheats is on (Source's sv_cheats, reference/source-sdk-2013 game/server/client.cpp:1167) AND the
+// host has not withheld the sender's right, the node multivoid.dev.local.cheats (MTA's per-right check,
+// reference/mtasa-blue Server/mods/deathmatch/logic/CConsoleCommands.cpp:152 and CAccessControlListManager.cpp:329).
+// The host logs every request a player makes, with the player's name and what came of it, and says in its chat what
+// a player did.
 //
 // The panels call SpawnItem, AddPoints and FireEvent from the render thread; every engine touch is posted to the game
 // thread. A request is bounded per player (a burst of eight, then three a second); one past its budget is dropped

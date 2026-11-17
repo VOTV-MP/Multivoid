@@ -8,3 +8,7 @@ CFG_ENUM(cheat_drill, "cheat_drill", "dev", "off", "off|on", "VOTVCOOP_CHEAT_DRI
     "requests are all refused and move nothing; with it on the client's points, crowbars and event run on the host and "
     "mirror here, a story event and an unlisted prop are refused; reset, the next request is refused again. Each peer first "
     "opens the F1 panes it is offered. Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict.")
+CFG_FLAG(cheat_node_check_off, "cheat_node_check_off", "dev", false, "VOTVCOOP_CHEAT_NODE_CHECK_OFF",
+    "Developer red arm: never set (HOST). 1 makes the host skip the per-player right multivoid.dev.local.cheats when it "
+    "judges a cheat request, so a request from a player whose right the host withheld runs, and the cheat drill's "
+    "withheld arm must FAIL.")

@@ -9,6 +9,8 @@
 #include "coop/net/intent_bucket.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
+#include "coop/permissions/grants_core.h"
+#include "coop/permissions/permission_host.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/text/utf8_codec.h"
@@ -186,6 +188,18 @@ void TellHost(const std::string& nick, const Request& r, int done) {
     coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
 }
 
+// Whether the host lets this sender use cheats: the per-player right on top of the master switch (which Run reads).
+// The id is proved the way the remover derives it; an id that is not proved holds no right.
+bool SenderMayCheat(const coop::net::Session& s, uint8_t slot) {
+    static const bool nodeCheckOff = coop::config::ResolveFlag(coop::config_registry::rows::cheat_node_check_off);
+    if (nodeCheckOff) return true;   // the red arm: the right is not asked
+    const std::string guid = s.ProvedGuidForSlotWithToken(slot, coop::roster_ledger::Get(slot).bornGeneration);
+    if (guid.empty()) return false;
+    const coop::permissions::grants::Entry& right =
+        coop::permissions::grants::kProjected[static_cast<size_t>(coop::permissions::grants::Projected::Cheats)];
+    return coop::permissions::host::Allows(guid, right.node, right.defaultGranted, false);
+}
+
 bool PrintableAscii(const char* s, size_t n) {
     for (size_t i = 0; i < n; ++i)
         if (static_cast<unsigned char>(s[i]) < 0x20 || static_cast<unsigned char>(s[i]) > 0x7E) return false;
@@ -290,7 +304,8 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
         r.count = p.count;
         r.target = p.target;
         r.amount = p.amount;
-        if (!s->IsSlotWorldReady(senderSlot)) o.reason = CheatReason::NotReady;
+        if (!SenderMayCheat(*s, senderSlot)) o.reason = CheatReason::Off;
+        else if (!s->IsSlotWorldReady(senderSlot)) o.reason = CheatReason::NotReady;
         else o = Run(r, senderSlot);
         UE_LOGI("cheats: slot %u (%s) asked for %s -> %s", static_cast<unsigned>(senderSlot), nick.c_str(),
                 Describe(r).c_str(), ReasonName(o.reason));

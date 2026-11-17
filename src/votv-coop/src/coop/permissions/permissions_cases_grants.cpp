@@ -39,10 +39,10 @@ void RunGrantsCases(CheckSink& sink) {
     sink.Check(G::MergeEarliest(7, 5) == 5, "grants: merging 7 with 5 is 5");
     sink.Check(G::MergeEarliest(5, 0) == 5, "grants: merging 5 with none is 5");
 
-    bool allDenied = true;
+    bool defaultsRight = true;
     for (size_t i = 0; i < static_cast<size_t>(G::Projected::Count); ++i)
-        if (G::kProjected[i].defaultGranted) allDenied = false;
-    sink.Check(allDenied, "grants: every projected node is denied by default");
+        if (G::kProjected[i].defaultGranted != (i == static_cast<size_t>(G::Projected::Cheats))) defaultsRight = false;
+    sink.Check(defaultsRight, "grants: every projected node is denied by default but the cheats right");
 }
 
 }  // namespace coop::permissions

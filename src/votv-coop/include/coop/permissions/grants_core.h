@@ -1,5 +1,5 @@
 // coop/permissions/grants_core.h -- the local grants' engine-free core: the table of nodes a machine
-// shows locally (the dev features), their packing into one 64-bit word, the rule that reads a bit,
+// shows locally (the dev features, and a player's right to the host's cheat tools), their packing into one 64-bit word, the rule that reads a bit,
 // and the rule that says when the host computes them again. Time and the session's serial are
 // parameters; nothing here logs, reads a clock or includes the engine layer, so the selftest drives
 // it whole and the future arbiter links it as it is. The session glue is coop/session/local_grants
@@ -13,7 +13,7 @@ namespace coop::permissions::grants {
 
 // A node a machine shows locally, in wire order: kind 168 carries one bit per entry, entry 0 the
 // lowest bit.
-enum class Projected : uint8_t { Freecam, Hud, Overlay, Stamina, Count };
+enum class Projected : uint8_t { Freecam, Hud, Overlay, Stamina, Cheats, Count };
 
 static_assert(static_cast<size_t>(Projected::Count) <= 32, "the bits travel in a uint32_t");
 

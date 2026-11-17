@@ -46,6 +46,7 @@ Arm ExpectNow() {
 
 // Whether `arm` expects this peer to hold the projected node `n`.
 bool Expects(Arm arm, bool host, G::Projected n) {
+    if (n == G::Projected::Cheats) return true;   // granted by default; no arm withholds it
     if (host) return !(arm == Arm::HostDeny && n == G::Projected::Hud);
     return arm == Arm::Grant && n == G::Projected::Hud;
 }
