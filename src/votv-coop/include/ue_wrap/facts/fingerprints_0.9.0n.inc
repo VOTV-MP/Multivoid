@@ -192,6 +192,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"droneconsole_c", L"player_use", L"droneconsole_c.player_use", 0xe87a23146f2bd561ull, 0x08e7122143f7bdb7ull},
     {L"droneconsole_c", L"playerhanduse_lmb", L"droneconsole_c.playerhanduse_lmb", 0x5de5f12d89a97b5eull, 0xc193a954a4b66d2aull},
     {L"droneselllocation_c", L"sell", L"droneselllocation_c.sell", 0xecb32fd7970774e9ull, 0xc303829c519877bdull},
+    {L"effect_c", L"removeranout", L"effect_c.removeranout", 0xba1ba82cb32407deull, 0x234412eb15129173ull},
     {L"eg_c", L"onlanded", L"eg_c.onlanded", 0x3a245918663bdc30ull, 0xbbb186751ea45df1ull},
     {L"eg_c", L"receivebeginplay", L"eg_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0xa7ae5bb7910294c4ull},
     {L"eg_c", L"receivetick", L"eg_c.receivetick", 0x6082ffdfa2cda429ull, 0xa990487e9fa5eba4ull},
