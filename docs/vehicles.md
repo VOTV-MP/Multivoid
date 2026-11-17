@@ -174,7 +174,7 @@ sits tells the host's table (`coop/interactables/atv_rider_watch`, a watch on it
 stamp carries it from there.
 
 On a client, the stamped kerfur's mirror rides the ATV the stamp names, by the kerfur's own `sitOnCar`, which attaches
-it; the mirror's pose, state and movement stay the host's stream's, and when the stamp no longer names it the mirror is
+it; the mirror's pose, state and movement stay the host's stream's, and when the stamp stops naming it the mirror is
 unseated without a car (`coop/creatures/npc_ride`). A client's own game never decides a mirror's seat: its ATV's sit
 would invite every kerfur of its world, mirrors included, and its dismount and crash paths would unseat or kill the
 riding one, so `tryToOccupyCar` and `getOffCar` on a mirror are cancelled at the script gate on a client. `[?]` Built to

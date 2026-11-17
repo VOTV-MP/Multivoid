@@ -130,7 +130,7 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
 - **A zip disk dropped in the drone sack** ([#111](https://github.com/VOTV-MP/Multivoid/pull/111)): a client's
   disk dropped into the drone sack was filed on that client only, and the sack's call destroyed the prop,
   taking the host's copy with it unsold. Now the client's put from the sack is cancelled and the host, which
-  runs the same overlap, files it. Kept as written; on top, the cancel no longer lists its callers: on a
+  runs the same overlap, files it. Kept as written; on top, the cancel lists none of its callers: on a
   client every overlap put into a shared container is cancelled, the roomba's own pickup the one named
   exception, and the drone sack drill's arm 2 carries its prop over the sack and says its verdict.
 - **One walking mannequin, the host's** ([#84](https://github.com/VOTV-MP/Multivoid/pull/84)): each peer's mannequin spawner rolled its own walkers and
@@ -237,7 +237,7 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   every player's sky turns. Kept as written; on top, a drill with a join arm and a red.
 - **The robot cleaner is the host's** ([#130](https://github.com/VOTV-MP/Multivoid/pull/130)): the cleaner ran on each peer apart; now the host's runs on
   every peer and a client's switch press is asked of the host. Kept as written. On top: the switch is watched
-  instead of polled, a press made before the host's copy exists is held, the overlap check no longer exempts
+  instead of polled, a press made before the host's copy exists is held, the overlap check does not exempt
   the cleaner, and a drill with a join arm and two reds.
 - **A selftest every tick** ([#163](https://github.com/VOTV-MP/Multivoid/pull/163)): the life-edge selftest's caller is the install pump, which runs every tick, so
   its result was logged 61 times a second, four lines in five of a session's log; the checks are pure, so it runs

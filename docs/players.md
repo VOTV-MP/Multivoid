@@ -274,7 +274,7 @@ player is refused, as is a second loadLevel while a visit is under way.
 
 A player who joins while another is in one of the maps needs no snapshot of it: the first pose
 the joiner applies for that player is below the floor, so its copy is hidden from that pose, and a
-copy born or respawned below, or a lost pose, is corrected by the next one. MTA keeps a player's
+copy born or respawned below, or a lost pose, is set right by the next one. MTA keeps a player's
 interior and dimension as a reliable state with a join snapshot; here the map is a place in the
 same world, so the position the pose already carries is the state `[?]`. What the host's save
 capture holds while the host itself is in a map (its player below the world, its game instance

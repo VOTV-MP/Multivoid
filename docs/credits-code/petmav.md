@@ -8,7 +8,7 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   index's per-class lists, and the array only while the index trails the engine. Kept as written; on top, a scan
   that may spawn a mirror for a missing twin brings the index fully up to date first.
 - **Why a signal was refused** ([#158](https://github.com/VOTV-MP/Multivoid/pull/158)): the signal lanes now say why a saved signal or a deck selection was refused,
-  a signal row's identity no longer depends on the case two peers' engines spell its names in, and a dev census
+  a signal row's identity does not depend on the case two peers' engines spell its names in, and a dev census
   counts what a peer receives by message kind and bytes. Kept as written; on top, the census is a dev setting like
   its sister and counts every message kind.
 - **More than four players** ([#152](https://github.com/VOTV-MP/Multivoid/pull/152)): the player cap went from four to eight, the per-player ack arrays of the
