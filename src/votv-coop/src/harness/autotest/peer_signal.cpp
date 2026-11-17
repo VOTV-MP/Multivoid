@@ -52,6 +52,8 @@ bool Begin(const char* logTag) {
     return true;
 }
 
+const std::string& Dir() { return g_dir; }
+
 void Mark(const char* name) { Mark(name, "x"); }
 
 // Written whole: the text goes to `<name>.tmp` and is renamed over `<name>`, so a reader polling the signal never

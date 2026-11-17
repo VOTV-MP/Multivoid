@@ -109,7 +109,8 @@ const Cand* PickIsolated(const std::vector<Cand>& cs, bool clump) {
 void Install() {
     if (!Armed() || g_tried) return;
     g_tried = true;
-    if (!PS::Begin(kTag)) g_done = true;   // Begin said INVALID itself
+    if (!PS::Begin(kTag)) { g_done = true; return; }   // Begin said INVALID itself
+    UE_LOGI("pile-orphan: signal clock started, dir='%s'", PS::Dir().c_str());
 }
 
 void OnDisconnect() {
@@ -158,7 +159,11 @@ void NoteNoSweep() {
 void NoteSweepBegin() {
     if (!Armed() || g_done) return;
     std::string text;
-    if (!g_tried || !PS::Peek(kSignal, text) || !Decode(text, g_pile, g_clump)) {
+    const bool peeked = g_tried && PS::Peek(kSignal, text);
+    const bool decoded = peeked && Decode(text, g_pile, g_clump);
+    UE_LOGI("pile-orphan: at sweep begin tried=%d peek=%d decode=%d text='%s'", g_tried ? 1 : 0, peeked ? 1 : 0,
+            decoded ? 1 : 0, text.c_str());
+    if (!decoded) {
         V::Say(kTag, V::Outcome::Invalid, "no staging signal from the host when the sweep began");
         g_done = true;
         return;

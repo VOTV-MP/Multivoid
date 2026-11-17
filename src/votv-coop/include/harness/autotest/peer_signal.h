@@ -16,6 +16,9 @@ namespace harness::autotest::peer_signal {
 // folder is not set.
 bool Begin(const char* logTag);
 
+// The folder Begin read from VOTVCOOP_CAN_DIR; empty before Begin or when it is unset. For a drill's own log line.
+const std::string& Dir();
+
 // Leaves the signal `name` for the other peer.
 void Mark(const char* name);
 
