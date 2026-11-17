@@ -4,7 +4,7 @@
 
 #include "coop/element/element.h"        // kInvalidId
 #include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor
-#include "ue_wrap/actors/prop.h"         // IsChipPile
+#include "coop/props/pile_spawn_bind.h"  // CollectLiveTrashNatives: the one trash universe
 #include "ue_wrap/engine/engine.h"       // TryGetActorLocation
 #include "ue_wrap/core/reflection.h"   // NumObjects / ObjectAt / IsLive / ClassNameOf
 #include "ue_wrap/core/log.h"
@@ -28,15 +28,16 @@ bool g_have = false;
 int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes) {
     // INDEPENDENT of the expression path: a raw GUObjectArray walk sees every live actor whether or
     // not it is in the Prop Element registry. The 11:16 root was untracked piles MISSING from the
-    // registry -> never expressed; they are still counted here. IsTrashActor is a cheap class-hierarchy
-    // test (no per-object string alloc); ClassNameOf runs only for the actual piles and clumps.
+    // registry -> never expressed; they are still counted here. The universe is the one the joiner's sweep
+    // walks (CollectLiveTrashNatives: live piles and clumps, the class default objects out), so both sides
+    // count the same set. A class default object is a persistent live object of the pile class at the
+    // origin and no world's pile: counted, it made the host report one pile more than the joiner could
+    // ever claim, and the floor kept a real orphan for it.
     std::unordered_map<std::wstring, uint32_t> byClass;
     int unexpressed = 0;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsTrashActor(o)) continue;   // both resting forms are in the sweep's universe
+    std::vector<void*> natives;
+    coop::pile_spawn_bind::CollectLiveTrashNatives(natives);
+    for (void* o : natives) {
         ++byClass[R::ClassNameOf(o)];
         // Counted, not judged: a live trash actor with no Prop Element row is in this census and in no
         // expression, so the joiner's floor reads it as a pile still to come. Said, so a short claim is traceable.
