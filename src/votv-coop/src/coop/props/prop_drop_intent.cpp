@@ -15,7 +15,7 @@
 #include "coop/props/join_membership_sweep.h"// RecordSelfAuthored (a player's own prop is never divergence)
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
 #include "coop/props/prop_save_data.h"
-#include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu / the toolgun)
+#include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu, the toolgun, the hacksaw, the pry)
 #include "coop/props/prop_drive_rules.h"    // kRestVelCmS: the floor under which a spawn is written no velocity
 #include "coop/props/prop_throw.h"          // ThrowSeqFor: the throw that launched a drained place
 #include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
@@ -88,7 +88,7 @@ struct PendingPlace {
     // drop intent, since the client-extracted item's world actor is invisible to the host
     // otherwise (the fresh-birth whitelist covers only reel, module and drive births).
     bool    containerExtract = false;
-    // True when a PLAYER's own spawn verb -- the sandbox spawn menu or the toolgun -- was on the
+    // True when a PLAYER's own spawn verb -- the spawn menu, the toolgun, the hacksaw or a pry -- was on the
     // stack at the finish (coop/props/prop_spawn_authoring). Admitted at drain as an ordinary drop
     // intent: the class is whatever the catalog offered, so no whitelist can name it, and the
     // authorship is what makes it shared-world state rather than the per-peer churn every other
@@ -481,7 +481,7 @@ void Tick(coop::net::Session* session) {
         // and drive only) drops it at drain and the item never reaches the host's world. The host's
         // duplicate guard keeps the intent safe.
         //
-        // And a PLAYER-AUTHORED birth, the spawn menu and the toolgun. It cannot be a class row:
+        // And a PLAYER-AUTHORED birth, the spawn menu, the toolgun, the hacksaw and the pry. It cannot be a class row:
         // the menu is the whole catalog, and every class on it is also what the world's own
         // spawners, morphs and impacts make for themselves. What admits it is the authorship the
         // seam read off the VM's calling frame, which the world's own births do not carry. It is

@@ -7,11 +7,11 @@
 // admit by CLASS; the discriminator is WHO ASKED. Background:
 // docs/coop-entity-expression-map.md, "Who asked, for a client's fresh birth".
 
-// The two player spawn verbs, read from bytecode on the shipped pak. The MENU: a catalog click
-// runs ui_spawnmenu_C::spawn, which calls gamemode->spawnPropThroughGamemode -- a verb replaceProp
-// and the impact component call too, so it is identified by its CALLER, through a script-body gate
-// watch. The TOOLGUN: tool_spawn_C::init enters ExecuteUbergraph_tool_spawn, which finishes its
-// own spawns and holds no other FinishSpawningActor, so the native seam's caller frame names it.
+// The four player spawn verbs, read from bytecode on the shipped pak. The MENU: ui_spawnmenu_C::spawn calls
+// gamemode->spawnPropThroughGamemode, a verb replaceProp and the impact component call too, so it is identified by
+// its CALLER, through a script-body gate watch. The TOOLGUN, the HACKSAW and the PRY (pryingCrowbar_C::End, the
+// crowbar it hands back) finish their own spawns in one ubergraph or End, so the native seam's caller frame names
+// them.
 
 // Gameplay layer (principle 7): reaches the engine only through ue_wrap. Game thread only -- the
 // gate and the native seam both hand their callbacks the VM's live frame.

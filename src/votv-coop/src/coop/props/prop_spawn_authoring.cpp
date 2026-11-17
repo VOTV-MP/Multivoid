@@ -171,8 +171,8 @@ bool BirthIsPlayerAuthored(void* born) {
         return false;
     }
     if (caller == g_toolUberFn) return true;
-    if (!g_toolUberFn &&
-        FunctionIs(const_cast<void*>(caller), g_toolUberName, L"tool_spawn_C")) {
+    // A class a world reloaded is a new function, so a miss of the latch is asked by name again.
+    if (FunctionIs(const_cast<void*>(caller), g_toolUberName, L"tool_spawn_C")) {
         g_toolUberFn = const_cast<void*>(caller);
         UE_LOGI("prop_spawn_authoring: the toolgun's ubergraph is the calling frame -- its births "
                 "are a player's");
@@ -206,7 +206,8 @@ bool BirthIsPlayerAuthored(void* born) {
     // comes back as a new crowbar, freed from the board, dropped at it, or put back in the hand. The pry runs only on
     // the prying player's game, so without this the crowbar is gone for every other player.
     if (caller == g_pryEndFn) return true;
-    if (!g_pryEndFn && FunctionIs(const_cast<void*>(caller), g_pryEndName, L"pryingCrowbar_C")) {
+    // A reloaded world re-creates pryingCrowbar_C, so a miss of the latch is asked by name again.
+    if (FunctionIs(const_cast<void*>(caller), g_pryEndName, L"pryingCrowbar_C")) {
         g_pryEndFn = const_cast<void*>(caller);
         UE_LOGI("prop_spawn_authoring: a prying crowbar's End is the calling frame -- the crowbar a pry hands back is "
                 "a player's");
