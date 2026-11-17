@@ -121,18 +121,32 @@ void RefuseBed(BedRefusal why, int senderSlot) {
     Refuse("bed", senderSlot);
 }
 
+// The mode of the line said for the host's current sleep (0 host, 1 everyone, 2 never); -1 while none is.
+int g_saidMode = -1;
+
 // The host's name for the chat line; the ledger owns the fallback when the host's row has no nick.
 void PushHostAsleepLine() {
     const std::string name = coop::text::ToUtf8(coop::roster_ledger::DisplayName(0));
     char buf[256];
     // The line says what world.sleep_speedup makes of the host's sleep (coop/player/sleep_rest): the row's session value.
     const std::string mode = coop::config::ResolveEnum(coop::config_registry::rows::world_sleep_speedup);
-    const char* const fmt = mode == "host"    ? l10n::T("%1$s is asleep -- the world runs faster")
-                            : mode == "never" ? l10n::T("%1$s is asleep -- sleeping does not speed the world up")
+    g_saidMode = mode == "host" ? 0 : mode == "never" ? 2 : 1;
+    const char* const fmt = g_saidMode == 0   ? l10n::T("%1$s is asleep -- the world runs faster")
+                            : g_saidMode == 2 ? l10n::T("%1$s is asleep -- sleeping does not speed the world up")
                                               : l10n::T("%1$s is asleep -- the world speeds up once everyone sleeps");
     if (l10n::Fmt(buf, sizeof(buf), fmt, name.c_str()) < 0) return;
     // A status readout of a state that ends: reading it back hours later would be noise, not history.
     coop::chat_feed::Push(std::string(buf), coop::chat_feed::Keep::Transient);
+}
+
+// CLIENT: the row's session value changed (the host set it mid-sleep, or its value reached this client after the host's
+// flag did) while the host sleeps: the line is said again when the mode it named is no longer the row's.
+void OnSpeedupRowChanged() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || IsHost(s) || !g_hostSleeping || g_saidMode < 0) return;
+    const std::string mode = coop::config::ResolveEnum(coop::config_registry::rows::world_sleep_speedup);
+    const int now = mode == "host" ? 0 : mode == "never" ? 2 : 1;
+    if (now != g_saidMode) PushHostAsleepLine();
 }
 
 // To one slot, or (toSlot < 0) to every client but `exceptSlot` (-1: none).
@@ -220,6 +234,7 @@ void SendClientRest(coop::net::Session* s) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    coop::config::Subscribe(coop::config_registry::rows::world_sleep_speedup, &OnSpeedupRowChanged);
 }
 
 void Tick() {
@@ -325,6 +340,7 @@ void OnReliable(const uint8_t* payload, size_t len, uint8_t senderSlot) {
         if (now && !g_hostSleeping) PushHostAsleepLine();
         if (now != g_hostSleeping) UE_LOGI("sleep_sync: the host is %s", now ? "asleep" : "awake");
         g_hostSleeping = now;
+        if (!now) g_saidMode = -1;
         // The host refuses a rest from a slot it does not yet hold world-ready, so a rest sent early is sent
         // again here (the connect broadcast reaches this slot only once it is); a held one is dropped there.
         if (g_localState != SleepPeerState::Awake) SendClientRest(s);
@@ -420,6 +436,7 @@ void OnDisconnect() {
     for (auto& st : g_state) st = SleepPeerState::Awake;
     std::memset(g_bed, 0, sizeof(g_bed));
     g_hostSleeping = false;
+    g_saidMode = -1;
     g_sentState = SleepPeerState::Awake;
     std::memset(&g_sentBed, 0, sizeof(g_sentBed));
 }
