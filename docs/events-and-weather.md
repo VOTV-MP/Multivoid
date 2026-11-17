@@ -177,6 +177,24 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The ship that appears high over the radio tower is not one of them: `arirShipAppear_C` is placed in the level, and the
+arirShip event's box runs its `appear(true)`, which fades it in and lights its radar point. That box runs on the host
+alone (its other spawns have no lane), so a client never saw the ship (Ghezra/Multivoid#39). The host's post watch on
+`appear` sends `EventCue` 103 when it comes up, and again to a joiner while it is up; a client runs its own copy's
+`appear(true)` (`coop/world/arir_ship_sync`). Each copy's own tick then fades its ship out once that copy's player has
+looked at it, as the game does for whoever sees it. `[V]` (`coop/dev/event_probe`, `VOTVCOOP_EVENT_PROBE=arirShip`: the
+host's forced box raised the client's ship in the same second.)
+
+The Antibreather's cave is shut by its spawner's rock (`antibreatherSPawner_C`'s `blockRock`, shown with its collision
+on). The spawner's `block` timer, every 5 s, hides the rock while its Antibreather lives and shows it again once player 0
+is past 50 m, and its BeginPlay hides it for a player starting inside; each copy ran that on its own player and its own
+spawn rolls, so the cave stood open for a client and shut for the host (Ghezra/Multivoid#39). The rock is the host's: a
+client's `block` is refused, the host sends the rock's state when it changes and to a joiner (`CaveRockState`), and a
+client shows or hides its rock, collision with it. A host `block` that shuts the cave while a client's player is within
+50 m of the spawner is undone, so a player near it is not shut out (`coop/world/cave_rock_sync`). `[V]` (`coop/dev/event_probe`:
+the host's own spawner opened its cave at night, and a client that joined after found its shut cave opened as the host's;
+the keep-open for a near client is `[?]`.)
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -260,6 +278,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | `WeatherState`, `LightningStrike`, `RedSky`, `BadSun` | the host to all | the state fields; a strike location; the red sky's edge; whether a Bad Sun exists |
 | `FireflySpawn` | each peer, relayed | one spawn |
 | `EventFire`, `EventSnapshot`, `EventCue` | the host to all; the host to one joiner; the host to all | a fired row; an in-flight event; an emitter cue |
+| `CaveRockState` | the host to all | the Antibreather cave's entrance rock, shut or open |
 | `WorldActorSpawn`, `WorldActorDestroy`, `WorldActorPose` (stream) | the host to all | an event actor's birth with scale and blob; its death; full-rotation poses |
 | `PyramidGather` | the host to all | the gather commit |
 | `UfoEvent` | the host to all; the host to one joiner | a UFO's rolled path (a ball's turn and ends, a boo's flight spline), or the Midas take-off |

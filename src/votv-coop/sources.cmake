@@ -90,6 +90,8 @@ set(VOTVCOOP_SOURCES
     src/coop/comms/chat_rate.cpp
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/woodchipper_sync.cpp
+    src/coop/world/arir_ship_sync.cpp
+    src/coop/world/cave_rock_sync.cpp
     src/coop/interactables/woodchipper_gate.cpp
     src/coop/interactables/atv_gate.cpp
     src/coop/interactables/atv_host_judge.cpp

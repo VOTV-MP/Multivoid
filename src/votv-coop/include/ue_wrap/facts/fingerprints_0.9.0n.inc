@@ -6,6 +6,8 @@ inline constexpr RefFn kRefFns[] = {
     {L"animblueprint_kerfuromega_regular_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_regular_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x2250f6e374f73414ull},
     {L"animblueprint_kerfuromega_skerfuro_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_skerfuro_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x043f72b999157c31ull},
     {L"antibreather_low_test_skeleton_animblueprint_c", L"blueprintupdateanimation", L"antibreather_low_test_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf5ec444407b73527ull},
+    {L"antibreatherspawner_c", L"block", L"antibreatherspawner_c.block", 0x6a2d5d90ab51fa2dull, 0xe131ab38ee281992ull},
+    {L"arirshipappear_c", L"appear", L"arirshipappear_c.appear", 0xedaeaffd1a5772c9ull, 0x793946de4c0eed02ull},
     {L"beacon_skeleton_animblueprint_c", L"blueprintupdateanimation", L"beacon_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xd65da5f81aa4b765ull},
     {L"deersk_skeleton_animblueprint_c", L"blueprintupdateanimation", L"deersk_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xace20bbd0bb7f351ull},
     {L"deerzombsk_skeleton_animblueprint_c", L"blueprintupdateanimation", L"deerzombsk_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xa79fd56b6089193dull},
