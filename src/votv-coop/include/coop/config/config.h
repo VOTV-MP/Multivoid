@@ -69,6 +69,15 @@ SetResult SetValue(const config_registry::FloatRow& row, const char* value);
 SetResult SetValue(const config_registry::EnumRow& row, const char* value);
 SetResult SetValue(const config_registry::StringRow& row, const char* value);
 
+// A server-scope row's value for THIS session only, on the host: the session layer takes it and the row's
+// subscribers are told, as SetValue does, but no ini line is written and the runtime layer is untouched, so the
+// value ends with the session and the install's standing value is unchanged. Refused off the host, outside a
+// session, for a row that is not server-scope, or for a value the reader would refuse. A drill pins the rule it
+// tests this way without leaving it in the rig's ini. Returns HeldNotSaved when taken.
+SetResult SetForSession(const config_registry::FlagRow& row, const char* value);
+SetResult SetForSession(const config_registry::IntRow& row, const char* value);
+SetResult SetForSession(const config_registry::EnumRow& row, const char* value);
+
 // Return a row to its default while the game runs: the runtime layer forgets it, its line leaves
 // multivoid.ini (an environment twin, if set, answers again; on the host in a session, a
 // server-scope row's session layer then holds what the layers below it answer), the reset is
