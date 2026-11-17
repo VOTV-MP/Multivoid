@@ -40,8 +40,10 @@
 #include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
 #include "ue_wrap/desk/tape_caddy.h"            // IsReelClass whitelist + the Progress birth scalar
 #include "ue_wrap/desk/phys_mods.h"             // IsModuleClass whitelist
+#include "ue_wrap/desk/desk_panels.h"           // IsPanelClass whitelist
 #include "ue_wrap/devices/serverbox.h"          // IsUpgradeClass whitelist
 #include "coop/interactables/physmods_sync.h"   // the denied-birth reap
+#include "coop/interactables/desk_panel_sync.h" // the refused take-off's reap
 #include "coop/interactables/server_upgrade_sync.h"  // the refused take-out's reap
 #include "coop/interactables/drive_payload_sync.h"  // NoteOwnDrive, NoteClientBrought: a drive a player brings into the world
 #include "ue_wrap/desk/drive_chain.h"           // IsDriveClass whitelist
@@ -473,6 +475,9 @@ void Tick(coop::net::Session* session) {
               ue_wrap::tape_caddy::IsReelClass(R::ClassOf(e.actor))) ||
              (ue_wrap::phys_mods::EnsureResolved() &&
               ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))) ||
+             // A back panel the desk's take-off hands the player, born into the hand like a module.
+             (ue_wrap::desk_panels::EnsureResolved() &&
+              ue_wrap::desk_panels::IsPanelClass(R::ClassOf(e.actor))) ||
              (ue_wrap::drive_chain::EnsureResolved() &&
               ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor))) ||
              isUpgradeBirth);
@@ -644,7 +649,7 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     UE_ASSERT_GAME_THREAD("prop_drop_intent::OnReelEjectIntent");
     if (session.role() != coop::net::Role::Host) return;
     // The client fresh-birth author, class-whitelisted: reels (the caddy eject), desk modules
-    // (the socket unplug), drives, floppy discs and server upgrades (a box's take-out). Not a general
+    // (the socket unplug), desk back panels (the take-off), drives, floppy discs and server upgrades (a box's take-out). Not a general
     // client-spawn door; any other class here is a protocol violation, dropped.
     const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
     // Host resolving a CLIENT's eject class: lookup only (a client's name never makes the host load).
@@ -660,7 +665,10 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                         ue_wrap::floppy_disc::IsDiscClass(clsObj);
     // A server box's take-out hands the player a new upgrade, born into the hand like a module.
     const bool isServerUpg = clsObj && ue_wrap::serverbox::IsUpgradeClass(clsObj);
-    if (!isReel && !isModule && !isDrive && !isDisc && !isServerUpg) {
+    // A back panel the desk's take-off hands the player, born into the hand like a module.
+    const bool isDeskPanel = clsObj && ue_wrap::desk_panels::EnsureResolved() &&
+                             ue_wrap::desk_panels::IsPanelClass(clsObj);
+    if (!isReel && !isModule && !isDrive && !isDisc && !isServerUpg && !isDeskPanel) {
         UE_LOGW("[PROP-DROP] HOST birth intent from slot=%u rejected: class '%ls' not whitelisted",
                 senderSlot, cls.c_str());
         return;
@@ -670,6 +678,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     if (isModule && coop::physmods_sync::HostShouldReapModuleBirth(senderSlot, clsObj)) return;
     // The same for an upgrade a refused take-out handed over (the server upgrade sync logs).
     if (isServerUpg && coop::server_upgrade_sync::HostShouldReapUpgradeBirth(senderSlot)) return;
+    // And for the panel of a take-off another peer's came before (the desk panel sync logs).
+    if (isDeskPanel && coop::desk_panel_sync::HostShouldReapPanelBirth(senderSlot, clsObj)) return;
     // Drive births are authored normally; a denied rack-take ghost is reaped when its row arrives, by the row's
     // hash (drive_payload_sync).
     // An eject is born in a hand or at a device's mouth and is never thrown: its velocity and throw sequence are

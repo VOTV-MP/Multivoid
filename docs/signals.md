@@ -217,7 +217,24 @@ cannot pull the drive back out; a drive a conflicting line ejects is unfrozen wi
 no hold follows it. The desk's physical modules sit in slots, and a type
 may sit in more than one, so a plug and an unplug each name their slot; the host applies them and
 re-broadcasts the whole array, and a refused one goes back to its author with it
-(`coop/interactables/physmods_sync`). The tape caddy's reel slots are presser-authored edges, and
+(`coop/interactables/physmods_sync`). The back panels over those slots are two masks, which panels are
+unbolted and which are on the desk: a wrench's unbolt, a take-off and a panel carried back into its
+place each change one on the peer whose player did it, a client sends the host each bit that moved,
+and the host applies what its own desk allows (the fixed panel never moves, only an unbolted panel
+comes off) and re-broadcasts both masks, a refused edit going back to its author with them. A
+taken-off panel is a prop born into the hand, authored by the host like an unplugged module, and a
+peer that takes a mask with a panel gone raises the desk's own take-off latch so the prop's copy,
+born inside the lid it came off, does not re-attach there. One desk puts a panel back: its
+carrier's while a player carries it, the host's while nobody does. Every other copy is moved by the
+wire (a carrier's pose, a release's last pose, a correction), which can set it back inside the lid it
+just left, so a desk's overlap is refused for those, and the deciding desk puts the panel on and
+destroys the prop. Two take-offs of one panel can cross on
+the wire: the host keeps the first, answers the second with a deny that names the panel, and drops
+the panel prop's birth that follows it; the denied peer destroys the prop its own press spawned
+(`coop/interactables/desk_panel_sync`)
+`[V]`: `coop/dev/desk_panel_drill` (`VOTVCOOP_DESK_PANEL_DRILL=host|client|race`, both peers) unbolts a
+panel, takes it off, puts it back and bolts it from each side, each step standing on both desks, and
+presses the take-off on both peers at once: one panel prop is left. The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second
 (`coop/interactables/tape_caddy_sync`). The stationary PC's power is a presser edge
 (`coop/interactables/laptop_sync`); its disc slot is the host's like a server box's, a peer's
@@ -309,6 +326,7 @@ measured). Nine of the ten have a row on the laptop's panel, since no widget car
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the host | playback edges; the refiner's state, its completions and its loaded signal |
 | `DriveSlotState` | any peer to the host; the host to every other client, a line it accepted; the host to the source, answering a line it refused | a slot's occupant, inserted or ejected |
 | `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | rack operations and arrays; the module set; the crate stack |
+| `DeskPanelState` | any peer to the host; the host canonical | one back panel bolted, unbolted, taken off or put back; both masks |
 | `DrivePayload` | the host to all and to a joiner; a client to the host; the host to that client | a drive's row; a client's own new drive's row; the host's own row, answering a client row it refused |
 | `EraserPressIntent` | a client to the host; the host to all, or to a presser | the eraser's delete, with the drive the presser saw seated; what the host's eraser did, for each client's eraser to show; a press the host refused |
 | `ReelSlot`, `ReelPose` (stream), `ReelEjectIntent` | the presser; the host; a client | slot edges; the corrector; a reel birth |
@@ -325,7 +343,7 @@ is never applied before its base, and a reset the host made since the joiner's w
 goes ahead of them all, the game's own order of a reset, a catch and an arm; the deck list, the
 database and the emails are seeded as deltas against the blob instant; every drive slot, every drive
 row that differs from its class default (a row that arrives before its drive waits for it through
-the join), the rack, the module set, the reel slots, the laptop's power, its slot (before its file buffer) and the crate
+the join), the rack, the module set, the back panels, the reel slots, the laptop's power, its slot (before its file buffer) and the crate
 arrive as canonical rows from the host, and so do the refiner's state and loaded signal, while the
 joiner's own restore of a saved decode is refused; the desk's two loops are re-sent from component
 truth; a short circuit under way on the host's desk is sent again, and the joiner's desk shorts from the start.
@@ -361,7 +379,7 @@ arrive with the save and never again.
 | the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_ping_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
 | signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync`, `coop/interactables/download_arm_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
-| drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
+| drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/desk_panel_sync`, `coop/interactables/tape_caddy_sync` |
 | the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/floppy_slot_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |
 | the SAT console | `coop/interactables/sat_console_sync`, `coop/interactables/sat_console_table` |
 | the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio, the SAT console) |

@@ -8,3 +8,11 @@ CFG_ENUM(pried_drill, "pried_drill", "dev", "off",
     "crowbarOpen with no crowbar. The watching peer names the first stuck prop of the class (a plank, a "
     "radiator), the acting peer pries it and says where its copy rests, and the watching peer judges its "
     "own copy. One `[PRIED-DRILL] [H|C] PASS` or `FAIL` line per judge.")
+CFG_ENUM(desk_panel_drill, "desk_panel_drill", "dev", "off", "off|host|client|race",
+    "VOTVCOOP_DESK_PANEL_DRILL",
+    "Drill (BOTH peers): the desk's back panels. host and client: the acting peer unbolts the top-left "
+    "panel through the desk's own unscrewPanel, takes it off through the desk's own E press, and "
+    "puts the panel prop back into its place; after each step the watching peer says the masks its "
+    "desk holds, and the acting peer judges them against its own. race: both peers take the same "
+    "unbolted panel on one net-clock instant, and each judges that one panel prop is left. One "
+    "`[DESK-PANEL-DRILL] [H|C] PASS` or `FAIL` line per judge.")

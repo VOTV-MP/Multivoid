@@ -7,6 +7,7 @@
 #include "coop/interactables/desk_ping_sync.h"
 #include "coop/interactables/deck_play_sync.h"  // deck playback lane
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
+#include "coop/interactables/desk_panel_sync.h"  // desk back panels lane
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/drive_sync.h"  // the drive slots
 #include "coop/interactables/drive_rack_sync.h"  // rack storage
@@ -30,6 +31,7 @@ void Install(coop::net::Session& session) {
     coop::desk_snd_fx::Install(&session);  // desk audio-effect mirror (Func-patch audio seam)
     coop::deck_play_sync::Install(&session);  // deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
     coop::physmods_sync::Install(&session);  // physMods slot ops at the desk's verbs + host-canonical array
+    coop::desk_panel_sync::Install(&session);  // the desk's back panels: edits to the host, host-canonical masks
     coop::drive_sync::Install(&session);  // the drive chain's slot lane (verb dirty-marks + the slot sweep; the slot and rack verb watches)
     coop::drive_payload_sync::Install(&session);  // a drive's row: the host authors it at prop_drive_C::upd
     coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
@@ -59,6 +61,7 @@ void Tick() {
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_snd"}; coop::desk_snd_fx::Tick(); }  // audio-seam ring flush + lazy hook install + pending loop retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:deck_play"}; coop::deck_play_sync::Tick(); }  // deck playback ring flush + lazy Deactivate/fin seam install + gen author
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:physmods"}; coop::physmods_sync::Tick(); }  // parked-canonical apply at desk resolve
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_panels"}; coop::desk_panel_sync::Tick(); }  // parked-canonical apply + the panels' edits
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); coop::drive_payload_sync::Tick(); }  // the slot lane's drain and sweep; the rows' enrolments
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive_rack"}; coop::drive_rack_sync::Tick(); }  // rack barrier drain + 1 Hz sweep
 }
@@ -77,6 +80,7 @@ void OnDisconnect() {
     coop::desk_snd_fx::OnDisconnect();
     coop::deck_play_sync::OnDisconnect();  // gen counters + ring + self-test latch
     coop::physmods_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
+    coop::desk_panel_sync::OnDisconnect();  // the known masks + parked canonical
     coop::drive_sync::OnDisconnect();  // slot baselines + latch/dirty state
     coop::drive_payload_sync::OnDisconnect();  // held and sent rows, notes
     coop::drive_rack_sync::OnDisconnect();  // rack baselines/shadow + deny/taken rings

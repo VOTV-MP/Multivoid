@@ -1469,6 +1469,11 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+
+    // Peer to host: one of the desk's back panels bolted or unbolted, taken off or put back; host to all, and to a
+    // joiner at its connect replay: the canonical pair of masks. The host refuses an edit its own desk does not allow
+    // and answers the author with the canonical. Never relayed. DeskPanelStatePayload.
+    DeskPanelState = 273,
 };
 
 #pragma pack(push, 1)
@@ -4395,6 +4400,24 @@ struct PhysModsStatePayload {
 };
 static_assert(sizeof(PhysModsStatePayload) == 16, "PhysModsStatePayload must be 16 bytes");
 
+// The desk back panels lane (DeskPanelState). A mask carries one bit per panel, bit i for panel i of the
+// desk's panels array.
+namespace desk_panel {
+constexpr uint8_t kSetOn = 0;
+constexpr uint8_t kSetUnscrewed = 1;
+constexpr uint8_t kCanonical = 2;
+constexpr uint8_t kDeny = 3;
+}  // namespace desk_panel
+struct DeskPanelStatePayload {
+    uint8_t op;            // 1 -- desk_panel::kSetOn or kSetUnscrewed (peer->host), kCanonical (host->all),
+                           //      kDeny (host->the author of a take-off another peer's came before)
+    uint8_t panel;         // 1 -- the two edits and kDeny: the panel; kCanonical: 0
+    uint8_t value;         // 1 -- the two edits: 1 or 0; kCanonical and kDeny: 0
+    uint8_t onMask;        // 1 -- kCanonical: the panels that are on the desk; else 0
+    uint8_t unscrewedMask; // 1 -- kCanonical: the panels whose bolts are out; else 0
+    uint8_t _pad[3];       // 3 -- zero
+};
+static_assert(sizeof(DeskPanelStatePayload) == 8, "DeskPanelStatePayload must be 8 bytes");
 // One drive-slot state line (DriveSlotState). role: 0 the desk play slot, 1 the desk comp slot,
 // 2 the eraser slot. occupied 1 names the slotted drive; 0 means empty, with driveEid the last
 // occupant for the latch completion.

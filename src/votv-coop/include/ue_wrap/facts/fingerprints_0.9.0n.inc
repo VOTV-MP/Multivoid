@@ -2,6 +2,7 @@
 // mod's capture on that build (docs/bytecode-fingerprint.md); do not edit. Included by the census.
 inline constexpr const char* kRefBuild = "0.9.0n";
 inline constexpr RefFn kRefFns[] = {
+    {L"analogdscreentest_c", L"receiveactorbeginoverlap", L"analogdscreentest_c.receiveactorbeginoverlap", 0x21b3fbf6adea9c01ull, 0x506b6bbc77c91750ull},
     {L"animblueprint_kerfuromega_kelheadless_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_kelheadless_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x6deb0b10d29f3b75ull},
     {L"animblueprint_kerfuromega_regular_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_regular_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x2250f6e374f73414ull},
     {L"animblueprint_kerfuromega_skerfuro_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_skerfuro_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x043f72b999157c31ull},

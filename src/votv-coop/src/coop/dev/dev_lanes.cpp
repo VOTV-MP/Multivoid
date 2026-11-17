@@ -21,6 +21,7 @@
 #include "coop/dev/damage_probe.h"  // [dev] every player damage verb call, and by whom
 #include "coop/dev/delivery_census_probe.h"  // COUNT the delivery-path actors
 #include "coop/dev/desk_diag.h"  // [dev] desk/console divergence census
+#include "coop/dev/desk_panel_drill.h"  // [dev] the desk back panels unbolted, taken off and put back, judged on both peers
 #include "coop/dev/door_drill.h"  // [dev] whether a remote player counts in a door's own sensor
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/rack_birth_drill.h"  // [dev] a rack born holding rows reaches the client, which sends no op
@@ -306,6 +307,7 @@ void EndSession() {
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::pried_drill::OnDisconnect();  // [dev] back to the first step
+    coop::dev::desk_panel_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::pi3_drill::OnDisconnect();  // [dev] a spawner mid-arm is abandoned, a still peer lets go
     coop::dev::native_spawn_probe::OnDisconnect();  // [dev] the per-source counts are said and the records cleared
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
@@ -368,6 +370,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::fireext_drill::Tick(&session);  // [dev] the fire extinguisher drill (a single bool read when off)
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)
     coop::dev::pried_drill::Tick(&session);  // [dev] the pried-prop drill (a single read when off)
+    coop::dev::desk_panel_drill::Tick(&session);  // [dev] the desk back-panel drill (a single read when off)
     coop::dev::recycled_slot_drill::Tick();  // [dev] the recycled-slot drill (a single read when off)
     coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)
     coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)

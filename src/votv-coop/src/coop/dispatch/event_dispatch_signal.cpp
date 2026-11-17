@@ -23,6 +23,7 @@
 #include "coop/interactables/floppybox_sync.h"   // FloppyBoxState
 #include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // PhysModsState
+#include "coop/interactables/desk_panel_sync.h"  // DeskPanelState
 #include "coop/interactables/sat_console_sync.h"  // SatConsole
 #include "coop/interactables/drive_payload_sync.h"  // DrivePayload
 #include "coop/interactables/drive_sync.h"       // DriveSlotState
@@ -121,6 +122,23 @@ bool HandleSignalEvent(net::Session& session, const net::Session::ReliableMessag
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::physmods_sync::OnPhysMods(pm, pmslot);
+        break;
+    }
+    case net::ReliableKind::DeskPanelState: {
+        // A back panel's edit (peer->host) or the canonical masks (host->all). Role and trust gates live
+        // in desk_panel_sync::OnDeskPanel.
+        if (msg.payloadLen < sizeof(net::DeskPanelStatePayload)) {
+            UE_LOGW("event_feed: DeskPanelState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DeskPanelStatePayload));
+            break;
+        }
+        net::DeskPanelStatePayload dp{};
+        std::memcpy(&dp, msg.payload, sizeof(dp));
+        const uint8_t dpslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::desk_panel_sync::OnDeskPanel(dp, dpslot);
         break;
     }
     case net::ReliableKind::DriveSlotState: {

@@ -8,6 +8,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
+#include "coop/interactables/desk_panel_sync.h"  // desk back panels lane
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/drive_sync.h"  // the drive slots
@@ -143,6 +144,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
     coop::garbage_bin_sync::QueueConnectBroadcastForSlot(slot);  // every garbage container again
+    coop::desk_panel_sync::QueueConnectBroadcastForSlot(slot);  // canonical back-panel masks
     coop::props::prop_food_sync::QueueConnectBroadcastForSlot(slot);  // every world food's condition again
     coop::plant_sync::QueueConnectBroadcastForSlot(slot);  // every plant again
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
