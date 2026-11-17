@@ -45,18 +45,27 @@ inline void* ActorSaveCls() {
 // The four building-piece roots, resolved on the game thread and published; a root not loaded yet is asked again
 // by the latch (on a class-set move and through the load window after it), never cached as absent. A class that
 // never loads costs nothing once its window has run out. Another thread reads the published pointers only, so
-// GetInteractableKey stays callable from a script-gate observer on a worker. UClasses are process-scoped, as the
-// trash bases in prop.cpp are, so a published root is kept for good.
+// GetInteractableKey stays callable from a script-gate observer on a worker. A class the index unlists may come
+// back at the same address, so the roots are cleared when ClassUnlistVersion moves (the shape of explosion.cpp's
+// Sync); until they are published again a reader answers "not a piece", never a freed class.
 constexpr const wchar_t* kPieceRootNames[] = {L"nail_C", L"customWall_C", L"customWall_unfinished_C", L"poster_C"};
 constexpr int kPieceRootCount = static_cast<int>(sizeof(kPieceRootNames) / sizeof(kPieceRootNames[0]));
 std::atomic<void*> g_pieceRoot[kPieceRootCount];
 std::atomic<bool>  g_pieceRootsAll{false};
 std::atomic<bool>  g_pieceKeyRead{true};
 class_reask::Latch g_pieceLatch;  // game thread only
+uint64_t g_pieceRootsVersion = ~0ull;  // game thread only: the ClassUnlistVersion the roots were resolved under
 
 void ResolvePieceRoots() {
-    if (g_pieceRootsAll.load(std::memory_order_acquire)) return;
     if (game_thread::IsDefinitelyOffGameThread()) return;  // the class index is the game thread's: answer from what is published
+    const uint64_t unlisted = object_index::ClassUnlistVersion();
+    if (unlisted != g_pieceRootsVersion) {
+        g_pieceRootsVersion = unlisted;
+        g_pieceRootsAll.store(false, std::memory_order_release);
+        for (int i = 0; i < kPieceRootCount; ++i) g_pieceRoot[i].store(nullptr, std::memory_order_release);
+        g_pieceLatch.Reset();
+    }
+    if (g_pieceRootsAll.load(std::memory_order_acquire)) return;
     if (!g_pieceLatch.Due()) return;
     bool all = true;
     for (int i = 0; i < kPieceRootCount; ++i) {
