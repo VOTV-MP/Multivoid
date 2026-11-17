@@ -450,7 +450,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi1_selftest::Tick(&session);  // [dev] the substrate primitives' selftest, once (latched read when off)
     coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
     coop::dev::pi3_drill::Tick(&session);
-    coop::dev::sleepall_probe::Tick(&session);   // [dev] sleeping with world.sleep_everyone (a latched read when off)  // [dev] the puppet-identity verb drill (a latched read when off)
+    coop::dev::sleepall_probe::Tick(&session);   // [dev] sleeping with world.sleep_speedup (a latched read when off)  // [dev] the puppet-identity verb drill (a latched read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)

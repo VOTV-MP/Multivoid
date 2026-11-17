@@ -223,17 +223,17 @@ host, which relays it to every other client; the host's own sleeping flag goes t
 one chat line naming the host when it rises. A joiner is sent the host's flag and every peer's
 state that is not awake, and a leaver is told to every client as awake.
 
-The host may choose the speed-up's trigger with the world rule `world.sleep_everyone` ("Time speeds
-up only when everyone sleeps", off by default, shown in the host's world rules and sent to every
-client). Off, the host's sleep speeds the world up as in single player. On, a host that sleeps while a
-connected player is awake rests as a client does: its world held at 1, its body and the world's
-effects at the game's factor, its food and coffee settled (`coop/player/sleep_rest`). Once every
-connected player rests or dreams, the world takes the game's factor; when one wakes, or a player
-joins, it goes back to 1 and the host rests on. The clients' line says the speed-up waits for
-everyone. `[V]` `coop/dev/sleepall_probe` (`VOTVCOOP_SLEEPALL_PROBE=1`): with the rule on, the host's
-world read 1 while the client was awake, 20 within a second of the client's sleep, and 1 again within a
-second of its wake; with it off, 20 for the host's whole sleep. The host's own nightmare roll is the game's, 500 s of world
-time, so while the host rests alone it comes 500 real seconds into the sleep.
+The host chooses whose sleep speeds the world up with the world setting `world.sleep_speedup` ("Time
+speeds up while sleeping", shown in the host's world settings and sent to every client), three modes.
+`host`: only the host's sleep does, as in single player. `everyone` (the default): the world speeds up
+only while every connected player is asleep; a host that sleeps while a player is awake rests as a
+client does, its world held at 1, its body and the world's effects at the game's factor, its food and
+coffee settled (`coop/player/sleep_rest`), the world takes the game's factor once every connected
+player rests or dreams, and goes back to 1 when one wakes. A player who joins is awake, so the world
+drops to 1 at its join. `never`: no one's sleep speeds the world up, and the host's sleep rests at 1
+like a client's. The clients' line names the mode. `[?]` Not yet run on the rig for the three modes.
+The host's own nightmare roll is the game's, 500 s of world time, so while the host rests at 1 it
+comes 500 real seconds into the sleep.
 
 A nightmare is one player's. The game rolls once per sleep, 500 s of world time after the sleeper
 falls asleep, and the host's sleep runs the world at 20, so a host rolls 25 real seconds into a

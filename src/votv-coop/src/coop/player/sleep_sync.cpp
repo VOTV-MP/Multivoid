@@ -119,13 +119,12 @@ void RefuseBed(BedRefusal why, int senderSlot) {
 void PushHostAsleepLine() {
     const std::string name = coop::text::ToUtf8(coop::roster_ledger::DisplayName(0));
     char buf[256];
-    // Under world.sleep_everyone the host's sleep alone speeds nothing up (coop/player/sleep_rest).
-    const bool everyone = coop::config::ResolveFlag(coop::config_registry::rows::world_sleep_everyone);
-    if (l10n::Fmt(buf, sizeof(buf),
-                  everyone ? l10n::T("%1$s is asleep -- the world speeds up once everyone sleeps")
-                           : l10n::T("%1$s is asleep -- the world runs faster"),
-                  name.c_str()) < 0)
-        return;
+    // The line says what world.sleep_speedup makes of the host's sleep (coop/player/sleep_rest): the row's session value.
+    const std::string mode = coop::config::ResolveEnum(coop::config_registry::rows::world_sleep_speedup);
+    const char* const fmt = mode == "host"    ? l10n::T("%1$s is asleep -- the world runs faster")
+                            : mode == "never" ? l10n::T("%1$s is asleep -- sleeping does not speed the world up")
+                                              : l10n::T("%1$s is asleep -- the world speeds up once everyone sleeps");
+    if (l10n::Fmt(buf, sizeof(buf), fmt, name.c_str()) < 0) return;
     // A status readout of a state that ends: reading it back hours later would be noise, not history.
     coop::chat_feed::Push(std::string(buf), coop::chat_feed::Keep::Transient);
 }

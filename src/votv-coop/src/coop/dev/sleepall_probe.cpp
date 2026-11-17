@@ -1,6 +1,6 @@
 // coop/dev/sleepall_probe.cpp -- [dev] the host sleeps, then a client, then the client wakes, then the host
 // (VOTVCOOP_SLEEPALL_PROBE=1 on both peers, VOTVCOOP_FILL_NEEDS=0; VOTVCOOP_SLEEPALL_RULE=1 on the host sets
-// world.sleep_everyone on, unset leaves it off).
+// world.sleep_speedup to everyone, unset to host).
 //
 // Every phase follows a state the peer can read. HOST, 20 s after a client is connected: its nightmare chance held at
 // 0 and its sleep need at 50 (the game's wake comes at 100), it goes to bed through the game's own sleep. CLIENT: 10 s
@@ -65,10 +65,10 @@ void Tick(coop::net::Session* session) {
         g_startAt = Now();
         if (host) {
             const bool rule = coop::config::ReadEnv("VOTVCOOP_SLEEPALL_RULE") == "1";
-            coop::config::SetValue(coop::config_registry::rows::world_sleep_everyone, rule ? "1" : "0");
+            coop::config::SetValue(coop::config_registry::rows::world_sleep_speedup, rule ? "everyone" : "host");
         }
-        UE_LOGI("[SLEEPALL] probe armed role=%s rule=%d", host ? "host" : "client",
-                coop::config::ResolveFlag(coop::config_registry::rows::world_sleep_everyone) ? 1 : 0);
+        UE_LOGI("[SLEEPALL] probe armed role=%s speedup=%s", host ? "host" : "client",
+                coop::config::ResolveEnum(coop::config_registry::rows::world_sleep_speedup).c_str());
     }
     if (g_hold) V::Write(V::Field::Sleep, 50.f);
     const uint64_t t = Now() - g_startAt;

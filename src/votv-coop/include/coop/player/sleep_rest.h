@@ -11,8 +11,9 @@
 // tick, loses (F - 1) times each fall more. The rest ends when the game's `wakeup` has run (a second POST watch), with the
 // session, or when the gamemode or the body changes. Timer-driven owners (the ariral pillow's rolls, the
 // nightmare) are scaled by no dilation at 1 and are not touched here; the nightmare's roll is made by
-// coop/player/nightmare_roll, which counts this rest. A host never runs this: its sleep
-// is the game's own, at the game's own speed.
+// coop/player/nightmare_roll, which counts this rest. A host runs it only as the host's setting world.sleep_speedup
+// says: `host` leaves the host's sleep the game's own, at single player's speed;
+// `everyone` rests the host at 1 as a client's while a connected player is awake; `never` always.
 
 #pragma once
 

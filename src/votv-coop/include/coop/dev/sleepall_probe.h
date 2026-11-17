@@ -1,5 +1,5 @@
 // coop/dev/sleepall_probe.h -- [dev] the host sleeps, then a client, then the client wakes and the host
-// (VOTVCOOP_SLEEPALL_PROBE=1 on both peers; VOTVCOOP_SLEEPALL_RULE=1 on the host turns world.sleep_everyone on), the
+// (VOTVCOOP_SLEEPALL_PROBE=1 on both peers; VOTVCOOP_SLEEPALL_RULE=1 on the host sets world.sleep_speedup to everyone), the
 // world's dilation logged on the host each second, for the host rule "time speeds up only when everyone sleeps".
 #pragma once
 

@@ -127,6 +127,10 @@ msgid "%1$s deleted an email: %2$s"
 msgstr "[[%1$s deleted an email: %2$s]]"
 
 #, c-format
+msgid "%1$s is asleep -- sleeping does not speed the world up"
+msgstr "[[%1$s is asleep -- sleeping does not speed the world up]]"
+
+#, c-format
 msgid "%1$s is asleep -- the world runs faster"
 msgstr "[[%1$s is asleep -- the world runs faster]]"
 
@@ -1007,9 +1011,6 @@ msgstr ""
 "[[Speech louder than this transmits. Watch the mic\n"
 "meter: set the slider just above your room's noise.]]"
 
-msgid "Speed the world up only while every player in the session sleeps. Off, the host's sleep speeds it up for everyone, as in single player. On, a host asleep while someone is awake rests at the world's normal speed as a client does, and the speed-up starts once everyone is asleep and stops when anyone wakes."
-msgstr "[[Speed the world up only while every player in the session sleeps. Off, the host's sleep speeds it up for everyone, as in single player. On, a host asleep while someone is awake rests at the world's normal speed as a client does, and the speed-up starts once everyone is asleep and stops when anyone wakes.]]"
-
 msgid "Starting your server"
 msgstr "[[Starting your server]]"
 
@@ -1287,8 +1288,8 @@ msgstr "[[Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under th
 msgid "Tidy up multivoid.ini"
 msgstr "[[Tidy up multivoid.ini]]"
 
-msgid "Time speeds up only when everyone sleeps"
-msgstr "[[Time speeds up only when everyone sleeps]]"
+msgid "Time speeds up while sleeping"
+msgstr "[[Time speeds up while sleeping]]"
 
 msgid "To stop, look at the camera and press Alt+E. A click or E alone only pauses it."
 msgstr "[[To stop, look at the camera and press Alt+E. A click or E alone only pauses it.]]"
@@ -1433,6 +1434,9 @@ msgstr "[[When]]"
 
 msgid "Whispering"
 msgstr "[[Whispering]]"
+
+msgid "Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at normal speed."
+msgstr "[[Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at normal speed.]]"
 
 msgid "World"
 msgstr "[[World]]"

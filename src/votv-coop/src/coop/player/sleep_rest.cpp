@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <string>
 
 namespace coop::sleep_rest {
 namespace {
@@ -229,12 +230,25 @@ void EnsureWatch() {
     SettleWatch(g_wakeWatch);
 }
 
-// ---- HOST: the world rule world.sleep_everyone ----
+// ---- HOST: the world rule world.sleep_speedup ----
 
-// The rule's on, and a connected client is awake: the host's sleep would speed up a world someone is playing in.
-// A joiner still connecting counts as awake, as it is not asleep.
-bool HostRestsAlone(coop::net::Session& s) {
-    if (!coop::config::ResolveFlag(coop::config_registry::rows::world_sleep_everyone)) return false;
+enum class Speedup { Host, Everyone, Never };
+
+// The row's session value: host = the host's own sleep speeds the world up (the game's, as in single player);
+// everyone = it does only while every connected player is asleep; never = no one's sleep does.
+Speedup ReadSpeedup() {
+    const std::string v = coop::config::ResolveEnum(coop::config_registry::rows::world_sleep_speedup);
+    return v == "host" ? Speedup::Host : v == "never" ? Speedup::Never : Speedup::Everyone;
+}
+
+// The host's sleep rests at 1 as a client's does: under `never` always; under `everyone` while a connected client is
+// awake (a joiner still connecting counts as awake, as it is not asleep). Under `host` never.
+bool HostRestsAtOne(coop::net::Session& s) {
+    switch (ReadSpeedup()) {
+    case Speedup::Host: return false;
+    case Speedup::Never: return true;
+    case Speedup::Everyone: break;
+    }
     for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot)
         if (s.IsSlotConnected(slot) && coop::sleep_sync::PeerState(slot) == coop::net::SleepPeerState::Awake) return true;
     return false;
@@ -242,30 +256,30 @@ bool HostRestsAlone(coop::net::Session& s) {
 
 void TickRest();
 
-// The host asleep: the game's own sleep (the world at its factor) while everyone else sleeps or the rule is off; a
-// client's rest (the world at 1, the body and the effects at the factor) while the rule is on and someone is awake.
-// Each switch is an edge of who sleeps, so it happens in the tick that sees it.
+// The host asleep: the game's own sleep (the world at its factor) when the row says the host's sleep speeds the world
+// up, or everyone else sleeps; a client's rest (the world at 1, the body and the effects at the factor) otherwise.
+// Each switch is an edge of who sleeps or of the row, so it happens in the tick that sees it.
 void HostTick(coop::net::Session& s) {
     const bool asleep = SLP::EnsureResolved() && SLP::IsSleeping();
     if (!asleep) {
         if (g_resting) EndRest("the host woke");
         return;
     }
-    const bool alone = HostRestsAlone(s);
-    if (alone && !g_resting) {
+    const bool atOne = HostRestsAtOne(s);
+    if (atOne && !g_resting) {
         if (!SLP::SetGlobalTimeDilation(1.f)) {
             UE_LOGE("sleep_rest: the world's dilation could not be held at 1 for the host's rest");
             return;
         }
         BeginRest();
-        UE_LOGI("sleep_rest: the host sleeps while a player is awake -- the world stays at 1 until everyone sleeps "
-                "(world.sleep_everyone)");
+        UE_LOGI("sleep_rest: the host's sleep does not speed the world up now (world.sleep_speedup) -- the world "
+                "stays at 1");
         return;
     }
-    if (!alone && g_resting) {
-        EndRest("everyone is asleep, or the rule is off");
+    if (!atOne && g_resting) {
+        EndRest("the host's sleep speeds the world up now (world.sleep_speedup)");
         if (SLP::SetGlobalTimeDilation(kNativeSleepDilation))
-            UE_LOGI("sleep_rest: everyone sleeps -- the world runs at the game's %.0f", kNativeSleepDilation);
+            UE_LOGI("sleep_rest: the world runs at the game's %.0f", kNativeSleepDilation);
         return;
     }
     if (g_resting) TickRest();
@@ -328,7 +342,7 @@ void OnDisconnect() {
     auto* s = g_session.load(std::memory_order_acquire);
     const bool host = s && s->role() == coop::net::Role::Host;
     EndRest("the session ended");
-    // A host resting alone sleeps on by itself: its world takes the game's factor back.
+    // A host resting at 1 sleeps on by itself: its world takes the game's factor back.
     if (host && SLP::IsSleeping()) SLP::SetGlobalTimeDilation(kNativeSleepDilation);
 }
 
