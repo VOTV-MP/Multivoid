@@ -338,6 +338,7 @@ void RunProbe() {
     // which drags the whole join (the save transfer, the mirror spawn, the sweeps, the roster
     // teardown) through the same LoadMap. The two arms differ in exactly that.
     const bool  rejoin = coop::config::ReadEnv("VOTVCOOP_RELOAD_REJOIN") == "1";
+    const bool  rehost = coop::config::ReadEnv("VOTVCOOP_RELOAD_HOST") == "1";
     const std::string peer = coop::config::ReadEnv("VOTVCOOP_NET_PEER");
     const std::string port = coop::config::ReadEnv("VOTVCOOP_NET_PORT");
     const std::string addr = peer.empty() ? std::string() : (peer + ":" + (port.empty() ? "47621" : port));
@@ -464,17 +465,35 @@ void RunProbe() {
         } else {
             auto done = std::make_shared<std::atomic<int>>(0);
             auto ok   = std::make_shared<int>(0);
-            GT::Post([done, ok, wslot] {
-                E::ResetCachedSave();
-                *ok = wslot.empty() ? (E::StartFreshGame(ue_wrap::game_mode::kStory) ? 1 : 0)
-                                    : (E::LoadStorySave(wslot.c_str()) ? 1 : 0);
-                done->store(1);
-            });
-            WaitDone(done, 30000);
-            // Not a verdict term: false means deferred, not failed; the world-pointer change below
-            // is the evidence.
-            UE_LOGI("reloadchurn: cycle %d LoadStorySave returned %d (false == deferred, not failed)",
-                    c, *ok);
+            // The host arm (VOTVCOOP_RELOAD_HOST=1): the save is hosted again as the Host button does it, the
+            // harness loading the world and starting the session, unlisted and direct so nothing leaves the
+            // machine. A rehost in one process is what this arm measures (Ghezra/Multivoid#36).
+            if (rehost && !slot.empty()) {
+                GT::Post([done, ok, slot] {
+                    coop::session_manager::SaveChoice choice;
+                    choice.slot = slot;
+                    coop::session::HostMode mode;
+                    mode.reach = coop::session::Reachability::Direct;
+                    mode.listed = false;
+                    *ok = coop::session_manager::HostWithSave(choice, "Rig Host", /*locked=*/false, /*password=*/"",
+                                                              /*masterUrl=*/"", mode) ? 1 : 0;
+                    done->store(1);
+                });
+                WaitDone(done, 30000);
+                UE_LOGI("reloadchurn: cycle %d HostWithSave('%s') accepted=%d", c, slot.c_str(), *ok);
+            } else {
+                GT::Post([done, ok, wslot] {
+                    E::ResetCachedSave();
+                    *ok = wslot.empty() ? (E::StartFreshGame(ue_wrap::game_mode::kStory) ? 1 : 0)
+                                        : (E::LoadStorySave(wslot.c_str()) ? 1 : 0);
+                    done->store(1);
+                });
+                WaitDone(done, 30000);
+                // Not a verdict term: false means deferred, not failed; the world-pointer change below
+                // is the evidence.
+                UE_LOGI("reloadchurn: cycle %d LoadStorySave returned %d (false == deferred, not failed)",
+                        c, *ok);
+            }
         }
 
         w = WaitForWorldKind(WK::Gameplay, rejoin ? 240 : 120);
