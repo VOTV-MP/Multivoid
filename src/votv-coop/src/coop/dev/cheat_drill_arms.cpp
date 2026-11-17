@@ -193,7 +193,13 @@ void ClientArmTick(coop::net::Session& s) {
         const size_t i = static_cast<size_t>(g.sub - 1);
         if (i >= RawCaseCount()) { finished = true; break; }
         const RawCase& c = RawCaseAt(i);
-        if (!Ask([&] { SendRawForDrill(s, c.p); }, &r, A)) return;
+        // Each case costs the sender a token on the host, so a case goes only when the sender's own bucket allows one;
+        // the next goes after this one's answer (Ask).
+        if (!g.sent && !CH::CanAsk(1)) {
+            if (Timed(kSyncBoundMs)) ClientInvalid(A, "the request mirror never refilled");
+            return;
+        }
+        if (!Ask([&] { SendRawForDrill(s, c.p); CH::ChargeMirrorForDrill(1.f); }, &r, A)) return;
         if (r.reason != reason(c.want)) {
             ClientFail(A, std::string(c.what) + " was answered " + std::to_string(r.reason) + ", not " + std::to_string(reason(c.want)));
             return;

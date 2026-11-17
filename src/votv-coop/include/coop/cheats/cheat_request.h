@@ -71,6 +71,11 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot);
 // CLIENT: the host's answer. Game thread.
 void OnResult(const coop::net::CheatResultPayload& p);
 
+// DRILL: charge `tokens` to this client's mirror of the host's bucket for a raw request the drill sent past the panel
+// path, which draws nothing from it, so CanAsk keeps telling the truth about what the host will take. Nothing is spent
+// when the mirror holds fewer. Game thread.
+void ChargeMirrorForDrill(float tokens);
+
 // One observer of every answer a client receives, for the dev drill; null clears. Game thread.
 void SetResultObserver(void (*fn)(const coop::net::CheatResultPayload& p));
 

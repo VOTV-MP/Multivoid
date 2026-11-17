@@ -404,6 +404,12 @@ bool CanAsk(int count) {
     return b.burst - owed >= CostOf(CheatOp::SpawnItem, count);
 }
 
+void ChargeMirrorForDrill(float tokens) {
+    const uint64_t now = coop::net::NowMs();
+    g_mirror.TakeN(coop::cheats::kMirrorBudget, now, tokens);
+    g_fullAtMs.store(g_mirror.FullAtMs(coop::cheats::kMirrorBudget, now), std::memory_order_release);
+}
+
 void SetResultObserver(void (*fn)(const coop::net::CheatResultPayload& p)) { g_observer = fn; }
 
 uint32_t AnsweredFor(int slot, CheatReason reason) {
