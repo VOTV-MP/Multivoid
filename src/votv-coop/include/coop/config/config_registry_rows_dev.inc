@@ -403,17 +403,9 @@ CFG_ENUM(pry_drill, "pry_drill", "dev", "off", "off|host|client|join",
     "runs its copy's hand unstick, which a pryable refuses with its 'Tool required' hint. client: the "
     "client pries and the host watches. join: the host pries while a joiner is still loading. Both peers "
     "print every pryable they have and every change of one.")
-CFG_ENUM(crowbarpry_drill, "crowbarpry_drill", "dev", "off", "off|open|hand",
-    "VOTVCOOP_CROWBARPRY_DRILL",
-    "Drill (BOTH peers, the client also takes prop_birth_key_probe=1): a client pries a wall-attachable sign the host spawned beside "
-    "it with the game's own activatePrying and ends the pry. open: the pry opens, the board comes free and the crowbar "
-    "the pry hands back must exist on the host (the host says PASS; the client says FAIL when that crowbar's birth is "
-    "not sent). hand: the pry is given up, the crowbar goes back into the hand and no world crowbar may reach the host "
-    "(the client says PASS, the host FAIL if one appears). Run with --rejoin or --rehost: the second life pries again.")
-CFG_FLAG(crowbarpry_authorship_off, "crowbarpry_authorship_off", "dev", false, "VOTVCOOP_CROWBARPRY_AUTHORSHIP_OFF",
-    "Developer red arm: never set (CLIENT). 1 stops the pry's End from being admitted as a player's birth, so the "
-    "crowbar drill's open arm must FAIL on the client with \"the pry's crowbar was not sent\".")
-CFG_FLAG(recycled_slot_drill,"recycled_slot_drill", "dev", false, "VOTVCOOP_RECYCLED_SLOT_DRILL",
+// The crowbar pry drill and its red arm: their own file, one concept, included as _dev_port.inc is above.
+#include "coop/config/config_registry_rows_dev_crowbarpry.inc"
+CFG_FLAG(recycled_slot_drill, "recycled_slot_drill", "dev", false, "VOTVCOOP_RECYCLED_SLOT_DRILL",
     "Drill (either peer): once the local pawn and the object index are up, stage an object slot the "
     "engine recycled on the pawn's root component -- a queued birth naming the slot's old class, and a "
     "stale listing -- then dispatch the actor location read on the component, whose read faults inside "
