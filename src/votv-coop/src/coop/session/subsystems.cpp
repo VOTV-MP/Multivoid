@@ -104,6 +104,7 @@
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_tool_flags.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
+#include "coop/props/prop_pry_sync.h"  // a crowbar's pry of a prop with no wall-attach component
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
 #include "coop/save/join_window_baseline.h"  // the connect edge's removes and position corrections
@@ -369,6 +370,7 @@ void Install(coop::net::Session& session) {
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::nightmare_roll::Install(&session);  // a client's nightmare roll at the host's pace
     coop::level_visit::Install(&session);  // a clip's trip to another map is the clipping player's alone
+    coop::prop_pry_sync::Install(&session);  // a pried plank or radiator: the crowbarOpen watch
     coop::sleep_sync::Install(&session);  // who rests: each peer's rest state (client -> host -> clients) and the host's sleeping flag
     coop::sleep_rest::Install(&session);  // a client's rest at the native rate: its own sleep watch and the factor on its body and effects
     coop::wisp_attack_sync::Install(&session);  // Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
@@ -524,6 +526,7 @@ DisconnectStats DisconnectAll() {
     coop::props::container_break::OnDisconnect();
     coop::props::hacksaw_cut::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
+    coop::prop_pry_sync::OnDisconnect();  // the session's pry counters
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();

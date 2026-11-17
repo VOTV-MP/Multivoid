@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 class Session;
@@ -71,6 +72,16 @@ bool IsWallAttachable(void* actor);
 // the component's `holding`, which nobody here has set on the copy. Not mirrored back. False when the
 // unstick half is not installed or the component does not resolve. Game thread.
 bool ReplayUnstick(void* actor);
+
+// The message a peer sends for a prop its own body just freed: the prop by key, its eid as the
+// fallback, with the pose and velocity it has now, as an unstick (flags 0), and the key into `keyW`.
+// False, said, when the prop has no identity or its pose does not read. Game thread.
+bool FillFreedProp(coop::net::PropStickStatePayload& p, void* prop, std::wstring& keyW);
+
+// A freed copy let go from the freeing peer's pose with that peer's velocity. False, and the copy
+// left where it is, when another owner moves it here: a peer's hold, the host's driven-prop channel,
+// this peer's own grab. Game thread.
+bool LetGoFrom(void* prop, const coop::net::PropStickStatePayload& p);
 
 // Clear per-session state (the pending stick and unstick records). Net disconnect.
 void OnDisconnect();
