@@ -17,6 +17,12 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/spawn_order_probe.cpp
     src/coop/dev/prop_birth_key_probe.cpp
     src/coop/dev/impact_damage_probe.cpp
+    src/coop/dev/build_probe.cpp
+    src/coop/dev/build_probe_aim.cpp
+    src/coop/dev/build_probe_brick.cpp
+    src/coop/dev/build_probe_census.cpp
+    src/coop/dev/build_probe_damage.cpp
+    src/coop/dev/build_probe_watch.cpp
     src/coop/dev/feedback_probe.cpp
     src/coop/dev/kerfur_seat_probe.cpp
     src/coop/dev/requester_feedback_exercise.cpp

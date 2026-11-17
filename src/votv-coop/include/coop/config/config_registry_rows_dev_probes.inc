@@ -96,3 +96,13 @@ CFG_INT(pause_menu_probe, "pause_menu_probe", "dev", 0, 0, 4, "VOTVCOOP_PAUSE_ME
     "pressed the way the engine broadcasts them, and how enterPause and resume are reached from the Escape event. "
     "4 (host only): watches the client's pause window and logs its own counters. "
     "Prints pmprobe lines, then pmprobe DONE or pmprobe FAIL.")
+CFG_ENUM(build_probe, "build_probe", "dev", "off", "off|on", "VOTVCOOP_BUILD_PROBE",
+    "Probe (BOTH peers, the same value, the peers' folder VOTVCOOP_CAN_DIR absolute): the nail, the wall and the poster "
+    "measured where the Blueprint dumps stop. At each world-ready edge a census of every nail, wall, unfinished wall and "
+    "poster (class, key, owning level, whether the prop key index holds the key and how long after the edge, claimed "
+    "or not by the join sweep). The host, walked by the director to the level's wall, throws a brick, swings an axe "
+    "and detonates an explosion at it, and logs the damage routes that fired with their callers and the wall's health; "
+    "then both peers spawn an unfinished wall at one place and the client throws a brick into its own, each logging "
+    "whether the overlap delegate fired on its copy. With no session, it saves once at the first world edge and a later "
+    "reload of that save prints the second census and a diff of the keys. Observe only: it cancels nothing. Lines "
+    "tagged build-probe; ends on build-probe: DONE.")

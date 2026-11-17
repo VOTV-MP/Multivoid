@@ -141,6 +141,7 @@
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/host_settle_drill.h"  // [dev] a join in the host's start-up waits for it
 #include "coop/dev/impact_damage_probe.h"  // [dev] what impactDamage receives, logged per call
+#include "coop/dev/build_probe.h"  // [dev] the nail, wall and poster measured: census, damage routes, brick overlap, keys
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
@@ -236,6 +237,7 @@ void EndSession() {
     coop::dev::container_intent_drill::OnDisconnect();  // [dev] the target, the screen and the walk belong to one session
     coop::dev::join_prop_loss_drill::OnDisconnect();  // [dev] the cans, the pair and the steps belong to one session
     coop::dev::impact_damage_probe::OnDisconnect();  // [dev] the session's call count is said and cleared
+    coop::dev::build_probe::OnDisconnect();  // [dev] the steps and the peers' marks start over; the world records stay
     coop::dev::feedback_probe::OnDisconnect();  // [dev] the window's dropped count is said
     coop::dev::kerfur_seat_probe::OnDisconnect();  // [dev] the session's call counts are said and cleared
     coop::dev::requester_feedback_exercise::OnDisconnect();  // [dev] the once-latch clears
@@ -492,6 +494,7 @@ void TickProbes(coop::net::Session& session, bool isConnected, bool isHost) {
     coop::dev::light_group_census::Tick();  // dev-only READ-ONLY light-GROUP census (ini lightgroup_census=1); self-installs
     coop::dev::keypad_probe::Install();  // dev-only keypad digit-entry RE probe (ini keypad_probe=1)
     coop::dev::keypad_probe::Tick();  // synthetic inputNumber sequence -> does it append inPassword + flip isAcc
+    coop::dev::build_probe::Tick(session);  // [dev] the building probe, with or without a session (a latched read when off)
 }
 
 }  // namespace coop::dev::dev_lanes
