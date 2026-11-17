@@ -8,6 +8,7 @@
 #include "ui/cheat_panes.h"
 
 #include "coop/cheats/cheat_request.h"
+#include "coop/cheats/cheat_run.h"
 #include "coop/cheats/item_catalog.h"
 #include "coop/dev/dev_gate.h"
 #include "coop/dev/spawn_menu_unlock.h"
@@ -49,6 +50,8 @@ struct Filtered {
     // Held, not borrowed: a list freed under a raw pointer can be reallocated at its address.
     std::shared_ptr<const std::vector<std::string>> source;
     std::string filter;
+    bool authority = false;   // the list was cut for a player (false) or is the host's whole list (true)
+    size_t offered = 0;       // the names this pane offers, before the filter
     std::vector<int> index;
 };
 
@@ -72,19 +75,25 @@ void RenderItems() {
     char line[160];
     ImGui::SetNextItemWidth(S(220.f));
     ImGui::InputTextWithHint("##itemfilter", l10n::T("Search items..."), filterBuf, sizeof(filterBuf));
-    if (cache.source != names || cache.filter != filterBuf) {
+    if (cache.source != names || cache.filter != filterBuf || cache.authority != authority) {
         cache.source = names;
         cache.filter = filterBuf;
+        cache.authority = authority;
+        cache.offered = 0;
         cache.index.clear();
-        for (size_t i = 0; i < names->size(); ++i)
+        for (size_t i = 0; i < names->size(); ++i) {
+            // A player is offered what the host's judge accepts: an explosive is left out of the list.
+            if (!authority && !CH::ItemOpenToPlayers((*names)[i])) continue;
+            ++cache.offered;
             if (ContainsI((*names)[i], filterBuf)) cache.index.push_back(static_cast<int>(i));
+        }
     }
     ImGui::SameLine();
     if (filterBuf[0])
         l10n::Fmt(line, sizeof(line), l10n::T("%1$d of %2$d items"), static_cast<int>(cache.index.size()),
-                  static_cast<int>(names->size()));
+                  static_cast<int>(cache.offered));
     else
-        l10n::Fmt(line, sizeof(line), l10n::T("%d items"), static_cast<int>(names->size()));
+        l10n::Fmt(line, sizeof(line), l10n::T("%d items"), static_cast<int>(cache.offered));
     ImGui::TextDisabled("%s", line);
 
     const int maxCount = authority ? 50 : coop::net::kCheatMaxCount;

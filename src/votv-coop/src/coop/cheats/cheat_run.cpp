@@ -63,7 +63,7 @@ bool OpenCheckOff() {
 Outcome RunSpawn(const Request& r, int senderSlot) {
     const int maxCount = senderSlot == 0 ? kHostMaxCount : coop::net::kCheatMaxCount;
     if (r.count < 1 || r.count > maxCount) return Done(CheatReason::BadRequest);
-    if (senderSlot != 0 && !OpenCheckOff() && IsExplosive(r.name)) return Done(CheatReason::Refused);
+    if (senderSlot != 0 && !OpenCheckOff() && !ItemOpenToPlayers(r.name)) return Done(CheatReason::Refused);
     // Where: in front of the asker, or at a player who is in the session. The asker's own body is its slot.
     const bool inFront = r.target == coop::net::kCheatInFront;
     const int slot = inFront ? senderSlot : r.target;
@@ -114,5 +114,7 @@ Outcome Run(const Request& r, int senderSlot) {
 bool OpenToPlayers(const ET::EventInfo& ev) {
     return ev.risk == ET::Risk::Safe && ev.cat != ET::Category::Story;
 }
+
+bool ItemOpenToPlayers(const std::string& name) { return !IsExplosive(name); }
 
 }  // namespace coop::cheats

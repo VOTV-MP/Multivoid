@@ -42,4 +42,8 @@ Outcome Run(const Request& r, int senderSlot);
 // and a player's pane both ask it, of the table's row. Any thread.
 bool OpenToPlayers(const coop::dev::event_trigger::EventInfo& ev);
 
+// True for a prop a player may spawn: not one of the explosives. The one rule, like OpenToPlayers: the host's judge
+// refuses what this denies and a player's Items pane does not list it. Any thread.
+bool ItemOpenToPlayers(const std::string& name);
+
 }  // namespace coop::cheats
