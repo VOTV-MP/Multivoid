@@ -252,6 +252,8 @@ docs/**
 !docs/coop-sync-doctrine.md
 !docs/credits.md
 !docs/credits-reports.md
+!docs/credits-code/
+!docs/credits-code/*.md
 !docs/devs-gauntlet.md
 !docs/feasibility.md
 !docs/install.md
