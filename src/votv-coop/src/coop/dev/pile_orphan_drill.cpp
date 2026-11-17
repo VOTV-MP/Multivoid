@@ -4,7 +4,6 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
-#include "coop/net/session.h"
 #include "coop/props/pile_spawn_bind.h"
 #include "coop/props/save_time_retire_util.h"  // kExactMatchR2Cm: the 1 cm the bind matches by
 #include "coop/session/rig_verdict.h"
@@ -107,8 +106,8 @@ const Cand* PickIsolated(const std::vector<Cand>& cs, bool clump) {
 
 }  // namespace
 
-void Tick(coop::net::Session* session) {
-    if (!Armed() || !session || g_tried) return;
+void Install() {
+    if (!Armed() || g_tried) return;
     g_tried = true;
     if (!PS::Begin(kTag)) g_done = true;   // Begin said INVALID itself
 }

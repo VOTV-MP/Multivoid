@@ -198,6 +198,7 @@ void Install(coop::net::Session& session) {
     coop::dev::kerfur_seat_probe::Install(&session);  // [dev] the actionName and useSelectedAction watches (a latched read unless kerfur_seat_probe=1)
     coop::dev::atv_gate_drill::Install(&session);  // [dev] the rejoined client's held announce (a latched read unless atv_gate_drill is on in its second life)
     coop::dev::requester_feedback_exercise::Install(&session);  // [dev] the host's one hint inside slot 1's scope (a latched read unless requester_feedback_exercise=1)
+    coop::dev::pile_orphan_drill::Install();  // [dev] the orphan drill's signal clock starts at boot, before any join (a latched bool read when off)
 }
 
 void EndSession() {
@@ -406,7 +407,6 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::late_join_drill::Tick(&session);  // [dev] the bind wait's tallies (a latched bool read when off)
     coop::dev::pile_late_load::Tick();  // [dev] the late-load seam (a cached bool read when off)
     coop::dev::pile_defer_drill::Tick(&session);  // [dev] the pile deferral drill (a latched enum read when off)
-    coop::dev::pile_orphan_drill::Tick(&session);  // [dev] the pile orphan drill (a latched bool read when off)
     coop::dev::download_drill::Tick(&session);  // [dev] the download drill (two short string compares when off)
     coop::dev::laptop_drill::Tick(&session);  // [dev] the laptop drill (a latched read when off)
     coop::dev::laptop_power_drill::Tick(&session);  // [dev] the laptop power drill (a bool read when off)

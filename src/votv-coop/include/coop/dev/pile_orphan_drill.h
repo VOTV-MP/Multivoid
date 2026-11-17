@@ -15,12 +15,11 @@
 
 #pragma once
 
-namespace coop::net { class Session; }
-
 namespace coop::dev::pile_orphan_drill {
 
-// Once per pump tick; a latched bool read when off. Starts the peer signal's clock before the capture it must outlast.
-void Tick(coop::net::Session* session);
+// Once at boot; a latched bool read when off. Starts the peer signal's clock there, since the helper takes only a signal
+// written after it: the host writes right after the capture, which can land before the client's first tick.
+void Install();
 
 // The session ended: a rejoin's client reads and judges again.
 void OnDisconnect();
