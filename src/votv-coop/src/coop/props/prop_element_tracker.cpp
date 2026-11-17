@@ -194,6 +194,62 @@ bool IsBoundMirrorNative(void* actor) {
     return R::IsLiveByIndex(actor, el->GetInternalIdx());  // recycled/dead -> false
 }
 
+// ---- EnsureUniqueKey ----
+// The host is the key-uniqueness authority (MTA: the server owns element-id uniqueness). VOTV's
+// level content carries duplicate interactable Keys, present before any save record loads (85
+// trashBitsPile_C in untitled_1 share four baked keys), the game keeps any non-None key
+// unchecked, and a New Game saves them all; every identity layer assumes uniqueness: a clone
+// family funnels its wire rows onto one actor and the join reconcile re-expresses the rest into
+// occupied positions. A keyed actor enrolling while a different live actor carries its Key is
+// re-keyed before anything sees it. The new key persists for an actor that lives to a save; an
+// actor that a save's load then destroys (loadObjects re-creates every actor_save from its
+// records) takes its throwaway key with it, at no cost beyond the mint. A dead incumbent is a
+// loadObjects re-create inheriting its identity, spared by the liveness check. The key index
+// answers whether another live actor holds the key; when it cannot answer (off the game thread,
+// where setKey could not run anyway; before its session seed; with no current world; while a
+// birth is still loading), the actor enrols under its key and such enrolments are counted, the
+// first and each power of two said.
+std::wstring EnsureUniqueKey(void* actor, const std::wstring& key, const std::wstring& cls, bool contentSource) {
+    std::wstring enrollKey = key;
+    if (!enrollKey.empty() && enrollKey != L"None") {
+        const auto held = coop::prop_key_index::AnotherHolder(enrollKey, actor);
+        if (held == coop::prop_key_index::Read::Pending) {
+            // Counted, and said at the first and at each power of two, so a later skip is never silent.
+            static std::atomic<uint64_t> sUnchecked{0};
+            const uint64_t n = sUnchecked.fetch_add(1, std::memory_order_relaxed) + 1;
+            if ((n & (n - 1)) == 0)
+                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS unchecked -- the key index could not answer for '%ls' "
+                        "on '%ls' (%s); enrolling under its key (%llu unchecked this run)", enrollKey.c_str(),
+                        cls.c_str(), ue_wrap::game_thread::IsGameThread() ? "not ready" : "off the game thread",
+                        static_cast<unsigned long long>(n));
+        } else if (held == coop::prop_key_index::Read::Hit) {
+            ue_wrap::FVector dupLoc{};
+            const char* const dupUnread =
+                ue_wrap::engine::TryGetActorLocation(actor, dupLoc) ? "" : " (unread)";
+            const std::wstring fresh = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
+            if (!fresh.empty() && fresh != enrollKey) {
+                // By `contentSource`: the passive census walks the world, at the session seed (the world as
+                // loaded, where the level's clone families sit, re-keyed on every load) and at its
+                // re-seeds, so a duplicate it finds is reported plainly: INFO. Any other source is a
+                // live birth carrying a key a live actor already holds, a runtime clone worth a look:
+                // WARN. The FAILED branch below stays a warning.
+                ue_wrap::log::Write(contentSource ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
+                        "prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
+                        "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (%s; host key "
+                        "authority -- the new key persists if the actor lives to a save)",
+                        enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread,
+                        fresh.c_str(), contentSource ? "found by the census" : "a live birth carrying it");
+                enrollKey = fresh;
+            } else {
+                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- re-key FAILED for duplicate '%ls' "
+                        "key='%ls' loc=(%.1f,%.1f,%.1f)%s -- enrolling under the duplicate (pre-fix behavior)",
+                        cls.c_str(), enrollKey.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread);
+            }
+        }
+    }
+    return enrollKey;
+}
+
 // ---- MarkPropElement ----
 // Role-aware allocation: the host mints in the host range, a client in the peer range; without
 // the split both peers popped the host range for unrelated actors, and a client's Registry::Get
@@ -254,59 +310,9 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
         TrackKeyForActor_(actor, key, R::InternalIndexOf(actor));
         return key;
     }
-    // The host is the key-uniqueness authority (MTA: the server owns element-id uniqueness). VOTV's
-    // level content carries duplicate interactable Keys, present before any save record loads (85
-    // trashBitsPile_C in untitled_1 share four baked keys), the game keeps any non-None key
-    // unchecked, and a New Game saves them all; every identity
-    // layer assumes uniqueness: a clone family funnels its wire rows onto one actor and the join
-    // reconcile re-expresses the rest into occupied positions. A keyed actor enrolling while a
-    // different live actor carries its Key is re-keyed before anything sees it. The new key persists
-    // for an actor that lives to a save; an actor that a save's load then destroys (loadObjects
-    // re-creates every actor_save from its records) takes its throwaway key with it, at no cost
-    // beyond the mint. A dead incumbent is a loadObjects re-create inheriting its identity, spared by
-    // the liveness check. A client never re-keys. The key
-    // index answers whether another live actor holds the key; when it cannot answer (off the game thread,
-    // where setKey could not run anyway; before its session seed; with no current world; while a birth is
-    // still loading), the actor enrols under its key and such enrolments are counted, the first and each
-    // power of two said.
-    std::wstring enrollKey = key;
-    if (isHost && !enrollKey.empty() && enrollKey != L"None") {
-        const auto held = coop::prop_key_index::AnotherHolder(enrollKey, actor);
-        if (held == coop::prop_key_index::Read::Pending) {
-            // Counted, and said at the first and at each power of two, so a later skip is never silent.
-            static std::atomic<uint64_t> sUnchecked{0};
-            const uint64_t n = sUnchecked.fetch_add(1, std::memory_order_relaxed) + 1;
-            if ((n & (n - 1)) == 0)
-                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS unchecked -- the key index could not answer for '%ls' "
-                        "on '%ls' (%s); enrolling under its key (%llu unchecked this run)", enrollKey.c_str(),
-                        cls.c_str(), ue_wrap::game_thread::IsGameThread() ? "not ready" : "off the game thread",
-                        static_cast<unsigned long long>(n));
-        } else if (held == coop::prop_key_index::Read::Hit) {
-            ue_wrap::FVector dupLoc{};
-            const char* const dupUnread =
-                ue_wrap::engine::TryGetActorLocation(actor, dupLoc) ? "" : " (unread)";
-            const std::wstring fresh = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
-            if (!fresh.empty() && fresh != enrollKey) {
-                // By `src`: the passive census walks the world, at the session seed (the world as
-                // loaded, where the level's clone families sit, re-keyed on every load) and at its
-                // re-seeds, so a duplicate it finds is reported plainly: INFO. Any other source is a
-                // live birth carrying a key a live actor already holds, a runtime clone worth a look:
-                // WARN. The FAILED branch below stays a warning.
-                const bool content = src == EnrollSource::kPassiveCensus;
-                ue_wrap::log::Write(content ? ue_wrap::log::Level::Info : ue_wrap::log::Level::Warn,
-                        "prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
-                        "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (%s; host key "
-                        "authority -- the new key persists if the actor lives to a save)",
-                        enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread,
-                        fresh.c_str(), content ? "found by the census" : "a live birth carrying it");
-                enrollKey = fresh;
-            } else {
-                UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- re-key FAILED for duplicate '%ls' "
-                        "key='%ls' loc=(%.1f,%.1f,%.1f)%s -- enrolling under the duplicate (pre-fix behavior)",
-                        cls.c_str(), enrollKey.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread);
-            }
-        }
-    }
+    // A client never re-keys: the host is the key-uniqueness authority (EnsureUniqueKey).
+    const std::wstring enrollKey =
+        isHost ? EnsureUniqueKey(actor, key, cls, src == EnrollSource::kPassiveCensus) : key;
     auto el = std::make_unique<coop::element::Prop>();
     auto toStr = [](const std::wstring& w) {
         std::string s; s.reserve(w.size());

@@ -66,6 +66,12 @@ enum class EnrollSource : uint8_t { kExpressSeam, kPassiveCensus };
 std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls,
                              EnrollSource src);
 
+// The key `actor` may enrol under on the HOST (a client never calls it): `key` itself when no other live actor of
+// any lane holds it or the key index cannot answer yet, else a fresh key minted for `actor` (a clone of the
+// level's, or a runtime duplicate). `contentSource` is true when the actor was found by the census walk of the
+// world as loaded, which only changes how the re-key is logged. Any thread MarkPropElement runs on.
+std::wstring EnsureUniqueKey(void* actor, const std::wstring& key, const std::wstring& cls, bool contentSource);
+
 // A consumer of the host's prop births: called from MarkPropElement once the HOST has minted `actor`'s eid and the post-alloc
 // recheck kept it, on every route that mints (the Init POST body, the census, the seed, the steady re-seed), never on a
 // client. THREAD CONTRACT: the caller may be any thread (MarkPropElement runs off the game thread, see its comment), the
