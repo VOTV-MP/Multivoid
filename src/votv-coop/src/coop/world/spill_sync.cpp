@@ -79,6 +79,7 @@ float g_pourSize = -1.f;    // grimeProjectile_C's default size: a break leaves 
 struct Landed {
     ue_wrap::CachedObjRef decal;
     bool held = false;
+    bool blood = false;      // a bleeding body's mark (blooder_C, bloodDecalMaster_C): no splash
     int foreignSlot = 0;     // HOST: > 0 when the projectile was a foreign flight: the slot whose hold drove its prop
     std::wstring foreignCls;
 };
@@ -203,6 +204,22 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
         g_flights.push_back(f);
         return;
     }
+    // Blood: the falling drops' marks (bloodDecalMaster_C, any bleeding body: on a client, its own player's bleeding) and
+    // the blood event's (blooder_C, the host's) were each machine's alone (Ghezra/Multivoid#38). The host's go out as its
+    // spills do, and a client's drops go to the host; the blood event runs on the host alone.
+    if (source && GS::IsDecal(spawned) && g_landed.size() < kCap) {
+        const std::wstring src = R::ClassNameOf(source);
+        const bool event = src == L"blooder_C", drops = src == L"bloodDecalMaster_C";
+        if (event || drops) {
+            if (event && !g_host.load(std::memory_order_relaxed)) return;
+            Landed l;
+            l.decal.Set(spawned);
+            l.held = true;
+            l.blood = true;
+            g_landed.push_back(l);
+            return;
+        }
+    }
     if (!source || !GS::IsProjectile(source) || !GS::IsDecal(spawned) || g_landed.size() >= kCap) return;
     Landed l;
     l.decal.Set(spawned);
@@ -290,7 +307,7 @@ void HostTick(coop::net::Session& s) {
         GS::Spill sp;
         if (void* d = l.decal.Get(); d && GS::ReadSpill(d, sp)) {
             Payload p = ToWire(sp);
-            p.splash = 1;
+            p.splash = l.blood ? 0 : 1;
             p.origin = 0;   // the host's own flight: it heard its splash
             Broadcast(s, d, p);
         }
@@ -319,12 +336,15 @@ void HostTick(coop::net::Session& s) {
         void* d = GS::SpawnSpill(sp);
         if (!d) continue;
         ++g_made;
+        const bool blood = sp.className.rfind(L"grime_blood", 0) == 0;
         UE_LOGI("spill: slot %d spilled a %ls -- made on the host", in.slot, sp.className.c_str());
-        coop::prop_sound::PlaySpillSplashAt(d, sp.location);   // the client's flight splashed there alone
-        ++g_splashes;
+        if (!blood) {
+            coop::prop_sound::PlaySpillSplashAt(d, sp.location);   // the client's flight splashed there alone
+            ++g_splashes;
+        }
         GS::Spill made;
         Payload out = GS::ReadSpill(d, made) ? ToWire(made) : in.p;
-        out.splash = 1;
+        out.splash = blood ? 0 : 1;
         out.origin = static_cast<uint8_t>(in.slot);
         Broadcast(s, d, out);
     }
@@ -353,9 +373,10 @@ void ClientTick(coop::net::Session& s) {
         GS::Spill sp;
         if (l.held && GS::ReadSpill(d, sp) && g_outbox.size() < kCap) {
             g_outbox.push_back(ToWire(sp));
-            UE_LOGI("spill: this player spilled a %ls -- the host makes it", sp.className.c_str());
+            UE_LOGI("spill: this player %s a %ls -- the host makes it", l.blood ? "bled" : "spilled", sp.className.c_str());
         }
-        RemoveOwn(d);
+        // This player's own blood stays where it fell; the host's copy of it finds it there and is not made twice.
+        if (!l.blood) RemoveOwn(d);
     }
     for (auto it = g_flights.begin(); it != g_flights.end();) it = it->projectile.Get() ? std::next(it) : g_flights.erase(it);
     if (!coop::net_pump::HasAnnouncedWorldReady()) return;

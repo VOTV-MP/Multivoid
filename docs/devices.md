@@ -247,96 +247,93 @@ past a bound are refused with a log naming the prop and size, the contents or pr
 
 ### Keypads and locks
 
-A keypad is a typed buffer and a verdict, and the verdict is also the power it hands on to its pair
-and its gated door. The host's copy decides. Every change goes through one of the keypad's own
-verbs -- a digit, an open with its verdict, the scripted guesser, the set-new-code mode, a false
-entry -- and the script-body gate watches them by name (`coop/interactables/keypad_verbs`): before
-each body on the host the verb goes to every client, which runs the same verb on its own copy, so
-the keypad's own chain plays its sounds and lands the same state; after it the state the chain
-settled on goes too -- at the keypad's setActive, its pair's with it and the password in it; at a
-digit or a reset that started no open -- and a joiner gets each keypad's state in its snapshot
-(`coop/interactables/keypad_sync`), handed on to its pair and door where the host's already hold
-it, so a door ends as the host's even when a chain ran after the host's save was taken. A client's
-copy is written to that state whatever its own
-replay met, but one that arrives while the copy's own replayed open, on the keypad or its pair, is
-still in its 0.2 s wait is written at that chain's end, so it never lands under the tail that
-reads the set-new-code mode and writes the pair. On a client every call of those
-verbs is refused but the lane's own; a player's own entries -- a digit, the accept or cancel key,
-the numpad's (told apart by the key, since the numpad's accept passes the copy's own verdict), a
-keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
-copy, judging a submit against its own password. A digit clicked on the keys needs the light's power
-on the presser's own copy, as single player's click does, and a client's copy holds the host's
-light power, since a client applies the host's canonical through the panel's own buttonsVisibility,
-whose tail runs setPower once the panel is enabled and its generators read whole: a client's clicks
-stop in a blackout and come back with the power. The entries run in order, and the next one waits
-while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
-clears its buffer, so none is lost to either wait (a full queue still refuses). A keycard's
-verdict is taken only while the sender holds a keycard. An accept unlocks a door; opening it is
-an ordinary press of the door.
+A keypad is a typed buffer and a verdict, and the verdict is also the power it hands on to its pair and its gated
+door. The host's copy decides. Every change goes through one of the keypad's own verbs -- a digit, an open with its
+verdict, the scripted guesser, the set-new-code mode, a false entry -- and the script-body gate watches them by name
+(`coop/interactables/keypad_verbs`): before each body on the host the verb goes to every client, which runs the same
+verb on its own copy, so the keypad's own chain plays its sounds and lands the same state; after it the state the
+chain settled on goes too -- at the keypad's setActive, its pair's with it and the password in it; at a digit or a
+reset that started no open -- and a joiner gets each keypad's state in its snapshot
+(`coop/interactables/keypad_sync`), handed on to its pair and door where the host's already hold it, so a door ends as
+the host's even when a chain ran after the host's save was taken. A client's copy is written to that state whatever
+its own replay met, but one that arrives while the copy's own replayed open, on the keypad or its pair, is still in
+its 0.2 s wait is written at that chain's end, so it never lands under the tail that reads the set-new-code mode and
+writes the pair. On a client every call of those verbs is refused but the lane's own; a player's own entries -- a
+digit, the accept or cancel key, the numpad's (told apart by the key, since the numpad's accept passes the copy's own
+verdict), a keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its copy,
+judging a submit against its own password. A digit clicked on the keys needs the light's power on the presser's own
+copy, as single player's click does, and a client's copy holds the host's light power, since a client applies the
+host's canonical through the panel's own buttonsVisibility, whose tail runs setPower once the panel is enabled and its
+generators read whole: a client's clicks stop in a blackout and come back with the power. The entries run in order,
+and the next one waits while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
+clears its buffer, so none is lost to either wait (a full queue still refuses). A keycard's verdict is taken only
+while the sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
-The power panel's five latched breakers have one author, the host (`coop/world/power_panel`). A
-press on any peer, a lever or the laptop's breaker page, runs as its prediction, and a client's
-reaches the host as the breakers it flipped, caught where the panel's own apply runs. The host takes
-presses in arrival order, a few a second, from a presser within reach of the lever or of the
-terminal it worked the page through (the laptop, or a portable PC); it runs a lever press as the
-game's own press by the presser's puppet, tutorial gate and click included, and applies a page
-press's flip, whose wait the presser already served. It sends every peer the breakers and the
-panel's lockout with the last press it took from each, and a refused press to its author alone. A
-client puts its own untaken presses on top and runs the panel's apply only when that differs from
-what its panel shows, so each machine's own setPower drives its base: the desk's units, the laptop,
-the lights, the servers and the sockets follow the grid everywhere. The desk virus's 60 s lockout
-runs on the host alone: a client refuses its own, switches its servers off as the host's lockout
-starts, and as it ends switches them on with the calc breaker and plays the turn-on cue. The
-generators behind the panel wear on a 30 s decay tick that rolls its own dice; the host runs it,
-and a client refuses its own tick, break, wear and fullFix at the body. The host sends every
-generator's row after the outermost of its generator verbs and its Activate presses, so a break's
-rows follow the blackout canonical it produced; a client runs the same edges from the rows and then
-puts its breakers back to the canonical, since a break's own blackout rewrote them
-(`coop/world/power_grid`). A client's player acts on a generator as ops: its Activate press and its
-upgrade install run on the client first and are reconciled like the panel's presses, and its hit is
-the host's to run, with a held item that swings. The host takes an op from a player within reach, in
-the player's order, and judges an Activate press on its own copy of the repair puzzle, branching as
-the button does: a broken generator is mended, a whole one serviced. An install rests on the upgrade
-its insert spent: a world upgrade the host saw that player destroy beside the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the upgrade the hand lane says that player's hand last held, one use a hold (`coop/player/hand_spend`), the world one recorded by
-`coop/world/power_upgrade`: an install without one is refused, and one refused after it, the second
-of two players at a generator's last free place, gets its upgrade back where the player stands. An upgrade from the hold slot is announced to the host as the generator's insert begins, before it spends the upgrade; a request the hand lane never counted is the client's loss, as for the fuse towers below. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
-the game's repair with the puzzle solved followed by the Activate route's turn-on at the generator
-and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets
-are the host's rolls, which a client never makes, and its values belong to the one player inside the
-panel (the device lock). That player's knob, switch and rotator inputs run on its client first and
-reach the host as values, taken in its order, so a press follows the inputs it rests on; every peer
-draws the host's puzzle with the panel's own setters and moves, and a joiner gets it with the rows.
-The wind turbine's heading integrator is not saved and chases the synced wind at a degree per
-second, so the host mirrors six driver floats about once a second and the turbine's own tick
-interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are
-monotone: a wipe only lowers them, so each peer broadcasts a decrease and the receiver keeps the
-minimum, and two peers wiping at once converge with no oscillation; the grime decals are keyed by
-their quantised world position, since both peers place them from the same save
-(`coop/interactables/window_sync`, `coop/interactables/grime_sync`).
+The power panel's five latched breakers have one author, the host (`coop/world/power_panel`). A press on any peer, a
+lever or the laptop's breaker page, runs as its prediction, and a client's reaches the host as the breakers it
+flipped, caught where the panel's own apply runs. The host takes presses in arrival order, a few a second, from a
+presser within reach of the lever or of the terminal it worked the page through (the laptop, or a portable PC); it
+runs a lever press as the game's own press by the presser's puppet, tutorial gate and click included, and applies a
+page press's flip, whose wait the presser already served. It sends every peer the breakers and the panel's lockout
+with the last press it took from each, and a refused press to its author alone. A client puts its own untaken presses
+on top and runs the panel's apply only when that differs from what its panel shows, so each machine's own setPower
+drives its base: the desk's units, the laptop, the lights, the servers and the sockets follow the grid everywhere. The
+desk virus's 60 s lockout runs on the host alone: a client refuses its own, switches its servers off as the host's
+lockout starts, and as it ends switches them on with the calc breaker and plays the turn-on cue. The generators behind
+the panel wear on a 30 s decay tick that rolls its own dice; the host runs it, and a client refuses its own tick,
+break, wear and fullFix at the body. The host sends every generator's row after the outermost of its generator verbs
+and its Activate presses, so a break's rows follow the blackout canonical it produced; a client runs the same edges
+from the rows and then puts its breakers back to the canonical, since a break's own blackout rewrote them
+(`coop/world/power_grid`). A client's player acts on a generator as ops: its Activate press and its upgrade install
+run on the client first and are reconciled like the panel's presses, and its hit is the host's to run, with a held
+item that swings. The host takes an op from a player within reach, in the player's order, and judges an Activate press
+on its own copy of the repair puzzle, branching as the button does: a broken generator is mended, a whole one
+serviced. An install rests on the upgrade its insert spent: a world upgrade the host saw that player destroy beside
+the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the
+upgrade the hand lane says that player's hand last held, one use a hold (`coop/player/hand_spend`), the world one
+recorded by `coop/world/power_upgrade`: an install without one is refused, and one refused after it, the second of two
+players at a generator's last free place, gets its upgrade back where the player stands. An upgrade from the hold slot
+is announced to the host as the generator's insert begins, before it spends the upgrade; a request the hand lane never
+counted is the client's loss, as for the fuse towers below. A repair, the host's of a client's press and a client's of
+the host's rows alike, runs as the game's repair with the puzzle solved followed by the Activate route's turn-on at
+the generator and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets are
+the host's rolls, which a client never makes, and its values belong to the one player inside the panel (the device
+lock). That player's knob, switch and rotator inputs run on its client first and reach the host as values, taken in
+its order, so a press follows the inputs it rests on; every peer draws the host's puzzle with the panel's own setters
+and moves, and a joiner gets it with the rows. The wind turbine's heading integrator is not saved and chases the
+synced wind at a degree per second, so the host mirrors six driver floats about once a second and the turbine's own
+tick interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are monotone: a wipe
+only lowers them, so each peer broadcasts a decrease and the receiver keeps the minimum, and two peers wiping at once
+converge with no oscillation; the grime decals are keyed by their quantised world position, since both peers place
+them from the same save (`coop/interactables/window_sync`, `coop/interactables/grime_sync`).
 
 A spilled liquid is the host's (`coop/world/spill_sync`). A coffee cup tipped or flung fast, beer, wine and a gas
-bottle spill through a `grimeProjectile_C` that flies and leaves its grime decal (`grime_coffee_C` and the rest)
-where it meets a surface, so each peer's own flight would land somewhere else. The host sends each decal its
-projectile leaves, with its transform, its decal's random turn and its dirt (`SpillState`); a client makes it at that
-transform, so the grime lane's position key names it on both and a partial wipe crosses as any decal's does. A client
-removes a decal its own projectile leaves; when the liquid was in its player's hand it sends the decal first
-(`SpillIntent`), and the host checks its class and that it lies within 15 m of the sender, makes it and sends it back.
-A spill wiped away is said by whoever wiped it, the host's to everyone and a client's to the host, which wipes its own
-within reach. A spill that just landed carries its splash: every peer whose own flight did not land it plays the
-game's `water_splash_Cue` there, as the projectile does at its hit, and a replay plays none. A copy lies at the host's
-own floats, so a peer keeps one spill per message and checks only a replay against a decal already there; a bottle's
-pours land a millimetre apart and stack. A world cup or bottle does not spill on a client, whose copy of a food is
-parked; a gas bottle spills only as it breaks, which the host decides. A beer or wine pours on its tick while it is open
-and upside down, and each pour plays `fuel1` beside the bottle on the peer that pours it; the lane sees the pour as its
-projectile is born, with the `size` of 1 a pour writes (a break leaves the class default, 5, and plays no pour), so the
-host sends each of its pours (`SpillPour`), a client sends one from a bottle in its hand (`SpillPourIntent`) for the
-host to play and send on, and each peer that did not pour it plays it at the bottle. Water from a bucket leaves no
-puddle: the game's pour (`prop_sponge_bucketPour_C`) flies, puts out fires and cleans what it meets, then ends
-`[V]` (`harness/autotest/autotest_spill.cpp`, twice: a host cup spilled and on the client at its place with none of
-its own and its splash heard; a partial wipe each way, 100 to 76 and 76 to 52 on both; the host's wipe and the client's;
-an opened beer (7 and 8 decals), an opened wine (10) and a broken gas bottle (1) on their head on the host, every decal
+bottle spill through a `grimeProjectile_C` that flies and leaves its grime decal (`grime_coffee_C` and the rest) where
+it meets a surface, so each peer's own flight would land somewhere else. The host sends each decal its projectile
+leaves, with its transform, its decal's random turn and its dirt (`SpillState`); a client makes it at that transform,
+so the grime lane's position key names it on both and a partial wipe crosses as any decal's does. A client removes a
+decal its own projectile leaves; when the liquid was in its player's hand it sends the decal first (`SpillIntent`),
+and the host checks its class and that it lies within 15 m of the sender, makes it and sends it back. A spill wiped
+away is said by whoever wiped it, the host's to everyone and a client's to the host, which wipes its own within reach.
+Blood rides the same lane (Ghezra/Multivoid#38): the marks of falling drops (`bloodDecalMaster_C`'s `grime_blood`
+decals) and the blood event's (`blooder_C`) were each machine's alone. The host sends its own as spills; a client's
+own drops go to the host as a held spill's would, its own mark staying where it fell. Blood plays no splash `[V]`
+(`coop/dev/blood_probe`: five drops from each peer left the same five marks on both, none twice). A spill that just
+landed carries its splash: every peer whose own flight did not land it plays the game's `water_splash_Cue` there, as
+the projectile does at its hit, and a replay plays none. A copy lies at the host's own floats, so a peer keeps one
+spill per message and checks only a replay against a decal already there; a bottle's pours land a millimetre apart and
+stack. A world cup or bottle does not spill on a client, whose copy of a food is parked; a gas bottle spills only as
+it breaks, which the host decides. A beer or wine pours on its tick while it is open and upside down, and each pour
+plays `fuel1` beside the bottle on the peer that pours it; the lane sees the pour as its projectile is born, with the
+`size` of 1 a pour writes (a break leaves the class default, 5, and plays no pour), so the host sends each of its
+pours (`SpillPour`), a client sends one from a bottle in its hand (`SpillPourIntent`) for the host to play and send
+on, and each peer that did not pour it plays it at the bottle. Water from a bucket leaves no puddle: the game's pour
+(`prop_sponge_bucketPour_C`) flies, puts out fires and cleans what it meets, then ends `[V]`
+(`harness/autotest/autotest_spill.cpp`, twice: a host cup spilled and on the client at its place with none of its own
+and its splash heard; a partial wipe each way, 100 to 76 and 76 to 52 on both; the host's wipe and the client's; an
+opened beer (7 and 8 decals), an opened wine (10) and a broken gas bottle (1) on their head on the host, every decal
 on the client at its place and none of its own; a cup in the client's hand spilled, made by the host, its splash heard
 there and back on the client once; the host's 16 bottle pours all heard on the client and a pour of a beer in the
 client's hand heard on the host; the client killed and rejoined, all 40 and 41 live spills there, none twice).
