@@ -20,7 +20,7 @@ browser marks mismatched lobbies before you click.
 | | |
 |--|--|
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
-| **Players** | up to **4** (host + 3) — LAN + Internet, no port forwarding needed |
+| **Players** | up to **8** (host + 7) — LAN + Internet, no port forwarding needed |
 | **Status** | Alpha — dev builds; everyone playing one is a tester |
 | **Website** | [multivoid.dev](https://multivoid.dev) |
 | **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — questions, bug reports, people to play with |
@@ -28,7 +28,7 @@ browser marks mismatched lobbies before you click.
 
 ## What you get
 
-- **Co-op over LAN or Internet** — one host, up to three friends; join by direct IP or
+- **Co-op over LAN or Internet** — one host and up to fifteen friends (the host sets the limit, two by default); join by direct IP or
   through the built-in server browser backed by the official master server.
 - **Real remote players** — full body and animations, per-player skins, nameplates with
   live ping, chat, and 3D positional **voice chat**.

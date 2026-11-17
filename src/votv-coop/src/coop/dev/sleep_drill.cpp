@@ -477,6 +477,15 @@ void Tick() {
         UE_LOGI("[SLEEP-DRILL] %s %s armed -- %s", ArmName(), RoleName(host), ArmPlan(host));
         if (host && ArmOf() == Arm::Beside && !coop::dev::hookdrag_selftest::IsEnabled())
             return Fail(true, "beside needs the hook drill armed on this peer (hookdrag_selftest)");
+        // Every arm expects the host's sleep alone to speed the world up, which is the row's `host` value: the session's
+        // value is pinned here (a set for this session only, nothing written to the ini), so the arm does not depend on
+        // how the run was invoked.
+        if (host) {
+            if (coop::config::SetForSession(::coop::config_registry::rows::world_sleep_speedup, "host") ==
+                coop::config::SetResult::Refused)
+                return Fail(true, "world.sleep_speedup could not be set to host for this arm");
+            UE_LOGI("sleep-drill: pinned world.sleep_speedup=host for this arm");
+        }
     }
     if (!host && ArmOf() == Arm::Beside) return;  // the armed line is all this arm says on a client
     if (Clock::now() > g_deadline)

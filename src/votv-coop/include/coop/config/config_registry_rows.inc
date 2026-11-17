@@ -171,10 +171,13 @@ CFG_INT(net_novelty_budget, "net.novelty_budget", "net", 512, 0, 100000, nullptr
     "A text field that would exceed it is refused whole.")
 CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 3600000, nullptr,
     "Length of the novelty budget window, in milliseconds.")
-// The host's connection cap at the accept edge (coop/net/connect_history): MTA's join-flood
-// numbers, four per thirty seconds per address and then thirty seconds of refusal. Filed under
-// [net] because it is a host policy on inbound connections; the refusal carries MV-H29.
-CFG_INT(net_connect_cap, "net.connect_cap", "net", 4, 0,
+// The host's connection cap at the accept edge (coop/net/connect_history): MTA's join-flood window,
+// thirty seconds per address and then thirty seconds of refusal, but not its four (CGame.cpp:163): an
+// MTA address is one player, while a LAN party or a NAT puts a whole lobby behind one address, so a
+// full session of sixteen opens fifteen connections inside one window. The default is the most the
+// history keeps per address (kMaxStamps, 16), which is the player ceiling. Filed under [net] because
+// it is a host policy on inbound connections; the refusal carries MV-H29.
+CFG_INT(net_connect_cap, "net.connect_cap", "net", 16, 0,
     ::coop::net::connect_history::History::kMaxStamps, "VOTVCOOP_NET_CONNECT_CAP",
     "Host: connections one address may open per window before it is refused for one window "
     "(0 = no cap). On the internet lane no address is known when a connection arrives, so it "
@@ -273,12 +276,33 @@ CFG_FLAG(net_allow_other_builds, "net.allow_other_builds", "net", false, "VOTVCO
     "already in stay."))
 CFG_ROWFLAGS(net_allow_other_builds, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(net_allow_other_builds, L10N_MARK("Allow other builds"))
+CFG_ENUM(net_max_players, "net.max_players", "net", "2", "2|4|8|16", "VOTVCOOP_NET_MAX_PLAYERS",
+    L10N_MARK("How many players this server seats, you included. Applies to the next joins; players already in "
+    "stay, and a lower number never removes anyone."))
+// Server-scope and live, but not replicated: nothing in a session reads the limit on a client (the browser
+// gets it from the master, and the host's admission reads it), so no row is sent. MTA tells its joined clients
+// the new maximum (CStaticFunctionDefinitions.cpp:10483); replicate this row when a client-side reader exists.
+CFG_ROWFLAGS(net_max_players, kRowServer | kRowLive)
+CFG_LABEL(net_max_players, L10N_MARK("Player limit"))
 CFG_FLAG(world_backrooms, "world.backrooms", "world", true, nullptr,
     L10N_MARK("Let a player's clip through the world take them to the backrooms and the game's two secret maps, each "
     "player alone. Off, the clip does nothing for anyone in the session, and a player already there stays until "
     "their visit ends."))
 CFG_ROWFLAGS(world_backrooms, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(world_backrooms, L10N_MARK("Allow the backrooms"))
+CFG_FLAG(net_hunger_shared, "net.hunger_shared", "net", false, "VOTVCOOP_NET_HUNGER_SHARED",
+    L10N_MARK("Each player gets hungry slower the more players are in the game (about three quarters of the normal "
+    "rate for two players, just over half for four), so a larger group does not need a "
+    "matching mountain of food. Stamina and sleep are unchanged. Off by default."))
+CFG_ROWFLAGS(net_hunger_shared, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(net_hunger_shared, L10N_MARK("Slower hunger in larger groups"))
+CFG_ENUM(world_sleep_speedup, "world.sleep_speedup", "world", "everyone", "host|everyone|never", "VOTVCOOP_WORLD_SLEEP_SPEEDUP",
+    L10N_MARK("Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the "
+    "others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal "
+    "speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at "
+    "normal speed."))
+CFG_ROWFLAGS(world_sleep_speedup, kRowServer | kRowReplicated | kRowLive | kRowNotify)
+CFG_LABEL(world_sleep_speedup, L10N_MARK("Time speeds up while sleeping"))
 CFG_INT(voice_jitter_threshold, "voice.jitter_threshold", "voice", 3, 0, 60, nullptr,
     "Jitter buffer: late-packet tolerance in frames before a reset.")
 CFG_INT(voice_prebuffer_frames, "voice.prebuffer_frames", "voice", 5, 0, 60, nullptr,

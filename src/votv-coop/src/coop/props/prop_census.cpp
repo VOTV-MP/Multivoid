@@ -129,10 +129,10 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
         const std::wstring cls = R::ClassNameOf(obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
         if (key.empty() || key == L"None") {
-            // A keyless trash actor's cross-peer identity is its ElementId, so an Element is minted
-            // here, which puts the host's world piles into the connect snapshot (the keyless skip
-            // in the drain routes them down the eid-only receiver lane) and lets the client adopt
-            // the host's pile set instead of sweeping its own. A garbage clump is the same entity
+            // A keyless trash actor's cross-peer identity is its ElementId, so the HOST mints an
+            // Element here, which puts its world piles into the connect snapshot (the keyless skip
+            // in the drain routes them down the eid-only receiver lane); a client mints none and
+            // binds the host's id to its own native (MarkPropElement). A garbage clump is the same entity
             // in its other resting form -- one the save loaded, one thrown and at rest on a box,
             // one a creature made of no pile -- and had no identity at all until it was counted
             // here: each peer carried its own copy. (A clump in a hand already owns its pile's
@@ -140,7 +140,7 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
             // not expressible and stays untracked, symmetric with the sweep's universe test.
             if (ue_wrap::prop::IsTrashActor(obj)) {
                 MarkPropElement(obj, L"", cls, EnrollSource::kPassiveCensus);
-                ++c.keylessPiles;
+                if (GetPropElementIdForActor(obj) != coop::element::kInvalidId) ++c.keylessPiles;  // a client mints none
             }
             continue;
         }
@@ -458,7 +458,7 @@ void DrainReseedQueue() {
             }
         }
         // Phase 2, outside the mutex: the idempotent mark refresh for a keyed prop (index only on a
-        // client) and the mint for a keyless pile.
+        // client) and the host's mint for a keyless pile (a client mints none).
         const std::wstring cls = R::ClassNameOf(it.obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(it.obj);
         bool expressible = false;

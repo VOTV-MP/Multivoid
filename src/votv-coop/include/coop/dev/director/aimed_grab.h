@@ -26,6 +26,10 @@ enum class GrabState { Working, Grabbed, Failed };
 class AimedGrab {
 public:
     AimedGrab(void* player, void* prop) { player_.Set(player); prop_.Set(prop); }
+    // A prop that names its own body component, for one whose bounds take in a component left elsewhere (a
+    // glowstick's hook, at the world origin until it sticks): the aim is the actor's own location, and where the whole
+    // fan finds none there (the origin sits on the floor) the centre of the body's bounds.
+    AimedGrab(void* player, void* prop, void* body) { player_.Set(player); prop_.Set(prop); body_.Set(body); }
     GrabState Tick();
     // Hold at the aim: once the trace takes the prop, Tick keeps answering Working without running the chain
     // until Fire. A race aims both peers first and fires them at one instant.
@@ -47,6 +51,8 @@ public:
 private:
     ue_wrap::CachedObjRef player_;
     ue_wrap::CachedObjRef prop_;
+    ue_wrap::CachedObjRef body_;   // the prop's own body, when the caller names it
+    int pass_ = 0;                 // with a body: 0 aims at the actor's location, 1 at the body's bounds centre
     int ticks_ = 0;
     int poses_ = 0;
     bool aimed_ = false;

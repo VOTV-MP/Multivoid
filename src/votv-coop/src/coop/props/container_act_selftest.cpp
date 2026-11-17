@@ -201,7 +201,7 @@ void RunSelftest() {
         big.family = kPutRecord;
         big.eid = 10;
         big.record = Rec(L"prop_apple_C", 4, L"");
-        big.record.strings = {{std::wstring(6000, L'x')}};
+        big.record.strings = {{std::wstring(20000, L'x')}};
         std::vector<uint8_t> bigRec;
         coop::save_record_wire::SerSave(bigRec, big.record);
         check(bigRec.size() > prw::kMaxRecordBytes && bigRec.size() <= 0xFFFF,

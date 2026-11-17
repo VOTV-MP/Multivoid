@@ -45,8 +45,6 @@ std::atomic<int> g_preObserverActive{0};
 // ends, seconds during a world load. Writers stay under the mutex, so the depth and the deque
 // never diverge.
 std::atomic<int> g_queueDepth{0};
-// The game thread id, recorded by the detour on its first dispatch.
-std::atomic<unsigned long> g_gameThreadId{0};
 }  // namespace detail
 
 namespace {
@@ -411,14 +409,6 @@ void Post(Task task) {
 bool IsGameThread() {
     const unsigned long gt = D::g_gameThreadId.load(std::memory_order_relaxed);
     return gt != 0 && gt == ::GetCurrentThreadId();
-}
-
-bool IsDefinitelyOffGameThread() {
-    // An id of 0 means not known yet, so nothing can be proven and the answer is false: the guard
-    // must not fire at boot before the first dispatch records the game thread id. Once known, it
-    // fires only on a real mismatch.
-    const unsigned long gt = D::g_gameThreadId.load(std::memory_order_relaxed);
-    return gt != 0 && gt != ::GetCurrentThreadId();
 }
 
 unsigned long long TasksRun() { return g_tasksRun.load(std::memory_order_relaxed); }

@@ -307,7 +307,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/puppet_reg_probe.cpp
     src/coop/dev/pi0_selftest.cpp
-    src/coop/dev/wire_census.cpp
     src/coop/dev/perf_probe.cpp
     src/coop/dev/input_focus_probe.cpp
     src/coop/dev/leak_probe.cpp
@@ -322,13 +321,21 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_parity.cpp
     src/coop/dev/pile_defer_drill.cpp
     src/coop/dev/pile_defer_drill_host.cpp
+    src/coop/dev/pile_orphan_drill.cpp
     src/coop/dev/client_model_probe.cpp
     src/coop/dev/atv_eject_drill.cpp
     src/coop/dev/atv_gate_drill.cpp
     src/coop/dev/atv_gate_drill_forged.cpp
     src/coop/dev/atv_gate_drill_joiner.cpp
+    src/coop/dev/atv_drive.cpp
     src/coop/dev/atv_gate_drill_acts.cpp
     src/coop/dev/atv_gate_drill_steps.cpp
+    src/coop/dev/atv_riders_drill.cpp
+    src/coop/dev/atv_riders_drill_steps.cpp
+    src/coop/dev/atv_riders_drill_late.cpp
+    src/coop/dev/atv_riders_drill_drive.cpp
+    src/coop/dev/atv_riders_drill_seat_offset.cpp
+    src/coop/dev/atv_riders_join_hold.cpp
     src/coop/dev/atv_probe.cpp
     src/coop/dev/atv_seat.cpp
     src/coop/dev/atv_tire_probe.cpp
@@ -381,6 +388,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/pi3_arms.cpp
     src/coop/dev/pi3_drill.cpp
     src/coop/dev/native_spawn_probe.cpp
+    src/coop/dev/hand_record_drill.cpp
+    src/coop/dev/hand_record_drill_can.cpp
+    src/coop/dev/hand_record_drill_wire.cpp
+    src/coop/dev/sleep_speedup_drill.cpp
     src/coop/dev/droneunhook_probe.cpp
 )
 # Per-developer local sources: a gitignored file on this box may append its own entries to

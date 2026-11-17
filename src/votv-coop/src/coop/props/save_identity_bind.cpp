@@ -436,7 +436,7 @@ int BindUnboundReCreates(bool* ghostRetireDrained) {
                 if (used[i]) continue;
                 const LiveNative& nv = chipN[i];
                 if (!R::IsLiveByIndex(nv.actor, nv.idx)) continue;
-                if (coop::element::Registry::Get().EidForActor(nv.actor) != coop::element::kInvalidId)
+                if (PT::IsBoundMirrorNative(nv.actor))
                     continue;  // a bind above claimed it after all -> not a ghost
                 bool nearKey = false;
                 for (const MAP::IdEntry& e : g_chipEntries) {

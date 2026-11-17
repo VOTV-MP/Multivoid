@@ -13,7 +13,7 @@
 #include "connection_tuning.h"            // co-located: TuneConnection, kDefaultSendBufBytes
 #include "coop/net/net_clock.h"           // NowMs, the net layer's one steady clock
 #include "coop/net/peer_admission.h"      // the exchange state a pending entry owns
-#include "coop/player/players_registry.h"
+#include "coop/net/player_limit.h"        // Max: the seats the host's row offers
 #include "signaling_client.h"             // co-located: DialReport, the rendezvous half of a dial
 #include "ue_wrap/core/log.h"
 
@@ -127,8 +127,8 @@ EndReason AcceptPolicy(ISteamNetworkingSockets* sockets, HSteamNetConnection hCo
 }  // namespace
 
 // --- the pending (unadmitted) band ---
-// session.h says why it is a band and not a per-slot flag: three seats, and an unadmitted socket
-// holding one would let three silent sockets lock the lobby.
+// session.h says why it is a band and not a per-slot flag: the seats are few, and an unadmitted socket
+// holding one would let as many silent sockets lock the lobby.
 
 int Session::ParkPending(uint32_t hConn) {
     for (int i = 0; i < kMaxPending; ++i) {
@@ -243,7 +243,7 @@ std::string Session::ProvedGuidForSlotWithToken(int slot, uint32_t expectedGener
     return p.generation == expectedGeneration ? p.guid : std::string();
 }
 
-int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
+int Session::AdmitPending(int pendingIdx, uint32_t hConn, bool rejoin) {
     // The band index must still belong to this connection; not reachable today (ParkPending runs
     // only under RunCallbacks, never between two messages of a batch), but a reassigned index would
     // lose the new occupant's entry and the sweep that closes it.
@@ -254,8 +254,8 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
     // The seat is spent here and nowhere else, in the accept edge's old order: the generation is
     // minted before the peerConns_ store, so any observer that can see the connection can see who
     // owns it.
-    const int slot = FindFreePeerSlotForClient();
-    if (slot < 0) return -1;  // lobby genuinely full of ADMITTED players
+    const int slot = FindFreePeerSlotForClient(rejoin);
+    if (slot < 0) return -1;  // the host's limit of ADMITTED players is reached, or no slot is free
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return -1;
     sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
@@ -270,14 +270,33 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
         pendingSinceMs_[pendingIdx].store(0, std::memory_order_release);
     }
     UE_LOGI("net: ADMITTED pending conn 0x%08x -> slot %d (%d/%d seated)",
-            static_cast<unsigned>(hConn), slot, connectedPeerCount(), kMaxPeers - 1);
+            static_cast<unsigned>(hConn), slot, connectedPeerCount(), player_limit::Max() - 1);
     return slot;
 }
 
-int Session::FindFreePeerSlotForClient() {
+int Session::SeatedPlayers() const {
+    int seated = 1;  // the host
+    for (int i = 1; i < kMaxPeers; ++i) {
+        if (peerConns_[i].load() != 0) ++seated;
+    }
+    return seated;
+}
+
+int Session::FindFreePeerSlotForClient(bool rejoin) {
     // Host: the lowest unoccupied client slot; slot 0 is the host itself. A slot is free when its
     // teardown has finished: the generation clear is that teardown's last per-slot write, so no
     // successor can be seated while a predecessor's state is still being cleared.
+    //
+    // The host's limit (net.max_players) counts SEATED players, the host among them: two is the host
+    // and one friend. It is judged here, at admission, so a join that waited while the limit moved is
+    // judged against the limit of its own admission, and a lower limit never removes a seated player:
+    // it only refuses the next join. A rejoin is that same player taking back the seat its own older
+    // connection just lost, so it is never held to the limit (a limit lowered under a seated player
+    // would otherwise turn their reconnect into a removal).
+    // MTA decides the same limit when a connection arrives (CConnectManager.cpp:306 shows its client
+    // the queue, the soft limit under the hard one of CMainConfig.cpp:1062); ours decides after the
+    // identity proof, because a rejoin and a ban are judged on the proved identity.
+    if (!rejoin && SeatedPlayers() >= player_limit::Max()) return -1;
     for (int i = 1; i < kMaxPeers; ++i) {
         if (peerConns_[i].load() == 0 &&
             peerGenBySlot_[i].load(std::memory_order_acquire) == 0) return i;
@@ -371,7 +390,7 @@ void Session::FinishPeerConnected(int slot, uint32_t hConn) {
         // it lives for the session, so the read is well-defined unless the client connects in the
         // boot window before the first pump tick, when it reads kInvalidId and the client falls
         // back to non-mirror routing.
-        p.hostElementId = coop::players::Registry::Get().LocalPlayerElementId();
+        p.hostElementId = hooks_.localPlayerElementId ? hooks_.localPlayerElementId() : kNoHostElementId;
         if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
             UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
         } else {
@@ -605,7 +624,7 @@ void Session::HandleConnStatusChanged(void* info) {
         // peer, and FindFreePeerSlotForClient hands the slot out only after it. It runs only for
         // the path that claimed the slot: a racing kick's teardown owns the clear otherwise, and a
         // second one would wipe a successor seated in between.
-        // A client's slots 1..3 are the other players as the host relayed them, and they end with
+        // A client's slots 1 to kMaxPeers-1 are the other players as the host relayed them, and they end with
         // the link: the host link's close resets every slot and empties the whole inbox.
         if (owned && cfg_.role == Role::Client && slot == 0) {
             { std::lock_guard<std::mutex> lk(remoteMutex_);

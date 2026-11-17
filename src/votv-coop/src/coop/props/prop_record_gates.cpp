@@ -19,6 +19,7 @@ struct Row {
     Fn fn;
 };
 std::vector<Row<IntentGate>> g_intent;
+std::vector<Row<IntentRecordGate>> g_intentRecord;
 std::vector<Row<ApplyGate>> g_apply;
 
 template <class Fn>
@@ -39,11 +40,18 @@ bool Names(const wchar_t* className, void* actor) {
 }  // namespace
 
 void RegisterIntentGate(const wchar_t* className, IntentGate fn) { Add(g_intent, className, fn); }
+void RegisterIntentRecordGate(const wchar_t* className, IntentRecordGate fn) { Add(g_intentRecord, className, fn); }
 void RegisterApplyGate(const wchar_t* className, ApplyGate fn) { Add(g_apply, className, fn); }
 
 bool IntentAllows(void* actor, uint8_t senderSlot) {
     for (const Row<IntentGate>& r : g_intent)
         if (Names(r.className, actor) && !r.fn(actor, senderSlot)) return false;
+    return true;
+}
+
+bool IntentRecordAllows(void* actor, uint8_t senderSlot, const ue_wrap::save_record::SaveRecord& rec) {
+    for (const Row<IntentRecordGate>& r : g_intentRecord)
+        if (Names(r.className, actor) && !r.fn(actor, senderSlot, rec)) return false;
     return true;
 }
 

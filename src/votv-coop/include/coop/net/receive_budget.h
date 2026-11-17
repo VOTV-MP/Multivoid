@@ -18,7 +18,7 @@
 
 #include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"             // MsgType
-#include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/player/slot_count.h"  // kMaxPeers
 
 #include <cstdint>
 

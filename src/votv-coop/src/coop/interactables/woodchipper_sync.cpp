@@ -15,6 +15,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/player/slot_mask.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/requester_feedback/requester_feedback.h"
 
@@ -104,7 +105,7 @@ struct Tracked {
     float sentFuel = -1.f;
     bool sentActive = false;
     bool dirty = false;               // a body announced a change since the last send
-    uint32_t answerMask = 0;          // the slots owed the host's state at the next flush (a refused intent's answer)
+    coop::players::SlotMask answerMask;  // the slots owed the host's state at the next flush (a refused intent's answer)
     Clock::time_point nextCheck{};    // the burn's poll, once a second a chipper
 };
 std::vector<Tracked> g_tracked;
@@ -159,7 +160,7 @@ void Flush(N::Session& s, Clock::time_point now) {
     const bool peers = s.AnyWorldReadyPeer();
     for (size_t i = 0; i < g_tracked.size();) {
         Tracked& t = g_tracked[i];
-        if (!t.dirty && !t.answerMask && now < t.nextCheck) {
+        if (!t.dirty && t.answerMask.None() && now < t.nextCheck) {
             ++i;
             continue;
         }
@@ -175,7 +176,7 @@ void Flush(N::Session& s, Clock::time_point now) {
         // send, so a machine at rest, or one switched on with nothing to burn, costs a read and no message.
         const bool moved = fuel != t.sentFuel || active != t.sentActive;
         t.nextCheck = now + kBurnPeriod;
-        if (!t.dirty && !moved && !t.answerMask) {
+        if (!t.dirty && !moved && t.answerMask.None()) {
             ++i;
             continue;
         }
@@ -188,11 +189,11 @@ void Flush(N::Session& s, Clock::time_point now) {
             t.sentActive = active;
         }
         for (uint8_t slot = 1; slot < N::kMaxPeers; ++slot) {
-            if (!(t.answerMask & (1u << slot))) continue;
+            if (!t.answerMask.Has(slot)) continue;
             if (!broadcast) SendState(s, slot, t, fuel, active, false);
             ++g_view.answers;
         }
-        t.answerMask = 0;
+        t.answerMask.ClearAll();
         t.dirty = false;
         ++i;
     }
@@ -241,7 +242,7 @@ void Refuse(Reason why, uint8_t slot, const std::wstring& key, const char* more)
 // every failed vehicle request to its sender (CGame.cpp:3042, :3098, :3358). The answer is owed here and sent by the
 // next flush, in this tick, and a change of the same chipper in the same tick goes out as the one broadcast that covers it.
 void Answer(void* chipper, uint8_t slot) {
-    if (Tracked* t = Track(chipper)) t->answerMask |= 1u << slot;
+    if (Tracked* t = Track(chipper)) t->answerMask.Set(slot);
 }
 
 struct Slot {

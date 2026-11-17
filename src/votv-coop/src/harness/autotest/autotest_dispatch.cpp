@@ -11,6 +11,7 @@
 #include "coop/session/join_seed.h"  // the inline seed selftest
 #include "coop/config/config.h"
 #include "coop/dev/atv_gate_drill.h"
+#include "coop/dev/atv_riders_drill.h"
 #include "coop/dev/cremator_drill.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_walker_drill.h"
@@ -210,6 +211,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_CAN_STATE", "canned food state drill", &CanStateThread, role);
     SpawnIf("VOTVCOOP_RUN_FOOD_STATE", "world food state drill", &FoodStateThread, role);
     SpawnIfEnum(coop::config_registry::rows::world_sound_drill, "world sound drill", &WorldSoundThread, role);
+    // Containers: photos in a record, a nested container, a garbage container, a container that breaks.
+    SpawnIf("VOTVCOOP_RUN_CONTAINER_GAPS", "container gaps drill", &ContainerGapsThread, role);
 
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     // The cargo lift, the base's elevator, as each peer sees it.
@@ -222,6 +225,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_DRONE_HOVER", "drone hover drill", &DroneHoverThread, role);
     // The base computer's short circuit on both peers.
     SpawnIfEnum(coop::config_registry::rows::desk_short_drill, "desk short drill", &DeskShortThread, role);
+    SpawnIf("VOTVCOOP_RUN_CHIPPER_FEED", "chipper feed drill", &ChipperFeedThread, role);
+    SpawnIf("VOTVCOOP_RUN_HACKSAW", "hacksaw drill", &HacksawThread, role);
+    // A glowstick stuck to a surface, on every peer.
+    SpawnIfEnum(coop::config_registry::rows::glowstick_drill, "glowstick drill", &GlowstickThread, role);
     // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
     // reflected AddMovementInput moving the possessed body.
     SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);
@@ -300,6 +307,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     }
     // The ATV drill: each act a player does at an ATV, decided on the events of the host path, green and eleven reds.
     SpawnIfEnum(coop::config_registry::rows::atv_gate_drill, "ATV drill", &coop::dev::atv_gate_drill::Thread, role);
+    // The ATV's riders: the driver's body and the host's kerfur on every peer, green and fifteen reds, three peers and a rejoin.
+    SpawnIfEnum(coop::config_registry::rows::atv_riders_drill, "ATV riders drill", &coop::dev::atv_riders_drill::Thread, role);
 }
 
 }  // namespace harness::autotest

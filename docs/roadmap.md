@@ -19,7 +19,7 @@ Phase 1 is where the work is today.
 ## Phase 1 — functional co-op (current)
 
 **Built.** The multiplayer foundation: the transport (GameNetworkingSockets, LAN and Internet with
-NAT traversal), sessions of up to four peers with a mutual key-based admission and an optional
+NAT traversal), sessions of up to sixteen peers (the host's limit, two by default) with a mutual key-based admission and an optional
 password, the master server and the server browser, the join pipeline (the host's world streamed
 to the joiner, then a connect snapshot), remote players with skins, ragdolls, nameplates, chat and
 voice, and the synced world listed on the front page: props, piles, NPCs and the kerfur cycle,

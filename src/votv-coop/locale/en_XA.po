@@ -127,8 +127,16 @@ msgid "%1$s deleted an email: %2$s"
 msgstr "[[%1$s deleted an email: %2$s]]"
 
 #, c-format
+msgid "%1$s is asleep -- sleeping does not speed the world up"
+msgstr "[[%1$s is asleep -- sleeping does not speed the world up]]"
+
+#, c-format
 msgid "%1$s is asleep -- the world runs faster"
 msgstr "[[%1$s is asleep -- the world runs faster]]"
+
+#, c-format
+msgid "%1$s is asleep -- the world speeds up once everyone sleeps"
+msgstr "[[%1$s is asleep -- the world speeds up once everyone sleeps]]"
 
 #, c-format
 msgid "%1$s is connecting to the game..."
@@ -480,6 +488,9 @@ msgstr "[[Drop the camera or put it away to close this view.]]"
 msgid "Duplicate settings with different values"
 msgstr "[[Duplicate settings with different values]]"
 
+msgid "Each player gets hungry slower the more players are in the game (about three quarters of the normal rate for two players, just over half for four), so a larger group does not need a matching mountain of food. Stamina and sleep are unchanged. Off by default."
+msgstr "[[Each player gets hungry slower the more players are in the game (about three quarters of the normal rate for two players, just over half for four), so a larger group does not need a matching mountain of food. Stamina and sleep are unchanged. Off by default.]]"
+
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr "[[Each surface picks its own family; applies on the next frame.]]"
 
@@ -532,6 +543,9 @@ msgstr ""
 
 msgid "Host game"
 msgstr "[[Host game]]"
+
+msgid "How many players this server seats, you included. Applies to the next joins; players already in stay, and a lower number never removes anyone."
+msgstr "[[How many players this server seats, you included. Applies to the next joins; players already in stay, and a lower number never removes anyone.]]"
 
 msgid "ID"
 msgstr "[[ID]]"
@@ -795,6 +809,9 @@ msgstr ""
 msgid "Player id %s"
 msgstr "[[Player id %s]]"
 
+msgid "Player limit"
+msgstr "[[Player limit]]"
+
 msgid "Players"
 msgstr "[[Players]]"
 
@@ -978,6 +995,9 @@ msgstr "[[Skins]]"
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr "[[Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak.]]"
 
+msgid "Slower hunger in larger groups"
+msgstr "[[Slower hunger in larger groups]]"
+
 msgid "Someone else has that item."
 msgstr "[[Someone else has that item.]]"
 
@@ -1069,6 +1089,10 @@ msgstr "[[The game is closing.]]"
 
 msgid "The game is shutting down."
 msgstr "[[The game is shutting down.]]"
+
+#, c-format
+msgid "The host allows %d players."
+msgstr "[[The host allows %d players.]]"
 
 msgid "The host banned you."
 msgstr "[[The host banned you.]]"
@@ -1239,6 +1263,9 @@ msgstr "[[This server admits only the official Multivoid build. Install the offi
 msgid "This server has no settings to change here."
 msgstr "[[This server has no settings to change here.]]"
 
+msgid "This server is full."
+msgstr "[[This server is full.]]"
+
 msgid "This server needs a password, and nothing told this machine which host it was dialling."
 msgstr "[[This server needs a password, and nothing told this machine which host it was dialling.]]"
 
@@ -1260,6 +1287,9 @@ msgstr "[[Tidied: %1$d duplicate line(s) merged, %2$d setting(s) placed under th
 
 msgid "Tidy up multivoid.ini"
 msgstr "[[Tidy up multivoid.ini]]"
+
+msgid "Time speeds up while sleeping"
+msgstr "[[Time speeds up while sleeping]]"
 
 msgid "To stop, look at the camera and press Alt+E. A click or E alone only pauses it."
 msgstr "[[To stop, look at the camera and press Alt+E. A click or E alone only pauses it.]]"
@@ -1404,6 +1434,9 @@ msgstr "[[When]]"
 
 msgid "Whispering"
 msgstr "[[Whispering]]"
+
+msgid "Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at normal speed."
+msgstr "[[Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at normal speed.]]"
 
 msgid "World"
 msgstr "[[World]]"

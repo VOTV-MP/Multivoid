@@ -156,7 +156,17 @@ msgstr ""
 
 #: src/coop/player/sleep_sync.cpp
 #, c-format
+msgid "%1$s is asleep -- sleeping does not speed the world up"
+msgstr ""
+
+#: src/coop/player/sleep_sync.cpp
+#, c-format
 msgid "%1$s is asleep -- the world runs faster"
+msgstr ""
+
+#: src/coop/player/sleep_sync.cpp
+#, c-format
+msgid "%1$s is asleep -- the world speeds up once everyone sleeps"
 msgstr ""
 
 #: src/coop/session/player_handshake.cpp
@@ -597,6 +607,10 @@ msgstr ""
 msgid "Duplicate settings with different values"
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "Each player gets hungry slower the more players are in the game (about three quarters of the normal rate for two players, just over half for four), so a larger group does not need a matching mountain of food. Stamina and sleep are unchanged. Off by default."
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "Each surface picks its own family; applies on the next frame."
 msgstr ""
@@ -658,6 +672,10 @@ msgstr ""
 
 #: src/ui/server_browser_actions.cpp
 msgid "Host game"
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "How many players this server seats, you included. Applies to the next joins; players already in stay, and a lower number never removes anyone."
 msgstr ""
 
 #: src/ui/admin_panel.cpp src/ui/scoreboard.cpp
@@ -997,6 +1015,10 @@ msgstr ""
 msgid "Player id %s"
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "Player limit"
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "Players"
 msgstr ""
@@ -1210,6 +1232,10 @@ msgstr ""
 msgid "Skins come from converter .pak files under Content/Paks/LogicMods (any subfolder). One pak may carry several skins -- the four scientists ship together in scientists.pak."
 msgstr ""
 
+#: include/coop/config/config_registry_rows.inc
+msgid "Slower hunger in larger groups"
+msgstr ""
+
 #: src/coop/props/prop_act_request.cpp
 msgid "Someone else has that item."
 msgstr ""
@@ -1327,6 +1353,11 @@ msgstr ""
 
 #: src/coop/net/end_reason.cpp
 msgid "The game is shutting down."
+msgstr ""
+
+#: src/ui/end_reason_dialog.cpp
+#, c-format
+msgid "The host allows %d players."
 msgstr ""
 
 #: src/coop/net/end_reason.cpp
@@ -1546,6 +1577,10 @@ msgstr ""
 msgid "This server has no settings to change here."
 msgstr ""
 
+#: src/ui/server_browser_actions.cpp
+msgid "This server is full."
+msgstr ""
+
 #: src/coop/net/end_reason.cpp
 msgid "This server needs a password, and nothing told this machine which host it was dialling."
 msgstr ""
@@ -1573,6 +1608,10 @@ msgstr ""
 
 #: src/ui/config_review_panel.cpp
 msgid "Tidy up multivoid.ini"
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Time speeds up while sleeping"
 msgstr ""
 
 #: src/ui/hud.cpp
@@ -1760,6 +1799,10 @@ msgstr ""
 
 #: src/ui/voice_icons.cpp
 msgid "Whispering"
+msgstr ""
+
+#: include/coop/config/config_registry_rows.inc
+msgid "Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at normal speed."
 msgstr ""
 
 #: src/ui/dev_menu.cpp

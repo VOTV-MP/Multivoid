@@ -89,7 +89,7 @@ Rightmost `X-Forwarded-For` from a loopback proxy only, so the rate-limit and ta
 cannot be spoofed; constant-time token compare; an opaque `lobbyId` against a secret `sessionId`;
 control-character strip and codepoint clamp on every string; per-(address, class) sliding-window
 rate limits (the table of them holds 50000 keys and, full, forgets the least recently seen rather
-than refuse a new address; `GET /v1/lobbies` has its own class, 120 per minute); a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header and
+than refuse a new address; `GET /v1/lobbies` has its own class, 240 per minute); a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header and
 body; connection admission at accept (`admission.rs`: a total and a per-address cap, taken before
 the TLS handshake) under one deadline that covers the handshake and every read before the
 answer, or on the relay before registration; a relay destination's queue is capped in bytes;

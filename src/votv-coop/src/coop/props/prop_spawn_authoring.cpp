@@ -2,10 +2,14 @@
 
 #include "coop/props/prop_spawn_authoring.h"
 
+#include "coop/props/prop_lifecycle.h"      // DestroyLocalProp -- a ghost the unscrew left, destroyed with no broadcast
+
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/fname_utils.h"     // StringToFName -- the two verb names, once
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"   // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"      // ClassByName -- the battery prop class
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"   // CurrentCallerFrame -- the calling Blueprint frame
@@ -28,6 +32,11 @@ constexpr int kGateTag = 0x53504157;  // 'SPAW'
 void* g_gamemodeSpawnFn = nullptr;   // mainGamemode_C::spawnPropThroughGamemode -- watched
 void* g_menuSpawnFn     = nullptr;   // ui_spawnmenu_C::spawn -- the caller that makes it a player's
 void* g_toolUberFn      = nullptr;   // tool_spawn_C::ExecuteUbergraph_tool_spawn -- the toolgun
+void* g_sawUberFn       = nullptr;   // prop_hacksaw_C::ExecuteUbergraph_prop_hacksaw -- the hacksaw's cut
+void* g_unscrewFn       = nullptr;   // ATV_C::unscrewPanel -- the battery an unscrew hands back (atv_gate's watch)
+bool  g_unscrewBattery  = false;     // the unscrew now starting is the battery's branch
+ue_wrap::CachedObjRef g_unscrewBorn;  // the battery prop that branch's body spawned on this client, until its POST takes it
+ue_wrap::CachedObjRef g_batteryCls;   // prop_atvcarbattery_C, found again when a world reload has re-created it
 bool  g_watchInstalled  = false;
 
 // The negative arm, and it is the half a run cannot otherwise see. Catching every menu spawn and
@@ -42,6 +51,7 @@ unsigned g_verbFromOther = 0;   // ... by anything else (lib_C::replaceProp, com
 // and never a string build. Zeroed ComparisonIndex means "not yet converted".
 R::FName g_menuSpawnName{0, 0};   // "spawn"
 R::FName g_toolUberName{0, 0};    // "ExecuteUbergraph_tool_spawn"
+R::FName g_sawUberName{0, 0};     // "ExecuteUbergraph_prop_hacksaw"
 
 // Is `fn` a function named `name` whose owner (a UFunction's Outer is its declaring class) is
 // called `className`? Both compares are allocation-free: the FName pair is two ints, and the
@@ -110,6 +120,8 @@ void Install(bool isClient) {
         g_menuSpawnName = ue_wrap::fname_utils::StringToFName(L"spawn");
     if (g_toolUberName.ComparisonIndex == 0)
         g_toolUberName = ue_wrap::fname_utils::StringToFName(L"ExecuteUbergraph_tool_spawn");
+    if (g_sawUberName.ComparisonIndex == 0)
+        g_sawUberName = ue_wrap::fname_utils::StringToFName(L"ExecuteUbergraph_prop_hacksaw");
 
     ue_wrap::facts::Resolved gamemodeSpawn;
     if (!g_gamemodeSpawnFn) {
@@ -135,7 +147,7 @@ void Install(bool isClient) {
     g_watchInstalled = true;
 }
 
-bool BirthIsPlayerAuthored() {
+bool BirthIsPlayerAuthored(void* born) {
     // The menu: is the gamemode's spawn verb running on this thread, entered from the menu's own
     // spawn()? The gate answers from the RAII scope it pushes around the body, so the window
     // cannot outlive the body on any exit path, and an inner watched body belonging to some other
@@ -145,7 +157,15 @@ bool BirthIsPlayerAuthored() {
     // actor itself. The pointer is cached on first sight -- the class is loaded by definition,
     // since its bytecode is what is running.
     const void* caller = ue_wrap::ufunction_hook::CurrentCallerFrame().function;
-    if (!caller) return false;
+    if (!caller) {
+        static bool s_said = false;
+        if (g_unscrewBattery && !s_said) {
+            s_said = true;
+            UE_LOGW("prop_spawn_authoring: a birth inside an ATV's battery unscrew has no calling frame -- the unscrew's own "
+                    "battery prop is not recorded here (said once)");
+        }
+        return false;
+    }
     if (caller == g_toolUberFn) return true;
     if (!g_toolUberFn &&
         FunctionIs(const_cast<void*>(caller), g_toolUberName, L"tool_spawn_C")) {
@@ -154,7 +174,56 @@ bool BirthIsPlayerAuthored() {
                 "are a player's");
         return true;
     }
+    // The hacksaw's cut: its tick spawns the scrap of the prop it saws, then destroys the prop. The saw runs only where
+    // it is held, so the scrap is this player's doing and no other peer's game makes it; the prop's destroy crosses by
+    // the destroy seam. It is a granted act's consequence: the client's saw asked the host first (coop/props/hacksaw_cut)
+    // and runs this tick only after the grant. MTA would have the server make the product (a request judged and answered
+    // by the server alone, reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3338-3367); here the derivation
+    // (the drop from the prop's material, the amount from its mesh volume) lives mid-ubergraph with no entry point, so
+    // the saw that holds that state runs it and the host judges the births it sends. A class a world reloaded is a new
+    // function, so a miss of the latch is asked by name again.
+    if (caller == g_sawUberFn) return true;
+    if (FunctionIs(const_cast<void*>(caller), g_sawUberName, L"prop_hacksaw_C")) {
+        g_sawUberFn = const_cast<void*>(caller);
+        UE_LOGI("prop_spawn_authoring: the hacksaw's ubergraph is the calling frame -- the scrap of its cut is a "
+                "player's");
+        return true;
+    }
+    // An ATV's battery unscrewed: its unscrewPanel (a custom event, so the calling frame is the ATV's whole ubergraph)
+    // spawns the battery at the panel. That birth is no player's: the host spawns the battery every peer shares, so this
+    // client's own prop is only recorded here, for the POST of that body to destroy. The birth stays an unauthored
+    // place in the drop-intent queue, and its drain sends nothing for it: the destroyed actor is dead at the drain, and
+    // a live one is no whitelisted birth.
+    if (g_unscrewBattery && g_unscrewFn && born && R::IsLive(born) && sg::IsBodyActive(g_unscrewFn)) {
+        if (!g_batteryCls.Alive()) g_batteryCls.Set(ue_wrap::object_index::ClassByName(L"prop_atvcarbattery_C"));
+        if (g_batteryCls.Raw() && R::ClassOf(born) == g_batteryCls.Raw()) g_unscrewBorn.Set(born);
+    }
     return false;
+}
+
+// The record an unscrew's POST never took (a fault or a cancel skips one): its battery prop is this client's ghost, so it is
+// destroyed here as the POST would, with no destroy sent, and never just forgotten.
+static void DestroyHeldRecord(const char* when) {
+    void* const ghost = g_unscrewBorn.Get();
+    g_unscrewBorn.Reset();
+    if (!ghost) return;
+    coop::prop_lifecycle::DestroyLocalProp(ghost, false);
+    UE_LOGW("prop_spawn_authoring: the battery prop of an unscrew whose end never came is destroyed at %s", when);
+}
+
+void NoteAtvUnscrewBranch(void* unscrewFn, bool batteryBranch) {
+    UE_ASSERT_GAME_THREAD("prop_spawn_authoring::NoteAtvUnscrewBranch");
+    DestroyHeldRecord("the next unscrew");
+    g_unscrewFn = unscrewFn;
+    g_unscrewBattery = batteryBranch;
+}
+
+void* TakeAtvUnscrewBattery() {
+    UE_ASSERT_GAME_THREAD("prop_spawn_authoring::TakeAtvUnscrewBattery");
+    void* const born = g_unscrewBorn.Get();
+    g_unscrewBorn.Reset();
+    g_unscrewBattery = false;
+    return born;
 }
 
 void Reset() {
@@ -166,6 +235,8 @@ void Reset() {
                 g_verbFromOther == 0 ? " -- this run never exercised the rejection" : "");
     g_verbFromMenu = 0;
     g_verbFromOther = 0;
+    g_unscrewBattery = false;
+    DestroyHeldRecord("the session's end");
     // The tally is per session; the watch and the resolved UFunctions are NOT. They name the
     // game's own classes, which outlive any session in this process, and the gate is already
     // session-gated, so a watch costs nothing while nobody is connected. Retiring and re-adding it

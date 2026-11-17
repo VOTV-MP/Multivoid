@@ -11,6 +11,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/dev/force_overdestroy_test.h"
 #include "coop/dev/join_window_pos_trace.h"  // the keyed-prop join-window position trace
+#include "coop/dev/pile_orphan_drill.h"      // [dev] the orphan drill reads the world at the sweep's two edges
 #include "coop/dev/spawn_order_probe.h"
 #include "coop/element/element.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors, the dead-actor mirror-row census
@@ -38,6 +39,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -145,17 +147,18 @@ static void RunDivergenceSweep_(void* localPlayer) {
         UE_LOGW("join_membership_sweep: claim sweep requested but tracking is not armed -- skipping");
         return;
     }
+    coop::dev::pile_orphan_drill::NoteSweepBegin();  // [dev] the orphan drill's precondition (a latched bool read when off)
     // The universe is what the host snapshot can express a binding for: keyed interactables and the
     // keyless trash lineage (a chip pile or a garbage clump at rest, eid-expressed), plus the
     // wire-suppressed intermediate the client already destroys on sight while connected. Any other
     // keyless actor (a pre-Init Aprop_C) is outside it and never swept.
-    // The candidates are the client's own local Prop elements from the registry, never a
+    // The keyed candidates are the client's own local Prop elements from the registry, never a
     // GUObjectArray scan: deletion by tracked membership, as MTA's CElementGroup iterates its
     // member list rather than the world. So a host-driven mirror is excluded at the source (a
     // kerfur prop mirror is never a save-load divergence), and a keyless transient is never a local
-    // element. The >50% valve stays: an incomplete host bracket leaves most of the loaded world
-    // unclaimed, and that is an incomplete snapshot, not a divergence. One registry snapshot, no
-    // per-actor mutex.
+    // element. The trash lineage has no row on a client and comes from its own walk (below). The
+    // >50% valve stays: an incomplete host bracket leaves most of the loaded world unclaimed, and
+    // that is an incomplete snapshot, not a divergence. One registry snapshot, no per-actor mutex.
     std::vector<coop::element::Registry::ActorIdPair> propPairs;
     coop::element::Registry::Get().SnapshotActorsByType(
         coop::element::ElementType::Prop, propPairs);
@@ -182,7 +185,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         for (wchar_t c : w) s.push_back(static_cast<char>(c & 0xFF));
         return s;
     };
-    int inClass = 0;        // live, non-mirror, LOCAL Prop Elements (the membership universe)
+    int inClass = 0;        // live, non-mirror, LOCAL Prop Elements plus the unbound native trash (the membership universe)
     int claimedCount = 0;
     int sparedCount = 0;    // see Spared
     void* handAxis[1 + coop::players::kMaxPeers];
@@ -202,9 +205,25 @@ static void RunDivergenceSweep_(void* localPlayer) {
     std::unordered_map<std::wstring, int> claimedByClass;  // Phase 0: claimed count per class (floor numerator)
     std::unordered_map<std::wstring, int> keylessSkippedByClass;
     for (const auto& pr : propPairs) {
-        if (pr.mirror) continue;                                    // host-driven mirror -> not a save divergence (automatic kerfur exemption)
+        if (pr.mirror) {
+            // Host-driven mirror -> not a save divergence (automatic kerfur exemption). A bound save
+            // native is the host's entity this client holds, so it counts as claimed for its class (the
+            // floor below compares the host's census with what is really bound) and stays in the universe
+            // the >50% valve measures, or a handful of orphans against the unbound few would read as most
+            // of it and abort the sweep. The count is one per bound native, so a stale bound mirror (the
+            // host destroyed the pile after its census, its PropDestroy in flight) covers one failed
+            // expression in that comparison; not fixed here.
+            if (pr.actor && !coop::dev::force_overdestroy_test::BoundCountDisabledForTest() &&
+                coop::prop_element_tracker::IsBoundMirrorNative(pr.actor)) {
+                ++inClass;
+                ++claimedCount;
+                ++claimedByClass[R::ClassNameOf(pr.actor)];
+            }
+            continue;
+        }
         if (!pr.actor) continue;
         if (!R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;  // dead (no deref) -- the reaper owns it
+        if (ue_wrap::prop::IsTrashActor(pr.actor)) continue;        // the fresh trash walk below owns every pile and clump, row or none
         ++inClass;
         void* a = pr.actor;
         // The class is read before the claimed check: the completeness floor counts claims per
@@ -212,16 +231,6 @@ static void RunDivergenceSweep_(void* localPlayer) {
         const std::wstring acls = R::ClassNameOf(a);
         if (g_claimedActors.count(a)) { ++claimedCount; ++claimedByClass[acls]; continue; }  // host-expressed / self-claimed -> converged, keep
         if (Spared(a, acls, onHandAxis(a))) { ++sparedCount; continue; }
-        if (ue_wrap::prop::IsTrashActor(a)) {          // a pile or a clump at rest: expressible on the eid lane
-            // A body the load hold froze and no row bound by now: the host never bound it, so the host's
-            // world does not have it, whatever the class count says. It leaves the floor's reckoning.
-            if (coop::trash_native_hold::IsHeld(a)) { heldUnbound.push_back(a); continue; }
-            if (ue_wrap::prop::IsGarbageClump(a)) ++unheldClumps;
-            doomed.push_back(a);
-            doomedClass.push_back(acls);
-            ++doomedByClass[acls];
-            continue;
-        }
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(a);
         if (key.empty() || key == L"None") {
             ++keylessSkippedByClass[acls];  // defensive tripwire: a tracked keyless non-pile should not exist post-quiescence
@@ -328,6 +337,37 @@ static void RunDivergenceSweep_(void* localPlayer) {
                     "(%d claimed, %d stale entries evicted)", idxUniverse, idxClaimed, idxEvicted);
         }
     }
+    // The trash half. A chip pile or a garbage clump at rest is keyless and rides the eid lane, and a
+    // client mints no id for the host's, so no row names the unbound ones: they come from a fresh walk of
+    // the object array (never the bracket's bind index, whose stored indices a purge churns), the one
+    // CollectLiveTrashNatives the orphan census shares. Judged as element rows were: a bound mirror native is
+    // the host's own and counted above, a claimed one is converged, the spared are skipped, a body the load
+    // hold froze and no eid bound is held for the post-floor doom, the rest are doomed under the class floor,
+    // which spares a pile whose host eid is still binding (the reconcile ran before this sweep and no
+    // expression lands after it).
+    if (!coop::dev::force_overdestroy_test::FreshUniverseDisabledForTest()) {
+        std::vector<void*> natives;
+        coop::pile_spawn_bind::CollectLiveTrashNatives(natives);
+        for (void* a : natives) {
+            if (coop::prop_element_tracker::IsBoundMirrorNative(a)) continue;
+            // Any host-expressed mirror is the host's, save native or not (a mirror a convert or a carry
+            // registered): the row walk never doomed a mirror row, and neither does this.
+            if (const auto meid = coop::element::Registry::Get().EidForActor(a);
+                meid != coop::element::kInvalidId) {
+                const coop::element::Element* mel = coop::element::Registry::Get().Get(meid);
+                if (mel && mel->IsMirror()) continue;
+            }
+            ++inClass;
+            const std::wstring acls = R::ClassNameOf(a);
+            if (g_claimedActors.count(a)) { ++claimedCount; ++claimedByClass[acls]; continue; }
+            if (Spared(a, acls, onHandAxis(a))) { ++sparedCount; continue; }
+            if (coop::trash_native_hold::IsHeld(a)) { heldUnbound.push_back(a); continue; }
+            if (ue_wrap::prop::IsGarbageClump(a)) ++unheldClumps;
+            doomed.push_back(a);
+            doomedClass.push_back(acls);
+            ++doomedByClass[acls];
+        }
+    }
     // A row still in deadKeyedRows is a wire identity whose actor churn-died with no same-key
     // re-create. Under the join barrier wire expressions land only in a settled world, so this
     // should not happen; it is named per key so a log read localises it.
@@ -392,6 +432,25 @@ static void RunDivergenceSweep_(void* localPlayer) {
                         "claimed only %d this bracket (INCOMPLETE snapshot, NOT a divergence)",
                         v, c.c_str(), hostHas, claimedOfC);
             }
+            // Which host expressions the floor is waiting on: the keyless mirror rows that hold no live actor here.
+            // Read-only, cold (once per join, only when the floor kept something).
+            {
+                std::vector<coop::element::Prop*> rows;
+                coop::element::PropMirrors().Snapshot(rows);
+                int unbound = 0;
+                char firstEids[96] = "";
+                size_t used = 0;
+                for (coop::element::Prop* p : rows) {
+                    if (!p || !p->IsMirror() || !p->GetName().empty()) continue;
+                    void* ra = p->GetActor();
+                    if (ra && R::IsLiveByIndex(ra, p->GetInternalIdx())) continue;
+                    if (++unbound <= 6 && used + 12 < sizeof(firstEids))
+                        used += static_cast<size_t>(std::snprintf(firstEids + used, sizeof(firstEids) - used, " %u",
+                                                                  static_cast<unsigned>(p->GetId())));
+                }
+                UE_LOGI("join_membership_sweep: %d keyless host row(s) hold no live actor on this client (first eids:%s)",
+                        unbound, firstEids);
+            }
             UE_LOGW("join_membership_sweep: completeness floor KEPT %zu of %zu doomed actor(s) across %zu class(es) "
                     "(top: %d x '%ls') -- the host under-expressed these classes; the unclaimed locals SURVIVE",
                     keptTotal, doomed.size(), floorKeptByClass.size(), topCnt, topCls.c_str());
@@ -431,6 +490,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         g_selfAuthored.clear();   // the world is adjudicated (here: left alone); nothing left to spare
         g_claimTrackingActive = false;
         coop::pile_spawn_bind::Reset();
+        coop::dev::pile_orphan_drill::NoteSweepDone(/*aborted=*/true);  // [dev] the orphans survive an aborted sweep
         return;
     }
 
@@ -456,6 +516,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
             "%d claimed (expressed on the wire this bracket), %d spared (the hand axis, the player's own, "
             "per-player state), %d unclaimed locals destroyed (client adopts host world)",
             inClass, claimedCount, sparedCount, static_cast<int>(doomed.size()));
+    coop::dev::pile_orphan_drill::NoteSweepDone(/*aborted=*/false);  // [dev] the orphan drill's verdict (a latched bool read when off)
     if (!heldUnbound.empty())
         UE_LOGI("join_membership_sweep:   %zu of them held natives the host never bound (past the completeness floor)",
                 heldUnbound.size());
@@ -478,8 +539,8 @@ static void RunDivergenceSweep_(void* localPlayer) {
     // The orphan census, read-only: the native level chipPiles no arriving expression bound within 1
     // cm. The bracket is drained before the sweep fires (Begin, every PropSpawn and Complete are
     // FIFO on one lane; Complete only arms), so a leftover is real host drift: the host moved or
-    // collected the pile since the save the client loaded. The registry doom above misses these (a
-    // level native enters the Prop registry lazily), and a player can grab one through the real
+    // collected the pile since the save the client loaded. The trash walk above dooms the ones the
+    // floor lets go, so this reports what survived it, and a player can grab one through the real
     // interaction system with no GrabIntent sent. Each orphan is banded by its distance to the
     // nearest bound pile, so a removal threshold comes from measured drift. This diverges from
     // MTA, which removes only by id (Packet_EntityRemove): a chipPile is keyless and level-placed,
@@ -545,6 +606,7 @@ void TickClientReconcile() {
                     kBracketFlakeMs / 1000);
             // The flake also shortens the reconcile window to the bound the header promises.
             coop::world_load_episode::NoteBracketFlake();
+            coop::dev::pile_orphan_drill::NoteNoSweep();  // [dev] the orphan drill's INVALID: no sweep to judge (a latched bool read when off)
         }
         return;  // zero cost when disarmed (the steady state)
     }

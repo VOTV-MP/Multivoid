@@ -13,7 +13,7 @@ mod and the rules for changing it.
 | [install.md](install.md) | Install, update, uninstall. The single owner of that text; the README and every release only link here |
 | [../SECURITY.md](../SECURITY.md) | What the mod does and does not protect, and how to report a vulnerability. Read the "what does not hold" part before hosting for strangers |
 | [../README.md](../README.md) | The front page: what works today, where to get builds, who contributed |
-| [credits.md](credits.md) | Every outside code contribution, report and review that changed the mod, and what shipped from it |
+| [credits.md](credits.md) | Every outside code contribution, report and review that changed the mod, and what shipped from it; each code contributor's story is a page in [credits-code/](credits-code/) |
 | [credits-reports.md](credits-reports.md) | The full write-ups of the outside reports and reviews: what each one turned out to be, and what shipped |
 
 ## I want to understand it, or help

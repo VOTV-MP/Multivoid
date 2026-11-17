@@ -11,8 +11,10 @@
 #include "coop/player/hand_item.h"         // what the sender's hand holds
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/player/slot_mask.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/world/power_grid_install.h"  // the hand's half of an upgrade install
+#include "coop/world/power_grid_rows.h"  // reading the generators as rows, and comparing two readings
 #include "coop/world/power_decay.h"  // the wear dice, which only the host rolls
 #include "coop/world/power_panel.h"  // the canonical a client's own generator verbs rewrote
 #include "coop/world/power_puzzle.h"  // the rows' second half: each generator's repair puzzle
@@ -43,12 +45,14 @@ namespace R   = ue_wrap::reflection;
 namespace sg  = ue_wrap::script_gate;
 using coop::net::PowerGridPayload;
 using coop::net::kPowerGridGenerators;
+using coop::power_grid::row_reading::kMaxUpgrade;
+using coop::power_grid::row_reading::ReadRows;
+using coop::power_grid::row_reading::SameRows;
 
-static_assert(coop::net::kMaxPeers <= 4, "PowerGridPayload::ack holds four slots");
-static_assert(coop::net::kMaxPeers <= 8, "the owed rows are one bit a slot");
+static_assert(sizeof(PowerGridPayload::ack) / sizeof(uint16_t) == coop::net::kMaxPeers,
+              "PowerGridPayload::ack holds one slot per peer");
 static_assert(kInputBurst >= coop::net::kPowerPuzzleFields, "a flush of every held field fits one burst");
 
-constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
 // A slot's ops wait, in arrival order, while the generators have not resolved or their sender has no body here
 // yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig), and an install
@@ -93,7 +97,7 @@ struct Waiting { PowerGridPayload p; uint64_t arrivedMs; bool handPaid = false; 
 std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
 coop::net::IntentBucket g_rate[coop::net::kMaxPeers];       // a sender's acts
 coop::net::IntentBucket g_inputRate[coop::net::kMaxPeers];  // a sender's puzzle inputs
-uint8_t g_owed = 0;
+coop::players::SlotMask g_owed;
 uint64_t g_opsTaken = 0, g_opsRefused = 0, g_noisyAnswered = 0, g_inputsTaken = 0, g_queuesFull = 0;
 uint64_t g_rowsBroadcast = 0;
 bool g_puzzleDirty = false;
@@ -158,39 +162,6 @@ const char* OpName(uint8_t op) {
     case coop::net::kPowerGridOpPuzzle:   return "puzzle input";
     default:                              return "?";
     }
-}
-
-bool ReadRows(PowerGridPayload& p) {
-    std::vector<void*> gens;
-    if (GEN::ReadGenerators(gens) == 0) return false;
-    const size_t n = std::min(gens.size(), static_cast<size_t>(kPowerGridGenerators));
-    p.op = coop::net::kPowerGridOpRows;
-    p.count = static_cast<uint8_t>(n);
-    for (size_t i = 0; i < n; ++i) {
-        GEN::Row r{};
-        coop::net::PowerGridRow& w = p.rows[i];
-        w = {};
-        if (!gens[i] || !GEN::ReadRow(gens[i], r)) continue;
-        w.present = 1;
-        w.broken = r.broken ? 1 : 0;
-        w.cyc = r.cyc ? 1 : 0;
-        w.upgradeLevel = static_cast<uint8_t>(std::clamp(r.upgradeLevel, 0, kMaxUpgrade));
-        w.cycle = r.cycle;
-        coop::power_puzzle::Fill(gens[i], w.puzzle);
-    }
-    return true;
-}
-
-bool SameRows(const PowerGridPayload& a, const PowerGridPayload& b) {
-    if (a.count != b.count) return false;
-    for (int i = 0; i < a.count && i < kPowerGridGenerators; ++i) {
-        const auto& x = a.rows[i];
-        const auto& y = b.rows[i];
-        if (x.present != y.present || x.broken != y.broken || x.cyc != y.cyc || x.upgradeLevel != y.upgradeLevel ||
-            x.cycle != y.cycle || !coop::power_puzzle::SamePuzzle(x.puzzle, y.puzzle))
-            return false;
-    }
-    return true;
 }
 
 // ---- the host ------------------------------------------------------------------------------------------------
@@ -412,12 +383,12 @@ void HostDrainWaiting(coop::net::Session* s) {
 
 // The rows each owed joiner waits for, once the generators resolve.
 void HostServeOwed(coop::net::Session* s) {
-    if (!g_owed || !GEN::EnsureResolved()) return;
+    if (g_owed.None() || !GEN::EnsureResolved()) return;
     PowerGridPayload probe{};
     if (!ReadRows(probe)) return;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        if (g_owed & (1u << slot)) HostSendRows(s, slot);
-    g_owed = 0;
+        if (g_owed.Has(slot)) HostSendRows(s, slot);
+    g_owed.ClearAll();
 }
 
 // ---- a client ------------------------------------------------------------------------------------------------
@@ -725,9 +696,9 @@ void OnReliable(const coop::net::PowerGridPayload& payload, uint8_t senderSlot) 
 void QueueConnectBroadcastForSlot(int slot) {
     auto* s = Connected();
     if (!s || s->role() != coop::net::Role::Host || slot <= 0 || slot >= coop::net::kMaxPeers) return;
-    g_owed |= static_cast<uint8_t>(1u << slot);
+    g_owed.Set(slot);
     HostServeOwed(s);
-    if (g_owed & (1u << slot))
+    if (g_owed.Has(slot))
         UE_LOGI("power_grid: slot %d's rows wait for the host's generators to resolve", slot);
 }
 
@@ -743,7 +714,7 @@ void OnPeerLeft(uint8_t slot) {
     g_waiting[slot].clear();
     g_rate[slot].Reset();
     g_inputRate[slot].Reset();
-    g_owed = static_cast<uint8_t>(g_owed & ~(1u << slot));
+    g_owed.Clear(slot);
 }
 
 size_t PendingOps() { return g_pending.size(); }
@@ -790,7 +761,7 @@ void OnDisconnect() {
         g_inputRate[slot].Reset();
     }
     for (auto& ref : g_verbFn) ref.Reset();
-    g_owed = 0;
+    g_owed.ClearAll();
     g_pending.clear();
     g_seq = 0;
     g_haveRows = g_rowsWaiting = false;

@@ -68,13 +68,14 @@
 #include "coop/props/trash_morph_gate.h"
 #include "coop/save/save_guard.h"
 #include "coop/save/save_transfer.h"
+#include "coop/session/boot_selftests.h"
 #include "coop/session/join_beacon.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/local_grants.h"
 #include "coop/session/net_pump.h"
-#include "coop/session/player_handshake.h"
 #include "coop/session/server_settings_sync.h"
 #include "coop/text/utf8_codec.h"
+#include "coop/session/session_hooks.h"
 #include "coop/session/session_manager.h"
 #include "coop/session/shutdown.h"
 #include "coop/server_profile/server_profile.h"
@@ -113,17 +114,8 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
-namespace cfg = coop::config;
-
 // The single networking session; off until a scenario or a menu action starts it.
 coop::net::Session g_session;
-
-// The host's ban predicate (Session::SetBanCheck): a plain function, so it converts to the
-// session's pointer type.
-bool BanCheck(const char* playerId, const char* address, char* whyOut, int whyLen) {
-    return coop::ban_list::IsBanned(playerId, address, whyOut, whyLen);
-}
-
 
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
@@ -317,6 +309,8 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     coop::ban_list::RunSelftest();
     // And the one file writer: a write that is not whole is a lost ini, ban or key.
     coop::atomic_file::RunSelftest();
+    // And the four the session once ran (join beacon, nickname arbiter and trims, novelty cap).
+    coop::boot_selftests::RunOnce();
     // Reset net_pump's edge detectors, so a Stop/Start on one process carries no stale "was
     // connected" or "was holding" entries into the new session.
     coop::net_pump::OnSessionStart();
@@ -373,7 +367,6 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
         // The ban list, on every topology: read from the hosted server's folder, and asked at the
         // identity proof, which both transports pass.
         coop::ban_list::Load(serverDir);
-        g_session.SetBanCheck(&BanCheck);
         // The server's permission store, read here and published to the game thread before
         // Start spawns the net thread, so every check a client's line causes sees it.
         coop::permissions::host::OnHostStart(
@@ -382,7 +375,7 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // The client's connecting state is not raised here but by the browser connect actions, so the
     // loading screen is browser-join only; the env and autotest client boot reaches this function
     // directly and shows nothing.
-    const bool ok = g_session.Start(netCfg, why);
+    const bool ok = g_session.Start(netCfg, coop::session_hooks::Game(netCfg.role), why);
     // A session that never ran never stops, so the stop listener will not end its layer; a Start
     // refused because a session already runs must not end that one's.
     if (!ok && !g_session.running()) coop::server_settings_sync::OnSessionEnd();

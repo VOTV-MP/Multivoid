@@ -9,6 +9,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/slot_mask.h"
 #include "coop/world/ambient_births.h"
 
 #include "ue_wrap/actors/ambient_creature.h"
@@ -51,7 +52,7 @@ struct Tree {
     bool                     sentLanded = false;
     bool                     landed = false;  // the landing's entry was seen, or the mesh reads shown
     bool                     dirty = false;
-    uint32_t                 pendingSlots = 0;  // joiners owed the current state alone (bit = slot)
+    coop::players::SlotMask  pendingSlots;      // joiners owed the current state alone
     Clock::time_point        heldSince{};
     bool                     heldSaid = false;
 };
@@ -121,7 +122,7 @@ bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
     if (!AC::ReadTree(obj, scale, shown)) return false;
     const bool landed = t.landed || shown;
     const bool changed = !t.sent || t.sentScale != scale || t.sentLanded != landed;
-    if (!changed && !t.pendingSlots) {
+    if (!changed && t.pendingSlots.None()) {
         t.dirty = false;
         return true;
     }
@@ -130,7 +131,7 @@ bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
         coop::config::ResolveEnum(coop::config_registry::rows::ambient_creature_red) == "no_tree_state";
     if (s_redNoTreeState) {
         t.dirty = false;
-        t.pendingSlots = 0;
+        t.pendingSlots.ClearAll();
         return true;
     }
     coop::net::AmbientTreeStatePayload p{};
@@ -144,14 +145,14 @@ bool SendTree(coop::net::Session& s, void* obj, Tree& t) {
         t.sentScale = scale;
         t.sentLanded = landed;
         t.sent = true;
-        t.pendingSlots = 0;
+        t.pendingSlots.ClearAll();
         ++g_counters.sent;
     } else {
         // Nothing changed: the joiner alone is told what the others already have.
         for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
-            if (!(t.pendingSlots & (1u << slot))) continue;
+            if (!t.pendingSlots.Has(slot)) continue;
             if (!s.SendReliableToSlot(slot, coop::net::ReliableKind::AmbientTreeState, &p, sizeof(p))) return false;
-            t.pendingSlots &= ~(1u << slot);
+            t.pendingSlots.Clear(slot);
             ++g_counters.sent;
         }
     }
@@ -164,13 +165,13 @@ void HostTick(coop::net::Session& s) {
     DrainHost();
     // A send reaches only a world-ready peer; the trees stay dirty until one is, and the connect replay marks them all for it.
     if (!g_anyDirty || !s.AnyWorldReadyPeer()) return;
-    uint32_t connected = 0;
+    coop::players::SlotMask connected;
     for (int slot = 1; slot < coop::players::kMaxPeers; ++slot)
-        if (s.IsSlotConnected(slot)) connected |= 1u << slot;
+        if (s.IsSlotConnected(slot)) connected.Set(slot);
     bool held = false;
     for (auto it = g_trees.begin(); it != g_trees.end();) {
         Tree& t = it->second;
-        t.pendingSlots &= connected;  // a joiner that left is owed nothing
+        t.pendingSlots.Keep(connected);  // a joiner that left is owed nothing
         if (t.dirty && !SendTree(s, it->first, t)) held = true;
         ++it;
     }
@@ -262,7 +263,7 @@ void OnTreeState(const coop::net::AmbientTreeStatePayload& p) {
 void QueueConnectBroadcastForSlot(int slot) {
     if (slot <= 0 || slot >= coop::players::kMaxPeers) return;
     for (auto& kv : g_trees) {
-        kv.second.pendingSlots |= 1u << slot;
+        kv.second.pendingSlots.Set(slot);
         kv.second.dirty = true;
     }
     g_anyDirty = !g_trees.empty();

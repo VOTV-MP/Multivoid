@@ -8,6 +8,7 @@
 #include "remote_prop_drive.h"     // g_drives, g_holds, the hold gate, ResolveAndStartDrive
 
 #include "coop/dev/swinger_drill.h"     // NotePropPose, NotePropUnresolved
+#include "coop/interactables/atv_drill_events.h"    // NoteMirrorBound: the ATV drill's arrival event
 #include "coop/interactables/swinger_join_pose.h"   // Forget: a release supersedes a parked connect pose
 #include "coop/props/active_drive.h"   // the fixed-delay snapshot interp, shared with the trash carry stream
 #include "coop/props/prop_hold_claim.h"  // OnSlotLeft: the leaver's wait line is forgotten with its hold gate
@@ -458,6 +459,7 @@ void RegisterPropMirror(coop::element::ElementId eid,
         coop::roomba_sync::OnBound(static_cast<uint32_t>(eid), actor, cls.c_str());  // a cleaner copy joins the brush list and takes its held state
         coop::element::bind_wait::OnBound(static_cast<uint32_t>(eid));  // messages held for this eid replay at the next Pump
         coop::props::container_act_host::overlap::OnBound(actor);  // an overlap put that waited for this prop's id is judged at the next tick
+        coop::atv_drill_events::NoteMirrorBound(cls, actor);  // [dev] the ATV drill's arrival of a host-spawned battery; one compare with the row off
     } else if (!row && actor && eid != 0 && eid != coop::element::kInvalidId) {
         // Refused and rowless: no retry runs inside the create path, so messages for the eid wait here until a
         // later bind, a destroy of it, or the world change.

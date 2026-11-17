@@ -135,6 +135,10 @@ public:
 
     void* actor() const { return actor_; }
 
+    // The body's seat on an ATV ended (coop/player/puppet_seat): the presentation yaw is re-based on the wire's and the
+    // stream places the body again at the next apply. Game thread.
+    void OnSeatReleased();
+
 private:
     // Spawn's before-finish callback (engine::SpawnActor): keeps the deferred actor and registers it
     // under pendingSlot_, so the registry knows the body before its BeginPlay runs.
@@ -180,6 +184,10 @@ private:
 
     // The peer slot Spawn registers the puppet under, read by OnBeforeFinish during the spawn call.
     uint8_t pendingSlot_ = players::kPeerIdUnknown;
+
+    // The peer slot this body is, set at the end of a successful Spawn; kPeerIdUnknown for a puppet no session owns.
+    // The ragdoll stops and the pose guard name the seat owner's slot by it.
+    uint8_t slot_ = players::kPeerIdUnknown;
 
     // The GUObjectArray InternalIndex of actor_, captured in Spawn's before-finish callback while the
     // puppet was known live; valid() checks IsLiveByIndex, never plain IsLive. A mass GC purge can free the puppet without

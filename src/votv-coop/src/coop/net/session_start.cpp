@@ -16,13 +16,9 @@
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/net/session_serial.h"
-#include "coop/player/nickname_arbiter.h"
-#include "coop/session/join_beacon.h"    // RunDrainingSelftest
-#include "coop/session/player_handshake.h"
 #include "coop/text/case_fold.h"
 #include "coop/text/name_filter.h"
 #include "coop/text/repertoire.h"
-#include "coop/text/novelty_ledger.h"
 #include "coop/text/utf8_codec.h"
 
 #include "ice_config.h"          // co-located: ICE STUN/TURN config (P2P)
@@ -112,7 +108,7 @@ void Session::OnConnStatusChanged(void* info) {
     if (self) self->HandleConnStatusChanged(info);
 }
 
-bool Session::Start(const Config& cfg, Refusal* why) {
+bool Session::Start(const Config& cfg, const NetHooks& hooks, Refusal* why) {
     std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
     if (why) *why = Refusal{EndReason::CouldNotStart, {}};
     if (running_.load()) {
@@ -132,6 +128,7 @@ bool Session::Start(const Config& cfg, Refusal* why) {
         return false;
     }
     cfg_ = cfg;
+    hooks_ = hooks;
     net_stats::ResetSession();  // a new session's traffic totals start at zero
     // The measured-rate controller, unless the drill has pinned a fixed rate -- that knob is an
     // instrument, and an instrument that the controller overrides measures the controller.
@@ -192,14 +189,11 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     // The step parser's selftest sits beside Arm, its only caller and the first reader of
     // net.fakelink_steps, once per process: a red parser logs its line next to the "armed" line of
     // the text it parsed, and the config is read by now. The send-rate base history's pure cases
-    // and the join beacon's Draining cases run in the same latch. Results are logged, not acted
-    // on, like the harness's net selftests.
+    // run in the same latch. Results are logged, not acted on, like the harness's net selftests.
     static const bool kFakeLinkStepsOk = fake_link_steps::RunSelftest();
     static const bool kBaseHistoryOk = SendRateControl::RunSelftest();
-    static const bool kJoinDrainingOk = coop::join_beacon::RunDrainingSelftest();
     (void)kFakeLinkStepsOk;
     (void)kBaseHistoryOk;
-    (void)kJoinDrainingOk;
 
     // This install's durable identity goes into GNS before any socket exists: the public key is the
     // identity (GNS's 32-byte GenericBytes form), so every connection this process makes or
@@ -215,16 +209,6 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     // drill. A function-local static makes it exactly once; the smoke greps its one PASS line.
     static const bool kLinkClassifyOk = RunLinkClassifySelftest();
     (void)kLinkClassifyOk;
-
-    // The nickname arbiter's self-test, the same discipline: its policy is a pure function, and its
-    // interesting cases (a suffix displacing stem characters at the cap, a variant colliding with a
-    // name another player holds) would need four peers with chosen names to stage.
-    static const bool kNickArbiterOk = coop::nickname_arbiter::RunNicknameArbiterSelftest();
-    (void)kNickArbiterOk;
-
-    // The nickname's own trims, beside the arbiter that folds it.
-    static const bool kNickSanitizerOk = coop::player_handshake::RunNicknameSanitizerSelftest();
-    (void)kNickSanitizerOk;
 
     // The UTF-8 codec's self-test: its interesting cases are an ill-formed byte sequence a peer
     // would have to send deliberately, and a cap landing mid-character.
@@ -247,12 +231,6 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     // looks like, so there is no negative symptom to grep for.
     static const bool kCaseFoldOk = coop::text::RunCaseFoldSelftest();
     (void)kCaseFoldOk;
-
-    // The receive-boundary novelty cap's self-test: its interesting case is a peer sending a
-    // deliberately diverse alphabet, which no LAN drill stages, and its first draft passed by
-    // construction for every budget above 32.
-    static const bool kNoveltyOk = coop::text::RunNoveltyLedgerSelftest();
-    (void)kNoveltyOk;
 
     // The host's connection cap, MTA's join-flood shape at the accept edge: its two ini rows
     // resolved once here and never per connection, since a resolve line-scans the ini under a

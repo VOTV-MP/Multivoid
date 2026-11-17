@@ -7,6 +7,7 @@
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"    // CurrentHoldGen, LastHeldActor: this peer's own hold
 #include "coop/player/players_registry.h"
+#include "coop/props/glowstick_sync.h"    // OnHoldRefused: the host's record of a glowstick goes to the refused slot
 #include "coop/props/prop_hold.h"         // HostHolds: the host player's own hand
 #include "coop/props/prop_sound.h"        // PlayDenyClick
 #include "coop/props/remote_prop.h"       // DrivingSlotOf, RefuseHold
@@ -99,6 +100,7 @@ bool AdmitRemoteHold(int slot, uint16_t holdGen, const coop::net::WireKey& key, 
         const int holder = coop::prop_hold::HostHolds(actor) ? 0 : coop::remote_prop::DrivingSlotOf(actor, slot);
         if (holder < 0) return true;
         coop::remote_prop::RefuseHold(slot, holdGen);
+        coop::glowstick_sync::OnHoldRefused(slot, actor);
         coop::net::PropHoldRefusedPayload p{};
         p.key = key;
         p.holdGen = holdGen;

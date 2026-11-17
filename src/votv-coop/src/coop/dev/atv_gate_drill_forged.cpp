@@ -3,7 +3,10 @@
 // makes a forged request in that window, and then lets the announce go. One step is decided there, on events:
 //   16 the host PARKS the request until the sender's world is ready and answers it after: decided on the host's park events
 //      (a request answered while the slot is not ready, FAIL; answered after a park, PASS).
-// The marks: client left, rejoin_up, atv_key2 (the host's key), req16_sent, rejoin_c_done.
+// The marks: client left, rejoin_up, atv_bat2 (the host copy's battery), atv_key2 (the host's key), req16_sent, rejoin_c_done.
+// Step b5 is the client's: the first host state of the drill ATV applied after the rejoin CARRIES the battery and leaves the
+// copy at the battery the host marked. Its red, battery_join_off, strips the battery from the connect replay and from every
+// answer (the joiner's first applied state is one of them), so b5 FAILs at that apply.
 
 #include "atv_gate_drill_detail.h"
 
@@ -22,6 +25,7 @@
 
 #include "ue_wrap/core/log.h"
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -62,6 +66,8 @@ bool HostRejoin(const std::wstring& key) {
     Ctx c;
     c.me = kHost;
     c.cur[DE::kPark] = DE::Count(DE::kPark);
+    const float battery = ReadBattery(key);
+    PS::Mark("atv_bat2", std::isnan(battery) ? std::string("unread") : std::to_string(battery));
     PS::Mark("atv_key2", Narrow(key));
     bool parked = false;
     DE::Rec r;
@@ -78,6 +84,37 @@ bool HostRejoin(const std::wstring& key) {
     }
     UE_LOGI("atv-drill: step 16 PASS: the host parked the joiner's request and answered it after the slot's world was ready");
     return AwaitMark("rejoin_c_done", t, kRejoinS);
+}
+
+// CLIENT, second life, step b5: the first host state applied to this life's copy of the DRILL ATV (its key's tag, never
+// another ATV's: step 10's second ATV is in the world too) CARRIES the battery and leaves the copy at the battery the host
+// marked. The carry is the mechanism: the rejoined world is the host's live save, which already holds the battery, so the
+// value alone matches even when the connect state drops it (battery_join_off). The host's value drains, so within kBatterySame.
+bool DecideB5(const std::wstring& key) {
+    std::string t;
+    if (!AwaitMark("atv_bat2", t, kRejoinS)) return false;
+    if (t == "unread") {
+        End('I', "step b5: the host copy's battery did not read");
+        return false;
+    }
+    const float host = std::stof(t);
+    Ctx c;
+    c.me = kClient;
+    DE::Rec r;
+    const int32_t tag = DE::KeyTag(key);
+    if (WaitRec(c, DE::kStateApplied, [tag](const DE::Rec& a) { return a.i3 == tag; }, r) != 1) return false;
+    if (r.f3 == 0.f) {
+        UE_LOGI("atv-drill: step b5 FAIL: the rejoined copy's first host state carried no battery");
+        End('F', "step b5 (the rejoined copy's battery) on the client: its first host state carried no battery");
+        return false;
+    }
+    if (!(std::fabs(r.f2 - host) <= kBatterySame)) {
+        UE_LOGI("atv-drill: step b5 FAIL: the rejoined copy's battery is %.1f after its first host state, the host's is %.1f", r.f2, host);
+        End('F', "step b5 (the rejoined copy's battery) on the client: " + std::to_string(r.f2) + " after its first host state, the host's is " + std::to_string(host));
+        return false;
+    }
+    UE_LOGI("atv-drill: step b5 PASS: the rejoined copy's battery is %.1f after its first host state (the host's %.1f)", r.f2, host);
+    return true;
 }
 
 // CLIENT, second life: the held announce, the forged request.
@@ -104,6 +141,7 @@ void RunRejoinedClient() {
         return;
     }
     PS::Mark("req16_sent");
+    if (!DecideB5(key)) return;
     PS::Mark("rejoin_c_done");
 }
 

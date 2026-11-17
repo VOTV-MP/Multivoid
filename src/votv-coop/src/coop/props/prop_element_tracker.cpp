@@ -239,8 +239,16 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     // client-born prop mints at its express seam, which broadcasts the identity in the same
     // breath). A silent census mint produced ~2,200 zombie double rows per join. The actor is
     // tracked by key instead (the sweep's universe reads it; the adopt burst resolves through the key
-    // index, which holds it anyway). Keyless (chipPile) census mints are untouched; no session keeps
-    // minting.
+    // index, which holds it anyway). No session keeps minting.
+    //
+    // The keyless trash lineage (a chip pile, a garbage clump) is the same case: the host owns the
+    // pile's id, and the client's native binds it directly (pile_spawn_bind). A client-minted id was
+    // never sent and was retired at the bind, a mint-and-retire per pile at every join that could
+    // exhaust the client's band on a save with enough piles. The join sweep walks the unbound natives
+    // itself and no reader needs an id before the host's arrives.
+    if (src == EnrollSource::kPassiveCensus && s != nullptr && s->role() == coop::net::Role::Client &&
+        ue_wrap::prop::IsTrashActor(actor))
+        return key;
     if (src == EnrollSource::kPassiveCensus && s != nullptr &&
         s->role() == coop::net::Role::Client && !key.empty() && key != L"None") {
         TrackKeyForActor_(actor, key, R::InternalIndexOf(actor));

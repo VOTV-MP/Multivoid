@@ -352,6 +352,8 @@ float* SnapshotField(Snapshot& s, Field f) {
 
 const float* SnapshotField(const Snapshot& s, Field f) { return SnapshotField(const_cast<Snapshot&>(s), f); }
 
+void* LocalPawn() { return PawnObject(); }
+
 bool Read(Field f, float* out) {
     if (f >= Field::Count) return false;
     const size_t idx = static_cast<size_t>(f);

@@ -9,6 +9,7 @@
 
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/player/slot_mask.h"
 #include "coop/interactables/meadow_db_hash.h"
 #include "coop/interactables/meadow_db_internal.h"
 #include "coop/interactables/meadow_db_park.h"
@@ -88,7 +89,7 @@ bool g_orderPending = false;  // an order change detected but not yet sent/broad
 // refused: this host's own order already matches its baseline, so nothing else would send it. The retry
 // sends both once no line waits.
 bool     g_owedAll = false;
-uint32_t g_owedSlots = 0;
+coop::players::SlotMask g_owedSlots;
 
 // [dev] DebugHoldAppends: this peer's appends wait as a refused send's do, so the selftest can put a row
 // on this peer that no other peer has seen yet.
@@ -188,7 +189,7 @@ bool EnsurePrimed() {
         g_orderBase.clear();
         g_orderPending = false;
         g_owedAll = false;
-        g_owedSlots = 0;
+        g_owedSlots.ClearAll();
     }
     if (!MH::HashStore(g_shadow, &g_orderBase)) return false;
     g_primedIn.Set(db);
@@ -287,7 +288,7 @@ void SendOrderIfDiffers(coop::net::Session* s, const std::vector<uint64_t>& seq)
         g_orderPending = false;
         if (IsHost()) {
             g_owedAll = false;
-            g_owedSlots = 0;  // every ready slot has it now
+            g_owedSlots.ClearAll();  // every ready slot has it now
         }
         ++(canonical ? g_cCanonicalSent : g_cOrderSent);
         UE_LOGI("meadow_db: %s %s (n=%zu)", canonical ? "canonical order" : "order",
@@ -297,11 +298,10 @@ void SendOrderIfDiffers(coop::net::Session* s, const std::vector<uint64_t>& seq)
 
 // The seeds' orders still owed, each to its slot, once no line waits.
 void SendOwedOrders(coop::net::Session* s, const std::vector<uint64_t>& seq) {
-    if (!g_owedSlots || !g_pending.empty() || meadow_db_park::Parked() > 0 || !s || !s->connected()) return;
+    if (g_owedSlots.None() || !g_pending.empty() || meadow_db_park::Parked() > 0 || !s || !s->connected()) return;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        const uint32_t bit = 1u << slot;
-        if (!(g_owedSlots & bit) || !SendOrder(s, seq, slot)) continue;
-        g_owedSlots &= ~bit;
+        if (!g_owedSlots.Has(slot) || !SendOrder(s, seq, slot)) continue;
+        g_owedSlots.Clear(slot);
         ++g_cCanonicalSent;
         UE_LOGI("meadow_db: the seed's canonical order sent to slot %d (n=%zu)", slot, seq.size());
     }
@@ -405,14 +405,13 @@ void RetryPending(coop::net::Session* s) {
             continue;
         }
         bool done = false;
-        if (p.excludeMask == 0) {
+        if (p.excludeMask.None()) {
             done = p.isDelete ? SendDeleteBroadcast(s, p.hash)
                               : SendAppendBroadcast(s, p.blob);
         } else {
             bool allCovered = true;
             for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-                const uint32_t bit = 1u << slot;
-                if ((p.excludeMask | p.sentMask) & bit) continue;
+                if (p.excludeMask.Has(slot) || p.sentMask.Has(slot)) continue;
                 if (!s->IsSlotWorldReady(slot)) continue;
                 bool ok;
                 if (p.isDelete) {
@@ -423,7 +422,7 @@ void RetryPending(coop::net::Session* s) {
                     ok = coop::blob_chunks::SendBlobToSlot(
                         s, slot, coop::net::ReliableKind::MeadowAppend, g_nextSeq++, p.blob);
                 }
-                if (ok) p.sentMask |= bit;
+                if (ok) p.sentMask.Set(slot);
                 else allCovered = false;
             }
             done = allCovered;
@@ -649,7 +648,7 @@ void Tick() {
     // The retries -- a line whose send failed or waits for this client's world-ready, a delete that
     // came before its row, an order held behind them, a row's chunks in flight -- once a second, and
     // only while one of them waits.
-    if (g_pending.empty() && meadow_db_park::HeldDeletes() == 0 && !g_orderPending && !g_owedAll && !g_owedSlots &&
+    if (g_pending.empty() && meadow_db_park::HeldDeletes() == 0 && !g_orderPending && !g_owedAll && g_owedSlots.None() &&
         g_assembler.Idle() && g_orderAsm.Idle())
         return;
     if (now < g_nextRetry) return;
@@ -660,7 +659,7 @@ void Tick() {
     if (!EnsurePrimed()) return;
     meadow_db_park::RetryDeletes(&ApplyDeleteByHash);
     RetryPending(s);
-    if ((g_orderPending || g_owedAll || g_owedSlots) && g_pending.empty() && meadow_db_park::Parked() == 0) {
+    if ((g_orderPending || g_owedAll || g_owedSlots.Any()) && g_pending.empty() && meadow_db_park::Parked() == 0) {
         std::map<uint64_t, int32_t> cur;
         std::vector<uint64_t> seq;
         if (MH::HashStore(cur, &seq)) {
@@ -733,7 +732,7 @@ void OnDisconnect() {
     g_orderBase.clear();
     g_orderPending = false;
     g_owedAll = false;
-    g_owedSlots = 0;
+    g_owedSlots.ClearAll();
     g_debugHoldAppends = false;
     g_debugAway = false;
     g_awaySaid = false;
@@ -774,7 +773,7 @@ bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSl
         s, toSlot, coop::net::ReliableKind::MeadowOrder, g_nextSeq++, blob);
 }
 
-void OweOrderTo(int slot) { g_owedSlots |= 1u << slot; }
+void OweOrderTo(int slot) { g_owedSlots.Set(slot); }
 
 bool DatabaseAway() { return Away(); }
 void CountSeedLines(uint64_t n) { g_cSeedLines += n; }
@@ -782,7 +781,7 @@ void CountSeedLines(uint64_t n) { g_cSeedLines += n; }
 void ForgetSlot(uint8_t slot) {
     g_assembler.ClearSlot(slot);
     g_orderAsm.ClearSlot(slot);
-    g_owedSlots &= ~(1u << slot);
+    g_owedSlots.Clear(slot);
 }
 
 }  // namespace internal

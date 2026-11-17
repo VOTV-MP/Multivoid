@@ -56,6 +56,36 @@ fn a_beats_links_are_clamped_to_the_lobby() {
 }
 
 #[test]
+fn a_beat_moves_the_lobbys_player_limit_and_an_old_mod_leaves_it() {
+    let mut state = MasterState::new();
+    let lo = Lobby::new("198.51.100.8");
+    let (sid, token) = (lo.session_id.clone(), lo.token.clone());
+    state.lobby_by_public.insert(lo.lobby_id.clone(), sid.clone());
+    state.lobbies.insert(sid.clone(), lo);
+    let beat = |extra: serde_json::Value| {
+        let mut b = serde_json::json!({"sessionId": sid, "token": token});
+        b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        b
+    };
+    assert_eq!(super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({"players_max": 8}))).0, 200);
+    assert_eq!(state.lobbies[&sid].players_max, 8);
+    // A beat without the field (a mod from before the host's limit) keeps what the lobby has.
+    assert_eq!(super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({}))).0, 200);
+    assert_eq!(state.lobbies[&sid].players_max, 8);
+    // Out-of-range values are clamped to the lobby's bounds, never stored as sent.
+    assert_eq!(super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({"players_max": 99}))).0, 200);
+    assert_eq!(state.lobbies[&sid].players_max, super::MAX_PLAYERS);
+    assert_eq!(super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({"players_max": 0}))).0, 200);
+    assert_eq!(state.lobbies[&sid].players_max, 1);
+    // A host that lowered its limit under the players already in lists the live count, 5 of 2.
+    assert_eq!(
+        super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({"players_max": 2, "players_cur": 5}))).0,
+        200
+    );
+    assert_eq!((state.lobbies[&sid].players_cur, state.lobbies[&sid].players_max), (5, 2));
+}
+
+#[test]
 fn identity_shape_accepts_a_real_rendered_key() {
     let k = format!("gen:{}", "ab01cd23".repeat(8)); // 64 hex chars
     assert_eq!(k.len(), 68);

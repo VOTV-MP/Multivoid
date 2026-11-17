@@ -73,7 +73,8 @@ CFG_FLAG(atv_eject_red, "atv_eject_red", "dev", false, "VOTVCOOP_ATV_EJECT_RED",
     "skipped, a client syncer's is consumed), so both arms of the ATV eject drill must fail.")
 CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "off|green|atv_gate_off|atv_ack_off|atv_judge_off|atv_dup_module|atv_refund_off|atv_publish_off|atv_joiner_rows_off|"
-    "atv_bits_off|atv_gate_hold_off|atv_park_off",
+    "atv_bits_off|atv_gate_hold_off|atv_park_off|battery_refund_off|battery_spawn_off|local_destroy_off|battery_in_off|"
+    "battery_out_off|battery_publish_off|battery_judge_off|battery_join_off",
     "VOTVCOOP_ATV_GATE_DRILL",
     "Drill (BOTH peers, plus a third client as observer): the client, the host and the observer do each act a player does "
     "at an ATV -- a refuel, a repair, a module fitted and taken off, the seat, lights, brake, turbo and horn, a drive -- and "
@@ -85,4 +86,37 @@ CFG_ENUM(atv_gate_drill, "atv_gate_drill", "dev", "off",
     "duplicate fit allowed), atv_refund_off (a refused fit not refunded), atv_publish_off (the host's own acts not "
     "published), atv_joiner_rows_off (a state for an unadopted ATV dropped), atv_bits_off (a block's control bits "
     "ignored, horn included), atv_gate_hold_off (a state applies while the "
-    "open-request gate is shut), atv_park_off (a request is judged before its sender's world is ready). MUTATES the ATV.")
+    "open-request gate is shut), atv_park_off (a request is judged before its sender's world is ready), "
+    "battery_refund_off (a refused battery fit is not refunded), battery_spawn_off (the host spawns no battery on an "
+    "accepted unscrew), local_destroy_off (a client keeps the battery prop its own unscrew spawned), battery_in_off and "
+    "battery_out_off (the client's battery fit, or unscrew, row asks nothing), battery_publish_off (the host's states carry "
+    "no battery), battery_judge_off (a battery fit is not judged against the hand, so a forged one is refunded a battery), battery_join_off (the connect replay and every "
+    "answer carry no battery; the live publish keeps it). "
+    "The battery steps: b1 a fit, b2 an unscrew (the host spawns the one battery every peer holds), b3 a fit back, b0 a fit "
+    "the host refuses as full and refunds, b4 an unscrew it refuses as not held, b6 a forged fit with an empty hand, b5 the "
+    "rejoined copy's battery. MUTATES the ATV.")
+CFG_ENUM(atv_riders_drill, "atv_riders_drill", "dev", "off",
+    "off|on|drive_control|seat_announce_off|body_attach_off|invite_off|rider_stamp_off|mirror_ride_off|mirror_invite_off|"
+    "resend_rider_off|birth_seat_off|bind_ride_off|reveal_ride_off|release_seat_off|release_ride_off|getoff_cancel_off|"
+    "unseat_latch_off|ragdoll_restore_off|exit_seat_off",
+    "VOTVCOOP_ATV_RIDERS_DRILL",
+    "Drill (set on the host and both clients; three peers, the observer in slot 1 leaves and rejoins, the driver is slot 2): "
+    "the driver sits in an ATV and drives, the host's kerfur rides, and every peer must show the driver's body seated and the "
+    "kerfur riding, through a rejoin, the driver's leaving, a ragdoll while seated, the host's own seat and the ATV's "
+    "destruction. Every step is decided by an event (coop/interactables/atv_drill_events); the run ends on rig: VERDICT "
+    "atv-riders PASS|FAIL|INVALID. on: step 0 (the host spawns a kerfur and sits in the driver's first join window, "
+    "and the driver's hidden kerfur mirror must ride at its reveal), then the same kerfur beside the ATV, which the "
+    "rejoined observer adopts from the live save (the bind route); drive_control: the run of on without step 0, but the "
+    "host's kerfur takes the game's idle verb before the host sits, so the host's own drive is measured with no kerfur on "
+    "the ATV (a control, not a red). Each other value is a red, read only by the module whose mechanism it turns off, and "
+    "ends FAIL at its step, or INVALID where its route was not reached (ragdoll_restore_off, reveal_ride_off, bind_ride_off): "
+    "seat_announce_off (a seat change calls no subscriber, "
+    "step 1), body_attach_off (the body is placed, not attached, 1), invite_off (the host's seat-edge invite, 2), "
+    "rider_stamp_off (the host's stamp carries no rider, 2), mirror_ride_off (a client's rider subscriber, 2), "
+    "mirror_invite_off (a client's game invites a mirror, 2), resend_rider_off (the host's re-send carries no rider, 4), "
+    "birth_seat_off (a born body is not seated, 5), bind_ride_off (a bound mirror takes no ride, 5), reveal_ride_off (a "
+    "revealed mirror takes no ride, 0; step 0 runs only for on, bind_ride_off and reveal_ride_off), release_seat_off (a seat's end does not release the body, 6), release_ride_off (the "
+    "rider's end does not unseat the mirror, 6), getoff_cancel_off (a client's own dismount unseats a mirror, 6), "
+    "unseat_latch_off (an unseated mirror keeps its row's latch, so its pose stays frozen, 6), "
+    "ragdoll_restore_off (a ragdoll's stop restores no seat, 8), exit_seat_off (an ATV's end announces no change, 9). "
+    "MUTATES the ATV.")

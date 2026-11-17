@@ -5,7 +5,7 @@
 // about a second of poses, is, and its end is said too.
 #pragma once
 
-#include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/player/slot_count.h"  // kMaxPeers
 
 #include <array>
 #include <cstdint>

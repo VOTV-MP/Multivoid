@@ -18,6 +18,8 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/interactables/woodchipper_sync.h"  // NoteDestroyed
+#include "coop/interactables/garbage_bin_sync.h"  // NoteDestroyed
+#include "coop/props/glowstick_sync.h"  // NoteDestroyed
 #include "coop/player/hand_item.h"  // IsLocalHandViewActor
 #include "coop/props/prop_drop_intent.h"
 #include "coop/items/coingun_sync.h"
@@ -121,6 +123,8 @@ void DestroySeamBody(void* self, HandView handView) {
     PT::UnmarkProcessedInit(self);
     PT::UnmarkKnownKeyedProp(self);
     coop::woodchipper_sync::NoteDestroyed(self);   // the host's chipper table loses a chipper that left the world
+    coop::garbage_bin_sync::NoteDestroyed(self);   // the host's container whose listed prop died is sent again
+    coop::glowstick_sync::NoteDestroyed(self);     // the host's glowsticks hung from this prop send their records
     if (!s->connected()) return;
     if (coop::prop_echo_suppress::IsIncomingDestroy(self)) {
         UE_LOGI("grab_hook[destroy-seam]: actor %p was wire-received destroy -- skip rebroadcast",
@@ -154,9 +158,9 @@ void DestroySeamBody(void* self, HandView handView) {
     // episode; the local destroy already ran, so this peer's world is unaffected. Client-scoped;
     // the role guard is defence in depth on a shared seam. The suppression covers keyless
     // destroys too: inside its own load a client generates no events, it is being torn down and
-    // rebuilt, and a joining client otherwise broadcasts one eid-only clump destroy per level
-    // pile, each with a client-band eid the host never saw, which the host parks and expires in
-    // the same minute its send buffer is full. The window is the load episode or the reconcile
+    // rebuilt, and a keyless one that carries an eid (a bound host id, or a client's own birth) would
+    // otherwise be broadcast for an entity the host parks and expires in the same minute its send
+    // buffer is full (a client's unbound level pile carries no eid and returns above). The window is the load episode or the reconcile
     // window, of any kind: a junk broadcast costs more than a suppressed destroy, which the
     // bracket re-expresses. A keyed suppression in the reconcile window alone warns with a rate
     // latch, since it is the trace if a player's genuine destroy vanished.

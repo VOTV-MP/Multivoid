@@ -8,11 +8,8 @@
 
 namespace coop::join_seed {
 
-static_assert(Seeder::kMaxPeers == static_cast<int>(coop::net::kMaxPeers),
-              "join_seed slot array must match the session's peer count");
-
 void Seeder::Capture(int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= kMaxPeers) return;
+    if (peerSlot <= 0 || peerSlot >= coop::players::kMaxPeers) return;
     SlotSnap& snap = snaps_[peerSlot];
     snap = SlotSnap{};
     if (!a_.HashArray(snap.counts)) {
@@ -25,17 +22,17 @@ void Seeder::Capture(int peerSlot) {
 }
 
 bool Seeder::Captured(int peerSlot) const {
-    return peerSlot >= 0 && peerSlot < kMaxPeers && snaps_[peerSlot].valid;
+    return peerSlot >= 0 && peerSlot < coop::players::kMaxPeers && snaps_[peerSlot].valid;
 }
 
 void Seeder::Cancel(int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= kMaxPeers) return;
+    if (peerSlot <= 0 || peerSlot >= coop::players::kMaxPeers) return;
     snaps_[peerSlot] = SlotSnap{};
     seededOnce_[peerSlot] = false;
 }
 
 void Seeder::SeedForSlot(coop::net::Session* s, int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= kMaxPeers) return;
+    if (peerSlot <= 0 || peerSlot >= coop::players::kMaxPeers) return;
     if (!s || !s->connected()) return;
     SlotSnap& snap = snaps_[peerSlot];
     if (!snap.valid) {
@@ -73,7 +70,7 @@ void Seeder::SeedForSlot(coop::net::Session* s, int peerSlot) {
 }
 
 void Seeder::Reset() {
-    for (int i = 0; i < kMaxPeers; ++i) {
+    for (int i = 0; i < coop::players::kMaxPeers; ++i) {
         snaps_[i] = SlotSnap{};
         seededOnce_[i] = false;
     }

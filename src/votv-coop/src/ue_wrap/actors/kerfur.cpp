@@ -2,15 +2,19 @@
 
 #include "ue_wrap/actors/kerfur.h"
 
+#include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/kismet_timer.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <cstring>
 #include <cwchar>
+#include <vector>
 
 namespace ue_wrap::kerfur {
 namespace {
@@ -41,6 +45,13 @@ void ResolveKerfurOffsets() {
     if (g_offSpooky == -2) g_offSpooky = R::FindPropertyOffset(kc, L"isSpooky");
     if (g_offFace   == -2) g_offFace   = R::FindPropertyOffset(kc, L"faceMaterialIndex");
     if (g_offKill   == -2) g_offKill   = R::FindPropertyOffset(kc, L"kill");
+}
+
+// The Omega's `occupyCar` field, resolved once.
+int32_t OccupyCarOffset() {
+    static int32_t sOff = -2;
+    if (sOff == -2) sOff = R::FindPropertyOffset(ResolveKerfurClass(), L"occupyCar");
+    return sOff;
 }
 
 }  // namespace
@@ -221,6 +232,103 @@ void* ReadTargetActor(void* actor) {
     if (sOff < 0) return nullptr;
     void* t = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(actor) + sOff);
     return (t && R::IsLive(t)) ? t : nullptr;
+}
+
+void* GetOccupyCar(void* kerfur) {
+    if (!IsKerfurActor(kerfur)) return nullptr;
+    const int32_t off = OccupyCarOffset();
+    if (off < 0) return nullptr;
+    void* const c = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(kerfur) + off);
+    return (c && R::IsLive(c)) ? c : nullptr;
+}
+
+bool OccupiesCar(void* kerfur, void* car) {
+    if (!car || !IsKerfurActor(kerfur)) return false;
+    const int32_t off = OccupyCarOffset();
+    if (off < 0) return false;
+    return *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(kerfur) + off) == car;
+}
+
+std::vector<void*> AllKerfurs() {
+    std::vector<void*> classes, out;
+    object_index::ForEachClass([](void* c, void* cls, void* anyInstance) {
+        if (IsKerfurActor(anyInstance)) static_cast<std::vector<void*>*>(c)->push_back(cls);
+    }, &classes);
+    for (void* cls : classes) {
+        object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t idx) {
+            if (R::SlotFlags(idx) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            static_cast<std::vector<void*>*>(c)->push_back(obj);
+        }, &out);
+    }
+    return out;
+}
+
+namespace {
+
+// One of the kerfur's own ATV functions, its one parameter (the ATV, or none) set by name.
+bool CallCar(void* kerfur, const wchar_t* fn, const wchar_t* param, void* atv) {
+    if (!IsKerfurActor(kerfur)) return false;
+    void* const f = R::FindDispatchFunctionCached(R::ClassOf(kerfur), fn);
+    if (!f) return false;
+    ParamFrame pf(f);
+    if (!pf.valid()) return false;
+    if (param && !pf.Set<void*>(param, atv)) return false;
+    return Call(kerfur, pf);
+}
+
+}  // namespace
+
+bool TryToOccupyCar(void* kerfur, void* atv) { return atv && CallCar(kerfur, L"tryToOccupyCar", L"car", atv); }
+bool SitOnCar(void* kerfur, void* atv) { return atv && CallCar(kerfur, L"sitOnCar", L"occupyCar", atv); }
+bool GetOffCar(void* kerfur) { return CallCar(kerfur, L"getOffCar", nullptr, nullptr); }  // kill: false, the frame's zero
+bool FailCar(void* kerfur) { return CallCar(kerfur, L"failCar", nullptr, nullptr); }
+
+namespace {
+
+// One bool property of `ownerClass`, by name, written on `obj`; `off` is resolved once per call site (-2 = not tried).
+bool WriteBoolOf(void* obj, void* ownerClass, const wchar_t* name, int32_t& off, uint8_t& mask, bool value) {
+    if (!obj || !ownerClass || !R::IsLive(obj)) return false;
+    if (off == -2 && !R::FindBoolProperty(ownerClass, name, off, mask)) off = -1;
+    if (off < 0) return false;
+    uint8_t& byte = static_cast<uint8_t*>(obj)[off];
+    byte = value ? static_cast<uint8_t>(byte | mask) : static_cast<uint8_t>(byte & ~mask);
+    return true;
+}
+
+// A step of the unseat that did not read or write is said once per step.
+bool Step(bool took, int step, const char* what) {
+    static bool sSaid[6] = {};
+    if (!took && !sSaid[step]) {
+        sSaid[step] = true;
+        UE_LOGW("kerfur: UnseatWithoutCar step '%s' did not take -- the rest still ran", what);
+    }
+    return took;
+}
+
+}  // namespace
+
+bool UnseatWithoutCar(void* kerfur) {
+    if (!IsKerfurActor(kerfur)) return false;
+    ResolveKerfurOffsets();
+    uint8_t* const base = static_cast<uint8_t*>(kerfur);
+    bool ok = Step(engine::DetachActorFromParent(kerfur), 0, "detach");
+    ok = Step(engine::SetActorEnableCollision(kerfur, true), 1, "collision on") && ok;
+    const bool stateOk = g_offState >= 0;
+    if (stateOk) base[g_offState] = 0;
+    ok = Step(stateOk, 2, "state") && ok;
+    const int32_t carOff = OccupyCarOffset();
+    if (carOff >= 0) *reinterpret_cast<void**>(base + carOff) = nullptr;
+    ok = Step(carOff >= 0, 3, "occupyCar") && ok;
+    ok = Step(puppet::SetNpcOnAtv(kerfur, false), 4, "isOnAtv") && ok;
+    static int32_t sAbsOff = -2;
+    static uint8_t sAbsMask = 0;
+    static void* sSceneClass = nullptr;   // resolved once; asked again only while it did not resolve
+    if (!sSceneClass) sSceneClass = R::FindClass(P::name::SceneComponentClass);
+    void* const mesh = *reinterpret_cast<void* const*>(base + P::off::ACharacter_Mesh);
+    ok = Step(mesh && WriteBoolOf(mesh, sSceneClass, L"bAbsoluteRotation", sAbsOff, sAbsMask, true),
+              5, "Mesh bAbsoluteRotation") && ok;
+    return ok;
 }
 
 }  // namespace ue_wrap::kerfur

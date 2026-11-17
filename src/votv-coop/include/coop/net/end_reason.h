@@ -158,6 +158,13 @@ int ToTransportEnd(EndReason code);
 // LinkLost.
 EndReason FromTransportEnd(int transportEnd);
 
+// The detail a host's HostFull close carries when its player limit is the cause: the machine token
+// `max_players=<N>`, not a sentence, so each joiner's dialog writes it in its own language. The
+// reader takes only that exact form (digits after the `=`, nothing else) and leaves `n` alone on
+// anything else, a host's English cause among them.
+std::string MaxPlayersDetail(int n);
+bool ReadMaxPlayersDetail(const std::string& detail, int& n);
+
 namespace end_reason {
 // The table's own check, run once per session start beside the identity ones: every row has a
 // non-empty id and sentence, ids are unique, the family letter matches the value range, and a

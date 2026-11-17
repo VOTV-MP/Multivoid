@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/player/slot_count.h"  // kMaxPeers: the per-slot table's length
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -13,7 +14,7 @@
 namespace coop::dev::wire_census {
 namespace {
 
-constexpr int kSlots = 8;    // >= kMaxPeers; out-of-range slots are dropped
+constexpr int kSlots = coop::players::kMaxPeers;  // out-of-range slots are dropped
 constexpr int kTypes = 256;  // full uint8_t MsgType space
 
 int g_enabled = -1;  // -1 = the row not resolved yet (latched on first Enabled())

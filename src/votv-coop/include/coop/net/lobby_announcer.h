@@ -46,12 +46,13 @@ struct HostInfo {
 
 // What a lobby was announced with. Kept by the announcer so it can announce the same game again
 // when the master forgets it; timeoutMs bounds every POST of the request, the re-announce's too.
+// The lobby's player limit is not kept here: every create and every heartbeat reads the host's row
+// through coop/net/player_limit.h, so a change of the row reaches the master within one beat.
 struct AnnounceRequest {
     std::string masterUrl;
     std::string name;
     std::string world;
     bool locked = false;
-    int playersMax = 0;
     int timeoutMs = 0;
     int directPort = 0;   // positive: a DIRECT lobby, announced with this listen port
 };
@@ -94,10 +95,10 @@ public:
     // and no caller-passed version string, which is what once let a stale duplicate ride.
     HostInfo Host(const std::string& masterUrl, const std::string& name,
                   const std::string& world,
-                  bool locked, int playersMax, int timeoutMs, int directPort = 0);
+                  bool locked, int timeoutMs, int directPort = 0);
 
     // The heartbeat publishes a live player count from this callback (host wires it to
-    // the session's connected-peer count + 1). null -> publishes playersMax's host (1).
+    // the session's connected-peer count + 1). null -> publishes the host alone (1).
     // ATOMIC because the heartbeat worker may ALREADY be running when this is
     // installed: the env-host lane announces (spawning HeartbeatLoop) before the
     // harness reaches its install point, so the std::thread constructor's

@@ -10,7 +10,9 @@
 #pragma once
 
 #include "coop/element/element.h"
+#include "coop/player/slot_count.h"  // kMaxPeers: the band count
 
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <mutex>
@@ -107,6 +109,18 @@ public:
     size_t HostCount() const;
     size_t LocalCount() const;
 
+    // The live ids per band and their peak, said as one `element bands:` line of live/peak/cap: the
+    // host range and each peer band that held an id. The peak is of the ids this process's table held,
+    // so a client's own band reads its own mints, and the host's table also reads each client's band
+    // (the mirrors of what that client minted). No line when no id was ever held, and none when no
+    // number changed since the last line.
+    //
+    // ReportIfDue says it from the gameplay tick: 10 s after a tick first sees a held id, then at most
+    // once a minute. `nowMs` is coop::net::NowMs(). Game thread.
+    void ReportIfDue(uint64_t nowMs);
+    // Says it once at the session's end and restarts the peaks from the live counts.
+    void ReportBandPeaksAtSessionEnd();
+
     // Copy the (actor, id, internal index, mirror flag) tuple of every allocated Element of the
     // type, under the mutex. The mutex protects the C++ Element lifetime only: the actor pointer is
     // a raw UObject* the garbage collector can free independently (a mass purge marks thousands of
@@ -149,6 +163,23 @@ private:
     // Which peer-range band m_localFree holds: 0 is the pre-slot band, 1..kMaxPeers-1 the client's
     // slot band after SetLocalPeerBand. The host stays on 0, since it never calls AllocLocalId.
     uint8_t m_activeBand = 0;
+
+    // Ids held in m_byId by range, minted here or bound as a mirror: slot 0 the host range, 1 + band
+    // the peer bands, by the id's own band, so a pre-slot id freed after the band switch still counts
+    // against band 0. Guarded by m_mutex with the table they count.
+    static constexpr size_t kBandStats = 1u + coop::players::kMaxPeers;
+    uint32_t m_bandLive[kBandStats] = {};
+    uint32_t m_bandPeak[kBandStats] = {};
+    // ReportIfDue's pacing, read by the game thread without the lock: some id was ever held, and
+    // when the next line is due (0 until a tick has seen a held id).
+    std::atomic<bool>     m_bandAnyHeld{false};
+    std::atomic<uint64_t> m_bandDueMs{0};
+    void NoteHeld_(ElementId id);       // m_mutex held: an id entered the table
+    void NoteReleased_(ElementId id);   // m_mutex held: an id left the table
+    // The numbers of the last line said, so an unchanged state is not said again.
+    uint32_t m_bandShownLive[kBandStats] = {};
+    uint32_t m_bandShownPeak[kBandStats] = {};
+    void LogBandPeaks_();               // m_mutex held
 
     // Pre-populate the host list with the whole host range and the local list with the pre-slot
     // band, once at construction.

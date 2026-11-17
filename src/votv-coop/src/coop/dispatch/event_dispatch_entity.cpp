@@ -9,7 +9,9 @@
 #include "coop/element/player.h"
 #include "coop/element/registry.h"
 
+#include "coop/net/wire_key_util.h"
 #include "coop/player/item_activate.h"
+#include "coop/props/container_break.h"
 #include "coop/session/join_progress.h"
 #include "coop/dev/dronesack_drill.h"  // NoteWirePropDestroy (the drone sack drill's record)
 #include "coop/creatures/npc_mirror.h"
@@ -274,11 +276,10 @@ bool HandleEntityEvent(net::Session& session,
         // frame. The keyed echo guard for the dispenser-pile counter channel: a wire destroy must
         // not re-broadcast from our own death watch.
         if (p.key.len > 0) {
-            std::wstring dkey;
-            dkey.reserve(p.key.len);
-            for (uint8_t i = 0; i < p.key.len && i < 31; ++i)
-                dkey.push_back(static_cast<wchar_t>(static_cast<unsigned char>(p.key.data[i])));
+            const std::wstring dkey = coop::net::StringFromWireKey(p.key);
             coop::trash_pile_sync::NotifyWireDestroy(dkey);
+            // A granted saw cut: the host's copy breaks (the spill is the host's) before the sender's destroy applies.
+            if (session.role() == net::Role::Host) coop::props::container_break::OnClientDestroy(msg.senderPeerSlot, dkey);
         }
         coop::dev::dronesack_drill::NoteWirePropDestroy(p.elementId, p.key.data, p.key.len, msg.senderPeerSlot);
         // A spawn waiting for the snapshot bracket's end is dropped by its own eid, or by its key for a key-only destroy.

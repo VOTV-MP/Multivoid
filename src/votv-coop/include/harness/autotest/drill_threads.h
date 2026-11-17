@@ -196,6 +196,8 @@ DWORD WINAPI RunEndDrillThread(LPVOID arg);
 
 // VOTVCOOP_RUN_SPILL, both peers -- harness/autotest/autotest_spill.cpp
 DWORD WINAPI SpillThread(LPVOID arg);
+// VOTVCOOP_RUN_CONTAINER_GAPS, both peers -- harness/autotest/autotest_container_gaps.cpp
+DWORD WINAPI ContainerGapsThread(LPVOID arg);
 
 // VOTVCOOP_RUN_AMBIENT_CREATURE -- the ambient creatures: one set of deer and walking trees, the host's
 DWORD WINAPI AmbientCreatureThread(LPVOID arg);
@@ -246,4 +248,12 @@ DWORD WINAPI OrbDrillThread(LPVOID arg);
 DWORD WINAPI SkyTpDrillThread(LPVOID arg);
 // roomba_drill, both peers -- harness/autotest/autotest_roomba.cpp
 DWORD WINAPI RoombaDrillThread(LPVOID arg);
+// VOTVCOOP_RUN_CHIPPER_FEED, both peers -- harness/autotest/autotest_chipper_feed.cpp
+DWORD WINAPI ChipperFeedThread(LPVOID arg);
+
+// VOTVCOOP_RUN_HACKSAW, both peers -- harness/autotest/autotest_hacksaw.cpp
+DWORD WINAPI HacksawThread(LPVOID arg);
+
+// The row glowstick_drill, both peers -- harness/autotest/autotest_glowstick.cpp
+DWORD WINAPI GlowstickThread(LPVOID arg);
 }  // namespace harness::autotest

@@ -42,7 +42,9 @@ namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 using coop::net::FuseTowerPayload;
 
-static_assert(coop::net::kMaxPeers <= 4, "FuseTowerPayload's acknowledgements hold four slots");
+static_assert(sizeof(FuseTowerPayload::ack) / sizeof(uint16_t) == coop::net::kMaxPeers &&
+                  sizeof(FuseTowerPayload::refused) / sizeof(uint16_t) == coop::net::kMaxPeers,
+              "FuseTowerPayload's acknowledgements hold one slot per peer");
 
 // A slot's ops wait, in arrival order, while the towers have not resolved, their sender has no body here yet (a
 // joiner's first pose follows its world-ready by seconds) or an insert's spend has not arrived (its destroy rides

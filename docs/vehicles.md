@@ -73,8 +73,8 @@ Accumulators apply from the syncer, clamped to the game's domains when it is a c
 which tyres are on and whether the spare is, is consumed only from the host's own copy, because a
 client syncer's eject ships a mask whose paired wheel prop cannot travel, and applying it would
 turn a divergence into an item loss the host persists. The mirror's own accrual is held at zero by the impulse neuter, so an
-overwrite never races an irreversible act. The battery is an inserted prop's charge and rides
-the prop lane.
+overwrite never races an irreversible act. The battery is the host's (below); each copy drains
+its own between the host's states.
 
 ### What the host owns beyond the rig
 
@@ -98,8 +98,25 @@ its own acts and takes the host's state (`coop/interactables/atv_host_sync`):
 - **Modules.** A fit (`playerUsedOn` with an upgrade in hand) and a take-off (`upgradeTake`) run on the client's copy and
   are asked of the host the same way, by the module's value. The host fits one its copy does not hold and takes off one
   it does, writes its `Modules` and runs `updUpgrades`. A fit's module must be of the class the sender's hand last held,
-  once per item. A fit refused as a duplicate, after the hand check passed, is refunded with that module's prop at the ATV.
+  once per item. Any refusal after that hand check (a duplicate, the sender out of reach or not alive, the ATV gone) is refunded
+  with that module's prop, above the ATV or, when it is gone, above the sender.
   A copy that is adopted holding no state of the host's asks for it (request op 6), and the host answers with its state.
+- **The battery.** `battery` is a charge, -1 with none fitted. A fit (`playerUsedOn` with a `prop_atvcarbattery_C` in
+  hand) and an unscrew (`unscrewPanel`'s battery branch, which drops the battery as a prop with its charge) run on the
+  client's copy and are asked of the host: op 5 with the charge the copy took, op 7 for the unscrew. The host fits only
+  into an ATV with none and only from a hand that last held a battery (`no_item` otherwise, and nothing is refunded);
+  once that check has passed, any refusal of the fit (`full`, out of reach, not alive, the ATV gone) is refunded with a
+  battery prop at the request's charge, above the ATV or above the sender when it is gone; the host holds no number for the
+  battery the sender held, so the charge is the sender's claim, kept within 0..100. It takes out only a fitted battery (`not_held` otherwise), and spawns the battery prop itself, at its own copy's
+  charge and at the ATV's `Billboard4`, where the game's own unscrew spawns it; a spawn that fails refuses the request
+  and changes nothing. The client's own copy of the unscrew spawns a battery too: it is recorded as it is born
+  (`coop/props/prop_spawn_authoring`) and destroyed at the end of the unscrew body with no destroy sent, so the host's
+  prop is the one every peer holds; a tire's branch is not touched. The host then writes `battery` and runs the game's
+  `updBattery`. Every host state carries the charge with a flag that it read, a joiner gets it in its connect state, and
+  a client writes it when it differs, with `updBattery`. The rig's ATV drill decides each step on events, counting
+  battery props by actor: b1 a fit, b2 an unscrew (one new battery on every peer; a mirror's charge is decided when its
+  save record lands on it), b3 a fit back, b0 a refused fit refunded, b4 a refused unscrew spawning nothing, b6 a forged fit refunding nothing, b5 the rejoined copy's charge.
+  `[?]` built to the design, not yet run.
 - **Lights, brake, turbo and the horn.** The syncer's copy writes them into its blocks' `stateBits` (brake 0x02, lights
   0x20, turbo 0x40, horn 0x80) at each block build. The host takes them from an admitted block (the block's sender must be
   the ATV's syncer) and runs the ATV's own light, brake and turbo bodies on its copy for each bit that changed; its re-send
@@ -133,6 +150,53 @@ The host publishes an ATV's state at one point: when a write to its copy changed
 ATV's state at its ready edge. The map is a display of the ATV's own place, and its module is a module. The padlock and
 the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 
+### Who rides
+
+One table says who rides an ATV: the host's. Every write of an ATV's seat, syncer and rider goes through
+`coop/interactables/atv_seat_table`, the table's one writer, which announces each change to its subscribers on whichever
+route made it: a judgement, a stamp, an answer, a departure, or the entry's own end (the ATV destroyed, the entry
+replaced, the session over). The seat and the rider ride every `AtvState` the host sends, the rider as the kerfur's
+element id (`riderEid`), so a peer learns who rides from the stamp and from nothing it watches itself.
+
+The driver's own player is attached to the ATV and hidden while it drives, so its stream says nothing a body could sit
+by. On every other peer, when the table puts a peer on an ATV, that peer's body is attached to the ATV once, at the
+ATV's `playerHit`, the game's own driver seat where its sit puts its player, in the AnimBP's ATV seat pose (`isOnAtv`),
+with its collision off so it cannot push the ATV. When the seat ends, the body is detached and the stream places it again
+(`coop/player/puppet_seat`).
+
+The kerfur passenger is the host's. The ATV's own sit asks every kerfur to come (`tryToOccupyCar`) and its dismount
+sends the rider off, but on the host that runs only for the host's own player. When a client's seat begins, the host
+runs the same steps on its copy at the seat's edge, not on a scan: it fills `allKerfuros` and asks each kerfur. When the
+seat ends the rider gets off (`getOffCar`) and the rest turn back (`failCar`). The host's own seat is the game's. When
+the ATV is destroyed under kerfurs it invited, those that were not seated are turned back by their own `failCar`; the
+seated one is the game's, which dismounts it through its crash paths (`coop/interactables/atv_riders`). The kerfur that
+sits tells the host's table (`coop/interactables/atv_rider_watch`, a watch on its `sitOnCar` and `getOffCar`), and the
+stamp carries it from there.
+
+On a client, the stamped kerfur's mirror rides the ATV the stamp names, by the kerfur's own `sitOnCar`, which attaches
+it; the mirror's pose, state and movement stay the host's stream's, and when the stamp stops naming it the mirror is
+unseated without a car (`coop/creatures/npc_ride`). A client's own game never decides a mirror's seat: its ATV's sit
+would invite every kerfur of its world, mirrors included, and its dismount and crash paths would unseat or kill the
+riding one, so `tryToOccupyCar` and `getOffCar` on a mirror are cancelled at the script gate on a client. `[?]` Built to
+this design; no three-peer run has judged it yet.
+
+The unseat of a mirror (`UnseatWithoutCar`) is `getOffCar`'s own steps without its car read, teleport and kill tail: detach,
+collision on, `state` 0, `occupyCar` cleared, the AnimBP's seat pose off and the Mesh's absolute rotation restored. It sets
+no movement mode and calls no `move(false)`: the mirror stays where it is and the host's stream owns where it goes next.
+
+A stamp that reaches a client before its copy of the ATV is indexed is dropped whole, seat and rider with it (the vitals
+are held and applied at the index, the table is not). The host's next block for that key carries both again, at most one
+idle keepalive later, so a joiner that adopts its save's copy late sees the driver's body and the kerfur seated then.
+The same holds when a client's copy is replaced or pruned while the host's lives on: the client's seat state ends with the
+copy and returns with the next block. `[?]` Read from the code, not measured.
+
+| Step | The host | A client and an observer |
+|---|---|---|
+| A client sits | the table takes the seat; the host's kerfurs are invited; the first to arrive sits and the stamp names it | the client's body sits in the seat on every other peer; the stamped kerfur's mirror sits on the ATV |
+| The client moves the ATV | the kerfur rides with the ATV | the mirror rides with it, attached |
+| The client gets off | the rider gets off, the rest turn back, the stamp names no rider | the body stands again; the mirror is unseated where it stands |
+| The host sits | the game's own sit invites its kerfurs | the host's body sits in the seat; the stamped mirror sits on the ATV |
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -148,6 +212,8 @@ the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 | fuel and health | the host | a client's refuel or repair is a request the host judges and applies on its copy; a client driver only lowers them |
 | the modules | the host | a client's fit or take-off is a request the host judges and makes on its copy |
 | lights, brake, turbo, the horn | the syncer | the syncer's copy's bools and the horn key's level ride its block's `stateBits`; the host applies each change and re-sends |
+| the kerfur passenger | the host | its kerfur's own sit, called for a client's seat too on the seat's edge; the stamp names it and a client's mirror rides the ATV the stamp names |
+| the driver's body in the seat | the host's seat table | each peer attaches a seated peer's body to the ATV once |
 | tyre and spare presence | the host | consumed from the host's own copy only |
 | a runtime ATV's identity | the host | its game key, announced |
 
@@ -155,14 +221,14 @@ the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat and the syncer the host stamps, the host copy's trap, the syncer's brake, lights, turbo and horn, the condition block with its vitals ack, an adopt flag |
+| `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat, the syncer and the riding kerfur the host stamps, the host copy's trap, the syncer's brake, lights, turbo and horn, the condition block with its vitals ack, an adopt flag |
 | `AtvSeat`, `AtvTakeover` | a client to the host | a sit in or leave of the driver's seat; a grab of the ATV |
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
-| `AtvHostState` | the host to all | an ATV's fuel, health, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
-| `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off (each with a request id), a copy's ask for the host's state |
+| `AtvHostState` | the host to all | an ATV's fuel, health, battery, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
+| `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off, a battery fitted (its charge) or unscrewed (each with a request id), a copy's ask for the host's state |
 
 ## Late join
 
@@ -190,8 +256,9 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | At a hand-back to the host the old syncer's last blocks may still be in flight; the host drops and counts them, and the stamp moves every client to the host's copy | `[?]` `coop/interactables/atv_authority`, `coop/interactables/atv_sync` |
 | A client's tyre eject is refused by the arbiter, so the host keeps the wheel and the peers disagree until the eject intent lane exists | `[V]` `coop/interactables/atv_condition_sync`, by design |
 | The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
-| Not synced: the radio, the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` nothing under `coop/interactables/atv_*` carries them |
+| Not synced: the radio | `[V]` nothing under `coop/interactables/atv_*` carries them |
 | A client's refuel or repair is the rise its copy shows, which the host takes as is within the 100 ceiling and the reach; the gas can's own fuel after a pour is not carried. A refused take-off of a module the host does not have leaves its author's module in the world | `[V]` `coop/interactables/atv_host_sync` |
+| A seated driver's head does not follow its look, and its flashlight and steps are still; a riding kerfur and the driver's body share the ATV, the driver at the ATV's `playerHit` and the kerfur at its `sitarrow`. A client's mirror rides the ATV the stamp names, not the nearest one | `[?]` `coop/player/puppet_seat`, `coop/creatures/npc_ride` |
 
 ## Code map
 
@@ -205,4 +272,5 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | the seat | `coop/interactables/device_occupancy` |
 | fuel, health, modules | `coop/interactables/atv_host_sync` |
 | lights, brake, turbo, the horn (the block's bits taken and applied, the syncer's latch) | `coop/interactables/atv_stream_gates` (`TakeControls`) |
-| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `coop/dev/atv_gate_drill` (the row `atv_gate_drill=green\|<red>`: each act a player does at an ATV, every outcome decided by an event of `coop/interactables/atv_drill_events`); the smoke run with the ATV scenario enabled |
+| the riders: the driver's body, the kerfur passenger | `coop/interactables/atv_riders`, `coop/player/puppet_seat`, `coop/interactables/atv_rider_watch`, `coop/interactables/atv_seat_table`, the mirror's ride in `coop/creatures/npc_ride` |
+| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `coop/dev/atv_gate_drill` (the row `atv_gate_drill=green\|<red>`: each act a player does at an ATV, every outcome decided by an event of `coop/interactables/atv_drill_events`); `coop/dev/atv_riders_drill` (the row `atv_riders_drill=on\|drive_control\|<red>`: three peers and a rejoin, the driver's body and the host's kerfur shown on every peer, a red for each owner and each seam of the riders); the smoke run with the ATV scenario enabled |

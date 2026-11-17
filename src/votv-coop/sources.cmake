@@ -1,4 +1,5 @@
-# votv-coop/sources.cmake -- the DLL's translation units, one per line.
+# votv-coop/sources.cmake -- the DLL's translation units, one per line, and at the end the net
+# library's (VOTVCOOP_NET_SOURCES).
 #
 # Extracted from CMakeLists.txt when that file reached the 800-line cap: the build
 # CONFIGURATION (toolchain, third-party targets, the version stamp, the link and install
@@ -30,6 +31,7 @@ set(VOTVCOOP_SOURCES
     ${VOTVCOOP_SOURCES_UE_WRAP_2}
     src/coop/player/movement_ledger.cpp
     src/coop/player/remote_player.cpp
+    src/coop/player/puppet_seat.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp
     src/coop/player/skin_effects.cpp
@@ -128,6 +130,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/power_decay.cpp
     src/coop/world/power_grid.cpp
     src/coop/world/power_grid_install.cpp
+    src/coop/world/power_grid_rows.cpp
     src/coop/world/power_panel.cpp
     src/coop/world/power_puzzle.cpp
     src/coop/world/power_upgrade.cpp
@@ -135,6 +138,8 @@ set(VOTVCOOP_SOURCES
     src/coop/world/fuse_tower_rows.cpp
     src/coop/world/fuse_tower_kind.cpp
     src/coop/interactables/atv_sync.cpp
+    src/coop/interactables/atv_stamp.cpp
+    src/coop/interactables/atv_seat_table.cpp
     src/coop/interactables/atv_stream_gates.cpp
     src/coop/interactables/atv_authority.cpp
     src/coop/interactables/atv_body.cpp
@@ -181,6 +186,8 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/window_sync.cpp
     src/coop/interactables/window_stroke_sync.cpp
     src/coop/interactables/grime_sync.cpp
+    src/coop/session/boot_selftests.cpp
+    src/coop/session/session_hooks.cpp
     src/coop/session/player_handshake.cpp
     src/coop/session/player_handshake_prefs.cpp
     src/coop/session/player_handshake_nick.cpp
@@ -232,6 +239,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/hit_target_creature.cpp
     src/coop/creatures/npc_pose_drive.cpp
     src/coop/creatures/npc_pose_host.cpp
+    src/coop/creatures/npc_ride.cpp
     src/coop/creatures/npc_sync.cpp
     src/coop/creatures/npc_sync_install.cpp
     src/coop/creatures/npc_world_enum.cpp
@@ -259,14 +267,20 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
     src/coop/props/prop_food_state.cpp
+    src/coop/interactables/garbage_bin_sync.cpp
+    src/coop/props/container_break.cpp
+    src/coop/props/hacksaw_cut.cpp
     src/coop/world/vent_crawler_sync.cpp
     src/coop/props/prop_food_sync.cpp
     src/coop/props/food_tick_gate.cpp
+    src/coop/player/hand_record_sync.cpp
     src/ue_wrap/actors/food.cpp
     src/coop/world/plant_sync.cpp
     src/coop/interactables/desk_short_sync.cpp
     src/coop/interactables/cargo_lift.cpp
     src/coop/world/plant_edit_gate.cpp
+    src/coop/interactables/atv_riders.cpp
+    src/coop/interactables/atv_rider_watch.cpp
     src/ue_wrap/actors/growing_plant.cpp
     src/coop/world/world_sound_sync.cpp
     src/coop/props/prop_record_refresh.cpp
@@ -282,9 +296,14 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_spawn_authoring.cpp
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_save_data.cpp
+    src/coop/props/prop_birth_ledger.cpp
     src/coop/props/prop_nametag.cpp
     src/coop/props/disc_record_ceiling.cpp
     src/coop/props/prop_record_gates.cpp
+    src/coop/props/glowstick_stick_record.cpp
+    src/coop/props/glowstick_stick_judge.cpp
+    src/coop/props/glowstick_struck.cpp
+    src/coop/props/glowstick_sync.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp
@@ -322,22 +341,9 @@ set(VOTVCOOP_SOURCES
     src/coop/world/weather_event_births.cpp
     src/coop/world/weather_redsky.cpp
     src/coop/world/weather_badsun.cpp
-    src/coop/config/config.cpp
-    src/coop/text/utf8_codec.cpp
-    src/coop/text/case_fold.cpp
-    src/coop/text/repertoire.cpp
-    src/coop/text/name_filter.cpp
-    src/coop/config/config_census.cpp
-    src/coop/config/config_ini_read.cpp
-    src/coop/config/config_example.cpp
-    src/coop/config/config_ini_write.cpp
-    src/coop/config/config_registry.cpp
-    src/coop/config/config_runtime.cpp
-    src/coop/config/config_session.cpp
+    src/coop/config/config_player.cpp
     src/coop/config/config_selftest.cpp
     src/coop/config/config_review.cpp
-    src/coop/mod_data/legacy_note.cpp
-    src/coop/atomic_file/atomic_file.cpp
     src/coop/atomic_file/atomic_file_selftest.cpp
     src/coop/bug_report/report_redact.cpp
     src/coop/bug_report/report_form.cpp
@@ -360,52 +366,6 @@ set(VOTVCOOP_SOURCES
     src/coop/element/portable_identity.cpp
     src/ue_wrap/core/component_calls.cpp
     src/ue_wrap/core/kismet_timer.cpp
-    src/coop/net/peer_admission.cpp
-    src/coop/net/peer_admission_selftest.cpp
-    src/coop/net/end_reason.cpp
-    src/coop/net/connect_history.cpp
-    src/coop/net/connection_tuning.cpp
-    src/coop/net/lobby_password.cpp
-    src/coop/net/identity_crypto.cpp
-    src/coop/net/identity_key_file.cpp
-    src/coop/net/peer_identity.cpp
-    src/coop/net/session.cpp
-    src/coop/net/session_receive.cpp
-    src/coop/net/session_streams.cpp
-    src/coop/net/net_stats.cpp
-    src/coop/net/session_npc.cpp
-    src/coop/net/session_worldactor.cpp
-    src/coop/net/session_trashcarry.cpp
-    src/coop/net/session_propdrive.cpp
-    src/coop/net/session_start.cpp
-    src/coop/net/session_serial.cpp
-    src/coop/net/session_status.cpp
-    src/coop/net/session_teardown.cpp
-    src/coop/net/link_kind.cpp
-    src/coop/net/session_relay.cpp
-    src/coop/net/origin_context.cpp
-    src/coop/net/stream_refusals.cpp
-    src/coop/net/stream_slot_selftest.cpp
-    src/coop/net/apply_pause_selftest.cpp
-    src/coop/net/intent_queue_selftest.cpp
-    src/coop/net/latest_wins.cpp
-    src/coop/net/receive_budget.cpp
-    src/coop/net/refusal_tally.cpp
-    src/coop/net/send_admission.cpp
-    src/coop/net/send_backlog.cpp
-    src/coop/net/snapshot_send_scope.cpp
-    src/coop/net/send_rate_control.cpp
-    src/coop/net/fake_link_steps.cpp
-    src/coop/net/ice_config.cpp
-    src/coop/net/ice_policy.cpp
-    src/coop/net/signaling_client.cpp
-    src/coop/net/signaling_proof.cpp
-    src/coop/net/lobby_proof.cpp
-    src/coop/net/http_client.cpp
-    src/coop/net/lobby_client.cpp
-    src/coop/net/lobby_announcer.cpp
-    src/coop/net/endpoint_log.cpp
-    src/coop/net/master_slots.cpp
     src/coop/save/join_window_baseline.cpp
     src/coop/save/save_transfer.cpp
     src/coop/save/slot_file_read.cpp
@@ -425,6 +385,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/registry_reaper.cpp
     src/coop/session/pause_guard.cpp
     src/coop/session/connect_replay.cpp
+    src/coop/session/session_gate_hold.cpp
     src/coop/session/subsystems.cpp
     src/coop/session/desk_subsystems.cpp
     src/coop/session/world_ready_answer.cpp
@@ -519,7 +480,6 @@ set(VOTVCOOP_SOURCES
     src/coop/items/hotbar_icon_edge.cpp
     src/ue_wrap/actors/save_record.cpp
     src/coop/world/email_sync.cpp
-    src/coop/net/blob_chunks.cpp
     src/coop/interactables/signal_wire.cpp
     src/coop/interactables/meadow_db_sync.cpp
     src/coop/interactables/meadow_db_join.cpp
@@ -531,7 +491,6 @@ set(VOTVCOOP_SOURCES
     src/coop/voice/voice_chat.cpp
     src/coop/voice/voice_capture.cpp
     src/coop/voice/voice_playback.cpp
-    src/coop/net/session_voice.cpp
     src/ui/voice_icons.cpp
     src/ui/voice_panel.cpp
   src/coop/dev/floppy_selftest.cpp
@@ -595,6 +554,7 @@ set(VOTVCOOP_SOURCES
     resources/thanks.rc
     src/coop/player/roster.cpp
     src/coop/player/roster_ledger.cpp
+    src/coop/player/hunger_share.cpp
     src/coop/moderation/ban_list.cpp
     src/coop/moderation/ban_list_selftest.cpp
     src/coop/moderation/cremate.cpp
@@ -693,6 +653,8 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_runend.cpp
     src/harness/autotest/autotest_slip.cpp
     src/harness/autotest/autotest_flash_battery.cpp
+    src/harness/autotest/autotest_chipper_feed.cpp
+    src/harness/autotest/autotest_chipper_carry.cpp
     src/harness/autotest/peer_signal.cpp
     src/harness/autotest/meet.cpp
     src/harness/autotest/autotest_seat_ragdoll.cpp
@@ -714,6 +676,10 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_spill.cpp
     src/harness/autotest/autotest_drone_hover.cpp
     src/harness/autotest/autotest_desk_short.cpp
+    src/harness/autotest/autotest_hacksaw.cpp
+    src/harness/autotest/autotest_glowstick.cpp
+    src/harness/autotest/glowstick_drill_common.cpp
+    src/harness/autotest/glowstick_drill_client.cpp
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
@@ -727,6 +693,8 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_orb.cpp
     src/harness/autotest/autotest_sky_tp.cpp
     src/harness/autotest/autotest_roomba.cpp
+    src/harness/autotest/autotest_container_gaps.cpp
+    src/harness/autotest/autotest_container_gaps_bin.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
     src/harness/mod_environment.cpp
@@ -747,3 +715,81 @@ set(VOTVCOOP_SOURCES
 
 include(${CMAKE_CURRENT_LIST_DIR}/sources_dev.cmake)
 list(APPEND VOTVCOOP_SOURCES ${VOTVCOOP_DEV_SOURCES})
+
+# The net library's translation units (coop-net, CMakeLists.txt): the session and what its closure
+# stands on, which reaches no engine object -- the game-side calls of the session are NetHooks the
+# DLL sets (coop/net/net_hooks.h). The DLL links the library; a program with no game behind it (the
+# load peer, src/votv-coop/loadpeer) links the same one. Files keep their folders: the library is a
+# link unit, not a folder. A file joins when nothing it includes or calls reaches the engine.
+set(VOTVCOOP_NET_SOURCES
+    src/coop/net/peer_admission.cpp
+    src/coop/net/peer_admission_selftest.cpp
+    src/coop/net/end_reason.cpp
+    src/coop/net/connect_history.cpp
+    src/coop/net/connection_tuning.cpp
+    src/coop/net/lobby_password.cpp
+    src/coop/net/identity_crypto.cpp
+    src/coop/net/identity_key_file.cpp
+    src/coop/net/peer_identity.cpp
+    src/coop/net/session.cpp
+    src/coop/net/session_receive.cpp
+    src/coop/net/session_streams.cpp
+    src/coop/net/net_stats.cpp
+    src/coop/net/session_npc.cpp
+    src/coop/net/session_worldactor.cpp
+    src/coop/net/session_trashcarry.cpp
+    src/coop/net/session_propdrive.cpp
+    src/coop/net/session_start.cpp
+    src/coop/net/session_serial.cpp
+    src/coop/net/session_status.cpp
+    src/coop/net/session_teardown.cpp
+    src/coop/net/link_kind.cpp
+    src/coop/net/session_relay.cpp
+    src/coop/net/origin_context.cpp
+    src/coop/net/stream_refusals.cpp
+    src/coop/net/stream_slot_selftest.cpp
+    src/coop/net/apply_pause_selftest.cpp
+    src/coop/net/intent_queue_selftest.cpp
+    src/coop/net/latest_wins.cpp
+    src/coop/net/receive_budget.cpp
+    src/coop/net/refusal_tally.cpp
+    src/coop/net/send_admission.cpp
+    src/coop/net/send_backlog.cpp
+    src/coop/net/snapshot_send_scope.cpp
+    src/coop/net/send_rate_control.cpp
+    src/coop/net/fake_link_steps.cpp
+    src/coop/net/ice_config.cpp
+    src/coop/net/ice_policy.cpp
+    src/coop/net/player_limit.cpp
+    src/coop/net/signaling_client.cpp
+    src/coop/net/signaling_proof.cpp
+    src/coop/net/lobby_proof.cpp
+    src/coop/net/http_client.cpp
+    src/coop/net/lobby_client.cpp
+    src/coop/net/lobby_announcer.cpp
+    src/coop/net/endpoint_log.cpp
+    src/coop/net/master_slots.cpp
+    src/coop/net/blob_chunks.cpp
+    src/coop/net/session_voice.cpp
+    src/coop/net/join_wire.cpp
+    src/ue_wrap/core/log.cpp
+    src/ue_wrap/core/paths.cpp
+    src/ue_wrap/core/hot_path_guard.cpp
+    src/ue_wrap/core/game_thread_id.cpp
+    src/coop/atomic_file/atomic_file.cpp
+    src/coop/mod_data/legacy_note.cpp
+    src/coop/text/utf8_codec.cpp
+    src/coop/text/case_fold.cpp
+    src/coop/text/repertoire.cpp
+    src/coop/text/name_filter.cpp
+    src/coop/config/config.cpp
+    src/coop/config/config_census.cpp
+    src/coop/config/config_ini_read.cpp
+    src/coop/config/config_ini_write.cpp
+    src/coop/config/config_example.cpp
+    src/coop/config/config_registry.cpp
+    src/coop/config/config_runtime.cpp
+    src/coop/config/config_session.cpp
+    src/coop/dev/traffic_census.cpp
+    src/coop/dev/wire_census.cpp
+)

@@ -34,10 +34,12 @@
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -56,14 +58,11 @@ namespace R  = ue_wrap::reflection;
 using ue_wrap::FRotator;
 using ue_wrap::FVector;
 
-constexpr float kReachCm = 220.f;      // the walk ends this near the ATV's root: its body is wider than that, so the player stands beside it
-constexpr int   kWalkS = 300;
 constexpr int   kToolboxHoldS = 30;    // the toolbox fixes while the key is held, for the ATV's own fix time
 constexpr int   kSlotS = 15;           // the upgrades screen's module slot exists within this of the verb
 constexpr int   kAnswerS = 6;          // the game answers a fire press within this, or it did not
 constexpr float kCanFuel = 100.f;      // a gas can's hold record loads empty without it
 constexpr const wchar_t* kCanClass = L"prop_gascan_C";
-constexpr int   kBurnS = 30;           // a drive holds the throttle until the driver's own fuel has fallen, within this
 constexpr int   kToolboxFixes = 10;    // the toolbox class default; its hold record carries none
 constexpr const wchar_t* kToolboxClass = L"prop_toolbox_C";
 constexpr const wchar_t* kModuleRow = L"atvup_lights";
@@ -77,21 +76,6 @@ constexpr const wchar_t* kUpgradesClass = L"ui_objectUpgrades_C";
 DR::InputStub g_firePress{L"InpActEvt_fire_K2Node_InputActionEvent_58"};
 DR::InputStub g_fireRelease{L"InpActEvt_fire_K2Node_InputActionEvent_59"};
 
-void* Me() { return coop::players::Registry::Get().Local(); }
-
-// The ATV this peer holds under `key`. Game thread.
-void* Atv(const std::wstring& key) {
-    coop::atv_sync::TableView tv;
-    return coop::atv_sync::ReadTable(key, tv) ? tv.actor : nullptr;
-}
-
-bool ReadFloat(void* o, const wchar_t* name, float& v) {
-    const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
-    if (off < 0) return false;
-    std::memcpy(&v, static_cast<const uint8_t*>(o) + off, sizeof(v));
-    return true;
-}
-
 bool WriteFloat(void* o, const wchar_t* name, float v) {
     const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
     if (off < 0) return false;
@@ -104,15 +88,6 @@ bool WriteInt(void* o, const wchar_t* name, int32_t v) {
     if (off < 0) return false;
     std::memcpy(static_cast<uint8_t*>(o) + off, &v, sizeof(v));
     return true;
-}
-
-// A function with no parameters, or one key parameter left zero, called as the engine calls it. Game thread.
-bool CallByName(void* obj, const wchar_t* name) {
-    void* fn = obj ? R::FindDispatchFunctionCached(R::ClassOf(obj), name) : nullptr;
-    if (!fn) return false;
-    const int32_t fs = R::FunctionFrameSize(fn);
-    std::vector<uint8_t> frame(fs > 0 ? static_cast<size_t>(fs) : 0, 0u);
-    return R::CallFunction(obj, fn, frame.empty() ? nullptr : frame.data());
 }
 
 // ---- the hand ----
@@ -187,40 +162,10 @@ bool AimAtAtv(const std::wstring& key, std::string& why) {
     return false;
 }
 
-// The director walks the local player to within `reachCm` of `at`; `carry` keeps what the hand holds (the walk set
-// without ClearHand). `what` names the goal in the log and in `why`.
-bool WalkTo(const FVector& at, float reachCm, bool carry, const char* what, std::string& why) {
-    std::shared_ptr<DR::BackgroundWalk> walk;
-    OnGt([&] { walk = DR::StartBackgroundWalk(at, reachCm, kWalkS, carry); });
-    UE_LOGI("atv-drill: walking to the %s at (%.0f,%.0f,%.0f)", what, at.X, at.Y, at.Z);
-    PS::WaitFor("the director's walk", kWalkS + 60, [&] { return walk->state.load() != 0; }, false);
-    if (walk->state.load() != 1) {
-        DR::CancelBackgroundWalk(*walk);
-        why = std::string("the director's walk to the ") + what + " did not arrive";
-        return false;
-    }
-    return true;
-}
-
-
 // A pointer property of `o` by name, or null.
 void* ObjProp(void* o, const wchar_t* name) {
     const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;
     return off < 0 ? nullptr : *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(o) + off);
-}
-
-Vitals ReadVitals(const std::wstring& key) {
-    Vitals v;
-    OnGt([&] {
-        void* atv = Atv(key);
-        if (!atv) return;
-        ReadFloat(atv, L"fuel", v.fuel);
-        ReadFloat(atv, L"health", v.health);
-        const int32_t off = R::FindPropertyOffset(R::ClassOf(atv), L"modules");
-        if (off >= 0) v.modules = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(atv) + off + 8);
-        v.seated = coop::atv_sync::ActorSeatedBy(coop::players::Registry::Get().LocalPeerId()) == atv;
-    });
-    return v;
 }
 
 const char* RoleName(Role r) { return r == kHost ? "host" : r == kClient ? "client" : "observer"; }
@@ -254,20 +199,6 @@ bool CopyResolves(const std::wstring& key) {
         OnGt([&] { atv = Atv(key); });
         return atv != nullptr;
     });
-}
-
-bool WalkToAtv(const std::wstring& key, std::string& why) {
-    FVector at{};
-    bool read = false;
-    OnGt([&] {
-        void* atv = Atv(key);
-        read = atv && E::TryGetActorLocation(atv, at);
-    });
-    if (!read) {
-        why = "the ATV's place does not read";
-        return false;
-    }
-    return WalkTo(at, kReachCm, false, "ATV", why);
 }
 
 // ---- the acts on the held item ----
@@ -348,6 +279,121 @@ bool EmptyHand(const std::wstring& /*key*/, std::string& why) {
 }
 
 bool HandHoldsModule() { return HandIs(kModuleClass); }
+
+// ---- the battery ----
+
+constexpr const wchar_t* kBatteryClass = L"prop_atvcarbattery_C";
+
+float ReadBattery(const std::wstring& key) {
+    float v = std::nanf("");
+    OnGt([&] {
+        void* atv = Atv(key);
+        if (atv) ReadFloat(atv, L"battery", v);
+    });
+    return v;
+}
+
+bool SetLocalBattery(const std::wstring& key, float charge) {
+    bool ok = false;
+    OnGt([&] {
+        void* atv = Atv(key);
+        ok = atv && WriteFloat(atv, L"battery", charge) && CallByName(atv, L"updBattery");
+    });
+    return ok;
+}
+
+bool FitBattery(const std::wstring& key, float charge, std::string& why) {
+    if (!TakeHand(L"atvcarbattery", kBatteryClass)) {
+        why = "the battery did not reach the hand";
+        return false;
+    }
+    bool set = false;
+    OnGt([&] { set = WriteFloat(coop::hand_item::LocalHandActor(), L"battery", charge); });
+    if (!set) {
+        why = "the held battery's charge could not be set";
+        return false;
+    }
+    if (!AimAtAtv(key, why)) return false;
+    return HoldFire(AG::kUsedOn, kAnswerS, why);
+}
+
+namespace {
+
+// The live battery props of this world other than the hand's and the hand mirrors'. Game thread.
+std::vector<void*> ScanBatteries() {
+    std::vector<void*> out;
+    for (void* o : R::FindObjectsByClass(kBatteryClass)) {
+        if (!o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__") || coop::hand_item::IsHandAxisActor(o)) continue;
+        out.push_back(o);
+    }
+    return out;
+}
+
+// How many live battery props `before` did not hold, and the first one's charge (-1 when none). A prop is held by `before`
+// when the weak reference still names it. Game thread.
+int CountNew(const BatterySet& before, float* firstCharge) {
+    int n = 0;
+    if (firstCharge) *firstCharge = -1.f;
+    for (void* o : ScanBatteries()) {
+        if (std::any_of(before.begin(), before.end(), [&](const ue_wrap::CachedObjRef& b) { return b.Is(o); })) continue;
+        if (!n && firstCharge) ReadFloat(o, L"battery", *firstCharge);
+        ++n;
+    }
+    return n;
+}
+
+}  // namespace
+
+BatterySet BatteryProps() {
+    BatterySet out;
+    OnGt([&] {
+        for (void* o : ScanBatteries()) {
+            out.emplace_back();
+            out.back().Set(o);
+        }
+    });
+    return out;
+}
+
+int NewBatteryProps(const BatterySet& before, float* firstCharge) {
+    int n = 0;
+    OnGt([&] { n = CountNew(before, firstCharge); });
+    return n;
+}
+
+bool UnscrewBattery(const std::wstring& key, std::string& why) {
+    bool ran = false;
+    OnGt([&] {
+        void* atv = Atv(key);
+        void* fn = atv ? R::FindDispatchFunctionCached(R::ClassOf(atv), L"unscrewPanel") : nullptr;
+        const int32_t off = fn ? R::FindParamOffset(fn, L"spawnAt") : -1;
+        void* root = atv ? ue_wrap::engine::RootComponentOf(atv) : nullptr;
+        if (!fn || off < 0 || !root) return;
+        // The panel's branch is the battery's when the player looks at no tire and no tire socket.
+        WriteInt(atv, L"lookAtTire", -1);
+        WriteInt(atv, L"lookAtTireSocket", -1);
+        std::vector<uint8_t> frame(static_cast<size_t>(R::FunctionFrameSize(fn)), 0u);
+        std::memcpy(frame.data() + off, &root, sizeof(root));
+        ran = R::CallFunction(atv, fn, frame.data());
+    });
+    if (!ran) why = "the ATV's unscrewPanel did not run";
+    return ran;
+}
+
+// The host's own copy's battery set and published through the host's one publish point, as any change of the host copy.
+bool SeedHostBattery(const std::wstring& key, float charge, std::string& why) {
+    bool ok = false;
+    OnGt([&] {
+        namespace H = coop::atv_host_sync;
+        void* atv = Atv(key);
+        H::Vitals before;
+        if (!atv || !H::ReadVitals(atv, before)) return;
+        ok = WriteFloat(atv, L"battery", charge) && CallByName(atv, L"updBattery");
+        H::PublishIfChanged(key, atv, before);
+    });
+    if (!ok) why = "the host's ATV battery could not be set";
+    return ok;
+}
 
 bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why) {
     bool ok = false;
@@ -554,42 +600,12 @@ bool Sit(const std::wstring& key, std::string& why) {
     return true;
 }
 
-// One of the ATV's own input-action events, called as the engine calls it on the possessed ATV; the player must be seated.
-bool PressAtv(const std::wstring& key, const wchar_t* fn, std::string& why) {
-    bool ok = false, seated = false;
-    OnGt([&] {
-        void* atv = Atv(key);
-        seated = atv && coop::atv_sync::ActorSeatedBy(coop::players::Registry::Get().LocalPeerId()) == atv;
-        ok = seated && CallByName(atv, fn);
-    });
-    if (!ok) why = seated ? "the ATV's key event did not dispatch" : "the player is not in the seat";
-    return ok;
-}
-
-
-bool Leave(const std::wstring& key, std::string& why) {
-    if (!PressAtv(key, L"InpActEvt_dismount_K2Node_InputActionEvent_0", why)) return false;
-    if (!PS::WaitFor("the player leaves the seat", 10, [&] { return !ReadVitals(key).seated; }, false)) {
-        why = "the dismount key left the player in the seat";
-        return false;
-    }
-    return true;
-}
-
 bool Lights(const std::wstring& key, std::string& why) {
     return PressAtv(key, L"InpActEvt_atv_lights_K2Node_InputActionEvent_3", why);
 }
 
-bool Brake(const std::wstring& key, std::string& why) {
-    return PressAtv(key, L"InpActEvt_atv_brake_K2Node_InputActionEvent_22", why);
-}
-
 bool TurboOn(const std::wstring& key, std::string& why) {
     return PressAtv(key, L"InpActEvt_atv_turbo_K2Node_InputActionEvent_12", why);
-}
-
-bool TurboOff(const std::wstring& key, std::string& why) {
-    return PressAtv(key, L"InpActEvt_atv_turbo_K2Node_InputActionEvent_13", why);
 }
 
 bool HornPress(const std::wstring& key, std::string& why) {
@@ -601,38 +617,5 @@ bool HornRelease(const std::wstring& key, std::string& why) {
 }
 
 bool HornTap(const std::wstring& key, std::string& why) { return HornPress(key, why) && HornRelease(key, why); }
-
-// The seated player drives: the brake off (a parked ATV sits on its handbrake), then the throttle key down, held until the
-// driver's own fuel has fallen or the bound runs out. The throttle stays down for the step; DriveOff lets it go.
-bool DriveOn(const std::wstring& key, std::string& why) {
-    bool braked = false, turbo = false;
-    float fuel0 = -1.f;
-    OnGt([&] {
-        void* atv = Atv(key);
-        braked = atv && ue_wrap::atv::GetBrake(atv);
-        turbo = atv && ue_wrap::atv::GetTurbo(atv);
-        if (atv) ReadFloat(atv, L"fuel", fuel0);
-    });
-    if (braked && !Brake(key, why)) return false;
-    // Step 5 leaves the turbo key down; at turbo speed the ATV struck something within 2 s and threw its driver out (f3-green).
-    if (turbo && !TurboOff(key, why)) return false;
-    if (!PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_4", why)) return false;
-    // Decided on whichever comes first: the driver's own fuel falls, or the driver is out of the seat (nothing burns then).
-    bool thrown = false;
-    const bool burned = PS::WaitFor("the driver's own fuel falls", kBurnS, [&] {
-        const Vitals v = ReadVitals(key);
-        thrown = !v.seated;
-        return thrown || v.fuel < fuel0 - 0.5f;
-    }, false) && !thrown;
-    if (!burned) why = thrown ? "the ATV threw its driver out of the seat before any fuel burned"
-                              : "the throttle was held and this copy's own fuel did not fall";
-    return burned;
-}
-
-void DriveOff(const std::wstring& key) {
-    std::string unused;
-    PressAtv(key, L"InpActEvt_atv_forward_K2Node_InputActionEvent_5", unused);
-}
-
 
 }  // namespace coop::dev::atv_gate_drill::detail

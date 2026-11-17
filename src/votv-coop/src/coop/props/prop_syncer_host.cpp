@@ -484,9 +484,9 @@ void Admit(coop::net::Session& s) {
     g_session = &s;
     const uint64_t nowMs = coop::active_drive::NowMs();
     for (auto& v : g_take) v.clear();
-    const uint32_t got = s.TakeRemotePropDriveBatches(g_take);   // every origin's merge, under one lock
+    const coop::players::SlotMask got = s.TakeRemotePropDriveBatches(g_take);   // every origin's merge, under one lock
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        if (got & (1u << slot))
+        if (got.Has(slot))
             for (const coop::net::PropDriveRow& e : g_take[slot]) AdmitRow(e, static_cast<uint8_t>(slot), nowMs);
     if (nowMs >= g_nextPassMs) {
         g_nextPassMs = nowMs + kPassMs;

@@ -8,6 +8,7 @@
 #include "coop/interactables/atv_authority.h"
 #include "coop/interactables/atv_sync_internal.h"
 #include "coop/interactables/atv_index_internal.h"
+#include "coop/interactables/atv_seat_table.h"
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -147,8 +148,8 @@ void JudgeHostBody(void* localPlayer) {
     for (auto& kv : g_atvs) {                                // (3) the host's yield on its own table
         AtvEntry& e = kv.second;
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
-        if (e.localSeated && e.occupantSlot != 0) YieldSeat(e, kv.first, "the seat is another's");
-        if (e.localCarrying && e.syncerSlot != 0) YieldCarry(e, localPlayer, kv.first, "another syncs it");
+        if (e.localSeated && e.seatOccupant != 0) YieldSeat(e, kv.first, "the seat is another's");
+        if (e.localCarrying && e.seatSyncer != 0) YieldCarry(e, localPlayer, kv.first, "another syncs it");
     }
 }
 
@@ -166,9 +167,9 @@ void TickClientBody(coop::net::Session& s, AtvEntry& e, const std::wstring& key,
         if (e.takeoverDue) SendTakeover(s, e, key);
     }
     if (e.pendingSeq != 0) return;
-    if (e.sentSeated && e.localSeated && e.occupantSlot != localSlot)
+    if (e.sentSeated && e.localSeated && e.seatOccupant != localSlot)
         YieldSeat(e, key, "the host's stamp names another occupant");
-    else if (e.localCarrying && !e.takeoverDue && e.syncerSlot != localSlot)
+    else if (e.localCarrying && !e.takeoverDue && e.seatSyncer != localSlot)
         YieldCarry(e, localPlayer, key, "the host's stamp names another syncer");
 }
 
@@ -191,9 +192,7 @@ void OnAnswer(const coop::net::AtvAnswerPayload& a) {
     // successor reset finishes the rest.
     if (!R::IsLiveByIndex(e.actor, e.idx)) return;
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
-    e.occupantSlot = a.occupantSlot;
-    if (e.syncerSlot != a.syncerSlot) coop::atv_sync::ForgetHorn(e);   // the horn's last level was the previous syncer's
-    e.syncerSlot   = a.syncerSlot;
+    coop::atv_seat_table::SetSeat(e, a.occupantSlot, a.syncerSlot, "answer", /*forgetHorn*/false);
     UE_LOGI("atv: host %s '%ls' seq %u (reason %u) -- seat %u, syncer %u", a.admitted ? "granted" : "refused",
             key.c_str(), static_cast<unsigned>(a.seq), static_cast<unsigned>(a.reason),
             static_cast<unsigned>(a.occupantSlot), static_cast<unsigned>(a.syncerSlot));

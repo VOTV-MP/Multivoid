@@ -27,6 +27,7 @@
 #include "coop/save/join_window_baseline.h"
 #include "coop/save/save_transfer.h"
 #include "coop/dev/spawn_menu_unlock.h"
+#include "coop/dev/pile_orphan_drill.h"  // the orphan drill's signal clock, started at boot
 #include "coop/dev/spawn_npc.h"
 #include "coop/dev/world_first_check.h"
 #include "coop/session/teleport_client.h"
@@ -36,6 +37,7 @@
 #include "coop/mod_data/legacy_note.h"      // the old-place notices, the empty-folder warning
 #include "coop/net/master_slots.h"         // the master list and the chosen slot
 #include "coop/net/peer_identity.h"        // the durable Ed25519 identity
+#include "coop/net/player_limit.h"         // the host's player-limit row, mirrored for the net thread
 #include "coop/player/local_body.h"         // SetInitialSkin
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
@@ -510,6 +512,10 @@ void Start() {
     // menu; host and local only.
     coop::dev::spawn_menu_unlock::Init();
 
+    // The pile orphan drill's peer-signal clock, at boot: the host writes its staging signal when the joiner's
+    // world is cut, before the joiner has a pawn, and the helper takes only a signal written after its Begin.
+    coop::dev::pile_orphan_drill::Init();
+
     // The other dev features (snow, restore vitals, teleport clients, the position and camera
     // overlay, spawn NPC) are driven from the F1 menu; their SetSession calls ran above.
 
@@ -546,8 +552,8 @@ void Start() {
     // nameplate and nick-colour seeds above have read their rows, the two flag modules load theirs
     // on first use, the scale and font modules load theirs in the overlay's bring-up, which retries
     // on a later frame if it fails (LoadUserPrefOnce, ReadRoleFamiliesOnce), the voice module reads
-    // its rows when a session's Install opens the devices, and every later set reaches all seven
-    // through these subscriptions. The host's server-scope sender follows the replicated rows the
+    // its rows when a session's Install opens the devices, and every later set reaches all of them
+    // through these subscriptions (the player limit reads its row here, before any lobby announces). The host's server-scope sender follows the replicated rows the
     // same way, and its session handle and stop listener are bound first, because the first
     // session start on the TimelineThread reads them.
     coop::nameplate::SubscribeRow();
@@ -557,6 +563,7 @@ void Start() {
     ui::scale::SubscribeRow();
     ui::fonts::SubscribeRows();
     coop::voice_chat::SubscribeRows();
+    coop::net::player_limit::Init();
     coop::server_settings_sync::BindSession(session_runtime::Session());
     coop::server_settings_sync::SubscribeRows();
     // The interface language, chosen before the overlay's first frame and fixed for the process: the

@@ -23,9 +23,10 @@ namespace R = ue_wrap::reflection;
 // unresolved placeholder holds a second slot). What fills a table is its KEYED slots, retired
 // ones included, so the cap counts those: at most 3/8 of a table, the load at which a miss
 // probes under two slots. A name watch, class-scoped or not, holds two keyed slots, so the name table
-// takes 384 name watches: each peer of a two-peer smoke held 163-166, eighteen of them one lane's
-// device entries, and every polled state moved onto a watch adds its own.
-constexpr int kSlotBits = 11;
+// takes 768 name watches. A two-peer smoke on 0.9.0n held 163-166 per peer (the measurement the
+// 11-bit table was sized on) and the 0.10.0 port's held 374-378; 12 bits leave room for both and
+// for the watches each polled state moved onto a watch adds.
+constexpr int kSlotBits = 12;
 constexpr int kSlots = 1 << kSlotBits;
 constexpr int kMaxKeyed = kSlots * 3 / 8;
 

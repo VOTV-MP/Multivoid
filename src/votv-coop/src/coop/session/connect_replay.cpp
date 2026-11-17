@@ -55,6 +55,7 @@
 #include "coop/world/power_panel.h"
 #include "coop/world/sky_sync.h"
 #include "coop/interactables/window_sync.h"
+#include "coop/interactables/garbage_bin_sync.h"
 #include "coop/props/prop_food_sync.h"  // every world food's condition again
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
@@ -70,6 +71,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/prop_nametag.h"  // the tags put on this session, again
+#include "coop/player/hand_record_sync.h"  // every held item's own record
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
@@ -141,6 +143,7 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_input_sync::SeedPingAttributionFromMachine();  // a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
+    coop::garbage_bin_sync::QueueConnectBroadcastForSlot(slot);  // every garbage container again
     coop::props::prop_food_sync::QueueConnectBroadcastForSlot(slot);  // every world food's condition again
     coop::plant_sync::QueueConnectBroadcastForSlot(slot);  // every plant again
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
@@ -185,6 +188,8 @@ void ConnectReplayForSlot(int slot) {
     coop::event_active_sync::SendJoinSnapshotForSlot(slot);
     // Each creature's count, after its NPC spawn (the queue above, same lane): the joiner applies a count at the bind.
     coop::creature_event_relay::SendJoinSnapshotForSlot(slot);
+    // Every held item's own record, for its hand mirrors.
+    coop::hand_record_sync::SendJoinSnapshotForSlot(slot);
     // The rolled path of each ambient UFO still flying, after its world-actor spawn; the Midas run while it flies.
     coop::ufo_sync::SendJoinSnapshotForSlot(slot);
     // Every robot cleaner's switch; one that runs is followed through the drive stream.

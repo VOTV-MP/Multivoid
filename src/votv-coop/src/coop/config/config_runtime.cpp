@@ -223,6 +223,37 @@ SetResult ResetValueAt(const std::wstring& iniPath, const Row* row) {
 
 }  // namespace internal
 
+namespace {
+// SetForSession's body: SetValueAt's checks and its lock, the session layer's put, no runtime layer, no ini.
+SetResult SetForSessionAt(const Row* row, const char* value) {
+    if (t_notifying) {
+        UE_LOGW("config: SESSION-SET %s REFUSED -- called from inside a change notification", row->key);
+        return SetResult::Refused;
+    }
+    const std::string v = internal::NormalizeValue(value, row->kind != config_registry::Kind::String);
+    if (!config_registry::IsServerScope(row) || !ValueValidForKey(row->key, v, nullptr)) {
+        UE_LOGW("config: SESSION-SET %s REFUSED -- not a server setting, or not a valid value", row->key);
+        return SetResult::Refused;
+    }
+    {
+        std::lock_guard<std::mutex> setLock(g_setMutex);
+        if (internal::SessionRole() != 1) {
+            UE_LOGW("config: SESSION-SET %s REFUSED -- no host session is running", row->key);
+            return SetResult::Refused;
+        }
+        internal::SessionLayerPutNoNotify(row, v);
+    }
+    UE_LOGI("config: SESSION-SET %s=%s (this session only; not saved)", row->key,
+            config_registry::ValueForLog(row, v).c_str());
+    internal::PostNotify(row);
+    return SetResult::HeldNotSaved;
+}
+}  // namespace
+
+SetResult SetForSession(const config_registry::FlagRow& row, const char* value) { return SetForSessionAt(row.row, value); }
+SetResult SetForSession(const config_registry::IntRow& row, const char* value) { return SetForSessionAt(row.row, value); }
+SetResult SetForSession(const config_registry::EnumRow& row, const char* value) { return SetForSessionAt(row.row, value); }
+
 SetResult SetValue(const config_registry::FlagRow& row, const char* value) {
     return internal::SetValueAt(internal::LiveIniPath(), row.row, value);
 }

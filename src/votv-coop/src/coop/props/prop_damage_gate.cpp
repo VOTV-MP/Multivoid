@@ -6,6 +6,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/container_break.h"
 #include "coop/props/prop_syncer.h"
 #include "coop/props/prop_throw.h"
 
@@ -171,6 +172,9 @@ sg::Verdict Judge(Row row, const sg::Call& c) {
         // A non-lethal call runs; a lethal one waits for the grant, since a break before it would delete the host's
         // prop even when the host refuses the election.
         if (AuthoredByPendingSeqOnly(owner) && Lethal(row, c)) return HoldLethal(row, c, owner);
+        // A container breaks on the host, where its spill is the one that counts (coop/props/container_break).
+        if (Lethal(row, c) && coop::props::container_break::RequestFromClient(owner, row == kFire))
+            return sg::Verdict::Cancel;
         return sg::Verdict::Run;
     }
 

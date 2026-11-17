@@ -21,6 +21,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace coop::pile_spawn_bind {
 
@@ -33,8 +34,8 @@ void Reset();
 // Bind the client's own save-loaded native for the trash expression `payload`, a pile or a clump
 // at rest (the index holds both forms, and a row binds a native of its own form only): match it at
 // `matchPos` (bit-exact within 1 cm, same chipType, ambiguous cluster skipped so the wrong one is
-// never bound), consume it from the index, claim it for the membership sweep, retire its
-// client-local identity, converge its transform when it genuinely diverged, and register it as
+// never bound), consume it from the index, claim it for the membership sweep,
+// converge its transform when it genuinely diverged, and register it as
 // the mirror at `payload.elementId`, marked save-native.
 // Returns the bound native, or nullptr when nothing matched. Lazily builds the index on the first
 // call.
@@ -58,7 +59,7 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
 void OnDisconnect();
 
 // Adopt `native` as the mirror of `eid`: claim it for the membership sweep (a no-op outside a
-// bracket), retire its client-local identity, register it as the mirror and mark it save-native,
+// bracket), register it as the mirror and mark it save-native,
 // which is the flag the grab route, the morph hand-off, the sweep exemption and the retire all
 // read. The TRANSFORM is the caller's: the spawn path converges to the host pose, and the
 // order owner leaves the host's own position correction to snap a late bind. `why` names the
@@ -72,5 +73,11 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
 // if the index was never built this bracket. Reads this module's own build-time count + dark-probe
 // gate -- it reports on THIS module's bind outcome, so it lives here. Game-thread only.
 void LogCensus();
+
+// Every live native trash actor (a chip pile or a garbage clump, CDOs out) from a FRESH walk of the
+// object array, appended to `out` after it is cleared. The one walk the orphan census and the join
+// sweep's universe share; it reads no bracket state, so it answers whether or not the bind index was
+// built. COLD: once per join. Game thread only.
+void CollectLiveTrashNatives(std::vector<void*>& out);
 
 }  // namespace coop::pile_spawn_bind

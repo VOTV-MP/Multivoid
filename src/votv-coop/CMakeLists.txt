@@ -232,6 +232,22 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # The translation units live in their own list (see sources.cmake for why).
 include(${CMAKE_CURRENT_SOURCE_DIR}/sources.cmake)
 
+# coop-net: the session and what its closure stands on (VOTVCOOP_NET_SOURCES), a static library the
+# DLL links. It reaches no engine object, so the load peer's probe links it alone. A plain build
+# builds every target: the DLL, the library and the probe.
+add_library(coop-net STATIC ${VOTVCOOP_NET_SOURCES})
+target_include_directories(coop-net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/generated third_party/GameNetworkingSockets/include)
+target_compile_definitions(coop-net PRIVATE
+    "VOTVCOOP_FINGERPRINT_TABLE=\"ue_wrap/facts/fingerprints_${VOTVCOOP_GAME_TARGET}.inc\"")
+target_link_libraries(coop-net PUBLIC nlohmann_json::nlohmann_json GameNetworkingSockets::static
+    ws2_32 bcrypt crypt32 winhttp)
+
+# multivoid-loadpeer: a client that holds a seat on a host with no game behind it, linked against coop-net
+# and nothing else (dev only, never shipped; its source is loadpeer/).
+add_executable(multivoid-loadpeer loadpeer/main.cpp)
+target_link_libraries(multivoid-loadpeer PRIVATE coop-net)
+
 add_library(votv-coop SHARED ${VOTVCOOP_SOURCES})
 
 target_include_directories(votv-coop PRIVATE include ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -299,6 +315,7 @@ endif()
 # minhook: our inline-hook substrate (game-thread dispatcher).
 # ws2_32: Winsock for the UDP coop transport (src/coop/net).
 target_link_libraries(votv-coop PRIVATE
+    coop-net   # the session, its config core and what they stand on (sources.cmake: VOTVCOOP_NET_SOURCES)
     version
     minhook
     imgui
@@ -361,11 +378,22 @@ if (MSVC)
     # parallelism (`cmake --build --parallel`) runs PROJECTS side by side, and this target is one
     # project of ~800 sources, which without /MP compile one after another on a single core.
     target_compile_options(votv-coop PRIVATE /MP)
+    # The net library and the load peer: the DLL's runtime and flags (the library's sources are the DLL's
+    # own files), so a unit compiles the same in either.
+    set_property(TARGET coop-net multivoid-loadpeer PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(coop-net PRIVATE /W4 /permissive- /EHa /utf-8 /we4129 /MP)
+    target_compile_options(multivoid-loadpeer PRIVATE /W4 /permissive- /EHa /utf-8)
+    target_link_options(multivoid-loadpeer PRIVATE /OPT:REF)
     # /MAP emits main.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
     # name by grepping the linker map -- no IDA needed. The .map lands in
     # build/ (gitignored); link-time cost is trivial.
     target_link_options(votv-coop PRIVATE /MAP)
+    # Every object of the net library goes into the DLL, referenced or not, as when its files were
+    # the DLL's own: an archive member nothing names would otherwise be left out, and with it any
+    # static initialiser it carries.
+    target_link_options(votv-coop PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:coop-net>")
 
     # MinHook must match the mod's static CRT or the link fails.
     set_property(TARGET minhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

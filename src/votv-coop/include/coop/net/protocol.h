@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "coop/player/slot_count.h"  // kMaxPeers: the length of the per-slot acknowledgement arrays
+
 namespace coop::net {
 
 // Magic guard: rejects a stray datagram that hits our port. The spelling is "VMTP".
@@ -31,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 294;
+inline constexpr uint16_t kProtocolVersion = 300;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -697,6 +699,12 @@ enum class ReliableKind : uint16_t {
     // stood at its cut, and its connect replay sends it, alone, an op 2 for each prop whose tag this session published,
     // ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by key.
     PropNametag = 261,
+    // A player's held item's own save record (coop/player/hand_record_sync), chunked (BlobChunkPayload) as
+    // [u8 slot][the record]: its owner's, when the item or its record changes, a client's to the host, which decodes it,
+    // checks the sender's applied hand holds that class, stores its own copy and sends that on to every peer but the
+    // sender, the host's own to everyone, and every hand's to a joiner at its ready edge. Each peer writes it into its
+    // mirror of that hand through the item's own loadData.
+    HandRecord = 268,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game
@@ -1455,6 +1463,20 @@ enum class ReliableKind : uint16_t {
     // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
     // RoombaPayload.
     RoombaIntent = 246,
+    // HOST->ALL: a garbage container's contents (the keys of the props its itemsInside lists) and whether it can be held
+    // and collected, when any changes, and every container again to a joiner at its ready edge. A client's copy writes the
+    // flags and the list and glues the props as the container's own glue does, once every listed prop is here. A chunked
+    // blob on the Default lane (a body past the blob ceiling is logged on the host and not sent). Host-authored: refused
+    // at a client from any slot but 0 and dropped on the host; never relayed; not pre-world. See kGarbageBinVersion.
+    GarbageBinState = 262,
+    // CLIENT->HOST: a container this client authors (it holds it, threw it or syncs it) took a lethal impact or fire
+    // here, which the client cancelled: op 1, the request; the host breaks its own copy by the same lethal call, so
+    // the spill is the host's. Or the client's hacksaw is about to complete a cut (sawn): op 1 asks the host to
+    // GRANT it. HOST->the requester alone: op 2, the host's refusal with its reason; op 3, a granted cut: the host records
+    // it and breaks its copy when that client's destroy of the prop arrives, and the client's saw runs the rest. CLIENT->HOST,
+    // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
+    // is an act. ContainerBreakPayload.
+    ContainerBreakRequest = 263,
 };
 
 #pragma pack(push, 1)
@@ -2331,6 +2353,37 @@ struct DeskShortPayload {
     uint8_t _pad[3];   // 3 -- zero
 };
 static_assert(sizeof(DeskShortPayload) == 4, "DeskShortPayload must be 4 bytes");
+
+// A garbage container's state (GarbageBinState), a chunked blob (blob_chunks) on the Default lane, little-endian:
+// [u8 version][u8 key length][key][u8 flags][u16 count][count x ([u8 length][key])]. The container's key and each listed
+// prop's key are ASCII, 1 to 31 chars; the list is every keyed prop its itemsInside holds, in its order. A receiver reads
+// every length from the body and refuses what does not add up to it exactly, a version it does not know, a flag outside
+// the two, a listed key equal to the container's own, and a key listed twice.
+inline constexpr uint8_t kGarbageBinVersion = 1;
+inline constexpr uint8_t kGarbageBinCanHold = 0x01, kGarbageBinCanCollect = 0x02;
+
+// A client's break of a container it authors, or its saw's cut of a prop (ContainerBreakRequest, op 1), the host's refusal
+// of it (op 2) or its grant of a cut (op 3), and the client's withdrawal of a grant its cut did not use (op 4).
+inline constexpr uint8_t kContainerBreakAsk      = 1;   // CLIENT->HOST: break this container, or grant this cut
+inline constexpr uint8_t kContainerBreakRefused  = 2;   // HOST->the requester: not broken or not granted, with a reason
+inline constexpr uint8_t kContainerBreakGranted  = 3;   // HOST->the requester: the cut may run (sawn 1, reason 0)
+inline constexpr uint8_t kContainerBreakWithdrawn = 4;   // CLIENT->HOST: the granted cut ended without its destroy (sawn 1, fire 0, reason 0)
+// The reason of an op 2. Zero on an op 1, an op 3 and an op 4.
+inline constexpr uint8_t kContainerBreakNotFound = 1;      // the host holds no live prop of that key (gone, or already granted)
+inline constexpr uint8_t kContainerBreakNotAuthor   = 2;   // the sender neither syncs nor holds it
+inline constexpr uint8_t kContainerBreakNoSaw       = 3;   // a cut, with no hacksaw in the sender's applied hand
+inline constexpr uint8_t kContainerBreakOutOfReach  = 4;   // the container is not within the sender's reach
+inline constexpr uint8_t kContainerBreakTooFast     = 5;   // the sender is past its budget, or its queue of requests is full
+inline constexpr uint8_t kContainerBreakNotReady    = 6;   // the sender's world was not ready
+inline constexpr uint8_t kContainerBreakNotTaken    = 7;   // the host's call did not run
+struct ContainerBreakPayload {
+    WireKey key;       // 32 -- the container's Key, or for a cut the sawn prop's
+    uint8_t op;        // 1 -- kContainerBreakAsk, kContainerBreakRefused, kContainerBreakGranted or kContainerBreakWithdrawn
+    uint8_t fire;      // 1 -- a fireDamage (1) or an impactDamage (0); the request's, echoed by a refusal
+    uint8_t sawn;      // 1 -- 1: the hacksaw's cut, which the host grants and the client's own saw then runs; always 1 on an op 3 and an op 4
+    uint8_t reason;    // 1 -- kContainerBreak* on an op 2; 0 on an op 1, an op 3 and an op 4
+};
+static_assert(sizeof(ContainerBreakPayload) == 36, "ContainerBreakPayload must be 36 bytes");
 
 // One message of the drill filler (DevLoadFiller): its place in the run and the run's length; the rest is fill.
 struct DevLoadFillerPayload {
@@ -3216,10 +3269,11 @@ struct PowerPanelPayload {
     uint8_t  leverSlot;  // 1  -- whose lever made leverBits (0xFF when none)
     uint8_t  _pad;       // 1
     uint16_t seq;        // 2
-    uint16_t ack[4];     // 8  -- by slot (kMaxPeers)
+    uint16_t ack[coop::players::kMaxPeers];  // 32 -- by slot
     uint32_t terminal;   // 4  -- op 0, a page press: the portable PC's element id, 0xFFFFFFFF for the laptop
 };
-static_assert(sizeof(PowerPanelPayload) == 20, "PowerPanelPayload must be 20 bytes");
+static_assert(sizeof(PowerPanelPayload) == 44, "PowerPanelPayload must be 44 bytes");
+static_assert(sizeof(PowerPanelPayload) <= 256 - 20 - 8, "PowerPanelPayload must fit one reliable datagram");
 // A page press through a portable PC that has no element id yet: the host cannot say where it stands.
 inline constexpr uint32_t kPowerPanelTerminalUnnamed = 0xFFFFFFFEu;
 
@@ -3264,7 +3318,7 @@ struct PowerGridPayload {
     uint8_t      index;    // 1  -- ops 1..4: the generator's place
     uint8_t      field;    // 1  -- op 4
     uint16_t     seq;      // 2  -- ops 1, 2, 4
-    uint16_t     ack[4];   // 8  -- op 0, by slot (kMaxPeers)
+    uint16_t     ack[coop::players::kMaxPeers];  // 32 -- op 0, by slot
     float        damage;   // 4  -- op 3
     uint8_t      value;    // 1  -- op 4
     uint8_t      _pad;     // 1
@@ -3272,7 +3326,7 @@ struct PowerGridPayload {
 };
 static_assert(sizeof(PowerGridPuzzle) == 30, "PowerGridPuzzle must be 30 bytes");
 static_assert(sizeof(PowerGridRow) == 38, "PowerGridRow must be 38 bytes");
-static_assert(sizeof(PowerGridPayload) == 172, "PowerGridPayload must be 172 bytes");
+static_assert(sizeof(PowerGridPayload) == 196, "PowerGridPayload must be 196 bytes");
 static_assert(sizeof(PowerGridPayload) <= 256 - 20 - 8, "PowerGridPayload must fit one reliable datagram");
 
 // The fuse towers (FuseTowerState) by (kind, id); a row past `count` is unused. Op 0, the host's rows, with `ack`
@@ -3320,13 +3374,13 @@ struct FuseTowerPayload {
     uint8_t       kind;        // 1  -- ops 1..6: the tower's kind
     int32_t       tower;       // 4  -- ops 1..6: the tower's id
     uint16_t      seq;         // 2  -- ops 1..6
-    uint16_t      ack[4];      // 8  -- op 0, by slot (kMaxPeers)
-    uint16_t      refused[4];  // 8  -- op 0, by slot
+    uint16_t      ack[coop::players::kMaxPeers];      // 32 -- op 0, by slot
+    uint16_t      refused[coop::players::kMaxPeers];  // 32 -- op 0, by slot
     uint16_t      _pad2;       // 2
     FuseTowerRow rows[kFuseTowers];  // 80
 };
 static_assert(sizeof(FuseTowerRow) == 20, "FuseTowerRow must be 20 bytes");
-static_assert(sizeof(FuseTowerPayload) == 108, "FuseTowerPayload must be 108 bytes");
+static_assert(sizeof(FuseTowerPayload) == 156, "FuseTowerPayload must be 156 bytes");
 static_assert(sizeof(FuseTowerPayload) <= 256 - 20 - 8, "FuseTowerPayload must fit one reliable datagram");
 
 // The ATV's rig pose, velocity and condition (AtvState), keyed by its Key. A receiver keeps its own
@@ -3349,6 +3403,11 @@ struct AtvStatePayload {
     uint8_t  stateBits;    // 1  -- bit0=isDriven, bit1=kAtvBrake, bit2=grabbed (the sender's grav hand holds it),
                            //      bit3=kAtvFromSyncer, bit4=kAtvTrap, bit5=kAtvLights, bit6=kAtvTurbo, bit7=kAtvHorn
     uint8_t  adopt;        // 1  -- 1 = host connect-snapshot (warp as is), 0 = live stream
+    // The riding kerfur's element id, 0 = none; the host's, on every block it sends (a client's carry 0 and the host never
+    // reads them). MTA carries an occupant's vehicle on the ped's add
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CEntityAddPacket.cpp:874-884); ours rides the ATV's
+    // stamp, since an ATV has one rider and the stamp already reaches the driver and every joiner.
+    uint32_t riderEid;     // 4
     // The condition block: the tires' and dirt's accumulators travel from the syncer (fuel and health are the host
     // copy's absolute, a client syncer's burn taken only under its ack, see ackSeq); a mirror's own accrual is held at
     // zero, so overwriting never races an irreversible act. Presence (tiresMask, hasSpare) is consumed
@@ -3375,7 +3434,8 @@ struct AtvStatePayload {
                                   //      of a syncer's block and on every block of its own copy. The host takes a client
                                   //      syncer's fuel and health only from a block whose ackSeq is its current stateSeq.
 };
-static_assert(sizeof(AtvStatePayload) == 152, "AtvStatePayload must be 152 bytes");
+static_assert(offsetof(AtvStatePayload, riderEid) == 84, "riderEid must follow adopt at offset 84");
+static_assert(sizeof(AtvStatePayload) == 156, "AtvStatePayload must be 156 bytes");
 
 // stateBits bit 3: the block is the syncer's, re-sent by the host (a client syncer's pose and condition), not the
 // host's own copy. A receiver applies the pose and condition of such a block to an ATV it does not sync; the host's
@@ -4006,11 +4066,12 @@ struct WoodchipperPayload {
 static_assert(sizeof(WoodchipperPayload) == 40, "WoodchipperPayload must be 40 bytes");
 
 // An ATV's host state (AtvHostState), or a client's request (AtvRequest). One payload, told apart by `op`: a request's
-// is 1..4 or 6, a state's 16 or 17. The syncer's horn is neither: it is a bit of AtvState's stateBits (kAtvHorn).
+// is 1..7, a state's 16 or 17. The syncer's horn is neither: it is a bit of AtvState's stateBits (kAtvHorn).
 namespace atv_host_op {
-// AtvRequest (client -> host): the four acts of a player's item on an ATV, and a copy's ask for the host's state (kSync: sent
+// AtvRequest (client -> host): the acts of a player's item on an ATV -- a refuel, a repair, a module fitted or taken off, a
+// battery fitted (`amount` the held battery's charge) or unscrewed -- and a copy's ask for the host's state (kSync: sent
 // when a copy is adopted holding none; the host answers with its state and applies nothing).
-inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kSync = 6;
+inline constexpr uint8_t kRefuel = 1, kRepair = 2, kFit = 3, kTakeoff = 4, kBatteryIn = 5, kSync = 6, kBatteryOut = 7;
 // AtvHostState (host -> clients): the host copy's vitals, and the answer to a request.
 inline constexpr uint8_t kState = 16, kAnswer = 17;
 }  // namespace atv_host_op
@@ -4021,8 +4082,9 @@ inline constexpr uint8_t kOk = 0, kNotReady = 1, kGone = 2, kReach = 3, kNoItem 
                          kNotHeld = 7, kNotSyncer = 8, kMalformed = 9, kFull = 10;
 }  // namespace atv_host_reason
 // `flags`: the host copy's empty and broken marks (a state, an answer);
-// kAtvHostNoState, on an answer that carries no state (the fuel, health, marks and modules are zero and mean nothing).
-inline constexpr uint8_t kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10, kAtvHostNoState = 0x20;
+// kAtvHostNoState, on an answer that carries no state (the fuel, health, marks and modules are zero and mean nothing);
+// kAtvHostBattery, the battery field read on the host's copy (without it a receiver leaves its copy's battery alone).
+inline constexpr uint8_t kAtvHostEmpty = 0x08, kAtvHostBroken = 0x10, kAtvHostNoState = 0x20, kAtvHostBattery = 0x40;
 struct AtvHostPayload {
     WireKey  key;          // 32 -- the ATV's Key
     float    fuel;         // 4 -- the host copy's fuel (a state, an answer)
@@ -4035,8 +4097,9 @@ struct AtvHostPayload {
     uint8_t  module;       // 1 -- a fitted or taken-off module's value (request); an answer's atv_host_reason
     uint8_t  moduleCount;  // 1 -- how many of `modules` are fitted (a state, an answer)
     uint8_t  modules[16];  // 16 -- the host copy's fitted module values, in the ATV's order (a state, an answer)
+    float    battery;      // 4 -- the host copy's battery charge, -1 with none fitted (a state, an answer)
 };
-static_assert(sizeof(AtvHostPayload) == 72, "AtvHostPayload must be 72 bytes");
+static_assert(sizeof(AtvHostPayload) == 76, "AtvHostPayload must be 76 bytes");
 
 // The edge a PropConvert re-skins.
 namespace propconvert_kind {

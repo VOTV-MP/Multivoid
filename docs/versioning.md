@@ -18,6 +18,9 @@ deploy and publish scripts refuse on a mismatch between the resource and the tre
 numbers themselves are minted in an append-only ledger in `.github/ci/`, and a tag or a
 release page is a drift detector, never the authority ([release.md](release.md)).
 
+Build 299 raised the player cap to sixteen and widened the per-player acknowledgement arrays of the power panel, power grid
+and fuse tower messages, so a peer on an earlier build cannot join one on 299.
+
 An unofficial build -- any `main.dll` without its release signature -- shows `(unofficial build)`
 after the version. A host refuses a player on a build of the other kind -- an unofficial build on an
 official host (MV-H30), the official build on a modified host (MV-H31) -- unless it allows other

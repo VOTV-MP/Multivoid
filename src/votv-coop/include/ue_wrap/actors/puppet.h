@@ -53,6 +53,18 @@ void* GetSkeletalMeshComponent(void* puppetActor);
 // the target from the streamed camera yaw and pitch. No-op until an AnimInstance resolves.
 void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget);
 
+// The kerfur AnimBP's ATV seat pose (`isOnAtv`, the pose a kerfur rides in) on both of the puppet's rendered bodies.
+// Class-gated like the head look; false when neither body's AnimInstance takes it. Game thread.
+bool SetOnAtv(void* puppetActor, bool on);
+
+// The same flag on an NPC kerfur's own body: the AnimInstance of its native ACharacter::Mesh slot, where the kerfur's
+// Blueprint writes it. Class-gated; false when that AnimInstance is not a kerfur AnimBP or does not resolve. Game thread.
+bool SetNpcOnAtv(void* npcActor, bool on);
+
+// The same flag read back: `out` is true when every rendered body's AnimInstance that took the read holds `isOnAtv`.
+// False, `out` untouched, when neither body's AnimInstance reads. Game thread.
+bool GetOnAtv(void* puppetActor, bool& out);
+
 // A read-only probe of the puppet's head-look state: the LookAt clamps and alphas, the AnimBP
 // gate flags, and the world rotation of the head and neck bones. The LookAt nodes live inside
 // the AnimBP state `lookAtPlayer`, exited when lookingAtPlayer flips false, so with the
@@ -106,6 +118,10 @@ bool ReadCharacterIsFalling(void* actor);
 // Whether `actor`'s CMC reports MOVE_Walking (not falling, swimming, flying or none): the state the game's
 // save test names "not in mid air". False, `walking` untouched, on a null or dead actor or CMC.
 bool ReadCharacterIsWalking(void* actor, bool& walking);
+
+// `actor`'s CharacterMovement as it stands: MovementMode (MOVE_None 0, Walking 1, NavWalking 2, Falling 3, ...) and
+// Velocity (world, cm/s). False, outs untouched, on a null or dead actor or CMC.
+bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity);
 
 // ---- kerfur head-look ----
 // The kerfur AnimBP (shared by the NPCs and the player puppets) aims the head and neck at its

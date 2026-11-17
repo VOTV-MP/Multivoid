@@ -50,6 +50,11 @@ struct SaveRecord {
     std::vector<std::vector<std::array<float, 10>>> transforms; // FTransform packed
     std::vector<std::vector<uint8_t>>               bytes;
     std::vector<std::vector<std::wstring>>          names;    // FName
+    // A container record's contents, carried with it where its GObjStack index cannot travel (the index names a slot of
+    // the sender's array): container_inventory::AttachNested fills them at a send site and clears the index, and
+    // WriteSaveRecord gives them a slot of this machine's array (container_inventory::PlaceNested). Unset elsewhere.
+    std::vector<SaveRecord>                         nested;
+    bool                                            nestedCarried = false;
 };
 
 // ARRAY ELEMENT STRIDE is the 16-ALIGNED struct size, not the dump's raw `Size:` line.
@@ -91,11 +96,12 @@ Arr ReadArr(const void* base, int32_t off);
 // freshly-built array the engine will read then, on its next mutation, realloc wholesale.)
 void WriteArrHeader(void* base, int32_t off, void* data, int32_t num);
 
-// Replace the TArray<uint8> at base+off with `data[0..count)`, for an array of a LIVE object that is written again and again:
-// into the array's own buffer when its capacity (Max) holds `count`, only Num moving; else into a new engine buffer, the
-// replaced one released through the engine's allocator (EngineFree), which owns it. False, having written nothing, for a
-// negative or past-cap count, a null `data` with a count, or an EngineAlloc failure. Game thread.
-bool ReplaceByteArray(void* base, int32_t off, const uint8_t* data, int32_t count);
+// Replace the TArray at base+off, whose elements are `elemSize` bytes, with `count` elements from `data`, for an array of a
+// LIVE object that is written again and again: into the array's own buffer when its capacity (Max) holds `count`, only
+// Num moving; else into a new engine buffer, the replaced one released through the engine's allocator (EngineFree), which
+// owns it. False, having written nothing, for a non-positive `elemSize`, a negative or past-cap count, a null `data` with a
+// count, or an EngineAlloc failure. Game thread.
+bool ReplaceArray(void* base, int32_t off, const void* data, int32_t count, int32_t elemSize);
 
 // Allocate `count*elemSize` engine bytes, zeroed. Null (-> caller writes an empty array) on a
 // zero count or an EngineAlloc failure (GMalloc unresolved). Zeroing makes every unset FString/
@@ -109,8 +115,10 @@ void WriteFNameField(void* dst, const std::wstring& leaf);
 // ---- The record codec ------------------------------------------------------------------------
 
 // Read one Fstruct_save at `base` into `rec`. Pure field reads + FName::ToString / FString copy
-// (no UFunction dispatch). `rec` is overwritten field-by-field; pass a fresh record.
-void ReadSaveRecord(const void* base, SaveRecord& rec);
+// (no UFunction dispatch). `rec` is overwritten field-by-field; pass a fresh record. A signal's photo (its PNG, 8.7 to
+// 23 KB) is copied into the record unless `withImage` is false: a caller that reads a record only to name it or compare
+// its other fields leaves it.
+void ReadSaveRecord(const void* base, SaveRecord& rec, bool withImage = true);
 
 // Write one Fstruct_save into the ZEROED 0x100 slot at `base`, constructing engine-OWNED
 // TArrays via reflection::EngineAlloc (FNames interned, FStrings engine-minted, UClasses
@@ -120,12 +128,15 @@ void ReadSaveRecord(const void* base, SaveRecord& rec);
 // a buffer it has lost the pointer to. Buffers WE allocate are GMalloc-owned (EngineAlloc), so
 // the engine's later Array realloc / GC free of them is allocator-matched.
 // `load` governs how every class leaf (the record's own class and its `classes` group) resolves
-// (see ClassLoad).
+// (see ClassLoad). A record that carries its container's contents (SaveRecord::nestedCarried) has them written into a
+// slot of this machine's GObjStack first, under the same `load`, and its index set to it.
+// A signal's photo (its `image`, the PNG the laptop shows) rides its record both ways; a record that does not fit a
+// transport's bound is refused whole by that transport, never cut: half a record through loadData is worse than none.
 void WriteSaveRecord(uint8_t* base, const SaveRecord& r, ClassLoad load);
 
-// Resolves every class the record names (its own class and its `classes` leaves) under `load`, the loads a write would
-// make. False when one answered Pending (the load budget of this tick is spent): a caller that can wait does so and
-// writes once this answers true, when the write finds every class loaded. Game thread.
+// Resolves every class the record names (its own class, its `classes` leaves and its carried contents') under `load`,
+// the loads a write would make. False when one answered Pending (the load budget of this tick is spent): a caller that
+// can wait does so and writes once this answers true, when the write finds every class loaded. Game thread.
 bool ClassesReady(const SaveRecord& r, ClassLoad load);
 
 // ---- The GAME's own codec, on a LIVE actor --------------------------------------------------

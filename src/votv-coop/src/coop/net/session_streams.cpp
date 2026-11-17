@@ -14,7 +14,6 @@
 //     npc/worldactor/trashcarry batch stamps, whose Serialize* bodies live in their own TUs
 // The BATCH channels (npc, worldactor, trashcarry, voice) keep their own TUs.
 
-#include "coop/player/movement_ledger.h"
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
 
@@ -212,11 +211,9 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         // HOST ONLY: bounds apply to clients, never to the host, so a symmetric validator would
         // be a bug. `routeSlot == peerSlot` here is the authenticated connection. Measure-only
         // on this build: it records, nothing refuses.
-        if (cfg_.role == Role::Host) {
-            coop::movement_ledger::OnClientPose(
-                *this, routeSlot,
-                ue_wrap::FVector{pkt.pose.x, pkt.pose.y, pkt.pose.z},
-                ReadStateTimeMs24(pkt.header));
+        if (cfg_.role == Role::Host && hooks_.onClientPose) {
+            hooks_.onClientPose(*this, routeSlot, pkt.pose.x, pkt.pose.y, pkt.pose.z,
+                                ReadStateTimeMs24(pkt.header));
         }
         // Host relay: forward this client's pose to every OTHER client.
         if (cfg_.role == Role::Host) {

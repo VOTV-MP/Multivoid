@@ -3,6 +3,7 @@
 #include "coop/interactables/signal_wire.h"
 
 #include "coop/net/blob_chunks.h"
+#include "coop/text/case_fold.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -20,6 +21,19 @@ size_t PrefixSize(const std::vector<uint8_t>& b) {
     if (b.size() < kHeadSize) return b.size();
     const size_t end = kHeadSize + 2 * (static_cast<size_t>(b[5]) + b[6] + b[7] + b[8]);
     return end < b.size() ? end : b.size();
+}
+
+// The object and signal leaves of a photo-free prefix (the name and id before them are FStrings), folded to lower case
+// in place. They are FNames, and an FName renders in whichever spelling this process registered first, so two peers can
+// render one name in two cases; the row is the same row, and its identity must not tell them apart.
+void FoldNameLeaves(std::vector<uint8_t>& prefix) {
+    if (prefix.size() < kHeadSize) return;
+    for (size_t at = kHeadSize + 2 * (static_cast<size_t>(prefix[5]) + prefix[6]); at + 1 < prefix.size(); at += 2) {
+        const uint32_t folded = coop::text::CaseFold(static_cast<uint16_t>(prefix[at] | (prefix[at + 1] << 8)));
+        if (folded > 0xFFFF) continue;
+        prefix[at] = static_cast<uint8_t>(folded & 0xFF);
+        prefix[at + 1] = static_cast<uint8_t>(folded >> 8);
+    }
 }
 
 bool g_saidImageOverCap = false;
@@ -173,6 +187,7 @@ uint64_t ContentHash(const std::vector<uint8_t>& blob) {
     // The strings' end, the image bit zeroed: a row with its photo and without it hash identically.
     std::vector<uint8_t> copy(blob.begin(), blob.begin() + static_cast<ptrdiff_t>(PrefixSize(blob)));
     copy[1] = static_cast<uint8_t>(copy[1] & ~kFlagImage);
+    FoldNameLeaves(copy);
     return coop::blob_chunks::Fnv64(copy);
 }
 

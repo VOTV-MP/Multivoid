@@ -4,44 +4,44 @@
 // false with `why` set when it could not be issued; a step whose act could not be issued is INVALID.
 #pragma once
 
+#include "coop/dev/atv_drive.h"
 #include "coop/interactables/atv_drill_events.h"
 
 #include "harness/autotest/peer_signal.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace coop::dev::atv_gate_drill::detail {
 
 inline constexpr const char* kTag = "atv";
 
-// Runs `fn` on the game thread and returns when it has run. The drill's thread calls this; the game thread never does.
-template <class Fn>
-void OnGt(Fn&& fn) {
-    ue_wrap::game_thread::RunAndWait([&fn](std::atomic<int>& d) { fn(); d.store(1); });
-}
+// The drive closure (the walk, the ATV's input keys, the reads of the held copy) is coop/dev/atv_drive's, shared with the
+// riders drill; the drill's own code names these as its own.
+using coop::dev::atv_drive::Atv;
+using coop::dev::atv_drive::CallByName;
+using coop::dev::atv_drive::kReachCm;
+using coop::dev::atv_drive::Me;
+using coop::dev::atv_drive::OnGt;
+using coop::dev::atv_drive::PressAtv;
+using coop::dev::atv_drive::ReadFloat;
+using coop::dev::atv_drive::ReadVitals;
+using coop::dev::atv_drive::Vitals;
 
 // The three peers: the host, the client in slot 1 (the actor of most steps, which leaves and rejoins) and the observer.
 enum Role : int { kHost = 0, kClient = 1, kObserver = 2, kRoles = 3 };
 const char* RoleName(Role r);
 
-// What a step reads of the ATV on this peer, for an act's precondition.
-struct Vitals {
-    float fuel = -1.f;
-    float health = -1.f;
-    int   modules = -1;
-    bool  seated = false;   // this peer's player is in the seat
-};
-Vitals ReadVitals(const std::wstring& key);
-
 // The world's ATV nearest the local player by NavMesh route, its key; empty when none has a route. Host side.
 std::wstring ChooseAtv();
 bool CopyResolves(const std::wstring& key);                       // this peer's copy under `key` is indexed
-bool WalkToAtv(const std::wstring& key, std::string& why);        // the director walks the player beside the ATV
+using coop::dev::atv_drive::WalkToAtv;                            // the director walks the player beside the ATV
 
 // ---- the acts ----
 bool PourCan(const std::wstring& key, std::string& why);          // a gas can in the hand, the fire key held on the ATV
@@ -51,19 +51,33 @@ bool TakeModuleOff(const std::wstring& key, std::string& why);    // the upgrade
 bool ModuleToHand(const std::wstring& key, std::string& why);     // the module in the hand, no act
 bool EmptyHand(const std::wstring& key, std::string& why);
 bool Sit(const std::wstring& key, std::string& why);              // the game's seat verb
-bool Leave(const std::wstring& key, std::string& why);            // the dismount key
+using coop::dev::atv_drive::Leave;                                // the dismount key
 bool Lights(const std::wstring& key, std::string& why);           // the lights key
-bool Brake(const std::wstring& key, std::string& why);            // the brake key
+using coop::dev::atv_drive::Brake;                                // the brake key
 bool TurboOn(const std::wstring& key, std::string& why);          // the turbo key down, left down
-bool TurboOff(const std::wstring& key, std::string& why);         // the turbo key up
+using coop::dev::atv_drive::TurboOff;                             // the turbo key up
 bool HornPress(const std::wstring& key, std::string& why);        // the horn key down
 bool HornRelease(const std::wstring& key, std::string& why);      // the horn key up
 bool HornTap(const std::wstring& key, std::string& why);          // down and up
-bool DriveOn(const std::wstring& key, std::string& why);          // the brake off and the throttle key down
-void DriveOff(const std::wstring& key);                           // the throttle key up
+using coop::dev::atv_drive::DriveOn;                              // the brake off and the throttle key down
+using coop::dev::atv_drive::DriveOff;                             // the throttle key up
 
 // The host's own copy's fuel and health set, published through the host's one publish point as any change of the host copy.
 bool SeedHost(const std::wstring& key, float fuel, float health, std::string& why);
+
+// The battery: this peer's copy's charge (-1 none fitted; NaN when it does not read), the copy's charge written with the
+// game's updBattery (a local fixture, published by no one), the host copy's charge written and published, a charged battery in
+// the hand with the fire key on the ATV, and the panel's unscrew (the game's unscrewPanel on the battery branch).
+float ReadBattery(const std::wstring& key);
+bool SetLocalBattery(const std::wstring& key, float charge);
+bool SeedHostBattery(const std::wstring& key, float charge, std::string& why);
+bool FitBattery(const std::wstring& key, float charge, std::string& why);
+bool UnscrewBattery(const std::wstring& key, std::string& why);   // the panel's unscrew on the battery branch
+// The live battery props of this world as weak references (the hand's and the hand mirrors' excluded), and how many of them a
+// snapshot did not hold, with the first new one's charge (-1 when none). Neither counts by place or by element id.
+using BatterySet = std::vector<ue_wrap::CachedObjRef>;
+BatterySet BatteryProps();
+int NewBatteryProps(const BatterySet& before, float* firstCharge);
 
 // A fitted module's value on this peer's copy (the first), or -1.
 int FirstModule(const std::wstring& key);
@@ -75,6 +89,7 @@ bool HandHoldsModule();
 namespace DE = coop::atv_drill_events;
 
 inline constexpr int kEventS = 40;   // a bound on an event: past it the run is INVALID, never a verdict
+inline constexpr float kBatterySame = 2.f;   // the rejoined copy's adopted battery agrees with the host's mark of it within this (it drains)
 
 // A verdict decided anywhere ends every peer's sequence: the deciding peer marks `atv_end` ("F <text>" or "I <text>"), the host
 // says the verdict at once, and every wait of the sequencer returns on the mark. Aborted() is true from then on.
@@ -116,6 +131,7 @@ struct Ctx {
     uint32_t reqId = 0;                   // the forged request the actor made
     float fuel0 = -1.f, health0 = -1.f;   // this copy's vitals at the barrier
     int modules0 = -1;
+    BatterySet bat0;                      // the battery props this peer held before a battery step's act (BatteryProps)
 };
 
 // A fact one peer leaves for the others in this step ("<id>_f_<role>"), and the wait for it.

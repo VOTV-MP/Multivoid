@@ -281,6 +281,57 @@ void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget) {
     }
 }
 
+namespace {
+
+// The AnimInstances of the puppet's two rendered bodies (null where one does not resolve).
+void OnAtvAnims(void* puppetActor, void* (&anims)[2]) {
+    anims[0] = anims[1] = nullptr;
+    void* comp = GetSkeletalMeshComponent(puppetActor);
+    if (comp && R::IsLive(comp)) anims[0] = LiveAnimInstance(comp);
+    void* meshSlot = ReadPtr(puppetActor, P::off::ACharacter_Mesh);
+    if (meshSlot && meshSlot != comp && R::IsLive(meshSlot)) anims[1] = LiveAnimInstance(meshSlot);
+    if (anims[1] == anims[0]) anims[1] = nullptr;
+}
+
+}  // namespace
+
+bool SetOnAtv(void* puppetActor, bool on) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;
+    void* anims[2];
+    OnAtvAnims(puppetActor, anims);
+    bool any = false;
+    for (void* anim : anims) {
+        if (!anim || !IsKerfurAnimBP(anim)) continue;
+        *reinterpret_cast<bool*>(static_cast<uint8_t*>(anim) + off) = on;
+        any = true;
+    }
+    return any;
+}
+
+bool SetNpcOnAtv(void* npcActor, bool on) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    void* const anim = NpcBodyAnimInstance(npcActor);
+    if (off < 0 || !anim || !IsKerfurAnimBP(anim)) return false;
+    *reinterpret_cast<bool*>(static_cast<uint8_t*>(anim) + off) = on;
+    return true;
+}
+
+bool GetOnAtv(void* puppetActor, bool& out) {
+    const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_isOnAtv();
+    if (off < 0 || !puppetActor || !R::IsLive(puppetActor)) return false;
+    void* anims[2];
+    OnAtvAnims(puppetActor, anims);
+    bool any = false, all = true;
+    for (void* anim : anims) {
+        if (!anim || !IsKerfurAnimBP(anim)) continue;
+        all = all && *reinterpret_cast<const bool*>(static_cast<const uint8_t*>(anim) + off);
+        any = true;
+    }
+    if (any) out = all;
+    return any;
+}
+
 bool ReadPuppetHeadLookProbe(void* puppetActor, PuppetHeadLookProbe& out) {
     out = {};
     void* comp = GetSkeletalMeshComponent(puppetActor);
@@ -340,25 +391,35 @@ void DriveKerfurBodyYaw(void* npcActor, float yaw) {
     ue_wrap::engine::SetComponentWorldRotation(mesh, ue_wrap::FRotator{0.f, yaw, 0.f});
 }
 
+// UMovementComponent::Velocity. The offset is hardcoded here rather than promoted into sdk_profile.h so that every raw
+// memory access stays inside ue_wrap; coop/ callers see only the typed API.
+static constexpr size_t kUMovementComponent_Velocity = 0xC4;
+
+namespace {
+
+// The character's CharacterMovement component, live, or null (a dead actor, a missing or dying component): the one
+// read every CMC accessor below goes through.
+void* LiveCmc(void* actor) {
+    if (!actor || !R::IsLive(actor)) return nullptr;
+    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
+    return (cmc && R::IsLive(cmc)) ? cmc : nullptr;
+}
+
+}  // namespace
+
 void DriveCharacterMovement(void* puppetActor,
                             const FVector& worldVelocity,
                             bool inAir) {
-    if (!puppetActor || !R::IsLive(puppetActor)) return;
-    void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return;
-    // UMovementComponent::Velocity. The offset is hardcoded here rather than promoted into
-    // sdk_profile.h so that every raw memory write stays inside ue_wrap; coop/ callers see only
-    // this typed API.
-    constexpr size_t kUMovementComponent_Velocity = 0xC4;
+    void* cmc = LiveCmc(puppetActor);
+    if (!cmc) return;
     WriteAt<FVector>(cmc, kUMovementComponent_Velocity, worldVelocity);
     const uint8_t mm = inAir ? P::off::kMOVE_Falling : uint8_t{1};  // MOVE_Walking
     WriteAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode, mm);
 }
 
 void DriveSprintWalkSpeed(void* puppetActor, bool sprinting) {
-    if (!puppetActor || !R::IsLive(puppetActor)) return;
-    void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return;
+    void* cmc = LiveCmc(puppetActor);
+    if (!cmc) return;
     // MaxWalkSpeed, for footstep-loudness parity. lib_C::step scales the step sound by
     // clamp(CMC.MaxWalkSpeed / speedVolume, 0.5, 2) with speedVolume defaulting to 400 -- it reads
     // the SETTING, not Velocity. A parked puppet CMC never runs mainPlayer's updateSpeed, so
@@ -379,18 +440,24 @@ void DriveSprintWalkSpeed(void* puppetActor, bool sprinting) {
 }
 
 bool ReadCharacterIsFalling(void* actor) {
-    if (!actor || !R::IsLive(actor)) return false;
-    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return false;
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
     const uint8_t mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
     return mode == P::off::kMOVE_Falling;
 }
 
 bool ReadCharacterIsWalking(void* actor, bool& walking) {
-    if (!actor || !R::IsLive(actor)) return false;
-    void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement);
-    if (!cmc || !R::IsLive(cmc)) return false;
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
     walking = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode) == P::off::kMOVE_Walking;
+    return true;
+}
+
+bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity) {
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
+    mode = ReadAt<uint8_t>(cmc, P::off::UCharacterMovement_MovementMode);
+    velocity = ReadAt<FVector>(cmc, kUMovementComponent_Velocity);
     return true;
 }
 
@@ -404,12 +471,9 @@ void DisableCharacterTicks(void* actor) {
 }
 
 void DisableMovementTick(void* actor) {
-    if (!actor || !R::IsLive(actor)) return;
     // CMC tick off, to stop gravity and velocity integration so the networked SetActorLocation
     // drive is authoritative; we own CMC velocity and movement mode.
-    if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
-        if (R::IsLive(cmc)) E::SetComponentTickEnabled(cmc, false);
-    }
+    if (void* cmc = LiveCmc(actor)) E::SetComponentTickEnabled(cmc, false);
 }
 
 bool SetBurningFlame(void* mainPlayerActor, bool on) {

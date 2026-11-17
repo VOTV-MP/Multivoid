@@ -154,7 +154,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     // Was a player's own spawn verb on the stack? Asked FIRST, because it is the one question only
     // this instant can answer -- the VM's calling frame is gone by the drain -- and because it is
     // what exempts a birth from the load gates below.
-    const bool playerAuthored = coop::prop_spawn_authoring::BirthIsPlayerAuthored();
+    const bool playerAuthored = coop::prop_spawn_authoring::BirthIsPlayerAuthored(result);
     // The end condition: quiet during the load episode and the reconcile window's load-kind
     // segments (the join and reload bracket, whose spawn churn flooded this path; the mirror mark
     // below already scopes our own applies out). A mid-session bracket does not suppress: a
@@ -226,7 +226,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
         // adopting the host's world.
         coop::join_membership_sweep::RecordSelfAuthored(actor);
         UE_LOGI("[PROP-DROP] CLIENT enqueued PLAYER-AUTHORED birth actor=%p cls='%ls' "
-                "(spawn menu or toolgun; admitted at drain, spared by the join sweep)",
+                "(spawn menu, toolgun or hacksaw; admitted at drain, spared by the join sweep)",
                 actor, R::ClassNameOf(actor).c_str());
     }
 }

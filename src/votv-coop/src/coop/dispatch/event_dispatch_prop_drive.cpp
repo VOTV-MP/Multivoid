@@ -1,7 +1,8 @@
 // coop/dispatch/event_dispatch_prop_drive.cpp -- the driven prop's reliable kinds: PropDriveEnd (the
 // close of a prop's stream, the host's to all or a syncing client's to the host) and the prop
 // syncer's pair, PropSyncClaim (client to host) and PropSyncAnswer (host to one client), the host's refusal of
-// a second hold of one prop (PropHoldRefused, host to every client), and the developer
+// a second hold of one prop (PropHoldRefused, host to every client), a garbage container's state (GarbageBinState, host
+// to all) and a container's break or a saw's cut asked of the host (ContainerBreakRequest), and the developer
 // filler DevLoadFiller (host to one client), DevParityReport (a joiner's pose report to the host) and
 // DevContainerParity (a joiner's container content report to the host). Each case
 // validates at the trust boundary and hands off to its module. The switch below is the family's
@@ -27,12 +28,16 @@
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
+#include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
+#include "coop/interactables/garbage_bin_sync.h"
+#include "coop/props/container_break.h"
 #include "coop/world/spill_sync.h"
 #include "coop/world/sus_hole_intent.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/devices/atv.h"   // ClampCharge: a host state's battery
 
 #include <cmath>
 #include <cstring>
@@ -235,6 +240,18 @@ bool HandlePropDriveEvent(net::Session& session,
         ::coop::props::prop_food_sync::OnHand(msg.senderPeerSlot, p);
         break;
     }
+    case net::ReliableKind::HandRecord: {
+        // Any peer to the host, the host to all (coop/player/hand_record_sync); chunked.
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: HandRecord from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) break;
+        net::BlobChunkPayload c{};
+        std::memcpy(&c, msg.payload, sizeof(c));
+        ::coop::hand_record_sync::OnChunk(c, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
     case net::ReliableKind::PlantState:
     case net::ReliableKind::PlantEdit: {
         // PlantState HOST->ALL, PlantEdit CLIENT->HOST.
@@ -325,6 +342,16 @@ bool HandlePropDriveEvent(net::Session& session,
         if (!std::isfinite(p.fuel) || !std::isfinite(p.health) || p.moduleCount > sizeof(p.modules)) {
             UE_LOGW("event_feed: ATV host state malformed -- dropping");
             break;
+        }
+        // The battery is -1 (none fitted) or a finite charge of 0 or more, brought into the field's range (the game's solar
+        // charge leaves it a fraction past 100); any other value is not read, the state's other fields are.
+        if (p.flags & net::kAtvHostBattery) {
+            if (std::isfinite(p.battery) && (p.battery == -1.f || p.battery >= 0.f)) {
+                if (p.battery >= 0.f) p.battery = ue_wrap::atv::ClampCharge(p.battery);
+            } else {
+                UE_LOGW("event_feed: ATV host state carries a battery that is neither -1 nor a charge -- its battery is not read");
+                p.flags = static_cast<uint8_t>(p.flags & ~net::kAtvHostBattery);
+            }
         }
         ::coop::atv_host_sync::OnState(p);
         break;
@@ -510,6 +537,18 @@ bool HandlePropDriveEvent(net::Session& session,
             break;
         }
         ::coop::walker_state_client::OnState(p);
+        break;
+    }
+    case net::ReliableKind::GarbageBinState: {
+        // HOST->ALL, a chunked blob. The payload's size, the side of the link, the body's every length and its version
+        // are the module's to judge, counted there.
+        ::coop::garbage_bin_sync::OnChunk(session, msg.payload, msg.payloadLen, msg.senderPeerSlot);
+        break;
+    }
+    case net::ReliableKind::ContainerBreakRequest: {
+        // CLIENT->HOST op 1, HOST->the requester op 2 or 3. The payload's exact size, the direction, the op and every
+        // field are the module's to judge, counted there.
+        ::coop::props::container_break::OnMessage(session, msg.senderPeerSlot, msg.payload, msg.payloadLen);
         break;
     }
     default:

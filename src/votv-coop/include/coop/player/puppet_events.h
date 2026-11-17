@@ -49,8 +49,8 @@ struct LifeStep {
 };
 LifeStep StepLife(Seen was, uint8_t healthFrac, bool worldReady);
 
-// The un-gated truth table of StepLife on pinned poses (coop/player/puppet_events_selftest.cpp), once per session start.
-// Pure, any thread; true when every check passed.
+// The un-gated truth table of StepLife on pinned poses (coop/player/puppet_events_selftest.cpp), run on the first call and
+// kept: a later call returns the first answer and logs nothing. Pure, any thread; true when every check passed.
 bool RunSelftest();
 
 }  // namespace coop::puppet_events

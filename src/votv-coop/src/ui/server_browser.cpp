@@ -156,7 +156,7 @@ void Render() {
             // Open the save picker (native loadSlots list + New Game); on confirm it
             // calls HostWithSave -> the harness loads the chosen world then hosts. (The
             // old immediate HostLobby-on-the-current-world path is gone, RULE 2.)
-            ui::host_save_picker::Open(g_hostName, g_hostLocked, /*playersMax=*/4);
+            ui::host_save_picker::Open(g_hostName, g_hostLocked);
         }
         ImGui::SameLine(0.0f, S(24.0f));
         if (ui::menu_sfx::Button("Refresh")) sm::Refresh();
@@ -223,6 +223,7 @@ void Render() {
                     g_selectedId = r.lobbyId;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
+                        else if (r.Full()) sm::SetHostStatus("This server is full.");
                         else if (sm::JoinLobby(g_rowsMaster, r.lobbyId, r.name, r.proto, r.game, r.gameBuild))
                             Close();
                     }
@@ -271,11 +272,16 @@ void Render() {
         if (!g_selectedId.empty())
             for (const Row& r : g_rows) if (r.lobbyId == g_selectedId) { sel = &r; break; }
         const bool selOwn = sel && !ownLobby.empty() && sel->lobbyId == ownLobby;
-        const bool canConnect = sel && !selOwn;
+        const bool selFull = sel && !selOwn && sel->Full();
+        const bool canConnect = sel && !selOwn && !selFull;
         if (!canConnect) ImGui::BeginDisabled();
         if (ui::menu_sfx::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
             if (sm::JoinLobby(g_rowsMaster, sel->lobbyId, sel->name, sel->proto, sel->game, sel->gameBuild))
                 Close();
+        // A disabled button shows its tooltip only with AllowWhenDisabled; it says why, so a full
+        // server's greyed Connect is not a mystery.
+        if (selFull && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("This server is full.");
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Close", ImVec2(S(90.0f), 0.0f))) open = false;

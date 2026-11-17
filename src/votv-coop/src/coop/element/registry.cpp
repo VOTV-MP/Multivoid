@@ -11,6 +11,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"       // IsLiveByIndex (LivePropActor)
 
+#include <cstdio>
+
 namespace coop::element {
 
 namespace {
@@ -39,7 +41,7 @@ ActorIdent IdentOf(void* actor, int32_t idx) {
 // from the host range), so band 0 is only ever consumed by a client's pre-slot allocations.
 constexpr uint32_t kPeerBandCount = coop::players::kMaxPeers;
 constexpr uint32_t kSlotBandSize  =
-    (kMaxElements - kHostRangeSize) / kPeerBandCount;  // 32768/4 = 8192
+    (kMaxElements - kHostRangeSize) / kPeerBandCount;  // 32768/16 = 2048
 
 // The [base, end) of the band for a band index (0 is pre-slot, 1 and up are client slots).
 // The last band absorbs any remainder so the union exactly covers the peer range.
@@ -50,6 +52,24 @@ constexpr ElementId BandEnd(uint8_t band) {
     return (band + 1u == kPeerBandCount) ? kMaxElements
                                          : BandBase(band) + kSlotBandSize;
 }
+
+// The slot of the per-range counters an id belongs to: 0 the host range, 1 + band for the peer
+// range (the last band absorbs the remainder, as BandEnd does).
+constexpr size_t BandStatOf(ElementId id) {
+    if (id < kHostRangeSize) return 0;
+    uint32_t band = (id - kHostRangeSize) / kSlotBandSize;
+    if (band >= kPeerBandCount) band = kPeerBandCount - 1;
+    return 1u + band;
+}
+// The ids a counter slot can hold: the host range less the invalid id 0, or one band.
+constexpr uint32_t BandStatCap(size_t stat) {
+    return stat == 0 ? kHostRangeSize - 1
+                     : BandEnd(static_cast<uint8_t>(stat - 1)) - BandBase(static_cast<uint8_t>(stat - 1));
+}
+// ReportIfDue: the first line comes this long after a tick first sees a held id, the next ones this
+// far apart.
+constexpr uint64_t kBandFirstLogMs = 10 * 1000;
+constexpr uint64_t kBandLogEveryMs = 60 * 1000;
 }  // namespace
 
 // The latch flipper in element.cpp.
@@ -140,6 +160,7 @@ ElementId Registry::AllocHostId(Element* e) {
         return kInvalidId;
     }
     m_byId[id] = e;
+    NoteHeld_(id);
     e->SetId_(id);
     if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // actor set before id -> reverse here
     return id;
@@ -150,7 +171,7 @@ ElementId Registry::AllocLocalId(Element* e) {
     const ActorIdent ai = IdentOf(e->GetActor(), e->GetInternalIdx());
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_localFree.empty()) {
-        UE_LOGW("element::Registry: peer range exhausted (32768 active elements); "
+        UE_LOGW("element::Registry: active peer band exhausted (every id of the band is live); "
                 "AllocLocalId returning kInvalidId -- this indicates an Element lifetime bug");
         return kInvalidId;
     }
@@ -164,6 +185,7 @@ ElementId Registry::AllocLocalId(Element* e) {
         return kInvalidId;
     }
     m_byId[id] = e;
+    NoteHeld_(id);
     e->SetId_(id);
     if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // actor set before id -> reverse here
     return id;
@@ -177,6 +199,7 @@ void Registry::FreeId(ElementId id) {
         return;
     }
     m_byId[id] = nullptr;
+    NoteReleased_(id);
     // FIFO reuse: push the freed id to the front (bottom) of the stack, not the back. Allocation
     // pops the back, so a freed id is only re-issued after the entire never-allocated pool above
     // it is exhausted, which defers reuse by hours of normal allocation, long enough for every
@@ -210,6 +233,7 @@ bool Registry::RegisterMirror(ElementId id, Element* e) {
         return false;
     }
     m_byId[id] = e;
+    NoteHeld_(id);
     e->SetId_(id);
     e->SetMirror_(true);
     if (ai.actor) m_byActor[ai.actor] = {id, ai.idx, ai.serial};  // mirror actor often set before Install
@@ -228,6 +252,7 @@ void Registry::UnregisterMirror(ElementId id) {
         return;
     }
     m_byId[id] = nullptr;
+    NoteReleased_(id);
     // Intentionally no free-stack push: the id is in the host's allocation space and was never
     // popped from this peer's free stack.
 }
@@ -284,6 +309,66 @@ size_t Registry::LocalCount() const {
     const size_t bandCapacity = BandEnd(m_activeBand) - BandBase(m_activeBand);
     return m_localFree.size() >= bandCapacity ? 0
                                               : bandCapacity - m_localFree.size();
+}
+
+void Registry::NoteHeld_(ElementId id) {
+    const size_t s = BandStatOf(id);
+    if (++m_bandLive[s] > m_bandPeak[s]) m_bandPeak[s] = m_bandLive[s];
+    m_bandAnyHeld.store(true, std::memory_order_relaxed);
+}
+
+void Registry::ReportIfDue(uint64_t nowMs) {
+    // Game thread, once per tick: two relaxed loads and a compare until a line is due.
+    if (!m_bandAnyHeld.load(std::memory_order_relaxed)) return;
+    const uint64_t due = m_bandDueMs.load(std::memory_order_relaxed);
+    if (due == 0) {  // the first held id seen: arm the first line
+        m_bandDueMs.store(nowMs + kBandFirstLogMs, std::memory_order_relaxed);
+        return;
+    }
+    if (nowMs < due) return;
+    std::lock_guard<std::mutex> lk(m_mutex);
+    LogBandPeaks_();  // says nothing when no number changed since the last line
+    m_bandDueMs.store(nowMs + kBandLogEveryMs, std::memory_order_relaxed);
+}
+
+void Registry::NoteReleased_(ElementId id) {
+    const size_t s = BandStatOf(id);
+    if (m_bandLive[s] > 0) --m_bandLive[s];
+}
+
+void Registry::LogBandPeaks_() {
+    // Said only when some live or peak number differs from the last line, so a repeated leave or a
+    // quit after a session's end stays silent.
+    bool changed = false;
+    for (size_t s = 0; s < kBandStats; ++s) {
+        changed = changed || m_bandLive[s] != m_bandShownLive[s] || m_bandPeak[s] != m_bandShownPeak[s];
+    }
+    if (!changed) return;
+    for (size_t s = 0; s < kBandStats; ++s) {
+        m_bandShownLive[s] = m_bandLive[s];
+        m_bandShownPeak[s] = m_bandPeak[s];
+    }
+    // Each entry reads live/peak/cap, so a drain after a peak shows. The host range always, a peer
+    // band only once it held an id. 1 + kMaxPeers entries at most, under 24 bytes each.
+    char line[512];
+    int n = std::snprintf(line, sizeof line, "host=%u/%u/%u", m_bandLive[0], m_bandPeak[0], BandStatCap(0));
+    for (size_t s = 1; s < kBandStats && n > 0 && static_cast<size_t>(n) < sizeof line; ++s) {
+        if (m_bandPeak[s] == 0) continue;
+        n += std::snprintf(line + n, sizeof line - static_cast<size_t>(n), " b%u=%u/%u/%u",
+                           static_cast<unsigned>(s - 1), m_bandLive[s], m_bandPeak[s], BandStatCap(s));
+    }
+    UE_LOGI("element bands: live/peak/cap %s", line);
+}
+
+void Registry::ReportBandPeaksAtSessionEnd() {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    bool used = false;
+    for (size_t s = 0; s < kBandStats; ++s) used = used || m_bandPeak[s] > 0;
+    if (used) LogBandPeaks_();
+    // The next session's peaks start from what this process still holds (the host range outlives a
+    // client's departure).
+    for (size_t s = 0; s < kBandStats; ++s) m_bandPeak[s] = m_bandLive[s];
+    m_bandDueMs.store(0, std::memory_order_relaxed);  // the next session's first line is armed afresh
 }
 
 size_t Registry::SnapshotActorsByType(ElementType t,

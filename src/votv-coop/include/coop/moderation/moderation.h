@@ -11,7 +11,7 @@
 //
 // Ban keys: the PROVED player id and an enforceable address (when one was stored: a direct path,
 // never loopback or a relay), both checked at the identity proof through the injected
-// Session::SetBanCheck. Principle 7: policy over a policy-free net layer, which never calls us.
+// NetHooks::banCheck. Principle 7: policy over a policy-free net layer, which never calls us.
 
 #pragma once
 

@@ -6,6 +6,8 @@
 
 #include "coop/interactables/atv_index_internal.h"
 #include "coop/interactables/atv_authority.h"   // ClearTable / ResetRequests: a successor actor starts from the empty table
+#include "coop/interactables/atv_rider_watch.h"  // SeedRider: a ride already under way when an entry is created
+#include "coop/interactables/atv_seat_table.h"   // Exit: an entry that ends or is replaced
 #include "coop/interactables/atv_sync_internal.h"
 
 #include "atv_spawn_park.h"                    // spawn_park::kCap
@@ -193,6 +195,10 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         // host's re-spawn of a recurring key (a save-placed one) heals it: a flicker, not a ghost.
         if (isHost && thisWorld && row.world == thisWorld) SendAtvDestroy(it->first);
         coop::atv_host_sync::NoteAtvGone(it->first);   // its open requests can never be answered
+        // Divergence from MTA, whose client keeps the occupancy across a vehicle's Destroy and warps the occupants back in at
+        // its Create (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientVehicle.cpp:3001, :2735): our table is the
+        // entry, which ends with its actor, so the occupancy is taken again from the host's next block for the key.
+        coop::atv_seat_table::Exit(it->second, "index prune");
         it = g_atvs.erase(it);
     }
     // Update or add. A wire key can outlive its actor (a save-placed key is deterministic and a
@@ -206,7 +212,12 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         // unaddressable key on the wire, and an ATV with no key is skipped the same way (HubMatch).
         if (gained && isHost && !KeyNamesAnAtv(f.key, "host")) continue;
         AtvEntry& e = gained ? g_atvs[f.key] : row->second;
+        if (gained) e.key = f.key;
+        const bool actorChanged = gained || e.actor != f.obj;
         if (e.actor && e.actor != f.obj) {
+            // The same divergence from MTA as the prune's (CClientVehicle.cpp:3001, :2735): the occupancy is not carried to the
+            // successor, the host's next block for the key seats it again.
+            coop::atv_seat_table::Exit(e, "successor actor");
             coop::atv_authority::ClearTable(e);
             coop::atv_authority::ResetRequests(e);
             e.haveLastSync = false; e.lastIdleSendMs = 0; e.lastPktMs = 0;
@@ -215,6 +226,9 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         e.actor = f.obj;
         e.idx   = f.idx;
         e.world = W::WorldOf(f.obj);
+        // A kerfur already riding this ATV is the entry's rider from the start (a ride begun before the entry existed); one whose
+        // element id was not registered yet is asked again at each pass that sees the same actor.
+        if (isHost && (actorChanged || coop::atv_rider_watch::SeedWaiting(e.key))) coop::atv_rider_watch::SeedRider(e);
         if (gained && isHost) AnnounceGained(f.key, e);
         if (gained && !isHost) coop::atv_host_sync::NoteAtvIndexed(f.key, f.obj);   // a state held for it is applied
     }
@@ -251,6 +265,7 @@ void AdoptNative(const std::wstring& key, void* actor) {
     e.actor = actor;
     e.idx   = R::InternalIndexOf(actor);
     e.world = W::WorldOf(actor);
+    e.key = key;
     g_atvs[key] = std::move(e);
     coop::atv_host_sync::NoteAtvIndexed(key, actor);   // a state held for it is applied
 }

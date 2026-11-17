@@ -1,5 +1,7 @@
 // coop/props/container_contents_io.cpp -- see coop/props/container_contents_io.h.
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/props/container_contents_io.h"
 #include "coop/props/container_slice_wire.h"
 
@@ -17,8 +19,9 @@ namespace ci = ue_wrap::container_inventory;
 // BOUNDARY 1, fail closed: only a world container's own inventory is this lane's to author
 // (ci::IsWorldInventory); authoring a personal inventory from the host would wipe that peer's own.
 // BOUNDARY 2: a nested container's ints[0][0] is its own GObjStack index, a slot number in the
-// sender's array that must not survive the wire, so it is shipped and written as -1
-// (ci::ClearInventoryIndex says why never by clearing ints).
+// sender's array that must not survive the wire, so it is shipped as -1 (ci::ClearInventoryIndex says
+// why never by clearing ints), with the contents of that slot carried beside it (ci::AttachNested); the
+// receiver's writer gives them a slot of its own array.
 bool ReadRecords(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested) {
     int32_t count = -1;
     if (!ci::ReadContents(inv, out, cw::kMaxRecords, &count)) {
@@ -29,7 +32,7 @@ bool ReadRecords(void* inv, std::vector<SR::SaveRecord>& out, bool neuterNested)
     }
     if (neuterNested)
         for (auto& r : out)
-            if (ci::IsContainerRecord(r)) ci::ClearInventoryIndex(r);
+            if (ci::IsContainerRecord(r)) ci::AttachNested(r);
     return true;
 }
 
@@ -57,15 +60,29 @@ WriteResult WriteRecords(uint32_t eid, void* inv, const std::vector<SR::SaveReco
         UE_LOGW("container_contents: eid=%u -- alloc of %d records failed; leaving contents", eid, n);
         return WriteResult::Refused;
     }
-    for (int32_t i = 0; i < n; ++i)
-        SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride,
-                            recs[i], load);
+    // The container gaps drill's nested red: a nested container's carried contents are not written, so it is born empty.
+    static const bool s_nestOff = coop::config::ResolveFlag(coop::config_registry::rows::nest_record_off);
+    for (int32_t i = 0; i < n; ++i) {
+        const SR::SaveRecord* r = &recs[i];
+        SR::SaveRecord stripped;
+        if (s_nestOff && r->nestedCarried) {
+            stripped = *r;
+            stripped.nested.clear();
+            stripped.nestedCarried = false;
+            r = &stripped;
+        }
+        SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride, *r, load);
+    }
     // The previous buffer is orphaned: freeing the nested sub-arrays, minted FStrings and signal
     // rows recursively is far more crash-prone than leaking them, and the engine never double-frees
     // a buffer it has lost. inventory::ApplyToSaveObject orphans the same way once per join; this
     // lane is steady-state, and the caller's content-hash gate bounds its own apply, since an apply
     // happens only when the contents changed. The record editor's callers orphan one array per grant
     // and per restore, bounded by the act's queue budget at 4 writes a second per client at most.
+    // Read again: a nested container's carried contents placed above may have grown GObjStack, which moves every
+    // slot (container_inventory::PlaceNested), so the pointer taken before the writes may name the old array.
+    slot = ci::ContentsSlot(inv);
+    if (!slot) return WriteResult::NotReady;
     SR::WriteArrHeader(slot, 0, buf, n);
 
     ci::RederiveShownState(ci::OwnerOf(inv), inv);

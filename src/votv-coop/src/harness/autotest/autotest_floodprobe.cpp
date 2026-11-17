@@ -1,9 +1,10 @@
 // harness/autotest/autotest_floodprobe.cpp -- the connection-cap drill, client side. Once this
-// client holds its seat and has settled, it opens six more raw connections to the host from the
-// same address, two seconds apart, and says nothing on them: under the default cap of four per
-// thirty seconds the host parks at most four of them (this client's own join counts while its
-// stamp is inside the window) and refuses the rest with the flood code, and the seated client
-// is untouched. After the refusal lifts it opens one more, which the host must park again. The
+// client holds its seat and has settled, it opens two more raw connections than the cap allows (the
+// net.connect_cap row, read here, never a literal) to the host from the same address, half a second
+// apart, and says nothing on them: the host parks at most the cap (this client's own join counts
+// while its stamp is inside the window) and refuses the rest with the flood code, and the seated
+// client is untouched. After the refusal lifts (the net.connect_window_s row, and ten seconds) it
+// opens one more, which the host must park again. The
 // host's log and this client's are the evidence, read by the driver. Env
 // VOTVCOOP_RUN_FLOOD_PROBE=1, client.
 
@@ -31,9 +32,9 @@ namespace {
 constexpr DWORD kPollMs = 500;
 constexpr DWORD kSeatWaitMs = 180'000;   // the client boots, joins and finishes its link first
 constexpr DWORD kSettleMs = 25'000;      // the download and the world load finish before the flood
-constexpr int   kJunkConnections = 6;    // cap 4: at most four park, at least two are refused
-constexpr DWORD kJunkGapMs = 2000;
-constexpr DWORD kRefusalWaitMs = 40'000;  // past the thirty-second window and refusal
+constexpr int   kJunkOverCap = 2;        // junk connections past the cap: at least this many are refused
+constexpr DWORD kJunkGapMs = 500;        // all of them inside one window, whatever the cap is
+constexpr DWORD kRefusalMarginMs = 10'000;  // past the window and the refusal, which lasts as long
 
 }  // namespace
 
@@ -74,19 +75,30 @@ void RunFloodProbe() {
         UE_LOGW("flood_probe: INCONCLUSIVE -- no transport");
         return;
     }
+    // The cap and the window are the host's rows; the rig gives both peers the same config, so this
+    // side reads its own. A cap of 0 is "no cap": nothing would be refused, so there is nothing to
+    // measure.
+    const long cap = coop::config::ResolveInt(coop::config_registry::rows::net_connect_cap);
+    const long windowS = coop::config::ResolveInt(coop::config_registry::rows::net_connect_window_s);
+    if (cap <= 0) {
+        UE_LOGW("flood_probe: INCONCLUSIVE -- net.connect_cap is 0, the host refuses nothing");
+        return;
+    }
+    const int junkConnections = static_cast<int>(cap) + kJunkOverCap;
+    const DWORD refusalWaitMs = static_cast<DWORD>(windowS) * 1000 + kRefusalMarginMs;
     // The junk connections say nothing and are never closed by this side: the host parks or
     // refuses each, and its close reaches the session's status callback, which logs the code
     // for a connection it never seated and releases the handle.
-    for (int i = 1; i <= kJunkConnections; ++i) {
+    for (int i = 1; i <= junkConnections; ++i) {
         const HSteamNetConnection h = sockets->ConnectByIPAddress(addr, 0, nullptr);
         UE_LOGI("flood_probe: junk connection %d of %d to %s:%ld -- h=0x%08x (says nothing)",
-                i, kJunkConnections, ue_wrap::log::Addr(peerIp).c_str(), port,
+                i, junkConnections, ue_wrap::log::Addr(peerIp).c_str(), port,
                 static_cast<unsigned>(h));
         ::Sleep(kJunkGapMs);
     }
     UE_LOGI("flood_probe: waiting %lu s for the refusal to lift",
-            static_cast<unsigned long>(kRefusalWaitMs / 1000));
-    ::Sleep(kRefusalWaitMs);
+            static_cast<unsigned long>(refusalWaitMs / 1000));
+    ::Sleep(refusalWaitMs);
     const HSteamNetConnection h = sockets->ConnectByIPAddress(addr, 0, nullptr);
     UE_LOGI("flood_probe: recovery connection -- h=0x%08x; the host must park it",
             static_cast<unsigned>(h));

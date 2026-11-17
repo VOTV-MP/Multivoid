@@ -24,6 +24,8 @@ std::vector<uint8_t> Pack(uint32_t eid, const std::vector<SR::SaveRecord>& recs,
     W::AppU16(b, static_cast<uint16_t>(recs.size()));
     W::AppU8(b, flags);
     for (const auto& r : recs) W::SerSave(b, r);
+    // Each record's carried container contents, after all of them (save_record_wire::SerNested).
+    for (const auto& r : recs) W::SerNested(b, r);
     return b;
 }
 
@@ -47,6 +49,7 @@ size_t SliceBytes(const std::vector<SR::SaveRecord>& recs) {
     for (const SR::SaveRecord& r : recs) {
         scratch.clear();
         W::SerSave(scratch, r);
+        W::SerNested(scratch, r);   // its carried contents ride the slice's tail
         total += scratch.size();
     }
     return total;
@@ -75,6 +78,13 @@ bool ParseRecords(const std::vector<uint8_t>& b, size_t& o, uint16_t count, std:
     for (auto& r : out) {
         if (!W::DeSave(b, o, r)) {
             if (outWhy) *outWhy = "malformed record stream";
+            out.clear();
+            return false;
+        }
+    }
+    for (auto& r : out) {
+        if (!W::DeNested(b, o, r)) {
+            if (outWhy) *outWhy = "malformed carried contents";
             out.clear();
             return false;
         }

@@ -2,8 +2,11 @@
 
 #include "coop/props/snapshot_census.h"
 
-#include "ue_wrap/actors/prop.h"         // IsChipPile
-#include "ue_wrap/core/reflection.h"   // NumObjects / ObjectAt / IsLive / ClassNameOf
+#include "coop/element/element.h"        // kInvalidId
+#include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor
+#include "coop/props/pile_spawn_bind.h"  // CollectLiveTrashNatives: the one trash universe
+#include "ue_wrap/engine/engine.h"       // TryGetActorLocation
+#include "ue_wrap/core/reflection.h"   // ClassNameOf
 #include "ue_wrap/core/log.h"
 
 #include <algorithm>
@@ -25,16 +28,30 @@ bool g_have = false;
 int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes) {
     // INDEPENDENT of the expression path: a raw GUObjectArray walk sees every live actor whether or
     // not it is in the Prop Element registry. The 11:16 root was untracked piles MISSING from the
-    // registry -> never expressed; they are still counted here. IsTrashActor is a cheap class-hierarchy
-    // test (no per-object string alloc); ClassNameOf runs only for the actual piles and clumps.
+    // registry -> never expressed; they are still counted here. The universe is the one the joiner's sweep
+    // walks (CollectLiveTrashNatives: live piles and clumps, the class default objects out), so both sides
+    // count the same set. A class default object is a persistent live object of the pile class at the
+    // origin and no world's pile: counted, it made the host report one pile more than the joiner could
+    // ever claim, and the floor kept a real orphan for it.
     std::unordered_map<std::wstring, uint32_t> byClass;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsTrashActor(o)) continue;   // both resting forms are in the sweep's universe
+    int unexpressed = 0;
+    std::vector<void*> natives;
+    coop::pile_spawn_bind::CollectLiveTrashNatives(natives);
+    for (void* o : natives) {
         ++byClass[R::ClassNameOf(o)];
+        // Counted, not judged: a live trash actor with no Prop Element row is in this census and in no
+        // expression, so the joiner's floor reads it as a pile still to come. Said, so a short claim is traceable.
+        if (coop::prop_element_tracker::GetPropElementIdForActor(o) == coop::element::kInvalidId) {
+            if (++unexpressed <= 3) {
+                ue_wrap::FVector at{};
+                const bool read = ue_wrap::engine::TryGetActorLocation(o, at);
+                UE_LOGI("snapshot_census: live '%ls' %p holds no local Prop Element row (a host-owned pile), so no expression names it (%.1f,%.1f,%.1f)%s",
+                        R::ClassNameOf(o).c_str(), o, at.X, at.Y, at.Z, read ? "" : " (unread)");
+            }
+        }
     }
+    if (unexpressed > 0)
+        UE_LOGI("snapshot_census: %d live trash actor(s) hold no local Prop Element row and are counted anyway", unexpressed);
 
     // Order by count DESC so the MASS classes (the only ones a wipe is catastrophic for) always
     // make the byte budget; only tiny classes can be omitted (and the >50% valve still covers them).

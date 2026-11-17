@@ -52,7 +52,6 @@ using Reason = coop::net::PropActReason;
 // A whitelisted fresh birth: a client's own spawn of it is authored by the host (prop_drop_intent.cpp).
 constexpr const wchar_t* kDisc = L"prop_floppyDisc_R_C";
 constexpr float kOwnLiftCm = 60.f;   // a client's own spawn, above its player's origin
-constexpr uint32_t kC2HookBit = 1u << kSlotC2;
 
 // A client's own floppy disc, spawned above its player: keyed (its init mints the key) and without a row, which the
 // gate reads as the client's own. The cell is read back first, else the row proves nothing.
@@ -411,7 +410,7 @@ void HostStep(coop::net::Session* s) {
         void* const actor = g_target.Get();
         const bool held = actor && (r.blocker == Blocker::C2Grab
                                         ? coop::remote_prop::IsActorDrivenByOtherThan(actor, kSlotC1)
-                                        : (coop::hook_sync::PlayerHookHolders(actor) & kC2HookBit) != 0);
+                                        : coop::hook_sync::PlayerHookHolders(actor).Has(kSlotC2));
         if (!held) {
             if (HExpired(kDoneBoundMs)) HostInvalid(&r, "c2's hold on the target was never read on the host");
             return;

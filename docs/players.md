@@ -82,6 +82,26 @@ each peer's battery drained in turn).
 A carried trash clump is driven to the puppet's hand on
 the host each tick (`coop/player/puppet_carry_drive`); a held physics prop is on the props lane.
 
+The mirror is spawned from the class alone, so it showed the class's defaults: a held can opened and eaten
+from was full and shut to the others. The hand's owner reads its hand item's record through the item's own
+`getData` when its hold changes (the game's `updateHold`, watched at the script gate) or a held can's `init`
+runs, and sends it chunked (`HandRecord`) once its hand lane has announced the item, the hold transform left
+out: a client's to the host, which parks it as bytes (the newest per sender, within a 4 KB lane ceiling, a record
+that arrives while the hand state it follows is owed waits for it), decodes it once the sender's pacing token is
+taken, and refuses it, counted per reason and never stored or relayed, when it is keyless, not finite, past the
+lane's field bounds, or of a class the sender's applied hand does not hold (a class the sender held a moment ago
+is an honest race and dropped silently). Every class its `classes[]` names must resolve to a class in the host's
+class index: one the index has not drained yet waits under the index's window, one that resolves to none is
+refused (an order box's record names its items' classes, so no blanket refusal of `classes[]` stands: the five
+drill arms hold a can, whose record names none) `[?]`. The host stores its own copy and sends that on to every
+other world-ready peer, the host's to everyone, every hand's to a joiner (a send the joiner's link refused is owed
+to it); the host clears a
+record when the hand empties or changes class and sends an empty one, so the next item is not shown it. Each peer
+writes it into its mirror through the item's own `loadData`, the leaf state only (a client waits for a class the
+record names to load, inside the per-tick budget), and again when the mirror is made anew (`coop/player/hand_record_sync`) `[?]` (a state changed in the hand of another class, an
+extinguisher's charge, is not announced and shows the record of the hold). The two-peer drill is
+`coop/dev/hand_record_drill` (`hand_record_drill=can|hand|joiner|forge|hostile|keyless|oversize|bounds|nonfinite|box`, the host's one verdict, three red arms).
+
 ### Name, colour and nameplate
 
 The host is the canonical namer. Two clients typing the same name each believe they are unique,
@@ -203,6 +223,19 @@ host, which relays it to every other client; the host's own sleeping flag goes t
 one chat line naming the host when it rises. A joiner is sent the host's flag and every peer's
 state that is not awake, and a leaver is told to every client as awake.
 
+The host chooses whose sleep speeds the world up with the world setting `world.sleep_speedup` ("Time
+speeds up while sleeping", shown in the host's world settings and sent to every client), three modes.
+`host`: only the host's sleep does, as in single player. `everyone` (the default): the world speeds up
+only while every connected player is asleep; a host that sleeps while a player is awake rests as a
+client does, its world held at 1, its body and the world's effects at the game's factor, its food and
+coffee settled (`coop/player/sleep_rest`), the world takes the game's factor once every connected
+player rests or dreams, and goes back to 1 when one wakes. A player who joins is awake, so the world
+drops to 1 at its join. `never`: no one's sleep speeds the world up, and the host's sleep rests at 1
+like a client's. The clients' line names the mode, and is said again if the host changes the mode mid-sleep. The host's sleep follows a change of the mode, and the last client leaving, at once. `[?]` Not yet run on the rig for the three modes
+(`coop/dev/sleep_speedup_drill` has one arm for each, one for the mode changing mid-sleep, one for a client leaving, and a red that makes the host ignore the setting).
+The host's own nightmare roll is the game's, 500 s of world time, so while the host rests at 1 it
+comes 500 real seconds into the sleep.
+
 A nightmare is one player's. The game rolls once per sleep, 500 s of world time after the sleeper
 falls asleep, and the host's sleep runs the world at 20, so a host rolls 25 real seconds into a
 rest. A client's rest keeps its world at 1, so the same wait would end after 500 real seconds. The
@@ -241,7 +274,7 @@ player is refused, as is a second loadLevel while a visit is under way.
 
 A player who joins while another is in one of the maps needs no snapshot of it: the first pose
 the joiner applies for that player is below the floor, so its copy is hidden from that pose, and a
-copy born or respawned below, or a lost pose, is corrected by the next one. MTA keeps a player's
+copy born or respawned below, or a lost pose, is set right by the next one. MTA keeps a player's
 interior and dimension as a reliable state with a join snapshot; here the map is a place in the
 same world, so the position the pose already carries is the state `[?]`. What the host's save
 capture holds while the host itself is in a map (its player below the world, its game instance
@@ -326,6 +359,11 @@ account that made it (`coop/net/peer_identity`; [install.md](install.md) says wh
 what a second account on the same PC gets). The world-side effect of a pickup or a drop is
 on the props lane.
 
+With the host's rule `net.hunger_shared` (Slower hunger in larger groups; off by default) each player's hunger runs at
+players^-0.44 of the game's rate, 74% for two and 54% for four, written on each peer's own player through the game's own
+hunger multiplier, `mainPlayer_C::foodDraining` (`coop/player/hunger_share`); stamina and sleep are untouched `[V]` on
+0.9.0n (a rig run): with the rule on, host and client each logged 74% for two players; with it off, 100%.
+
 ### Roster and moderation
 
 Slots are recycled, so who is in a slot is a token, never a boolean (`coop/player/roster_ledger`).
@@ -343,7 +381,7 @@ keeps a seen-players file for the administration panel. A nickname is never a ba
 key: anyone can type any name.
 The kicked or banned player lands at the menu with a modal saying which, under a stable code
 ([join.md](join.md) lists them). Beside the ban check, the accept edge caps how many
-connections one address may open in a window (four per thirty seconds by default, a host
+connections one address may open in a window (sixteen per thirty seconds by default, a host
 setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 
 The host's moderation is a set of commands -- `/kick`, `/ban`, `/banid`, `/unban`, `/tphere`, `/cremate` --
@@ -421,6 +459,7 @@ host. A setting that holds a password is never set or shown by command.
 | `RagdollPose` (stream) | each peer, while ragdolled | pelvis transform and velocity |
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
+| `HandRecord` | each peer to the host; the host to all | a held item's own save record, chunked, for its hand mirrors |
 | `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
 | `PlayerHit` | host to the hit peer | a parked creature's hit on the peer's puppet: the verb (addDamage or punch) to run on its own player |
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
@@ -460,6 +499,7 @@ dead peer through the ragdoll bit of its next pose.
 | name, colour, nameplate | `coop/player/nameplate`, `coop/player/nick_color`, `ui/hud`, `ui/scoreboard` |
 | skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `assets/paks/` |
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
+| a held item's record on its mirrors | `coop/player/hand_record_sync` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
 | leaving during an event | `coop/player/leave_in_event` |
 | sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest`, `coop/player/nightmare_roll`, `harness/autotest/autotest_nightmare.cpp` (the drill) |

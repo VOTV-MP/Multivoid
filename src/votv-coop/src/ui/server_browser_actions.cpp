@@ -62,6 +62,14 @@ void DoConnect() {
         SB::SetNotice(l10n::T("That's your own server -- you're already hosting it."));
         return;
     }
+    // The master's count says no seat is left: say so before the dial, as a sentence like the other
+    // declines. The host's own admission still decides (a row is a heartbeat old), so a click that
+    // reaches it on a stale count gets the host's refusal with the number.
+    if (row.Full()) {
+        g_lastOutcome = "connect:full";
+        SB::SetNotice(l10n::T("This server is full."));
+        return;
+    }
     // A locked row goes to the password prompt instead of straight at the host. The version is
     // not re-checked here: the join call owns the version-equality gate and refuses with the
     // connect-failed popup, and the prompt hands the row straight back to that same call, so a

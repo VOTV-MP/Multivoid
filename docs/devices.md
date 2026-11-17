@@ -179,13 +179,12 @@ cameras off until the creature mirror stops running the wisp's world writes `[?]
 
 ### What is inside a container
 
-A container's contents are not on the container. Every one of them reads from a single global
-per-peer array, `saveSlot.GObjStack`, addressed by an index the actor holds alongside a cached
-volume. That array reaches a client once, inside the join save-transfer blob, and never again on
-its own, because every verb that mutates it dispatches internally to the Blueprint, where neither
-hook seam can intercept it and only the script-body gate can watch it
-(`docs/coop-dispatch-visibility.md`). Without a lane of its own, a
-drone delivery landed full on the host and empty on the client.
+A container's contents are not on the container. Every one of them reads from a single global per-peer array,
+`saveSlot.GObjStack`, addressed by an index the actor holds alongside a cached volume. That array reaches a client once,
+inside the join save-transfer blob, and never again on its own, because every verb that mutates it dispatches internally to
+the Blueprint, where neither hook seam can intercept it and only the script-body gate can watch it
+(`docs/coop-dispatch-visibility.md`). Without a lane of its own, a drone delivery landed full on the host and empty on the
+client.
 
 The seam is a gate on the Blueprint body of the add and take verbs, and it only marks the
 container dirty -- it reads no arguments and takes no action, which is what makes it correct for
@@ -194,56 +193,57 @@ refuse here: the gate fires at the body's entry, on the presser's own machine, a
 moved there before an answer from anywhere else could arrive. So a client's mirror of a shared
 container is display only: its own add or take runs on the mirror, the watch forgets the applied
 hash, and the host's next publication, or the truth it sends a refused ask, puts the mirror back.
-A change a client really makes to a shared container is an act the host judges
-(`coop/props/container_act_*`). One client slice remains, a thrown container's birth: the host
-built its copy empty from the throw, the contents are the thrower's, and that slice is the one a
-host takes. It spends the author's arrival budget (sixteen a second); past it the slice waits in
-the pen. The host refuses every other client slice after its header, never applies or relays it,
-counts it, says it once per container, and answers the author with its own truth: at most one
-per container every two seconds and one per author every half second, so a forged address buys
-no more than the floor. An accepted birth is relayed to every peer except the author -- echoing a
-peer's own state back would revert its newer local value.
+A change a client really makes to a shared container is an act the host judges (`coop/props/container_act_*`). One client
+slice remains, a thrown container's birth: the host built its copy empty from the throw, the contents are the thrower's, and
+that slice is the one a host takes. It spends the author's arrival budget (sixteen a second); past it the slice waits in the
+pen. The host refuses every other client slice after its header, never applies or relays it, counts it, says it once per
+container, and answers the author with its own truth (at most one per container every two seconds and one per author every
+half second, so a forged address buys no more than the floor). An accepted birth is relayed to every peer except the author:
+echoing a peer's own state back would revert its newer local value.
 
-Two things can arrive before they can be judged, and neither is refused for it. A slice whose
-container has not spawned on this machine yet waits in a holding pen -- one entry per container,
-replayed until it lands, and dropped after thirty seconds; while a join is streaming in, that
-clock does not run at all, because contents normally arrive ahead of the props they belong to. And
-a thrown container's first contents that arrive faster than their arrival budget allows wait in
-the same pen rather than being turned down, since they are the thrower's only copy. A client's pen is bounded per
-author; the host's own slices are not bounded, the way nothing of the host's is.
+Two things can arrive before they can be judged, and neither is refused for it. A slice whose container has not spawned
+on this machine yet waits in a holding pen -- one entry per container, replayed until it lands, and dropped after thirty
+seconds; while a join is streaming in that clock does not run, because contents normally arrive ahead of the props they
+belong to. And a thrown container's first contents that arrive faster than their arrival budget allows wait in the same
+pen, since they are the thrower's only copy. A client's pen is bounded per author; the host's own slices are not bounded.
 
-A container that is thrown changes hands without either verb: the game rebinds the thrown actor to
-its old slot of the thrower's own array, and the drop intent carries no contents, so the host's copy
-of a client's throw was born empty and every later client slice for it was refused for its base.
-The host's copy of a client's throw is now a transfer in progress: it is not published, to a joiner
-either, until the thrower's slice lands. The thrower ships its slice once the host's echo binds the
-container, and retries while its own slot is not readable yet; every slice of that author for the
-container is the newest version of the transfer, an edit made while the first one waited included,
-and is taken without a base. Whatever the host put in meanwhile is kept beside it, and the merged
-contents go to every peer, the thrower included; if the two do not fit one slice, the thrower's is
-applied alone and the host's records are dropped, with a warning. A birth slice is taken unjudged
-but not unbounded: it spends its author's arrival budget like an edit, and past that budget it is
-held in the pen and replayed rather than refused, since it is the thrower's only copy and is sent
-once. The pen holds eight per author, so a ninth simultaneous held slice evicts that author's oldest, said. Each author
-has at most 64 transfers in flight, its own oldest given up past that. The wait ends after thirty
-seconds or when the thrower leaves. A peer that joins during a transfer gets the container from the
-fan-out that completes it, not from its seed. A container the host throws publishes its contents at the express, since the
-mirrors are born empty, retrying while its slot is not readable.
+A container that is thrown changes hands without either verb: the game rebinds the thrown actor to its old slot of the
+thrower's own array, and the drop intent carries no contents, so the host's copy of a client's throw was born empty and every
+later client slice for it was refused for its base. That copy is now a transfer in progress: it is not published, to a joiner
+either, until the thrower's slice lands. The thrower ships its slice once the host's echo binds the container, retrying
+while its own slot is not readable; every slice of that author for the container is the newest version of the transfer (an
+edit made while the first waited included) and is taken without a base. Whatever the host put in meanwhile is kept beside it
+and the merged contents go to every peer, the thrower included; if the two do not fit one slice the thrower's is applied
+alone and the host's records are dropped, with a warning. A birth slice is taken unjudged but not unbounded: it spends its
+author's arrival budget like an edit and, past it, waits in the pen rather than being refused, since it is sent once. The
+pen holds eight per author (a ninth evicts the oldest, said), each author has at most 64 transfers in flight (its own oldest
+given up past that), and the wait ends after thirty seconds or when the thrower leaves. A peer that joins during a transfer
+gets the container from the fan-out that completes it. A container the host throws publishes its contents at the express,
+since the mirrors are born empty, retrying while its slot is not readable.
 
-Applying a slice raw-writes the receiver's own array slot and then re-derives everything a setter
-owns through the game's own verbs -- the volume and mass recalculation and the display-name
-rebuild -- rather than writing those fields directly. The add verb cannot be the apply verb: it
-takes a live actor and serialises it itself, so it cannot ingest a record off the wire. The
-overflow check is not called on apply either: it ejects contents.
+Applying a slice raw-writes the receiver's own array slot and then re-derives everything a setter owns through the game's own
+verbs (the volume and mass recalculation, the display-name rebuild). The add verb cannot be the apply verb: it takes a live
+actor and serialises it itself, so it cannot ingest a record off the wire; the overflow check is not called either, it ejects
+contents.
 
-Two boundaries, both fail-closed. Personal inventory is not this lane's business even though it
-is backed by the same global array, so a container whose component is flagged as a player's -- or
-whose flag cannot be resolved at all -- is skipped; writing over another peer's slice would wipe
-that player's inventory. And a nested container's own index into that array never travels: it
-names a slot in the sender's array and would resolve to an unrelated container on the receiver. A
-record whose class descends from the container class carries a sentinel there instead -- written
-when a slice is sent and again when one is applied, since enforcing it only on the way out would
-trust every sender to be this build -- and the nested container arrives empty rather than broken.
+Two boundaries, both fail-closed. Personal inventory is not this lane's business even though the same global array backs
+it, so a container whose component is flagged as a player's -- or whose flag cannot be resolved -- is skipped: writing over
+another peer's slice would wipe that player's inventory. And a nested container's own index into that array never travels,
+since it names a slot in the sender's array: a slice ships it as -1 and, in its tail, the slot's own records
+(`container_inventory::AttachNested`, three levels deep), and a receiver neuters an index it was sent too, since enforcing it
+only on the way out would trust every sender to be this build. The receiver writes the records into a slot of its own array
+(the one it gave the same container key before while it stands, else a new one appended as the container's own `Init`
+appends one, `container_inventory::PlaceNested`) and points the record at it, so a client that takes a nested container into
+its own inventory takes its contents too. `[V]` (`harness/autotest/autotest_container_gaps.cpp`: a disc in a basket in a
+backpack taken through the backpack's screen by the client; before, the basket named no slot and the disc was gone; the
+container join drill's parity, 281 containers on both peers, matched.)
+
+A signal's photo (8.7 to 23.3 KB measured) rides its record on every path that carries one, each held to its own bound and
+refused whole past it, never cut: a prop's own record (`prop_save_data`, 56,092 B), a container slice
+(`container_contents_publish`, 56,100 B), the player inventory (`player_inventory_sync`) and a request that carries a record
+(`prop_record_wire`: a put, a kerfur disc; 32 KB, raised from 4 KB so one photo fits). One photo fits every path; several
+past a bound are refused with a log naming the prop and size, the contents or profile staying as they were `[?]`. `[V]`
+(`autotest_container_gaps`: a 15.8 KB photo in a drive box filled by each peer; before, neither crossed; now both peers hold both.)
 
 ### Keypads and locks
 
@@ -450,9 +450,10 @@ box is destroyed and chipped into a garbage clump. Each of those ran only on the
 or press never reached the host, whose copy the save keeps, and a host's never reached a client `[V]`. The host's copy is
 now the machine (`coop/interactables/woodchipper_sync`, `coop/interactables/woodchipper_gate`):
 
-- A client's copy is refused its tick and its intake at the script gate, as the foods' and the plants' ticks are, so it
-  burns nothing and eats nothing; the host's copy eats, destroys the prop through the prop destroy path and drops the
-  clump, which reaches a client by the prop census's re-seed `[?]`.
+- A client's copy is refused its tick and its intake at the script gate, as the foods' and the plants' ticks are; the
+  host's copy eats, destroys the prop through the prop destroy path and drops the clump `[?]`. A client's held or thrown
+  prop is a host copy its drive keeps unsimulated, which `canChip` refuses; at the overlap's resume the host sets it
+  simulating while the chipper is on, idle and fuelled, and the chipper takes it `[V]`; a refused copy is set back `[?]`.
 - Every change of the host's chipper is announced by the game's own `checkActive`, and by the button's body for a press
   at fuel 0, so a watch on each sends the chipper's fuel and on/off at once, one message per changed chipper per tick. The
   burn is the one thing nothing announces: while a chipper's fuel moves it is read and sent once a second. A client
@@ -462,16 +463,15 @@ now the machine (`coop/interactables/woodchipper_sync`, `coop/interactables/wood
 - A client's pour runs on its copy as the game wrote it (its can drains and sounds), and the fuel the copy gained is
   sent to the host; its press of the button is refused on the copy and sent as the state it wanted. The host judges each
   (the sender's world, the chipper by key and class, a living sender, its reach, a bounded queue and rate, the gas can
-  in the sender's hand and the room in the tank for a pour, the state wanted for a press), adds the fuel it has room
-  for and runs `checkActive`, or runs the game's own press with the sender's puppet as the player, inside the requester
+  in the sender's hand and the room in the tank for a pour, the state wanted for a press), adds the fuel it has room for
+  and runs `checkActive`, or runs the game's own press with the sender's puppet as the player, inside the requester
   feedback scope, and answers a refused intent with the state, to the sender alone, whenever it can name the chipper (a
-  key that names none has no state to send). A client can refill a chipper to
-  full on demand, at the intent budget of four a second; it cannot overfill it, and no gas can drains but the one in
-  the client's own hand `[?]`.
-- At a joiner's ready edge the host sends which chippers are on; their fuel comes with the prop records. A chipper
-  that is mid-chip at the join, its chip animation and its chip sound are not carried `[?]`.
+  key that names none has no state to send). A client can refill a chipper to full on demand, at the intent budget of
+  four a second; it cannot overfill it, and no gas can drains but the one in the client's own hand `[?]`.
+- At a joiner's ready edge the host sends which chippers are on; their fuel comes with the prop records, and the prop a
+  chipper took or left is the ordinary prop state, no flip pending. A mid-chip chipper shows no chip animation or sound `[?]`.
 
-`[?]` until the drill runs (`harness/autotest/autotest_woodchipper.cpp`, the `woodchipper_drill` row).
+`[?]` until the drills run (`autotest_woodchipper.cpp`, the `woodchipper_drill` row; `autotest_chipper_feed.cpp`, the flip).
 
 ### The computer and the economy
 
@@ -577,7 +577,7 @@ state it shows, and the first rows a world takes play no sound.
 | A cord's link is the host's: a client reports the plug its player made and the host's answer settles both copies, so two clients on one cord settle in arrival order and a claim on a cord the host's player is dragging is answered with the host's link. A socket's power, a generator's outlets and a Kerfus's charging are not this lane's. Not yet exercised in a two-peer game run | `[RD]` the cord and socket Blueprint call surface; `[?]` `coop/interactables/cord_sync`, `ue_wrap/devices/cord` |
 | A client's spill from its hand lands where its own flight put it, which the host takes as is within 15 m. A bottle's opening click and a liquid that leaves something other than a grime decal are not carried | `[V]` `prop_snack_beer_C`'s `openBottle` plays `impact_plastic_cue`; `coop/world/spill_sync` |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
-| A woodchipper's chip animation and chip sound, and the gas can's fuel on the other peers after a pour, are not carried; a client's pour is the fuel its own copy gained, which the host takes up to the room in the tank, and a prop a client holds over the hopper is not eaten while it is held | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the can's fuel |
+| A woodchipper's chip animation and chip sound, and the gas can's fuel on the other peers after a pour, are not carried; a client's pour is the fuel its own copy gained, which the host takes up to the room in the tank | `[?]` `coop/interactables/woodchipper_sync`; no lane carries the can's fuel |
 
 ## Code map
 

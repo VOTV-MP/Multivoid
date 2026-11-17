@@ -11,6 +11,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/creatures/npc_ride.h"
 #include "coop/element/npc.h"
 
 #include "coop/net/protocol.h"
@@ -190,6 +191,13 @@ void Npc::RefreshFloor(void* actor) {
 bool Npc::ApplyToEngine() {
     void* actor = GetActor();
     if (!actor) return false;
+    // A kerfur the host rides on an ATV is seated on this copy by coop::npc_ride, through its own sitOnCar: the stream
+    // waits (no location, rotation, floor, CMC or Mesh yaw write) and only the head and the command state are driven.
+    if (coop::npc_ride::HoldsPose(GetId())) {
+        if (hasLookAt_) Pup::DriveKerfurLookAt(actor, curLookAt_);
+        if (hasKerfState_) ue_wrap::kerfur::DriveKerfurState(actor, kerfState_, kerfSpooky_);
+        return true;
+    }
     // NPC capsule centre IS the actor pivot (the host streams the actor's location, the mirror is the
     // same class spawned at the same place) -- no mesh-offset reconstruction (unlike RemotePlayer).
     const bool moved = E::SetActorLocation(actor, curPos_);

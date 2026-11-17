@@ -2,8 +2,12 @@
 
 #include "coop/props/prop_save_data.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/food_clock_probe.h"   // [dev] the food catch-up's two clocks, read at these seams
+#include "coop/interactables/atv_drill_events.h"   // NoteRecordLanded: the ATV drill's battery charge event
 #include "coop/props/disc_record_ceiling.h"
+#include "coop/props/prop_birth_ledger.h"          // the host birth path's traffic ledger
 #include "coop/props/prop_record_gates.h"          // a class's say over who writes its record and when it lands
 #include "coop/items/save_record_wire.h"
 #include "coop/net/blob_chunks.h"
@@ -19,7 +23,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
 #include <map>
 #include <set>
 #include <utility>
@@ -136,65 +139,6 @@ coop::blob_chunks::Assembler g_asmCanonical;
 coop::blob_chunks::Assembler g_asmIntent;
 uint32_t g_blobSeq = 1;
 
-// The host birth path's traffic ledger. That path publishes for EVERY prop the host gives birth to
-// at runtime, not only discs, so what it costs is measured rather than assumed: one line a minute
-// with the window and the session so far (a rig peer is killed, not disconnected, so the running
-// total is what survives), and the session again at teardown.
-struct BirthTally { uint64_t records = 0; uint64_t bytes = 0; };
-struct BirthLedger {
-    BirthTally total;
-    std::map<std::wstring, BirthTally> byClass;
-    uint64_t declined  = 0;   // a covered birth the publisher sent nothing for
-    uint64_t uncovered = 0;   // a birth whose class carries no save state of its own
-};
-BirthLedger g_birthWindow;
-BirthLedger g_birthSession;
-uint64_t g_birthWindowStartMs = 0;
-uint64_t g_birthSessionStartMs = 0;
-constexpr uint64_t kBirthReportMs = 60000;
-
-std::string TopClasses(const BirthLedger& l) {
-    std::vector<std::pair<std::wstring, BirthTally>> v(l.byClass.begin(), l.byClass.end());
-    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
-        return a.second.bytes > b.second.bytes;
-    });
-    std::string out;
-    for (size_t i = 0; i < v.size() && i < 5; ++i) {
-        char row[160];
-        std::snprintf(row, sizeof(row), "%s%ls %llu/%lluB", i ? ", " : "", v[i].first.c_str(),
-                      static_cast<unsigned long long>(v[i].second.records),
-                      static_cast<unsigned long long>(v[i].second.bytes));
-        out += row;
-    }
-    return out.empty() ? std::string("none") : out;
-}
-
-void ReportBirthLedger(const char* when, const BirthLedger& l, uint64_t spanMs) {
-    const double secs = spanMs > 0 ? static_cast<double>(spanMs) / 1000.0 : 1.0;
-    UE_LOGI("prop_save_data: HOST BIRTH RECORDS %s (%.0f s) -- %llu sent, %llu B (%.1f B/s, %.1f "
-            "records/min), %llu declined, %llu births with no save state of their own; top by "
-            "bytes: %s", when, secs, static_cast<unsigned long long>(l.total.records),
-            static_cast<unsigned long long>(l.total.bytes),
-            static_cast<double>(l.total.bytes) / secs,
-            static_cast<double>(l.total.records) * 60.0 / secs,
-            static_cast<unsigned long long>(l.declined),
-            static_cast<unsigned long long>(l.uncovered), TopClasses(l).c_str());
-}
-
-// Host only, from Drive: the minute's line and the running session line under it.
-void TickBirthLedger(uint64_t now) {
-    if (!PT::SessionIsHost()) return;
-    if (!g_birthWindowStartMs) { g_birthWindowStartMs = g_birthSessionStartMs = now; return; }
-    if (now - g_birthWindowStartMs < kBirthReportMs) return;
-    // A minute with no host birth says nothing, and the session line under it has not moved.
-    const bool quiet = !g_birthWindow.total.records && !g_birthWindow.declined && !g_birthWindow.uncovered;
-    if (quiet) { g_birthWindowStartMs = now; return; }
-    ReportBirthLedger("last minute", g_birthWindow, now - g_birthWindowStartMs);
-    ReportBirthLedger("session so far", g_birthSession, now - g_birthSessionStartMs);
-    g_birthWindow = BirthLedger{};
-    g_birthWindowStartMs = now;
-}
-
 std::vector<uint8_t> BuildBody(const std::wstring& key, const SR::SaveRecord& rec) {
     std::vector<uint8_t> body;
     body.push_back(kBodyVersion);
@@ -215,6 +159,14 @@ bool ParseBody(const std::vector<uint8_t>& body, std::wstring& key, SR::SaveReco
     key.assign(body.begin() + static_cast<long>(o), body.begin() + static_cast<long>(o + keyLen));
     o += keyLen;
     if (!SW::DeSave(body, o, rec)) return false;
+    // A prop's own record never carries container contents (only a container slice's do,
+    // container_inventory::AttachNested): carried ones would give the prop's container items of the sender's choosing.
+    rec.nested.clear();
+    rec.nestedCarried = false;
+    // The container gaps drill's photo red: the record is applied with its signals' photos left out.
+    static const bool s_photoOff = coop::config::ResolveFlag(coop::config_registry::rows::photo_record_off);
+    if (s_photoOff)
+        for (auto& s : rec.signals) s.image.clear();
     // The body ADDRESSES a prop by the head key and CARRIES a record whose own key field the
     // game's loadData would write onto that prop. If the two disagree the message is asking to
     // rename one prop to another's identity, so it is refused whole rather than reconciled.
@@ -251,6 +203,11 @@ bool DropRowForGates(const std::wstring& key, void* actor) {
     const auto it = g_parked.find(key);
     if (it == g_parked.end()) return false;
     if (it->second.intent && !coop::prop_record_gates::IntentAllows(actor, it->second.senderSlot)) {
+        Unpark(it);
+        return true;
+    }
+    if (it->second.intent &&
+        !coop::prop_record_gates::IntentRecordAllows(actor, it->second.senderSlot, it->second.rec)) {
         Unpark(it);
         return true;
     }
@@ -299,7 +256,7 @@ constexpr uint64_t kIntentWindowMs   = 10000;
 struct IntentRate { uint64_t windowStartMs = 0; int count = 0; bool warned = false; };
 std::map<uint8_t, IntentRate> g_intentRate;
 
-bool AllowIntent(uint8_t senderSlot) {
+bool AllowIntent(uint8_t senderSlot, bool* firstRefusal = nullptr) {
     IntentRate& r = g_intentRate[senderSlot];
     const uint64_t now = NowMs();
     if (now - r.windowStartMs >= kIntentWindowMs) {
@@ -310,6 +267,7 @@ bool AllowIntent(uint8_t senderSlot) {
     if (++r.count <= kIntentsPerWindow) return true;
     if (!r.warned) {
         r.warned = true;
+        if (firstRefusal) *firstRefusal = true;
         UE_LOGW("prop_save_data: slot %u is past %d save-record intents in %llu ms -- refusing the "
                 "rest of this window", static_cast<unsigned>(senderSlot), kIntentsPerWindow,
                 static_cast<unsigned long long>(kIntentWindowMs));
@@ -333,6 +291,7 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!SR::ApplyRecord(actor, rec, load)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
+    coop::atv_drill_events::NoteRecordLanded(actor);   // [dev] the ATV drill's charge of a battery mirror; one compare with the row off
     // The author's record has LANDED, so the host may publish this key again, and does so here, from
     // what it now holds: a peer that became ready while the key was awaited was declined by its join
     // seed then. Not at its arrival: a record that arrives before the host's actor is indexed is
@@ -507,26 +466,17 @@ bool Publish(coop::net::Session* s, void* actor, const std::wstring& key, size_t
 bool PublishHostBirth(coop::net::Session* s, void* actor) {
     if (!s || !actor || !PT::SessionIsHost()) return false;
     if (!Covers(actor)) {
-        ++g_birthWindow.uncovered;
-        ++g_birthSession.uncovered;
+        coop::prop_birth_ledger::NoteUncovered();
         return false;
     }
     size_t bytes = 0;
     if (!Publish(s, actor, ue_wrap::prop::GetInteractableKeyString(actor), &bytes)) {
         // Declined, not lost: the author's own record is still owed (a birth from a client's
         // intent), no peer is in the world yet, or the transport refused and the retry holds it.
-        ++g_birthWindow.declined;
-        ++g_birthSession.declined;
+        coop::prop_birth_ledger::NoteDeclined();
         return false;
     }
-    const std::wstring cls = R::ClassNameOf(actor);
-    for (BirthLedger* l : {&g_birthWindow, &g_birthSession}) {
-        l->total.records += 1;
-        l->total.bytes += bytes;
-        BirthTally& t = l->byClass[cls];
-        t.records += 1;
-        t.bytes += bytes;
-    }
+    coop::prop_birth_ledger::NoteSent(R::ClassNameOf(actor), bytes);
     return true;
 }
 
@@ -551,6 +501,16 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
     return peerSlot < 0 ? Publish(s, actor, w) : PublishToSlot(s, peerSlot, actor, w);
 }
 
+// A client's intent the host will not take is answered with the host's own record of that prop, to the sender alone, so a
+// copy the client already changed here un-diverges (MTA answers every refused request to its asker, CGame.cpp:3041-3043 and
+// 3347-3363). Nothing is sent for a key the host does not hold or a class this lane does not carry.
+void AnswerRefused(coop::net::Session& s, uint8_t senderSlot, const std::wstring& key) {
+    if (key.empty()) return;
+    void* const actor = coop::prop_key_index::Find(key);
+    if (!actor || !Covers(actor)) return;
+    PublishToSlot(&s, senderSlot, actor, key);
+}
+
 void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_t senderSlot,
              bool intent) {
     // An intent is a claim addressed to the authority; a client receiving one has nothing to do
@@ -567,19 +527,26 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     if (body.size() > coop::disc_record::MaxBodyBytes()) {
         if (g_oversizeLogged.size() >= kMaxOversizeLogged) g_oversizeLogged.clear();   // turns over, never quiet
         const std::wstring named = HeadKey(body);
-        if (g_oversizeLogged.insert(named).second)
+        if (g_oversizeLogged.insert(named).second) {
             UE_LOGW("prop_save_data: %s body for key '%ls' from slot %u is %zu B, over the %zu ceiling -- "
                     "refused (said once per key)", intent ? "intent" : "record", named.c_str(),
                     static_cast<unsigned>(senderSlot), body.size(), coop::disc_record::MaxBodyBytes());
+            if (intent) AnswerRefused(s, senderSlot, named);
+        }
         return;
     }
-    if (intent && !AllowIntent(senderSlot)) return;
+    bool firstRefusal = false;
+    if (intent && !AllowIntent(senderSlot, &firstRefusal)) {
+        if (firstRefusal) AnswerRefused(s, senderSlot, HeadKey(body));   // once a window: the answer is bounded by the bucket
+        return;
+    }
 
     std::wstring key;
     SR::SaveRecord rec;
     if (!ParseBody(body, key, rec)) {
         UE_LOGW("prop_save_data: ill-formed %s body from slot %u (%zu B) -- dropped whole",
                 intent ? "intent" : "record", static_cast<unsigned>(senderSlot), body.size());
+        if (intent) AnswerRefused(s, senderSlot, HeadKey(body));
         return;
     }
     if (!intent) {
@@ -604,7 +571,11 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     const bool birth = g_awaiting.count(key) != 0;
     // A class that has a rule about who writes its record judges the sender here (the gate logs its
     // refusals). A record for a prop this host does not index yet is judged where it lands, from the park.
-    if (actor && !coop::prop_record_gates::IntentAllows(actor, senderSlot)) return;
+    if (actor && !coop::prop_record_gates::IntentAllows(actor, senderSlot)) {
+        AnswerRefused(s, senderSlot, key);
+        return;
+    }
+    if (actor && !coop::prop_record_gates::IntentRecordAllows(actor, senderSlot, rec)) return;
     // A claim is published to every peer only once it has landed here and passed its class's gates; one
     // that parked is published by its land (Drive, ApplyParked), never at arrival unjudged.
     const bool landed = LandRecord(key, SR::SaveRecord(rec), senderSlot, body.size(), /*budgeted=*/false,
@@ -620,6 +591,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     }
     if (landed && !birth) SendBody(&s, -1, key, rec);
 }
+void DropParkedFor(const std::wstring& key) { DropParked(key); }
 
 bool ApplyParked(void* actor, const std::wstring& key) {
     if (!actor || key.empty()) return false;
@@ -744,16 +716,11 @@ void Drive() {
     const auto now = std::chrono::steady_clock::now();
     g_asmCanonical.Sweep(now, std::chrono::seconds(30));
     g_asmIntent.Sweep(now, std::chrono::seconds(30));
-    TickBirthLedger(nowMs);
+    coop::prop_birth_ledger::Tick(nowMs);
 }
 
 void OnDisconnect() {
-    if (g_birthSessionStartMs &&
-        (g_birthSession.total.records || g_birthSession.declined || g_birthSession.uncovered))
-        ReportBirthLedger("SESSION", g_birthSession, NowMs() - g_birthSessionStartMs);
-    g_birthWindow = BirthLedger{};
-    g_birthSession = BirthLedger{};
-    g_birthWindowStartMs = g_birthSessionStartMs = 0;
+    coop::prop_birth_ledger::OnDisconnect(NowMs());
     g_parkCursor.clear();
     g_applyBudget = kAppliesPerFrame;
     g_nextSweepMs = 0;

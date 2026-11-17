@@ -463,8 +463,8 @@ void DoHost() {
                         : coop::session::Reachability::Brokered,
         !hideFromBrowser};
     coop::net::Refusal refused;
-    const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, /*playersMax=*/4,
-                                           g_shownMasterUrl, mode, &refused);
+    const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, g_shownMasterUrl,
+                                           mode, &refused);
     // The password is never logged: a log line is the easiest place for it to end up in a
     // screenshot.
     UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",

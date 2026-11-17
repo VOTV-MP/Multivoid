@@ -56,6 +56,12 @@ bool HideInfoOf(uint32_t eid, HideInfo& out);
 // lift reveal). No-op unless armed. `eid` is the host element id (tracking key).
 void OnMirrorSpawned(uint32_t eid, void* actor, HideCollision collision, bool holdUntilQuiescence);
 
+// Registers `fn`, called once per eid a reveal shows: at Arm and Reset (their stale records), at the curtain lift and
+// at the quiescence backstop, each AFTER the record left the hidden set. Not called where an eid's old actor is shown
+// only so its new one can be hidden. Capacity 2; the same function again is ignored (true); a full list returns false
+// and says so once. Arm and Reset never clear the list. Game thread.
+bool OnReveal(void (*fn)(uint32_t eid));
+
 // Curtain-lift reveal ("primary world assembled" = SnapshotComplete + spawn-drain, NOT
 // g_sweepFired): reveal every hidden mirror NOT held-to-quiescence. The held ones (their
 // local twin still visible) stay hidden -> revealed by the quiescence backstop below.
@@ -65,5 +71,16 @@ void RevealConfirmedAtLift();
 // still-hidden survivor + disarm. The catch-all -- every hidden mirror was tracked here, so
 // nothing can stay stuck hidden (a swept ghost is dead -> liveness-gated, skipped).
 void RevealAllSurvivorsAtQuiescence();
+
+// A dev hold of the two reveals above (the ATV riders drill's step 0): while `held` answers true, the lift and the
+// quiescence reveal do not run; each says so and waits. `held` is asked at those two calls and at ResumeHeldLift, on the
+// game thread. Null (the default) holds nothing and costs one pointer test. The window stays armed while a reveal waits, so a
+// mirror bound meanwhile is hidden too.
+using LiftHold = bool (*)();
+void SetLiftHold(LiftHold held);
+
+// The event that ends a hold: runs, in their order, the lift and the quiescence reveal that waited, once `held` answers false.
+// A no-op while it still answers true, or when nothing waited. Game thread.
+void ResumeHeldLift();
 
 }  // namespace coop::mirror_defer

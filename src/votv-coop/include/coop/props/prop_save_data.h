@@ -89,6 +89,10 @@ bool AwaitsRecordFrom(const std::wstring& key, uint8_t senderSlot);
 void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_t senderSlot,
              bool intent);
 
+// A record parked for `key` is dropped: what it says is older than an act this peer made on the prop since (a player's own stick
+// after a grab, a new hold of it). Nothing is dropped when no row waits.
+void DropParkedFor(const std::wstring& key);
+
 // Apply a parked record to `actor`, whose Key is now readable; called at every mirror-birth seam.
 // Unbudgeted, unlike the park drain: a newborn mirror must be right at birth, and the birth rate is
 // already paced by whatever seam produced it.

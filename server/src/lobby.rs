@@ -39,9 +39,12 @@ pub const RL_CREATE: (Duration, usize) = (Duration::from_secs(60), 10);
 pub const RL_JOIN: (Duration, usize) = (Duration::from_secs(60), 20);
 pub const RL_MUTATE: (Duration, usize) = (Duration::from_secs(60), 240);
 // GET /v1/lobbies: the 5 s snapshot cache bounds the work, this bounds the bytes an address can pull.
-// An open browser fetches every 5 s (12 a minute), so 120 leaves room for ten players behind one address.
-pub const RL_BROWSE: (Duration, usize) = (Duration::from_secs(60), 120);
+// An open browser fetches every 5 s (12 a minute), so 240 leaves room for twenty players behind one
+// address: a full lobby of MAX_PLAYERS, each with a browser open, and a few more.
+pub const RL_BROWSE: (Duration, usize) = (Duration::from_secs(60), 240);
 
+// A lobby's seats: the mod's peer ceiling (kMaxPeers); a host's own limit is its net.max_players row.
+pub const MAX_PLAYERS: i64 = 16;
 pub const MAX_NAME: usize = 63;
 pub const MAX_WORLD: usize = 39;
 pub const MAX_VERSION: usize = 23;
@@ -413,12 +416,19 @@ pub fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Val
     };
     let now = Instant::now();
     let lo = state.lobbies.get_mut(&sid).expect("just authed");
+    // The host's own limit (its net.max_players row), which it may change while the lobby lives; a
+    // mod that does not send it keeps the one the lobby was created with. Set before the count and the
+    // links are clamped against it.
+    lo.players_max = as_int(body, "players_max", lo.players_max).clamp(1, MAX_PLAYERS);
     let pc = as_int(body, "players_cur", lo.players_cur);
-    lo.players_cur = pc.clamp(0, lo.players_max);
+    // The count and the links are the live ones, bounded by the ceiling and not by the limit: a host
+    // that lowered its limit under the players already in lists as 5/2, as MTA's query reports the
+    // joined count against the maximum (ASE.cpp:376-378), not as a lobby of 2/2.
+    lo.players_cur = pc.clamp(0, MAX_PLAYERS);
     if body_has(body, "listed") {
         lo.listed = as_bool(body, "listed", lo.listed);
     }
-    if let Some(links) = LobbyLinks::from_beat(body, lo.players_max) {
+    if let Some(links) = LobbyLinks::from_beat(body, MAX_PLAYERS) {
         lo.links = links;
     }
     lo.last_seen = now;

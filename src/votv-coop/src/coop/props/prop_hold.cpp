@@ -5,6 +5,7 @@
 #include "coop/items/hook_sync.h"
 #include "coop/player/local_streams.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/slot_mask.h"
 #include "coop/props/remote_prop.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -36,8 +37,12 @@ std::array<Reservation, kSlots> g_reservations;
 
 bool InTable(int slot) { return slot >= 1 && slot < kSlots; }
 
-// The bit of the requester's own slot in a hook-holder mask; nothing for a requester outside the roster.
-uint32_t OwnBit(int requester) { return requester >= 0 && requester < kSlots ? 1u << requester : 0u; }
+// Whether a hook other than the requester's own pulls the prop; a requester outside the roster owns no hook here.
+bool HookedByOther(void* actor, int requester) {
+    coop::players::SlotMask holders = coop::hook_sync::PlayerHookHolders(actor);
+    if (requester >= 0 && requester < kSlots) holders.Clear(requester);
+    return holders.Any();
+}
 
 }  // namespace
 
@@ -58,7 +63,7 @@ Holder WhoHolds(void* actor, int requester) {
     if (coop::remote_prop::IsActorDrivenByOtherThan(actor, requester)) return Holder::Drive;
     // The claim pass's reading, at most one 20 Hz pass (50 ms) old; MTA sets occupancy in the judging call
     // (CGame.cpp:3152).
-    if (coop::hook_sync::PlayerHookHolders(actor) & ~OwnBit(requester)) return Holder::Hook;
+    if (HookedByOther(actor, requester)) return Holder::Hook;
     if (requester != 0 && (HostHolds(actor) || actor == coop::local_streams::LastHeldActor()))
         return Holder::HostHand;
     if (ReservedByOther(actor, requester)) return Holder::Reservation;

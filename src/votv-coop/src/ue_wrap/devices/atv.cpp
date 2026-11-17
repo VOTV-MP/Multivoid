@@ -6,7 +6,9 @@
 
 #include "ue_wrap/devices/atv.h"
 
-#include "ue_wrap/actors/save_record.h"  // ReadArr / WriteArrHeader / AllocZeroed -- the Modules array
+#include "ue_wrap/actors/kerfur.h"   // the kerfur's own ATV functions (InviteKerfurs, ReleaseKerfurs)
+#include "ue_wrap/actors/save_record.h"  // ReadArr / ReplaceArray -- the Modules and allKerfuros arrays
+#include "ue_wrap/core/cached_obj_ref.h"  // the battery prop class, found again after a world reload
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/component_calls.h"  // CallParamlessNamed -- the ATV's own parameterless functions
@@ -19,6 +21,7 @@
 #include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <string>
@@ -35,6 +38,7 @@ int32_t g_playerOff   = -1;       // Player   (0x05B0, AmainPlayer_C*)
 int32_t g_isDrivenOff = -1;       // isDriven (0x05F7, bool)
 int32_t g_fuelOff     = -1;       // fuel     (0x05D4, float)
 int32_t g_healthOff   = -1;       // health   (0x05E4, float)
+int32_t g_batteryOff  = -1;       // battery  (float; -1 none fitted), by reflection alone
 int32_t g_brakeOff    = -1;       // Brake    (0x05D9, bool)
 uint8_t g_brakeMask   = 0xFF;     // its bit; the whole byte when the bit could not be resolved
 int32_t g_lightsOff   = -1;       // lights, turbo: bool bits, byte and mask each
@@ -105,6 +109,8 @@ bool EnsureResolved() {
     g_isDrivenOff = ResolveOff(cls, L"isDriven", 0x05F7);
     g_fuelOff     = ResolveOff(cls, L"fuel",     0x05D4);
     g_healthOff   = ResolveOff(cls, L"health",   0x05E4);
+    g_batteryOff  = R::FindPropertyOffset(cls, L"battery");
+    if (g_batteryOff < 0) UE_LOGW("atv: battery offset not found -- an ATV's battery is not carried");
     g_brakeOff    = ResolveOff(cls, L"Brake",    0x05D9);
     {
         int32_t off = -1;
@@ -278,6 +284,51 @@ bool SetBroken(void* atv, bool v) {
 
 bool CallUpdHealth(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updHealth"); }
 
+bool BatteryResolved() { return g_batteryOff >= 0; }
+
+float GetBattery(void* atv) {
+    if (!atv || g_batteryOff < 0) return kNoBattery;
+    return *reinterpret_cast<const float*>(reinterpret_cast<const char*>(atv) + g_batteryOff);
+}
+
+bool SetBattery(void* atv, float v) {
+    if (!atv || g_batteryOff < 0) return false;
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(atv) + g_batteryOff) = v;
+    return true;
+}
+
+bool CallUpdBattery(void* atv) { return atv && component_calls::CallParamlessNamed(atv, L"updBattery"); }
+
+float ClampCharge(float v) { return std::fmin(std::fmax(v, 0.f), 100.f); }
+
+void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale, uint8_t collision, float charge) {
+    // The prop's class and its `battery` offset, resolved once and again when a world reload has re-created the class.
+    static CachedObjRef s_batteryCls;
+    static int32_t s_batteryPropOff = -1;
+    if (!s_batteryCls.Alive()) {
+        void* const found = object_index::ClassByName(L"prop_atvcarbattery_C");
+        s_batteryCls.Set(found);
+        s_batteryPropOff = found ? R::FindPropertyOffset(found, L"battery") : -1;
+    }
+    void* const cls = s_batteryCls.Get();
+    const int32_t off = s_batteryPropOff;
+    if (!cls || off < 0) {
+        UE_LOGW("atv: prop_atvcarbattery_C or its battery field does not resolve -- no battery prop is spawned");
+        return nullptr;
+    }
+    void* const actor = engine::BeginDeferredSpawn(cls, loc, rot, collision, &scale);
+    if (!actor) return nullptr;
+    const int32_t idx = R::InternalIndexOf(actor);
+    const float clamped = ClampCharge(charge);
+    std::memcpy(static_cast<uint8_t*>(actor) + off, &clamped, sizeof(clamped));
+    if (!engine::FinishDeferredSpawn(actor, loc, rot, &scale)) {
+        // No caller holds the begun actor (the result is null) and the engine would keep it.
+        if (R::IsLiveByIndex(actor, idx)) engine::DestroyActor(actor);
+        return nullptr;
+    }
+    return actor;
+}
+
 int ReadModules(void* atv, uint8_t* out, int cap) {
     if (!atv || g_modulesOff < 0) return -1;
     const save_record::Arr arr = save_record::ReadArr(atv, g_modulesOff);
@@ -288,7 +339,7 @@ int ReadModules(void* atv, uint8_t* out, int cap) {
 
 bool WriteModules(void* atv, const uint8_t* mods, int count) {
     if (!atv || g_modulesOff < 0 || count < 0 || count > kModulesCap || (count > 0 && !mods)) return false;
-    if (!save_record::ReplaceByteArray(atv, g_modulesOff, mods, count)) return false;
+    if (!save_record::ReplaceArray(atv, g_modulesOff, mods, count, 1)) return false;
     return component_calls::CallParamlessNamed(atv, L"updUpgrades");
 }
 
@@ -499,6 +550,115 @@ bool DestroyMirror(void* atv) {
                 "unpossessed and hidden after the ATV goes");
     // K2_DestroyActor is declared on Actor, not on ATV_C, so it is resolved there.
     return engine::DestroyActor(atv);
+}
+
+namespace {
+
+// A field of ATV_C by name, resolved once per field: the layout is the same in every world. -1 while ATV_C is not loaded
+// (asked again) or when it has no such field.
+struct Field {
+    const wchar_t* name;
+    int32_t off = -1;
+    bool tried = false;
+    int32_t Get() {
+        if (!tried) {
+            void* cls = AtvClass();
+            if (!cls) return -1;
+            off = R::FindPropertyOffset(cls, name);
+            tried = true;
+            if (off < 0) UE_LOGW("atv: ATV_C has no `%ls`", name);
+        }
+        return off;
+    }
+};
+Field g_camera{L"Camera"}, g_sitarrow{L"sitarrow"}, g_playerHit{L"playerHit"}, g_sittingKerfuro{L"sittingKerfuro"},
+    g_allKerfuros{L"allKerfuros"}, g_billboard4{L"Billboard4"}, g_lookAtTire{L"lookAtTire"},
+    g_lookAtTireSocket{L"lookAtTireSocket"};
+
+void* ReadObj(void* atv, int32_t off) {
+    if (!atv || off < 0) return nullptr;
+    void* o = *reinterpret_cast<void* const*>(static_cast<const char*>(atv) + off);
+    return o && R::IsLive(o) ? o : nullptr;
+}
+
+bool WriteKerfurList(void* atv, const std::vector<void*>& list) {
+    const int32_t off = g_allKerfuros.Get();
+    if (off < 0) return false;
+    return save_record::ReplaceArray(atv, off, list.data(), static_cast<int32_t>(list.size()),
+                                     static_cast<int32_t>(sizeof(void*)));
+}
+
+}  // namespace
+
+bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot) {
+    if (!atv || !R::IsLive(atv)) return false;
+    // The ATV's own sit attaches the player to the ATV and sets its location and rotation to the world transform of
+    // `playerHit` (in its `playerHitWith` event), so the body of a remote driver goes to the same place.
+    void* hit = ReadObj(atv, g_playerHit.Get());
+    return hit && engine::TryGetComponentLocation(hit, loc) && engine::TryGetComponentWorldRotation(hit, rot);
+}
+
+bool GetSitArrowLocation(void* atv, FVector& loc) {
+    if (!atv || !R::IsLive(atv)) return false;
+    void* sit = ReadObj(atv, g_sitarrow.Get());
+    return sit && engine::TryGetComponentLocation(sit, loc);
+}
+
+bool GetCameraLocation(void* atv, FVector& loc) {
+    if (!atv || !R::IsLive(atv)) return false;
+    void* camera = ReadObj(atv, g_camera.Get());
+    return camera && engine::TryGetComponentLocation(camera, loc);
+}
+
+bool GetUnscrewSpawnTransform(void* atv, FVector& loc, FRotator& rot, FVector& scale) {
+    if (!atv || !R::IsLive(atv)) return false;
+    // getUnscrewSpawn returns `Billboard4` when no tire is looked at, and unscrewPanel's battery arm spawns at that
+    // component's world transform. It is read here directly: calling the game's function would answer with a wheel
+    // whenever this copy's own player looks at a tire.
+    void* const panel = ReadObj(atv, g_billboard4.Get());
+    return panel && engine::TryGetComponentLocation(panel, loc) && engine::TryGetComponentWorldRotation(panel, rot) &&
+           engine::TryGetComponentWorldScale(panel, scale);
+}
+
+bool ReadTireLook(void* atv, bool& atTire) {
+    const int32_t tireOff = g_lookAtTire.Get(), socketOff = g_lookAtTireSocket.Get();
+    if (!atv || !R::IsLive(atv) || tireOff < 0 || socketOff < 0) return false;
+    const auto* const o = static_cast<const uint8_t*>(atv);
+    atTire = *reinterpret_cast<const int32_t*>(o + tireOff) >= 0 || *reinterpret_cast<const int32_t*>(o + socketOff) >= 0;
+    return true;
+}
+
+void* GetSittingKerfur(void* atv) {
+    if (!atv || !R::IsLive(atv)) return nullptr;
+    return ReadObj(atv, g_sittingKerfuro.Get());
+}
+
+void ForgetSittingKerfur(void* atv, void* kerfur) {
+    const int32_t off = g_sittingKerfuro.Get();
+    if (!atv || !kerfur || !R::IsLive(atv) || off < 0) return;
+    void** slot = reinterpret_cast<void**>(static_cast<char*>(atv) + off);
+    if (*slot == kerfur) *slot = nullptr;
+}
+
+bool InviteKerfurs(void* atv, const std::vector<void*>& kerfurs) {
+    if (!atv || !R::IsLive(atv) || !WriteKerfurList(atv, kerfurs)) return false;
+    for (void* k : kerfurs) kerfur::TryToOccupyCar(k, atv);
+    return true;
+}
+
+bool ReleaseKerfurs(void* atv) {
+    if (!atv || !R::IsLive(atv)) return false;
+    const int32_t listOff = g_allKerfuros.Get(), riderOff = g_sittingKerfuro.Get();
+    if (listOff < 0 || riderOff < 0) return false;
+    if (void* rider = ReadObj(atv, riderOff)) kerfur::GetOffCar(rider);
+    const save_record::Arr arr = save_record::ReadArr(atv, listOff);
+    std::vector<void*> rest;
+    for (int32_t i = 0; arr.data && i < arr.num && i < 256; ++i)
+        rest.push_back(reinterpret_cast<void* const*>(arr.data)[i]);
+    for (void* k : rest)
+        if (k && R::IsLive(k)) kerfur::FailCar(k);
+    *reinterpret_cast<void**>(static_cast<char*>(atv) + riderOff) = nullptr;
+    return WriteKerfurList(atv, {});
 }
 
 }  // namespace ue_wrap::atv

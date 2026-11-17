@@ -287,10 +287,8 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
     // not destroy it. Without it an entire host-expressed class claims zero and the sweep's
     // completeness floor reads that as the host under-expressing. Outside a bracket it is a no-op.
     coop::join_membership_sweep::RecordClaimIfTracking(native);
-    // Retire the client-local identity: the save-loaded pile was census-walked with a client-minted
-    // eid, and from this bind its sole cross-peer identity is the host eid. Left in place, a local
-    // morph would make the destroy observer broadcast a stray PropDestroy under the superseded eid.
-    coop::prop_element_tracker::UnmarkKnownKeyedProp(native);
+    // The native carries no client-minted identity (a client mints none for a keyless pile), so the
+    // host eid is its sole cross-peer identity from this bind.
     coop::remote_prop::RegisterPropMirror(eid, native, L"", ue_wrap::reflection::ClassNameOf(native), senderSlot);
     // Save-native is what the rest of the machinery tests (IsBoundMirrorNative): the grab route,
     // the morph hand-off, the divergence-sweep exemption and the retire all read it.
@@ -323,6 +321,18 @@ void OnDisconnect() {
     Reset();
 }
 
+void CollectLiveTrashNatives(std::vector<void*>& out) {
+    out.clear();
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        if (!ue_wrap::prop::IsTrashActor(o)) continue;                 // what the index holds: piles and clumps at rest
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+        out.push_back(o);
+    }
+}
+
 void LogCensus() {
     // ALWAYS log when the index was built this bracket, even at zero orphans: the summary line is
     // the proof the census ran, and a clean join binds every indexed candidate, which would
@@ -336,12 +346,9 @@ void LogCensus() {
     struct Seen { float x, y, z; bool bound; };
     std::vector<Seen> seen;
     int totalLive = 0, bound = 0, unread = 0;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o)) continue;
-        if (!ue_wrap::prop::IsTrashActor(o)) continue;                 // what the index holds: piles and clumps at rest
-        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
+    std::vector<void*> natives;
+    CollectLiveTrashNatives(natives);
+    for (void* o : natives) {
         ++totalLive;
         const bool isBound = coop::prop_element_tracker::IsBoundMirrorNative(o);
         if (isBound) ++bound;

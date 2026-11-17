@@ -20,9 +20,12 @@
 #include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -87,6 +90,21 @@ bool BindAsMirror(const Pending& e, void* obj) {
 // not-yet-keyed late-mint twin). Drives the anti-collision gate in the match loop.
 struct Cand { void* obj; void* cls; float x, y, z; std::wstring key; };
 
+// The object index's walk of one pending class: a live, untracked instance that is no class default and has a
+// location is a candidate. It creates and destroys nothing, as the index's callback contract asks.
+struct CandSink {
+    std::vector<Cand>*               cands;
+    const std::unordered_set<void*>* tracked;
+};
+void ConsiderCandidate(void* ctx, void* obj, int32_t /*index*/) {
+    auto* sink = static_cast<CandSink*>(ctx);
+    if (!obj || sink->tracked->count(obj) > 0 || !R::IsLive(obj)) return;
+    if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) return;
+    sink->cands->push_back(Cand{obj, R::ClassOf(obj), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetKeyString(obj)});
+}
+
 // One throttled scan: collect untracked (non-mirror) live kerfur PROP candidates, then bind each
 // pending entry to its NEAREST same-class unclaimed candidate, or fresh-spawn on quiescence/timeout.
 void ResolvePending() {
@@ -103,7 +121,35 @@ void ResolvePending() {
     // ONE GUObjectArray walk -> untracked kerfur PROP candidates (IsKerfurPropClass is a bounded
     // SuperStruct pointer walk vs the cached prop base; >99% of objects fail it before any alloc).
     std::vector<Cand> cands;
-    const int32_t n = R::NumObjects();
+    // A candidate is used only by a pending entry of its exact class, so the walk is each pending class's own
+    // instances, from the object index; the whole array (about 30 ms a pass, five passes a second) only while the
+    // index trails the engine.
+    // A scan that may fresh-spawn below (the load tail quiesced, or an entry timed out) acts on a miss, and that "no
+    // twin" must be true now: Backlog() is zero only as of the last budgeted drain, so the index is drained whole
+    // first (object_index.h: DrainAll answers a miss, never a tick; until then a scan drains nothing extra). A drain
+    // that cannot run leaves the scan on the whole array.
+    bool mayDecideMiss = coop::join_membership_sweep::HasLoadTailQuiesced();
+    for (const Pending& e : g_pending)
+        if (!mayDecideMiss && MsSince(e.armedAt) >= kAdoptTimeoutMs) mayDecideMiss = true;
+    const bool drained = !mayDecideMiss || ue_wrap::object_index::DrainAll() != SIZE_MAX;
+    const bool indexed =
+        drained && ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0;
+    if (indexed) {
+        CandSink sink{&cands, &tracked};
+        std::vector<void*> walked;
+        for (const Pending& e : g_pending) {
+            if (!e.actorClass || std::find(walked.begin(), walked.end(), e.actorClass) != walked.end()) continue;
+            walked.push_back(e.actorClass);
+            ue_wrap::object_index::ForEachInstance(e.actorClass, &ConsiderCandidate, &sink);
+        }
+    }
+    static bool s_saidWalk = false;
+    if (!s_saidWalk) {
+        s_saidWalk = true;
+        UE_LOGI("kerfur-prop-adopt: the twin scan walks %s (%zu pending)", indexed ? "each pending class's instances"
+                : "the whole object array, the index trailing the engine", g_pending.size());
+    }
+    const int32_t n = indexed ? 0 : R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;

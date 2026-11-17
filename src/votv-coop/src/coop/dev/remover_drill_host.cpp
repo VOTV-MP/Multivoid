@@ -132,7 +132,7 @@ void HostHookTick() {
     void* player = coop::players::Registry::Get().Local();
     void* first = laid.hostHooked.Get();
     void* second = laid.selfHooked.Get();
-    constexpr uint8_t kHostBit = 1u << 0, kClientBit = 1u << 1;
+    constexpr int kHostSlot = 0, kClientSlot = 1;
     switch (g_hookStep) {
     case HookStep::Plant: {
         if (!player || !first) return;
@@ -156,7 +156,7 @@ void HostHookTick() {
         return;
     }
     case HookStep::Pulling: {
-        if (!first || !(coop::hook_sync::PlayerHookHolders(first) & kHostBit)) return;
+        if (!first || !coop::hook_sync::PlayerHookHolders(first).Has(kHostSlot)) return;
         // The elements the host's registry holds for both crowbars: the client binds its roles by them.
         const coop::element::ElementId firstEid = coop::element::Registry::Get().EidForActor(first);
         const coop::element::ElementId secondEid = coop::element::Registry::Get().EidForActor(second);
@@ -180,7 +180,7 @@ void HostHookTick() {
         g_hookStep = HookStep::AwaitClient;
         return;
     case HookStep::AwaitClient:
-        if (!second || !(coop::hook_sync::PlayerHookHolders(second) & kClientBit)) return;
+        if (!second || !coop::hook_sync::PlayerHookHolders(second).Has(kClientSlot)) return;
         coop::chat_sync::QueueSend(HookedLine(kSelfHookedSaid, layout::RelaysDone()));
         UE_LOGI("[REMOVER-DRILL] host: the claim pass reads the client's hook on the second crowbar; self-hooked said");
         g_hookStep = HookStep::Done;

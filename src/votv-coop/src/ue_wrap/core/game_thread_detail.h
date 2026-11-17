@@ -1,5 +1,5 @@
-// ue_wrap/core/game_thread_detail.h -- PRIVATE seam between the two game_thread TUs. NOT public
-// API: nothing outside src/ue_wrap/{game_thread,pe_detour}.cpp may include this (subsystems use
+// ue_wrap/core/game_thread_detail.h -- PRIVATE seam between the game_thread TUs. NOT public API:
+// nothing outside src/ue_wrap/{game_thread,pe_detour,game_thread_id}.cpp may include this (subsystems use
 // ue_wrap/core/game_thread.h).
 //
 // The two TUs split along one concept boundary. pe_detour.cpp is the INTERPOSITION MECHANISM: the
@@ -48,7 +48,7 @@ inline bool BloomMaybe(const std::atomic<uint64_t>* bloom, void* fn) {
 
 // ---- pump state (defined in game_thread.cpp) ----------------------------------
 extern std::atomic<int> g_queueDepth;                // lock-free emptiness probe
-extern std::atomic<unsigned long> g_gameThreadId;    // first-dispatch CAS records it
+extern std::atomic<unsigned long> g_gameThreadId;    // first-dispatch CAS records it (game_thread_id.cpp)
 
 // ---- cold halves in game_thread.cpp (called only past the inline rejects) ----
 // Count-bounded slot walks; fire every matching registrant via the SafeCall*

@@ -11,7 +11,8 @@
 //   f32 locY; i64 date; then name, id, object and signal as UTF-16LE; with bit3, u32 bytes + PNG.
 //
 // A row's cross-peer identity, which SavedSignalDelete keys on, is the FNV-1a 64 of the blob up to the
-// strings' end with the image bit zeroed: a row shares it with its photo or without.
+// strings' end with the image bit zeroed and its two FName leaves (object, signal) lower-cased: a row
+// shares it with its photo or without, and whatever case each peer's engine renders those names in.
 
 #pragma once
 
@@ -34,7 +35,8 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r);
 // ui_laptop.cpp:3836) is left out of the row, logged, and the row kept.
 bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& out);
 
-// The content identity: the FNV-1a 64 of the blob up to its strings' end, the image bit zeroed.
+// The content identity: the FNV-1a 64 of the blob up to its strings' end, the image bit zeroed, the FName leaves
+// lower-cased.
 uint64_t ContentHash(const std::vector<uint8_t>& blob);
 
 }  // namespace coop::signal_wire

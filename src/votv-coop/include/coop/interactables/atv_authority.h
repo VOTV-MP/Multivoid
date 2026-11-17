@@ -2,9 +2,9 @@
 //
 // Three concepts, never aliased: the birth owner (the host's index row), the
 // OCCUPANT (a seat, a claim the host judges) and the SYNCER (write authority the host assigns). The table is two
-// fields of the ATV's AtvEntry, `occupantSlot` and `syncerSlot`, written here on the host by judgement and
-// everywhere else by the host's stamp. A client asks (AtvSeat, AtvTakeover) and meets the answer (AtvAnswer); the
-// host's own player is judged by the same table without the reach test. MTA is the precedent: seats are
+// fields of the ATV's AtvEntry, `seatOccupant` and `seatSyncer`, written here on the host by judgement and
+// everywhere else by the host's stamp, every write through atv_seat_table. A client asks (AtvSeat,
+// AtvTakeover) and meets the answer (AtvAnswer); the host's own player is judged by the same table without the reach test. MTA is the precedent: seats are
 // server-judged requests (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3079-3365); an unoccupied
 // vehicle keeps its syncer while that player stays in range, the server finding another when it leaves and a push
 // by another player being a rate-limited, range-checked takeover

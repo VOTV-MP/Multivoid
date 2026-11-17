@@ -17,7 +17,7 @@
 #pragma once
 
 #include "coop/net/send_admission.h"       // the send buffer's headroom rule, one for every path
-#include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/player/slot_count.h"  // kMaxPeers
 
 #include <atomic>
 #include <chrono>

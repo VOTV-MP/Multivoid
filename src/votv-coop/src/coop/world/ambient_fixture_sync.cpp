@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/slot_mask.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
@@ -78,13 +79,13 @@ struct Known {
     bool     sentAny = false;
     uint8_t  sentHasNest = 0;
     bool     pendingAll = true;    // goes to every client
-    uint32_t pendingSlots = 0;     // goes to these joiners alone (bit = slot)
+    coop::players::SlotMask pendingSlots;  // goes to these joiners alone
 };
 std::unordered_map<void*, Known> g_known;
 uint32_t g_nextId = 1;
 uint64_t g_tick = 0;
 bool g_work = false;               // something in g_known needs a pass: an edge, a pending send, a census
-uint32_t g_censusSlots = 0;        // the joiners whose census-end is owed (bit = slot)
+coop::players::SlotMask g_censusSlots;  // the joiners whose census-end is owed
 std::vector<Payload> g_ends;       // ends not yet sent
 bool g_keylessSaid = false;
 
@@ -220,10 +221,10 @@ void DrainHost() {
     }
 }
 
-uint32_t ConnectedSlots(const coop::net::Session& s) {
-    uint32_t mask = 0;
+coop::players::SlotMask ConnectedSlots(const coop::net::Session& s) {
+    coop::players::SlotMask mask;
     for (int slot = 1; slot < coop::players::kMaxPeers; ++slot)
-        if (s.IsSlotConnected(slot)) mask |= 1u << slot;
+        if (s.IsSlotConnected(slot)) mask.Set(slot);
     return mask;
 }
 
@@ -240,15 +241,15 @@ void SendEnds(coop::net::Session& s) {
 }
 
 void HostPass(coop::net::Session& s) {
-    const uint32_t connected = ConnectedSlots(s);
-    g_censusSlots &= connected;
+    const coop::players::SlotMask connected = ConnectedSlots(s);
+    g_censusSlots.Keep(connected);
     bool again = false;
     int sends = 0;
 
     for (auto it = g_known.begin(); it != g_known.end();) {
         void* obj = it->first;
         Known& k = it->second;
-        k.pendingSlots &= connected;
+        k.pendingSlots.Keep(connected);  // a joiner that left is owed nothing
         ++it;
         if (!k.placed && !ReadPlace(obj, k)) {
             again = true;
@@ -276,7 +277,7 @@ void HostPass(coop::net::Session& s) {
             }
             if (s.SendReliable(coop::net::ReliableKind::AmbientFixtureState, &k.wire, sizeof(Payload))) {
                 k.pendingAll = false;
-                k.pendingSlots = 0;
+                k.pendingSlots.ClearAll();
                 k.sentAny = true;
                 k.sentHasNest = hasNest;
                 ++sends;
@@ -284,11 +285,11 @@ void HostPass(coop::net::Session& s) {
             } else {
                 again = true;
             }
-        } else if (k.pendingSlots) {
+        } else if (k.pendingSlots.Any()) {
             for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
-                if (!(k.pendingSlots & (1u << slot))) continue;
+                if (!k.pendingSlots.Has(slot)) continue;
                 if (s.SendReliableToSlot(slot, coop::net::ReliableKind::AmbientFixtureState, &k.wire, sizeof(Payload))) {
-                    k.pendingSlots &= ~(1u << slot);
+                    k.pendingSlots.Clear(slot);
                     ++g_counters.sent;
                 } else
                     again = true;
@@ -301,10 +302,10 @@ void HostPass(coop::net::Session& s) {
 
     // A joiner's census ends once every fixture is sent to it, so the loaded branches nothing named are the host's lack.
     for (int slot = 1; slot < coop::players::kMaxPeers; ++slot) {
-        if (!(g_censusSlots & (1u << slot))) continue;
+        if (!g_censusSlots.Has(slot)) continue;
         bool owed = false;
         for (const auto& kv : g_known)
-            if (kv.second.pendingSlots & (1u << slot)) owed = true;
+            if (kv.second.pendingSlots.Has(slot)) owed = true;
         if (owed) {
             again = true;
             continue;
@@ -313,7 +314,7 @@ void HostPass(coop::net::Session& s) {
         end.family = fam::kCensusEnd;
         end.alive = 1;
         if (s.SendReliableToSlot(slot, coop::net::ReliableKind::AmbientFixtureState, &end, sizeof(end))) {
-            g_censusSlots &= ~(1u << slot);
+            g_censusSlots.Clear(slot);
             ++g_counters.censusSent;
             UE_LOGI("ambient_fixture_sync: census to slot %d complete, %zu fixtures stand", slot, g_known.size());
         } else {
@@ -583,14 +584,13 @@ Counters Read() { return g_counters; }
 // empty world, so the snapshot needs an end marker that one atomic packet does not.
 void QueueConnectBroadcastForSlot(int slot) {
     if (slot <= 0 || slot >= coop::players::kMaxPeers) return;
-    const uint32_t bit = 1u << slot;
     for (auto& kv : g_known) {
         Known& k = kv.second;
         if (k.wire.family == fam::kBranch && !k.keyKnown) continue;
-        k.pendingSlots |= bit;
+        k.pendingSlots.Set(slot);
         k.holdUntil = 0;
     }
-    g_censusSlots |= bit;
+    g_censusSlots.Set(slot);
     g_work = true;
 }
 
@@ -604,7 +604,7 @@ void OnDisconnect() {
     g_nextId = 1;
     g_tick = 0;
     g_work = false;
-    g_censusSlots = 0;
+    g_censusSlots.ClearAll();
     g_ends.clear();
     g_keylessSaid = false;
     g_events.clear();

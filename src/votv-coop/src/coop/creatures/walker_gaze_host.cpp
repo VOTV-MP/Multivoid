@@ -10,6 +10,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/slot_mask.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"
@@ -45,15 +46,15 @@ UE_FACT_FN(kRowRendered, "walker_gaze_host", L"SkeletalMeshComponent", L"WasRece
 // The host holds up to five walkers.
 constexpr size_t kMaxWalkers = 8;
 
-// One walker hunted by a client: its key (a message names it so), its target, and the level each slot last sent (a bit a slot).
-// Only the target's bit is ever set, and a change of target clears them all.
+// One walker hunted by a client: its key (a message names it so), its target, and the level each slot last sent.
+// Only the target's slot is ever set, and a change of target clears them all.
 struct Entry {
     void*              actor;
     int32_t            index;
     int32_t            serial;
     coop::net::WireKey key;
     uint8_t            target;
-    uint32_t           seen;
+    coop::players::SlotMask seen;
 };
 Entry  g_entries[kMaxWalkers];
 size_t g_count = 0;
@@ -147,7 +148,7 @@ void Answer(void* walker) {
         Remove(e);  // an entry that outlived its actor
         return;
     }
-    *static_cast<uint8_t*>(result) = ((e->seen >> e->target) & 1u) ? 1 : 0;
+    *static_cast<uint8_t*>(result) = e->seen.Has(e->target) ? 1 : 0;
     g_answered.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -253,7 +254,7 @@ Entry* Make(void* walker) {
         return nullptr;
     }
     Entry& e = g_entries[g_count++];
-    e = Entry{walker, R::InternalIndexOf(walker), 0, {}, WT::kNoTarget, 0};
+    e = Entry{walker, R::InternalIndexOf(walker), 0, {}, WT::kNoTarget, {}};
     e.serial = R::SlotSerial(e.index);
     coop::net::WireKeyFromString(key, e.key);
     return &e;
@@ -278,7 +279,7 @@ void OnTargetChanged(void* walker, uint8_t slot) {
     if (!e) e = Make(walker);
     if (!e) return;
     e->target = slot;
-    e->seen = 0;
+    e->seen.ClearAll();
     UE_LOGI("walker_gaze_host: walker %p is hunted by client slot %d -- its gaze reads answer with that slot's level", walker,
             static_cast<int>(slot));
     Rearm();
@@ -354,15 +355,15 @@ void OnSeen(const coop::net::WalkerSeenPayload& p, uint8_t senderSlot) {
     // The walker was found by its key in this module's own table (fed by the target module's changes), so no lookup is reflected.
     // A word that repeats the level held costs this one compare: the reach is read, from the sender's body and the walker, only
     // for a word that changes the level, one read of the sender's distance each.
-    const uint32_t bit = 1u << senderSlot;
-    const bool     was = (e->seen & bit) != 0;
+    const bool     was = e->seen.Has(senderSlot);
     if (was == (p.seen != 0)) return;
     ue_wrap::FVector from{}, to{};
     void* const      body = WT::ClientBody(senderSlot);
     if (!body || !Locate(body, from) || !Locate(e->actor, to)) return Refuse(kTooFar, senderSlot);
     const float dx = from.X - to.X, dy = from.Y - to.Y, dz = from.Z - to.Z;
     if (std::sqrt(dx * dx + dy * dy + dz * dz) > kWalkerGazeReachCm) return Refuse(kTooFar, senderSlot);
-    e->seen = p.seen ? (e->seen | bit) : (e->seen & ~bit);
+    if (p.seen) e->seen.Set(senderSlot);
+    else e->seen.Clear(senderSlot);
     LogLevel(senderSlot, p.seen != 0, p.key);
 }
 
@@ -371,7 +372,7 @@ uint32_t AnsweredReads() { return g_answered.load(std::memory_order_relaxed); }
 void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return;
     FlushLevel(slot);
-    for (size_t i = 0; i < g_count; ++i) g_entries[i].seen &= ~(1u << slot);
+    for (size_t i = 0; i < g_count; ++i) g_entries[i].seen.Clear(slot);
 }
 
 void OnDisconnect() {

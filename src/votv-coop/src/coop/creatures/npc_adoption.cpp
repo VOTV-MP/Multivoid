@@ -7,22 +7,28 @@
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
 #include "coop/element/identity_create.h"   // the single NPC mirror create funnel (Inc A)
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_mirror_brain.h"  // PrepareBirth / SetUpPresentation: a parked family's twin has its brain off
+#include "coop/creatures/npc_ride.h"  // a stored ride is applied to the adopted twin
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/creature_event_relay.h"  // OnMirrorBound: the host's event count for a new mirror
 #include "coop/props/remote_prop_spawn.h"  // HasLoadTailQuiesced -- shared save-load-tail quiescence signal
 #include "coop/props/join_membership_sweep.h"  // anti-smear: claim+sweep
+#include "coop/dev/atv_riders_join_hold.h"  // the ATV riders drill holds a rejoined observer's binds
 #include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: re-arm the kerfur census on world-ready / session-end
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- the no-mutex contract tripwire
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -90,11 +96,28 @@ bool BindAsMirror(uint32_t eid, void* obj, const std::wstring& classW) {
     // (timer_face/timer_kerf/checkDoor survive a tick-disable). Now host-driven, zero local AI.
     ue_wrap::puppet::DisableCharacterTicks(obj);
     ue_wrap::kerfur::NeutralizeAiTimers(obj);
+    // An adopted twin is never hidden: a ride the stamp stored before this bind is applied now.
+    coop::npc_ride::OnMirrorBound(static_cast<coop::element::ElementId>(eid));
     return true;
 }
 
 // A candidate local actor found in the GUObjectArray scan (one walk feeds all pending entries).
 struct Cand { void* obj; void* cls; float x, y, z; };
+
+// The object index's walk of one pending class: a live, untracked instance that is no class default and has a
+// location is a candidate. It creates and destroys nothing, as the index's callback contract asks.
+struct CandSink {
+    std::vector<Cand>*               cands;
+    const std::unordered_set<void*>* tracked;
+};
+void ConsiderCandidate(void* ctx, void* obj, int32_t /*index*/) {
+    auto* sink = static_cast<CandSink*>(ctx);
+    if (!obj || sink->tracked->count(obj) > 0 || !R::IsLive(obj)) return;
+    if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) return;
+    sink->cands->push_back(Cand{obj, R::ClassOf(obj), loc.X, loc.Y, loc.Z});
+}
 
 // One throttled scan: collect untracked allowlisted NPC candidates, then bind each pending entry
 // to its NEAREST same-class unclaimed candidate (multi-kerfur disambiguation), or fresh-spawn on
@@ -114,7 +137,36 @@ void ResolvePending() {
     // ONE GUObjectArray walk -> candidates (the allowlist prefilter eliminates >99% before any
     // alloc; only a handful of real NPCs reach NameOf/TryGetActorLocation).
     std::vector<Cand> cands;
-    const int32_t n = R::NumObjects();
+    // A candidate is used only by a pending entry of its exact class, so the walk is each pending class's own
+    // instances, from the object index. While the index trails the engine (a level load's backlog) the whole
+    // array is walked instead: about 40 ms a pass, five passes a second, which a joiner felt as stutter for the
+    // seconds after its loading screen dropped.
+    // A scan that may fresh-spawn below (the load tail quiesced, or an entry timed out) acts on a miss, and that "no
+    // twin" must be true now: Backlog() is zero only as of the last budgeted drain, so the index is drained whole
+    // first (object_index.h: DrainAll answers a miss, never a tick; until then a scan drains nothing extra). A drain
+    // that cannot run leaves the scan on the whole array.
+    bool mayDecideMiss = coop::join_membership_sweep::HasLoadTailQuiesced();
+    for (const Pending& e : g_pending)
+        if (!mayDecideMiss && MsSince(e.armedAt) >= kAdoptTimeoutMs) mayDecideMiss = true;
+    const bool drained = !mayDecideMiss || ue_wrap::object_index::DrainAll() != SIZE_MAX;
+    const bool indexed =
+        drained && ue_wrap::object_index::IsSeeded() && ue_wrap::object_index::Backlog() == 0;
+    if (indexed) {
+        CandSink sink{&cands, &tracked};
+        std::vector<void*> walked;
+        for (const Pending& e : g_pending) {
+            if (!e.actorClass || std::find(walked.begin(), walked.end(), e.actorClass) != walked.end()) continue;
+            walked.push_back(e.actorClass);
+            ue_wrap::object_index::ForEachInstance(e.actorClass, &ConsiderCandidate, &sink);
+        }
+    }
+    static bool s_saidWalk = false;
+    if (!s_saidWalk) {
+        s_saidWalk = true;
+        UE_LOGI("npc-adopt: the twin scan walks %s (%zu pending)", indexed ? "each pending class's instances"
+                : "the whole object array, the index trailing the engine", g_pending.size());
+    }
+    const int32_t n = indexed ? 0 : R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
@@ -227,8 +279,9 @@ void Tick() {
     auto* s = coop::npc_sync::GetSession();
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only
 
-    // (1) Resolve pending adoptions (throttled; only while entries exist).
-    if (!g_pending.empty() && MsSince(g_lastScan) >= kPollIntervalMs) {
+    // (1) Resolve pending adoptions (throttled; only while entries exist). The ATV riders drill's hold keeps a rejoined
+    // observer's scan back until its first applied ATV stamp.
+    if (!g_pending.empty() && !coop::dev::atv_riders_join_hold::BindHeld() && MsSince(g_lastScan) >= kPollIntervalMs) {
         g_lastScan = std::chrono::steady_clock::now();
         ResolvePending();
     }

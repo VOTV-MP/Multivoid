@@ -14,7 +14,7 @@
 // left is refused by name, where MTA destroys the player's element, as a slot's streams outlive it.
 #pragma once
 
-#include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/player/slot_count.h"  // kMaxPeers
 
 #include <array>
 #include <atomic>

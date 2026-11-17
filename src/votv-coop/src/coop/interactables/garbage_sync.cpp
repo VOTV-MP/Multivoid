@@ -6,13 +6,13 @@
 // every 0.25 s and APPENDS each accepted prop to itemsInside, calling setPropProps and
 // K2_AttachToActor on it; propAwoken then unfreezes every prop in the array and writes the
 // container's own velocities into it, most often when a player grabs one of them rather than on a
-// tip-over. So the cancel stops a real second author (on a client those props are mirrors) AND
-// blinds the client, which never learns its contents -- docs/piles.md has the visible half, the
-// crutch register the root fix and the crash claim it still owes.
+// tip-over. So the cancel stops a real second author (on a client those props are mirrors); the client learns its
+// contents from the host (coop/interactables/garbage_bin_sync).
 //
-// checkPickup is NOT hooked and cannot be: its three callers are EX_LocalVirtualFunction inside
-// the ubergraph, invisible to a ProcessEvent interceptor (docs/coop-dispatch-visibility.md). The
-// canHold/canCollect flags freeze because the tick that reaches them is cancelled.
+// checkPickup is not hooked here: its three callers are EX_LocalVirtualFunction inside
+// the ubergraph, invisible to a ProcessEvent interceptor (docs/coop-dispatch-visibility.md).
+// The host's copy is watched through the script gate (coop/interactables/garbage_bin_sync); a client's canHold/canCollect
+// are written from the host's state, since the tick that reaches them is cancelled.
 
 #include "coop/interactables/garbage_sync.h"
 

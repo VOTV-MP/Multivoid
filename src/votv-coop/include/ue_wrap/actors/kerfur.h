@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::kerfur {
 
@@ -87,5 +88,31 @@ bool ReadServerValid(void* actor, bool& valid);
 // the server, a reports task the dish console; patrol and fix_transformers clear it, idle leaves it. Null
 // when it is not an Omega, the field did not resolve, or it is unset. Game thread.
 void* ReadTargetActor(void* actor);
+
+// Every live kerfurOmega_C on this copy, its skins included: what the ATV's own sit gathers. Game thread.
+std::vector<void*> AllKerfurs();
+
+// The kerfur's own ATV functions: tryToOccupyCar (from idle, go to the ATV and sit), sitOnCar (sit now: attached at
+// the ATV's `sitarrow`, collision off, the ATV's `sittingKerfuro`, its AnimBP's `isOnAtv`), getOffCar (detached at
+// the ATV's `playerHit`, back to idle) and failCar (stop going). False when not a kerfur, unresolved or not
+// dispatched. Game thread.
+bool TryToOccupyCar(void* kerfur, void* atv);
+bool SitOnCar(void* kerfur, void* atv);
+bool GetOffCar(void* kerfur);
+bool FailCar(void* kerfur);
+
+// A MIRROR kerfur's unseat, getOffCar's own steps in its order without the car read, the teleport, the kill tail, the
+// movement mode and move(false): detach, collision on, `state` 0, `occupyCar` null, the AnimBP's `isOnAtv` false, the
+// Mesh's `bAbsoluteRotation` true. The mirror stays where it is; its pose and state are the host's stream's. A step
+// that does not read or write is said once and the rest still run. False when not a kerfur or any step failed. Game thread.
+bool UnseatWithoutCar(void* kerfur);
+
+// The Omega's `occupyCar`, the ATV its own tryToOccupyCar and sitOnCar assigned. Null when it is not an Omega, the field
+// did not resolve, it is unset or it is not a live object. Game thread.
+void* GetOccupyCar(void* kerfur);
+
+// True when the Omega's `occupyCar` field holds exactly `car`: a pointer compare, `car` is never dereferenced and may be a
+// destroyed actor's. False for a null `car`, a non-Omega or an unresolved field. Game thread.
+bool OccupiesCar(void* kerfur, void* car);
 
 }  // namespace ue_wrap::kerfur

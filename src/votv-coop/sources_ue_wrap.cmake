@@ -5,8 +5,6 @@
 # as it was. sources.cmake includes this and expands both lists in place.
 
 set(VOTVCOOP_SOURCES_UE_WRAP_1
-    src/ue_wrap/core/log.cpp
-    src/ue_wrap/core/paths.cpp
     src/ue_wrap/core/game_build.cpp
     src/ue_wrap/core/caller_locals.cpp
     src/ue_wrap/core/scan_ledger.cpp
@@ -24,7 +22,6 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
     src/ue_wrap/core/hook_drill.cpp
-    src/ue_wrap/core/hot_path_guard.cpp
     src/ue_wrap/core/game_thread.cpp
     src/ue_wrap/core/game_thread_wait.cpp
     src/ue_wrap/core/walk_census.cpp

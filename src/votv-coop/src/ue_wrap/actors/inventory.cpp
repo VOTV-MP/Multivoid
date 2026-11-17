@@ -120,12 +120,23 @@ bool ReadGameBlank(void* save, int32_t& offSlot, const wchar_t* name, EquipRecor
     return true;
 }
 
+// A record as the player inventory writes it: without carried container contents, whatever its sender put there.
+// They are only ever a container slice's, and this apply writes into a save object before the world stands, where
+// placing them (container_inventory::PlaceNested) would address the wrong save object and move the array under it.
+SR::SaveRecord Flat(const SR::SaveRecord& r) {
+    if (!r.nestedCarried && r.nested.empty()) return r;
+    SR::SaveRecord c = r;
+    c.nested.clear();
+    c.nestedCarried = false;
+    return c;
+}
+
 void WriteEquipRecord(uint8_t* base, const EquipRecord& r, const EquipRecord& gameBlank) {
     const EquipRecord& w = IsBlankEquip(r) ? gameBlank : r;
     SR::WriteFNameField(base + kEquip_propName, w.propName);
     SR::WriteFNameField(base + kEquip_propKey, w.propKey);
     // Immediate: this peer's own inventory, written from its own save data in place; no peer names the classes.
-    SR::WriteSaveRecord(base + kEquip_data, w.data, SR::ClassLoad::Immediate);  // embedded Fstruct_save (0x100 slot)
+    SR::WriteSaveRecord(base + kEquip_data, Flat(w.data), SR::ClassLoad::Immediate);  // embedded Fstruct_save (0x100 slot)
     SR::WriteFNameField(base + kEquip_tag, w.tag);
 }
 
@@ -326,7 +337,7 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
     }
     // Immediate: the player's own inventory, written from its own save data in place; no peer names the classes.
     BuildAndSwapArray(carried, 0, SR::kSaveStride, inv.inventory,
-                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r, SR::ClassLoad::Immediate); });
+                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, Flat(r), SR::ClassLoad::Immediate); });
     // equipment and hold are FIXED-SHAPE slot arrays: the game finds an empty slot to equip into
     // (AddEquipment: Array_Find, "Not enough space" on -1) and writes hold[0] in place, and
     // nothing in it ever grows them. A profile with fewer slots than the save object -- an empty

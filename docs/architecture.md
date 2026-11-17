@@ -102,8 +102,8 @@ pawn, so animation, IK, footsteps and the held item come from the engine's own s
 Peer traffic runs on GameNetworkingSockets (Valve's UDP library, vendored), encrypted end to end.
 Two topologies share one session code path, chosen in `coop/net/session_start`: a direct listen
 on a port (a LAN, or a forwarded port), and NAT traversal brokered by the master server's
-signaling, with TURN as the fallback. A session is a host plus up to three clients (`kMaxPeers`
-in `coop/player/players_registry.h`); clients talk only to the host, and the host relays what
+signaling, with TURN as the fallback. A session is a host plus up to fifteen clients (`kMaxPeers`, sixteen
+players, in `coop/player/slot_count.h`); clients talk only to the host, and the host relays what
 the other clients need. A dedicated net thread drives the sockets; the game thread sees pose
 slots and a reliable inbox.
 

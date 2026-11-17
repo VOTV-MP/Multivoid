@@ -34,9 +34,9 @@ UE_FACT_FN(kRowK2DrawMaterial, "window_stroke_sync", L"Canvas", L"K2_DrawMateria
 // A sponge dabs every 0.25 s, so these bounds are minutes of wiping, never reached in play.
 constexpr size_t kMaxQueued = 256;
 constexpr auto kInboundTtl = std::chrono::seconds(20);
-// Dabs replayed per tick. Four peers wiping flat out produce sixteen a second between them; this
-// is the frame rate times that, so a backlog drains in well under a second and no frame pays for
-// more than eight canvas draws.
+// Dabs replayed per tick. A peer wiping flat out produces four a second, a full session of sixteen sixty-four;
+// eight a tick is several hundred a second, so a backlog drains in well under a second and no frame
+// pays for more than eight canvas draws.
 constexpr int kDrainPerTick = 8;
 
 bool Verbose() {
@@ -157,8 +157,8 @@ void ApplyInbound() {
     // playing, nothing leaves it but an expired dab, and a signal playing is ordinary play. A dab
     // costs a canvas open, two scalar writes and a draw -- six engine dispatches -- so draining a
     // full queue in one frame would spend some fifteen hundred of them in that frame. The rest keep
-    // their place and their deadline and go out on the next tick, which at this budget is four
-    // times the rate three peers can fill it at.
+    // their place and their deadline and go out on the next tick, which at this budget is many
+    // times the rate a full session can fill it at.
     for (int drawn = 0; drawn < kDrainPerTick && !g_inbound.empty(); ++drawn) {
         // The deadline holds on this path as well as on the parked one: a dab that waited out the
         // window is a wipe from a minute ago, and drawing it now paints over what has happened

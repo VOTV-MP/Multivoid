@@ -5,11 +5,13 @@
 
 #include "coop/net/session.h"
 
+#include "coop/dev/traffic_census.h"
 #include "coop/dev/wire_census.h"
 #include "coop/net/connect_history.h"  // Floods -- the source a flood ended stays refused
 #include "coop/net/net_clock.h"        // NowMs -- the probe's echo is timed on the net layer's clock
 #include "coop/net/peer_admission.h"   // the identity challenge every peer passes
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
+#include "coop/net/player_limit.h"     // Max -- the number the refusal names
 #include "client_authorship.h"  // co-located private header: which kinds a client may author
 #include "session_lanes.h"      // co-located private header: the admission and relayable kind lists
 #include "ue_wrap/core/log.h"
@@ -103,7 +105,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // every transport holds an id and a route: the proved id, and the connection's own address
     // (empty on a relayed path or when GNS has none). Before the supersession kick and the seat:
     // a banned joiner costs no seat and kicks nobody.
-    if (banCheck_) {
+    if (hooks_.banCheck) {
         char addr[SteamNetworkingIPAddr::k_cchMaxString] = {};
         SteamNetConnectionInfo_t ci{};
         auto* sockets = SteamNetworkingSockets();
@@ -113,7 +115,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
             ci.m_addrRemote.ToString(addr, sizeof(addr), /*bWithPort*/false);
         }
         char why[96] = {};
-        if (banCheck_(guid.c_str(), addr, why, sizeof(why))) {
+        if (hooks_.banCheck(guid.c_str(), addr, why, sizeof(why))) {
             UE_LOGI("net: PENDING %d refused -- identity %.8s... or its address is banned (%s) [%s]",
                     pendIdx, guid.c_str(), why[0] ? why : "no reason recorded",
                     Describe(EndReason::Banned).id);
@@ -127,20 +129,30 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // asked for. The trigger is a dropped link, not an attack: GNS takes seconds to time out a dead
     // connection, a player rejoining inside that window would otherwise take a second seat, and the
     // stored inventory is keyed by guid, so both seats would persist it (last writer wins).
+    bool rejoin = false;  // this identity held a seat, and loses it to this connection
     for (int s = 1; s < kMaxPeers; ++s) {
         if (peerConns_[s].load() == 0) continue;
         if (ProvedGuidForSlot(s) != guid) continue;
         UE_LOGW("net: slot %d already holds identity %s -- superseding it with the "
                 "new connection (the holder proved the same key)", s, guid.c_str());
         Kick(s, EndReason::Superseded, "superseded by a new connection from your own identity");
+        rejoin = true;  // its seat was admitted before: the host's limit does not apply to it again
         break;  // one seat per identity is the invariant; there cannot be a second
     }
 
-    const int slot = AdmitPending(pendIdx, hConn);
+    const int slot = AdmitPending(pendIdx, hConn, rejoin);
     if (slot < 0) {
-        UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d [%s]", pendIdx,
-                Describe(EndReason::HostFull).id);
-        RetirePending(pendIdx, hConn, EndReason::HostFull, "host full");
+        // The close's detail says the cause the host found. When the limit is the cause it is the
+        // machine token max_players=<N>, which the joiner's dialog renders as a sentence in its own
+        // language (end_reason.h); a seat still clearing at the ceiling says that instead.
+        const bool limitReached = SeatedPlayers() >= player_limit::Max();
+        const std::string why = limitReached ? MaxPlayersDetail(player_limit::Max())
+                                             : std::string("no seat is free yet, try again in a moment");
+        UE_LOGW("net: %s -- refusing PENDING %d [%s]: %s",
+                limitReached ? "the seated players reached the host's limit (net.max_players)"
+                             : "every seat is taken or still being cleared",
+                pendIdx, Describe(EndReason::HostFull).id, why.c_str());
+        RetirePending(pendIdx, hConn, EndReason::HostFull, why.c_str());
         return;
     }
     // The peer's storage guid is derived from the key it proved and published here, on the net
@@ -246,6 +258,8 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
     // origin; reliables are counted once the kind is parsed.
     if (type != MsgType::Reliable && dev::wire_census::Enabled())
         dev::wire_census::NoteStream(routeSlot, static_cast<unsigned>(type));
+    if (type != MsgType::Reliable && dev::traffic_census::Enabled())
+        dev::traffic_census::NoteStream(static_cast<unsigned>(type), static_cast<uint32_t>(len));
 
     switch (type) {
     case MsgType::PoseSnapshot:
@@ -291,6 +305,8 @@ void Session::HandleMessage(int peerSlot, uint32_t hConn, const void* data, int 
             rateControl_.NoteReliableReceived(peerSlot, len);
         if (dev::wire_census::Enabled())
             dev::wire_census::NoteReliable(routeSlot, static_cast<unsigned>(rh.kind));
+        if (dev::traffic_census::Enabled())
+            dev::traffic_census::NoteReliable(static_cast<unsigned>(rh.kind), static_cast<uint32_t>(len));
         // Default deny at the edge (client_authorship.h): a kind no client may author, or a value that names no
         // kind, is dropped here, counted by the budget ahead of the epoch latch and acted on by nothing below --
         // not diverted, echoed, inboxed or relayed. The first of each value in a session is said with its number,

@@ -147,6 +147,21 @@ bool TryGetComponentLocation(void* component, FVector& out) {
     return true;
 }
 
+bool TryGetComponentWorldScale(void* component, FVector& out) {
+    out = FVector{1.f, 1.f, 1.f};
+    if (!component || !SceneCompClass()) return false;
+    static void* fn = nullptr;
+    if (!fn) fn = R::FindFunction(g_sceneCompClass, P::name::GetComponentScaleFn);
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!Call(component, f)) return false;
+    if (!f.GetRaw(L"ReturnValue", &out, static_cast<int32_t>(sizeof(out)))) {
+        out = FVector{1.f, 1.f, 1.f};
+        return false;
+    }
+    return true;
+}
+
 FVector GetComponentLocation(void* component) {
     FVector loc;
     TryGetComponentLocation(component, loc);

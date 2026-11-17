@@ -9,6 +9,7 @@
 #include "coop/net/protocol.h"   // kDefaultPort -- was reaching it only transitively
 #include "coop/session/host_mode.h"
 #include "coop/net/master_slots.h"  // the chosen master, where the lobby is announced
+#include "coop/net/player_limit.h"   // Max: the limit the picker shows beside the lobby name
 #include "coop/session/session_manager.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
@@ -50,7 +51,6 @@ std::wstring g_conflictSlot;
 // Lobby host params captured from the server browser on Open().
 std::string g_hostName = "My VOTV Server";
 bool g_hostLocked = false;
-int  g_hostMax = 4;
 // Connection selector: 0 = AUTOMATIC (P2P/ICE -- direct when the NAT allows it,
 // relay automatically otherwise; nothing to configure), 1 = DIRECT (LanDirect UDP
 // listen; needs the port forwarded, and friends join through Direct Connect or the
@@ -103,7 +103,7 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // rejected (busy, or this build starts no session) there is no pending boot to Reset, so we
     // must NOT raise it.
     coop::net::Refusal refused;
-    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(),
                           coop::net::master_slots::Selected().url, HostModeFromPicker(), &refused)) {
         UE_LOGW("host_save_picker: HOST existing '%s' rejected (%s) -- leaving picker open", c.slot.c_str(),
                 refused.code != coop::net::EndReason::None ? coop::net::Describe(refused.code).id : "busy");
@@ -128,7 +128,7 @@ void DoHostNew() {
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
     coop::net::Refusal refused;
-    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(),
                           coop::net::master_slots::Selected().url, HostModeFromPicker(), &refused)) {
         UE_LOGW("host_save_picker: HOST NEW '%s' rejected (%s) -- leaving picker open", g_newName,
                 refused.code != coop::net::EndReason::None ? coop::net::Describe(refused.code).id : "busy");
@@ -142,10 +142,9 @@ void DoHostNew() {
 
 }  // namespace
 
-void Open(const std::string& hostName, bool locked, int playersMax) {
+void Open(const std::string& hostName, bool locked) {
     g_hostName = hostName.empty() ? std::string("My VOTV Server") : hostName;
     g_hostLocked = locked;
-    g_hostMax = playersMax > 0 ? playersMax : 4;
     g_selected = -1;
     g_conflictSlot.clear();
     // RESOLVED ON OPEN, NEVER IN Render(). `ResolveInt` reaches `ReadIniValue`, which
@@ -281,7 +280,7 @@ void Render() {
         if (ImGui::Button("Cancel", ImVec2(S(90.0f), 0.0f))) open = false;
         ImGui::SameLine(0.0f, S(18.0f));
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.00f, 1.0f), "Lobby: %s%s  (max %d)",
-                           g_hostName.c_str(), g_hostLocked ? "  [locked]" : "", g_hostMax);
+                           g_hostName.c_str(), g_hostLocked ? "  [locked]" : "", coop::net::player_limit::Max());
 
         // The version warning, over the picker.
         if (!g_conflictSlot.empty()) {

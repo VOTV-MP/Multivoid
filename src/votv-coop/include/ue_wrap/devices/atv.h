@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::atv {
 
@@ -85,10 +86,29 @@ bool  GetBroken(void* atv);
 bool  SetBroken(void* atv, bool v);
 bool  CallUpdHealth(void* atv);
 
+// The battery: `battery`, a float charge, kNoBattery when none is fitted (the game's unscrewPanel writes -1, and a
+// fit takes the held battery's charge). `CallUpdBattery` is the game's repaint of it (the back lights, the lights).
+// GetBattery reads kNoBattery on null or an unresolved field; BatteryResolved says which. Game thread.
+inline constexpr float kNoBattery = -1.f;
+bool  BatteryResolved();
+float GetBattery(void* atv);
+bool  SetBattery(void* atv, float v);
+bool  CallUpdBattery(void* atv);
+// A charge brought into the field's range 0..100: the game's own solar charge leaves `battery` a fraction above 100, so a value
+// just past full is a charge, and one well past it is the field's top. NaN reads as 0. Callers keep kNoBattery (-1) apart.
+float ClampCharge(float v);
+
+// A battery prop (`prop_atvcarbattery_C`) of charge `charge` (ClampCharge), spawned the way the ATV's own unscrewPanel
+// spawns it: BeginDeferredSpawn at the transform, `battery` written on the begun actor, FinishDeferredSpawn at the same
+// transform, so its BeginPlay already reads the charge. `collision` is the game's ESpawnActorCollisionHandlingMethod byte.
+// The actor, or nullptr when the class or its `battery` field does not resolve or the spawn failed (a begun actor whose
+// finish failed is destroyed). Game thread.
+void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale, uint8_t collision, float charge);
+
 // The fitted modules: the live `Modules` array, one byte per module VALUE (the game's enum_physicalModules; each is the
 // value `physModToActor` maps to the module's prop class). ReadModules copies at most `cap` into `out` and returns how
 // many the ATV holds (it may exceed `cap`), or -1 when unreadable. WriteModules writes the array into its own buffer when
-// the capacity holds it, else into a new engine buffer with the replaced one freed (save_record::ReplaceByteArray), and then
+// the capacity holds it, else into a new engine buffer with the replaced one freed (save_record::ReplaceArray), and then
 // runs the ATV's own `updUpgrades`, which fits or takes off every part to match. ModuleByName maps a module's prop name, the FName
 // `upgradeTake` is called with, to its value through the ATV's own `upgradesNames`, which parallels `Modules`; false when
 // the ATV holds no part of that name. Game thread.
@@ -167,5 +187,42 @@ bool DestroyMirror(void* atv);
 // The ATV's own `dismount()`: the seated player is handed back (re-possessed, shown) and `isDriven` clears. False,
 // and nothing done, on a null or dead actor, an unresolved function or a call that did not dispatch. Game thread.
 bool Dismount(void* atv);
+
+// Where a seated driver's body goes: the world transform of the ATV's `playerHit`, where the ATV's own sit puts its
+// player (location and rotation). False on null, an unresolved ATV_C or component, or an unreadable transform. Game thread.
+bool GetSeatTransform(void* atv, FVector& loc, FRotator& rot);
+
+// The world location of the ATV's `sitarrow`, the point a riding kerfur's pivot goes. False on null, an unresolved ATV_C or
+// an unreadable component. Game thread.
+bool GetSitArrowLocation(void* atv, FVector& loc);
+
+// The world location of the ATV's `Camera`, the driver's eye. False on null, an unresolved ATV_C or an unreadable component.
+// Game thread.
+bool GetCameraLocation(void* atv, FVector& loc);
+
+// Where the ATV's own unscrew of its battery spawns the battery prop: the world transform of its `Billboard4` component
+// (what `getUnscrewSpawn` returns with no tire looked at). False on null, an unresolved ATV_C or component, or an
+// unreadable transform. Game thread.
+bool GetUnscrewSpawnTransform(void* atv, FVector& loc, FRotator& rot, FVector& scale);
+
+// Whether the ATV's player looks at a tire: its `lookAtTire` or `lookAtTireSocket` index is set (the panel's unscrew then
+// takes the tire's branch; with neither set it takes the battery's). False, with `atTire` unwritten, on null, a dead ATV or a
+// field that does not resolve. Game thread.
+bool ReadTireLook(void* atv, bool& atTire);
+
+// The ATV's rider: the kerfur its own `sittingKerfuro` names, or null when the field is empty, names a dead object, or does
+// not resolve. Game thread.
+void* GetSittingKerfur(void* atv);
+
+// The ATV's rider (`sittingKerfuro`) cleared when it is `kerfur`: a kerfur's own getOffCar leaves it set, and the ATV's
+// dismount is what clears it. Game thread.
+void ForgetSittingKerfur(void* atv, void* kerfur);
+
+// What the ATV's own sit and dismount do for the kerfurs, run on this copy with no player of its own in the seat.
+// InviteKerfurs puts `kerfurs` in `allKerfuros` and asks each to come (its own tryToOccupyCar): the first to reach the
+// ATV sits and turns the rest back. ReleaseKerfurs gets the rider off (its own getOffCar), turns back the rest
+// (failCar) and empties both. False when a field does not resolve. Game thread.
+bool InviteKerfurs(void* atv, const std::vector<void*>& kerfurs);
+bool ReleaseKerfurs(void* atv);
 
 }  // namespace ue_wrap::atv
