@@ -14,7 +14,6 @@
 
 #include "drive_drill_verbs.h"  // Throw: the hand's throw (co-located private header)
 
-#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
@@ -61,11 +60,7 @@ ue_wrap::CachedObjRef g_brick;
 bool                  g_brickSeen = false, g_sawMoving = false;
 int                   g_restReads = 0;
 std::string           g_clientText;
-
-void* SpawnWall(const ue_wrap::FVector& at) {
-    void* cls = ue_wrap::asset_load::LoadObjectByPath(kWallPath);
-    return cls ? E::SpawnActor(cls, at) : nullptr;
-}
+Approach              g_approach;   // the brick's distance to this peer's wall, read each tick from the throw on
 
 bool Due(uint64_t now) {
     if (now < g_nextPollMs) return false;
@@ -73,15 +68,22 @@ bool Due(uint64_t now) {
     return true;
 }
 
-// "bricks=<n> wall=<alive|gone>" for this peer's copy, with the overlap firings since the leg began.
+// "bricks=<n> wall=<alive|gone>" for this peer's copy, with the overlap firings since the leg began and the brick's
+// approach to the wall's box.
 std::string Reading() {
     int32_t bricks = -1;
     void* w = g_wall.Get();
     const bool alive = w && R::IsLive(w) && ReadInt(w, L"bricks", bricks);
-    char buf[160];
-    std::snprintf(buf, sizeof(buf), "overlaps=%u bricks=%d->%d wall=%s", OverlapFires() - g_overlapsBefore,
-                  static_cast<int>(g_bricksBefore), static_cast<int>(alive ? bricks : -1), alive ? "alive" : "gone");
+    char buf[200];
+    std::snprintf(buf, sizeof(buf), "overlaps=%u bricks=%d->%d wall=%s %s", OverlapFires() - g_overlapsBefore,
+                  static_cast<int>(g_bricksBefore), static_cast<int>(alive ? bricks : -1), alive ? "alive" : "gone",
+                  g_approach.Say().c_str());
     return buf;
+}
+
+// One reading of the live brick against the wall: every tick, so a fast brick's closest approach is not stepped over.
+void SampleBrick() {
+    if (g_brickSeen && g_brick.Alive()) g_approach.Sample(g_brick.Get(), g_wall.Get());
 }
 
 bool AtRest(void* t) {
@@ -123,21 +125,22 @@ void ResetBrick() {
     g_brickSeen = g_sawMoving = false;
     g_restReads = 0;
     g_clientText.clear();
+    g_approach.Reset();
 }
 
 Res TickBrickHost() {
     const uint64_t now = coop::net::NowMs();
+    SampleBrick();
     switch (g_host) {
     case Step::Spawn: {
         void* puppet = coop::puppet_drive::Puppet(1).GetActor();
-        ue_wrap::FVector pos{}, extent{}, centre{};
-        if (!puppet || !R::IsLive(puppet) || !E::GetActorBounds(puppet, false, centre, extent) ||
-            !E::TryGetActorLocation(puppet, pos))
+        ue_wrap::FVector pos{};
+        if (!puppet || !R::IsLive(puppet) || !E::TryGetActorLocation(puppet, pos))
             return Res::Working;   // the puppet is not placed yet: the host's join is already over, so it is a frame or two
         const ue_wrap::FVector fwd = E::GetActorForwardVector(puppet);
-        g_at = {pos.X + fwd.X * kAheadCm, pos.Y + fwd.Y * kAheadCm, centre.Z - extent.Z};
-        void* wall = SpawnWall(g_at);
-        if (!wall) return Invalid("the unfinished wall did not spawn on the host");
+        void* wall = PlaceOnGround(kWallPath, {pos.X + fwd.X * kAheadCm, pos.Y + fwd.Y * kAheadCm, pos.Z},
+                                   "the host's unfinished wall", g_at);
+        if (!wall) return Res::Invalid;   // PlaceOnGround said INVALID
         g_wall.Set(wall);
         ReadInt(wall, L"bricks", g_bricksBefore);
         g_overlapsBefore = OverlapFires();
@@ -212,9 +215,8 @@ Res TickBrickClient() {
         }
         const float x = v[0], y = v[1], z = v[2];
         if (!me) return Invalid("the client's player is gone");
-        g_at = {x, y, z};
-        void* wall = SpawnWall(g_at);
-        if (!wall) return Invalid("the unfinished wall did not spawn on the client");
+        void* wall = PlaceOnGround(kWallPath, {x, y, z}, "the client's unfinished wall", g_at);
+        if (!wall) return Res::Invalid;   // PlaceOnGround said INVALID
         g_wall.Set(wall);
         ReadInt(wall, L"bricks", g_bricksBefore);
         g_overlapsBefore = OverlapFires();
@@ -247,6 +249,7 @@ Res TickBrickClient() {
                 g_brickSeen = true;
             }
         }
+        SampleBrick();
         const bool gone = g_brickSeen && !g_brick.Alive();
         const bool rested = g_brickSeen && !gone && AtRest(g_brick.Get());
         if (!gone && !rested) {

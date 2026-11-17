@@ -12,7 +12,10 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 namespace coop::dev::build_probe::detail {
@@ -70,6 +73,26 @@ void* NewBrick(const std::vector<void*>& before) {
 bool CentreOf(void* actor, ue_wrap::FVector& out) {
     ue_wrap::FVector extent{};
     return actor && (E::GetActorBounds(actor, false, out, extent) || E::TryGetActorLocation(actor, out));
+}
+
+void Approach::Sample(void* brick, void* wall) {
+    ue_wrap::FVector p{}, c{}, e{};
+    if (!brick || !wall || !E::TryGetActorLocation(brick, p) || !E::GetActorBounds(wall, false, c, e)) return;
+    const float dx = (std::max)(std::fabs(p.X - c.X) - e.X, 0.f), dy = (std::max)(std::fabs(p.Y - c.Y) - e.Y, 0.f),
+                dz = (std::max)(std::fabs(p.Z - c.Z) - e.Z, 0.f);
+    last = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (min < 0.f || last < min) min = last;
+}
+
+// A brick's own centre this near the wall's box is a touch: about the brick's radius.
+bool Approach::Touched() const { return min >= 0.f && min <= 30.f; }
+
+std::string Approach::Say() const {
+    if (min < 0.f) return "not sampled";
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "closest=%.0f cm last=%.0f cm touched=%d", static_cast<double>(min),
+                  static_cast<double>(last), Touched() ? 1 : 0);
+    return buf;
 }
 
 }  // namespace coop::dev::build_probe::detail

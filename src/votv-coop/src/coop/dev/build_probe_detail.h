@@ -60,7 +60,7 @@ uint32_t OverlapFires();
 // A leg's window on the routes: the routes that fired since LegBegin, in order, each with its caller.
 void LegBegin(const char* leg);
 bool LegRouteFired();
-// The leg's line: routes, caller chain, the wall's health before and after.
+// The leg's line: routes, caller chain, the actors every addDamage of the leg struck, the wall's health before and after.
 void LegEnd(const char* leg, void* wall, float healthBefore);
 
 // A float or an int field of `obj` by name, through reflection. False when it does not resolve.
@@ -68,9 +68,18 @@ bool ReadFloat(void* obj, const wchar_t* name, float& out);
 bool WriteFloat(void* obj, const wchar_t* name, float value);
 bool ReadInt(void* obj, const wchar_t* name, int32_t& out);
 
+// ---- build_probe_place.cpp ----
+
+// Spawns `classPath` at `ask`, drops a ground line trace from 300 cm above it to 1000 cm below, moves the actor to the hit
+// with K2_SetActorLocation (no sweep) and reads it back. The line says the ask, the hit, its actor and the read-back; null
+// with the INVALID verdict said when nothing spawned, no ground was hit or the read-back is over 50 cm from the hit.
+// `placed` is the read-back place. Game thread.
+void* PlaceOnGround(const wchar_t* classPath, const ue_wrap::FVector& ask, const char* what, ue_wrap::FVector& placed);
+
 // ---- build_probe_damage.cpp ----
 
-// The host's three legs at the level's wall: its walk, the thrown brick, the swung axe, the explosion beside it.
+// The host's legs, first at the level's wall and then at a customWall_C of its own placed beside it: its walk, the thrown
+// brick, the swung axe, the explosion beside it.
 Res TickDamageLegs();
 void ResetDamageLegs();
 
@@ -94,5 +103,15 @@ void SnapshotBricks(std::vector<void*>& out);
 void* NewBrick(const std::vector<void*>& before);
 // The center of the actor's bounds, else its place; false when neither reads.
 bool CentreOf(void* actor, ue_wrap::FVector& out);
+
+// A thrown brick's distance to a wall's bounding box, read each tick from the throw on: the closest it came, the last one
+// read (at rest, or before it was gone) and whether the closest was within a touch.
+struct Approach {
+    float min = -1.f, last = -1.f;
+    void Reset() { min = last = -1.f; }
+    void Sample(void* brick, void* wall);
+    bool Touched() const;
+    std::string Say() const;   // "closest=<cm> last=<cm> touched=<0|1>", or "not sampled"
+};
 
 }  // namespace coop::dev::build_probe::detail

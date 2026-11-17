@@ -1,6 +1,8 @@
-// coop/dev/build_probe_damage.cpp -- the host's three legs at the level's wall: a thrown brick, a swung axe, an explosion
-// beside it; see coop/dev/build_probe.h. The director walks the host to the wall, never a teleport. A leg that destroys
-// the wall ends the legs there: what fired is the result, and nothing is left to hit.
+// coop/dev/build_probe_damage.cpp -- the host's legs at a wall: a thrown brick, a swung axe, an explosion beside it, first
+// at the level's wall and then at a customWall_C the probe placed on the ground beside the host; see coop/dev/build_probe.h.
+// The director walks the host to the wall, never a teleport. A leg that destroys the wall ends that wall's legs: what fired
+// is the result, and nothing is left to hit. Each throw says how near the brick came to the wall's box and each swing says
+// what its own view trace struck, so a leg with no route can be told from a miss.
 
 #include "build_probe_detail.h"
 
@@ -15,12 +17,17 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/world/explosion.h"
+#include "ue_wrap/world/weapon_catalog.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace coop::dev::build_probe::detail {
@@ -31,8 +38,10 @@ namespace E  = ue_wrap::engine;
 namespace DR = coop::director;
 namespace DV = coop::dev::drive_drill_verbs;
 
-enum class Step : uint8_t { Start, Walk, ThrowAim, ThrowSettle, Swing, Explode, ExplodeWait, End };
+enum class Step : uint8_t { Start, Walk, ThrowAim, ThrowSettle, Swing, Explode, ExplodeWait, Place, End };
 
+constexpr const wchar_t* kBuiltPath = L"/Game/objects/customWall.customWall_C";
+constexpr float    kBuiltAwayCm = 250.f;   // the host-built wall is put this far from the host, away from the level wall
 constexpr float    kReachCm = 150.f;       // the walk ends this near the wall: a swing's reach
 constexpr int      kWalkMinS = 90;
 constexpr int      kWalkMaxS = 300;
@@ -47,21 +56,31 @@ constexpr float    kMovingCmS = 50.f;
 constexpr float    kBlastDamage = 40.f;
 constexpr float    kBlastRadiusCm = 400.f;
 constexpr float    kBlastStandoffCm = 120.f;
+constexpr float    kDegToRad = 0.01745329252f;
+
+// The leg names per pass: the level's wall, then the host-built one.
+constexpr const char* kLegs[2][3] = {{"throw", "swing", "explosion"}, {"built-throw", "built-swing", "built-explosion"}};
+constexpr const char* kLabels[2] = {"level", "host-built"};
 
 Step     g_step = Step::Start;
+int      g_pass = 0;
 uint64_t g_stepMs = 0;
 uint64_t g_nextSwingMs = 0;
 int      g_swings = 0;
+float    g_swingReachCm = 0.f;
 float    g_healthBefore = 0.f;
 bool     g_inLeg = false;
 const char* g_leg = "";
 bool     g_thrownSeen = false;
 int      g_restReads = 0;
 bool     g_sawMoving = false;
+ue_wrap::FVector g_levelCentre{};
+Approach g_approach;
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 std::vector<void*>    g_bricksBefore;
 ue_wrap::CachedObjRef g_thrown;
 ue_wrap::CachedObjRef g_blast;
+ue_wrap::CachedObjRef g_built;
 
 // The fire action's press and release, the pair a left click makes.
 DR::InputStub g_firePress{L"InpActEvt_fire_K2Node_InputActionEvent_58"};
@@ -70,6 +89,23 @@ DR::InputStub g_fireRelease{L"InpActEvt_fire_K2Node_InputActionEvent_59"};
 void To(Step s, uint64_t now) {
     g_step = s;
     g_stepMs = now;
+}
+
+const char* Label() { return kLabels[g_pass]; }
+const char* LegName(int which) { return kLegs[g_pass][which]; }
+
+// The wall this pass hits: the level's own, then the one the probe placed.
+void* Target() { return g_pass == 0 ? LevelWall() : g_built.Get(); }
+
+// The next pass, or the end after the last.
+Res NextPass(uint64_t now) {
+    if (g_pass == 0) {
+        g_pass = 1;
+        To(Step::Place, now);
+        return Res::Working;
+    }
+    To(Step::End, now);
+    return Res::Done;
 }
 
 // The leg's start: the wall brought back to full health when an earlier leg hurt it, so each leg reads from the same
@@ -97,22 +133,24 @@ bool EndLeg(const char* leg, void* wall) {
 Res StartWalk(void* me, void* wall, uint64_t now) {
     ue_wrap::FVector mine{}, at{};
     float len = 0.f;
-    if (!CentreOf(wall, at) || !E::TryGetActorLocation(me, mine)) return Invalid("the level wall or the player did not read");
+    if (!CentreOf(wall, at) || !E::TryGetActorLocation(me, mine))
+        return Invalid("the %s wall or the player did not read", Label());
+    if (g_pass == 0) g_levelCentre = at;
     if (!DR::RouteInLegs(me, mine, at, kReachCm, &len))
-        return Invalid("no navigation route to within %.0f cm of the level wall at (%.0f,%.0f,%.0f)",
-                       static_cast<double>(kReachCm), static_cast<double>(at.X), static_cast<double>(at.Y),
+        return Invalid("no navigation route to within %.0f cm of the %s wall at (%.0f,%.0f,%.0f)",
+                       static_cast<double>(kReachCm), Label(), static_cast<double>(at.X), static_cast<double>(at.Y),
                        static_cast<double>(at.Z));
     const int deadline = std::clamp(static_cast<int>(len / 100.f) + 60, kWalkMinS, kWalkMaxS);
     g_walk = DR::StartBackgroundWalk(at, kReachCm, deadline);
-    Info("damage: the host walks to within %.0f cm of the level wall, a %.0f cm route, %d s budget",
-         static_cast<double>(kReachCm), static_cast<double>(len), deadline);
+    Info("damage: the host walks to within %.0f cm of the %s wall, a %.0f cm route, %d s budget",
+         static_cast<double>(kReachCm), Label(), static_cast<double>(len), deadline);
     To(Step::Walk, now);
     return Res::Working;
 }
 
 Res AimBound(uint64_t now, const char* what) {
     if (now - g_stepMs < kAimBoundMs) return Res::Working;
-    return Invalid("the camera never turned to the wall for %s", what);
+    return Invalid("the camera never turned to the %s wall for %s", Label(), what);
 }
 
 // Whether the live thrown brick has come to rest, after it was seen moving.
@@ -126,42 +164,64 @@ bool AtRest() {
     return g_sawMoving && g_restReads >= kRestTicks;
 }
 
+// What the swing's line trace strikes: the camera's view as far as the held item's `length`, the line the game's attack
+// traces. Said as the actor's class and distance, and whether it is the wall this pass hits.
+std::string SwingTraceSaid(void* me, void* wall) {
+    const ue_wrap::FVector cam = E::GetCameraLocation();
+    const ue_wrap::FRotator rot = E::GetCameraRotation();
+    const float p = rot.Pitch * kDegToRad, y = rot.Yaw * kDegToRad;
+    const ue_wrap::FVector to{cam.X + std::cos(p) * std::cos(y) * g_swingReachCm,
+                              cam.Y + std::cos(p) * std::sin(y) * g_swingReachCm, cam.Z + std::sin(p) * g_swingReachCm};
+    ue_wrap::trace::Hit hit;
+    if (!ue_wrap::trace::LineHitStatDyn(me, cam, to, &hit)) return "the view trace did not run";
+    if (!hit.blocked) return "the view trace is clear within the reach";
+    const float dx = hit.point.X - cam.X, dy = hit.point.Y - cam.Y, dz = hit.point.Z - cam.Z;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "the view trace struck %s at %.0f cm, onWall=%d", ClassOrNull(hit.actor).c_str(),
+                  static_cast<double>(std::sqrt(dx * dx + dy * dy + dz * dz)), hit.actor && hit.actor == wall ? 1 : 0);
+    return buf;
+}
+
 }  // namespace
 
 void ResetDamageLegs() {
     if (g_walk && g_walk->state.load() == 0) DR::CancelBackgroundWalk(*g_walk);
     g_walk.reset();
     g_step = Step::Start;
+    g_pass = 0;
     g_stepMs = g_nextSwingMs = 0;
     g_swings = g_restReads = 0;
+    g_swingReachCm = 0.f;
     g_sawMoving = g_inLeg = g_thrownSeen = false;
+    g_levelCentre = {};
+    g_approach.Reset();
     g_bricksBefore.clear();
     g_thrown.Reset();
     g_blast.Reset();
+    g_built.Reset();
 }
 
 Res TickDamageLegs() {
     const uint64_t now = coop::net::NowMs();
     void* me = coop::players::Registry::Get().Local();
-    void* wall = LevelWall();
+    void* wall = Target();
     if (g_step == Step::End) return Res::Done;
     if (!me) return Invalid("the host's player is gone");
-    if (!wall && g_step != Step::Start) {
+    if (!wall && g_step != Step::Start && g_step != Step::Place) {
         // The wall broke: what the leg saw is its result, and nothing is left to hit.
         if (g_inLeg) EndLeg(g_leg, nullptr);
-        Info("damage: the level wall is gone; the legs end here");
-        To(Step::End, now);
-        return Res::Done;
+        Info("damage: the %s wall is gone; its legs end here", Label());
+        return NextPass(now);
     }
     switch (g_step) {
     case Step::Start:
-        if (!wall) return Invalid("no customWall_C in the persistent level to hit");
+        if (!wall) return Invalid("no %s customWall_C to hit", Label());
         return StartWalk(me, wall, now);
     case Step::Walk: {
         const int state = g_walk ? g_walk->state.load() : 2;
         if (state == 0) return Res::Working;
-        if (state == 2) return Invalid("the director's walk to the level wall did not arrive");
-        Info("damage: the host arrived at the wall");
+        if (state == 2) return Invalid("the director's walk to the %s wall did not arrive", Label());
+        Info("damage: the host arrived at the %s wall", Label());
         if (!coop::dev::drill_hand::TakeIntoHandNow(L"brick", L"prop_C"))
             return Invalid("a brick could not be taken into the hand");
         To(Step::ThrowAim, now);
@@ -169,18 +229,19 @@ Res TickDamageLegs() {
     }
     case Step::ThrowAim: {
         ue_wrap::FVector at{};
-        if (!CentreOf(wall, at)) return Invalid("the level wall's place did not read");
+        if (!CentreOf(wall, at)) return Invalid("the %s wall's place did not read", Label());
         FaceTowards(me, at);
         if (now - g_stepMs < kAimHoldMs) return AimBound(now, "the throw");
         if (!ViewOn(at)) return AimBound(now, "the throw");
-        BeginLeg("throw", wall);
+        BeginLeg(LegName(0), wall);
         SnapshotBricks(g_bricksBefore);
         if (!DV::Throw(me)) return Invalid("throwHoldingProp did not run");
         g_thrown.Reset();
+        g_approach.Reset();
         g_thrownSeen = false;
         g_restReads = 0;
         g_sawMoving = false;
-        Info("damage: the host threw a brick at the wall");
+        Info("damage: the host threw a brick at the %s wall", Label());
         To(Step::ThrowSettle, now);
         return Res::Working;
     }
@@ -191,45 +252,48 @@ Res TickDamageLegs() {
                 g_thrownSeen = true;
             }
         }
+        if (g_thrownSeen && g_thrown.Alive()) g_approach.Sample(g_thrown.Get(), wall);
         // Done when the brick is gone (it broke or was taken) or has come to rest.
         const bool gone = g_thrownSeen && !g_thrown.Alive();
         if (!gone && !(g_thrownSeen && AtRest())) {
             if (now - g_stepMs < kSettleBoundMs) return Res::Working;
             return Invalid(g_thrownSeen ? "the thrown brick never came to rest" : "no thrown brick appeared");
         }
-        if (!EndLeg("throw", wall)) {
-            To(Step::End, now);
-            return Res::Done;
-        }
+        Info("damage: the thrown brick %s; its distance to the %s wall's box: %s", gone ? "is gone" : "came to rest", Label(),
+             g_approach.Say().c_str());
+        if (!EndLeg(LegName(0), wall)) return NextPass(now);
+        ue_wrap::weapon_catalog::Swing sw;
+        if (!ue_wrap::weapon_catalog::Lookup(L"axe", sw) || !(sw.length > 0.f))
+            return Invalid("the axe's swing length did not read");
+        g_swingReachCm = sw.length;
         if (!coop::dev::drill_hand::TakeIntoHandNow(L"axe", L"prop_axe_C"))
             return Invalid("the axe could not be taken into the hand");
         g_swings = 0;
         g_nextSwingMs = 0;
-        BeginLeg("swing", wall);
+        BeginLeg(LegName(1), wall);
         To(Step::Swing, now);
         return Res::Working;
     }
     case Step::Swing: {
         ue_wrap::FVector at{};
-        if (!CentreOf(wall, at)) return Invalid("the level wall's place did not read");
+        if (!CentreOf(wall, at)) return Invalid("the %s wall's place did not read", Label());
         const bool ended = LegRouteFired() || (g_swings >= kMaxSwings && now >= g_nextSwingMs);
         if (ended) {
-            if (!EndLeg("swing", wall)) {
-                To(Step::End, now);
-                return Res::Done;
-            }
+            if (!EndLeg(LegName(1), wall)) return NextPass(now);
             To(Step::Explode, now);
             return Res::Working;
         }
         if (g_swings >= kMaxSwings || now < g_nextSwingMs) return Res::Working;
         FaceTowards(me, at);
         if (now - g_stepMs < kAimHoldMs || !ViewOn(at)) return AimBound(now, "the swing");
+        const std::string traced = SwingTraceSaid(me, wall);
         if (!DR::PressInputEvent(me, g_firePress) || !DR::PressInputEvent(me, g_fireRelease))
             return Invalid("the fire input event did not run");
         ++g_swings;
         g_nextSwingMs = now + kSwingGapMs;
         g_stepMs = now;
-        Info("damage: swing %d of %d", g_swings, kMaxSwings);
+        Info("damage: swing %d of %d at the %s wall: %s (reach %.0f cm)", g_swings, kMaxSwings, Label(), traced.c_str(),
+             static_cast<double>(g_swingReachCm));
         return Res::Working;
     }
     case Step::Explode: {
@@ -243,21 +307,40 @@ Res TickDamageLegs() {
         namespace X = ue_wrap::explosion;
         if (!X::ResolveNow(X::Cls::Explosion)) return Invalid("the explosion class did not resolve");
         const X::Params p{kBlastDamage, kBlastRadiusCm, 0.f, 0.f, 0.f, 0.f, 0.f, 0, false, false};
-        BeginLeg("explosion", wall);
+        BeginLeg(LegName(2), wall);
         void* blast = X::SpawnDeferred(X::Cls::Explosion, loc, rot, scale, p, me);
         if (!blast) return Invalid("the explosion did not spawn");
         g_blast.Set(blast);
-        Info("damage: an explosion (damage %.0f, radius %.0f cm) spawned %.0f cm from the wall's centre, the player ignored",
-             static_cast<double>(kBlastDamage), static_cast<double>(kBlastRadiusCm), static_cast<double>(kBlastStandoffCm));
+        Info("damage: an explosion (damage %.0f, radius %.0f cm) spawned %.0f cm from the %s wall's centre, the player ignored",
+             static_cast<double>(kBlastDamage), static_cast<double>(kBlastRadiusCm), static_cast<double>(kBlastStandoffCm),
+             Label());
         To(Step::ExplodeWait, now);
         return Res::Working;
     }
     case Step::ExplodeWait:
         if (!LegRouteFired() && g_blast.Alive() && R::IsLive(g_blast.Get())) return Res::Working;
-        EndLeg("explosion", wall);
+        EndLeg(LegName(2), wall);
         coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr);
-        To(Step::End, now);
-        return Res::Done;
+        return NextPass(now);
+    case Step::Place: {
+        ue_wrap::FVector mine{}, placed{};
+        if (!E::TryGetActorLocation(me, mine)) return Invalid("the host's place did not read");
+        const float dx = mine.X - g_levelCentre.X, dy = mine.Y - g_levelCentre.Y;
+        const float flat = std::sqrt(dx * dx + dy * dy);
+        if (!(flat > 1.f)) return Invalid("the host stands at the level wall's centre: no side to put its own wall on");
+        const ue_wrap::FVector ask{mine.X + dx / flat * kBuiltAwayCm, mine.Y + dy / flat * kBuiltAwayCm, mine.Z};
+        void* built = PlaceOnGround(kBuiltPath, ask, "the host-built customWall_C", placed);
+        if (!built) return Res::Invalid;
+        g_built.Set(built);
+        float h = -1.f, mh = -1.f;
+        ReadFloat(built, L"health", h);
+        ReadFloat(built, L"maxHealth", mh);
+        Info("damage: the host-built wall stands at (%.1f,%.1f,%.1f), health %.1f of %.1f; its legs begin",
+             static_cast<double>(placed.X), static_cast<double>(placed.Y), static_cast<double>(placed.Z),
+             static_cast<double>(h), static_cast<double>(mh));
+        To(Step::Start, now);
+        return Res::Working;
+    }
     case Step::End:
         return Res::Done;
     }
