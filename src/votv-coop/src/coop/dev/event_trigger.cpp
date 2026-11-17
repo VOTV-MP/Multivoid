@@ -217,7 +217,7 @@ bool Trigger(const EventInfo& ev) {
     // Ambient/weather layer: these verbs are NOT eventer cases -- the game fires them from
     // daynightCycle/mainGamemode timers + RNG rolls. "Maximally native" here = call the SAME
     // UFunction the timer's success-arm calls, on the live instance (the exact pattern the
-    // autonomous fogprobe proved; autotest_fog_probe.cpp). Dev-only, never on the wire.
+    // autonomous fogprobe proved; autotest_fog_probe.cpp). The host fires it; a player's request for it is judged by coop/cheats first.
     GT::Post([name] {
         struct AmbientVerb { const wchar_t* cls; const wchar_t* fn; int boolArg; const wchar_t* boolName; };
         static const struct { const char* key; AmbientVerb v; } kAmbient[] = {

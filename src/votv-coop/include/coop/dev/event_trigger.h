@@ -1,5 +1,5 @@
-// coop/dev/event_trigger.h -- DEV: trigger any game event from the F1 menu. The full event list, in
-// strict categories, host-only, each row carrying its native trigger time of day.
+// coop/dev/event_trigger.h -- trigger any game event from the F1 menu (Host tools > Events), and for a player's request the
+// host runs. The full event list, in strict categories, each row carrying its native trigger time of day.
 //
 // The event system funnels through TWO FName dispatchers on the single placed trigger_eventer_C.
 // runEvent(event, special) carries the bulk; runSpecialEvent(name)->bool is a FLAT per-name switch
@@ -9,8 +9,8 @@
 // -> summonArirPrank, which randomizes over a reputation-tier pool and discards the incoming name;
 // the table keeps one random-prank row for that. Ambient weather is a third route, fired by
 // daynightCycle and mainGamemode timers rather than by either dispatcher, so the menu calls the
-// same UFunction on the live instance. HOST-ONLY by design: clients never dispatch, dev_gate
-// refusing as for every dev verb, and the spawned actors and NPCs mirror through the existing coop
+// same UFunction on the live instance. The dispatch is the HOST'S alone: a client never dispatches (dev_gate
+// refuses), it asks the host (coop/cheats), which judges the request and runs this; the spawned actors and NPCs mirror through the existing coop
 // pipelines, which is what these triggers exist to test.
 
 #pragma once
@@ -85,7 +85,7 @@ struct EventInfo {
 const std::vector<EventInfo>& Events();
 
 // Reflected dispatch on the host (runEvent / runSpecialEvent per ev.dispatch).
-// Refuses on a connected client (dev_gate) and while the eventer/verb is
+// Refuses on a connected client (dev_gate: a player's request is run by the host, coop/cheats/cheat_run) and while the eventer/verb is
 // unresolved. Safe to call from the menu render path (posts to the game thread).
 bool Trigger(const EventInfo& ev);
 

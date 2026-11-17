@@ -2,6 +2,7 @@
 // makes, the request bucket, the removal clamp, two requests in flight, a withheld right, Unstuck. The host's half stages
 // and judges each arm from its own counts; the client's half sends the requests and judges each answer.
 
+#include "coop/cheats/cheat_request.h"
 #include "coop/cheats/self_teleport.h"
 #include "coop/commands/command_sync.h"
 #include "coop/dev/cheat_drill_raw.h"

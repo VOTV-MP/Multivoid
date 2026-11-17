@@ -1,25 +1,14 @@
 // coop/dev/cheat_drill.h -- drill: the host's and the players' cheat tools, end to end on two peers (ini cheat_drill=
-// off|on / env VOTVCOOP_CHEAT_DRILL; BOTH peers, one run). The host runs it from the first line, the client from its
-// join; they sequence on lobby-chat lines (coop/dev/drill_chat). First each peer opens the F1 panes it is offered and
-// waits until the render thread drew each (the host: Items, Economy, Events, Entities, World, Myself, Player cheats;
-// the client, with the host's setting off: Myself only), then:
-//   A  the host spawns two crowbars through the Items call, and the client's own game gains two.
-//   B  the host adds 777 points through the Economy call; the client's balance mirrors it.
-//   C  the host fires the event arirGraff_3 through the Events call; the host's watch commits it and the client replays it.
-//   D  with the host's setting off, the client asks for each cheat: every one is answered Off, and nothing moved.
-//   E  the host turns the setting on (the `set` line its checkbox submits); the client asks for +321 points, two crowbars
-//      in front of it, one at the host's body and the event arirGraff_5 (each Ok), a story event (Refused) and a prop the
-//      game does not list (UnknownItem): the host's game moved by the Oks and nothing else, and the client's mirrors it.
-//   G..L the hostile arms (coop/dev/cheat_drill_arms): raw requests no panel makes, each refused with its reason; a ten-prop
-//      request drains the bucket and the next is answered Rate; eight removals against 50000 leave 0, one Ok and seven
-//      Failed; two requests in flight keep the status line with the later; a withheld right is answered Off and its
-//      projected bit is clear; Unstuck lands on the NavMesh.
-//   F  the host resets the setting; the client sees it off and its next request is answered Off.
-// A FAIL is decided by an event (a wrong answer or count) and said to the peer at once, so no later arm runs; a time
-// bound only says INVALID. Lines tagged [CHEAT-DRILL]; the host's PASS or FAIL line is the verdict, the client's own arms
-// print theirs. Reds, each a [dev] row that removes one mechanism on the HOST (the last on both peers): cheat_node_check_off
-// (G..L's K arm must FAIL), cheat_open_check_off (G must FAIL), cheat_count_cost_off (H must FAIL). The host leaves the
-// setting at its default. Nothing here ships enabled.
+// off|on / env VOTVCOOP_CHEAT_DRILL; BOTH peers, one run), sequenced on lobby-chat lines (coop/dev/drill_chat). Each peer
+// opens the F1 panes it is offered, then: A the host spawns crowbars through Items and the client gains them; B points
+// through Economy mirror; C an event through Events is replayed; D with the setting off the client's three requests are
+// answered Off; E with it on the client's points, crowbars, spawn at the host and event run and a story event and an
+// unlisted prop are refused; G..L the hostile arms (cheat_drill_arms): raw requests no panel makes, each refused with its
+// reason, a ten-prop request draining the bucket, eight removals against 50000, two requests in flight, a withheld right,
+// Unstuck onto the NavMesh; F the host resets the setting and the next request is Off. A FAIL is decided by an event and
+// said to the peer at once; a time bound only says INVALID. Reds, [dev] rows on the HOST (the last on both peers):
+// cheat_node_check_off (arm K must FAIL), cheat_open_check_off (E's story event must FAIL), cheat_count_cost_off (H must
+// FAIL). Lines tagged [CHEAT-DRILL]; the host's line is the verdict. Nothing here ships enabled.
 
 #pragma once
 

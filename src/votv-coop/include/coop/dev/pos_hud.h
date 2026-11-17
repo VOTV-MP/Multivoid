@@ -4,7 +4,7 @@
 // and the camera rotation in real time. Useful when staging scenes, picking
 // spawn anchors, or sanity-checking the freecam / pose sync.
 //
-// Driven by the ImGui dev menu (Player > HUD > "Position / camera readout").
+// Driven by the ImGui dev menu (Host tools > Myself > "Position and camera readout").
 // There is no hotkey for it: dev features live in the F1 menu. The overlay is a
 // separate in-world UMG widget, so it stays on
 // screen while you move with the menu closed.
@@ -17,7 +17,7 @@
 
 namespace coop::dev::pos_hud {
 
-// Menu action (Player > HUD): show/hide the overlay. On first show it lazily
+// Menu action (Host tools or Player tools > Myself): show/hide the overlay. On first show it lazily
 // creates the widget + starts a ~10 Hz refresh-pump thread. Safe to call off the
 // game thread (the show/hide is posted to it). Idempotent.
 void SetVisible(bool on);
