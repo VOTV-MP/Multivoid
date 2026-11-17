@@ -132,6 +132,12 @@ void AtEdge(Role role, uint64_t now) {
         End(Outcome::Invalid, "no nail, wall or poster is live at the %s's world-ready edge: nothing to read", RoleName(role));
         return;
     }
+    // The world is judged a New Game's before any key is: a save may hold a piece that is keyless on purpose.
+    if (level.walls != 1 || level.posters != 5) {
+        End(Outcome::Invalid, "the %s's world is not a New Game's: %d level wall(s) and %d level poster(s), expected 1 and 5",
+            RoleName(role), level.walls, level.posters);
+        return;
+    }
     for (const BI::Piece& p : pieces) {
         if (p.key.empty() || p.key == L"None") {
             std::string where = p.cls + " at " + p.level;
@@ -139,22 +145,20 @@ void AtEdge(Role role, uint64_t now) {
             return;
         }
     }
-    if (level.walls != 1 || level.posters != 5) {
-        End(Outcome::Invalid, "the %s's world is not a New Game's: %d level wall(s) and %d level poster(s), expected 1 and 5",
-            RoleName(role), level.walls, level.posters);
-        return;
-    }
     BI::Info("i1 ok: %s's %zu piece(s) all read a key", RoleName(role), pieces.size());
     if (role == Role::Host) {
         g_hostText = level.text;
         To(Phase::HostKeys1, now);
         return;
     }
-    const int unsettled = coop::world_load_episode::UnsettledBuildPieces();
-    if (unsettled < 0) {
-        End(Outcome::Invalid, "the client's load episode counted no scan: nothing to read for i4");
+    // i4 judges the settle the episode reached on a stable population; a ceiling latch (a slow or stuck load), an
+    // open session or none is no verdict on the count.
+    if (!coop::world_load_episode::QuiescedByStability()) {
+        End(Outcome::Invalid, "the client's load episode did not settle on a stable population (the ceiling latched, "
+                              "or no session closed): nothing to read for i4");
         return;
     }
+    const int unsettled = coop::world_load_episode::UnsettledBuildPieces();
     if (unsettled > 0) {
         End(Outcome::Fail, "i4: %d building piece(s) were counted unsettled when the client's load episode ended",
             unsettled);

@@ -64,6 +64,7 @@ bool g_everOpened = false;     // any session opened since Reset. While false,
                                // HasQuiesced() is VACUOUSLY true: a flow that never
                                // saw a world load has nothing to wait for
 bool g_quiesced   = false;     // the latch of the most recent session
+bool g_quiescedByStability = false;  // valid while g_quiesced: the latch was a stable population, not the ceiling
 std::chrono::steady_clock::time_point g_probeArmedAt{};      // absolute-ceiling base
 std::chrono::steady_clock::time_point g_lastScanAt{};        // {} => not yet scanned this session
 std::chrono::steady_clock::time_point g_quiescedAt{};        // valid while g_quiesced
@@ -227,9 +228,10 @@ void OpenProbeSession_(const char* reason, bool forRequest) {
             g_probeReason.c_str(), replay, kQuiesceScans, kScanIntervalMs, kAbsoluteCeilingMs / 1000);
 }
 
-void Latch_(const char* how) {
+void Latch_(const char* how, bool byStability) {
     g_probeOpen = false;
     g_quiesced = true;
+    g_quiescedByStability = byStability;
     g_quiescedAt = std::chrono::steady_clock::now();
     const bool closesEpisode = g_inEpisode.load(std::memory_order_relaxed);
     if (closesEpisode) g_inEpisode.store(false, std::memory_order_relaxed);
@@ -378,7 +380,7 @@ bool TickQuiesceProbe() {
         UE_LOGW("world_load_episode: probe ABSOLUTE ceiling (%d s) -- latching DEGRADED (stuck "
                 "purge / pathological load; the settled-world guarantee does NOT hold for this join)",
                 kAbsoluteCeilingMs / 1000);
-        Latch_("ABSOLUTE ceiling -- DEGRADED");
+        Latch_("ABSOLUTE ceiling -- DEGRADED", /*byStability*/ false);
         return true;
     }
     // A registry mid-purge, or one never seeded, means the loading world is incomplete; the
@@ -386,6 +388,7 @@ bool TickQuiesceProbe() {
     if (!coop::prop_element_tracker::HasSeededOnce() ||
         coop::prop_element_tracker::InPurgeEpisode()) {
         g_lastUnsettledCount = -1;
+        g_lastUnsettledPieces = -1;
         g_stableScans = 0;
         return false;
     }
@@ -396,7 +399,7 @@ bool TickQuiesceProbe() {
         return false;
     }
     if (++g_stableScans < kQuiesceScans) return false;  // stable, but not for long enough yet
-    Latch_("population stable");
+    Latch_("population stable", /*byStability*/ true);
     return true;
 }
 
@@ -436,6 +439,8 @@ void Reset() {
 bool InEpisode() { return g_inEpisode.load(std::memory_order_relaxed); }
 
 int UnsettledBuildPieces() { return g_lastUnsettledPieces; }
+
+bool QuiescedByStability() { return g_quiesced && g_quiescedByStability; }
 // ---- The reconcile window; see the header block ----
 
 void RaiseReconcileForReload() {
