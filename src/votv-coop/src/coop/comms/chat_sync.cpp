@@ -129,7 +129,7 @@ void ApplyRow(uint8_t slot, const std::string& nick, uint32_t custom,
     // line, since old history is a frozen history.
     const uint32_t argb = coop::nick_color::IsCustom(custom)
         ? custom
-        : coop::chat_nick_color::kSlotCols[slot % 8u];
+        : coop::chat_nick_color::PaletteFor(slot);
     const std::string line = nick + ": " + text;
     coop::chat_feed::PushWireChat(line,
                                   static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
