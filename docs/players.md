@@ -231,8 +231,8 @@ client does, its world held at 1, its body and the world's effects at the game's
 coffee settled (`coop/player/sleep_rest`), the world takes the game's factor once every connected
 player rests or dreams, and goes back to 1 when one wakes. A player who joins is awake, so the world
 drops to 1 at its join. `never`: no one's sleep speeds the world up, and the host's sleep rests at 1
-like a client's. The clients' line names the mode. `[?]` Not yet run on the rig for the three modes
-(`coop/dev/sleep_speedup_drill` has one arm for each, and a red that makes the host ignore the setting).
+like a client's. The clients' line names the mode, and is said again if the host changes the mode mid-sleep. The host's sleep follows a change of the mode, and the last client leaving, at once. `[?]` Not yet run on the rig for the three modes
+(`coop/dev/sleep_speedup_drill` has one arm for each, one for the mode changing mid-sleep, one for a client leaving, and a red that makes the host ignore the setting).
 The host's own nightmare roll is the game's, 500 s of world time, so while the host rests at 1 it
 comes 500 real seconds into the sleep.
 

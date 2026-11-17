@@ -478,7 +478,8 @@ void Tick() {
         if (host && ArmOf() == Arm::Beside && !coop::dev::hookdrag_selftest::IsEnabled())
             return Fail(true, "beside needs the hook drill armed on this peer (hookdrag_selftest)");
         // Every arm expects the host's sleep alone to speed the world up, which is the row's `host` value: the session's
-        // value is pinned here (the set /set uses), so the arm does not depend on how the run was invoked.
+        // value is pinned here (a set for this session only, nothing written to the ini), so the arm does not depend on
+        // how the run was invoked.
         if (host) {
             if (coop::config::SetForSession(::coop::config_registry::rows::world_sleep_speedup, "host") ==
                 coop::config::SetResult::Refused)
