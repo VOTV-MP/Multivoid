@@ -19,6 +19,7 @@
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -102,6 +103,27 @@ int Hidden(void* a) {
 
 bool KeyReads(const std::wstring& k) { return !k.empty() && k != L"None"; }
 
+// A board stuck the game's way: comp_wallAttachable::init(prop, arrow), the call a placed board's loadData makes, sets
+// the component's `prop`, which prop_stick_sync's unstick watch reads (no prop, nothing crosses). In the open no wall can
+// hold the board, so it is then held static as a stuck one is (comp_wallAttachable::unstick refuses one that is not).
+// False when the board has no component or the call did not run.
+bool StickBoard(void* board) {
+    const int32_t co = R::FindPropertyOffset(R::ClassOf(board), L"comp_wallAttachable");
+    const int32_t so = R::FindPropertyOffset(R::ClassOf(board), L"stick");
+    void* comp = nullptr;
+    void* arrow = nullptr;
+    if (co >= 0) std::memcpy(&comp, static_cast<const uint8_t*>(board) + co, sizeof(comp));
+    if (so >= 0) std::memcpy(&arrow, static_cast<const uint8_t*>(board) + so, sizeof(arrow));
+    void* const fn = comp ? R::FindDispatchFunctionCached(R::ClassOf(comp), L"init") : nullptr;
+    bool ok = false;
+    if (fn && arrow) {
+        ue_wrap::ParamFrame f(fn);
+        ok = f.valid() && f.Set<void*>(L"prop", board) && f.Set<void*>(L"arrow", arrow) && ue_wrap::Call(comp, f);
+    }
+    if (!PR::IsStatic(board)) PR::CallSetPropProps(board, true, false, false, false);
+    return ok;
+}
+
 // ---- the host ----------------------------------------------------------------------------------------
 
 enum class HostStep { WaitClient, Watch, Done };
@@ -139,22 +161,22 @@ void HostWaitClient(coop::net::Session& s) {
     g_plankAt = {at.X + fwd.X * kAheadCm, at.Y + fwd.Y * kAheadCm, at.Z};
     void* plank = E::SpawnActor(cls, g_plankAt);
     if (!plank) { HostSay(Outcome::Invalid, "the board did not spawn"); return; }
-    // A stuck board is held static: the pry's unstick refuses a board that is not (comp_wallAttachable::unstick).
-    const bool held = PR::CallSetPropProps(plank, true, false, false, false);
+    const bool held = StickBoard(plank);
     g_plank.Set(plank);
     g_crowbarsBefore = All(L"prop_crowbar_C");
     g_hostMs = Now();
     g_foundLogged = false;
-    UE_LOGI("[CROWBARPRY] host: the board '%ls' at (%.0f,%.0f,%.0f) 130 cm before the client, static=%d (held %d), %zu "
+    UE_LOGI("[CROWBARPRY] host: the board '%ls' at (%.0f,%.0f,%.0f) 130 cm before the client, static=%d (wired %d), %zu "
             "crowbar(s) in the world", PR::GetInteractableKeyString(plank).c_str(), g_plankAt.X, g_plankAt.Y, g_plankAt.Z,
             PR::IsStatic(plank) ? 1 : 0, held ? 1 : 0, g_crowbarsBefore.size());
     g_host = HostStep::Watch;
 }
 
-// A crowbar the world did not have when the board was spawned, near it: the one the pry handed back.
+// A world crowbar the world did not have when the board was spawned, near it: the one the pry handed back.
 void* NewCrowbar() {
     for (void* c : All(L"prop_crowbar_C")) {
         if (std::find(g_crowbarsBefore.begin(), g_crowbarsBefore.end(), c) != g_crowbarsBefore.end()) continue;
+        if (coop::hand_item::IsHandAxisActor(c)) continue;   // the puppet's display copy of its hand item is no world prop
         FVector l{};
         if (E::TryGetActorLocation(c, l) && Dist2(l, g_plankAt) <= kHostNearCm * kHostNearCm) return c;
     }
@@ -235,12 +257,12 @@ void ClientFind(void* me) {
         return;
     }
     g_board.Set(board);
-    // The host holds its copy static; a copy this peer's own spawn path left loose is held the same way, said once.
+    // The host stuck its copy; this peer's copy is wired the same way, since the pry's unstick runs on it first.
     const bool wasStatic = PR::IsStatic(board);
-    if (!wasStatic) PR::CallSetPropProps(board, true, false, false, false);
+    const bool wired = StickBoard(board);
     const bool took = coop::dev::drill_hand::TakeIntoHandNow(L"crowbar", L"prop_crowbar_C");
-    UE_LOGI("[CROWBARPRY] client: the board '%ls' bound (static on arrival %d), a crowbar in the hand (ok=%d, holds=%d)",
-            PR::GetInteractableKeyString(board).c_str(), wasStatic ? 1 : 0, took ? 1 : 0, HandHoldsCrowbar() ? 1 : 0);
+    UE_LOGI("[CROWBARPRY] client: the board '%ls' bound (static on arrival %d, wired %d), a crowbar in the hand (ok=%d, holds=%d)",
+            PR::GetInteractableKeyString(board).c_str(), wasStatic ? 1 : 0, wired ? 1 : 0, took ? 1 : 0, HandHoldsCrowbar() ? 1 : 0);
     if (!took || !HandHoldsCrowbar()) { ClientSay(Outcome::Invalid, "client: %s", "the crowbar did not come into the hand"); return; }
     FVector at{};
     E::TryGetActorLocation(board, at);
