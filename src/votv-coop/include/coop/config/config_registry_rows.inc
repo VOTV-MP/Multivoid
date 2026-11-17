@@ -296,7 +296,7 @@ CFG_FLAG(net_hunger_shared, "net.hunger_shared", "net", false, "VOTVCOOP_NET_HUN
     "matching mountain of food. Stamina and sleep are unchanged. Off by default."))
 CFG_ROWFLAGS(net_hunger_shared, kRowServer | kRowReplicated | kRowLive | kRowNotify)
 CFG_LABEL(net_hunger_shared, L10N_MARK("Slower hunger in larger groups"))
-CFG_ENUM(world_sleep_speedup, "world.sleep_speedup", "world", "everyone", "host|everyone|never", nullptr,
+CFG_ENUM(world_sleep_speedup, "world.sleep_speedup", "world", "everyone", "host|everyone|never", "VOTVCOOP_WORLD_SLEEP_SPEEDUP",
     L10N_MARK("Whose sleep speeds the world up. host: only the host's sleep does, as in single player, whatever the "
     "others are doing. everyone: the world speeds up only while every player is asleep, and drops back to normal "
     "speed the moment anyone is awake or joins. never: no one's sleep speeds the world up; every sleeper rests at "
