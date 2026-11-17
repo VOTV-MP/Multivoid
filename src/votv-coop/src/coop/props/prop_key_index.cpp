@@ -53,6 +53,7 @@ struct Holder {
     int32_t  idx;
     int32_t  serial;
     R::FName key;
+    Lane     lane;
 };
 // What a slot is indexed under, so a write that leaves the key as it was costs one probe and no string.
 struct SlotEntry {
@@ -60,6 +61,7 @@ struct SlotEntry {
     int32_t      serial;
     R::FName     key;
     std::wstring keyStr;
+    Lane         lane;
 };
 struct Parked {
     void*             obj;
@@ -106,10 +108,16 @@ struct Sum {
 Sum g_sum;
 Clock::time_point g_sumSince{};
 
+// What a class is indexed by: the field its key is read from and the lane its holders belong to.
+struct Field {
+    KeyField f;
+    Lane     lane;
+};
+
 // The key field of each class, asked once per class pointer. A class that unloads may leave its pointer to
 // a new class, so the memo is dropped when the object index unlists one. A class can only load after its
 // super, so a None answered for a subclass is never the result of a base still to come.
-std::unordered_map<void*, KeyField> g_fieldOf;
+std::unordered_map<void*, Field> g_fieldOf;
 uint64_t g_fieldOfVersion = 0;
 
 // Both classes a key field can come from are loaded: until then a class asked may read as keyless only because
@@ -118,8 +126,9 @@ bool KeyBasesLoaded() {
     return OI::ClassByName(ue_wrap::profile::name::PropClass) && OI::ClassByName(L"trashBitsPile_C");
 }
 
-KeyField FieldOf(void* cls) {
-    if (!cls) return KeyField::None;
+// Every class the index keys today is of the Prop lane.
+Field FieldOf(void* cls) {
+    if (!cls) return Field{KeyField::None, Lane::Prop};
     const uint64_t v = OI::ClassUnlistVersion();
     if (v != g_fieldOfVersion) {
         g_fieldOf.clear();
@@ -127,12 +136,12 @@ KeyField FieldOf(void* cls) {
     }
     const auto it = g_fieldOf.find(cls);
     if (it != g_fieldOf.end()) return it->second;
-    const KeyField f = ue_wrap::prop::KeyFieldOf(cls);
+    const Field fl{ue_wrap::prop::KeyFieldOf(cls), Lane::Prop};
     // A None is kept only once both bases are loaded: one still loading reads as absent, and a subclass
     // asked in that moment would stay out for good.
-    if (f != KeyField::None || KeyBasesLoaded())
-        g_fieldOf.emplace(cls, f);
-    return f;
+    if (fl.f != KeyField::None || KeyBasesLoaded())
+        g_fieldOf.emplace(cls, fl);
+    return fl;
 }
 
 // The hands (the local player's held item and every peer's display copy), read once per session tick: a hand
@@ -175,8 +184,8 @@ void Unindex(int32_t idx) {
 }
 
 // Index `obj` (live, readable, of a class with a key field) under the key its field holds now.
-void Index(void* obj, int32_t idx, KeyField f) {
-    const R::FName key = ue_wrap::prop::ReadKeyField(obj, f);
+void Index(void* obj, int32_t idx, Field fl) {
+    const R::FName key = ue_wrap::prop::ReadKeyField(obj, fl.f);
     const auto st = g_bySlot.find(idx);
     if (st != g_bySlot.end() && st->second.obj == obj && st->second.serial == R::SlotSerial(idx) &&
         SameName(st->second.key, key))
@@ -186,18 +195,18 @@ void Index(void* obj, int32_t idx, KeyField f) {
     std::wstring keyStr = R::ToString(key);
     const int32_t serial = R::AllocateSlotSerial(idx);
     ++g_version;
-    g_byKey[keyStr].push_back(Holder{obj, idx, serial, key});
-    g_bySlot[idx] = SlotEntry{obj, serial, key, std::move(keyStr)};
+    g_byKey[keyStr].push_back(Holder{obj, idx, serial, key, fl.lane});
+    g_bySlot[idx] = SlotEntry{obj, serial, key, std::move(keyStr), fl.lane};
     ++g_sum.reindexed;
 }
 
 // A domain object the index meets: indexed if readable, parked while it still loads. One the slot already
 // files is re-read straight away (a write after its birth); otherwise an object marked for death is left
 // out, and a class default object, which holds the class's default key, is never an instance.
-void Admit(void* obj, int32_t idx, KeyField f) {
+void Admit(void* obj, int32_t idx, Field fl) {
     const auto st = g_bySlot.find(idx);
     if (st != g_bySlot.end() && st->second.obj == obj && st->second.serial == R::SlotSerial(idx)) {
-        Index(obj, idx, f);
+        Index(obj, idx, fl);
         return;
     }
     if (!R::IsLiveByIndex(obj, idx)) return;
@@ -209,7 +218,7 @@ void Admit(void* obj, int32_t idx, KeyField f) {
         return;
     }
     if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-    Index(obj, idx, f);
+    Index(obj, idx, fl);
 }
 
 // The parked births whose object has finished loading are indexed; the gone are dropped.
@@ -223,8 +232,8 @@ void ReadParked() {
             continue;
         }
         if (!R::IsLiveByIndex(p.obj, p.idx)) continue;  // marked for death while it loaded
-        const KeyField f = FieldOf(R::ClassOf(p.obj));
-        if (f != KeyField::None && !R::NameStartsWith(R::NameOf(p.obj), L"Default__")) Index(p.obj, p.idx, f);
+        const Field fl = FieldOf(R::ClassOf(p.obj));
+        if (fl.f != KeyField::None && !R::NameStartsWith(R::NameOf(p.obj), L"Default__")) Index(p.obj, p.idx, fl);
     }
     g_parked.resize(keep);
 }
@@ -272,10 +281,10 @@ void PruneDead() {
 
 void OnCreated(void*, void* obj, void* cls, int32_t idx) {
     if (!g_live) return;
-    const KeyField f = FieldOf(cls);
-    if (f == KeyField::None) return;
+    const Field fl = FieldOf(cls);
+    if (fl.f == KeyField::None) return;
     ++g_sum.births;
-    Admit(obj, idx, f);
+    Admit(obj, idx, fl);
 }
 
 // The object may be freed by now: only its pointer is compared.
@@ -289,29 +298,34 @@ void OnDeleted(void*, void* obj, void*, int32_t idx) {
 
 void OnPost(const SG::Call& call) {
     if (!g_live || !call.object) return;
-    const KeyField f = FieldOf(R::ClassOf(call.object));
-    if (f == KeyField::None) {
+    const Field fl = FieldOf(R::ClassOf(call.object));
+    if (fl.f == KeyField::None) {
         ++g_sum.postsOut;
         return;
     }
     ++g_sum.postsIn;
     const int32_t idx = R::InternalIndexOf(call.object);
-    if (idx >= 0) Admit(call.object, idx, f);
+    if (idx >= 0) Admit(call.object, idx, fl);
 }
 
 // ---- the reads ----
 
 enum class Verdict : uint8_t { Counts, Dead, Moved, Excluded };
 
+// The lane argument of a read that means every lane.
+constexpr int kEveryLane = -1;
+
 // A holder counts when its slot still holds it with its serial and no kill flags, it is readable, its class
-// still keeps a key field holding the key it was indexed under, it is neither a child actor nor a hand, and
-// it belongs to the world the game is running (the scan hub's rule, object_scan_hub.cpp).
-Verdict Judge(const Holder& h, void* world) {
+// still keeps a key field holding the key it was indexed under, it is of the lane the read is for, it is
+// neither a child actor nor a hand, and it belongs to the world the game is running (the scan hub's rule,
+// object_scan_hub.cpp).
+Verdict Judge(const Holder& h, void* world, int lane) {
     if (!R::IsLiveByIndex(h.obj, h.idx) || R::SlotSerial(h.idx) != h.serial) return Verdict::Dead;
     if (R::SlotFlags(h.idx) & R::slot_flags::NotYetReadable) return Verdict::Excluded;
-    const KeyField f = FieldOf(R::ClassOf(h.obj));
-    if (f == KeyField::None) return Verdict::Dead;
-    if (!SameName(ue_wrap::prop::ReadKeyField(h.obj, f), h.key)) return Verdict::Moved;
+    const Field fl = FieldOf(R::ClassOf(h.obj));
+    if (fl.f == KeyField::None) return Verdict::Dead;
+    if (!SameName(ue_wrap::prop::ReadKeyField(h.obj, fl.f), h.key)) return Verdict::Moved;
+    if (lane != kEveryLane && static_cast<int>(h.lane) != lane) return Verdict::Excluded;
     if (ue_wrap::engine::IsChildActor(h.obj) || IsHand(h.obj)) return Verdict::Excluded;
     if (world && WI::WorldOf(h.obj) != world) return Verdict::Excluded;
     return Verdict::Counts;
@@ -320,14 +334,14 @@ Verdict Judge(const Holder& h, void* world) {
 // The lowest-slot holder of `key` that counts and is not `skip`. A dead holder is dropped; one whose key
 // changed through a body no watch saw is re-indexed and named once, since a read can then miss a key it
 // should have found.
-void* Best(const std::wstring& key, void* world, void* skip) {
+void* Best(const std::wstring& key, void* world, void* skip, int lane) {
     const auto kt = g_byKey.find(key);
     if (kt == g_byKey.end()) return nullptr;
     void* best = nullptr;
     int32_t bestIdx = INT32_MAX;
     std::vector<Holder> dead, moved;  // no allocation unless one is met
     for (const Holder& h : kt->second) {
-        switch (Judge(h, world)) {
+        switch (Judge(h, world, lane)) {
             case Verdict::Counts:
                 if (h.obj != skip && h.idx < bestIdx) {
                     best = h.obj;
@@ -348,8 +362,9 @@ void* Best(const std::wstring& key, void* world, void* skip) {
 }
 
 // `catchUp`: a miss first catches the object index up and asks again, so it is final; without it a miss is
-// "none indexed now", which a uniqueness check at enrolment asks for, run inside a script body.
-Read Ask(const std::wstring& key, void* skip, void** out, bool catchUp) {
+// "none indexed now", which a uniqueness check at enrolment asks for, run inside a script body. `lane`: the
+// holders of that lane count, or of every lane for kEveryLane.
+Read Ask(const std::wstring& key, void* skip, void** out, bool catchUp, int lane) {
     if (!ue_wrap::game_thread::IsGameThread()) {
         g_offThreadReads.fetch_add(1, std::memory_order_relaxed);
         return Read::Pending;  // no reason kept: g_pendingWhy is the game thread's
@@ -368,7 +383,7 @@ Read Ask(const std::wstring& key, void* skip, void** out, bool catchUp) {
         return Read::Miss;
     }
     RefreshHand();  // a hand made earlier in this tick must not answer for the world prop
-    if (void* a = Best(key, world, skip)) {
+    if (void* a = Best(key, world, skip, lane)) {
         if (out) *out = a;
         ++g_sum.hits;
         return Read::Hit;
@@ -391,7 +406,7 @@ Read Ask(const std::wstring& key, void* skip, void** out, bool catchUp) {
         return Read::Pending;
     }
     if (!g_parked.empty()) ReadParked();
-    if (void* a = Best(key, world, skip)) {
+    if (void* a = Best(key, world, skip, lane)) {
         if (out) *out = a;
         ++g_sum.hits;
         return Read::Hit;
@@ -415,7 +430,7 @@ Read Ask(const std::wstring& key, void* skip, void** out, bool catchUp) {
 // Ours checks a store against objects the engine owns, where a miss is a write no feed saw rather than our own
 // bug, so it is counted, named and filed again instead.
 bool ParityReady() { return g_live; }
-bool ParityIsInstance(void* obj) { return FieldOf(R::ClassOf(obj)) != KeyField::None; }  // class-pure
+bool ParityIsInstance(void* obj) { return FieldOf(R::ClassOf(obj)).f != KeyField::None; }  // class-pure
 // FieldOf answers None for a class asked while a base is still loading, without keeping it; the hub keeps its
 // verdicts, so it takes them again when both bases have loaded.
 uint64_t ParityBasesLoaded() { return KeyBasesLoaded() ? 1 : 0; }
@@ -424,10 +439,10 @@ void ParityBegin(void*, bool) {}
 void ParityMatch(void*, void* obj) {
     if (!g_live) return;
     ++g_sum.visited;
-    const KeyField f = FieldOf(R::ClassOf(obj));
+    const Field fl = FieldOf(R::ClassOf(obj));
     const int32_t idx = R::InternalIndexOf(obj);
-    if (f == KeyField::None || idx < 0 || !R::IsLiveByIndex(obj, idx)) return;
-    const R::FName key = ue_wrap::prop::ReadKeyField(obj, f);
+    if (fl.f == KeyField::None || idx < 0 || !R::IsLiveByIndex(obj, idx)) return;
+    const R::FName key = ue_wrap::prop::ReadKeyField(obj, fl.f);
     const auto st = g_bySlot.find(idx);
     const bool slotIsIt = st != g_bySlot.end() && st->second.obj == obj && st->second.serial == R::SlotSerial(idx);
     // A prop without a key is filed nowhere; one with a key is filed under it.
@@ -435,12 +450,12 @@ void ParityMatch(void*, void* obj) {
     if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;  // never filed: it holds the class's default
     for (const Parked& p : g_parked) {
         if (p.idx == idx && p.obj == obj) {  // finished loading since ReadParked ran: filed now, not a miss
-            Index(obj, idx, f);
+            Index(obj, idx, fl);
             return;
         }
     }
     NoteUnobserved(obj, idx, slotIsIt ? st->second.keyStr.c_str() : L"(nothing)", "the parity pass");
-    Index(obj, idx, f);
+    Index(obj, idx, fl);
 }
 
 size_t ParityComplete(void*, bool, uint32_t) { return g_bySlot.size(); }
@@ -509,13 +524,13 @@ void TrySeed() {
     std::vector<void*> classes;
     OI::ForEachClass(
         [](void* ctx, void* cls, void*) {
-            if (FieldOf(cls) != KeyField::None) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
+            if (FieldOf(cls).f != KeyField::None) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
         },
         &classes);
     for (void* cls : classes) {
-        KeyField f = FieldOf(cls);
+        Field fl = FieldOf(cls);
         OI::ForEachInstance(
-            cls, [](void* ctx, void* obj, int32_t idx) { Admit(obj, idx, *static_cast<KeyField*>(ctx)); }, &f);
+            cls, [](void* ctx, void* obj, int32_t idx) { Admit(obj, idx, *static_cast<Field*>(ctx)); }, &fl);
     }
     g_live = true;
     ++g_version;
@@ -624,11 +639,17 @@ void Tick() {
     SummaryIfDue();
 }
 
-Read Resolve(const std::wstring& key, void** out) { return Ask(key, nullptr, out, /*catchUp=*/true); }
+Read Resolve(const std::wstring& key, void** out) { return ResolveIn(Lane::Prop, key, out); }
 
-void* Find(const std::wstring& key) {
+Read ResolveIn(Lane lane, const std::wstring& key, void** out) {
+    return Ask(key, nullptr, out, /*catchUp=*/true, static_cast<int>(lane));
+}
+
+void* Find(const std::wstring& key) { return FindIn(Lane::Prop, key); }
+
+void* FindIn(Lane lane, const std::wstring& key) {
     void* actor = nullptr;
-    const Read r = Ask(key, nullptr, &actor, /*catchUp=*/true);
+    const Read r = Ask(key, nullptr, &actor, /*catchUp=*/true, static_cast<int>(lane));
     // A Pending here is answered as no holder, the one place "not yet" becomes "not here": counted apart, and the
     // first of a session named, since a run that shows none is the evidence this costs nothing.
     if (r == Read::Pending && ue_wrap::game_thread::IsGameThread() && g_wanted) {
@@ -644,7 +665,7 @@ void* Find(const std::wstring& key) {
 }
 
 Read AnotherHolder(const std::wstring& key, void* self, void** other) {
-    return Ask(key, self, other, /*catchUp=*/false);
+    return Ask(key, self, other, /*catchUp=*/false, kEveryLane);
 }
 
 bool CanAnswer() {

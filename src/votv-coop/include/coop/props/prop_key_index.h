@@ -45,9 +45,17 @@ void Tick();
 // world, a birth still loading, off the game thread, or inside an object-index drain).
 enum class Read : uint8_t { Hit, Miss, Pending };
 
-// The live actor of the current world that holds `key`, the lowest slot of those that do; a child actor and
-// a player's hand are never one. `out` is set on Hit only.
+// The family of keyed actors a holder belongs to. Prop is the index's own: a prop_C and the trash pile, each
+// with its key field; every holder is of it today. Resolve and Find read the Prop lane; ResolveIn and FindIn
+// read the lane named.
+enum class Lane : uint8_t { Prop, Building };
+
+// The live actor of the current world that holds `key` in the Prop lane, the lowest slot of those that do; a
+// child actor and a player's hand are never one. `out` is set on Hit only.
 Read Resolve(const std::wstring& key, void** out);
+
+// Resolve for a lane named.
+Read ResolveIn(Lane lane, const std::wstring& key, void** out);
 
 // Resolve for a caller whose "not yet" and "not here" are the same answer: the actor on Hit, else null. A
 // Pending answered so is counted in the summary, and the first of a session is named. A wire message whose key
@@ -55,9 +63,12 @@ Read Resolve(const std::wstring& key, void** out);
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2424-2425, :2672-2673); nothing searches further.
 void* Find(const std::wstring& key);
 
-// Whether an actor other than `self` holds `key`, by the same rule: a uniqueness check at enrolment, which
-// runs inside a script body, so it never catches the object index up: Miss here means none indexed now.
-// `other` is set on Hit when given.
+// Find for a lane named.
+void* FindIn(Lane lane, const std::wstring& key);
+
+// Whether an actor other than `self` holds `key` in any lane, by the same rule: the game keeps one key registry,
+// so a key is unique across lanes. A uniqueness check at enrolment, which runs inside a script body, so it never
+// catches the object index up: Miss here means none indexed now. `other` is set on Hit when given.
 Read AnotherHolder(const std::wstring& key, void* self, void** other = nullptr);
 
 // Whether a read now is answered by an index that holds this world: seeded, and the object index's last drain
