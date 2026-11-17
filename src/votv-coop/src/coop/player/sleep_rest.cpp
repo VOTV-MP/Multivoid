@@ -268,36 +268,50 @@ bool HostRestsAtOne(coop::net::Session& s) {
     return false;
 }
 
-// The host asleep: the game's own sleep (the world at its factor) when the row says the host's sleep speeds the world
-// up, or everyone else sleeps; a client's rest (the world at 1, the body and the effects at the factor) otherwise.
-// Every cause of a switch is announced, so each one runs this and nothing polls: the host's own `sleep` and `wakeup`
-// (the script gate's watches), a peer's rest state (sleep_sync's subscriber), a player's arrival or leaving (the
-// roster's), and the row (the config subscriber). Idempotent: the world's factor is set again on each run while the
-// host rests, since the game has no guard on a second `sleep` call, which sets its own factor again.
+// What the host's sleep should be, from the session, whether the host is asleep, the row and who is awake.
+enum class Want { NotAsleep, RestAtOne, GameFactor };
+
+// The world's dilation at `v`: read first, set only when it differs (the game has no guard on a second `sleep` call,
+// which sets its own factor again, and nothing else is told of it). A failed set is logged. False when it is not at `v`.
+bool HoldWorldAt(float v) {
+    const float now = SLP::GetGlobalTimeDilation();
+    if (now > 0.f && std::fabs(now - v) <= 0.01f) return true;
+    if (SLP::SetGlobalTimeDilation(v)) {
+        UE_LOGI("sleep_rest: the world's dilation set from %.2f to %.0f for the host's sleep", now, v);
+        return true;
+    }
+    UE_LOGE("sleep_rest: the world's dilation could not be set to %.0f for the host's sleep (it reads %.2f)", v, now);
+    return false;
+}
+
+// The host's sleep is declared, not stepped: the wanted state comes from (a session runs, the host is asleep, the row,
+// a connected client awake) and is made so, whichever state it was left in. RestAtOne is the world at 1 with the body
+// and the effects at the factor, a client's rest; GameFactor is the game's own sleep, the world at its factor. Every
+// cause is announced, so each runs this and nothing polls: the host's own `sleep` and `wakeup` (the script gate's
+// watches), a peer's rest state (sleep_sync's subscriber), a player's arrival or leaving (the roster's), the row (the
+// config subscriber), the last client leaving (OnDisconnect), and a rest that ended with the host still asleep (Tick).
 void HostEval() {
     auto* const s = HostSession();
     if (!s || !SLP::EnsureResolved()) return;
-    if (!SLP::IsSleeping()) {
+    Want want = !SLP::IsSleeping() ? Want::NotAsleep : HostRestsAtOne(*s) ? Want::RestAtOne : Want::GameFactor;
+    // A rest the game's own wake could not end would hold the body at the factor for good: the game's sleep stands.
+    if (want == Want::RestAtOne && !g_wakeWatch.live) want = Want::GameFactor;
+    switch (want) {
+    case Want::NotAsleep:  // the game's `wakeup` has put the world back
         if (g_resting) EndRest("the host woke");
         return;
-    }
-    if (HostRestsAtOne(*s)) {
-        // A rest that could not end with the game's own wake would hold the body at the factor for good.
-        if (!g_wakeWatch.live) return;
-        if (!SLP::SetGlobalTimeDilation(1.f)) {
-            UE_LOGE("sleep_rest: the world's dilation could not be held at 1 for the host's rest");
-            return;
-        }
+    case Want::RestAtOne:
+        if (!HoldWorldAt(1.f)) return;
         if (g_resting) return;
         BeginRest();
         UE_LOGI("sleep_rest: the host's sleep does not speed the world up now (world.sleep_speedup) -- the world "
                 "stays at 1");
         return;
+    case Want::GameFactor:
+        if (g_resting) EndRest("the host's sleep speeds the world up now (world.sleep_speedup)");
+        HoldWorldAt(kNativeSleepDilation);
+        return;
     }
-    if (!g_resting) return;
-    EndRest("the host's sleep speeds the world up now (world.sleep_speedup)");
-    if (SLP::SetGlobalTimeDilation(kNativeSleepDilation))
-        UE_LOGI("sleep_rest: the world runs at the game's %.0f", kNativeSleepDilation);
 }
 
 // Slot 0 is the host's own state, which its `sleep` and `wakeup` watches already announce.
@@ -365,17 +379,21 @@ void Tick() {
     if (!g_resting) return;
     if (!host && !ConnectedClient()) return EndRest("the session left");
     TickRest();
+    // A rest that ended with the host still asleep (its body or gamemode changed): declared again.
+    if (host && !g_resting) HostEval();
 }
 
 bool Resting() { return g_resting; }
 
+// The last client left a host's session, which lives on: the host's sleep is declared again with nobody connected. A
+// session that ended: a rest in progress goes back, and a host resting at 1 sleeps on by itself at the game's factor.
 void OnDisconnect() {
+    if (HostSession()) return HostEval();
     if (!g_resting) return;
     auto* s = g_session.load(std::memory_order_acquire);
     const bool host = s && s->role() == coop::net::Role::Host;
     EndRest("the session ended");
-    // A host resting at 1 sleeps on by itself: its world takes the game's factor back.
-    if (host && SLP::IsSleeping()) SLP::SetGlobalTimeDilation(kNativeSleepDilation);
+    if (host && SLP::IsSleeping()) HoldWorldAt(kNativeSleepDilation);
 }
 
 }  // namespace coop::sleep_rest
