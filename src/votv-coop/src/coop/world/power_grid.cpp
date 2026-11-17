@@ -14,6 +14,7 @@
 #include "coop/player/slot_mask.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/world/power_grid_install.h"  // the hand's half of an upgrade install
+#include "coop/world/power_grid_rows.h"  // reading the generators as rows, and comparing two readings
 #include "coop/world/power_decay.h"  // the wear dice, which only the host rolls
 #include "coop/world/power_panel.h"  // the canonical a client's own generator verbs rewrote
 #include "coop/world/power_puzzle.h"  // the rows' second half: each generator's repair puzzle
@@ -44,12 +45,14 @@ namespace R   = ue_wrap::reflection;
 namespace sg  = ue_wrap::script_gate;
 using coop::net::PowerGridPayload;
 using coop::net::kPowerGridGenerators;
+using coop::power_grid::row_reading::kMaxUpgrade;
+using coop::power_grid::row_reading::ReadRows;
+using coop::power_grid::row_reading::SameRows;
 
 static_assert(sizeof(PowerGridPayload::ack) / sizeof(uint16_t) == coop::net::kMaxPeers,
               "PowerGridPayload::ack holds one slot per peer");
 static_assert(kInputBurst >= coop::net::kPowerPuzzleFields, "a flush of every held field fits one burst");
 
-constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
 // A slot's ops wait, in arrival order, while the generators have not resolved or their sender has no body here
 // yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig), and an install
@@ -159,39 +162,6 @@ const char* OpName(uint8_t op) {
     case coop::net::kPowerGridOpPuzzle:   return "puzzle input";
     default:                              return "?";
     }
-}
-
-bool ReadRows(PowerGridPayload& p) {
-    std::vector<void*> gens;
-    if (GEN::ReadGenerators(gens) == 0) return false;
-    const size_t n = std::min(gens.size(), static_cast<size_t>(kPowerGridGenerators));
-    p.op = coop::net::kPowerGridOpRows;
-    p.count = static_cast<uint8_t>(n);
-    for (size_t i = 0; i < n; ++i) {
-        GEN::Row r{};
-        coop::net::PowerGridRow& w = p.rows[i];
-        w = {};
-        if (!gens[i] || !GEN::ReadRow(gens[i], r)) continue;
-        w.present = 1;
-        w.broken = r.broken ? 1 : 0;
-        w.cyc = r.cyc ? 1 : 0;
-        w.upgradeLevel = static_cast<uint8_t>(std::clamp(r.upgradeLevel, 0, kMaxUpgrade));
-        w.cycle = r.cycle;
-        coop::power_puzzle::Fill(gens[i], w.puzzle);
-    }
-    return true;
-}
-
-bool SameRows(const PowerGridPayload& a, const PowerGridPayload& b) {
-    if (a.count != b.count) return false;
-    for (int i = 0; i < a.count && i < kPowerGridGenerators; ++i) {
-        const auto& x = a.rows[i];
-        const auto& y = b.rows[i];
-        if (x.present != y.present || x.broken != y.broken || x.cyc != y.cyc || x.upgradeLevel != y.upgradeLevel ||
-            x.cycle != y.cycle || !coop::power_puzzle::SamePuzzle(x.puzzle, y.puzzle))
-            return false;
-    }
-    return true;
 }
 
 // ---- the host ------------------------------------------------------------------------------------------------

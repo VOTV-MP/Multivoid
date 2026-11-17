@@ -130,6 +130,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/power_decay.cpp
     src/coop/world/power_grid.cpp
     src/coop/world/power_grid_install.cpp
+    src/coop/world/power_grid_rows.cpp
     src/coop/world/power_panel.cpp
     src/coop/world/power_puzzle.cpp
     src/coop/world/power_upgrade.cpp
