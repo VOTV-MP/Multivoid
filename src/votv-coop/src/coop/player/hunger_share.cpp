@@ -36,7 +36,8 @@ constexpr float kSame = 0.0005f;
 enum class Put { Applied, Driven, NoPlayer };
 
 float g_written = kBase;  // what this module last put on the local player
-int   g_saidPlayers = -1;
+int   g_saidPlayers = -1;  // the last line said: its player count and the rule
+bool  g_saidOn = false;
 bool  g_pending = false;  // a write the player was not up for, asked again at kRetryMs
 uint64_t g_nextMs = 0;
 bool  g_subscribed = false;
@@ -62,17 +63,16 @@ bool RuleOn() { return coop::config::ResolveFlag(::coop::config_registry::rows::
 // The rate this player's hunger runs at now, written on the player.
 void Apply() {
     const bool on = RuleOn();
-    const int players = on ? std::max(coop::roster_ledger::OccupiedCount(), 1) : 1;
-    const float rate = RateFor(players);
+    const int players = std::max(coop::roster_ledger::OccupiedCount(), 1);
+    const float rate = on ? RateFor(players) : 1.0f;
     const Put res = PutRate(kBase * rate);
     g_pending = res == Put::NoPlayer;
-    if (res != Put::Applied || players == g_saidPlayers) return;
+    // One line per change of what is applied, for a drill to read on each peer.
+    if (res != Put::Applied || (players == g_saidPlayers && on == g_saidOn)) return;
     g_saidPlayers = players;
-    if (on)
-        UE_LOGI("hunger_share: %d players -- this player's hunger runs at %.0f%% of the game's rate", players,
-                static_cast<double>(rate) * 100.0);
-    else
-        UE_LOGI("hunger_share: off -- this player's hunger runs at the game's rate");
+    g_saidOn = on;
+    UE_LOGI("hunger_share: players=%d rate=%.0f%% (row %s)", players, static_cast<double>(rate) * 100.0,
+            on ? "on" : "off");
 }
 
 void OnSlotReplaced(int, const coop::roster_ledger::Row&, const coop::roster_ledger::Row&) { Apply(); }
