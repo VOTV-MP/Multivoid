@@ -18,6 +18,7 @@
 
 #include <cmath>
 #include <string>
+#include <unordered_set>
 
 namespace coop::cheats::item_spawn {
 namespace {
@@ -63,8 +64,14 @@ Result Spawn(std::string_view name, int count, int slot, bool inFront, int* spaw
     if (!coop::cheats::item_catalog::Resolve(name, canonical)) return Result::UnknownItem;
     const std::wstring path = L"/Game/objects/prop_" + canonical + L".prop_" + canonical + L"_C";
     // An item with a class of its own is spawned as that class. The rest of the game's list (food, a row of the
-    // generic prop, a row that names another class) is spawned by the gamemode's own verb, which reads the row.
-    void* const cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+    // generic prop, a row that names another class) is spawned by the gamemode's own verb, which reads the row. A
+    // name that has no class is remembered, so its failing load (a probe of the package, an engine warning) runs once.
+    static std::unordered_set<std::wstring> sNoClass;   // game thread only
+    void* cls = nullptr;
+    if (sNoClass.find(canonical) == sNoClass.end()) {
+        cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+        if (!cls) sNoClass.insert(canonical);
+    }
     void* const gamemode = cls ? nullptr : ue_wrap::world_singleton::Gamemode();
     void* const listSpawn =
         gamemode ? ue_wrap::reflection::FindFunction(ue_wrap::reflection::ClassOf(gamemode), L"spawnPropThroughGamemode") : nullptr;

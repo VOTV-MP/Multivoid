@@ -5,11 +5,13 @@
 #include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
-
-#include <windows.h>
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/world_identity.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <cwctype>
 #include <mutex>
 #include <unordered_map>
@@ -18,12 +20,22 @@ namespace coop::cheats::item_catalog {
 namespace {
 
 namespace GT = ue_wrap::game_thread;
+namespace sg = ue_wrap::script_gate;
+namespace WI = ue_wrap::world_identity;
+
+// The game's prop processor calls this on every actor that takes the int_coms interface, the gamemode among them,
+// once the prop list is filled (it runs setPropNames, then the loop over those actors). So the list is read when the
+// gamemode's own call arrives, the engine's signal that it is complete, and not by a guess at how long a fill takes.
+UE_FACT_FN(kRowFilled, "item_catalog", L"mainGamemode_C", L"intComs_propRenderer_finishProps", Declared);
+constexpr int kTag = 0x49434154;  // 'ICAT'
 
 std::mutex g_mutex;
 std::shared_ptr<const std::vector<std::string>> g_names;   // guarded by g_mutex
-std::atomic<bool> g_posted{false};                         // a refresh is queued or running
-std::atomic<uint64_t> g_lastAskMs{0};
-std::atomic<bool> g_settled{false};   // two reads in a row gave the same list: the game has finished filling it
+// The world generation the list was read in; 0 = none. A list of another world is not served: the game fills its
+// list again in every world it loads.
+std::atomic<uint32_t> g_builtGen{0};
+std::atomic<uint32_t> g_askedGen{0};   // the generation RequestRefresh last posted a read for
+bool g_armed = false;                  // game thread: the watch is registered and the gate held
 
 // Game thread only: the lower-cased name to the list's own spelling.
 std::unordered_map<std::wstring, std::wstring> g_byLower;
@@ -40,54 +52,75 @@ bool Ascii(const std::wstring& w) {
     return true;
 }
 
-void Refresh() {
+// Read the game's list as it stands. False when it is not filled yet; the watch on the fill reads it then.
+bool Refresh() {
     std::vector<std::wstring> raw;
-    if (ue_wrap::prop_gather::ListNames(raw) && !raw.empty()) {
-        std::unordered_map<std::wstring, std::wstring> byLower;
-        size_t skipped = 0;
-        for (const std::wstring& w : raw) {
-            if (!Ascii(w)) { ++skipped; continue; }
-            byLower.emplace(Lower(w), w);
-        }
-        auto names = std::make_shared<std::vector<std::string>>();
-        names->reserve(byLower.size());
-        for (const auto& kv : byLower) names->emplace_back(kv.second.begin(), kv.second.end());
-        std::sort(names->begin(), names->end(), [](const std::string& a, const std::string& b) {
-            return _stricmp(a.c_str(), b.c_str()) < 0;
-        });
-        // The game fills its list some seconds after the world loads, and a read can land mid-fill: the list is settled
-        // once a read gives the same number of names as the one before.
-        if (g_byLower.size() == byLower.size()) g_settled.store(true, std::memory_order_release);
-        g_byLower = std::move(byLower);
-        {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            g_names = std::move(names);
-        }
-        UE_LOGI("cheats: the game lists %zu spawnable props (%zu names not plain text were left out)",
-                g_byLower.size(), skipped);
+    if (!ue_wrap::prop_gather::ListNames(raw) || raw.empty()) return false;
+    std::unordered_map<std::wstring, std::wstring> byLower;
+    size_t skipped = 0;
+    for (const std::wstring& w : raw) {
+        if (!Ascii(w)) { ++skipped; continue; }
+        byLower.emplace(Lower(w), w);
     }
-    g_posted.store(false, std::memory_order_release);
+    auto names = std::make_shared<std::vector<std::string>>();
+    names->reserve(byLower.size());
+    for (const auto& kv : byLower) names->emplace_back(kv.second.begin(), kv.second.end());
+    std::sort(names->begin(), names->end(), [](const std::string& a, const std::string& b) {
+        return _stricmp(a.c_str(), b.c_str()) < 0;
+    });
+    g_byLower = std::move(byLower);
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_names = std::move(names);
+    }
+    g_builtGen.store(WI::Generation(), std::memory_order_release);
+    UE_LOGI("cheats: the game lists %zu spawnable props (%zu names not plain text were left out)", g_byLower.size(),
+            skipped);
+    return true;
 }
+
+// The watch's post callback runs inside a Blueprint frame: the read waits for the game thread's next task.
+void OnFilled(const sg::Call&) { GT::Post([] { Refresh(); }); }
+
+// Hold the gate and watch the fill, once. A coop session holds the gate for its life; a solo game does not, so the
+// catalog takes its own hold the first time it is asked. Game thread.
+void Arm() {
+    if (g_armed) return;
+    g_armed = true;
+    sg::Acquire("the item catalog");
+    if (!sg::WatchName(kRowFilled, kTag, nullptr, &OnFilled))
+        UE_LOGE("cheats: the watch on %ls::%ls was refused -- the list is read only when it is asked for",
+                kRowFilled.Class(), kRowFilled.Name());
+    sg::ResolvePendingNames();
+}
+
+bool Fresh() { return g_builtGen.load(std::memory_order_acquire) == WI::Generation(); }
 
 }  // namespace
 
 std::shared_ptr<const std::vector<std::string>> Names() {
+    if (!Fresh()) return nullptr;
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_names;
 }
 
 void RequestRefresh() {
-    if (g_settled.load(std::memory_order_acquire)) return;
-    const uint64_t now = ::GetTickCount64();
-    if (now - g_lastAskMs.load(std::memory_order_relaxed) < 2000) return;   // until settled: once in two seconds
-    bool expected = false;
-    if (!g_posted.compare_exchange_strong(expected, true)) return;
-    g_lastAskMs.store(now, std::memory_order_relaxed);
-    GT::Post([] { Refresh(); });
+    const uint32_t gen = WI::Generation();
+    if (g_builtGen.load(std::memory_order_acquire) == gen) return;   // read in this world
+    uint32_t asked = g_askedGen.load(std::memory_order_acquire);
+    // One read for this world: if the game has not filled its list yet, the watch reads it at the fill.
+    if (asked == gen || !g_askedGen.compare_exchange_strong(asked, gen)) return;
+    GT::Post([] {
+        Arm();
+        Refresh();
+    });
 }
 
 bool Resolve(std::string_view typed, std::wstring& canonical) {
-    if (!g_settled.load(std::memory_order_acquire)) Refresh();   // a request can arrive before the list settled
+    if (!Fresh()) {   // a request can arrive before anyone looked at the list in this world
+        Arm();
+        if (!Refresh()) return false;
+    }
     if (typed.empty()) return false;
     const auto it = g_byLower.find(Lower(std::wstring(typed.begin(), typed.end())));
     if (it == g_byLower.end()) return false;

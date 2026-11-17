@@ -99,7 +99,7 @@ void RenderItems() {
         ImGui::TextUnformatted(line);
     }
 
-    const bool canAsk = CH::CanAsk();   // a client's menu offers nothing the host would drop
+    const bool canAsk = CH::CanAsk(count);   // a client's menu offers nothing the host would drop
     ImGui::BeginDisabled(selected.empty() || !canAsk);
     if (ImGui::Button(l10n::Label(l10n::T("Spawn in front of me"), "spawn_front")))
         CH::SpawnItem(selected, count, coop::net::kCheatInFront);

@@ -450,7 +450,8 @@ event name. The host judges everything and runs the cheat itself; the client wri
 setting off or the right withheld (an id that is not proved holds none), a name
 that is not text, a count over 10 or an amount over 100000, an item the game's own list lacks or whose class does not
 load, an unknown event, an event that is not Safe or is a story event, a prop that explodes, and a sender past its budget
-(a burst of eight, then three a second; a client keeps the same bucket and offers nothing past it, and a request from a
+(a bucket of ten tokens refilled three a second, a request costing one token and a spawn one per prop; a client keeps the
+same bucket and offers nothing past it, and a request from a
 world not yet announced is dropped unanswered, which the menu never sends). A removal of points stops at zero, and one that would change nothing fails. Each request is
 logged on the host with the player's name and what came of it, and the host's chat says what each player did;
 the player is told the result (`CheatResult`). A spawned prop is an ordinary host spawn, expressed to every client by the prop lane; a credit

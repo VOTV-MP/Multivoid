@@ -51,7 +51,7 @@ void (*g_observer)(const coop::net::CheatResultPayload&) = nullptr;
 // publishes when its next request is allowed so the menu, on the render thread, can offer none before then.
 std::atomic<uint32_t> g_pendingId{0};
 coop::net::IntentBucket g_mirror;
-std::atomic<uint64_t> g_readyAtMs{0};
+std::atomic<uint64_t> g_fullAtMs{0};   // when the mirror is full again
 
 std::mutex g_statusMutex;
 Status g_status;   // guarded by g_statusMutex
@@ -131,6 +131,13 @@ void NoticeToFeed(CheatReason r) {
     coop::chat_feed::Push(StatusLine(s), coop::chat_feed::Keep::Transient);
 }
 
+// What a request draws from the bucket, on the host's judge and on a client's mirror alike. The red arm (dev row
+// cheat_count_cost_off) charges one token whatever the count, so a request for props costs what a press does.
+float CostOf(CheatOp op, int count) {
+    static const bool flat = coop::config::ResolveFlag(coop::config_registry::rows::cheat_count_cost_off);
+    return flat ? 1.0f : coop::cheats::RequestCost(op, count);
+}
+
 // The route: the host and a solo game run it, a client asks the host.
 void Route(Request r) {
     GT::Post([r = std::move(r)] {
@@ -144,13 +151,13 @@ void Route(Request r) {
             // drop it unanswered.
             const uint64_t now = coop::net::NowMs();
             const bool settled = coop::net_pump::IsWorldSettled();
-            if (!settled || !g_mirror.Take(coop::cheats::kRequestBudget, now)) {
+            if (!settled || !g_mirror.TakeN(coop::cheats::kRequestBudget, now, CostOf(r.op, r.count))) {
                 st.reason = settled ? CheatReason::Rate : CheatReason::NotReady;
                 SetStatus(st);
                 UE_LOGW("cheats: the request for %s was not sent (%s)", Describe(r).c_str(), ReasonName(st.reason));
                 return;
             }
-            g_readyAtMs.store(now + g_mirror.WaitMs(coop::cheats::kRequestBudget, now), std::memory_order_release);
+            g_fullAtMs.store(g_mirror.FullAtMs(coop::cheats::kRequestBudget, now), std::memory_order_release);
             st.pending = true;
             uint32_t id = 0;
             if (SendRequest(*s, r, &id)) {
@@ -210,10 +217,11 @@ void TellHost(const std::string& nick, const Request& r, int done) {
     coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
 }
 
-// Whether the host lets this sender use cheats: the per-player right on top of the master switch (which Run reads).
-// The id is proved the way the remover derives it; an id that is not proved holds no right.
+// Whether the host lets this sender use cheats: its master setting, then the per-player right. The id is proved the way
+// the remover derives it; an id that is not proved holds no right.
 bool SenderMayCheat(const coop::net::Session& s, uint8_t slot) {
     static const bool nodeCheckOff = coop::config::ResolveFlag(coop::config_registry::rows::cheat_node_check_off);
+    if (!PlayersMayCheat()) return false;
     if (nodeCheckOff) return true;   // the red arm: the right is not asked
     const std::string guid = s.ProvedGuidForSlotWithToken(slot, coop::roster_ledger::Get(slot).bornGeneration);
     if (guid.empty()) return false;
@@ -302,20 +310,9 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
         UE_LOGW("cheats: a CheatRequest from sender slot %u -- dropped", static_cast<unsigned>(senderSlot));
         return;
     }
-    const uint64_t now = coop::net::NowMs();
-    if (!g_bucket[senderSlot].Take(coop::cheats::kRequestBudget, now)) {
-        if (now >= g_nextSayMs[senderSlot]) {
-            g_nextSayMs[senderSlot] = now + kSayEveryMs;
-            UE_LOGI("cheats: slot %u is over its request rate; requests dropped", static_cast<unsigned>(senderSlot));
-            Outcome rate;
-            rate.reason = CheatReason::Rate;
-            Answer(*s, senderSlot, p, rate);   // told once per window, then dropped without an answer
-        }
-        return;
-    }
     // A sender whose world is not announced is dropped without work and without an answer: CheatResult is not a kind
     // the host sends before a slot is world-ready, so the answer could not reach it, and a client's menu offers no
-    // request before its world is up (CanAsk). The drop costs a bucket token, which bounds this line.
+    // request before its world is up (CanAsk). The receive edge bounds what a client may send at all.
     if (!s->IsSlotWorldReady(senderSlot)) {
         UE_LOGI("cheats: slot %u sent a request before its world was announced -- dropped",
                 static_cast<unsigned>(senderSlot));
@@ -325,22 +322,40 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
 
     Request r;
     Outcome o;
-    // The shape first: a name that is text and ends inside its field, and an op the host knows.
+    // The order: the shape (a name that is text and ends inside its field, an op the host knows, a count the wire
+    // allows), then the sender's rights, then the cost drawn from its bucket, then the cheat. A request that is bad or
+    // not allowed costs the sender nothing and is answered with its reason; one that is allowed draws its cost, a
+    // request for props one token per prop, and is dropped when the bucket holds too few.
     const size_t nameLen = strnlen(p.name, sizeof(p.name));
     const bool shapeOk = nameLen < sizeof(p.name) && PrintableAscii(p.name, nameLen) &&
-                         p.op >= static_cast<uint8_t>(CheatOp::SpawnItem) && p.op <= static_cast<uint8_t>(CheatOp::Event);
+                         p.op >= static_cast<uint8_t>(CheatOp::SpawnItem) && p.op <= static_cast<uint8_t>(CheatOp::Event) &&
+                         (p.op != static_cast<uint8_t>(CheatOp::SpawnItem) ||
+                          (p.count >= 1 && p.count <= coop::net::kCheatMaxCount));
     if (!shapeOk) {
         o.reason = CheatReason::BadRequest;
-        UE_LOGI("cheats: slot %u (%s) sent a malformed request (op %u) -> %s", static_cast<unsigned>(senderSlot),
-                nick.c_str(), static_cast<unsigned>(p.op), ReasonName(o.reason));
+        UE_LOGI("cheats: slot %u (%s) sent a malformed request (op %u, count %u) -> %s",
+                static_cast<unsigned>(senderSlot), nick.c_str(), static_cast<unsigned>(p.op),
+                static_cast<unsigned>(p.count), ReasonName(o.reason));
     } else {
         r.op = static_cast<CheatOp>(p.op);
         r.name.assign(p.name, nameLen);
         r.count = p.count;
         r.target = p.target;
         r.amount = p.amount;
-        if (!SenderMayCheat(*s, senderSlot)) o.reason = CheatReason::Off;
-        else o = Run(r, senderSlot);
+        if (!SenderMayCheat(*s, senderSlot)) {
+            o.reason = CheatReason::Off;
+        } else if (!g_bucket[senderSlot].TakeN(coop::cheats::kRequestBudget, coop::net::NowMs(), CostOf(r.op, r.count))) {
+            const uint64_t now = coop::net::NowMs();
+            if (now >= g_nextSayMs[senderSlot]) {
+                g_nextSayMs[senderSlot] = now + kSayEveryMs;
+                UE_LOGI("cheats: slot %u is over its request budget; requests dropped", static_cast<unsigned>(senderSlot));
+                o.reason = CheatReason::Rate;
+                Answer(*s, senderSlot, p, o);   // told once per window, then dropped without an answer
+            }
+            return;
+        } else {
+            o = Run(r, senderSlot);
+        }
         UE_LOGI("cheats: slot %u (%s) asked for %s -> %s", static_cast<unsigned>(senderSlot), nick.c_str(),
                 Describe(r).c_str(), ReasonName(o.reason));
     }
@@ -365,10 +380,15 @@ void OnResult(const coop::net::CheatResultPayload& p) {
     if (g_observer) g_observer(p);
 }
 
-bool CanAsk() {
+bool CanAsk(int count) {
     if (coop::dev_gate::Allowed()) return true;   // the host, or a solo game: the cheat runs at once
-    return coop::net_pump::IsWorldSettled() &&
-           coop::net::NowMs() >= g_readyAtMs.load(std::memory_order_acquire);
+    if (!coop::net_pump::IsWorldSettled()) return false;
+    // The mirror holds the burst less what is still owed: it is full at g_fullAtMs and refills linearly until then.
+    const coop::net::IntentBudget& b = coop::cheats::kRequestBudget;
+    const uint64_t now = coop::net::NowMs();
+    const uint64_t fullAt = g_fullAtMs.load(std::memory_order_acquire);
+    const float owed = fullAt > now ? static_cast<float>(fullAt - now) * b.perSecond / 1000.0f : 0.0f;
+    return b.burst - owed >= CostOf(CheatOp::SpawnItem, count);
 }
 
 void SetResultObserver(void (*fn)(const coop::net::CheatResultPayload& p)) { g_observer = fn; }
@@ -383,7 +403,7 @@ void OnDisconnect() {
     g_observer = nullptr;
     g_pendingId.store(0, std::memory_order_release);
     g_mirror.Reset();
-    g_readyAtMs.store(0, std::memory_order_release);
+    g_fullAtMs.store(0, std::memory_order_release);
 }
 
 }  // namespace coop::cheats

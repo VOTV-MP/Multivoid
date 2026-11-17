@@ -103,8 +103,6 @@ Outcome RunEvent(const Request& r, int senderSlot) {
 
 Outcome Run(const Request& r, int senderSlot) {
     UE_ASSERT_GAME_THREAD("cheat_run::Run");
-    if (senderSlot != 0 && !coop::config::ResolveFlag(coop::config_registry::rows::net_allow_player_cheats))
-        return Done(CheatReason::Off);
     switch (r.op) {
         case CheatOp::SpawnItem: return RunSpawn(r, senderSlot);
         case CheatOp::Points:    return RunPoints(r, senderSlot);

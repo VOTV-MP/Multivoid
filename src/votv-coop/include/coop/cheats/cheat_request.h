@@ -2,17 +2,16 @@
 // the authority is. On the host, or in a solo game, the cheat runs at once (coop/cheats/cheat_run). On a client it is
 // sent to the host as a CheatRequest, which the host judges and runs or refuses, answering with CheatResult; the
 // client never writes the world itself. A request is taken only while the host's master setting
-// net.allow_player_cheats is on (Source's sv_cheats, reference/source-sdk-2013 game/server/client.cpp:1167) AND the
+// net.allow_player_cheats is on (Source's sv_cheats, reference/source-sdk-2013/src/game/server/client.cpp:1167) AND the
 // host has not withheld the sender's right, the node multivoid.dev.local.cheats (MTA's per-right check,
-// reference/mtasa-blue Server/mods/deathmatch/logic/CConsoleCommands.cpp:152 and CAccessControlListManager.cpp:329).
-// The host logs every request a player makes, with the player's name and what came of it, and says in its chat what
-// a player did.
+// reference/mtasa-blue/Server/mods/deathmatch/logic/CConsoleCommands.cpp:152). The host logs every request with the
+// player's name and what came of it, and says in its chat what a player did.
 //
 // The panels call SpawnItem, AddPoints and FireEvent from the render thread; every engine touch is posted to the game
-// thread. A request is bounded per player (a burst of eight, then three a second); one past its budget is dropped
-// without work, answered Rate once and logged once per ten seconds. A client keeps a bucket of the same size and offers
-// no request while it is empty (CanAsk), so an honest client does not reach that drop. A request from a sender whose
-// world the host has not marked ready is dropped without work or answer, which the client's menu never sends.
+// thread. A request draws from a per-player bucket (coop/cheats/cheat_limits: ten tokens, three more a second; one
+// token a request, one per prop for a spawn); one past it is dropped without work, answered Rate once and logged once
+// per ten seconds. A client keeps a bucket of the same size and offers no request it would not cover (CanAsk). A
+// request from a sender whose world is not marked ready is dropped without work or answer.
 
 #pragma once
 
@@ -37,8 +36,9 @@ bool PlayersMayCheat();
 bool ClientMayCheat();
 
 // Whether a panel may offer a request now: always on the host and in a solo game; on a client, once its world is
-// announced to the host and while its mirror of the host's bucket holds a token. Any thread.
-bool CanAsk();
+// announced to the host and while its mirror of the host's bucket holds what the request costs: one token, or `count`
+// for a request for that many props. Any thread.
+bool CanAsk(int count = 1);
 
 // Ask for a cheat. Any thread. `target` is coop::net::kCheatInFront or the slot of the player to spawn at.
 void SpawnItem(const std::string& name, int count, int target);

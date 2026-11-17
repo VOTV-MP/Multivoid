@@ -2,12 +2,13 @@
 // the balance, fire a game event. The host's own panels and a player's request both end here, so a cheat means the
 // same thing whoever asked, and the world is written by the host alone.
 //
-// A request from a player (`senderSlot` >= 1) is judged first: the host's setting net.allow_player_cheats, the bounds
-// on the numbers, the item against the game's own list and against the explosives a player may not spawn, the target
-// against the session, and an event against OpenToPlayers (only a Safe event outside the story is a player's). The
-// host's own act (slot 0) is judged only for shape. Nothing is sent here; the writes ride the existing lanes (the
-// prop lane expresses a spawned prop, the balance poll mirrors a credit, the event watch broadcasts a fire). Game
-// thread, on the host or in a solo game.
+// A request from a player (`senderSlot` >= 1) arrives judged for its rights (coop/cheats/cheat_request: the host's
+// setting net.allow_player_cheats and the sender's own right) and is judged here for the bounds on the numbers, the
+// item against the game's own list and against the explosives a player may not spawn, the target against the
+// session, and an event against OpenToPlayers (only a Safe event outside the story is a player's). The host's own act
+// (slot 0) is judged only for shape. Nothing is sent here; the writes ride the existing lanes (the prop lane expresses
+// a spawned prop, the balance poll mirrors a credit, the event watch broadcasts a fire). Game thread, on the host or in a
+// solo game.
 
 #pragma once
 
@@ -33,9 +34,8 @@ struct Outcome {
     int done = 0;
 };
 
-// Judge and run `r` for `senderSlot` (0 = the host's own act, 1.. = a player's request). A player's request is refused
-// with Off while the host's setting is off, and with Refused for an event or a prop a player is not offered. Game
-// thread.
+// Judge and run `r` for `senderSlot` (0 = the host's own act, 1.. = a player's request, whose rights are already
+// judged); Refused for an event or a prop a player is not offered. Game thread.
 Outcome Run(const Request& r, int senderSlot);
 
 // True for an event a player may fire: its risk is Safe and it is not a story event. The one rule: the host's judge

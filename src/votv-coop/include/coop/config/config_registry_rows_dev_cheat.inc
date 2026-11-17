@@ -16,3 +16,7 @@ CFG_FLAG(cheat_open_check_off, "cheat_open_check_off", "dev", false, "VOTVCOOP_C
     "Developer red arm: never set (HOST). 1 makes the host skip the rule for what a player may fire or spawn, so a "
     "request for an event that is not Safe, or for an explosive prop, runs, and the cheat drill's refusal arm must "
     "FAIL.")
+CFG_FLAG(cheat_count_cost_off, "cheat_count_cost_off", "dev", false, "VOTVCOOP_CHEAT_COUNT_COST_OFF",
+    "Developer red arm: never set (BOTH peers). 1 makes a request for props cost one token whatever its count, on the "
+    "host's judge and on the client's mirror, so two requests for ten props in a row both run, and the cheat drill's "
+    "budget arm must FAIL.")
