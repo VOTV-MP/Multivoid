@@ -281,7 +281,10 @@ of it. The map's placed player takes the machine's controller as its level begin
 controller goes back to the visitor, and the placed player and the black screen it puts up are
 removed. The world's sky reaches that far down without bound: its height fog covered the map in its
 colour, and its sun, sky light and post process lit a maze the game leaves dark but for the
-lantern. All of it is hidden on the visitor's machine while it is there. The visitor's own clip check sees the view jump into the map and back
+lantern. What of it is shown is hidden on the visitor's machine while it is there, and only that is shown again
+after: the day-night cycle keeps some of it hidden itself (the sun at night), and showing those too lit the world as
+if by day once the visit ended (Ghezra/Multivoid#39) `[V]` (a daytime visit hides 6 of the 8 suns and sky lights, the
+2 the cycle had off staying off). The visitor's own clip check sees the view jump into the map and back
 out: the game's check (`mainGamemode_C::canBackrooms`, which the player's tick asks before every
 clip) is answered no for the visit and five seconds after it, and a trip asked while seated or
 driving is refused, as the game's own check refuses it. What a map's script
