@@ -19,3 +19,9 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
 - **Slower hunger in larger groups** ([#154](https://github.com/VOTV-MP/Multivoid/pull/154)): a host rule, off by default, that slows each player's hunger as the
   session grows (74% for two, 54% for four), written through the game's own hunger multiplier. Kept as written; on top,
   it follows the roster and the vaccine effect's end instead of a once-a-second poll, and says its rate in the log.
+- **Cheat panels in F1** ([#146](https://github.com/VOTV-MP/Multivoid/pull/146)): the host got its tools in the F1 menu (spawn any
+  listed prop by name, points, events, entities, snow, clock, vitals, freecam, Unstuck) and players got theirs as requests the
+  host checks, behind a host setting that is off by default. Kept as written; on top, a player's cheats are also a right the
+  host can withhold from one player, players may fire only safe non-story events and spawn no explosive, a request costs its
+  count, teleports land on the NavMesh, the item list builds when the game says it is filled, and a drill with a red for each
+  rule.
