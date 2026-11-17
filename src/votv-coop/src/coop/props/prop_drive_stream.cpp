@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_drive_stream.h"
 
+#include "coop/dev/end_trace.h"                 // OnEndApplied: the measure of what a slept copy does next
 #include "coop/dev/prop_syncer_drill.h"        // IsEnabled: the drill's view is kept only while it is on
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -23,6 +24,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"      // IsActorRootBodyAtRest: whether the sleep took
 
 #include <windows.h>
 
@@ -144,7 +146,7 @@ size_t g_endCount = 0;   // ends recorded since the session began; the newest is
 // The end edge on a live prop: the final pose, then the host's physics flags through the same
 // parity restore the join's converge applies after its teleport, then the velocity -- only into
 // a body this module parked and the flags leave simulating, and only when it is not zero, since
-// assigning a velocity wakes a body at rest.
+// assigning a velocity wakes a body at rest. A body whose End carries no velocity is put to sleep at the pose.
 void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedHere) {
     coop::prop_wire_parity::NoteCorrection(actor, ue_wrap::FVector{p.x, p.y, p.z},
                                            parkedHere ? "drive-end" : "drive-end-unparked");
@@ -161,18 +163,37 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
     // this copy was held for waits for the hold's end (prop_tool_flags), and this edge carries the host's.
     coop::prop_wire_parity::ConvergeStatic(actor, p.physFlags);
     coop::prop_wire_parity::ConvergeFrozenSleep(actor, p.physFlags);
+    bool sleepAtPose = false;
     if (!PhysicsStaysOff(actor)) {
         coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge(actor, p.physFlags);
         const float lin2 = p.linVelX * p.linVelX + p.linVelY * p.linVelY + p.linVelZ * p.linVelZ;
-        if (parkedHere && coop::prop_wire_parity::SpParitySimulate(p.physFlags) && lin2 > 0.f) {
+        const bool simulates = coop::prop_wire_parity::SpParitySimulate(p.physFlags);
+        if (parkedHere && simulates && lin2 > 0.f) {
             void* mesh = PR::GetStaticMesh(actor);
             ue_wrap::engine::SetComponentLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
             ue_wrap::engine::SetComponentAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
+        } else if (simulates && lin2 == 0.f) {
+            sleepAtPose = true;   // below: after the park is over, the last thing that touches the body
         }
     }
     // The park is over, whatever the flags left the body: a Character it stopped moves again.
     coop::prop_park::Unpark(actor, /*mesh=*/nullptr, /*rootSimulates=*/false);
     coop::prop_child_release::OnParentReleased(actor);   // a door jointed to it was waiting for this
+    if (sleepAtPose) {
+        // The body the End describes is at rest at this pose: this copy rests here too, asleep, and no second simulation settles
+        // it somewhere else (a body switched on awake at a rest pose came to rest 1.1 cm and 1.1 degrees away). It is put to
+        // sleep after its simulation is on and after the park is over, so nothing the End does later wakes it; touched by another
+        // body it wakes, as the host's would.
+        const bool ran = ue_wrap::engine::PutComponentToSleep(PR::GetStaticMesh(actor));
+        // Said for the first 32 and at each doubling: whether the call ran and the body reads at rest after it.
+        static uint32_t s_slept = 0;
+        const uint32_t n = ++s_slept;
+        if (n <= 32 || (n & (n - 1)) == 0)
+            UE_LOGI("[PROP-DRIVE] End eid=%u gen=%u: the copy put to sleep at the End's pose (call ran %d, body at rest after "
+                    "%d) (#%u)", p.eid, static_cast<unsigned>(p.gen), ran ? 1 : 0,
+                    ue_wrap::engine::IsActorRootBodyAtRest(actor) ? 1 : 0, n);
+        coop::dev::end_trace::OnEndApplied(actor, p.eid, p.gen, ue_wrap::FVector{p.x, p.y, p.z}, ran);
+    }
 }
 
 // One pose of a driven prop: parks the copy on a new generation's first, a lerp target after. The client's

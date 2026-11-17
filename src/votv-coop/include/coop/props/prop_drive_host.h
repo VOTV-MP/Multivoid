@@ -38,6 +38,12 @@ size_t CoastingCount();
 struct DriveContext { uint8_t gen = 0; bool open = false; };
 DriveContext ContextOf(void* actor, uint32_t eid);
 
+// Whether a drive's author may end it for `actor`'s body: true when the engine reports the body asleep, false when it reads awake
+// (it keeps streaming), and true when the sleep cannot be read at all, so such a body rests by the still-time alone and holds
+// no row open for ever. The unreadable case is counted and said once per class: `<class> rest by still-time: the body's sleep
+// could not be read (#n)`. Game thread.
+bool BodyAsleepForEnd(void* actor);
+
 // A hand holds `actor`: this player's grab slot, a peer's held-prop stream, or the hotbar hand axis.
 // Game thread.
 bool InAHand(void* actor);
@@ -46,15 +52,38 @@ bool InAHand(void* actor);
 // fires. A no-op for an unclaimed actor. Game thread.
 void Release(void* actor);
 
+// Who asks for a coast. A Verb is a host verb's own push, throw or release: it takes a prop from the client that syncs
+// it (the row becomes the host's). A BodyPush is a body that walked into the prop: it opens a row only where none stands,
+// since a row already streaming the prop (a let-go's, a verb's, a client's) is its source and re-times itself by its own
+// moves. A LetGo is a hand's plain release (CoastLetGo): it takes a client's row as a Verb does, and is its own cause so a
+// drill can tell it from a body's push.
+enum class CoastCause : uint8_t { Verb, LetGo, BodyPush };
+
 // An instant push moved `actor`: stream it, coasting, until it rests. A prop a verb has claimed
 // stays claimed, and one already coasting starts its rest clock again; the refusals are Claim's.
-// `reason` names the push for the log. Game thread.
-void Coast(void* actor, const char* reason);
+// `reason` names the push for the log; `cause` says whose push it is. True when this call opened a row or re-timed
+// a host row; false for a refusal, for a BodyPush on a prop any row already streams, and for a row a client syncs that a
+// BodyPush leaves alone. Game thread.
+bool Coast(void* actor, const char* reason, CoastCause cause = CoastCause::Verb);
+
+// A row of any author is open on `actor` right now. Game thread.
+bool IsDriven(void* actor);
+
+// The cause of the HOST-authored coast row open on element `eid` right now; false when no such row is open (none, or a
+// client's). For a drill that asks who flew a prop. Game thread.
+bool OpenCoastCause(uint32_t eid, CoastCause& out);
+
+// True when prop_drive_rules::kMaxCoasting props already coast: the caller opens no further one (a prop that already has a
+// row is no further one). A `birth` stops short of it by kCoastPushReserve, so a pile of births cannot take the rows a
+// let-go or a body's push needs. The first three refusals and each doubling after print a counter line naming `actor`'s
+// key and `reason`, with the running count. Only HOST coasts count: a client's row costs the host no pose read. Game
+// thread.
+bool CoastCapReached(void* actor, const char* reason, bool birth = false);
 
 // A hand let go of `actor` and its body flies on this host (a client's release applied here, the host's own release):
-// Coast, when the prop is simulating and awake, has an element id and fewer than 32 props already coast. Past the
-// cap, or for a body at rest, a frozen, static or sleeping one, it does nothing and every peer's copy falls on its
-// own. `reason` names the release for the log. Game thread.
+// Coast, when the prop is simulating and awake, has an element id and the cap is not reached. Past the cap, or for a
+// body at rest, a frozen, static or sleeping one, it does nothing and every peer's copy falls on its own. `reason`
+// names the release for the log. Game thread.
 void CoastLetGo(void* actor, const char* reason);
 
 // A host-side write to `actor` (its pose or its physics, from a peer's message) takes the prop from the client that
@@ -80,8 +109,8 @@ void OnPeerWorldReady();
 // syncing client sent (prop_syncer_host), then read every driven prop's pose (resting ones at 4 Hz) and
 // publish the ones that moved, close the streams of the props that rested or that a hand took, drop the
 // dead; a client row publishes the pose just admitted instead of being read. BOTH roles then run the
-// apply tick (prop_drive_stream): a client drains the host's batch, the host advances the copies it fed.
-// Game thread.
+// apply tick (prop_drive_stream): a client drains the host's batch, the host advances the copies it fed. Both
+// roles' pump also reads the props a player's body walks into (body_push). Game thread.
 void Pump(coop::net::Session& s, bool isHost);
 
 // Session end. Game thread.

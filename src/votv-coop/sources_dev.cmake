@@ -310,6 +310,17 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/keypad_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp
     src/coop/dev/fireext_drill.cpp
+    src/coop/dev/fireext_drill_runaway.cpp
+    src/coop/dev/level_ground.cpp
+    src/coop/dev/body_push_drill.cpp
+    src/coop/dev/body_push_drill_client.cpp
+    src/coop/dev/body_push_drill_host.cpp
+    src/coop/dev/body_push_drill_hits.cpp
+    src/coop/dev/collision_probe.cpp
+    src/coop/dev/end_trace.cpp
+    src/coop/dev/coast_drill.cpp
+    src/coop/dev/rest_compare.cpp
+    src/coop/dev/drill_ground.cpp
     src/coop/dev/pry_drill.cpp
     src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp

@@ -9,6 +9,7 @@
 #include "ue_wrap/core/types.h"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::prop_drive_rules {
@@ -32,6 +33,13 @@ constexpr float kRestVelCmS = 1.0f;
 // MTA's default is a row every 400 ms carrying the move and turn speed (CMainConfig.cpp:1513); ours carry the pose and the
 // velocity at 40 Hz because the receiver lerps to the pose and the velocity serves the host's takeover of a thrown prop.
 constexpr uint64_t kClientDriveSendMs = 25;
+// How many props may coast with no verb's claim: one bound for a born prop's fall, a hand's let-go and a body's push, so
+// the per-tick reads of the coasting rows stay bounded. A coast asked past it is refused and counted
+// (prop_drive_host::CoastCapReached).
+constexpr size_t kMaxCoasting = 32;
+// The last rows of that bound a born prop's fall may not take: a let-go and a body's push still coast when a pile of births
+// (a spawn-menu pile, an event's debris) stands at the births' own bound, kMaxCoasting less this.
+constexpr size_t kCoastPushReserve = 8;
 
 // True when a pose moved past the send epsilons on any axis since `sentLoc`/`sentRot`, the last one that went out.
 inline bool MovedPastEps(const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,

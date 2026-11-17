@@ -461,6 +461,16 @@ bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity) {
     return true;
 }
 
+bool ReadCharacterMaxStepHeight(void* actor, float& out) {
+    void* cmc = LiveCmc(actor);
+    if (!cmc) return false;
+    static R::InstanceOffset sOff(L"MaxStepHeight");
+    const int32_t off = sOff.Of(cmc);
+    if (off < 0) return false;
+    out = ReadAt<float>(cmc, static_cast<size_t>(off));
+    return true;
+}
+
 void DisableCharacterTicks(void* actor) {
     if (!actor || !R::IsLive(actor)) return;
     DisableMovementTick(actor);

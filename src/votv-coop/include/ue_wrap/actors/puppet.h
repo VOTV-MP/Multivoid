@@ -123,6 +123,10 @@ bool ReadCharacterIsWalking(void* actor, bool& walking);
 // Velocity (world, cm/s). False, outs untouched, on a null or dead actor or CMC.
 bool ReadCharacterMovement(void* actor, uint8_t& mode, FVector& velocity);
 
+// `actor`'s CharacterMovement MaxStepHeight (cm): the tallest ledge the character walks up without a jump, read from
+// the live property. False, `out` untouched, on a null or dead actor or CMC, or a CMC that declares none. Game thread.
+bool ReadCharacterMaxStepHeight(void* actor, float& out);
+
 // ---- kerfur head-look ----
 // The kerfur AnimBP (shared by the NPCs and the player puppets) aims the head and neck at its
 // `lookAt` member (a world FVector), which its update recomputes from the local camera

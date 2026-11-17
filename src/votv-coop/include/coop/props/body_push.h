@@ -1,15 +1,17 @@
-// coop/props/body_push.h -- a prop a player walks into rests alike on every peer.
+// coop/props/body_push.h -- the player who bumps a resting prop syncs it, and only that player's own body moves it.
 //
-// A prop at rest is the host's (docs/props.md), and each peer's copy keeps its own physics. A player's body that walks
-// into one knocks every copy, since the player's puppet stands in every world, but each copy settles the knock by its
-// own physics and nothing brings them back together: a woodchipper a client walked into came to rest up to 9 cm and
-// 12 degrees from the host's. This is MTA's push (CClientGame.cpp:4712-4733): the peer whose own player set the prop
-// moving syncs it. Each peer keeps the keyed props within 4 m of its player (a list refreshed once a second, read from
-// memory), and ten times a second compares their poses; one that moved more than 3 cm or turned more than 3 degrees,
-// with this peer's player within 1.5 m and nearer to it than any other player, nobody holding or driving it, and no
-// stream parking it here, is this peer's push: the host coasts it on the driven-prop channel until it rests
-// (prop_drive_host::Coast), a client claims it as its syncer (prop_syncer::Claim, reason BodyPush), and its pose reaches
-// every peer until its rest End. Game thread.
+// A player's body that walks into a prop used to knock every copy, since its puppet stands in every world, and each copy
+// settled the knock by its own physics: a woodchipper a client walked into came to rest up to 9 cm and 12 degrees from the
+// host's. MTA's answer is that the player who bumps an unsynced element becomes its syncer (the client's push packet,
+// CClientGame.cpp:4712-4733; the SERVER's judge and override, CUnoccupiedVehicleSync.cpp:476-509, not the client tree's file
+// of that name): one physics source per push, and a remote ped is never a physics author. So a push is read from the local
+// player's own body only, and a prop is syncd by the pusher's own peer.
+// A CLIENT's push is a PropSyncClaim (reason BodyPush) the host judges like a throw's election; the claim-holder's copy
+// streams while every other copy, the host's included, is driven. The HOST's own body makes the host coast a prop no row
+// streams (prop_drive_host::Coast, cause BodyPush). Each peer keeps the props within a runner's second of its own player's
+// body (a list refreshed once a second, nearest 64) and ten times a second compares their poses; a move over 3 cm or
+// 3 degrees, more sideways than down, with the body within 1.5 m, is a push once prop_syncer or prop_drive_host judges the
+// prop (a keyed one, in no hand, on no driven vehicle, with no row of its own). Game thread.
 
 #pragma once
 
@@ -19,10 +21,14 @@ class Session;
 
 namespace coop::props::body_push {
 
-// The nearby list and the pose compare, from the driven-prop pump. Game thread.
+// The nearby list and the pose compare, from the driven-prop pump, on both roles.
 void Tick(coop::net::Session& s, bool isHost);
 
-// The session ended: the counts are said and the list forgotten.
+// This peer's own write has just put `actor` in a new place (an End, a correction snap): the next read takes that pose as
+// the anchor and reads no push from it. A prop not in the list is ignored. Game thread.
+void Rebase(void* actor);
+
+// The session ended: the count is said and the list forgotten.
 void OnDisconnect();
 
 }  // namespace coop::props::body_push

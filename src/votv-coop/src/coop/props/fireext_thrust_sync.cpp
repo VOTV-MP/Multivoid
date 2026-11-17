@@ -2,6 +2,8 @@
 
 #include "coop/props/fireext_thrust_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/world/spawn_authority.h"
@@ -31,6 +33,7 @@ constexpr size_t kMaxHeld = 16;
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool     g_watched = false;
 uint64_t g_refused = 0;
+uint64_t g_overflow = 0;   // the runaways past kMaxHeld this session: left unstreamed, each peer's copy thrusts alone
 
 struct Held {
     void*   actor;
@@ -38,9 +41,20 @@ struct Held {
 };
 std::vector<Held> g_held;  // the host's extinguishers in runaway thrust
 
+// The runaway drill's two red arms, one per half of the sync, each resolved once: no claim on the host while its extinguisher
+// thrusts (the flight is not streamed), and no refusal of a client copy's own shoot.
+bool ClaimOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::fireext_claim_off);
+    return off;
+}
+bool CancelOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::fireext_cancel_off);
+    return off;
+}
+
 // A client's copy starts no runaway of its own.
 SG::Verdict OnShootPre(const SG::Call& call) {
-    if (!coop::spawn_authority::IsActiveClientSession()) return SG::Verdict::Run;
+    if (CancelOff() || !coop::spawn_authority::IsActiveClientSession()) return SG::Verdict::Run;
     const uint64_t n = ++g_refused;
     if ((n & (n - 1)) == 0)
         UE_LOGI("fireext_thrust: a client copy's runaway thrust refused on %p (call #%llu)", call.object,
@@ -51,10 +65,16 @@ SG::Verdict OnShootPre(const SG::Call& call) {
 // The host's extinguisher went off: it is held for the stream from the next tick.
 void OnShootPost(const SG::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Host || !call.object) return;
+    if (ClaimOff() || !s || !s->running() || s->role() != coop::net::Role::Host || !call.object) return;
     for (const Held& h : g_held)
         if (h.actor == call.object) return;
-    if (g_held.size() >= kMaxHeld) return;
+    if (g_held.size() >= kMaxHeld) {
+        const uint64_t n = ++g_overflow;
+        if ((n & (n - 1)) == 0)
+            UE_LOGI("fireext_thrust: %zu extinguishers already thrust -- the one on %p is not streamed (#%llu)", g_held.size(),
+                    call.object, static_cast<unsigned long long>(n));
+        return;
+    }
     g_held.push_back({call.object, R::InternalIndexOf(call.object)});
     UE_LOGI("fireext_thrust: the host's extinguisher %p went off -- streamed while it thrusts", call.object);
 }
@@ -80,7 +100,8 @@ void Tick(coop::net::Session* s) {
         float charge = 0.f;
         const bool live = R::IsLiveByIndex(h.actor, h.idx);
         if (live && FX::ReadThrusting(h.actor, thrusting) && thrusting && FX::ReadCharge(h.actor, charge) && charge > 0.f) {
-            coop::prop_drive_host::Claim(h.actor, "extinguisher thrust");
+            // A hand that took it owns it (the held-prop lane streams it); the claim is asked again when it is let go.
+            if (!coop::prop_drive_host::InAHand(h.actor)) coop::prop_drive_host::Claim(h.actor, "extinguisher thrust");
             ++i;
             continue;
         }
@@ -98,6 +119,7 @@ void OnDisconnect() {
         UE_LOGI("fireext_thrust: %llu runaway starts refused on this client's copies over the session",
                 static_cast<unsigned long long>(g_refused));
     g_refused = 0;
+    g_overflow = 0;
     g_held.clear();
 }
 

@@ -11,6 +11,7 @@
 
 #include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
+#include "coop/props/prop_drive_host.h"   // CoastCause
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/types.h"
 
@@ -31,6 +32,7 @@ struct Driven {
     bool                  resend   = false;  // a joiner needs the pose again, moved or not
     bool                  unreadSaid = false;  // the unreadable-location line went out for this row
     bool                  dead     = false;  // closed this tick; erased after the pass
+    CoastCause            cause    = CoastCause::Verb;   // who asked for this coast (a host row opened by Coast)
     ue_wrap::FVector      sentLoc{};
     ue_wrap::FRotator     sentRot{};
     uint64_t              openMs      = 0;   // when the row opened: the host's rows count their sendTimeMs from here
@@ -53,6 +55,9 @@ struct Driven {
     // grant and a Revoked echo, and the release the first row is measured from. A row that fails the step test is
     // displayed and counted (failedRun, failedTotal); a run of kMaxRefusedRows of them revokes the right.
     bool                  elected     = false;
+    // A client's body push (prop_syncer_host::OnClaim, reason BodyPush): its rows meet the throw's step test, measured
+    // from startLoc/startMs, the host's copy at the grant. StepTested() says which rows the host tests.
+    bool                  bodyPush    = false;
     uint16_t              throwSeq    = 0;
     ue_wrap::FVector      startLoc{};
     uint64_t              startMs     = 0;
@@ -66,6 +71,8 @@ struct Driven {
     uint32_t              passSendMs  = 0;
     uint64_t              passMs      = 0;
     uint32_t              maxGapMs    = 0;      // the largest gap between the host's arrivals of two admitted rows of this flight
+
+    bool StepTested() const { return elected || bodyPush; }   // the rows whose step agrees with a prop's speed or costs trust
 };
 
 // The live row of the prop with element id `eid`, null if none. Game thread.

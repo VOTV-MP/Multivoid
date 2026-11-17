@@ -387,15 +387,6 @@ CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
     "joiner's copy must show it within 20 s, and then the joiner's own toggle, as its noon would run it with "
     "a red sky live, must be refused, its sky still red. Run it on a fresh host world; every refused step is "
     "logged and ends the arm as invalid.")
-CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|join",
-    "VOTVCOOP_FIREEXT_DRILL",
-    "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "
-    "chain. carry: the host carries it a few metres once a client's join is over, and the client runs "
-    "the laptop exit's setPropProps on its carried copy once, which the drive must re-latch. short: "
-    "the host lets go the moment it holds it, then re-sends the closed hold's pose for a moment, which "
-    "every receiver must drop. client: the client carries it and the host watches. join: the host "
-    "takes it off while a joiner is still loading. Both peers print every extinguisher they have and "
-    "every move of one.")
 CFG_ENUM(pry_drill, "pry_drill", "dev", "off", "off|host|client|join",
     "VOTVCOOP_PRY_DRILL",
     "Drill (BOTH peers): a stuck pryable (a sign, a torch holder) pried off its wall by its own "

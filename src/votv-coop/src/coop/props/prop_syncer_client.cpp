@@ -7,6 +7,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/end_trace.h"          // NoteOpenRow: a dev line for each open row
 #include "coop/dev/prop_syncer_drill.h"     // IsEnabled: the last-grant record is kept only while the drill is on
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -26,6 +27,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"   // IsActorRootBodyAtRest: the engine's own sleep
 
 #include <cstdint>
 #include <string>
@@ -127,31 +129,31 @@ void SetBackoff(uint32_t eid, uint64_t nowMs, bool inHand) {
 
 // An episode that ends with a Revoked, a refusal or the host's End closes nothing in the stream's gate: the
 // host's End of that generation applies when it arrives. Only this client's own End closes its generation.
-void ClientClaim(void* actor, coop::net::PropSyncReason reason) {
-    if (!g_session) { Tally(Count::FeederRefused, "claim refused: no session yet", 0); return; }
+bool ClientClaim(void* actor, coop::net::PropSyncReason reason) {
+    if (!g_session) { Tally(Count::FeederRefused, "claim refused: no session yet", 0); return false; }
     // The host answers a slot that is not world-ready on a path its pre-world gate drops, so a claim sent earlier
     // would stay Pending with no answer coming.
     if (!coop::net_pump::HasAnnouncedWorldReady()) {
         Tally(Count::FeederRefused, "claim refused: this client's world is not ready", 0);
-        return;
+        return false;
     }
     const coop::element::ElementId id = coop::element::Registry::Get().EidForActor(actor);
     // The host answers a claim only for a host-allocated id and drops any other as malformed, so an unanswered
     // claim would leave the entry Pending (skipping the host's poses) for good.
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(id)) {
         Tally(Count::FeederRefused, "claim refused: the prop has no host element id", id == coop::element::kInvalidId ? 0u : id);
-        return;
+        return false;
     }
     const uint32_t eid = static_cast<uint32_t>(id);
     const uint64_t now = coop::active_drive::NowMs();
     if (const auto open = g_table.find(eid); open != g_table.end()) {
         open->second.lastInteractMs = now;   // an open episode: the interaction goes on, no send and no token
-        return;
+        return false;
     }
     if (const auto b = g_backoff.find(eid); b != g_backoff.end()) {
         if ((b->second.inHand && coop::prop_drive_host::InAHand(actor)) || now < b->second.untilMs) {
             Tally(Count::HeldOff, "claim held off after a refusal or a revoke", eid);
-            return;
+            return false;
         }
         g_backoff.erase(b);
     }
@@ -163,7 +165,7 @@ void ClientClaim(void* actor, coop::net::PropSyncReason reason) {
     p.reason = static_cast<uint8_t>(reason);
     if (!g_session->SendReliable(coop::net::ReliableKind::PropSyncClaim, &p, sizeof(p))) {
         Tally(Count::SendFailed, "claim not sent: the reliable lane refused it", eid);
-        return;
+        return false;
     }
     Entry& e = g_table[eid];
     e.ref.Set(actor);
@@ -173,9 +175,10 @@ void ClientClaim(void* actor, coop::net::PropSyncReason reason) {
     e.lastInteractMs = now;
     e.claimSentMs = now;
     const uint32_t n = ++CountRef(Count::ClaimsSent);
-    if (n == 1 || (n % 100) == 0)
-        UE_LOGI("[PROP-SYNC] CLIENT claim sent eid=%u seq=%u reason=%u (%s) (#%u)", eid, static_cast<unsigned>(p.seq),
-                static_cast<unsigned>(p.reason), ReasonName(reason), n);
+    if (n <= 3 || (n & (n - 1)) == 0)   // the first few and each doubling
+        UE_LOGI("[PROP-SYNC] CLIENT claim sent for '%ls' (reason %u, %s) eid=%u seq=%u (#%u)", keyW.c_str(),
+                static_cast<unsigned>(p.reason), ReasonName(reason), eid, static_cast<unsigned>(p.seq), n);
+    return true;
 }
 
 // The End of a generation this client no longer holds (its entry ended while the claim was out): the copy's
@@ -299,6 +302,7 @@ void OnRevoked(const coop::net::PropSyncAnswerPayload& p) {
 // the beat is due; the rest End when it rested and the interaction is over. True when the entry ended.
 bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uint64_t now) {
     if (e.thrown && g_muteThrown) return false;   // the depart arm's mute: no row and no End, as a crashed client sends none
+    coop::dev::end_trace::NoteOpenRow("CLIENT", eid, e.gen, actor);   // a latched bool read when off
 
     // The engine is read (two dispatches for the pose, one more for the velocity of a row that is built) only when a row
     // or the rest End may be due, in the host rows' order: the probe cadence and the send pace first, then the queue's
@@ -312,7 +316,14 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
     if (!E::TryGetActorLocation(actor, loc) || !E::TryGetActorRotation(actor, rot)) return false;
     const bool moved = !e.everSent || rules::MovedPastEps(loc, rot, e.sentLoc, e.sentRot);
     if (moved) e.lastMoveMs = now;
-    if (now - e.lastMoveMs >= rules::kRestMs && now - e.lastInteractMs >= kInteractionHoldMs) {
+    // The author's rest is the engine's: the End goes when the body has stood still for kRestMs AND is asleep. A body that
+    // keeps creeping (a prop leaning on a pawn settles for seconds) keeps streaming, and nothing forces an End on a timer.
+    // The still-time is not redundant: the awake flag is a dispatch, read only once the pose has stopped moving, so a moving
+    // body costs it nothing; a body whose sleep cannot be read rests by the still-time alone. The engine announces the sleep
+    // (UPrimitiveComponent::OnComponentSleep, a multicast no seam of ours sees), so it is polled here, for this one prop and
+    // only while this row is open (the board's PHYSICS-HIT-SEAM package owns the announced form).
+    if (now - e.lastMoveMs >= rules::kRestMs && now - e.lastInteractMs >= kInteractionHoldMs &&
+        coop::prop_drive_host::BodyAsleepForEnd(actor)) {
         const coop::net::PropDriveEndPayload end = coop::prop_drive_host::EndFromBody(actor, eid, e.gen, loc, rot);
         if (!s.SendReliable(coop::net::ReliableKind::PropDriveEnd, &end, sizeof(end))) {
             Tally(Count::SendFailed, "rest End not sent: the reliable lane refused it", eid);
@@ -362,12 +373,13 @@ bool StepSyncing(coop::net::Session& s, uint32_t eid, Entry& e, void* actor, uin
 
 }  // namespace
 
-void Claim(void* actor, coop::net::PropSyncReason reason) {
+bool Claim(void* actor, coop::net::PropSyncReason reason) {
     UE_ASSERT_GAME_THREAD("prop_syncer::Claim");
-    if (!actor) return;
-    if (g_role == Role::Host) { coop::prop_drive_host::Claim(actor, ReasonName(reason)); return; }
-    if (g_role == Role::Client) { ClientClaim(actor, reason); return; }
+    if (!actor) return false;
+    if (g_role == Role::Host) { coop::prop_drive_host::Claim(actor, ReasonName(reason)); return false; }
+    if (g_role == Role::Client) return ClientClaim(actor, reason);
     Tally(Count::FeederRefused, "claim refused: no role yet", 0);
+    return false;
 }
 
 void Tick(coop::net::Session& s, bool isHost) {

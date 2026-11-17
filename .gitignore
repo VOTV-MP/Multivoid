@@ -274,6 +274,7 @@ docs/**
 !docs/piles.md
 !docs/players.md
 !docs/props.md
+!docs/prop-coasting.md
 !docs/send-path.md
 !docs/signals.md
 !docs/testing.md

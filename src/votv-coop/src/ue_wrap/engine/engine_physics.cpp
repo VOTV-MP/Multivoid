@@ -41,6 +41,8 @@ Thunk g_setLinVel{P::name::SetPhysicsLinearVelocityFn, L"NewVel", L"BoneName"};
 Thunk g_setAngVel{P::name::SetPhysicsAngularVelocityInDegreesFn, L"NewAngVel", L"BoneName"};
 Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", L"ReturnValue"};
 Thunk g_getCenterOfMass{P::name::GetCenterOfMassFn, L"BoneName", L"ReturnValue"};
+Thunk g_putToSleep{P::name::PutRigidBodyToSleepFn, L"BoneName", nullptr};
+Thunk g_closestPoint{P::name::GetClosestPointOnCollisionFn, L"Point", L"ReturnValue"};
 
 // The class they are found on. A native class outlives every world, but the references are checked:
 // a freed one is found again, and each thunk, holding the class it resolved on by slot and serial,
@@ -128,6 +130,21 @@ bool SetComponentLinearVelocity(void* component, float vx, float vy, float vz) {
 
 bool SetComponentAngularVelocity(void* component, float wx, float wy, float wz) {
     return SetVelocity(g_setAngVel, component, wx, wy, wz);
+}
+
+bool PutComponentToSleep(void* component) {
+    if (!IsPrimitiveComponent(component) || !Resolve(g_putToSleep)) return false;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<R::FName*>(frame + g_putToSleep.off0) = R::FName{0, 0};  // None: the whole body
+    return R::CallFunction(component, g_putToSleep.fn, frame);
+}
+
+float GetComponentDistanceToCollision(void* component, const FVector& point) {
+    if (!IsPrimitiveComponent(component) || !Resolve(g_closestPoint)) return -1.f;
+    unsigned char frame[kFrameBytes] = {};   // OutPointOnBody and BoneName (None) stay zero
+    *reinterpret_cast<FVector*>(frame + g_closestPoint.off0) = point;
+    if (!R::CallFunction(component, g_closestPoint.fn, frame)) return -1.f;
+    return *reinterpret_cast<float*>(frame + g_closestPoint.off1);
 }
 
 bool IsComponentSimulatingPhysics(void* component) {

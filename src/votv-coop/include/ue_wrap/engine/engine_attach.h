@@ -113,6 +113,10 @@ void* GetActorRootPhysicalMaterial(void* actor);
 // failure. The host stamps kAtRest from it.
 bool IsActorRootBodyAtRest(void* actor);
 
+// The same question with the failure told apart: 1 when the root rigid body is awake, 0 when no body is, -1 when it could not be
+// read (a root that is not a primitive, an unresolved function or a call that did not run). Game thread.
+int ReadActorRootBodyAwake(void* actor);
+
 // True when the actor's root is a live primitive component that simulates physics (the root through
 // K2_GetRootComponent, then IsSimulatingPhysics); false for no root or a call that did not run.
 bool IsActorRootSimulatingPhysics(void* actor);

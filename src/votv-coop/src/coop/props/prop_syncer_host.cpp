@@ -84,6 +84,7 @@ std::vector<coop::net::PropDriveRow> g_take[coop::net::kMaxPeers];
 uint32_t g_granted = 0, g_admitted = 0, g_notSyncer = 0, g_lateSyncer = 0, g_staleGen = 0, g_paced = 0, g_steps = 0;
 uint32_t g_endsAdmitted = 0, g_endsNotSyncer = 0, g_endsStale = 0, g_endsOutOfBounds = 0, g_endsClamped = 0;
 uint32_t g_nonSyncerAdmitted = 0;
+uint32_t g_snapped = 0;   // refused claims answered with the host's pose (a host coast: one pose, then the rested End)
 uint32_t g_elected = 0, g_electRefused = 0, g_rowsFailed = 0, g_thrownAdmitted = 0, g_jitRows = 0, g_rowsClamped = 0;
 int64_t  g_jitMax = 0;   // the largest (sender dt - host arrival dt) of an elected row's later rows, ms
 std::unordered_map<uint32_t, dev::Admitted> g_admittedBy;   // eid -> rows admitted, for the drill's judge
@@ -113,17 +114,24 @@ void Answer(coop::net::Session& s, uint8_t slot, uint32_t eid, uint16_t seq, uin
     s.SendReliableToSlot(slot, coop::net::ReliableKind::PropSyncAnswer, &a, sizeof(a));
 }
 
-// A refusal: counted, answered, and, for an out-of-reach claim on a prop nothing streams, its pose sent to the
-// refused client by a host coast (one pose, then the rested End), so the client parks onto where the prop is. One
-// coast per claim token, so the claim bucket bounds them. A Paced refusal costs the host nothing past the answer:
-// MTA's refused push does nothing at all (CUnoccupiedVehicleSync.cpp:490-507), and a flood must not buy rows.
+// A refusal: counted, answered, and, for a claim on a prop nothing streams, its pose sent to the refused client by a
+// host coast (one pose, then the rested End), so the client's copy, which its own body already moved, parks onto where
+// the host's prop is: an out-of-reach claim, and a body push refused as paced (a puppet pushes nothing here, so the
+// host's copy stands where it was). One coast per claim token, so the claim bucket bounds them; a paced push's is
+// under the coast cap too. Any other Paced refusal costs the host nothing past the answer: MTA's refused push does
+// nothing at all (CUnoccupiedVehicleSync.cpp:490-507), and a flood must not buy rows.
 void Refuse(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, uint8_t slot, PropSyncRefusal why,
             void* actor = nullptr) {
     Tally(g_refused[static_cast<unsigned>(why) & 7u], kRefusalName[static_cast<unsigned>(why) & 7u], p.eid, slot);
     Answer(s, slot, p.eid, p.seq, 0, PropSyncResult::Refused, why);
-    if (why == PropSyncRefusal::OutOfReach && !coop::prop_drive_host::FindByEid(p.eid)) {
+    const bool pushPaced = why == PropSyncRefusal::Paced &&
+                           static_cast<coop::net::PropSyncReason>(p.reason) == coop::net::PropSyncReason::BodyPush;
+    if ((why == PropSyncRefusal::OutOfReach || pushPaced) && !coop::prop_drive_host::FindByEid(p.eid)) {
         if (!actor) actor = coop::remote_prop::ResolveLiveActorByEid(p.eid);
-        if (actor) coop::prop_drive_host::Coast(actor, "refused claim");
+        if (actor && !(pushPaced && coop::prop_drive_host::CoastCapReached(actor, "refused body push"))) {
+            coop::prop_drive_host::Coast(actor, "refused claim");
+            Tally(g_snapped, "refused claim answered with the host's pose", p.eid, slot);
+        }
     }
 }
 
@@ -151,13 +159,14 @@ bool IsLateSyncer(uint32_t eid, uint8_t slot, uint64_t nowMs) {
 }
 
 // The End of a row ended by the host: the pose and linear velocity the host trusts, and the released copy's flags. For
-// an elected row, the last PASSING row; when none passed, the release pose the reach gate checked, at rest (a displayed
-// row that failed the step is the syncer's claim, never the host's anchor). For any other row, the last admitted one;
+// a step-tested row (a throw's, a body push's), the last PASSING row; when none passed, the release or grant pose the reach
+// gate checked, at rest (a displayed row that failed the step is the syncer's claim, never the host's anchor). For any
+// other row, the last admitted one;
 // zero when the syncer never sent one; the rows carry no spin. MTA's receivers keep the last speed after a sync stops.
 coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
     static const ue_wrap::FVector kAtRest{};
-    const bool passing = d.elected && d.passedEver;
-    const bool fromRelease = d.elected && !d.passedEver;
+    const bool passing = d.StepTested() && d.passedEver;
+    const bool fromRelease = d.StepTested() && !d.passedEver;
     const ue_wrap::FVector&  loc = passing ? d.passLoc : fromRelease ? d.startLoc : d.admitLoc;
     const ue_wrap::FRotator& rot = passing ? d.passRot : d.admitRot;
     const ue_wrap::FVector&  vel = passing ? d.passVel : fromRelease ? kAtRest : d.admitVel;
@@ -173,7 +182,7 @@ coop::net::PropDriveEndPayload EndOf(const Driven& d, void* actor) {
     return p;
 }
 
-// An elected row's step test (coop/net/throw_bounds.h): its step agreeing with the speed a prop can fly. The first row is
+// A step-tested row's step test (a throw's or a body push's; coop/net/throw_bounds.h): its step agreeing with the speed a prop can fly. The first row is
 // measured from the release (its pose, and its arrival on this clock), the rest from the last PASSING row (its stamp on
 // the sender's clock, its arrival on this one); the host never compares clocks across peers, only deltas. A failing
 // row is still displayed: AdmitRow counts it on the row, and a run of them revokes the syncer's right. MTA applies
@@ -215,12 +224,13 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
     // one. The clamp is a value bound on input, not a refusal.
     coop::net::PropDriveRow r = e;
     if (tb::ClampRowVelocity(r.vel) != tb::Clamp::Ok) Tally(g_rowsClamped, "row velocity clamped to the flight ceiling", e.elementId, slot);
-    // An elected row's step is tested (a failing row is displayed all the same; it is counted on the row, and a run of
-    // kMaxRefusedRows of them revokes the thrower's right: the host takes the prop back from the last passing row).
-    // Any other row keeps the old rule: a movement discontinuity is logged, never refused (the host may cheat and the
-    // relay holds), and its first row after a grant is not tested, the claim's reach test having bounded where it started.
+    // A throw's or a body push's row has its step tested (a failing row is displayed all the same; it is counted on the
+    // row, and a run of kMaxRefusedRows of them revokes the syncer's right: the host takes the prop back from the last
+    // passing row). A body push is a client's body moving a prop at the speed a prop flies at the most, so it meets the
+    // throw's bound, and a push across the reach costs trust, never display. Any other row keeps the old rule: a movement
+    // discontinuity is logged, never refused (the host may cheat and the relay holds).
     bool passed = false;
-    if (row->elected) {
+    if (row->StepTested()) {
         passed = ElectedRowPasses(*row, r, nowMs);
         if (passed) {
             row->failedRun = 0;
@@ -340,8 +350,13 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
     // A host verb or push in flight wins (MTA's persistent syncer); another client's row is not stolen (MTA steals
     // from a non-persistent syncer, :498-501, which would ping-pong two pushers here). The sender's own row is
     // refused the same way: the client never re-claims while it waits or syncs.
-    if (const Driven* row = coop::prop_drive_host::FindByEid(p.eid))
-        return Refuse(s, p, slot, row->syncer == 0 ? PropSyncRefusal::HostAuthored : PropSyncRefusal::OtherSyncer, actor);
+    // A row that only coasts (no verb's claim) is not a persistent syncer: a client's body push takes it, as MTA's push
+    // overrides a non-persistent syncer (:498-501) and as a throw takes a coasting row (ElectClientRow), so the pusher's
+    // packet decides and a coast the host's own body opened first cannot refuse it.
+    const bool push = static_cast<coop::net::PropSyncReason>(p.reason) == coop::net::PropSyncReason::BodyPush;
+    const Driven* standing = coop::prop_drive_host::FindByEid(p.eid);
+    if (standing && !(push && standing->syncer == 0 && !standing->claimed))
+        return Refuse(s, p, slot, standing->syncer == 0 ? PropSyncRefusal::HostAuthored : PropSyncRefusal::OtherSyncer, actor);
     // MTA tests the dimension here too (CUnoccupiedVehicleSync.cpp:492); VOTV has one level, so the reach stands in for
     // it. A body or a target the helper cannot read (a puppet that is dead, ragdolled or not yet posed) is Unknown, the
     // nearest analogue of a wrong-dimension player, and only a measured distance beyond reach is OutOfReach.
@@ -350,8 +365,19 @@ void OnClaim(coop::net::Session& s, const coop::net::PropSyncClaimPayload& p, ui
         case EL::IntentOutcome::OutOfReach: return Refuse(s, p, slot, PropSyncRefusal::OutOfReach, actor);
         default:                            return Refuse(s, p, slot, PropSyncRefusal::Unknown, actor);
     }
-    Driven* row = coop::prop_drive_host::OpenClientRow(actor, slot, "client claim");
+    // No cap here: the cap bounds the host's own pose reads, and a client's row costs the host none (it publishes the
+    // admitted pose); the claim bucket bounds how often a slot opens one. A body push's step is tested from the host's
+    // copy where the grant finds it.
+    ue_wrap::FVector pushFrom{};
+    if (push && !E::TryGetActorLocation(actor, pushFrom)) return Refuse(s, p, slot, PropSyncRefusal::Unknown, actor);
+    Driven* row = standing ? coop::prop_drive_host::ElectClientRow(actor, slot, "client claim over a coast")
+                           : coop::prop_drive_host::OpenClientRow(actor, slot, "client claim");
     if (!row) return Refuse(s, p, slot, PropSyncRefusal::Unknown, actor);   // a hand or a class took it since the tests
+    if (push) {
+        row->bodyPush = true;
+        row->startLoc = pushFrom;
+        row->startMs  = coop::active_drive::NowMs();
+    }
     row->claimSeq = p.seq;
     ++g_granted;
     UE_LOGI("[PROP-SYNC] HOST granted eid=%u gen=%u to slot %u (reason %u, seq %u) (#%u)", p.eid,
@@ -554,7 +580,7 @@ void EndClientRow(Driven& d, Ending why) {
     if (why == Ending::RowsUntrusted)
         UE_LOGI("[PROP-SYNC] HOST took eid=%u back from slot %u (rows untrusted: %u in a row, %u in the flight) -- %s, maxgap=%u ms",
                 d.eid, static_cast<unsigned>(syncer), static_cast<unsigned>(d.failedRun), static_cast<unsigned>(d.failedTotal),
-                d.passedEver ? "from its last passing row" : "no row passed, from its release pose at rest",
+                d.passedEver ? "from its last passing row" : "no row passed, from its release or grant pose at rest",
                 static_cast<unsigned>(d.maxGapMs));
     else if (d.elected && toHost && why != Ending::HostVerb) {
         char label[40];   // a silent thrower's line names how long it was silent
@@ -588,6 +614,7 @@ void EndClientRow(Driven& d, Ending why) {
     d.admitSendMs  = 0;
     d.claimSeq     = 0;
     d.elected      = false;
+    d.bodyPush     = false;
     d.throwSeq     = 0;
     d.failedRun    = 0;
     d.failedTotal  = 0;
@@ -609,6 +636,7 @@ void OnDisconnect() {
     g_granted = g_admitted = g_notSyncer = g_lateSyncer = g_staleGen = g_paced = g_steps = 0;
     g_endsAdmitted = g_endsNotSyncer = g_endsStale = g_endsOutOfBounds = g_endsClamped = 0;
     g_nonSyncerAdmitted = 0;
+    g_snapped = 0;
     g_elected = g_electRefused = g_rowsFailed = g_thrownAdmitted = g_jitRows = g_rowsClamped = 0;
     g_jitMax = 0;
     g_admittedBy.clear();

@@ -25,3 +25,9 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   host can withhold from one player, players may fire only safe non-story events and spawn no explosive, a request costs its
   count, teleports land on the NavMesh, the item list builds when the game says it is filled, and a drill with a red for each
   rule.
+- **A prop at rest alike on every screen** ([#156](https://github.com/VOTV-MP/Multivoid/pull/156)): a prop a player dropped, set down or let go of without a
+  throw settled by each player's own physics, so it came to rest in a different place on every screen, and a damaged
+  extinguisher could run away on one screen only. Now the host flies a let-go prop to its rest and every copy follows,
+  and the host owns a runaway extinguisher's flight. Kept as written: the host's coast of a let-go, the runaway's host
+  claim, and the log of every correction. On top: the cap shared by every kind of coast, a client's own extinguisher
+  kept from running away, and a drill with a red for each mechanism.

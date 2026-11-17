@@ -7,6 +7,7 @@
 
 #include "coop/element/registry.h"         // EidForActor: the id a correction line names
 #include "coop/net/protocol.h"
+#include "coop/props/body_push.h"          // Rebase: a write of this peer's own is no push
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
@@ -137,7 +138,7 @@ constexpr float    kNoteFarCm      = 10.f;    // the summary counts these apart
 constexpr uint64_t kNoteWindowMs   = 5000;
 constexpr int      kNoteLinesPerWindow = 6;
 constexpr uint64_t kSummaryEveryMs = 30000;
-constexpr size_t   kMaxPaths       = 8;
+constexpr size_t   kMaxPaths       = 16;
 
 struct PathTally {
     const char* path = nullptr;   // a literal: compared by pointer, then by text
@@ -168,6 +169,8 @@ PathTally* TallyFor(const char* path) {
 
 void NoteCorrection(void* actor, const ue_wrap::FVector& to, const char* path) {
     UE_ASSERT_GAME_THREAD("prop_wire_parity::NoteCorrection");
+    // Every path here writes the prop's place next: the push poll must not read that write as a body's push.
+    if (actor) coop::props::body_push::Rebase(actor);
     ue_wrap::FVector from{};
     if (!actor || !path || !ue_wrap::engine::TryGetActorLocation(actor, from)) return;
     const float dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
@@ -195,6 +198,15 @@ void NoteCorrection(void* actor, const ue_wrap::FVector& to, const char* path) {
             ue_wrap::prop::GetInteractableKeyString(actor).c_str(), path, cm, dz, body,
             g_suppressed ? " (more suppressed since the last line)" : "");
     g_suppressed = 0;
+}
+
+void OnDisconnect() {
+    for (PathTally& t : g_tally) t = PathTally{};
+    g_windowStartMs = 0;
+    g_windowLines   = 0;
+    g_suppressed    = 0;
+    g_nextSummaryMs = 0;
+    g_anyTallied    = false;
 }
 
 void FlushCorrectionSummary(uint64_t nowMs) {

@@ -256,7 +256,5 @@ DWORD WINAPI HacksawThread(LPVOID arg);
 
 // The row glowstick_drill, both peers -- harness/autotest/autotest_glowstick.cpp
 DWORD WINAPI GlowstickThread(LPVOID arg);
-// VOTVCOOP_RUN_BODY_PUSH, both peers -- harness/autotest/autotest_body_push.cpp
-DWORD WINAPI BodyPushThread(LPVOID arg);
 
 }  // namespace harness::autotest

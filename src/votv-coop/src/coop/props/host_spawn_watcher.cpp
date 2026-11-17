@@ -398,22 +398,12 @@ void TickWatchedProps(coop::net::Session* s) {
 // final pose. A birth that is not simulating and awake does not move and is left alone, and past the cap
 // a burst of births -- a spawn-menu pile, an event's debris -- falls locally as it always did, so
 // the stream's per-tick reads stay bounded.
-constexpr size_t kMaxCoastingBirths = 32;
 namespace {
 void CoastIfFalling(void* actor) {
     namespace pf = coop::net::propspawn_flags;
     // A prop a client threw is its thrower's to sync: its drop intent left a mark, and the election opens the row (the
     // grant goes out behind the spawn just expressed) in place of the host's coast. A refused election falls to the coast.
     if (coop::prop_syncer_host::ElectFromMark(actor)) return;
-    if (coop::prop_drive_host::CoastingCount() >= kMaxCoastingBirths) {
-        static bool sSaid = false;
-        if (!sSaid) {
-            sSaid = true;
-            UE_LOGW("host_spawn_watcher: %zu births already coasting -- a further birth falls locally "
-                    "(said once)", kMaxCoastingBirths);
-        }
-        return;
-    }
     if (PT::GetPropElementIdForActor(actor) == coop::element::kInvalidId) return;
     // The fall drill's red: a falling birth is not streamed, so no copy gets the host's final pose.
     static const bool s_noCoast = coop::config::ResolveFlag(coop::config_registry::rows::prop_fall_no_coast);
@@ -421,6 +411,9 @@ void CoastIfFalling(void* actor) {
     // Simulating and awake, which also means neither frozen, static nor asleep: a body born resting,
     // or one that has landed by the drain, opens no row.
     if (!(coop::prop_wire_parity::PhysFlagsOf(actor) & pf::kSimulatePhysics)) return;
+    // Asked last, so a prop that would not coast anyway is never counted as refused; a birth stops short of the cap by the
+    // rows a let-go and a body's push keep.
+    if (coop::prop_drive_host::CoastCapReached(actor, "host birth", /*birth=*/true)) return;
     coop::prop_drive_host::Coast(actor, "host birth");
 }
 }  // namespace

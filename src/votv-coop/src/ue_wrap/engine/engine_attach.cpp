@@ -181,19 +181,23 @@ bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify) {
     return Call(root, f);
 }
 
+int ReadActorRootBodyAwake(void* actor) {
+    void* root = PrimitiveRootOf(actor);
+    if (!root) return -1;
+    void* fn = PrimFn(&g_isAwakeFn, L"IsAnyRigidBodyAwake");
+    if (!fn) return -1;
+    ParamFrame f(fn);
+    if (!Call(root, f)) return -1;
+    return f.Get<bool>(L"ReturnValue") ? 1 : 0;
+}
+
 bool IsActorRootBodyAtRest(void* actor) {
     // True ONLY if we positively confirmed the root rigid body is at rest (no body
     // awake -- covers both an asleep simulating body and a non-simulating one).
     // Returns false on ANY resolution failure: the host uses this to decide whether
     // to stamp kAtRest, and we must NEVER claim a rest we couldn't verify (a false
     // kAtRest would tell the client to sleep a body the host actually has moving).
-    void* root = PrimitiveRootOf(actor);
-    if (!root) return false;
-    void* fn = PrimFn(&g_isAwakeFn, L"IsAnyRigidBodyAwake");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    if (!Call(root, f)) return false;
-    return !f.Get<bool>(L"ReturnValue");
+    return ReadActorRootBodyAwake(actor) == 0;
 }
 
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang) {

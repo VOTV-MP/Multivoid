@@ -5,6 +5,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"
 
 #include <cstdint>
 
@@ -99,6 +100,14 @@ bool ReadSpraying(void* ext, bool& out) {
 
 bool ReadThrusting(void* ext, bool& out) {
     return ReadBool(ext, g_thrusting, P::name::FireExtThrustingProp, out);
+}
+
+bool ReadComponentRotation(void* ext, const wchar_t* member, FRotator& out) {
+    if (!IsExtinguisher(ext)) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(ext), member);
+    if (off < 0) return false;
+    void* comp = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(ext) + off);
+    return comp && engine::TryGetComponentWorldRotation(comp, out);
 }
 
 }  // namespace ue_wrap::fire_extinguisher

@@ -24,6 +24,15 @@ bool SetComponentSimulatePhysics(void* component, bool simulate);
 bool SetComponentLinearVelocity(void* component, float vx, float vy, float vz);
 bool SetComponentAngularVelocity(void* component, float wx, float wy, float wz);
 
+// UPrimitiveComponent::PutRigidBodyToSleep on the whole body (bone None): a simulating body stays where it is, asleep,
+// until something touches it. True when the call ran. Not for a body that is mid-depenetration: PhysX faults there.
+bool PutComponentToSleep(void* component);
+
+// UPrimitiveComponent::GetClosestPointOnCollision for the whole body: the distance in cm from the world point `point` to the
+// component's collision, 0 for a point inside it. -1 for anything but a live primitive component, a component with no
+// collision, or when the call did not resolve or run. Game thread.
+float GetComponentDistanceToCollision(void* component, const FVector& point);
+
 // IsSimulatingPhysics: USceneComponent's UFunction, which UPrimitiveComponent overrides natively.
 // False for anything but a live primitive component, or when it did not resolve.
 bool IsComponentSimulatingPhysics(void* component);

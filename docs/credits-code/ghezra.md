@@ -299,3 +299,8 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   birth is a player's own and crosses to the host like a drop. Kept as written; on top, the pry and the toolgun are asked
   by name again after a world reload, and the probe became a drill with a red (an open pry, a pry given up, a rejoin and a
   host reload). The plank a pry frees and a pry's host grant are packages of their own.
+- **A prop a player walks into** ([#99](https://github.com/VOTV-MP/Multivoid/pull/99)): a prop a player walked into moved on that player's screen only, and
+  the two copies came to rest apart. Now the player who bumps a resting prop syncs it, as a request the host checks,
+  and every other copy follows that player's stream to the same rest. Kept as written: the claim of a body push and its
+  watch around a player. On top: the host's own push flown by the host, a push's end left asleep at its pose only once
+  the body sleeps, the watch reading only the player's own body, and a drill with a red for each mechanism.

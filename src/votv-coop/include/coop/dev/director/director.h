@@ -160,8 +160,10 @@ struct BackgroundWalk {
     std::atomic<int> state{0};
     std::atomic<bool> cancelled{false};
 };
+// `through`, when given, is the prop the walk is about (a goal's own target): a walk stopped by it does not delete it, as the
+// blocker delete leaves a goal's own target (blocker_delete.h).
 std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, float reachCm, int deadlineS,
-                                                    bool carry = false);
+                                                    bool carry = false, void* through = nullptr);
 
 // End a background walk at its next tick: the worker lets go of the keys it holds and `state` reads 2.
 // For a drill that failed while its walker was still walking. Any thread.

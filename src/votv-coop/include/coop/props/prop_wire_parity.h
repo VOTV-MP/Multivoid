@@ -81,8 +81,12 @@ void RestoreSpParityPhysicsAfterConverge(void* actor, uint8_t physFlags);
 // the move to `to` is 3 cm or more, tallies it under `path` (a string literal) and logs one `[PROP-CORRECT]` line
 // with the prop's eid and key, the distance, and whether the body is kinematic, asleep or awake. At most 6 lines per
 // 5 s; the rest are counted, and a summary line (per path: count, moves of 10 cm or more, mean, max) follows every
-// 30 s. Reads only. Game thread.
+// 30 s. Reads the prop and writes nothing to it; it also tells the body-push poll that this peer is about to move the prop
+// (body_push::Rebase), since every path here writes the place next. Game thread.
 void NoteCorrection(void* actor, const ue_wrap::FVector& to, const char* path);
+
+// The session ended: the tallies, the line window and the summary clock start over. Game thread.
+void OnDisconnect();
 
 // Emits the summary line when 30 s have passed since the last one and a correction was tallied. Per tick, cheap.
 void FlushCorrectionSummary(uint64_t nowMs);

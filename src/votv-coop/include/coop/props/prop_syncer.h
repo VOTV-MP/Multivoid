@@ -25,7 +25,9 @@ namespace coop::prop_syncer {
 // The feeder API: `actor`'s motion is this peer's interaction right now. Idempotent -- call it every tick the
 // interaction lasts. HOST: prop_drive_host::Claim. CLIENT: opens an episode with a PropSyncClaim, or refreshes
 // the open one; an actor with no host element id is a counted refusal, never a send. `reason` names the feeder.
-void Claim(void* actor, coop::net::PropSyncReason reason);
+// True when this call sent a PropSyncClaim (a client opening an episode); false for a refresh of an open episode, a
+// held-off or refused claim, and every host call (the host's Claim opens a row, not an episode).
+bool Claim(void* actor, coop::net::PropSyncReason reason);
 
 // Per gameplay tick, first thing in the driven-prop pump: learns the role, and on a client publishes the pose of
 // each prop it syncs, ends the ones that rested and drops the ones a hand took or that died.

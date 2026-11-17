@@ -50,7 +50,7 @@ void Install(coop::net::Session* session);
 // hand actor (the hand edge in coop/player/hand_item owns that actor's eventual world release),
 // and publish the save record of each one it adopted (prop_save_data::PublishHostBirth). A birth
 // that simulates and is awake, adopted here or tracked by the init seam before its finish, coasts
-// on the driven-prop stream until it rests (prop_drive_host::Coast), at most 32 at once.
+// on the driven-prop stream until it rests (prop_drive_host::Coast), at most prop_drive_rules::kMaxCoasting at once.
 // ONE express attempt per entry, eight entries a tick -- an entry is spent when drained, so a
 // still-unkeyed actor falls to the periodic safety census rather than being retried here, and a
 // burst waits its turn in the queue rather than costing one frame. Host-side express; game thread

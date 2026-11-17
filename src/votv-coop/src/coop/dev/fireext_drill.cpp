@@ -2,10 +2,15 @@
 
 #include "coop/dev/fireext_drill.h"
 
+#include "fireext_drill_detail.h"   // co-located private header (src tree, not include/)
+
 #include "coop/config/config.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/routes.h"
+#include "coop/dev/drill_chat.h"
+#include "coop/dev/drill_ground.h"
+#include "coop/dev/rest_compare.h"
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
 #include "coop/player/players_registry.h"
@@ -15,8 +20,10 @@
 #include "coop/save/join_window_baseline.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/fire_extinguisher.h"
+#include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -37,6 +44,14 @@
 #include <vector>
 
 namespace coop::dev::fireext_drill {
+
+namespace detail {
+std::vector<Watched> g_watched;
+Step g_step = Step::WaitJoin;
+ue_wrap::CachedObjRef g_target;
+std::wstring g_targetKey;
+}  // namespace detail
+
 namespace {
 
 namespace R  = ue_wrap::reflection;
@@ -45,15 +60,15 @@ namespace FX = ue_wrap::fire_extinguisher;
 namespace PR = ue_wrap::prop;
 
 // carry: the host takes it off and carries it off. short: the host lets go the moment it holds it.
-// client: the client carries, the host watches. join: the host takes it off while a joiner loads.
-enum class Arm { Off, Carry, Short, Client, Join };
-enum class Step { WaitJoin, WalkTo, Grab, WalkAway, Rest, Done, Invalid };
+// client: the client carries, the host watches. join: the host takes it off while a joiner loads. runaway: the host lets go
+// and damages it, which starts its runaway thrust.
+enum class Arm { Off, Carry, Short, Client, Join, Runaway };
 
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::fireext_drill);
         return v == "carry" ? Arm::Carry : v == "short" ? Arm::Short : v == "client" ? Arm::Client
-             : v == "join" ? Arm::Join : Arm::Off;
+             : v == "join" ? Arm::Join : v == "runaway" ? Arm::Runaway : Arm::Off;
     }();
     return a;
 }
@@ -82,15 +97,8 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
 
 // ---- The watch: both peers, every extinguisher --------------------------------------------------
 
-struct Watched {
-    ue_wrap::CachedObjRef ref;
-    std::wstring key;
-    ue_wrap::FVector start{}, printed{};
-    bool frozen = false, mounted = false, gone = false;
-    bool unread = false;              // its location could not be read: said once, and no reader reads it again
-    int thrusting = 0, spraying = 0;  // a drop hard enough starts the runaway thrust; -1 = unread
-};
-std::vector<Watched> g_watched;
+using detail::Watched;
+using detail::g_watched;
 std::vector<ue_wrap::CachedObjRef> g_mounts;
 bool g_watchArmed = false;
 int  g_watchTick = 0;
@@ -288,9 +296,13 @@ void TickReleaseReadout() {
 
 // ---- The acting peer's steps -------------------------------------------------------------------
 
-Step g_step = Step::WaitJoin;
-ue_wrap::CachedObjRef g_target;
-std::wstring g_targetKey;
+using detail::Step;
+using detail::g_step;
+using detail::g_target;
+using detail::g_targetKey;
+using detail::Invalid;
+using detail::Go;
+using detail::LogTarget;
 ue_wrap::FVector g_mountPos{};
 int g_stepTicks = 0;
 std::unique_ptr<coop::director::AimedGrab> g_grab;  // the grab of the extinguisher, from its aim to the hand
@@ -364,10 +376,15 @@ void StartWalk(const ue_wrap::FVector& to, float reachCm, bool carry) {
 // 0 walking, 1 reached, 2 failed.
 int WalkState() { return g_walk ? g_walk->state.load() : 2; }
 
+}  // namespace
+
+namespace detail {
+
 // The run's dead marker: a run passes --dead-marker "[FIREEXT-DRILL] INVALID", which ends it
 // INCONCLUSIVE, so a drill that measured nothing never ends on the done marker a measurement prints.
 void Invalid(const char* why) {
     UE_LOGW("[FIREEXT-DRILL] INVALID %s", why);
+    if (ArmOf() == Arm::Runaway) coop::rig_verdict::Say("fireext-runaway", coop::rig_verdict::Outcome::Invalid, "%s", why);
     g_step = Step::Invalid;
 }
 
@@ -375,6 +392,10 @@ void Go(Step s) {
     g_step = s;
     g_stepTicks = 0;
 }
+
+}  // namespace detail
+
+namespace {
 
 // The mounted extinguisher at the end of the shortest NavMesh route from the player, from the
 // watch's own lists: a route must exist and end within reach of the wall, as the director's pile
@@ -428,6 +449,10 @@ bool PickCarryEnd(void* player, ue_wrap::FVector& out, const char*& why) {
     return false;
 }
 
+}  // namespace
+
+namespace detail {
+
 void LogTarget(const char* what) {
     ReadMounts();
     void* t = g_target.Get();
@@ -442,6 +467,10 @@ void LogTarget(const char* what) {
         UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (unread) frozen=%d mounted=%d", Who(), what,
                 g_targetKey.c_str(), PR::IsFrozen(t) ? 1 : 0, IsMounted(t) ? 1 : 0);
 }
+
+}  // namespace detail
+
+namespace {
 
 // When the acting peer may start. carry and short: a client's join and its join window are over,
 // since while the host's late flush is armed a move reaches the joiner as the join's position
@@ -497,11 +526,11 @@ void ActStep(coop::net::Session& s, void* player) {
         }
         {
             LogTarget("GRABBED");
-            if (ArmOf() == Arm::Short || ArmOf() == Arm::Join) {
+            if (ArmOf() == Arm::Short || ArmOf() == Arm::Join || ArmOf() == Arm::Runaway) {
                 // Let go at once: the stream carries a pose or two, then the release.
                 coop::director::CallOnPlayer(player, L"dropGrabObject");
                 LogTarget("DROPPED");
-                Go(Step::Rest);
+                Go(ArmOf() == Arm::Runaway ? Step::Damage : Step::Rest);
                 return;
             }
             ue_wrap::FVector end{};
@@ -536,6 +565,11 @@ void ActStep(coop::net::Session& s, void* player) {
         Go(Step::Done);
         return;
     }
+    case Step::Damage:
+    case Step::RunRest:
+    case Step::WaitClient:
+        detail::RunawayHostStep(player);
+        return;
     case Step::Done:
         UE_LOGI("[FIREEXT-DRILL] ACTOR DONE");
         g_step = Step::Invalid;  // terminal: nothing further runs, and nothing is printed twice
@@ -579,6 +613,7 @@ void Tick(coop::net::Session* session) {
         TickRelatchProbe();
         TickReleaseReadout();
     }
+    if (ArmOf() == Arm::Runaway && !coop::roster::LocalIsHost()) detail::RunawayClientTick();
 }
 
 void OnDisconnect() {
@@ -598,6 +633,7 @@ void OnDisconnect() {
     g_afterTicks = -1;
     g_tailEnded = false;
     g_walk.reset();
+    detail::RunawayReset();
 }
 
 }  // namespace coop::dev::fireext_drill

@@ -563,6 +563,10 @@ inline constexpr const wchar_t* SetPhysicsLinearVelocityFn           = L"SetPhys
 inline constexpr const wchar_t* SetPhysicsAngularVelocityInDegreesFn = L"SetPhysicsAngularVelocityInDegrees";
 // GetCenterOfMass: a body's centre of mass in world space, a welded body's the whole weld's.
 inline constexpr const wchar_t* GetCenterOfMassFn                    = L"GetCenterOfMass";
+// GetClosestPointOnCollision: the distance from a world point to the component's collision (0 inside it, -1 with none).
+inline constexpr const wchar_t* GetClosestPointOnCollisionFn          = L"GetClosestPointOnCollision";
+// PutRigidBodyToSleep: UPrimitiveComponent's own call, the one the game's Blueprints make to rest a body.
+inline constexpr const wchar_t* PutRigidBodyToSleepFn                = L"PutRigidBodyToSleep";
 
 // AdaynightCycle_C: the singleton weather authority (the scheduler timers, the state fields, the
 // mutator UFunctions), resolved through R::FindObjectByClass.

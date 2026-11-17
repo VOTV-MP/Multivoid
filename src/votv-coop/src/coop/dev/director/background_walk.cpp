@@ -24,10 +24,11 @@ DWORD WINAPI WalkThread(LPVOID arg) {
 }  // namespace
 
 std::shared_ptr<BackgroundWalk> StartBackgroundWalk(const ue_wrap::FVector& to, float reachCm, int deadlineS,
-                                                    bool carry) {
+                                                    bool carry, void* through) {
     auto walk = std::make_shared<BackgroundWalk>();
     walk->goal.targetPos = to;
     walk->goal.reachCm = reachCm;
+    walk->goal.targetActor = through;
     walk->carry = carry;
     walk->goal.epoch = WalkEpoch();
     walk->goal.cancel = &walk->cancelled;

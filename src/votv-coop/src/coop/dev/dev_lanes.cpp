@@ -96,6 +96,10 @@
 #include "coop/dev/settings_drill.h"  // [dev] the host sets its own rows and the modules show they followed
 #include "coop/dev/mannequin_drill.h"  // [dev] the walking mannequin's spawn and baseline drill
 #include "coop/dev/fireext_drill.h"  // [dev] a wall-mounted fire extinguisher taken off and carried, watched on both peers
+#include "coop/dev/body_push_drill.h"  // [dev] a client walks into a crate: the copies must rest alike
+#include "coop/dev/coast_drill.h"  // [dev] a crate a hand lets go of rests alike on both peers
+#include "coop/dev/collision_probe.h"  // [dev] what collides with what on a pawn, as the engine reports it
+#include "coop/dev/end_trace.h"  // [dev] what a copy does just after a drive End put it to sleep
 #include "coop/dev/feedback_probe.h"  // [dev] every hint and 2D sound this peer makes, logged by role
 #include "coop/dev/kerfur_seat_probe.h"  // [dev] which seat sees a kerfur radial command, logged by role
 #include "coop/dev/atv_gate_drill.h"  // [dev] the ATV drill's rejoin hold
@@ -316,6 +320,8 @@ void EndSession() {
     coop::dev::grime_drill::OnDisconnect();  // [dev] the decals and the phase belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
+    coop::dev::body_push_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
+    coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::crowbarpry_drill::OnDisconnect();  // [dev] the host's board is destroyed, both halves start over
     coop::dev::pi3_drill::OnDisconnect();  // [dev] a spawner mid-arm is abandoned, a still peer lets go
@@ -378,6 +384,10 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::light_drill::Tick(&session);  // [dev] the light drill's presses (a single bool read when off)
     coop::dev::keypad_drill::Tick(&session);  // [dev] the keypad drill's legs (a single bool read when off)
     coop::dev::fireext_drill::Tick(&session);  // [dev] the fire extinguisher drill (a single bool read when off)
+    coop::dev::body_push_drill::Tick(&session);  // [dev] the body-push drill (a latched bool read when off)
+    coop::dev::coast_drill::Tick(&session);  // [dev] the coast drill (a latched enum read when off)
+    coop::dev::collision_probe::Tick();  // [dev] the pawns' collision, logged (a latched bool read when off)
+    coop::dev::end_trace::Tick();  // [dev] the copies an End slept, traced (a latched bool read when off)
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)
     coop::dev::recycled_slot_drill::Tick();  // [dev] the recycled-slot drill (a single read when off)
     coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)

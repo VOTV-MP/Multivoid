@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 namespace ue_wrap::fire_extinguisher {
 
 // Resolve the two class names. Dispatches the string-to-name conversion, so call it from a
@@ -36,5 +38,10 @@ void* MountedExtinguisher(void* mount);
 bool ReadCharge(void* ext, float& out);
 bool ReadSpraying(void* ext, bool& out);
 bool ReadThrusting(void* ext, bool& out);
+
+// The world rotation of the extinguisher's own component `member` ("PhysicsThruster", the thruster whose force is along its
+// own -X axis, or "Arrow", the nozzle), read off the instance by reflection. False, `out` untouched, for anything that is not
+// an extinguisher, a member that does not resolve or a component that does not read. Game thread.
+bool ReadComponentRotation(void* ext, const wchar_t* member, FRotator& out);
 
 }  // namespace ue_wrap::fire_extinguisher

@@ -4,6 +4,7 @@
 #include "coop/props/prop_drive_host.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/end_trace.h"                // NoteOpenRow: a dev line for each open row
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -27,10 +28,12 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"   // IsActorRootBodyAtRest: the engine's own sleep
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -47,6 +50,7 @@ using coop::prop_drive_rules::kRestVelCmS;
 
 std::vector<Driven> g_driven;   // game thread only
 size_t              g_turn = 0; // where the next tick's publishing starts, so no prop waits forever
+uint64_t            g_coastRefused = 0;   // the coasts refused past the cap this session (CoastCapReached)
 // The claim generation is PER PROP: the receiver's closed-generation gate is keyed by eid and
 // compares in a signed 8-bit window, so a counter shared by every prop would read a re-claim as
 // older than the closed one after enough claims of other props in between. Outlives the row.
@@ -111,7 +115,7 @@ size_t PublishAdmitted(coop::net::Session& s, Driven& d) {
 // A new row for `actor` when the channel can carry it: a keyed prop with a host element id, in no
 // hand, of a class peers hold. Null otherwise. `claimed` false opens it coasting. `syncer` 0 is a host
 // verb's row, n a client slot's grant.
-Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0) {
+Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0, CoastCause cause = CoastCause::Verb) {
     if (!PR::IsDescendantOfProp(actor)) return nullptr;
     if (InAHand(actor)) return nullptr;   // the held-prop lane owns a prop in a hand
     const coop::element::ElementId eid = coop::prop_element_tracker::GetPropElementIdForActor(actor);
@@ -133,6 +137,7 @@ Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0) {
     d.eid = static_cast<uint32_t>(eid);
     d.claimed = claimed;
     d.syncer = syncer;
+    d.cause = cause;
     const std::wstring keyW = PR::GetInteractableKeyString(actor);
     d.key.len = 0;
     for (size_t i = 0; i < keyW.size() && i < sizeof(d.key.data); ++i)
@@ -140,9 +145,11 @@ Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0) {
     d.gen = BumpGen(d.eid);
     d.openMs = d.lastMoveMs = coop::active_drive::NowMs();
     g_driven.push_back(std::move(d));
-    UE_LOGI("[PROP-DRIVE] HOST %s eid=%u gen=%u key='%ls' (%s) -- %zu driven",
+    UE_LOGI("[PROP-DRIVE] HOST %s eid=%u gen=%u key='%ls' (%s%s) -- %zu driven",
             syncer ? "GRANT" : (claimed ? "CLAIM" : "COAST"), g_driven.back().eid,
-            static_cast<unsigned>(g_driven.back().gen), keyW.c_str(), why, g_driven.size());
+            static_cast<unsigned>(g_driven.back().gen), keyW.c_str(), why,
+            claimed || syncer ? "" : (cause == CoastCause::LetGo ? ", let-go" : cause == CoastCause::BodyPush ? ", body push" : ", verb"),
+            g_driven.size());
     return &g_driven.back();
 }
 
@@ -223,6 +230,7 @@ Driven* ElectClientRow(void* actor, uint8_t slot, const char* why) {
     d->admitSendMs  = 0;
     d->admitVel     = ue_wrap::FVector{};
     d->claimSeq     = 0;
+    d->bodyPush     = false;
     d->streamBucket.Reset();
     UE_LOGI("[PROP-DRIVE] HOST GRANT eid=%u gen=%u (%s) -- the host row on it becomes slot %u's", d->eid,
             static_cast<unsigned>(d->gen), why ? why : "", static_cast<unsigned>(slot));
@@ -262,10 +270,13 @@ void Claim(void* actor, const char* reason) {
     Open(actor, /*claimed=*/true, why);
 }
 
-void Coast(void* actor, const char* reason) {
+bool Coast(void* actor, const char* reason, CoastCause cause) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::Coast");
-    if (!actor) return;
+    if (!actor) return false;
     if (Driven* d = Find(actor)) {
+        // A body's push opens a row and touches none: the row that stands (a let-go's, a verb's, a client's) is the prop's
+        // one source, and a prop that still moves re-times its own row at each read.
+        if (cause == CoastCause::BodyPush) return false;
         // A push on a prop a client syncs: the row becomes the host's, coasting from the client's last pose (the
         // same override as Claim's).
         if (d->syncer != 0) {
@@ -276,21 +287,73 @@ void Coast(void* actor, const char* reason) {
         // read every tick.
         d->nextProbeMs = 0;
         d->lastMoveMs = coop::active_drive::NowMs();
-        return;
+        return true;
     }
-    Open(actor, /*claimed=*/false, reason ? reason : "");
+    return Open(actor, /*claimed=*/false, reason ? reason : "", /*syncer=*/0, cause) != nullptr;
+}
+
+bool BodyAsleepForEnd(void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::BodyAsleepForEnd");
+    const int awake = E::ReadActorRootBodyAwake(actor);
+    if (awake == 0) return true;
+    if (awake > 0) return false;
+    static uint64_t sUnread = 0;
+    static std::vector<std::wstring> sSaid;
+    ++sUnread;
+    const std::wstring cls = R::ClassNameOf(actor);
+    if (std::find(sSaid.begin(), sSaid.end(), cls) == sSaid.end()) {
+        sSaid.push_back(cls);
+        UE_LOGI("prop_drive_host: %ls rest by still-time: the body's sleep could not be read (#%llu)", cls.c_str(),
+                static_cast<unsigned long long>(sUnread));
+    }
+    return true;
+}
+
+bool IsDriven(void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::IsDriven");
+    return actor && Find(actor) != nullptr;
+}
+
+bool OpenCoastCause(uint32_t eid, CoastCause& out) {
+    const Driven* d = FindByEid(eid);
+    if (!d || d->syncer != 0 || d->claimed) return false;
+    out = d->cause;
+    return true;
+}
+
+bool CoastCapReached(void* actor, const char* reason, bool birth) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::CoastCapReached");
+    const size_t cap = birth ? coop::prop_drive_rules::kMaxCoasting - coop::prop_drive_rules::kCoastPushReserve
+                             : coop::prop_drive_rules::kMaxCoasting;
+    if (CoastingCount() < cap) return false;
+    if (actor && Find(actor)) return false;   // already driven: a coast only re-times its row, it opens no new one
+    // Said for the first three refusals and at each doubling after, like the session's other counters: a pile past the
+    // cap would otherwise print a line per prop.
+    const uint64_t n = ++g_coastRefused;
+    if (n > 3 && (n & (n - 1)) != 0) return true;
+    const std::wstring keyW = actor ? PR::GetInteractableKeyString(actor) : std::wstring();
+    std::string key;
+    for (const wchar_t c : keyW) key.push_back(static_cast<char>(c));
+    UE_LOGI("prop_drive_host: coast refused past kMaxCoasting (%zu) for '%s' -- %s; refused %llu this session",
+            cap, key.c_str(), reason ? reason : "",
+            static_cast<unsigned long long>(n));
+    return true;
 }
 
 void CoastLetGo(void* actor, const char* reason) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::CoastLetGo");
     namespace pf = coop::net::propspawn_flags;
-    constexpr size_t kMaxCoasting = 32;   // the births' cap (host_spawn_watcher): one bound for every coasting row
-    if (!actor || CoastingCount() >= kMaxCoasting) return;
+    // The coast drill's red arm: no let-go is flown, so each peer's copy falls by its own physics. Resolved once.
+    static const bool s_off = coop::config::ResolveFlag(coop::config_registry::rows::coast_letgo_off);
+    if (s_off) return;
+    if (!actor) return;
     // The same refusals as a falling birth: no id means no peer holds a copy, and a body at rest, frozen, static or
-    // asleep has nothing to fly. Said by neither, since a let-go is the commonest thing a hand does.
+    // asleep has nothing to fly. Said by neither, since a let-go is the commonest thing a hand does; the cap is asked
+    // last, so a prop that would not coast anyway is never counted as refused by it.
     if (coop::prop_element_tracker::GetPropElementIdForActor(actor) == coop::element::kInvalidId) return;
     if (!(coop::prop_wire_parity::PhysFlagsOf(actor) & pf::kSimulatePhysics)) return;
-    Coast(actor, reason ? reason : "release");
+    if (CoastCapReached(actor, reason ? reason : "release")) return;
+    Coast(actor, reason ? reason : "release", CoastCause::LetGo);
 }
 
 void OverrideClientSyncer(void* actor, const char* reason) {
@@ -406,6 +469,7 @@ static void Tick(coop::net::Session& s) {
             joined += PublishAdmitted(s, d);
             continue;
         }
+        coop::dev::end_trace::NoteOpenRow("HOST", d.eid, d.gen, actor);   // a latched bool read when off
         if (now < d.nextProbeMs) continue;   // resting: read at the slow cadence
         // A pose read before its turn would be overwritten before any send.
         const coop::net::PoseTurn turn = s.PropDrivePoseTurn(d.eid);
@@ -450,6 +514,12 @@ static void Tick(coop::net::Session& s) {
             continue;
         }
         if (now - d.lastMoveMs >= kRestMs) {
+            // A coast ends when the body has stood still AND is asleep, as a client author's does (prop_syncer_client
+            // StepSyncing): a body that keeps creeping keeps streaming. An unread pose still ends at the last pose sent.
+            if (!d.claimed && poseRead && !BodyAsleepForEnd(actor)) {
+                d.nextProbeMs = now + kRestProbeMs;
+                continue;
+            }
             if (!d.claimed) {
                 if (poseRead)        SendEnd(s, d, actor, loc, rot, "rested");
                 else if (d.everSent) SendEnd(s, d, actor, d.sentLoc, d.sentRot, "rested");
@@ -467,7 +537,7 @@ static void Tick(coop::net::Session& s) {
 
 void Pump(coop::net::Session& s, bool isHost) {
     coop::prop_syncer::Tick(s, isHost);   // first: the role for a feeder's Claim, and a client's rows of the props it syncs
-    coop::props::body_push::Tick(s, isHost);   // a feeder: the props this peer's player walks into
+    coop::props::body_push::Tick(s, isHost);   // a feeder: the props a player's body walks into
     if (isHost) {
         // The order is the point: a client's rows are judged first, so the row's turn in Tick publishes what
         // this tick admitted, and the apply tick then advances the host's copies they just fed.
@@ -479,8 +549,10 @@ void Pump(coop::net::Session& s, bool isHost) {
 
 void OnDisconnect() {
     coop::props::body_push::OnDisconnect();
+    coop::prop_wire_parity::OnDisconnect();
     g_driven.clear();
     g_turn = 0;
+    g_coastRefused = 0;
     g_genByEid.clear();
     coop::prop_syncer_host::OnDisconnect();   // its buckets, hand-back records and counters go with the rows
     coop::prop_syncer::OnDisconnect();        // a client's table, backoffs and counters (a link that drops ends the session)
