@@ -33,3 +33,11 @@ CFG_FLAG(sweep_fresh_universe_off, "sweep_fresh_universe_off", "dev", false, "VO
     "Drill red (the joining client, with pile_orphan_drill=1 on both peers): 1 stops the join sweep walking the "
     "native piles and clumps no host eid owns, so nothing finds an orphan and the drill must FAIL on the pile and the "
     "clump the host no longer has. 0 = the sweep walks them, as designed.")
+
+CFG_FLAG(pile_orphan_drill, "pile_orphan_drill", "dev", false, "VOTVCOOP_PILE_ORPHAN_DRILL",
+    "Drill (BOTH peers, with VOTVCOOP_CAN_DIR set to one folder for both; run it on a fresh host world, one client): "
+    "right after the capture of the joiner's world the host destroys one isolated chip pile and the garbage clump and "
+    "leaves their class and position for the joiner; when its join sweep has run the joiner looks for a native of "
+    "that class within 1 cm of each, and says rig: VERDICT pile-orphan FAIL the moment either survives, PASS when both "
+    "are gone, INVALID when the host could not stage both or the joiner held no native there. Reds: "
+    "sweep_bound_count_off and sweep_fresh_universe_off.")

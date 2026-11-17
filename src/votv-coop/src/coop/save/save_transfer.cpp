@@ -14,6 +14,7 @@
 #include "coop/config/config_registry.h"  // [dev] stall_world_stream_at_pct, the stalled-download drill
 #include "coop/dev/atv_spawn_drill.h"  // [dev] the ATV spawn drill's divergence arm acts as a stream ends
 #include "coop/dev/host_settle_drill.h"  // [dev] the settle drill's hold and capture readings
+#include "coop/dev/pile_orphan_drill.h"  // [dev] the orphan drill's host half, right after the capture
 #include "coop/interactables/meadow_db_sync.h"  // the join-seed multiset snapshot at the blob instant
 #include "coop/interactables/download_arm_sync.h"  // the armed state at the capture
 #include "coop/interactables/signal_sync.h"  // the seed snapshot capture and cancel
@@ -429,6 +430,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
             // fallback leaves each one empty and the divergence sweep keeps full responsibility
             // for that join.
             coop::join_window_baseline::CaptureForSlot(peerSlot);  // keyed keys + save-time xforms
+            coop::dev::pile_orphan_drill::NoteCaptured(peerSlot);  // [dev] the host loses a pile and a clump after the cut (a latched bool read when off)
             coop::hook_retrieve::CaptureJoinHooks(peerSlot);  // the anchored hooks this blob holds, for the join's removes
             // The meadow-DB content-hash multiset; the ready-edge seed diffs it against the
             // then-live store. The stale fallback leaves it invalid, so no seed.

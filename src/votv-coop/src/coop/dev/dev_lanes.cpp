@@ -132,6 +132,7 @@
 #include "coop/dev/bind_wait_selftest.h"  // [dev] the bind wait's rules on stated inputs
 #include "coop/dev/pile_late_load.h"   // [dev] the late-load seam: one save-loaded clump kept aside until its row defers
 #include "coop/dev/pile_defer_drill.h"  // [dev] a joiner's real pile deferrals counted and their outcome checked, the host comparing poses
+#include "coop/dev/pile_orphan_drill.h"  // [dev] a pile and a clump the host loses after the capture must be gone from the joiner after its sweep
 #include "coop/dev/order_selftest.h"  // exercise host-side order pricing end to end
 #include "coop/dev/physmods_drill.h"  // [dev] a module plug and unplug are sent at their verbs, and a rejoin's load sends none
 #include "coop/dev/pinecone_probe.h"
@@ -297,6 +298,7 @@ void EndSession() {
     coop::dev::bind_wait_selftest::OnDisconnect();  // [dev] a rejoin's client runs the checks again
     coop::dev::pile_late_load::OnDisconnect();  // [dev] a clump still aside goes back to its saved pose
     coop::dev::pile_defer_drill::OnDisconnect();  // [dev] a rejoin's client counts and reports again
+    coop::dev::pile_orphan_drill::OnDisconnect();  // [dev] a rejoin's client reads and judges again
     coop::dev::meadow_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::lid_drill::OnDisconnect();  // [dev] the PC and the legs belong to one world
     coop::dev::subject_drill::OnDisconnect();  // [dev] the drives and the legs belong to one world
@@ -404,6 +406,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::late_join_drill::Tick(&session);  // [dev] the bind wait's tallies (a latched bool read when off)
     coop::dev::pile_late_load::Tick();  // [dev] the late-load seam (a cached bool read when off)
     coop::dev::pile_defer_drill::Tick(&session);  // [dev] the pile deferral drill (a latched enum read when off)
+    coop::dev::pile_orphan_drill::Tick(&session);  // [dev] the pile orphan drill (a latched bool read when off)
     coop::dev::download_drill::Tick(&session);  // [dev] the download drill (two short string compares when off)
     coop::dev::laptop_drill::Tick(&session);  // [dev] the laptop drill (a latched read when off)
     coop::dev::laptop_power_drill::Tick(&session);  // [dev] the laptop power drill (a bool read when off)

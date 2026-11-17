@@ -11,6 +11,7 @@
 #include "coop/creatures/npc_sync.h"
 #include "coop/dev/force_overdestroy_test.h"
 #include "coop/dev/join_window_pos_trace.h"  // the keyed-prop join-window position trace
+#include "coop/dev/pile_orphan_drill.h"      // [dev] the orphan drill reads the world at the sweep's two edges
 #include "coop/dev/spawn_order_probe.h"
 #include "coop/element/element.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors, the dead-actor mirror-row census
@@ -145,6 +146,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         UE_LOGW("join_membership_sweep: claim sweep requested but tracking is not armed -- skipping");
         return;
     }
+    coop::dev::pile_orphan_drill::NoteSweepBegin();  // [dev] the orphan drill's precondition (a latched bool read when off)
     // The universe is what the host snapshot can express a binding for: keyed interactables and the
     // keyless trash lineage (a chip pile or a garbage clump at rest, eid-expressed), plus the
     // wire-suppressed intermediate the client already destroys on sight while connected. Any other
@@ -463,6 +465,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
         g_selfAuthored.clear();   // the world is adjudicated (here: left alone); nothing left to spare
         g_claimTrackingActive = false;
         coop::pile_spawn_bind::Reset();
+        coop::dev::pile_orphan_drill::NoteSweepDone(/*aborted=*/true);  // [dev] the orphans survive an aborted sweep
         return;
     }
 
@@ -488,6 +491,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
             "%d claimed (expressed on the wire this bracket), %d spared (the hand axis, the player's own, "
             "per-player state), %d unclaimed locals destroyed (client adopts host world)",
             inClass, claimedCount, sparedCount, static_cast<int>(doomed.size()));
+    coop::dev::pile_orphan_drill::NoteSweepDone(/*aborted=*/false);  // [dev] the orphan drill's verdict (a latched bool read when off)
     if (!heldUnbound.empty())
         UE_LOGI("join_membership_sweep:   %zu of them held natives the host never bound (past the completeness floor)",
                 heldUnbound.size());

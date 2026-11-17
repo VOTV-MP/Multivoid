@@ -321,6 +321,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/container_parity.cpp
     src/coop/dev/pile_defer_drill.cpp
     src/coop/dev/pile_defer_drill_host.cpp
+    src/coop/dev/pile_orphan_drill.cpp
     src/coop/dev/client_model_probe.cpp
     src/coop/dev/atv_eject_drill.cpp
     src/coop/dev/atv_gate_drill.cpp
