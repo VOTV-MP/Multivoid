@@ -71,13 +71,14 @@ std::wstring PortableIdentity(void* actor) {
                 // NO IDENTITY -- and say so loudly ONCE per class rather than returning a guess.
                 // Two different things land here and the log must not hide either: an actor whose
                 // Key really is None, and an actor of a class `ue_wrap::prop::GetInteractableKey`
-                // cannot read AT ALL. That reader covers the Aprop_C lineage, trashBitsPile and
-                // chipPile/clump, and returns FName{0,0} for everything else, which `ToString`
-                // renders as the string "None", byte identical to a genuinely keyless actor
-                // (prop.cpp:250-266); `AtriggerBase_C` is outside it. Deliberately NOT widened: the
-                // reader has 33 call sites, all in the prop lanes, and widening it changes what
-                // every one of them sees even though none of their code changes. So the line names
-                // the CLASS, which is what tells the two cases apart.
+                // cannot read AT ALL. That reader covers the Aprop_C lineage, trashBitsPile,
+                // chipPile/clump and the four building pieces (nail, walls, poster: the one
+                // actor_save lineage it reads), and returns FName{0,0} for everything else, which
+                // `ToString` renders as the string "None", byte identical to a genuinely keyless
+                // actor (prop.cpp:250-266); `AtriggerBase_C` is outside it. The other actor_save
+                // children (the crematorium, the dish) are served by the GetActorSaveKeyString
+                // fallback above. So the line names the CLASS, which is what tells the two cases
+                // apart.
                 static std::mutex sSeenMu;
                 static std::set<std::wstring> sSeen;
                 const std::wstring cls = R::ClassNameOf(cur);

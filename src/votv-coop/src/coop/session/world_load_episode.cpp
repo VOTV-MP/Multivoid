@@ -441,6 +441,7 @@ bool InEpisode() { return g_inEpisode.load(std::memory_order_relaxed); }
 int UnsettledBuildPieces() { return g_lastUnsettledPieces; }
 
 bool QuiescedByStability() { return g_quiesced && g_quiescedByStability; }
+
 // ---- The reconcile window; see the header block ----
 
 void RaiseReconcileForReload() {
