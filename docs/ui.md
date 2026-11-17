@@ -140,9 +140,10 @@ Events (the game's events by kind; a red event, one that advances the story or m
 Ctrl+click), Entities (the game's creatures), World (snow, the clock, and helpers for the players: restore
 vitals for everyone or one player, bring the clients or one player to the host, go to a player), Myself
 (the free camera and position readout the host grants itself) and, on a host, Player cheats. A client sees
-**Player tools** instead: Myself (teleport to the host, unstuck, the free camera and position readout when
+**Player tools** instead: Myself (unstuck onto the nearest safe floor, the free camera and position readout when
 the host grants them) and, only while the host's setting "Let players use cheats" (`net.allow_player_cheats`,
-a replicated server row, off by default, also in Administration > Server settings) is on, the same Items,
+a replicated server row, off by default, also in Administration > Server settings) is on and the host has not withheld the
+right from that player, Teleport to the host and the same Items,
 Economy and Events panes. The panes call `coop/cheats/cheat_request`: the host's call runs at once; a client's
 is a `CheatRequest` the host checks and runs ([players.md](players.md)), so a client never writes the world.
 The developer's diagnostics (the object and bone overlays, the stamina test) stay under Player in the developer

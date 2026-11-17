@@ -29,6 +29,11 @@ void Install(coop::net::Session* session);
 // The host's setting net.allow_player_cheats: on a client, the host's value as replicated. Any thread.
 bool PlayersMayCheat();
 
+// CLIENT: whether this machine's panes offer the cheat tools: the host's master setting AND this machine's own right,
+// the projected grant `Cheats` the host sends (multivoid.dev.local.cheats). A gate on the UI only: a client moves its
+// own body without asking the host, and the host judges every request again. Any thread.
+bool ClientMayCheat();
+
 // Ask for a cheat. Any thread. `target` is coop::net::kCheatInFront or the slot of the player to spawn at.
 void SpawnItem(const std::string& name, int count, int target);
 void AddPoints(int amount);

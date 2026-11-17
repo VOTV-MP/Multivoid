@@ -271,8 +271,8 @@ msgstr "[[%s (you)]]"
 msgid "(Q closes it too)"
 msgstr "[[(Q closes it too)]]"
 
-msgid "(Unstuck lifts you 1.5 m straight up)"
-msgstr "[[(Unstuck lifts you 1.5 m straight up)]]"
+msgid "(Unstuck puts you on the nearest safe floor)"
+msgstr "[[(Unstuck puts you on the nearest safe floor)]]"
 
 msgid "(food, sleep and health)"
 msgstr "[[(food, sleep and health)]]"
@@ -881,6 +881,9 @@ msgstr "[[No remote players connected.]]"
 msgid "No route to the host through its firewall or router."
 msgstr "[[No route to the host through its firewall or router.]]"
 
+msgid "No safe place to land there."
+msgstr "[[No safe place to land there.]]"
+
 msgid "No tools here yet -- coming soon."
 msgstr "[[No tools here yet -- coming soon.]]"
 
@@ -1457,6 +1460,9 @@ msgstr "[[The host has no randomness to challenge with.]]"
 
 msgid "The host has not allowed cheats."
 msgstr "[[The host has not allowed cheats.]]"
+
+msgid "The host has not given you the cheat tools."
+msgstr "[[The host has not given you the cheat tools.]]"
 
 msgid "The host is settling its world"
 msgstr "[[The host is settling its world]]"

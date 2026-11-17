@@ -2,13 +2,16 @@
 
 #include "coop/cheats/self_teleport.h"
 
+#include "coop/comms/chat_feed.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/teleport_client.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_nav.h"
 
 #include <cmath>
 
@@ -19,15 +22,46 @@ namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
 
 constexpr float kBehindCm = 100.f;
-constexpr float kLiftCm = 50.f;
-constexpr float kUnstuckCm = 150.f;
+// How far the NavMesh may be from the wanted point: a point beside a wall slides to the floor on its own side.
+constexpr ue_wrap::FVector kNavExtent{150.f, 150.f, 250.f};
+
+void NoSafePlace() {
+    coop::chat_feed::Push(std::string(l10n::T("No safe place to land there.")), coop::chat_feed::Keep::Transient);
+}
+
+// Teleport this machine's body onto the NavMesh point nearest `want`, facing `yaw`, keeping the view's pitch and roll.
+// The NavMesh is the floor the game lets a walker stand on, so the body never lands in a wall or under the ground (a
+// body put inside geometry is hidden by the game's out-of-bounds check). False, with the player told and nothing moved,
+// when no NavMesh point lies near `want`.
+bool LandNear(void* local, const ue_wrap::FVector& want, float yaw) {
+    ue_wrap::FVector floor{};
+    const float halfHeight = E::GetActorCharacterHalfHeight(local);
+    if (!E::ProjectToNav(local, want, kNavExtent, &floor) || !(halfHeight > 0.f)) {
+        UE_LOGW("cheats: no NavMesh within reach of (%.0f, %.0f, %.0f) -- the player stays where it is", want.X, want.Y,
+                want.Z);
+        NoSafePlace();
+        return false;
+    }
+    ue_wrap::FRotator view{};
+    if (void* const ctrl = E::GetController(local)) view = E::GetControlRotation(ctrl);
+    coop::teleport_client::ApplyArgs args{};
+    args.locX = floor.X;
+    args.locY = floor.Y;
+    args.locZ = floor.Z + halfHeight;   // the capsule's centre stands one half-height above the floor
+    args.rotPitch = view.Pitch;
+    args.rotYaw = yaw;
+    args.rotRoll = view.Roll;
+    coop::teleport_client::ApplyLocally(args);
+    return true;
+}
 
 void MoveToPlayer(int slot) {
     if (slot < 0 || slot >= coop::players::kMaxPeers) return;
     auto& reg = coop::players::Registry::Get();
+    void* const local = reg.Local();
     coop::RemotePlayer* const puppet = reg.Puppet(static_cast<uint8_t>(slot));
     ue_wrap::FVector at{};
-    if (!puppet || !puppet->valid() || !puppet->HasPose() || !puppet->TryGetLocation(at)) {
+    if (!local || !puppet || !puppet->valid() || !puppet->HasPose() || !puppet->TryGetLocation(at)) {
         UE_LOGW("cheats: cannot teleport to slot %d -- that player has no place here yet", slot);
         return;
     }
@@ -35,12 +69,7 @@ void MoveToPlayer(int slot) {
     const float len = std::sqrt(aim.X * aim.X + aim.Y * aim.Y);
     const float fx = len > 0.001f ? aim.X / len : 1.f, fy = len > 0.001f ? aim.Y / len : 0.f;
     const float yawDeg = std::atan2(fy, fx) * 57.2957795f;
-    coop::teleport_client::ApplyArgs args{};
-    args.locX = at.X - fx * kBehindCm;
-    args.locY = at.Y - fy * kBehindCm;
-    args.locZ = at.Z + kLiftCm;
-    args.rotYaw = yawDeg;
-    coop::teleport_client::ApplyLocally(args);
+    LandNear(local, ue_wrap::FVector{at.X - fx * kBehindCm, at.Y - fy * kBehindCm, at.Z}, yawDeg);
 }
 
 void Lift() {
@@ -52,12 +81,7 @@ void Lift() {
     }
     float yaw = 0.f;
     if (void* const ctrl = E::GetController(local)) yaw = E::GetControlRotation(ctrl).Yaw;
-    coop::teleport_client::ApplyArgs args{};
-    args.locX = at.X;
-    args.locY = at.Y;
-    args.locZ = at.Z + kUnstuckCm;
-    args.rotYaw = yaw;
-    coop::teleport_client::ApplyLocally(args);
+    LandNear(local, at, yaw);
 }
 
 }  // namespace

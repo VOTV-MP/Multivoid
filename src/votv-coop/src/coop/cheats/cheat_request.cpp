@@ -13,6 +13,7 @@
 #include "coop/permissions/permission_host.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/session/local_grants.h"
 #include "coop/text/utf8_codec.h"
 #include "l10n/l10n.h"
 #include "ue_wrap/core/game_thread.h"
@@ -211,6 +212,10 @@ bool PrintableAscii(const char* s, size_t n) {
 void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
 
 bool PlayersMayCheat() { return coop::config::ResolveFlag(coop::config_registry::rows::net_allow_player_cheats); }
+
+bool ClientMayCheat() {
+    return PlayersMayCheat() && coop::session::local_grants::Has(coop::permissions::grants::Projected::Cheats);
+}
 
 void SpawnItem(const std::string& name, int count, int target) {
     Request r;

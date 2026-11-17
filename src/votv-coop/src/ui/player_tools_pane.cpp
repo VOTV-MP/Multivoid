@@ -26,13 +26,17 @@ void RenderMyself() {
     const bool client = !coop::dev_gate::Allowed();
 
     ImGui::SeparatorText(l10n::Label(l10n::T("Move"), "myself_move"));
-    if (client) {
+    // Teleport to the host is a cheat: offered while the host allows players cheats and has not withheld this player's
+    // right. The gate is this menu's: the move is this machine's own (a modified client could make it anyway), and the
+    // host's body is not moved by it.
+    const bool mayCheat = client && coop::cheats::ClientMayCheat();
+    if (mayCheat) {
         if (ImGui::Button(l10n::Label(l10n::T("Teleport to the host"), "tp_to_host"))) coop::cheats::self_teleport::ToPlayer(0);
         ImGui::SameLine();
     }
     if (ImGui::Button(l10n::Label(l10n::T("Unstuck"), "unstuck"))) coop::cheats::self_teleport::Unstuck();
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", l10n::T("(Unstuck lifts you 1.5 m straight up)"));
+    ImGui::TextDisabled("%s", l10n::T("(Unstuck puts you on the nearest safe floor)"));
 
     ImGui::SeparatorText(l10n::Label(l10n::T("Tools the host grants"), "myself_grants"));
     if (LG::Has(G::Projected::Freecam)) {
@@ -54,9 +58,11 @@ void RenderMyself() {
     if (client) {
         ImGui::Spacing();
         ImGui::SeparatorText(l10n::Label(l10n::T("Cheats"), "myself_cheats"));
-        if (coop::cheats::PlayersMayCheat())
+        if (mayCheat)
             ImGui::TextUnformatted(l10n::T("The host lets players use cheats: Items, Economy and Events are on the left. "
                                            "Each use is a request the host checks and runs."));
+        else if (coop::cheats::PlayersMayCheat())
+            ImGui::TextDisabled("%s", l10n::T("The host has not given you the cheat tools."));
         else
             ImGui::TextDisabled("%s", l10n::T("The host has not allowed cheats."));
     }

@@ -332,7 +332,7 @@ msgid "(Q closes it too)"
 msgstr ""
 
 #: src/ui/player_tools_pane.cpp
-msgid "(Unstuck lifts you 1.5 m straight up)"
+msgid "(Unstuck puts you on the nearest safe floor)"
 msgstr ""
 
 #: src/ui/cheat_world_pane.cpp
@@ -1113,6 +1113,10 @@ msgstr ""
 msgid "No route to the host through its firewall or router."
 msgstr ""
 
+#: src/coop/cheats/self_teleport.cpp
+msgid "No safe place to land there."
+msgstr ""
+
 #: src/ui/dev_menu.cpp
 msgid "No tools here yet -- coming soon."
 msgstr ""
@@ -1834,6 +1838,10 @@ msgstr ""
 
 #: src/coop/cheats/cheat_request.cpp src/ui/player_tools_pane.cpp
 msgid "The host has not allowed cheats."
+msgstr ""
+
+#: src/ui/player_tools_pane.cpp
+msgid "The host has not given you the cheat tools."
 msgstr ""
 
 #: src/ui/loading_screen.cpp

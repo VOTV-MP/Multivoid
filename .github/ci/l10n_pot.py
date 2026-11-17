@@ -50,6 +50,7 @@ ALLOWLIST = [
     "src/coop/bug_report/report_files.cpp",
     "src/coop/bug_report/report_form.cpp",
     "src/coop/cheats/cheat_request.cpp",
+    "src/coop/cheats/self_teleport.cpp",
     "src/coop/commands/command_sync.cpp",
     "src/coop/comms/peer_action_feed.cpp",
     "src/coop/creatures/kerfur_command_answer.cpp",

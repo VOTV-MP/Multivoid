@@ -5,7 +5,7 @@
 
 #include "l10n/l10n.h"
 
-#include "coop/cheats/cheat_request.h"  // PlayersMayCheat -- the Player tools' cheat subs
+#include "coop/cheats/cheat_request.h"  // ClientMayCheat -- the Player tools' cheat subs
 #include "coop/dev/dev_gate.h"
 #include "coop/permissions/grants_core.h"
 #include "coop/session/local_grants.h"
@@ -346,7 +346,7 @@ void Render() {
     const bool devMode = DevMode();
     const bool authority = ::coop::dev_gate::Allowed();   // the host or a solo game (lock-free, render-thread safe)
     const Viewer viewer{devMode, coop::roster::LocalIsHost(), authority, !authority,
-                        !authority && ::coop::cheats::PlayersMayCheat()};
+                        !authority && ::coop::cheats::ClientMayCheat()};
     const auto& tree = Tree();
 
     if (g_wantSelect.exchange(false, std::memory_order_acq_rel)) {

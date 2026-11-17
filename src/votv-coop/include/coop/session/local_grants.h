@@ -25,8 +25,8 @@ void Install(coop::net::Session* session);
 // true. Running: the packed word read FIRST, then the current serial.
 bool Has(coop::permissions::grants::Projected n);
 
-// True when `Has` is true for any of the projected features: the F1 dev panes have something to
-// show. Any thread.
+// True when `Has` is true for any of the projected dev features (every one but the cheats right, which the player
+// tools read themselves): the F1 dev panes have something to show. Any thread.
 bool AnyDevLocal();
 
 // The serial the stored bits were written for (the packed word's high half; 0 before any write).

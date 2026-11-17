@@ -29,8 +29,10 @@ bool Has(G::Projected n) {
 }
 
 bool AnyDevLocal() {
-    for (uint8_t i = 0; i < static_cast<uint8_t>(G::Projected::Count); ++i)
+    for (uint8_t i = 0; i < static_cast<uint8_t>(G::Projected::Count); ++i) {
+        if (i == static_cast<uint8_t>(G::Projected::Cheats)) continue;   // a player's right, not a dev pane's tool
         if (Has(static_cast<G::Projected>(i))) return true;
+    }
     return false;
 }
 

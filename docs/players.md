@@ -441,12 +441,16 @@ host. A setting that holds a password is never set or shown by command.
 The host's F1 **Host tools** (Items, Economy, Events, Entities, World; see [ui.md](ui.md)) are the host's alone. The
 server setting "Let players use cheats", `net.allow_player_cheats`, is off by default; changed with `/set` or by the
 checkbox in Host tools > Player cheats, it persists with the host's other settings and tells every player when it
-changes. While it is on, a client's menu offers Player tools > Items, Economy and Events, and each use is a
+changes. The host can also withhold the right from one player: the permission node `multivoid.dev.local.cheats` is
+granted by default and projected to each client like the other local grants (Source's `sv_cheats` is the master switch,
+MTA's per-right check the per-player layer). While the setting is on and the right is held, a client's menu offers
+Player tools > Items, Economy and Events (and Teleport to the host, a client-local move), and each use is a
 `CheatRequest`: a prop name, a count and where (in front of the sender, or at a player), a signed amount of points, or an
 event name. The host judges everything and runs the cheat itself; the client writes nothing. It refuses with the
-setting off, a request from a world that is not up, a name that is not text, a count over 10 or an amount over 100000, an item the
-game's own list lacks or whose class does not load, an unknown event, an event of the story, save or relocation kinds, and
-a sender past its budget (a burst of eight, then three a second). A removal of points stops at zero. Each request is
+setting off or the right withheld (an id that is not proved holds none), a request from a world that is not up, a name
+that is not text, a count over 10 or an amount over 100000, an item the game's own list lacks or whose class does not
+load, an unknown event, an event that is not Safe or is a story event, a prop that explodes, and a sender past its budget
+(a burst of eight, then three a second). A removal of points stops at zero. Each request is
 logged on the host with the player's name and what came of it, and the host's chat says what each player did;
 the player is told the result (`CheatResult`). A spawned prop is an ordinary host spawn, expressed to every client by the prop lane; a credit
 is mirrored by the balance lane; an event is broadcast by the event watch.
