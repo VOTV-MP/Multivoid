@@ -51,7 +51,7 @@ const NoReplayRow kNoReplayRows[] = {
     // The ship: the trigger-box arm's overlap spawns the ship and the alarm lamp (and possibly
     // NPC leaves); replaying the arm would spawn them client-local. Host-only until the ship gets
     // a lane:
-    { "arirShip", "actor spawn on armed overlap (no lane)" },
+    { "arirShip", "actor spawn on armed overlap (no lane); the sky ship it raises rides arir_ship_sync" },
     // The obelisk's graph is not a bare flag flip: obelisk_C spawns prop_C/prop_obelisk_C actors
     // and punches getMainPlayer -- a replay would double-spawn the props client-local and hit the
     // client's own player. Host-only until the scene gets a lane:

@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 300;
+inline constexpr uint16_t kProtocolVersion = 301;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1477,6 +1477,9 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+    // HOST->ALL: the Antibreather cave's entrance rock shut or open (coop/world/cave_rock_sync), when it changes and to a
+    // joiner. Not pre-world. CaveRockPayload.
+    CaveRockState = 274,
 };
 
 #pragma pack(push, 1)
@@ -2283,6 +2286,14 @@ struct RoombaPayload {
     uint8_t  pad[3];  // zero
 };
 static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
+
+// CaveRockState. The spawner (antibreatherSPawner_C, placed in the level) by its object name.
+struct CaveRockPayload {
+    WireKey name;      // 32 -- the spawner's object name
+    uint8_t closed;    // 1 -- the rock shown, the cave shut
+    uint8_t _pad[3];   // 3 -- zero
+};
+static_assert(sizeof(CaveRockPayload) == 36, "CaveRockPayload must be 36 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set
