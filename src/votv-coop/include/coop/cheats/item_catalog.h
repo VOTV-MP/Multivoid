@@ -7,8 +7,8 @@
 // thread copies out; a reader never waits. The game fills the list some seconds after a world loads and then calls
 // intComs_propRenderer_finishProps on its gamemode: a script-gate watch on that call reads the list the moment it is
 // complete, in every world, and a list read in another world is not served. A read at the first ask of a world covers
-// a world whose fill has already passed. The catalog holds the script gate from its first ask on (a coop session
-// holds it anyway; a solo game does not).
+// a world whose fill has already passed. The catalog holds the script gate from the first ask of a world until the
+// list is read, then gives it back (a coop session holds it anyway; a solo game does not).
 
 #pragma once
 

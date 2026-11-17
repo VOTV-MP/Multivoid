@@ -35,7 +35,8 @@ std::shared_ptr<const std::vector<std::string>> g_names;   // guarded by g_mutex
 // list again in every world it loads.
 std::atomic<uint32_t> g_builtGen{0};
 std::atomic<uint32_t> g_askedGen{0};   // the generation RequestRefresh last posted a read for
-bool g_armed = false;                  // game thread: the watch is registered and the gate held
+bool g_watched = false;                // game thread: the watch on the fill is registered
+bool g_held = false;                   // game thread: this catalog holds the script gate, for the world it waits on
 
 // Game thread only: the lower-cased name to the list's own spelling.
 std::unordered_map<std::wstring, std::wstring> g_byLower;
@@ -74,6 +75,10 @@ bool Refresh() {
         g_names = std::move(names);
     }
     g_builtGen.store(WI::Generation(), std::memory_order_release);
+    if (g_held) {   // the list of this world is read: the gate is needed again only at the next world's
+        g_held = false;
+        sg::Release("the item catalog");
+    }
     UE_LOGI("cheats: the game lists %zu spawnable props (%zu names not plain text were left out)", g_byLower.size(),
             skipped);
     return true;
@@ -82,16 +87,21 @@ bool Refresh() {
 // The watch's post callback runs inside a Blueprint frame: the read waits for the game thread's next task.
 void OnFilled(const sg::Call&) { GT::Post([] { Refresh(); }); }
 
-// Hold the gate and watch the fill, once. A coop session holds the gate for its life; a solo game does not, so the
-// catalog takes its own hold the first time it is asked. Game thread.
+// Watch the fill (registered once) and hold the gate until this world's list is read. A coop session holds the gate
+// for its life; a solo game does not, so the catalog holds it from the first ask of each world until the read, which
+// gives it back (Refresh). Game thread.
 void Arm() {
-    if (g_armed) return;
-    g_armed = true;
-    sg::Acquire("the item catalog");
-    if (!sg::WatchName(kRowFilled, kTag, nullptr, &OnFilled))
-        UE_LOGE("cheats: the watch on %ls::%ls was refused -- the list is read only when it is asked for",
-                kRowFilled.Class(), kRowFilled.Name());
-    sg::ResolvePendingNames();
+    if (!g_watched) {
+        g_watched = true;
+        if (!sg::WatchName(kRowFilled, kTag, nullptr, &OnFilled))
+            UE_LOGE("cheats: the watch on %ls::%ls was refused -- the list is read only when it is asked for",
+                    kRowFilled.Class(), kRowFilled.Name());
+        sg::ResolvePendingNames();
+    }
+    if (!g_held) {
+        g_held = true;
+        sg::Acquire("the item catalog");
+    }
 }
 
 bool Fresh() { return g_builtGen.load(std::memory_order_acquire) == WI::Generation(); }
@@ -111,15 +121,16 @@ void RequestRefresh() {
     // One read for this world: if the game has not filled its list yet, the watch reads it at the fill.
     if (asked == gen || !g_askedGen.compare_exchange_strong(asked, gen)) return;
     GT::Post([] {
-        Arm();
-        Refresh();
+        if (!Refresh()) Arm();   // a list already filled needs no gate; one not filled is read at the fill
     });
 }
 
 Lookup Resolve(std::string_view typed, std::wstring& canonical) {
     if (!Fresh()) {   // a request can arrive before anyone looked at the list in this world
-        Arm();
-        if (!Refresh()) return Lookup::Unfilled;
+        if (!Refresh()) {
+            Arm();
+            return Lookup::Unfilled;
+        }
     }
     if (typed.empty()) return Lookup::Unknown;
     const auto it = g_byLower.find(Lower(std::wstring(typed.begin(), typed.end())));

@@ -55,22 +55,35 @@ bool Shown(int vis) { return vis == 0 || vis == 3 || vis == 4; }
 // watcher.
 std::atomic<bool> g_open{false};
 
+// Whether the menu is up, and with it the script gate: the watch on the game's close needs the gate while the menu
+// is up and nothing else does, so a solo game pays for it only then (a coop session holds the gate anyway). Game
+// thread.
+void SetOpen(bool open) {
+    static bool sHeld = false;
+    if (open && !sHeld) {
+        sHeld = true;
+        sg::Acquire("the spawn menu");
+    } else if (!open && sHeld) {
+        sHeld = false;
+        sg::Release("the spawn menu");
+    }
+    g_open.store(open, std::memory_order_release);
+}
+
 // After the game's Q release ran: when the widget is no longer drawn the game closed it, so the open this layer
 // owes a close for is over and the key watcher can end. Read once, at the event.
 void OnQRelease(const sg::Call&) {
     if (!g_open.load(std::memory_order_acquire)) return;
     if (Shown(ReadVis(FindSpawnMenuWidget()))) return;
-    g_open.store(false, std::memory_order_release);
+    SetOpen(false);
     UE_LOGI("spawn_menu: the game closed the menu itself -- no close is owed");
 }
 
-// Hold the gate and watch the game's close, once. A solo game holds no gate, so the menu takes its own hold the
-// first time it opens. Game thread.
+// Watch the game's close, registered once. Game thread.
 void ArmCloseWatch() {
     static bool sArmed = false;
     if (sArmed) return;
     sArmed = true;
-    sg::Acquire("the spawn menu");
     if (!sg::WatchName(kRowQRelease, kTagQRelease, nullptr, &OnQRelease))
         UE_LOGE("spawn_menu: the watch on %ls::%ls was refused -- the menu stays owed a close until Q is pressed",
                 kRowQRelease.Class(), kRowQRelease.Name());
@@ -189,7 +202,7 @@ bool Open(void* localPlayer) {
 
     const int visAfter = ReadVis(widget);
     ArmCloseWatch();
-    g_open.store(true, std::memory_order_release);
+    SetOpen(true);
     UE_LOGI("spawn_menu::Open: native SetVisibility + opened() + GameAndUI input -- "
             "visibility %d -> %d (4=SelfHitTestInvisible)", visBefore, visAfter);
     return true;
@@ -198,7 +211,7 @@ bool Open(void* localPlayer) {
 bool IsOpen() { return g_open.load(std::memory_order_acquire); }
 
 bool Close(void* localPlayer) {
-    g_open.store(false, std::memory_order_release);
+    SetOpen(false);
     // (1) THE LOAD-BEARING UN-STICK: restore SetInputMode_GameOnly + hide the cursor. Open() leaves
     // the player in GameAndUI/cursor mode (spawn_menu.cpp Open() @ SetInputMode_GameAndUIEx + cursor);
     // without this the world interaction/use trace stays dead. Do it FIRST and unconditionally (even
