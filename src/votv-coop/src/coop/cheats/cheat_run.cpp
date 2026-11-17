@@ -70,6 +70,7 @@ Outcome RunSpawn(const Request& r, int senderSlot) {
     int spawned = 0;
     switch (coop::cheats::item_spawn::Spawn(r.name, r.count, slot, inFront, &spawned)) {
         case coop::cheats::item_spawn::Result::Ok: return Done(CheatReason::Ok, spawned);
+        case coop::cheats::item_spawn::Result::NotReady: return Done(CheatReason::NotReady);
         case coop::cheats::item_spawn::Result::UnknownItem: return Done(CheatReason::UnknownItem);
         case coop::cheats::item_spawn::Result::NoPlace: return Done(inFront ? CheatReason::NotReady : CheatReason::NoTarget);
         case coop::cheats::item_spawn::Result::Failed: return Done(CheatReason::Failed);

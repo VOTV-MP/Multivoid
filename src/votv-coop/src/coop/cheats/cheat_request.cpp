@@ -321,23 +321,39 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot));
         return;
     }
-    const std::string nick = coop::text::ToUtf8(coop::roster_ledger::DisplayName(senderSlot));
+    // What a request costs the sender, in the order the host learns what it is: every request, a refused one too, draws
+    // ONE token before anything else is read, so a flood of requests the host refuses is bounded by the bucket like a
+    // flood it accepts. Then the shape (a name that is text and ends inside its field, an op the host knows, a count the
+    // wire allows), then the sender's rights, then the rest of the cost (a request for props, one token per prop; the
+    // first is already paid), then the cheat. A request over the bucket at either draw is dropped, answered Rate and
+    // logged once per ten seconds per sender; every other answer rides the tokens the bucket allows.
+    const uint64_t now = coop::net::NowMs();
+    const float cost = CostOf(static_cast<CheatOp>(p.op), p.count);
+    const auto overBudget = [&] {
+        if (now < g_nextSayMs[senderSlot]) return;
+        g_nextSayMs[senderSlot] = now + kSayEveryMs;
+        UE_LOGI("cheats: slot %u is over its request budget; requests dropped", static_cast<unsigned>(senderSlot));
+        Outcome rate;
+        rate.reason = CheatReason::Rate;
+        Answer(*s, senderSlot, p, rate);   // told once per window, then dropped without an answer
+    };
+    if (!g_bucket[senderSlot].TakeN(coop::cheats::kRequestBudget, now, 1.0f)) {
+        overBudget();
+        return;
+    }
 
     Request r;
     Outcome o;
-    // The order: the shape (a name that is text and ends inside its field, an op the host knows, a count the wire
-    // allows), then the sender's rights, then the cost drawn from its bucket, then the cheat. A request that is bad or
-    // not allowed costs the sender nothing and is answered with its reason; one that is allowed draws its cost, a
-    // request for props one token per prop, and is dropped when the bucket holds too few.
     const size_t nameLen = strnlen(p.name, sizeof(p.name));
     const bool shapeOk = nameLen < sizeof(p.name) && PrintableAscii(p.name, nameLen) &&
                          p.op >= static_cast<uint8_t>(CheatOp::SpawnItem) && p.op <= static_cast<uint8_t>(CheatOp::Event) &&
                          (p.op != static_cast<uint8_t>(CheatOp::SpawnItem) ||
                           (p.count >= 1 && p.count <= coop::net::kCheatMaxCount));
+    const auto nick = [&] { return coop::text::ToUtf8(coop::roster_ledger::DisplayName(senderSlot)); };
     if (!shapeOk) {
         o.reason = CheatReason::BadRequest;
         UE_LOGI("cheats: slot %u (%s) sent a malformed request (op %u, count %u) -> %s",
-                static_cast<unsigned>(senderSlot), nick.c_str(), static_cast<unsigned>(p.op),
+                static_cast<unsigned>(senderSlot), nick().c_str(), static_cast<unsigned>(p.op),
                 static_cast<unsigned>(p.count), ReasonName(o.reason));
     } else {
         r.op = static_cast<CheatOp>(p.op);
@@ -347,23 +363,17 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
         r.amount = p.amount;
         if (!SenderMayCheat(*s, senderSlot)) {
             o.reason = CheatReason::Off;
-        } else if (!g_bucket[senderSlot].TakeN(coop::cheats::kRequestBudget, coop::net::NowMs(), CostOf(r.op, r.count))) {
-            const uint64_t now = coop::net::NowMs();
-            if (now >= g_nextSayMs[senderSlot]) {
-                g_nextSayMs[senderSlot] = now + kSayEveryMs;
-                UE_LOGI("cheats: slot %u is over its request budget; requests dropped", static_cast<unsigned>(senderSlot));
-                o.reason = CheatReason::Rate;
-                Answer(*s, senderSlot, p, o);   // told once per window, then dropped without an answer
-            }
+        } else if (cost > 1.0f && !g_bucket[senderSlot].TakeN(coop::cheats::kRequestBudget, now, cost - 1.0f)) {
+            overBudget();
             return;
         } else {
             o = Run(r, senderSlot);
         }
-        UE_LOGI("cheats: slot %u (%s) asked for %s -> %s", static_cast<unsigned>(senderSlot), nick.c_str(),
+        UE_LOGI("cheats: slot %u (%s) asked for %s -> %s", static_cast<unsigned>(senderSlot), nick().c_str(),
                 Describe(r).c_str(), ReasonName(o.reason));
     }
     Answer(*s, senderSlot, p, o);
-    if (o.reason == CheatReason::Ok) TellHost(nick, r, o.done);
+    if (o.reason == CheatReason::Ok) TellHost(nick(), r, o.done);
 }
 
 void OnResult(const coop::net::CheatResultPayload& p) {

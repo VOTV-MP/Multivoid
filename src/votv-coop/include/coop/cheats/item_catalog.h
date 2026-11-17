@@ -28,8 +28,14 @@ std::shared_ptr<const std::vector<std::string>> Names();
 // yet), so a panel may call it every frame. Any thread.
 void RequestRefresh();
 
-// The list's own spelling of `typed`, case-insensitive; false when the game lists no such prop, or has not filled its
-// list in this world. Reads the list at once when this world's is not read yet. Game thread (the host's judge).
-bool Resolve(std::string_view typed, std::wstring& canonical);
+enum class Lookup : unsigned char {
+    Found,     // the list's own spelling is in `canonical`
+    Unknown,   // the list is read and has no such prop
+    Unfilled,  // the game has not filled its list in this world yet: no answer about the name can be given
+};
+
+// The list's own spelling of `typed`, case-insensitive. Reads the list at once when this world's is not read yet.
+// Game thread (the host's judge).
+Lookup Resolve(std::string_view typed, std::wstring& canonical);
 
 }  // namespace coop::cheats::item_catalog

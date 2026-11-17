@@ -116,16 +116,16 @@ void RequestRefresh() {
     });
 }
 
-bool Resolve(std::string_view typed, std::wstring& canonical) {
+Lookup Resolve(std::string_view typed, std::wstring& canonical) {
     if (!Fresh()) {   // a request can arrive before anyone looked at the list in this world
         Arm();
-        if (!Refresh()) return false;
+        if (!Refresh()) return Lookup::Unfilled;
     }
-    if (typed.empty()) return false;
+    if (typed.empty()) return Lookup::Unknown;
     const auto it = g_byLower.find(Lower(std::wstring(typed.begin(), typed.end())));
-    if (it == g_byLower.end()) return false;
+    if (it == g_byLower.end()) return Lookup::Unknown;
     canonical = it->second;
-    return true;
+    return Lookup::Found;
 }
 
 }  // namespace coop::cheats::item_catalog

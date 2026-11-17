@@ -14,6 +14,7 @@ namespace coop::cheats::item_spawn {
 
 enum class Result : unsigned char {
     Ok,           // every requested prop was spawned
+    NotReady,     // the game has not filled its list of props in this world yet
     UnknownItem,  // the game lists no such prop, or its class does not load
     NoPlace,      // the body to place them by has no place yet (no such player, no pose, no world)
     Failed,       // the class loaded and the spawns came to nothing

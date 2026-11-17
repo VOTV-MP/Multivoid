@@ -61,7 +61,11 @@ Result Spawn(std::string_view name, int count, int slot, bool inFront, int* spaw
     UE_ASSERT_GAME_THREAD("item_spawn::Spawn");
     if (spawned) *spawned = 0;
     std::wstring canonical;
-    if (!coop::cheats::item_catalog::Resolve(name, canonical)) return Result::UnknownItem;
+    switch (coop::cheats::item_catalog::Resolve(name, canonical)) {
+        case coop::cheats::item_catalog::Lookup::Found: break;
+        case coop::cheats::item_catalog::Lookup::Unfilled: return Result::NotReady;
+        case coop::cheats::item_catalog::Lookup::Unknown: return Result::UnknownItem;
+    }
     const std::wstring path = L"/Game/objects/prop_" + canonical + L".prop_" + canonical + L"_C";
     // An item with a class of its own is spawned as that class. The rest of the game's list (food, a row of the
     // generic prop, a row that names another class) is spawned by the gamemode's own verb, which reads the row. A
