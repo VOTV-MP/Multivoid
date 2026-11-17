@@ -15,7 +15,8 @@ namespace coop::dev::hostile_drill {
 // hostile_drill_remover.cpp, the take-or-use arms in hostile_drill_act.cpp and the explosion_* arms (one Arm value,
 // the family resolving its own sub-arm) in hostile_drill_explosion.cpp and the ignite_* arms (likewise) in
 // hostile_drill_ignite.cpp and the atv_* arms (likewise) in hostile_drill_atv.cpp and the cord_* arms (likewise) in
-// hostile_drill_cord.cpp and the coffee_* arms (likewise) in hostile_drill_coffee.cpp -- hostile_drill.cpp is the
+// hostile_drill_cord.cpp and the coffee_* arms (likewise) in hostile_drill_coffee.cpp and bad_destroy_eid in
+// hostile_drill_destroy.cpp -- hostile_drill.cpp is the
 // dispatcher that owns the Step machine of its own arms, and hostile_drill_arms.cpp owns the arm selection and routes
 // those to their module's sender and judge.
 enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, RepeatJoin,
@@ -23,7 +24,7 @@ enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, Rep
                  BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest, KerfurFlood, KerfurForged,
                  RemoverFar, RemoverHidden, RemoverFlood,
                  ActFar, ActGone, ActWrongFamily, ActBadCommit, ActNotYet, ActFlood, ActFloodEarly, Explosion, Ignite,
-                 Atv, Cord, Coffee };
+                 Atv, Cord, Coffee, BadDestroyEid };
 
 // The selected arm, resolved once from the config value.
 Arm ArmOf();

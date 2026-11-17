@@ -8,6 +8,7 @@
 #include "coop/dev/hostile_drill_chat.h"  // the chat arms
 #include "coop/dev/hostile_drill_coffee.h"  // the coffee lane's refusal arms
 #include "coop/dev/hostile_drill_cord.h"  // the cord link lane's refusal arms
+#include "coop/dev/hostile_drill_destroy.h"  // the destroy-by-eid arm
 #include "coop/dev/hostile_drill_explosion.h"  // the explosion request lane's refusal arms
 #include "coop/dev/hostile_drill_hand.h"  // the hand-item class arm
 #include "coop/dev/hostile_drill_ignite.h"  // the salt rocket ignite lane's refusal arms
@@ -57,6 +58,7 @@ Arm ArmOf() {
              : v == "act_notyet"          ? Arm::ActNotYet
              : v == "act_flood"           ? Arm::ActFlood
              : v == "act_flood_early"     ? Arm::ActFloodEarly
+             : v == "bad_destroy_eid" || v == "eid_type_off" ? Arm::BadDestroyEid
              : v.rfind("explosion_", 0) == 0 ? Arm::Explosion
              : v.rfind("ignite_", 0) == 0    ? Arm::Ignite
              : v.rfind("atv_", 0) == 0       ? Arm::Atv
@@ -141,6 +143,7 @@ const char* ArmName() {
     case Arm::ActNotYet:         return "act_notyet";
     case Arm::ActFlood:          return "act_flood";
     case Arm::ActFloodEarly:     return "act_flood_early";
+    case Arm::BadDestroyEid:     return destroy::ArmName(destroy::Arm::BadDestroyEid);
     case Arm::Explosion:         return explosion::ArmName(ExplosionArmOf());
     case Arm::Ignite:            return ignite::ArmName(IgniteArmOf());
     case Arm::Atv:               return atv::ArmName(AtvArmOf());
@@ -209,6 +212,7 @@ bool TickFamilyHost(coop::net::Session* s) {
                                   : ArmOf() == Arm::RemoverFlood    ? remover::Arm::RemoverFlood
                                                                     : remover::Arm::None;
     const act::Arm actArm = ActArmOf();
+    const destroy::Arm destroyArm = ArmOf() == Arm::BadDestroyEid ? destroy::Arm::BadDestroyEid : destroy::Arm::None;
     const explosion::Arm explosionArm = ExplosionArmOf();
     const ignite::Arm igniteArm = IgniteArmOf();
     const atv::Arm atvArm = AtvArmOf();
@@ -228,6 +232,7 @@ bool TickFamilyHost(coop::net::Session* s) {
     else if (worldArm != world::Arm::None)   world::TickHostJudge(s, worldArm);
     else if (kerfurArm != kerfur::Arm::None) kerfur::TickHostJudge(s, kerfurArm);
     else if (removerArm != remover::Arm::None) remover::TickHostJudge(s, removerArm);
+    else if (destroyArm != destroy::Arm::None) destroy::TickHostJudge(s, destroyArm);
     else if (actArm != act::Arm::None)       act::TickHostJudge(s, actArm);
     else if (chatArm != chat::Arm::None)     chat::TickHostJudge(s, chatArm);
     else return false;
@@ -248,6 +253,7 @@ bool TickFamilyClient(coop::net::Session* s) {
                                   : ArmOf() == Arm::RemoverFlood    ? remover::Arm::RemoverFlood
                                                                     : remover::Arm::None;
     const act::Arm actArm = ActArmOf();
+    const destroy::Arm destroyArm = ArmOf() == Arm::BadDestroyEid ? destroy::Arm::BadDestroyEid : destroy::Arm::None;
     const explosion::Arm explosionArm = ExplosionArmOf();
     const ignite::Arm igniteArm = IgniteArmOf();
     const atv::Arm atvArm = AtvArmOf();
@@ -267,6 +273,7 @@ bool TickFamilyClient(coop::net::Session* s) {
     else if (worldArm != world::Arm::None)   world::TickClient(s, worldArm);
     else if (kerfurArm != kerfur::Arm::None) kerfur::TickClient(s, kerfurArm);
     else if (removerArm != remover::Arm::None) remover::TickClient(s, removerArm);
+    else if (destroyArm != destroy::Arm::None) destroy::TickClient(s, destroyArm);
     else if (actArm != act::Arm::None)       act::TickClient(s, actArm);
     else if (chatArm != chat::Arm::None)     chat::TickClient(s, chatArm);
     else return false;
@@ -280,6 +287,7 @@ void OnDisconnectFamilies() {
     world::OnDisconnect();
     kerfur::OnDisconnect();
     remover::OnDisconnect();
+    destroy::OnDisconnect();
     act::OnDisconnect();
     explosion::OnDisconnect();
     ignite::OnDisconnect();

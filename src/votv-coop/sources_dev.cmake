@@ -74,6 +74,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/hostile_drill_atv.cpp
     src/coop/dev/hostile_drill_atv_client.cpp
     src/coop/dev/hostile_drill_atv_host.cpp
+    src/coop/dev/hostile_drill_destroy.cpp
     src/coop/dev/hostile_drill_kerfur.cpp
     src/coop/dev/hostile_drill_remover.cpp
     src/coop/dev/hostile_drill_latest.cpp

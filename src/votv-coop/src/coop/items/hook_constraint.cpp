@@ -3,6 +3,7 @@
 #include "coop/items/hook_constraint.h"
 
 #include "coop/element/intent_authority.h"
+#include "coop/element/registry.h"             // LiveActorOfType: the registry's O(1) row, by element type
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"           // StringFromWireKey
@@ -10,7 +11,6 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"      // Find: every live keyed prop by key
-#include "coop/props/remote_prop.h"           // ResolveLiveActorByEid: the registry's O(1) row
 
 #include "ue_wrap/actors/hook.h"
 #include "ue_wrap/actors/prop.h"
@@ -208,12 +208,16 @@ BiteResult BiteMirror(void* mirror, uint8_t ownerSlot, const coop::net::HookStat
 
     // The bitten actor: the element id first (the registry's O(1) row), then the save key through
     // the tracked-prop index, then the game's own key map, which is what makes a keyed thing that
-    // is not a prop -- the ATV -- resolve too.
+    // is not a prop -- the ATV -- resolve too. The owner names the eid of whatever its hook bit, so
+    // the row is read for the two element types a keyed bitten actor can carry here, a prop and an
+    // NPC (a kerfur), and for no other.
     const std::wstring key = coop::net::StringFromWireKey(p.biteKey);
     void* actor = nullptr;
     const char* how = "";
     if (p.biteEid != 0) {
-        actor = coop::remote_prop::ResolveLiveActorByEid(p.biteEid);
+        namespace EL = coop::element;
+        actor = EL::LiveActorOfType(p.biteEid, EL::ElementType::Prop);
+        if (!actor) actor = EL::LiveActorOfType(p.biteEid, EL::ElementType::Npc);
         how = "eid";
     }
     if (!actor && !key.empty()) {

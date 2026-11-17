@@ -7,6 +7,8 @@
 #include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 #include "remote_prop_drive.h"     // g_drives, g_holds, the hold gate, ResolveAndStartDrive
 
+#include "coop/config/config.h"           // ResolveEnum, for the hostile drill's red
+#include "coop/config/config_registry.h"  // the hostile drill row
 #include "coop/dev/swinger_drill.h"     // NotePropPose, NotePropUnresolved
 #include "coop/interactables/atv_drill_events.h"    // NoteMirrorBound: the ATV drill's arrival event
 #include "coop/interactables/swinger_join_pose.h"   // Forget: a release supersedes a parked connect pose
@@ -499,10 +501,21 @@ size_t DrainWirePropMirrors() {
 }  // namespace
 
 
+namespace {
+// The hostile drill's red `eid_type_off`: an eid resolves to its actor whatever the element's
+// type, the read this function had before it named the Prop type. Off in every other run.
+bool EidTypeCheckOff_() {
+    static const bool s = coop::config::ResolveEnum(coop::config_registry::rows::hostile_drill) == "eid_type_off";
+    return s;
+}
+}  // namespace
+
 // A Prop element id to its live actor, or null; the clump is identified this way, its key never
-// sticks. Shared with the destroy TU.
+// sticks. An eid of any other element type (an NPC, a player) names no prop and resolves to null.
+// Shared with the destroy TU.
 void* ResolveLiveActorByEid(uint32_t eid) {
     if (eid == 0 || eid == coop::element::kInvalidId) return nullptr;
+    if (!EidTypeCheckOff_()) return coop::element::LivePropActor(eid);
     coop::element::Element* e = coop::element::Registry::Get().Get(eid);
     if (!e) return nullptr;
     void* actor = e->GetActor();

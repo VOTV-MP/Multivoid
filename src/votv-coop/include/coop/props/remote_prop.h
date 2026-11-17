@@ -129,7 +129,7 @@ std::wstring KeyToWString(const coop::net::WireKey& k);
 // A Prop element id to its live actor, or null: the registry's O(1) row, liveness by the cached
 // object-array index. The clump is identified this way, its key never sticks; the driven-prop
 // receiver resolves by it first, since a joiner's keyed copy adopts the host's eid at the bind.
-// Game thread.
+// An eid of another element type resolves to null. Game thread.
 void* ResolveLiveActorByEid(uint32_t eid);
 
 // Force-release: called at disconnect or a level unload to put any cached prop back into its
