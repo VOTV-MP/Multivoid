@@ -13,6 +13,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_ping_sync.h"
+#include "coop/interactables/oven_progress_sync.h"  // the oven's screws and lid
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
 #include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
 #include "coop/interactables/meadow_db_sync.h"  // meadow signal-DB mirror (multiset shadow + join seed)
@@ -331,6 +332,7 @@ void Install(coop::net::Session& session) {
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::subsystems::desk::Install(session);
+    coop::oven_progress_sync::Install(&session);  // the oven's screws and lid: each screen's bits, merged
     coop::email_sync::Install(&session);  // meadow-PC email mirror (watermark -> chunked rows -> addEmail)
     coop::signal_sync::Install(&session);  // desk signal-library mirror (savedSignals_0 shadow/diff)
     coop::meadow_db_sync::Install(&session);  // meadow-DB mirror (content-hash multiset + id-preserving replay)
@@ -591,6 +593,7 @@ DisconnectStats DisconnectAll() {
     coop::props::prop_can_state::OnDisconnect();  // its counters (what is known of every can goes with the world)
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
     coop::subsystems::desk::OnDisconnect();  // the desk, the drives and the dishes: each lane's counters, shadows and sessions
+    coop::oven_progress_sync::OnDisconnect();  // the known ovens + parked masks
     coop::sleep_sync::OnDisconnect();
     coop::nightmare_roll::OnDisconnect();
     coop::level_visit::OnDisconnect();
@@ -714,6 +717,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerContents"}; coop::props::container_contents_sync::Tick(); }  // edge-driven dirty drain (4 Hz gate)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerView"}; coop::props::container_view_close::Tick(); }  // a client's view into a container, closed out of reach
     coop::subsystems::desk::Tick();
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:oven_progress"}; coop::oven_progress_sync::Tick(); }  // the oven screens' steps, 4 Hz
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }  // email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }  // saved-signals shadow poll (same shape on gamemode.savedSignals_0)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:meadow"}; coop::meadow_db_sync::Tick(); }  // meadow-DB: the writers' watches until settled, the pen's drain once the database is back, then retries (1 Hz) while a line, a tombstone or an owed order waits

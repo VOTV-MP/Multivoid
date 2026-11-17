@@ -8,6 +8,14 @@ CFG_ENUM(pried_drill, "pried_drill", "dev", "off",
     "crowbarOpen with no crowbar. The watching peer names the first stuck prop of the class (a plank, a "
     "radiator), the acting peer pries it and says where its copy rests, and the watching peer judges its "
     "own copy. One `[PRIED-DRILL] [H|C] PASS` or `FAIL` line per judge.")
+CFG_ENUM(oven_progress_drill, "oven_progress_drill", "dev", "off", "off|host|client|join",
+    "VOTVCOOP_OVEN_PROGRESS_DRILL",
+    "Drill (BOTH peers): the oven's screws and lid. host and client: the acting peer sets a screw's "
+    "bool on its own repair screen, then the other three, then the lid's; the watching peer says its "
+    "screen's mask whenever it changes and each step must stand there before the next. join: the "
+    "host's screen takes all five before anyone joins and the joiner judges its own screen after its "
+    "join. One `[OVEN-DRILL] [H|C] PASS` or `FAIL` line per judge; an oven the save holds repaired "
+    "fails by name.")
 CFG_ENUM(desk_panel_drill, "desk_panel_drill", "dev", "off", "off|host|client|race",
     "VOTVCOOP_DESK_PANEL_DRILL",
     "Drill (BOTH peers): the desk's back panels. host and client: the acting peer unbolts the top-left "

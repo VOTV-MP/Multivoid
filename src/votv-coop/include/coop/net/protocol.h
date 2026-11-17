@@ -1474,6 +1474,12 @@ enum class ReliableKind : uint16_t {
     // joiner at its connect replay: the canonical pair of masks. The host refuses an edit its own desk does not allow
     // and answers the author with the canonical. Never relayed. DeskPanelStatePayload.
     DeskPanelState = 273,
+
+    // Any peer to all (a client's through the host's relay), and host to a joiner at its connect replay: the steps
+    // of one kitchen oven's repair that come before its wiring, as a mask of the four screws out and the lid off.
+    // The bits are never cleared, so a receiver raises on its own repair screen every bit it lacks. Client-allowed;
+    // relayed. OvenProgressStatePayload.
+    OvenProgressState = 275,
 };
 
 #pragma pack(push, 1)
@@ -4418,6 +4424,16 @@ struct DeskPanelStatePayload {
     uint8_t _pad[3];       // 3 -- zero
 };
 static_assert(sizeof(DeskPanelStatePayload) == 8, "DeskPanelStatePayload must be 8 bytes");
+
+// The steps of an oven's repair before its wiring (OvenProgressState): the oven by key, and a mask with
+// bits 0..3 for the top-left, top-right, bottom-left and bottom-right screws out and bit 4 for the lid off.
+struct OvenProgressStatePayload {
+    WireKey key;      // 32 -- the oven's key
+    uint8_t mask;     // 1  -- the steps done
+    uint8_t _pad[3];  // 3  -- zero
+};
+static_assert(sizeof(OvenProgressStatePayload) == 36, "OvenProgressStatePayload must be 36 bytes");
+
 // One drive-slot state line (DriveSlotState). role: 0 the desk play slot, 1 the desk comp slot,
 // 2 the eraser slot. occupied 1 names the slotted drive; 0 means empty, with driveEid the last
 // occupant for the latch completion.
