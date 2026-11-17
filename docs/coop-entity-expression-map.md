@@ -458,6 +458,11 @@ registry recycled that id. `[V]`
   asks with `AtvSeat` (sit or leave) and `AtvTakeover` (a grab), each judged and answered with `AtvAnswer`; the
   host's own player is judged by the same table. The three are never aliased: the host's index row (the birth
   owner), the occupant, the syncer. `[?]`
+- **Authority: the passenger seats are the host's table.** `AtvEntry::passengerSlot[3]` (which slot sits in each of the three
+  passenger seats beside the driver's) is decided by the host alone: a client asks with `AtvPassengerRequest` (board or leave),
+  judged and answered with `AtvPassengerAnswer`, and the host's own player is judged by the same table. The table reaches every
+  client as `AtvPassengerTable` (a joiner at its replay), and each machine seats a rider's body on its own copy of the ATV: its
+  own player's by `coop/interactables/atv_passenger`, a remote rider's by `coop/player/puppet_seat`. A driver leaving ejects nobody. `[V]`
 - **Expression: the syncer's stamped stream.** The syncer streams `AtvState`; a client's reaches the host alone,
   which applies only its syncer's blocks and re-sends each, marked and stamped with the seat and the syncer, to
   every other client. The host's own copy streams while it syncs. Every machine follows the stamp, yielding to

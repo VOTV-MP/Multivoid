@@ -12,6 +12,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/atv.h"
+#include "ue_wrap/devices/atv_passenger.h"
 
 namespace coop::atv_seat_table {
 
@@ -106,9 +107,17 @@ void* ResolveAtv(const std::wstring& key, int32_t& atvIdx) {
 
 bool ResolveSeat(const std::wstring& key, uint8_t seatIndex, void*& atv, int32_t& atvIdx, ue_wrap::FVector& loc,
                  ue_wrap::FRotator& rot) {
-    if (seatIndex != 0) return false;
     void* actor = ResolveAtv(key, atvIdx);
-    if (!actor || !ue_wrap::atv::GetSeatTransform(actor, loc, rot)) return false;
+    if (!actor) return false;
+    if (seatIndex == 0) {
+        if (!ue_wrap::atv::GetSeatTransform(actor, loc, rot)) return false;
+    } else {
+        // A passenger seat: its place on the rear deck, facing as the rig faces.
+        ue_wrap::FVector root{};
+        if (seatIndex > ue_wrap::atv_passenger::kSeats || !ue_wrap::atv::GetRootTransform(actor, root, rot) ||
+            !ue_wrap::atv_passenger::SeatWorldLocation(actor, seatIndex - 1, loc))
+            return false;
+    }
     atv = actor;
     return true;
 }

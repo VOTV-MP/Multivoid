@@ -5,6 +5,7 @@
 #include "coop/props/trash_mirror.h"
 #include "coop/session/subsystems.h"
 #include "coop/session/desk_subsystems.h"
+#include "coop/session/power_subsystems.h"
 
 #include "coop/element/object_scan_hub.h"  // the shared pass over the object index
 #include "coop/world/balance_sync.h"
@@ -111,6 +112,7 @@
 #include "coop/session/join_beacon.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/atv_passenger.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/items/coingun_sync.h"
@@ -135,10 +137,6 @@
 #include "coop/interactables/atv_gate.h"
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/interactables/keypad_sync.h"
-#include "coop/world/fuse_tower_ops.h"
-#include "coop/world/fuse_tower_rows.h"
-#include "coop/world/power_grid.h"
-#include "coop/world/power_panel.h"
 #include "coop/world/sky_sync.h"
 #include "coop/world/time_sync.h"
 #include "coop/interactables/window_stroke_sync.h"
@@ -244,10 +242,7 @@ void Install(coop::net::Session& session) {
     coop::keypad_sync::Install(&session);  // the password keypads' index and wire (its own module)
     coop::time_sync::Install(&session);  // host-authoritative world clock (time-of-day / dark-world fix)
     coop::sky_sync::Install(&session);  // host-authoritative night-sky orientation, moon phase and eye
-    coop::power_panel::Install(&session);  // the power panel: presses to the host, its canonical to every peer
-    coop::power_grid::Install(&session);  // the grid runs on the host: its generators' rows, a client's ops
-    coop::fuse_tower_rows::Install(&session);  // the towers roll and judge on the host: their rows to every peer
-    coop::fuse_tower_ops::Install(&session);  // a client's presses and fuse claims, and its refused rolls
+    coop::subsystems::power::Install(session);
     coop::atv_sync::Install(&session);  // ATV body pose (the syncer the host assigned streams a keyed pose)
     coop::drone_sync::Install(&session);  // delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
@@ -432,9 +427,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::comp_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the refiner's decode it began is the host's
     coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
     coop::walker_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // a walker that hunted the leaver chooses again, and the level the leaver sent is dropped
-    coop::power_panel::OnPeerLeft(static_cast<uint8_t>(slot));  // and its presses that wait for its body
-    coop::power_grid::OnPeerLeft(static_cast<uint8_t>(slot));  // and its generator ops
-    coop::fuse_tower_ops::OnPeerLeft(static_cast<uint8_t>(slot));  // and its tower ops
+    coop::subsystems::power::OnPeerLeft(static_cast<uint8_t>(slot));  // and its panel presses, generator ops and tower ops
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
     coop::puppet_hide::Forget(static_cast<uint8_t>(slot));  // the reasons its copy was hidden for end with it
     coop::puppet_seat::Forget(static_cast<uint8_t>(slot));  // and the seat its body was held on
@@ -517,10 +510,8 @@ DisconnectStats DisconnectAll() {
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
     coop::sky_sync::OnDisconnect();
-    coop::power_panel::OnDisconnect();
-    coop::power_grid::OnDisconnect();
-    coop::fuse_tower_ops::OnDisconnect();
-    coop::fuse_tower_rows::OnDisconnect();
+    coop::subsystems::power::OnDisconnect();
+    coop::atv_passenger::OnDisconnect();  // a rider still on its seat is let go where it stands; the bodies' owner drops its seats itself
     coop::atv_sync::OnDisconnect();
     coop::atv_riders::OnDisconnect();  // after the lane's end, so the seat table's exits reached the riders' subscribers
     coop::drone_sync::OnDisconnect();
@@ -656,10 +647,10 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }  // a keypad state that arrived before its keypad was indexed
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: the eye gate's name (both roles), then the host's throttled push
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_panel::Tick(); coop::power_grid::Tick(); }
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:towers"}; coop::fuse_tower_ops::Tick(); coop::fuse_tower_rows::Tick(); }  // the towers: the gates settle, the host's ops and rows, a client's panels  // the panel's and the grid's gates settle; what came before the panel or the generators resolved is taken
+    coop::subsystems::power::Tick();
     coop::dish_calib_sync::Tick();  // settle the precision lane's three watches
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: the host judges its own seat and grab, a client asks the host; the syncer streams its pose (host+client)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv_passenger"}; coop::atv_passenger::Tick(); }  // the passenger seats: this body against the table, the table's sends, the remote riders' seats
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:woodchipper"}; coop::woodchipper_sync::Tick(); }  // woodchippers: the host's intents and its changed chippers, the burn read once a second / the client's held states

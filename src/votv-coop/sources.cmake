@@ -82,6 +82,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_intent.cpp
     src/coop/dispatch/event_dispatch_prop_drive.cpp
     src/coop/dispatch/event_dispatch_requester_feedback.cpp
+    src/coop/dispatch/event_dispatch_atv_seat.cpp
     src/coop/dispatch/event_dispatch_kerfur_command.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
@@ -142,6 +143,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/atv_stream_gates.cpp
     src/coop/interactables/atv_authority.cpp
     src/coop/interactables/atv_body.cpp
+    src/coop/interactables/atv_passenger.cpp
     src/coop/interactables/atv_index.cpp
     src/coop/interactables/atv_runtime_mirror.cpp
     src/coop/interactables/atv_spawn_park.cpp
@@ -382,6 +384,7 @@ set(VOTVCOOP_SOURCES
     src/coop/session/session_gate_hold.cpp
     src/coop/session/subsystems.cpp
     src/coop/session/desk_subsystems.cpp
+    src/coop/session/power_subsystems.cpp
     src/coop/session/world_ready_answer.cpp
     src/coop/player/local_streams.cpp
     src/coop/interactables/device_occupancy.cpp

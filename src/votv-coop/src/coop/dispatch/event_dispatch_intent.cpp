@@ -16,7 +16,6 @@
 #include "coop/player/hit_intent.h"  // CLIENT->HOST a swing that hit a creature's mirror
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
-#include "coop/interactables/atv_authority.h"  // CLIENT->HOST an ATV seat or takeover request, judged by the host
 #include "coop/interactables/camera_toggle_intent.h"  // CLIENT->HOST use of a security camera, or its laptop light button
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
 #include "coop/interactables/sleepingbag_sync.h"  // CLIENT->HOST fold/unfold; HOST runs the source Blueprint
@@ -452,48 +451,6 @@ bool HandleIntentEvent(net::Session& session,
             break;
         }
         coop::salt_rocket_ignite::OnIntentReceived(static_cast<int>(msg.senderPeerSlot), msg.payload, msg.payloadLen);
-        break;
-    }
-    case net::ReliableKind::AtvSeat: {
-        // CLIENT->HOST: this client's player sat in an ATV's driver seat or left it. The host judges the
-        // request and answers it (coop::atv_authority::OnSeat). Never relayed.
-        if (session.role() != net::Role::Host) {
-            UE_LOGW("event_feed: AtvSeat received on a client -- dropping");
-            break;
-        }
-        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
-            UE_LOGW("event_feed: AtvSeat from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
-        if (msg.payloadLen < sizeof(net::AtvSeatPayload)) {
-            UE_LOGW("event_feed: AtvSeat payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvSeatPayload));
-            break;
-        }
-        net::AtvSeatPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        coop::atv_authority::OnSeat(p, static_cast<uint8_t>(msg.senderPeerSlot));
-        break;
-    }
-    case net::ReliableKind::AtvTakeover: {
-        // CLIENT->HOST: this client's player took hold of an ATV with the grav hand. The host judges the
-        // request and answers it (coop::atv_authority::OnTakeover). Never relayed.
-        if (session.role() != net::Role::Host) {
-            UE_LOGW("event_feed: AtvTakeover received on a client -- dropping");
-            break;
-        }
-        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
-            UE_LOGW("event_feed: AtvTakeover from invalid senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
-        if (msg.payloadLen < sizeof(net::AtvTakeoverPayload)) {
-            UE_LOGW("event_feed: AtvTakeover payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::AtvTakeoverPayload));
-            break;
-        }
-        net::AtvTakeoverPayload p{};
-        std::memcpy(&p, msg.payload, sizeof(p));
-        coop::atv_authority::OnTakeover(p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::PropActRequest: {

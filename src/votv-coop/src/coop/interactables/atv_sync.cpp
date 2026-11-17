@@ -18,6 +18,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/atv_riders_arm.h"
 #include "coop/interactables/atv_authority.h"
+#include "coop/interactables/atv_passenger.h"
 #include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/interactables/atv_damage_gate.h"
@@ -167,6 +168,8 @@ void OnSlotReplaced(int slot, const coop::roster_ledger::Row& /*outgoing*/,
     if (slot < 1 || slot > 0xFE) return;
     const uint8_t s8 = static_cast<uint8_t>(slot);
     if (slot < static_cast<int>(coop::players::kMaxPeers)) ClearOwed(slot);  // a leaver is owed no edge
+    // A departed rider's passenger seats go back to the table too; the other riders stay.
+    const int riders = AU::ClearPassenger(s8);
     int freed = 0;
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
@@ -175,8 +178,9 @@ void OnSlotReplaced(int slot, const coop::roster_ledger::Row& /*outgoing*/,
         // depends on the host sending something.
         e.haveLastSync = false;
     }
-    if (freed > 0)
-        UE_LOGI("atv: slot %d departed -- cleared the seat and syncer of %d ATV(s)", slot, freed);
+    if (freed > 0 || riders > 0)
+        UE_LOGI("atv: slot %d departed -- cleared the seat and syncer of %d ATV(s) and %d passenger seat(s)", slot, freed,
+                riders);
 }
 
 void SubscribeDepartures() {
@@ -417,6 +421,8 @@ SetSent SendSetToSlot(coop::net::Session* s, int peerSlot, bool withPoses) {
             ++r.poses;
         }
     }
+    // The passenger tables follow the poses, so a joiner seats the riders its copies already hold.
+    if (withPoses) coop::atv_passenger::SendTablesToSlot(*s, peerSlot);
     // The edge, behind the AtvSpawns on the same lane. Withheld whenever the walk cannot be taken as complete -- an
     // announce that did not go, or one of the reasons above.
     const char* withheld = r.spawns != static_cast<int>(held.size()) ? "an AtvSpawn was not sent" : incomplete;
@@ -719,6 +725,7 @@ bool ReadTable(const std::wstring& key, TableView& out) {
     out.snapshotReached = it->second.snapshotReached;
     auto* s = g_session.load(std::memory_order_acquire);
     out.trap = s && s->role() == coop::net::Role::Host ? it->second.hostTrap : it->second.stampTrap;
+    for (int i = 0; i < 3; ++i) out.passengerSlot[i] = it->second.passengerSlot[i];
     out.blown = it->second.blown;
     out.blownBy = it->second.blownBy;
     out.actor = it->second.actor;

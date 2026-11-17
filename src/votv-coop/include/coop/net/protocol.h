@@ -31,7 +31,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 297;
+inline constexpr uint16_t kProtocolVersion = 298;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1469,6 +1469,23 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+
+    // Client to host: this client's player boarded an ATV as a passenger, or left its passenger seat (AtvPassengerPayload's
+    // action). The host judges it (the sender's world ready, the ATV known, the sender alive and with a body, a pace, not
+    // seated anywhere already, a seat free, within reach), picks the first free passenger seat and answers every
+    // judged request with AtvPassengerAnswer. A client acts at once and yields to a refusal. Never relayed; not pre-world.
+    // Late join: none, a request is an act. AtvPassengerRequestPayload.
+    AtvPassengerRequest = 278,
+
+    // Host to one client: the verdict on one AtvPassengerRequest, with the seat the host gave (or held). Never relayed.
+    // Late join: none. Trust: from the host alone. AtvPassengerAnswerPayload.
+    AtvPassengerAnswer = 279,
+
+    // Host to every world-ready client: one ATV's passenger table, which slot sits in each of its passenger seats. Sent
+    // when the table changed and to a joiner at its connect replay for each ATV that carries a passenger. The table is
+    // the host's; a client's copy is what its machine seats the passengers' puppets by. Host-authored: refused at the
+    // host's receive edge; never relayed; not pre-world. AtvPassengerTablePayload.
+    AtvPassengerTable = 280,
 };
 
 #pragma pack(push, 1)
@@ -3528,6 +3545,60 @@ struct AtvAnswerPayload {
 };
 static_assert(sizeof(AtvAnswerPayload) == 40, "AtvAnswerPayload must be 40 bytes");
 static_assert(sizeof(AtvAnswerPayload) <= 256 - 20 - 8, "AtvAnswerPayload must fit in one reliable datagram");
+
+// An ATV carries the driver and up to three passengers (atv_authority.cpp asserts the seats never outnumber
+// the other players of a full session).
+inline constexpr int kAtvPassengerSeats = 3;
+
+// A client's boarding of an ATV's passenger seats, or its leaving of the one it holds (AtvPassengerRequest). The seq is the
+// client's own counter, nonzero and wrapping, and the answer echoes it. The client never names a seat: the host gives the
+// first free one.
+struct AtvPassengerRequestPayload {
+    WireKey key;       // 32 -- the ATV's Key
+    uint8_t action;    // 1  -- 1 board, 0 leave; anything else is malformed
+    uint8_t seq;       // 1
+    uint8_t pad[2];    // 2  -- zero
+};
+static_assert(sizeof(AtvPassengerRequestPayload) == 36, "AtvPassengerRequestPayload must be 36 bytes");
+static_assert(sizeof(AtvPassengerRequestPayload) <= 256 - 20 - 8, "AtvPassengerRequestPayload must fit in one reliable datagram");
+
+// Why the host refused an AtvPassengerRequest. Wire-visible: the values are stable and a client logs them.
+enum class AtvPassengerRefusal : uint8_t {
+    Admitted = 0,
+    NotWorldReady = 1,   // never answered; counted
+    Malformed = 2,
+    UnknownAtv = 3,
+    SenderDead = 4,
+    NoBody = 5,
+    Paced = 6,
+    AlreadySeated = 7,   // the sender sits in an ATV already, as its driver or in a passenger seat
+    Full = 8,            // every passenger seat is taken
+    OutOfReach = 9,
+    NoTarget = 10,
+    NotPassenger = 11,   // a leave from a slot that holds no passenger seat of that ATV
+    Count = 12,
+};
+
+// The host's verdict on one request (AtvPassengerAnswer): the seat the sender holds on that ATV after it (0xFF = none).
+struct AtvPassengerAnswerPayload {
+    WireKey key;       // 32 -- the request's key
+    uint8_t seq;       // 1  -- the request's seq
+    uint8_t admitted;  // 1  -- 1 granted, 0 refused
+    uint8_t seat;      // 1  -- the passenger seat the sender holds on that ATV now (0xFF = none)
+    uint8_t reason;    // 1  -- an AtvPassengerRefusal
+};
+static_assert(sizeof(AtvPassengerAnswerPayload) == 36, "AtvPassengerAnswerPayload must be 36 bytes");
+static_assert(sizeof(AtvPassengerAnswerPayload) <= 256 - 20 - 8, "AtvPassengerAnswerPayload must fit in one reliable datagram");
+
+// One ATV's passenger table (AtvPassengerTable): the slot that sits in each passenger seat, 0xFF for a free one. The seat
+// positions are the receiver's own constants (ue_wrap/devices/atv_passenger); the table names who sits there.
+struct AtvPassengerTablePayload {
+    WireKey key;                        // 32 -- the ATV's Key
+    uint8_t slot[kAtvPassengerSeats];   // 3  -- the peer slot in each seat, 0xFF = free
+    uint8_t pad;                        // 1  -- zero
+};
+static_assert(sizeof(AtvPassengerTablePayload) == 36, "AtvPassengerTablePayload must be 36 bytes");
+static_assert(sizeof(AtvPassengerTablePayload) <= 256 - 20 - 8, "AtvPassengerTablePayload must fit in one reliable datagram");
 
 // The drone's state (DroneState): transform, activity, effect bits and the dust anchor.
 struct DroneStatePayload {

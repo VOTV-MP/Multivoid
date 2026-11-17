@@ -16,6 +16,7 @@
 #include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/movement_ledger.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
@@ -24,6 +25,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/devices/atv.h"
+#include "ue_wrap/devices/atv_passenger.h"
 
 #include <chrono>
 #include <cstdint>
@@ -49,6 +51,7 @@ namespace {
 // The takeover pace is per sender; MTA's is per vehicle, one push per 1500 ms (CUnoccupiedVehicleSync.cpp:490).
 constexpr IntentBudget kSeatBudget{4.f, 1.f};
 constexpr IntentBudget kTakeoverBudget{2.f, 1.f};
+constexpr IntentBudget kPassengerBudget{4.f, 1.f};   // a board takes a token, a leave none
 constexpr IntentBudget kStreamBudget{16.f, 40.f};   // twice the 20 Hz a syncer sends
 
 // Twice mainPlayer.armLength; the authority adds the ATV's bounds and its lag allowance.
@@ -60,8 +63,21 @@ constexpr float kRestCmS = 5.f;               // a block's linear speed under th
 constexpr float kRestMovedCm = 1.f;           // and its position moved under this since the last block
 constexpr uint8_t kNoSeat = 0xFF;
 
+// The passenger seats: the table's width is the wire's and the engine wrapper's, and one more than the other players of a full session.
+constexpr int kPassengerSeats = coop::net::kAtvPassengerSeats;
+static_assert(kPassengerSeats <= coop::players::kMaxPeers - 1, "the passenger seats never outnumber the other players of a full session; a request beyond them is refused Full");
+static_assert(kPassengerSeats == ue_wrap::atv_passenger::kSeats, "the wire and the wrapper agree on the seat count");
+static_assert(sizeof(coop::atv_sync::AtvEntry::passengerSlot) == kPassengerSeats, "the entry's table is the wire's width");
+// A rider whose claimed position is this far from its seat for this long is not on the ATV any more: the host takes it
+// out. A client's ATV copy trails the host's by the corrector's bound and a rider's pose is its own copy's, so a seat
+// may be a few metres from where the host's copy puts it while the rig is at speed; a teleport the rider's own machine
+// saw has already sent its leave, so this is the backstop for a rider that could not.
+constexpr float kRiderStrayUU = 1500.f;
+constexpr uint64_t kRiderStrayMs = 2000;
+
 coop::roster_ledger::PerSlotState<coop::net::IntentBucket> g_seatBuckets;
 coop::roster_ledger::PerSlotState<coop::net::IntentBucket> g_takeoverBuckets;
+coop::roster_ledger::PerSlotState<coop::net::IntentBucket> g_passengerBuckets;
 Counters g_counters;
 coop::net::RefusalTally g_refusals{"atv_authority"};
 
@@ -83,6 +99,26 @@ const char* ReasonName(AtvRefusal r) {
     case AtvRefusal::Seated:        return "seated";
     case AtvRefusal::Synced:        return "synced";
     case AtvRefusal::TakeoverPaced: return "takeover_paced";
+    }
+    return "unknown";
+}
+
+const char* PassengerReasonName(coop::net::AtvPassengerRefusal r) {
+    using R = coop::net::AtvPassengerRefusal;
+    switch (r) {
+    case R::Admitted:      return "admitted";
+    case R::NotWorldReady: return "not_world_ready";
+    case R::Malformed:     return "malformed";
+    case R::UnknownAtv:    return "unknown_atv";
+    case R::SenderDead:    return "sender_dead";
+    case R::NoBody:        return "no_body";
+    case R::Paced:         return "paced";
+    case R::AlreadySeated: return "already_seated";
+    case R::Full:          return "full";
+    case R::OutOfReach:    return "out_of_reach";
+    case R::NoTarget:      return "no_target";
+    case R::NotPassenger:  return "not_passenger";
+    case R::Count:         break;
     }
     return "unknown";
 }
@@ -139,10 +175,12 @@ AtvRefusal ReachTest(coop::net::Session& s, uint8_t slot, void* actor) {
     }
 }
 
-// Whether `slot` sits in any ATV of the index.
+// Whether `slot` sits in any ATV of the index, in its driver's seat or a passenger's.
 bool SeatedAnywhere(uint8_t slot) {
-    for (const auto& kv : g_atvs)
-        if (kv.second.seatOccupant == slot && R::IsLiveByIndex(kv.second.actor, kv.second.idx)) return true;
+    for (const auto& kv : g_atvs) {
+        if (!R::IsLiveByIndex(kv.second.actor, kv.second.idx)) continue;
+        if (kv.second.seatOccupant == slot || PassengerSeatOf(kv.second, slot) >= 0) return true;
+    }
     return false;
 }
 
@@ -255,6 +293,180 @@ void OnTakeover(const coop::net::AtvTakeoverPayload& p, uint8_t slot) {
     Answer(*s, slot, p.key, p.seq, why, e);
 }
 
+int PassengerSeatOf(const AtvEntry& e, uint8_t slot) {
+    if (slot == kNoSeat) return -1;
+    for (int i = 0; i < kPassengerSeats; ++i)
+        if (e.passengerSlot[i] == slot) return i;
+    return -1;
+}
+
+int ClearPassenger(uint8_t slot) {
+    int cleared = 0;
+    for (auto& kv : g_atvs) {
+        AtvEntry& e = kv.second;
+        for (int i = 0; i < kPassengerSeats; ++i) {
+            if (e.passengerSlot[i] != slot) continue;
+            e.passengerSlot[i] = kNoSeat;
+            e.passengerAwayMs[i] = 0;
+            e.passengerDue = true;
+            ++cleared;
+        }
+    }
+    return cleared;
+}
+
+namespace {
+
+// The verdict to its sender, with the seat it holds on that ATV after it (0xFF = none).
+void PassengerAnswer(coop::net::Session& s, uint8_t slot, const coop::net::WireKey& key, uint8_t seq,
+                     coop::net::AtvPassengerRefusal why, const AtvEntry* e) {
+    using Refusal = coop::net::AtvPassengerRefusal;
+    coop::net::AtvPassengerAnswerPayload a{};
+    a.key = key;
+    a.seq = seq;
+    a.admitted = why == Refusal::Admitted ? 1 : 0;
+    const int held = e ? PassengerSeatOf(*e, slot) : -1;
+    a.seat = held >= 0 ? static_cast<uint8_t>(held) : kNoSeat;
+    a.reason = static_cast<uint8_t>(why);
+    if (why == Refusal::Admitted) {
+        ++g_counters.passengerAdmitted;
+    } else {
+        ++g_counters.passengerRefused[static_cast<unsigned>(why) & 15u];
+        g_refusals.Note(slot, PassengerReasonName(why), std::chrono::steady_clock::now());
+    }
+    s.SendReliableToSlot(slot, coop::net::ReliableKind::AtvPassengerAnswer, &a, sizeof(a));
+}
+
+int FirstFreeSeat(const AtvEntry& e) {
+    for (int i = 0; i < kPassengerSeats; ++i)
+        if (e.passengerSlot[i] == kNoSeat) return i;
+    return -1;
+}
+
+// A board by `who`: one seat at a time anywhere, then a free passenger seat. The driver's seat is no test: a passenger
+// may board an empty ATV, and a driver's leaving ejects nobody.
+coop::net::AtvPassengerRefusal BoardTests(const AtvEntry& e, uint8_t who, int* seat) {
+    using Refusal = coop::net::AtvPassengerRefusal;
+    if (SeatedAnywhere(who)) return Refusal::AlreadySeated;
+    *seat = FirstFreeSeat(e);
+    return *seat >= 0 ? Refusal::Admitted : Refusal::Full;
+}
+
+// HOST, from RunPass: a rider whose body is dead is out, and one whose claimed position stays far from its seat (the
+// ledger's accepted position, which a puppet pinned to the seat cannot say) is out after a while: its machine has left
+// the ATV without being able to say so. The host's own player is its own machine's to leave. Each change is marked for a
+// send.
+void SweepPassengers(uint64_t nowMs) {
+    coop::net::Session* s = coop::atv_sync::LaneSession();
+    if (!s) return;
+    for (auto& kv : g_atvs) {
+        AtvEntry& e = kv.second;
+        if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
+        for (int i = 0; i < kPassengerSeats; ++i) {
+            const uint8_t who = e.passengerSlot[i];
+            if (who == kNoSeat || who == 0) continue;
+            const char* why = nullptr;
+            if (coop::players::Registry::Get().LifeOf(who) == coop::players::PuppetLife::Dead) {
+                why = "dead";
+            } else {
+                FVector seatAt{}, claimed{};
+                if (ue_wrap::atv_passenger::SeatWorldLocation(e.actor, i, seatAt) &&
+                    coop::movement_ledger::TryGetAcceptedPosition(*s, who, claimed)) {
+                    const FVector d{claimed.X - seatAt.X, claimed.Y - seatAt.Y, claimed.Z - seatAt.Z};
+                    if (coop::atv_sync::Len(d) > kRiderStrayUU) {
+                        if (e.passengerAwayMs[i] == 0) e.passengerAwayMs[i] = nowMs;
+                        else if (nowMs - e.passengerAwayMs[i] >= kRiderStrayMs) why = "far from its seat";
+                    } else {
+                        e.passengerAwayMs[i] = 0;
+                    }
+                }
+            }
+            if (!why) continue;
+            e.passengerSlot[i] = kNoSeat;
+            e.passengerAwayMs[i] = 0;
+            e.passengerDue = true;
+            ++g_counters.passengerSwept;
+            UE_LOGI("atv_authority: slot %u is out of passenger seat %d of '%ls' (%s)", static_cast<unsigned>(who), i,
+                    kv.first.c_str(), why);
+        }
+    }
+}
+
+}  // namespace
+
+void OnPassengerRequest(const coop::net::AtvPassengerRequestPayload& p, uint8_t slot) {
+    using Refusal = coop::net::AtvPassengerRefusal;
+    coop::net::Session* s = coop::atv_sync::LaneSession();
+    if (!s) return;
+    if (!s->IsSlotWorldReady(slot)) {
+        ++g_counters.passengerRefused[static_cast<unsigned>(Refusal::NotWorldReady)];
+        g_refusals.Note(slot, PassengerReasonName(Refusal::NotWorldReady), std::chrono::steady_clock::now());
+        return;
+    }
+    const std::wstring key = coop::net::StringFromWireKey(p.key);
+    if (p.action > 1 || key.empty()) return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::Malformed, nullptr);
+    AtvEntry* e = FindLive(key);
+    if (!e) return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::UnknownAtv, nullptr);
+    if (p.action == 0) {
+        // A leave from a rider frees its seat and takes no token; the driver and the syncer keep their places.
+        const int held = PassengerSeatOf(*e, slot);
+        if (held < 0) return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::NotPassenger, e);
+        e->passengerSlot[held] = kNoSeat;
+        e->passengerAwayMs[held] = 0;
+        e->passengerDue = true;
+        return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::Admitted, e);
+    }
+    const coop::players::PuppetLife life = coop::players::Registry::Get().LifeOf(slot);
+    if (life == coop::players::PuppetLife::Dead) return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::SenderDead, e);
+    if (life == coop::players::PuppetLife::None) return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::NoBody, e);
+    if (!g_passengerBuckets[slot].Take(kPassengerBudget, coop::atv_sync::NowMs()))
+        return PassengerAnswer(*s, slot, p.key, p.seq, Refusal::Paced, e);
+    int seat = -1;
+    Refusal why = BoardTests(*e, slot, &seat);
+    if (why == Refusal::Admitted) {
+        switch (ReachTest(*s, slot, e->actor)) {
+        case AtvRefusal::Admitted:   break;
+        case AtvRefusal::NoBody:     why = Refusal::NoBody; break;
+        case AtvRefusal::OutOfReach: why = Refusal::OutOfReach; break;
+        default:                     why = Refusal::NoTarget; break;
+        }
+    }
+    if (why == Refusal::Admitted) {
+        e->passengerSlot[seat] = slot;
+        e->passengerAwayMs[seat] = 0;
+        e->passengerDue = true;
+    }
+    PassengerAnswer(*s, slot, p.key, p.seq, why, e);
+}
+
+bool JudgePassengerLocal(AtvEntry& e, bool board, int* seat) {
+    if (!board) {
+        const int held = PassengerSeatOf(e, 0);
+        if (held < 0) return false;
+        e.passengerSlot[held] = kNoSeat;
+        e.passengerAwayMs[held] = 0;
+        e.passengerDue = true;
+        return true;
+    }
+    int got = -1;
+    if (BoardTests(e, 0, &got) != coop::net::AtvPassengerRefusal::Admitted) return false;
+    e.passengerSlot[got] = 0;
+    e.passengerAwayMs[got] = 0;
+    e.passengerDue = true;
+    if (seat) *seat = got;
+    return true;
+}
+
+void DrillSetPassengerGhosts(const std::wstring& key, bool on) {
+    AtvEntry* e = FindLive(key);
+    if (!e) return;
+    static const uint8_t kGhosts[kPassengerSeats] = {2, 3, 0};
+    for (int i = 0; i < kPassengerSeats; ++i) {
+        if (on && e->passengerSlot[i] == kNoSeat) e->passengerSlot[i] = kGhosts[i];
+        else if (!on && e->passengerSlot[i] == kGhosts[i]) e->passengerSlot[i] = kNoSeat;
+    }
+}
+
 bool JudgeLocal(AtvEntry& e, AtvRequest req) {
     const uint64_t nowMs = coop::atv_sync::NowMs();
     switch (req) {
@@ -343,6 +555,7 @@ void RunPass(uint64_t nowMs) {
         coop::config::ResolveEnum(coop::config_registry::rows::atv_health_red) == "back";
     static const bool s_redSilence =
         coop::config::ResolveEnum(coop::config_registry::rows::atv_health_red) == "silence";
+    SweepPassengers(nowMs);
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
         if (e.seatSyncer == 0 || !R::IsLiveByIndex(e.actor, e.idx)) continue;
@@ -423,6 +636,20 @@ void LogSummary() {
                                     ReasonName(static_cast<AtvRefusal>(i)), n);
         if (w > 0 && used + static_cast<size_t>(w) < sizeof(byReason)) used += static_cast<size_t>(w);
     }
+    unsigned long long passRefused = 0;
+    char passBy[240] = {};
+    size_t passUsed = 0;
+    for (unsigned i = 1; i < 16; ++i) {
+        const unsigned long long n = g_counters.passengerRefused[i];
+        if (n == 0) continue;
+        passRefused += n;
+        const int w = std::snprintf(passBy + passUsed, sizeof(passBy) - passUsed, passUsed ? " %s=%llu" : "%s=%llu",
+                                    PassengerReasonName(static_cast<coop::net::AtvPassengerRefusal>(i)), n);
+        if (w > 0 && passUsed + static_cast<size_t>(w) < sizeof(passBy)) passUsed += static_cast<size_t>(w);
+    }
+    if (g_counters.passengerAdmitted != 0 || passRefused != 0 || g_counters.passengerSwept != 0)
+        UE_LOGI("atv_authority: passengers -- %llu admitted, %llu refused (%s), %llu swept", g_counters.passengerAdmitted,
+                passRefused, passBy, g_counters.passengerSwept);
     if (g_counters.admitted == 0 && refusedTotal == 0 && g_counters.notSyncer == 0 && g_counters.lateSyncer == 0 &&
         g_counters.streamPaced == 0 && g_counters.handedBack == 0 && g_counters.silenced == 0 &&
         g_counters.idleStreamBlocks == 0 && g_counters.carriedStillBlocks == 0)
@@ -438,6 +665,7 @@ void Reset() {
     g_counters = Counters{};
     for (int i = 0; i < g_seatBuckets.size(); ++i) g_seatBuckets[i].Reset();
     for (int i = 0; i < g_takeoverBuckets.size(); ++i) g_takeoverBuckets[i].Reset();
+    for (int i = 0; i < g_passengerBuckets.size(); ++i) g_passengerBuckets[i].Reset();
     g_refusals.Clear();
 }
 

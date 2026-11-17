@@ -42,6 +42,11 @@ struct AtvEntry {
     uint32_t seatRider    = 0;     // the riding kerfur's element id (0 = none)
     void*    seatRiderActor = nullptr;  // host only: the riding kerfur's actor, compared and never dereferenced
     std::wstring key;              // the game Key this entry is filed under (set where the entry is created)
+    // The passenger table (atv_authority.cpp): the peer slot in each passenger seat, 0xFF free. The host writes it by its
+    // judgement, a client by the host's AtvPassengerTable. Independent of the driver's seat: a driver leaving ejects nobody.
+    uint8_t  passengerSlot[3] = {0xFF, 0xFF, 0xFF};
+    bool     passengerDue = false;           // host: the table changed; one AtvPassengerTable goes to every ready client
+    uint64_t passengerAwayMs[3] = {};        // host: since when the seat's rider's claimed position is far from the seat (0 = near)
     // Host only: the judgement's clocks. A block, a grant or a pass moves them (atv_authority.cpp).
     uint8_t  prevSyncerSlot = 0xFF; // the client a hand-back just replaced, for the late-block count
     uint64_t lastBlockMs  = 0;     // when the syncer's last block was applied (a grant counts as one)

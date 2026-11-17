@@ -210,6 +210,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/atv_health_drill_peers.cpp
     src/coop/dev/atv_health_drill_spawned.cpp
     src/coop/dev/atv_spawn_near.cpp
+    src/coop/dev/atv_passenger_drill.cpp
+    src/coop/dev/atv_passenger_drill_host.cpp
     src/coop/dev/throw_drill.cpp
     src/coop/dev/log_drill.cpp
     src/coop/dev/server_upgrade_drill.cpp
