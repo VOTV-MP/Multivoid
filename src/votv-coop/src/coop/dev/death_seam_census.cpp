@@ -23,6 +23,7 @@ const char* TypeName(ElementType t) {
     case ElementType::Npc:        return "npc";
     case ElementType::Kerfur:     return "kerfur";
     case ElementType::WorldActor: return "world-actor";
+    case ElementType::Building:   return "building";
     default:                      return "unknown";
     }
 }
@@ -44,7 +45,7 @@ void Tick() {
     if (!s_on || s_subscribed) return;
     if (!DS::Install()) return;
     for (ElementType t : {ElementType::Player, ElementType::Prop, ElementType::Npc, ElementType::Kerfur,
-                          ElementType::WorldActor})
+                          ElementType::WorldActor, ElementType::Building})
         DS::Subscribe(t, &OnDeath);
     s_subscribed = true;
     UE_LOGI("[DEATH] census armed on every element type");

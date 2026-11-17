@@ -54,4 +54,9 @@ bool CreateOrAdoptNpcMirror(coop::element::ElementId eid, void* actor,
 bool CreateOrAdoptWorldActorMirror(coop::element::ElementId eid, void* actor,
                                    const std::wstring& cls, int senderSlot);
 
+// CreateOrAdopt for a wire-received BUILDING mirror (a nail, a wall, an unfinished wall, a poster). Same
+// contract as the NPC funnel; the Element carries `key` as its name and `cls` as its type name.
+bool CreateOrAdoptBuildingMirror(coop::element::ElementId eid, void* actor, const std::wstring& key,
+                                 const std::wstring& cls, int senderSlot);
+
 }  // namespace coop::element

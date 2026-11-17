@@ -13,6 +13,7 @@
 #include "coop/element/prop.h"
 #include "coop/element/npc.h"          // CreateOrAdoptNpcMirror
 #include "coop/element/world_actor.h"  // CreateOrAdoptWorldActorMirror
+#include "coop/element/building.h"     // CreateOrAdoptBuildingMirror
 #include "coop/element/registry.h"
 #include "coop/element/element_deleter.h"          // the provisional-dissolve deferred drain
 #include "coop/creatures/kerfur_entity.h"          // NotifyKerfurPropMirrorBound (client held-pose eid map)
@@ -54,14 +55,16 @@ std::string NarrowAscii(const std::wstring& w) {
     return s;
 }
 
-// The single-owner bind decision for a "simple" wire mirror (NPC / WorldActor) --
-// no save Key, no morph re-skin, no kerfur held-pose notify (those are prop-only).
+// The single-owner bind decision for a "simple" wire mirror (NPC / WorldActor / Building) --
+// no morph re-skin, no kerfur held-pose notify (those are prop-only). A non-empty `key`
+// is stored as the Element's name, as a Prop stores its key.
 // Idempotent-adopt (same actor -> true), HEAD live-conflict reject (a different
 // live actor at `eid` -> false), else build the Element + Install at `eid`.
 template <typename T>
 bool CreateOrAdoptSimpleMirror(coop::element::MirrorManager<T>& mgr,
                                coop::element::ElementId eid, void* actor,
-                               const std::wstring& cls, int senderSlot) {
+                               const std::wstring& cls, int senderSlot,
+                               const std::wstring& key = std::wstring()) {
     if (!actor) return false;
     if (auto* existing = coop::element::Registry::Get().Get(eid)) {
         return existing->GetActor() == actor;  // ADOPT idempotent (true) / REJECT divergent (false)
@@ -70,6 +73,7 @@ bool CreateOrAdoptSimpleMirror(coop::element::MirrorManager<T>& mgr,
         (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers))
             ? senderSlot : -1;
     auto mirror = std::make_unique<T>();
+    if (!key.empty()) mirror->SetName(NarrowAscii(key));
     if (!cls.empty()) mirror->SetTypeName(NarrowAscii(cls));
     mirror->SetActor(actor, R::InternalIndexOf(actor));
     return coop::element::MirrorInstallAccess::Install(mgr, eid, std::move(mirror), ownerSlot);
@@ -246,6 +250,15 @@ bool CreateOrAdoptWorldActorMirror(coop::element::ElementId eid, void* actor,
         coop::element::MirrorManager<coop::element::WorldActor>::Instance(), eid, actor, cls, senderSlot);
     if (ok)
         UE_LOGI("sync::CreateOrAdoptWorldActorMirror: eid=%u bound to actor=%p cls='%ls'", eid, actor, cls.c_str());
+    return ok;
+}
+
+bool CreateOrAdoptBuildingMirror(coop::element::ElementId eid, void* actor, const std::wstring& key,
+                                 const std::wstring& cls, int senderSlot) {
+    const bool ok = CreateOrAdoptSimpleMirror(BuildingMirrors(), eid, actor, cls, senderSlot, key);
+    if (ok)
+        UE_LOGI("sync::CreateOrAdoptBuildingMirror: eid=%u bound to actor=%p key='%ls' cls='%ls'", eid, actor,
+                key.c_str(), cls.c_str());
     return ok;
 }
 

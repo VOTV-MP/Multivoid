@@ -43,6 +43,10 @@ enum class ElementType : uint8_t {
     // jellyfish, the firetank): a plain actor the host streams a transform-only mirror of, a
     // sibling of Npc under Element (see coop/element/world_actor.h).
     WorldActor = 5,
+    // A building piece (a nail, a wall, an unfinished wall, a poster): an actor_save keyed actor
+    // with its own identity row, kept apart from Prop so no prop path resolves it by eid (see
+    // coop/element/building.h).
+    Building = 6,
 };
 
 class Element {

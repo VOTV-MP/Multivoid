@@ -2,8 +2,10 @@
 
 #include "coop/element/identity_destroy.h"
 
+#include "coop/element/building.h"
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
+#include "coop/element/mirror_managers.h"  // BuildingMirrors
 #include "coop/element/npc.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
@@ -22,6 +24,9 @@ void RetireMirror(coop::element::ElementId eid) {
             break;
         case ElementType::Npc:
             del.Enqueue(MirrorManager<Npc>::Instance().Take(eid));
+            break;
+        case ElementType::Building:
+            del.Enqueue(BuildingMirrors().Take(eid));
             break;
         case ElementType::WorldActor:
             del.Enqueue(MirrorManager<WorldActor>::Instance().Take(eid));
