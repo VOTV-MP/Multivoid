@@ -70,11 +70,12 @@ bool ReadInt(void* obj, const wchar_t* name, int32_t& out);
 
 // ---- build_probe_place.cpp ----
 
-// Spawns `classPath` at `ask`, drops a ground line trace from 300 cm above it to 1000 cm below, moves the actor to the hit
-// with K2_SetActorLocation (no sweep) and reads it back. The line says the ask, the hit, its actor and the read-back; null
-// with the INVALID verdict said when nothing spawned, no ground was hit or the read-back is over 50 cm from the hit.
-// `placed` is the read-back place. Game thread.
-void* PlaceOnGround(const wchar_t* classPath, const ue_wrap::FVector& ask, const char* what, ue_wrap::FVector& placed);
+// Traces a ground line from 300 cm above `ask` to 1000 cm below (ignoring the live actor `ctx`), spawns `classPath` at the
+// hit and reads its place back. The line says the ask, the hit, its actor and the read-back; null with the INVALID verdict
+// said when no ground was hit, nothing spawned or the read-back is over 50 cm from the hit. `placed` is the read-back
+// place. Game thread.
+void* PlaceOnGround(void* ctx, const wchar_t* classPath, const ue_wrap::FVector& ask, const char* what,
+                    ue_wrap::FVector& placed);
 
 // ---- build_probe_damage.cpp ----
 

@@ -2,7 +2,9 @@
 // at the level's wall and then at a customWall_C the probe placed on the ground beside the host; see coop/dev/build_probe.h.
 // The director walks the host to the wall, never a teleport. A leg that destroys the wall ends that wall's legs: what fired
 // is the result, and nothing is left to hit. Each throw says how near the brick came to the wall's box and each swing says
-// what its own view trace struck, so a leg with no route can be told from a miss.
+// what its own view trace struck, so a leg with no route can be told from a miss. Before a throw or a swing the view
+// trace must name the wall; where another actor blocks it the host walks to another side of the wall's box (up to four),
+// and a leg that finds no side with a clear view says what blocks it and moves on.
 
 #include "build_probe_detail.h"
 
@@ -28,6 +30,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace coop::dev::build_probe::detail {
@@ -38,7 +41,11 @@ namespace E  = ue_wrap::engine;
 namespace DR = coop::director;
 namespace DV = coop::dev::drive_drill_verbs;
 
-enum class Step : uint8_t { Start, Walk, ThrowAim, ThrowSettle, Swing, Explode, ExplodeWait, Place, End };
+enum class Step : uint8_t { Start, Walk, Restand, ThrowAim, ThrowSettle, Swing, Explode, ExplodeWait, Place, End };
+
+// What a look at the wall found: it is the first thing the view trace strikes, the host is walking to another stand to
+// find a line that names it, or every stand was tried.
+enum class Sight : uint8_t { Named, Walking, Blocked };
 
 constexpr const wchar_t* kBuiltPath = L"/Game/objects/customWall.customWall_C";
 constexpr float    kBuiltAwayCm = 250.f;   // the host-built wall is put this far from the host, away from the level wall
@@ -57,6 +64,10 @@ constexpr float    kBlastDamage = 40.f;
 constexpr float    kBlastRadiusCm = 400.f;
 constexpr float    kBlastStandoffCm = 120.f;
 constexpr float    kDegToRad = 0.01745329252f;
+constexpr float    kThrowTraceCm = 600.f;   // a throw's view trace runs this far
+constexpr float    kStandOffCm = 90.f;      // a stand is this far off a face of the wall's box
+constexpr float    kStandReachCm = 60.f;    // the walk to a stand ends this near it
+constexpr size_t   kMaxStands = 4;          // the sides of the box, each tried once per leg
 
 // The leg names per pass: the level's wall, then the host-built one.
 constexpr const char* kLegs[2][3] = {{"throw", "swing", "explosion"}, {"built-throw", "built-swing", "built-explosion"}};
@@ -76,6 +87,10 @@ int      g_restReads = 0;
 bool     g_sawMoving = false;
 ue_wrap::FVector g_levelCentre{};
 Approach g_approach;
+Step     g_resume = Step::ThrowAim;   // the step a walk to a stand returns to
+std::vector<ue_wrap::FVector> g_stands;
+size_t   g_standIdx = 0;
+bool     g_standsBuilt = false;
 std::shared_ptr<DR::BackgroundWalk> g_walk;
 std::vector<void*>    g_bricksBefore;
 ue_wrap::CachedObjRef g_thrown;
@@ -164,22 +179,104 @@ bool AtRest() {
     return g_sawMoving && g_restReads >= kRestTicks;
 }
 
-// What the swing's line trace strikes: the camera's view as far as the held item's `length`, the line the game's attack
-// traces. Said as the actor's class and distance, and whether it is the wall this pass hits.
-std::string SwingTraceSaid(void* me, void* wall) {
+// What the view's line trace strikes: the camera's view as far as `reachCm`, the line the game's attack traces. True when
+// the first thing it strikes is `wall`; `said` is the actor's class and distance and whether it is the wall, and `blocker`
+// what stands in the way when it is not (the class, or that the line is clear or did not run).
+bool ViewNamesWall(void* me, void* wall, float reachCm, std::string& said, std::string& blocker) {
     const ue_wrap::FVector cam = E::GetCameraLocation();
     const ue_wrap::FRotator rot = E::GetCameraRotation();
     const float p = rot.Pitch * kDegToRad, y = rot.Yaw * kDegToRad;
-    const ue_wrap::FVector to{cam.X + std::cos(p) * std::cos(y) * g_swingReachCm,
-                              cam.Y + std::cos(p) * std::sin(y) * g_swingReachCm, cam.Z + std::sin(p) * g_swingReachCm};
+    const ue_wrap::FVector to{cam.X + std::cos(p) * std::cos(y) * reachCm, cam.Y + std::cos(p) * std::sin(y) * reachCm,
+                              cam.Z + std::sin(p) * reachCm};
     ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitStatDyn(me, cam, to, &hit)) return "the view trace did not run";
-    if (!hit.blocked) return "the view trace is clear within the reach";
+    if (!ue_wrap::trace::LineHitStatDyn(me, cam, to, &hit)) {
+        said = blocker = "an unreadable view trace";
+        return false;
+    }
+    if (!hit.blocked) {
+        said = "the view trace is clear within the reach";
+        blocker = "nothing within the reach";
+        return false;
+    }
     const float dx = hit.point.X - cam.X, dy = hit.point.Y - cam.Y, dz = hit.point.Z - cam.Z;
+    const bool named = hit.actor && hit.actor == wall;
     char buf[160];
     std::snprintf(buf, sizeof(buf), "the view trace struck %s at %.0f cm, onWall=%d", ClassOrNull(hit.actor).c_str(),
-                  static_cast<double>(std::sqrt(dx * dx + dy * dy + dz * dz)), hit.actor && hit.actor == wall ? 1 : 0);
-    return buf;
+                  static_cast<double>(std::sqrt(dx * dx + dy * dy + dz * dz)), named ? 1 : 0);
+    said = buf;
+    blocker = ClassOrNull(hit.actor);
+    return named;
+}
+
+// The four sides of the wall's box, the host's nearest first: a point kStandOffCm off each face, at the host's height.
+std::vector<ue_wrap::FVector> SideStands(void* me, void* wall) {
+    ue_wrap::FVector c{}, e{}, mine{};
+    if (!E::GetActorBounds(wall, false, c, e) || !E::TryGetActorLocation(me, mine)) return {};
+    const float dir[kMaxStands][2] = {{1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f}};
+    std::vector<std::pair<float, ue_wrap::FVector>> sides;
+    for (const auto& d : dir) {
+        const float reach = (d[0] != 0.f ? e.X : e.Y) + kStandOffCm;
+        const ue_wrap::FVector p{c.X + d[0] * reach, c.Y + d[1] * reach, mine.Z};
+        sides.emplace_back(std::hypot(p.X - mine.X, p.Y - mine.Y), p);
+    }
+    std::stable_sort(sides.begin(), sides.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<ue_wrap::FVector> out;
+    for (const auto& s : sides) out.push_back(s.second);
+    return out;
+}
+
+// The leg's stands start over: the sides are measured at its first blocked look.
+void ForgetStands() {
+    g_stands.clear();
+    g_standIdx = 0;
+    g_standsBuilt = false;
+}
+
+// Starts the director's walk to the next side of the box that a route reaches; false when none is left.
+bool StartNextStand(void* me, void* wall, const char* why) {
+    if (!g_standsBuilt) {
+        g_stands = SideStands(me, wall);
+        g_standIdx = 0;
+        g_standsBuilt = true;
+    }
+    while (g_standIdx < g_stands.size()) {
+        const ue_wrap::FVector s = g_stands[g_standIdx++];
+        ue_wrap::FVector mine{};
+        float len = 0.f;
+        if (!E::TryGetActorLocation(me, mine) || !DR::RouteInLegs(me, mine, s, kStandReachCm, &len)) continue;
+        const int deadline = std::clamp(static_cast<int>(len / 100.f) + 30, 30, 120);
+        g_walk = DR::StartBackgroundWalk(s, kStandReachCm, deadline);
+        Info("damage: the %s wall is blocked by %s; the host steps to side %zu of %zu at (%.0f,%.0f,%.0f), a %.0f cm route",
+             Label(), why, g_standIdx, kMaxStands, static_cast<double>(s.X), static_cast<double>(s.Y),
+             static_cast<double>(s.Z), static_cast<double>(len));
+        return true;
+    }
+    return false;
+}
+
+// Before a throw or a swing: the view must name the wall. When another actor stands in the way the host walks to the
+// next side of the wall's box and the step `resume` looks again from there; `blocker` is what stood in the way.
+Sight LookAtWall(void* me, void* wall, float reachCm, Step resume, uint64_t now, std::string& said, std::string& blocker) {
+    if (ViewNamesWall(me, wall, reachCm, said, blocker)) return Sight::Named;
+    if (!StartNextStand(me, wall, blocker.c_str())) return Sight::Blocked;
+    g_resume = resume;
+    To(Step::Restand, now);
+    return Sight::Walking;
+}
+
+// The swing leg's start, after the throw leg ended or was blocked: the axe in the hand and its reach read.
+Res AfterThrow(uint64_t now, void* wall) {
+    ue_wrap::weapon_catalog::Swing sw;
+    if (!ue_wrap::weapon_catalog::Lookup(L"axe", sw) || !(sw.length > 0.f))
+        return Invalid("the axe's swing length did not read");
+    g_swingReachCm = sw.length;
+    if (!coop::dev::drill_hand::TakeIntoHandNow(L"axe", L"prop_axe_C")) return Invalid("the axe could not be taken into the hand");
+    g_swings = 0;
+    g_nextSwingMs = 0;
+    ForgetStands();
+    BeginLeg(LegName(1), wall);
+    To(Step::Swing, now);
+    return Res::Working;
 }
 
 }  // namespace
@@ -195,6 +292,8 @@ void ResetDamageLegs() {
     g_sawMoving = g_inLeg = g_thrownSeen = false;
     g_levelCentre = {};
     g_approach.Reset();
+    g_resume = Step::ThrowAim;
+    ForgetStands();
     g_bricksBefore.clear();
     g_thrown.Reset();
     g_blast.Reset();
@@ -224,7 +323,16 @@ Res TickDamageLegs() {
         Info("damage: the host arrived at the %s wall", Label());
         if (!coop::dev::drill_hand::TakeIntoHandNow(L"brick", L"prop_C"))
             return Invalid("a brick could not be taken into the hand");
+        ForgetStands();
         To(Step::ThrowAim, now);
+        return Res::Working;
+    }
+    case Step::Restand: {
+        const int state = g_walk ? g_walk->state.load() : 2;
+        if (state == 0) return Res::Working;
+        // A stand the walk did not reach is looked at from where the host stands: the look walks on to the next side.
+        Info("damage: the host %s its stand beside the %s wall", state == 1 ? "reached" : "did not reach", Label());
+        To(g_resume, now);
         return Res::Working;
     }
     case Step::ThrowAim: {
@@ -233,6 +341,14 @@ Res TickDamageLegs() {
         FaceTowards(me, at);
         if (now - g_stepMs < kAimHoldMs) return AimBound(now, "the throw");
         if (!ViewOn(at)) return AimBound(now, "the throw");
+        std::string said, blocker;
+        const Sight sight = LookAtWall(me, wall, kThrowTraceCm, Step::ThrowAim, now, said, blocker);
+        if (sight == Sight::Walking) return Res::Working;
+        if (sight == Sight::Blocked) {
+            Info("damage: the throw at the %s wall is blocked by %s after %zu sides; the leg moves on", Label(),
+                 blocker.c_str(), g_standIdx);
+            return AfterThrow(now, wall);
+        }
         BeginLeg(LegName(0), wall);
         SnapshotBricks(g_bricksBefore);
         if (!DV::Throw(me)) return Invalid("throwHoldingProp did not run");
@@ -262,17 +378,7 @@ Res TickDamageLegs() {
         Info("damage: the thrown brick %s; its distance to the %s wall's box: %s", gone ? "is gone" : "came to rest", Label(),
              g_approach.Say().c_str());
         if (!EndLeg(LegName(0), wall)) return NextPass(now);
-        ue_wrap::weapon_catalog::Swing sw;
-        if (!ue_wrap::weapon_catalog::Lookup(L"axe", sw) || !(sw.length > 0.f))
-            return Invalid("the axe's swing length did not read");
-        g_swingReachCm = sw.length;
-        if (!coop::dev::drill_hand::TakeIntoHandNow(L"axe", L"prop_axe_C"))
-            return Invalid("the axe could not be taken into the hand");
-        g_swings = 0;
-        g_nextSwingMs = 0;
-        BeginLeg(LegName(1), wall);
-        To(Step::Swing, now);
-        return Res::Working;
+        return AfterThrow(now, wall);
     }
     case Step::Swing: {
         ue_wrap::FVector at{};
@@ -286,7 +392,16 @@ Res TickDamageLegs() {
         if (g_swings >= kMaxSwings || now < g_nextSwingMs) return Res::Working;
         FaceTowards(me, at);
         if (now - g_stepMs < kAimHoldMs || !ViewOn(at)) return AimBound(now, "the swing");
-        const std::string traced = SwingTraceSaid(me, wall);
+        std::string traced, blocker;
+        const Sight sight = LookAtWall(me, wall, g_swingReachCm, Step::Swing, now, traced, blocker);
+        if (sight == Sight::Walking) return Res::Working;
+        if (sight == Sight::Blocked) {
+            Info("damage: the swing at the %s wall is blocked by %s after %zu sides; the leg moves on", Label(),
+                 blocker.c_str(), g_standIdx);
+            if (!EndLeg(LegName(1), wall)) return NextPass(now);
+            To(Step::Explode, now);
+            return Res::Working;
+        }
         if (!DR::PressInputEvent(me, g_firePress) || !DR::PressInputEvent(me, g_fireRelease))
             return Invalid("the fire input event did not run");
         ++g_swings;
@@ -329,7 +444,7 @@ Res TickDamageLegs() {
         const float flat = std::sqrt(dx * dx + dy * dy);
         if (!(flat > 1.f)) return Invalid("the host stands at the level wall's centre: no side to put its own wall on");
         const ue_wrap::FVector ask{mine.X + dx / flat * kBuiltAwayCm, mine.Y + dy / flat * kBuiltAwayCm, mine.Z};
-        void* built = PlaceOnGround(kBuiltPath, ask, "the host-built customWall_C", placed);
+        void* built = PlaceOnGround(me, kBuiltPath, ask, "the host-built customWall_C", placed);
         if (!built) return Res::Invalid;
         g_built.Set(built);
         float h = -1.f, mh = -1.f;

@@ -138,7 +138,7 @@ Res TickBrickHost() {
         if (!puppet || !R::IsLive(puppet) || !E::TryGetActorLocation(puppet, pos))
             return Res::Working;   // the puppet is not placed yet: the host's join is already over, so it is a frame or two
         const ue_wrap::FVector fwd = E::GetActorForwardVector(puppet);
-        void* wall = PlaceOnGround(kWallPath, {pos.X + fwd.X * kAheadCm, pos.Y + fwd.Y * kAheadCm, pos.Z},
+        void* wall = PlaceOnGround(puppet, kWallPath, {pos.X + fwd.X * kAheadCm, pos.Y + fwd.Y * kAheadCm, pos.Z},
                                    "the host's unfinished wall", g_at);
         if (!wall) return Res::Invalid;   // PlaceOnGround said INVALID
         g_wall.Set(wall);
@@ -215,7 +215,7 @@ Res TickBrickClient() {
         }
         const float x = v[0], y = v[1], z = v[2];
         if (!me) return Invalid("the client's player is gone");
-        void* wall = PlaceOnGround(kWallPath, {x, y, z}, "the client's unfinished wall", g_at);
+        void* wall = PlaceOnGround(me, kWallPath, {x, y, z}, "the client's unfinished wall", g_at);
         if (!wall) return Res::Invalid;   // PlaceOnGround said INVALID
         g_wall.Set(wall);
         ReadInt(wall, L"bricks", g_bricksBefore);
