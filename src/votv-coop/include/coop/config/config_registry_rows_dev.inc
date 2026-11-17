@@ -396,6 +396,8 @@ CFG_ENUM(pry_drill, "pry_drill", "dev", "off", "off|host|client|join",
     "print every pryable they have and every change of one.")
 // The crowbar pry drill and its red arm: their own file, one concept, included as _dev_port.inc is above.
 #include "coop/config/config_registry_rows_dev_crowbarpry.inc"
+// The oven repair drill's row: its own file, one concept, included as _dev_crowbarpry.inc is above.
+#include "coop/config/config_registry_rows_dev_fixtures.inc"
 CFG_FLAG(recycled_slot_drill, "recycled_slot_drill", "dev", false, "VOTVCOOP_RECYCLED_SLOT_DRILL",
     "Drill (either peer): once the local pawn and the object index are up, stage an object slot the "
     "engine recycled on the pawn's root component -- a queued birth naming the slot's old class, and a "

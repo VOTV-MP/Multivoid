@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 303;
+inline constexpr uint16_t kProtocolVersion = 304;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1489,6 +1489,12 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+
+    // Any peer to all (a client's through the host's relay), and host to a joiner at its connect replay: the steps
+    // of one kitchen oven's repair that come before its wiring, as a mask of the four screws out and the lid off.
+    // The bits are never cleared, so a receiver raises on its own repair screen every bit it lacks. Client-allowed;
+    // relayed. OvenProgressStatePayload.
+    OvenProgressState = 275,
 
     // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
     // host runs only while its setting net.allow_player_cheats is on and the sender holds the right
@@ -4481,6 +4487,15 @@ struct PhysModsStatePayload {
     uint8_t bytes[12];  // 12 -- op 2: the canonical array; else zero
 };
 static_assert(sizeof(PhysModsStatePayload) == 16, "PhysModsStatePayload must be 16 bytes");
+
+// The steps of an oven's repair before its wiring (OvenProgressState): the oven by key, and a mask with
+// bits 0..3 for the top-left, top-right, bottom-left and bottom-right screws out and bit 4 for the lid off.
+struct OvenProgressStatePayload {
+    WireKey key;      // 32 -- the oven's key
+    uint8_t mask;     // 1  -- the steps done
+    uint8_t _pad[3];  // 3  -- zero
+};
+static_assert(sizeof(OvenProgressStatePayload) == 36, "OvenProgressStatePayload must be 36 bytes");
 
 // One drive-slot state line (DriveSlotState). role: 0 the desk play slot, 1 the desk comp slot,
 // 2 the eraser slot. occupied 1 names the slotted drive; 0 means empty, with driveEid the last

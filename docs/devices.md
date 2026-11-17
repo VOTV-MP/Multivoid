@@ -58,7 +58,7 @@ Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, a m
 console's at its `actionOptionIndex`, and the container lane a lid's `opened` at its `open` or `close`
 (which its setup, grab, damage, padlock and resting swing, and a cremator's door, call), and the oven
 lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
-writes it and repaints on 1, `fix()`'s work without its screen, and refuses 0.
+writes it and repaints on 1, `fix()`'s work without its screen, and refuses 0. The repair's first steps live on the repair screen each peer's oven owns: four bools for the screws a screwdriver took out and one for the lid, never set back and never saved. A peer sends a screen's mask when it gained a bit, the host relays a client's, a receiver raises the bits its own screen lacks, and the connect replay sends a joiner every mask with a bit (`OvenProgressState`, `coop/interactables/oven_progress_sync`); the wiring under the lid is random per screen and stays each peer's own `[RD]`. `[V]` `coop/dev/oven_progress_drill` (`VOTVCOOP_OVEN_PROGRESS_DRILL=host|client|join`, both peers): each of three steps set on one screen stood on the other, and a joiner's screen held all five from the connect replay.
 A lid a player drags with the mouse (`mouseAssign`, bound to the player's `input_mouseXY` while the grab
 lasts) is not a verb of this lane: the game leaves the lid in the dragger's `grabbing_actor`, so the
 held-item stream carries its pose and the host relays it to the other clients. The game's own `Key` of a

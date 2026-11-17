@@ -148,6 +148,7 @@
 #include "coop/dev/build_probe.h"  // [dev] the nail, wall and poster measured: damage routes, brick overlap
 #include "coop/dev/build_identity_drill.h"  // [dev] the nail, wall and poster pieces carry keys the prop lane reads, across a rejoin
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
+#include "coop/dev/oven_progress_drill.h"  // [dev] the oven's screws and lid raised on one screen, read on the other
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
 #include "coop/dev/rng_roll_census.h"  // the dev roll census
@@ -324,6 +325,7 @@ void EndSession() {
     coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::crowbarpry_drill::OnDisconnect();  // [dev] the host's board is destroyed, both halves start over
+    coop::dev::oven_progress_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::pi3_drill::OnDisconnect();  // [dev] a spawner mid-arm is abandoned, a still peer lets go
     coop::dev::native_spawn_probe::OnDisconnect();  // [dev] the per-source counts are said and the records cleared
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
@@ -389,6 +391,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::collision_probe::Tick();  // [dev] the pawns' collision, logged (a latched bool read when off)
     coop::dev::end_trace::Tick();  // [dev] the copies an End slept, traced (a latched bool read when off)
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)
+    coop::dev::oven_progress_drill::Tick(&session);  // [dev] the oven screen drill (a single read when off)
     coop::dev::recycled_slot_drill::Tick();  // [dev] the recycled-slot drill (a single read when off)
     coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)
     coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)
