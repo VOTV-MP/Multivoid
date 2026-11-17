@@ -67,7 +67,7 @@ int64_t NowMs() {
 // The level-placed boxes, held across refreshes (game thread): a box lives as long as its world, so the refresh reads
 // the held actor and walks the object array only for one it does not hold, and at most once per world.
 ue_wrap::CachedObjRef g_boxRef[kBoxCount];
-uint32_t g_walkedGen = 0;   // the world generation of the last walk
+uint32_t g_walkedGen = 0;   // the world generation of the last walk that found a box
 
 // The live box named `name` among `boxes` (one class walk's result).
 void* MatchBox(const std::vector<void*>& boxes, const wchar_t* name) {
@@ -145,10 +145,11 @@ void RequestRefresh() {
     if (!g_lastRefreshMs.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
     GT::Post([] {
         Snap fresh[kBoxCount] = {};
-        // The held boxes are read as they are. One class walk per world finds the rest; a box the walk did not find is
-        // not in this world's level, and no later refresh looks for it again.
+        // The held boxes are read as they are. One class walk per world finds the rest, and the world counts as walked
+        // once a walk found a box: a walk that found none ran before the level's placed boxes existed, so the next
+        // refresh walks again.
         const uint32_t gen = ue_wrap::world_identity::Generation();
-        bool walked = false;
+        bool walked = false, foundAny = false;
         std::vector<void*> boxes;
         for (int i = 0; i < kBoxCount; ++i) {
             void* hit = g_boxRef[i].Get();
@@ -156,13 +157,14 @@ void RequestRefresh() {
                 if (!walked) { boxes = R::FindObjectsByClass(L"trigger_box_N_C"); walked = true; }
                 hit = MatchBox(boxes, kBoxes[i].box);
                 g_boxRef[i].Set(hit);
+                if (hit) foundAny = true;
             }
             if (!hit || !ResolveOffsets(hit)) continue;
             fresh[i].resolved = true;
             fresh[i].armed = ReadArmed(hit);
             fresh[i].shots = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(hit) + g_offN);
         }
-        if (walked) g_walkedGen = gen;
+        if (walked && foundAny) g_walkedGen = gen;
         std::lock_guard<std::mutex> lk(g_snapMx);
         std::memcpy(g_snap, fresh, sizeof(g_snap));
     });

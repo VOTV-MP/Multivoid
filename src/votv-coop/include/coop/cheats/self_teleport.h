@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 namespace coop::cheats::self_teleport {
 
 // Put this machine's body 1 m behind the player in `slot` (0 = the host), facing where they face, on the NavMesh
@@ -18,9 +20,10 @@ void ToPlayer(int slot);
 // and does not move when no NavMesh lies near.
 void Unstuck();
 
-// How many moves this process landed on the NavMesh and how many it refused for want of one, for the cheat drill to
-// wait on. Any thread.
-struct Landings { unsigned landed; unsigned refused; };
+// How many moves this process landed on the NavMesh, how many came to nothing (no NavMesh near, or the game's teleport
+// call reported failure), and where the last landing put the body's centre, for the cheat drill to wait on and to
+// check the body against. Any thread.
+struct Landings { unsigned landed; unsigned refused; ue_wrap::FVector target; };
 Landings Outcomes();
 
 }  // namespace coop::cheats::self_teleport

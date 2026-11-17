@@ -26,8 +26,9 @@ constexpr float kBehindCm = 100.f;
 // How far the NavMesh may be from the wanted point: a point beside a wall slides to the floor on its own side.
 constexpr ue_wrap::FVector kNavExtent{150.f, 150.f, 250.f};
 
-std::atomic<unsigned> g_landed{0};    // the moves that landed, and the ones refused for want of a NavMesh
+std::atomic<unsigned> g_landed{0};    // the moves that landed, and the ones that came to nothing
 std::atomic<unsigned> g_refused{0};
+std::atomic<float> g_targetX{0.f}, g_targetY{0.f}, g_targetZ{0.f};   // where the last landing put the body's centre
 
 void NoSafePlace() {
     coop::chat_feed::Push(std::string(l10n::T("No safe place to land there.")), coop::chat_feed::Keep::Transient);
@@ -56,7 +57,16 @@ bool LandNear(void* local, const ue_wrap::FVector& want, float yaw) {
     args.rotPitch = view.Pitch;
     args.rotYaw = yaw;
     args.rotRoll = view.Roll;
-    coop::teleport_client::ApplyLocally(args);
+    // The call reports whether a teleport was dispatched, not where the body ended: a landing counts only when it did.
+    if (!coop::teleport_client::ApplyLocally(args)) {
+        UE_LOGW("cheats: the game's teleport to (%.0f, %.0f, %.0f) reported failure -- the player stays where it is",
+                args.locX, args.locY, args.locZ);
+        g_refused.fetch_add(1);
+        return false;
+    }
+    g_targetX.store(args.locX);
+    g_targetY.store(args.locY);
+    g_targetZ.store(args.locZ);
     g_landed.fetch_add(1);
     return true;
 }
@@ -92,7 +102,9 @@ void Lift() {
 
 }  // namespace
 
-Landings Outcomes() { return {g_landed.load(), g_refused.load()}; }
+Landings Outcomes() {
+    return {g_landed.load(), g_refused.load(), ue_wrap::FVector{g_targetX.load(), g_targetY.load(), g_targetZ.load()}};
+}
 
 void ToPlayer(int slot) { GT::Post([slot] { MoveToPlayer(slot); }); }
 

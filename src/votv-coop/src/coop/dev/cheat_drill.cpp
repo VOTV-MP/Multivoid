@@ -395,7 +395,9 @@ void HostTick(coop::net::Session* s) {
         return;
     case H::Finish:
         Verdict("host", true, "A host item spawn, points and event reached the client; the client's requests were refused with "
-                              "the setting off and run (Ok x3, Refused, UnknownItem) with it on; refused again once reset");
+                              "the setting off; with it on (E) four were run (Ok x4) and the story event and an unknown prop were "
+                              "refused; arms G..L held (raw requests, the bucket, the removal clamp, two requests in flight, a "
+                              "withheld right, Unstuck); refused again once reset");
         DC::Say("cheatdrill done");
         return;
     }

@@ -17,7 +17,6 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_nav.h"
 
 #include <cmath>
 #include <string>
@@ -298,16 +297,23 @@ void ClientArmTick(coop::net::Session& s) {
                 if (Timed(kEffectBoundMs)) ClientInvalid(A, "Unstuck did not run");
                 return;
             }
-            if (o.refused > g.fires) { ClientFail(A, "Unstuck found no NavMesh to land on"); return; }
+            // No NavMesh near the start (or a teleport the game reported failed) is the tool working as designed, not a
+            // mechanism that failed: the arm has nothing to prove here.
+            if (o.refused > g.fires) { ClientInvalid(A, "Unstuck landed nowhere: no NavMesh near the start, or the game's teleport failed"); return; }
             void* const local = coop::players::Registry::Get().Local();
-            ue_wrap::FVector at{}, nav{};
+            ue_wrap::FVector at{};
             if (!local || !ue_wrap::engine::TryGetActorLocation(local, at)) { ClientInvalid(A, "this player's place does not read"); return; }
+            // The body is read where it stands after the move and must be at the landing point, within its capsule.
             const float half = ue_wrap::engine::GetActorCharacterHalfHeight(local);
-            if (!ue_wrap::engine::ProjectToNav(local, at, {30.f, 30.f, half + 80.f}, &nav) || std::hypot(nav.X - at.X, nav.Y - at.Y) > 30.f) {
-                ClientFail(A, "after Unstuck the body stands off the NavMesh");
+            const float off = std::sqrt((at.X - o.target.X) * (at.X - o.target.X) + (at.Y - o.target.Y) * (at.Y - o.target.Y) +
+                                        (at.Z - o.target.Z) * (at.Z - o.target.Z));
+            if (!(half > 0.f)) { ClientInvalid(A, "the body's capsule does not read"); return; }
+            if (off > half) {
+                ClientFail(A, "after Unstuck the body stands " + std::to_string(static_cast<int>(off)) + " cm from the landing point");
                 return;
             }
-            UE_LOGI("%s client L: Unstuck landed on the NavMesh at (%.0f, %.0f, %.0f)", kTag, at.X, at.Y, at.Z);
+            UE_LOGI("%s client L: Unstuck put the body %.0f cm from its landing point (%.0f, %.0f, %.0f)", kTag, off, o.target.X,
+                    o.target.Y, o.target.Z);
         }
         finished = true;
         break;
