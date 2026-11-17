@@ -8,7 +8,6 @@
 
 #include "ui/cheat_panes.h"
 
-#include "coop/cheats/cheat_request.h"
 #include "coop/commands/command_sync.h"
 #include "coop/config/config_registry.h"
 #include "l10n/l10n.h"
@@ -20,9 +19,16 @@
 
 namespace ui::cheat_panes {
 
+namespace {
+CheatFrame g_frame;   // render thread
+}  // namespace
+
+void SetCheatFrame(const CheatFrame& f) { g_frame = f; }
+const CheatFrame& CheatFrameNow() { return g_frame; }
+
 void RenderPlayerCheats() {
     const auto& row = *coop::config_registry::rows::net_allow_player_cheats.row;
-    bool on = coop::cheats::PlayersMayCheat();
+    bool on = g_frame.hostAllows;
     if (ImGui::Checkbox(l10n::Label(l10n::T("Let players use cheats"), "let_players_cheat"), &on))
         coop::command_sync::Submit(std::string("set ") + row.key + (on ? " 1" : " 0"));
     ImGui::Spacing();

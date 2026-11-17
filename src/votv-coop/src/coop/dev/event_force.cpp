@@ -4,11 +4,13 @@
 
 #include "coop/dev/dev_gate.h"
 #include "coop/world/event_fire_sync.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/world_identity.h"
 
 #include <atomic>
 #include <chrono>
@@ -62,14 +64,24 @@ int64_t NowMs() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-// Find a mapped live box actor by its level name. One GUObjectArray class walk
-// per call -- refresh/force paths only (never per-frame).
-void* FindBox(const wchar_t* name) {
-    for (void* obj : R::FindObjectsByClass(L"trigger_box_N_C")) {
-        if (obj && R::IsLive(obj) && R::NameStartsWith(R::NameOf(obj), name))
-            return obj;
-    }
+// The level-placed boxes, held across refreshes (game thread): a box lives as long as its world, so the refresh reads
+// the held actor and walks the object array only for one it does not hold, and at most once per world.
+ue_wrap::CachedObjRef g_boxRef[kBoxCount];
+uint32_t g_walkedGen = 0;   // the world generation of the last walk
+
+// The live box named `name` among `boxes` (one class walk's result).
+void* MatchBox(const std::vector<void*>& boxes, const wchar_t* name) {
+    for (void* obj : boxes)
+        if (obj && R::IsLive(obj) && R::NameStartsWith(R::NameOf(obj), name)) return obj;
     return nullptr;
+}
+
+// Row `i`'s box: the held actor, else one class walk (the force click's path, never a frame's).
+void* BoxFor(int i) {
+    if (void* held = g_boxRef[i].Get()) return held;
+    void* const found = MatchBox(R::FindObjectsByClass(L"trigger_box_N_C"), kBoxes[i].box);
+    g_boxRef[i].Set(found);
+    return found;
 }
 
 // trigger_box_C property offsets (resolved once against the live class).
@@ -133,17 +145,24 @@ void RequestRefresh() {
     if (!g_lastRefreshMs.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
     GT::Post([] {
         Snap fresh[kBoxCount] = {};
-        // one class walk for the whole table, then per-box name match
-        std::vector<void*> boxes = R::FindObjectsByClass(L"trigger_box_N_C");
+        // The held boxes are read as they are. One class walk per world finds the rest; a box the walk did not find is
+        // not in this world's level, and no later refresh looks for it again.
+        const uint32_t gen = ue_wrap::world_identity::Generation();
+        bool walked = false;
+        std::vector<void*> boxes;
         for (int i = 0; i < kBoxCount; ++i) {
-            void* hit = nullptr;
-            for (void* obj : boxes)
-                if (obj && R::IsLive(obj) && R::NameStartsWith(R::NameOf(obj), kBoxes[i].box)) { hit = obj; break; }
+            void* hit = g_boxRef[i].Get();
+            if (!hit && g_walkedGen != gen) {
+                if (!walked) { boxes = R::FindObjectsByClass(L"trigger_box_N_C"); walked = true; }
+                hit = MatchBox(boxes, kBoxes[i].box);
+                g_boxRef[i].Set(hit);
+            }
             if (!hit || !ResolveOffsets(hit)) continue;
             fresh[i].resolved = true;
             fresh[i].armed = ReadArmed(hit);
             fresh[i].shots = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(hit) + g_offN);
         }
+        if (walked) g_walkedGen = gen;
         std::lock_guard<std::mutex> lk(g_snapMx);
         std::memcpy(g_snap, fresh, sizeof(g_snap));
     });
@@ -165,10 +184,10 @@ bool ForceNow(const char* eventName) {
     efs::HostFire(efs::FireKind::RunEvent, wname, L"None");
     // 2) COMPLETE: drive the box's own BeginOverlap handler with the local pawn.
     //    Posted after HostFire's task (FIFO pump) so the arm lands first.
-    const wchar_t* boxName = row->box;
+    const int boxIdx = static_cast<int>(row - kBoxes);
     const char* boxNarrow = row->boxNarrow;
-    GT::Post([boxName, boxNarrow] {
-        void* box = FindBox(boxName);
+    GT::Post([boxIdx, boxNarrow] {
+        void* box = BoxFor(boxIdx);
         if (!box) { UE_LOGW("event_force: box %s not found (world up?)", boxNarrow); return; }
         if (!ResolveOffsets(box)) return;
         const int32_t n = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(box) + g_offN);

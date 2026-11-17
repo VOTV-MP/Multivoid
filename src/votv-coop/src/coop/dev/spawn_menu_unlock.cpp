@@ -26,10 +26,13 @@ namespace {
 // by SetEnabled (menu/boot).
 std::atomic<bool> g_enabled{false};
 
+// The key watcher thread is alive. It ends when the toggle is off and no menu of ours is up.
+std::atomic<bool> g_threadRunning{false};
+
 bool KeyDown(int vk) { return (::GetAsyncKeyState(vk) & 0x8000) != 0; }
 
 // Watches the Q key while enabled and opens the spawn menu on the rising edge.
-// Started lazily on the first enable (no idle worker for players who never use
+// Runs only while the toggle is on or a menu this module opened is up (no idle worker for players who never use
 // this dev feature). Mirrors freecam's InputDriverThread:
 //   - foreground-gated (GetAsyncKeyState is process-GLOBAL, so a same-box
 //     host+client pair would otherwise double-fire from one Q press);
@@ -42,8 +45,18 @@ DWORD WINAPI KeyWatcherThread(LPVOID) {
     while (!coop::shutdown::IsShuttingDown()) {
         // Q is watched while the toggle is on, and also for as long as a menu this module opened is up:
         // the game's own Q release cannot close it in story mode, so the button's open owes a close.
+        // Past both the thread ends; EnsureThread starts it again at the next enable or open. A key's state has no
+        // engine signal, so while one of the two holds it is polled.
         const bool enabled = g_enabled.load(std::memory_order_acquire);
         const bool open = ue_wrap::spawn_menu::IsOpen();
+        if (!enabled && !open) {
+            g_threadRunning.store(false, std::memory_order_release);
+            // A toggle or an open that landed between the check and the store started no thread: take the loop back.
+            if ((g_enabled.load(std::memory_order_acquire) || ue_wrap::spawn_menu::IsOpen()) &&
+                !g_threadRunning.exchange(true, std::memory_order_acq_rel))
+                continue;
+            return 0;
+        }
         if (enabled || open) {
             // Live role gate: a watcher enabled while solo/hosting dies the moment
             // this peer is a connected client (dev tools are host-only).
@@ -97,10 +110,12 @@ DWORD WINAPI KeyWatcherThread(LPVOID) {
 }
 
 void EnsureThread() {
-    static std::atomic<bool> started{false};
-    if (started.exchange(true)) return;
+    if (g_threadRunning.exchange(true, std::memory_order_acq_rel)) return;
     if (HANDLE t = ::CreateThread(nullptr, 0, &KeyWatcherThread, nullptr, 0, nullptr)) {
         ::CloseHandle(t);  // detached
+    } else {
+        g_threadRunning.store(false, std::memory_order_release);
+        return;
     }
     UE_LOGI("spawn_menu_unlock: Q-key watcher thread started (story-mode prop spawn menu)");
 }
@@ -173,8 +188,11 @@ void OpenNow() {
                 "while connected as a client");
         return;
     }
-    EnsureThread();  // Q closes what this opens, with the toggle on or off
-    GT::Post([] { ue_wrap::spawn_menu::Open(coop::players::Registry::Get().Local()); });
+    // Q closes what this opens, with the toggle on or off: the watcher starts once the open has landed, and ends at the
+    // close.
+    GT::Post([] {
+        if (ue_wrap::spawn_menu::Open(coop::players::Registry::Get().Local())) EnsureThread();
+    });
 }
 
 void CloseNow() {

@@ -49,7 +49,7 @@ std::atomic<bool> g_open{false};
 // The menu's search box holds the keyboard: a Q typed there is a letter of the search.
 bool SearchHasKeyboard(void* widget) {
     static int32_t sBoxOff = -2;
-    if (sBoxOff == -2) sBoxOff = R::FindPropertyOffset(R::ClassOf(widget), L"textbox_search");
+    if (sBoxOff < 0) sBoxOff = R::FindPropertyOffset(R::ClassOf(widget), L"textbox_search");   // a miss is asked again
     if (sBoxOff < 0) return false;
     void* box = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(widget) + sBoxOff);
     if (!box) return false;

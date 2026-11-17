@@ -29,7 +29,7 @@ void RenderMyself() {
     // Teleport to the host is a cheat: offered while the host allows players cheats and has not withheld this player's
     // right. The gate is this menu's: the move is this machine's own (a modified client could make it anyway), and the
     // host's body is not moved by it.
-    const bool mayCheat = client && coop::cheats::ClientMayCheat();
+    const bool mayCheat = client && CheatFrameNow().mayCheat;
     if (mayCheat) {
         if (ImGui::Button(l10n::Label(l10n::T("Teleport to the host"), "tp_to_host"))) coop::cheats::self_teleport::ToPlayer(0);
         ImGui::SameLine();
@@ -61,7 +61,7 @@ void RenderMyself() {
         if (mayCheat)
             ImGui::TextUnformatted(l10n::T("The host lets players use cheats: Items, Economy and Events are on the left. "
                                            "Each use is a request the host checks and runs."));
-        else if (coop::cheats::PlayersMayCheat())
+        else if (CheatFrameNow().hostAllows)
             ImGui::TextDisabled("%s", l10n::T("The host has not given you the cheat tools."));
         else
             ImGui::TextDisabled("%s", l10n::T("The host has not allowed cheats."));

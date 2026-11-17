@@ -10,6 +10,15 @@
 
 namespace ui::cheat_panes {
 
+// What the menu read once this frame of the cheat settings, for the panes that show them: the host's master switch, and on a
+// client whether its own right holds. Set by the menu before it draws a pane; render thread.
+struct CheatFrame {
+    bool hostAllows = false;   // net.allow_player_cheats
+    bool mayCheat = false;     // a client: the setting is on and the host has not withheld this machine's right
+};
+void SetCheatFrame(const CheatFrame& f);
+const CheatFrame& CheatFrameNow();
+
 // Items: every prop the game can spawn, searchable, with a count and where to put them.
 void RenderItems();
 

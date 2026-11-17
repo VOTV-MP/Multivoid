@@ -30,10 +30,16 @@ void Install(coop::net::Session* session);
 // The host's setting net.allow_player_cheats: on a client, the host's value as replicated. Any thread.
 bool PlayersMayCheat();
 
-// CLIENT: whether this machine's panes offer the cheat tools: the host's master setting AND this machine's own right,
-// the projected grant `Cheats` the host sends (multivoid.dev.local.cheats). A gate on the UI only: a client moves its
-// own body without asking the host, and the host judges every request again. Any thread.
-bool ClientMayCheat();
+// CLIENT: what this machine's panes know of its cheat rights, read once per frame by the menu: the host's master setting
+// (`hostAllows`) and this machine's own right, the projected grant `Cheats` the host sends (`mine`, the node
+// multivoid.dev.local.cheats). Offered only when both hold. A gate on the UI only: a client moves its own body without
+// asking the host, and the host judges every request again. Any thread.
+struct ClientRights {
+    bool hostAllows = false;
+    bool mine = false;
+    bool Open() const { return hostAllows && mine; }
+};
+ClientRights ReadClientRights();
 
 // Whether a panel may offer a request now: always on the host and in a solo game; on a client, once its world is
 // announced to the host and while its mirror of the host's bucket holds what the request costs: one token, or `count`

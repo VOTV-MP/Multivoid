@@ -242,8 +242,11 @@ void Install(coop::net::Session* session) { g_session.store(session, std::memory
 
 bool PlayersMayCheat() { return coop::config::ResolveFlag(coop::config_registry::rows::net_allow_player_cheats); }
 
-bool ClientMayCheat() {
-    return PlayersMayCheat() && coop::session::local_grants::Has(coop::permissions::grants::Projected::Cheats);
+ClientRights ReadClientRights() {
+    ClientRights r;
+    r.hostAllows = PlayersMayCheat();
+    r.mine = coop::session::local_grants::Has(coop::permissions::grants::Projected::Cheats);
+    return r;
 }
 
 void SpawnItem(const std::string& name, int count, int target) {

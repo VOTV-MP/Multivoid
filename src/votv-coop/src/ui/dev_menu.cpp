@@ -5,7 +5,7 @@
 
 #include "l10n/l10n.h"
 
-#include "coop/cheats/cheat_request.h"  // ClientMayCheat -- the Player tools' cheat subs
+#include "coop/cheats/cheat_request.h"  // ReadClientRights -- the Player tools' cheat subs
 #include "coop/dev/dev_gate.h"
 #include "coop/permissions/grants_core.h"
 #include "coop/session/local_grants.h"
@@ -345,8 +345,19 @@ void RequestSelect(const char* category, const char* sub) {
 void Render() {
     const bool devMode = DevMode();
     const bool authority = ::coop::dev_gate::Allowed();   // the host or a solo game (lock-free, render-thread safe)
-    const Viewer viewer{devMode, coop::roster::LocalIsHost(), authority, !authority,
-                        !authority && ::coop::cheats::ClientMayCheat()};
+    // The cheat settings, read once for the frame and handed to the panes: a client reads the host's switch and its own
+    // right; the host's pane reads the switch only in a hosted session (solo has no such pane, and its read is a file's).
+    ui::cheat_panes::CheatFrame cheats;
+    const bool hostRole = coop::roster::LocalIsHost();
+    if (!authority) {
+        const auto rights = ::coop::cheats::ReadClientRights();
+        cheats.hostAllows = rights.hostAllows;
+        cheats.mayCheat = rights.Open();
+    } else if (hostRole) {
+        cheats.hostAllows = ::coop::cheats::PlayersMayCheat();
+    }
+    ui::cheat_panes::SetCheatFrame(cheats);
+    const Viewer viewer{devMode, hostRole, authority, !authority, cheats.mayCheat};
     const auto& tree = Tree();
 
     if (g_wantSelect.exchange(false, std::memory_order_acq_rel)) {
