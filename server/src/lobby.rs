@@ -421,11 +421,14 @@ pub fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Val
     // links are clamped against it.
     lo.players_max = as_int(body, "players_max", lo.players_max).clamp(1, MAX_PLAYERS);
     let pc = as_int(body, "players_cur", lo.players_cur);
-    lo.players_cur = pc.clamp(0, lo.players_max);
+    // The count and the links are the live ones, bounded by the ceiling and not by the limit: a host
+    // that lowered its limit under the players already in lists as 5/2, as MTA's query reports the
+    // joined count against the maximum (ASE.cpp:376-378), not as a lobby of 2/2.
+    lo.players_cur = pc.clamp(0, MAX_PLAYERS);
     if body_has(body, "listed") {
         lo.listed = as_bool(body, "listed", lo.listed);
     }
-    if let Some(links) = LobbyLinks::from_beat(body, lo.players_max) {
+    if let Some(links) = LobbyLinks::from_beat(body, MAX_PLAYERS) {
         lo.links = links;
     }
     lo.last_seen = now;

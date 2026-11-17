@@ -77,6 +77,12 @@ fn a_beat_moves_the_lobbys_player_limit_and_an_old_mod_leaves_it() {
     assert_eq!(state.lobbies[&sid].players_max, super::MAX_PLAYERS);
     assert_eq!(super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({"players_max": 0}))).0, 200);
     assert_eq!(state.lobbies[&sid].players_max, 1);
+    // A host that lowered its limit under the players already in lists the live count, 5 of 2.
+    assert_eq!(
+        super::h_heartbeat(&mut state, "198.51.100.8", &beat(serde_json::json!({"players_max": 2, "players_cur": 5}))).0,
+        200
+    );
+    assert_eq!((state.lobbies[&sid].players_cur, state.lobbies[&sid].players_max), (5, 2));
 }
 
 #[test]

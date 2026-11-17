@@ -2,7 +2,7 @@
 //! master's clock, names, floor and block list injected through `HostCtx`.
 
 use crate::lobby::host::{h_challenge, h_host, HostCtx};
-use crate::lobby::{build_rows, h_heartbeat, Lobby, MasterState, MAX_LOBBIES_GLOBAL};
+use crate::lobby::{build_rows, h_heartbeat, Lobby, MasterState, MAX_LOBBIES_GLOBAL, MAX_PLAYERS};
 use crate::lobby_proof::{blob, NONCE_LIFE};
 use crate::version_gate::MIN_PROVED_PROTO;
 use ring::rand::SystemRandom;
@@ -110,6 +110,25 @@ fn a_valid_proof_lists_a_proved_row_that_names_its_key() {
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0]["proved"], true);
     assert_eq!(mine[0]["lobbyId"], answer["lobbyId"]);
+}
+
+#[test]
+fn a_create_keeps_the_players_max_it_names_within_the_ceiling() {
+    // No field (a mod from before the host's limit): the master's own default of four.
+    // Past the ceiling: clamped to it. Below one: clamped to one. In range: kept.
+    let cases: [(Option<i64>, i64); 5] =
+        [(None, 4), (Some(2), 2), (Some(99), MAX_PLAYERS), (Some(0), 1), (Some(-3), 1)];
+    for (sent, want) in cases {
+        let (env, mut state, h) = (Env::new(), MasterState::new(), host());
+        let mut body = plain(&h, OLD);
+        if let Some(n) = sent {
+            body["players_max"] = json!(n);
+        }
+        let (status, _) = env.create(&mut state, IP, &body);
+        assert_eq!(status, 200);
+        let rows = build_rows(&state);
+        assert_eq!(rows_of(&rows, &h)[0]["players_max"], want, "a create naming {sent:?}");
+    }
 }
 
 #[test]
