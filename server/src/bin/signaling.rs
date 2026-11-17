@@ -60,6 +60,7 @@
 
 use coop_server::admission::{Pool, Slot, CONNECTS};
 use coop_server::common::{clamp_str, ct_eq, env_int, env_str, identity_shape_ok, log, token_hex};
+use coop_server::lobby::MAX_PLAYERS;
 use coop_server::registration::check_registration_proof;
 use coop_server::tls;
 use std::collections::HashMap;
@@ -110,10 +111,11 @@ static CLIENTS: LazyLock<Mutex<HashMap<String, Route>>> = LazyLock::new(|| Mutex
 // taken at accept. A slot holds at most a 64 KiB TLS handshake buffer and a 513-byte line, and one
 // address 4 of the 128, so filling it takes 32 addresses: 128 x ~72 KiB is ~9 MiB.
 static PENDING: LazyLock<Pool> = LazyLock::new(|| Pool::new("pre-auth", 128, 4));
-// Registered peers: one per install while it hosts or joins. A full lobby is 8, all of them may share
-// one address behind a LAN's NAT, and a reconnect over a half-open socket is admitted before the
-// stale registration it replaces is gone, so 16 per address. 512 x ~143 KiB (MAX_QUEUED_PER_DEST's comment) is ~72 MiB of the unit's 128 MiB.
-static AUTHED: LazyLock<Pool> = LazyLock::new(|| Pool::new("authed", 512, 16));
+// Registered peers: one per install while it hosts or joins. A full lobby is MAX_PLAYERS, all of them
+// may share one address behind a LAN's NAT, and a reconnect over a half-open socket is admitted before
+// the stale registration it replaces is gone, so twice that per address (32 at 16 players). 512 x
+// ~143 KiB (MAX_QUEUED_PER_DEST's comment) is ~72 MiB of the unit's 128 MiB.
+static AUTHED: LazyLock<Pool> = LazyLock::new(|| Pool::new("authed", 512, 2 * MAX_PLAYERS as u32));
 static CONN_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Bounded, cancel-safe line reader over the connection's read half. On `select!`
