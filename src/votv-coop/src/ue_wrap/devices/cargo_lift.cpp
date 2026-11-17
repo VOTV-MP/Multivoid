@@ -82,8 +82,6 @@ bool WriteIgnoreCheck(void* lift, bool on) {
     return true;
 }
 
-bool ReadIgnoreCheck(void* lift, bool& on) { return ReadBool(lift, g_ignoreOff, on); }
-
 bool PlatformLocation(void* lift, FVector& out) {
     if (!lift || g_compOff < 0 || !IsCargoLift(lift)) return false;
     void* const comp = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(lift) + g_compOff);
