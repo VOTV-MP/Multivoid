@@ -164,6 +164,7 @@
 namespace coop::dev::dev_lanes {
 
 void Install(coop::net::Session& session) {
+    coop::dev::mannequin_drill::Install();  // [dev] the walker's button in the Entities pane (no-op unless mannequin_drill is set)
     coop::dev::rng_roll_census::Install(&session);  // [dev] driver/QuitGame interceptors (no-op unless rng_roll_census=1)
     coop::dev::server_breaker_census::Install(&session);  // [dev] the server breaker census (no-op unless server_breaker_census=1)
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)

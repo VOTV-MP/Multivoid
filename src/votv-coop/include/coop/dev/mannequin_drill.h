@@ -19,6 +19,10 @@ void SpawnWalker();
 // pending. Game thread.
 void TickFrame();
 
+// With the [dev] mannequin_drill row on (any value but off), add the walker to the host's Entities pane. The
+// pane names no drill module: the dev side adds its own button. Once per session start, idempotent.
+void Install();
+
 // The [dev] mannequin_drill row's baseline phases (`spawn`, `red`); a single enum read for any other value, the two-peer walker
 // drill's (coop/dev/mannequin_walker_drill.h) included. Game thread.
 void Tick(coop::net::Session* session);

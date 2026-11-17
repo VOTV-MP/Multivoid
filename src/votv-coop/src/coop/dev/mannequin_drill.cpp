@@ -15,6 +15,7 @@
 #include "coop/save/join_window_baseline.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "ui/cheat_entities.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/call.h"
@@ -385,6 +386,11 @@ void SpawnWalker() {
         return;
     }
     RequestSpawn(false, false);
+}
+
+void Install() {
+    if (coop::config::ResolveEnum(::coop::config_registry::rows::mannequin_drill) == "off") return;
+    ui::cheat_entities::AddDevEntry("a walking mannequin", &SpawnWalker);
 }
 
 void TickFrame() {

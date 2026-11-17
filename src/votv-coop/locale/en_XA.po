@@ -310,9 +310,6 @@ msgstr "[[(system default)]]"
 msgid "(the clients follow)"
 msgstr "[[(the clients follow)]]"
 
-msgid "(the game's own; use a throwaway save)"
-msgstr "[[(the game's own; use a throwaway save)]]"
-
 msgid "(unnamed)"
 msgstr "[[(unnamed)]]"
 
@@ -1907,9 +1904,6 @@ msgstr "[[[volume ?]]]"
 
 msgid "[volume-gated]"
 msgstr "[[[volume-gated]]]"
-
-msgid "a walking mannequin"
-msgstr "[[a walking mannequin]]"
 
 msgid "ambient"
 msgstr "[[ambient]]"

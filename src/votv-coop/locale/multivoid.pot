@@ -383,10 +383,6 @@ msgstr ""
 msgid "(the clients follow)"
 msgstr ""
 
-#: src/ui/cheat_entities_pane.cpp
-msgid "(the game's own; use a throwaway save)"
-msgstr ""
-
 #: src/ui/server_browser_panels.cpp
 msgid "(unnamed)"
 msgstr ""
@@ -2419,10 +2415,6 @@ msgstr ""
 
 #: src/ui/cheat_events_pane.cpp
 msgid "[volume-gated]"
-msgstr ""
-
-#: src/ui/cheat_entities_pane.cpp
-msgid "a walking mannequin"
 msgstr ""
 
 #: src/ui/cheat_events_pane.cpp
