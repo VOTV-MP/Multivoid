@@ -276,45 +276,47 @@ an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
-The power panel's five latched breakers have one author, the host (`coop/world/power_panel`). A
-press on any peer, a lever or the laptop's breaker page, runs as its prediction, and a client's
-reaches the host as the breakers it flipped, caught where the panel's own apply runs. The host takes
-presses in arrival order, a few a second, from a presser within reach of the lever or of the
-terminal it worked the page through (the laptop, or a portable PC); it runs a lever press as the
-game's own press by the presser's puppet, tutorial gate and click included, and applies a page
-press's flip, whose wait the presser already served. It sends every peer the breakers and the
-panel's lockout with the last press it took from each, and a refused press to its author alone. A
-client puts its own untaken presses on top and runs the panel's apply only when that differs from
-what its panel shows, so each machine's own setPower drives its base: the desk's units, the laptop,
-the lights, the servers and the sockets follow the grid everywhere. The desk virus's 60 s lockout
-runs on the host alone: a client refuses its own, switches its servers off as the host's lockout
-starts, and as it ends switches them on with the calc breaker and plays the turn-on cue. The
-generators behind the panel wear on a 30 s decay tick that rolls its own dice; the host runs it,
-and a client refuses its own tick, break, wear and fullFix at the body. The host sends every
-generator's row after the outermost of its generator verbs and its Activate presses, so a break's
-rows follow the blackout canonical it produced; a client runs the same edges from the rows and then
-puts its breakers back to the canonical, since a break's own blackout rewrote them
-(`coop/world/power_grid`). A client's player acts on a generator as ops: its Activate press and its
-upgrade install run on the client first and are reconciled like the panel's presses, and its hit is
-the host's to run, with a held item that swings. The host takes an op from a player within reach, in
-the player's order, and judges an Activate press on its own copy of the repair puzzle, branching as
-the button does: a broken generator is mended, a whole one serviced. An install rests on the upgrade
-its insert spent: a world upgrade the host saw that player destroy beside the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the upgrade the hand lane says that player's hand last held, one use a hold (`coop/player/hand_spend`), the world one recorded by
-`coop/world/power_upgrade`: an install without one is refused, and one refused after it, the second
-of two players at a generator's last free place, gets its upgrade back where the player stands. An upgrade from the hold slot is announced to the host as the generator's insert begins, before it spends the upgrade; a request the hand lane never counted is the client's loss, as for the fuse towers below. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
-the game's repair with the puzzle solved followed by the Activate route's turn-on at the generator
-and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets
-are the host's rolls, which a client never makes, and its values belong to the one player inside the
-panel (the device lock). That player's knob, switch and rotator inputs run on its client first and
-reach the host as values, taken in its order, so a press follows the inputs it rests on; every peer
-draws the host's puzzle with the panel's own setters and moves, and a joiner gets it with the rows.
-The wind turbine's heading integrator is not saved and chases the synced wind at a degree per
-second, so the host mirrors six driver floats about once a second and the turbine's own tick
-interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are
-monotone: a wipe only lowers them, so each peer broadcasts a decrease and the receiver keeps the
-minimum, and two peers wiping at once converge with no oscillation; the grime decals are keyed by
-their quantised world position, since both peers place them from the same save
-(`coop/interactables/window_sync`, `coop/interactables/grime_sync`).
+The power panel's five latched breakers have one author, the host (`coop/world/power_panel`). A press on any peer, a
+lever or the laptop's breaker page, runs as its prediction, and a client's reaches the host as the breakers it
+flipped, caught where the panel's own apply runs. The host takes presses in arrival order, a few a second, from a
+presser within reach of the lever or of the terminal it worked the page through (the laptop, or a portable PC); it
+runs a lever press as the game's own press by the presser's puppet, tutorial gate and click included, and applies a
+page press's flip, whose wait the presser already served. It sends every peer the breakers and the panel's lockout
+with the last press it took from each, and a refused press to its author alone. A client puts its own untaken presses
+on top and runs the panel's apply only when that differs from what its panel shows, so each machine's own setPower
+drives its base: the desk's units, the laptop, the lights, the servers and the sockets follow the grid everywhere. The
+desk virus's 60 s lockout runs on the host alone: a client refuses its own, switches its servers off as the host's
+lockout starts, and as it ends switches them on with the calc breaker and plays the turn-on cue. The generators behind
+the panel wear on a 30 s decay tick that rolls its own dice; the host runs it, and a client refuses its own tick,
+break, wear and fullFix at the body. The host sends every generator's row after the outermost of its generator verbs
+and its Activate presses, so a break's rows follow the blackout canonical it produced; a client runs the same edges
+from the rows and then puts its breakers back to the canonical, since a break's own blackout rewrote them
+(`coop/world/power_grid`). A client's player acts on a generator as ops: its Activate press and its upgrade install
+run on the client first and are reconciled like the panel's presses, and its hit is the host's to run, with a held
+item that swings. The host takes an op from a player within reach, in the player's order, and judges an Activate press
+on its own copy of the repair puzzle, branching as the button does: a broken generator is mended, a whole one
+serviced. An install rests on the upgrade its insert spent: a world upgrade the host saw that player destroy beside
+the generator, or, for one taken out of the inventory (the hold slot's own actor, whose destroy reaches no one), the
+upgrade the hand lane says that player's hand last held, one use a hold (`coop/player/hand_spend`), the world one
+recorded by `coop/world/power_upgrade`: an install without one is refused, and one refused after it, the second of two
+players at a generator's last free place, gets its upgrade back where the player stands. An upgrade from the hold slot
+is announced to the host as the generator's insert begins, before it spends the upgrade; a request the hand lane never
+counted is the client's loss, as for the fuse towers below. A repair, the host's of a client's press and a client's of
+the host's rows alike, runs as the game's repair with the puzzle solved followed by the Activate route's turn-on at
+the generator and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets are
+the host's rolls, which a client never makes, and its values belong to the one player inside the panel (the device
+lock). That player's knob, switch and rotator inputs run on its client first and reach the host as values, taken in
+its order, so a press follows the inputs it rests on; every peer draws the host's puzzle with the panel's own setters
+and moves, and a joiner gets it with the rows. The wind turbine's heading integrator is not saved and chases the
+synced wind at a degree per second, so the host mirrors six driver floats about once a second and the turbine's own
+tick interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are monotone: a wipe
+only lowers them, so each peer broadcasts a decrease and the receiver keeps the minimum, and two peers wiping at once
+converge with no oscillation; the grime decals are keyed by their quantised world position, since both peers place
+them from the same save (`coop/interactables/window_sync`, `coop/interactables/grime_sync`). The save replay (the
+gamemode's `loadObjects`) deletes the map's own decals and spawns the save's at the same keys; those deletes are no
+wipe, so the index forgets everything as the replay begins. A rehost in one game process had read them as wipes to
+zero and lowered 889 of the save's decals with them (Ghezra/Multivoid#36) `[V]` (the reload-churn autotest's host arm,
+`VOTVCOOP_RUN_RELOAD_CHURN=1 VOTVCOOP_RELOAD_HOST=1`: two rehosts lowered none).
 
 A spilled liquid is the host's (`coop/world/spill_sync`). A coffee cup tipped or flung fast, beer, wine and a gas
 bottle spill through a `grimeProjectile_C` that flies and leaves its grime decal (`grime_coffee_C` and the rest)
@@ -341,17 +343,15 @@ on the client at its place and none of its own; a cup in the client's hand spill
 there and back on the client once; the host's 16 bottle pours all heard on the client and a pour of a beer in the
 client's hand heard on the host; the client killed and rejoined, all 40 and 41 live spills there, none twice).
 
-The base's bay window is not one of those: its dirt is a 1645x512 render target that a sponge
-wipes one dab at a time, so there is no scalar to compare. A stroke reaches the window's own
-`cleanPhys` through a script call no hook here carries arguments for, so the dab is observed at
-its native draw instead -- a `UCanvas::K2_DrawMaterial` whose calling frame is the window with its
-canvas session open, which the window's periodic dirt splotch cannot be, since that refuses to run
-while the session is open. The stroking peer sends the dab's pixel, its edge and the brush's
-opacity and colour; every other peer draws the same dab through the window's own `Canvas` event
-with a brush material the mod owns, and the host relays a client's dab, so the host's save carries
-every peer's wipes. Never `setDraw`, `endDraw` or `dirty` from outside: the session belongs to the
-window, and an outside `endDraw` deletes the world canvas the game's own next dab draws into
-(`coop/interactables/window_stroke_sync`, `ue_wrap/devices/window_canvas`).
+The base's bay window is not one of those: its dirt is a 1645x512 render target that a sponge wipes one dab at a time,
+so there is no scalar to compare. A stroke reaches the window's own `cleanPhys` through a script call no hook here
+carries arguments for, so the dab is observed at its native draw instead -- a `UCanvas::K2_DrawMaterial` whose calling
+frame is the window with its canvas session open, which the window's periodic dirt splotch cannot be, since that
+refuses to run while the session is open. The stroking peer sends the dab's pixel, its edge and the brush's opacity
+and colour; every other peer draws the same dab through the window's own `Canvas` event with a brush material the mod
+owns, and the host relays a client's dab, so the host's save carries every peer's wipes. Never `setDraw`, `endDraw` or
+`dirty` from outside: the session belongs to the window, and an outside `endDraw` deletes the world canvas the game's
+own next dab draws into (`coop/interactables/window_stroke_sync`, `ue_wrap/devices/window_canvas`).
 
 ### The fuse towers
 
