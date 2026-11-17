@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"  // LifeOf
+#include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/session/net_pump.h"      // IsInAnnouncedWorld: a client's own world load runs natively
 
@@ -22,11 +23,13 @@
 #include "ue_wrap/devices/cargo_lift.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace coop::cargo_lift {
 namespace {
@@ -233,6 +236,46 @@ bool PressForApply(void* lift) {
     return ok;
 }
 
+// HOST: a client's player on a moving platform. The host's copy of that player stands where the client's stream puts
+// it, a frame behind its own platform, which presses up into it, falls behind its target, and reads as blocked: the
+// lift reversed every second and went nowhere (Ghezra/Multivoid#38). While a remote player rides, the lift's own skip
+// of that test (`ignoreCheck`, which it sets itself after a reversal) is held on; the client's own lift carries it.
+constexpr float kRideXYCm = 250.f;    // a body this near the platform's centre, across, stands on it
+constexpr float kRideAboveCm = 300.f; // and this far over it
+uint64_t g_holdAtMs = 0;
+std::vector<void*> g_held;           // the lifts whose ignoreCheck this lane holds
+
+bool RemoteRider(const ue_wrap::FVector& pl) {
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        coop::RemotePlayer* const rp = coop::players::Registry::Get().Puppet(slot);
+        ue_wrap::FVector at{};
+        if (!rp || !rp->TryGetLocation(at)) continue;
+        const float dx = at.X - pl.X, dy = at.Y - pl.Y, dz = at.Z - pl.Z;
+        if (dx * dx + dy * dy <= kRideXYCm * kRideXYCm && dz >= -50.f && dz <= kRideAboveCm) return true;
+    }
+    return false;
+}
+
+void HoldForRiders() {
+    if (NowMs() < g_holdAtMs) return;
+    g_holdAtMs = NowMs() + 100;
+    std::vector<void*> held;
+    for (void* lift : R::FindObjectsByClass(L"cargoLift_C")) {
+        if (!lift || !R::IsLive(lift) || R::NameStartsWith(R::NameOf(lift), L"Default__")) continue;
+        bool moving = false;
+        ue_wrap::FVector pl{};
+        if (!L::ReadMoving(lift, moving) || !moving || !L::PlatformLocation(lift, pl) || !RemoteRider(pl)) continue;
+        if (std::find(g_held.begin(), g_held.end(), lift) == g_held.end())
+            UE_LOGI("cargo_lift: a client's player rides the moving lift -- its blocked test is held off");
+        L::WriteIgnoreCheck(lift, true);
+        held.push_back(lift);
+    }
+    // A lift no longer ridden, or stopped, gets its test back.
+    for (void* lift : g_held)
+        if (std::find(held.begin(), held.end(), lift) == held.end() && R::IsLive(lift)) L::WriteIgnoreCheck(lift, false);
+    g_held = std::move(held);
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -253,6 +296,7 @@ void Tick(coop::net::Session& session) {
         }
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
+    HoldForRiders();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         g_slots[slot].queue.Serve(kBudget, NowMs, [&](const coop::net::KeyedTogglePayload& p) {
             return Execute(session, p, slot) ? coop::net::Served::Done : coop::net::Served::Wait;
@@ -301,6 +345,9 @@ void OnDisconnect() {
     g_sent = g_cancelled = g_reversed = g_ran = g_already = g_moving = g_refused = g_dead = 0;
     g_applied = g_turned = g_heldAgainst = 0;
     g_actionSaid = false;
+    for (void* lift : g_held)
+        if (R::IsLive(lift)) L::WriteIgnoreCheck(lift, false);
+    g_held.clear();
 }
 
 }  // namespace coop::cargo_lift

@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <string>
 
+#include "ue_wrap/core/types.h"
+
 namespace ue_wrap::cargo_lift {
 
 // The use action, the one the call buttons offer.
@@ -34,5 +36,13 @@ bool ReadMoving(void* lift, bool& moving);
 
 // The lift's own press: actionOptionIndex with the use action. True when the call ran.
 bool Press(void* lift);
+
+// `ignoreCheck`: while set, the move loop does not test whether its platform keeps up with its target, the test whose
+// failure it takes for a blocked platform and answers by reversing. The Blueprint sets it for a second after each reversal.
+bool WriteIgnoreCheck(void* lift, bool on);
+bool ReadIgnoreCheck(void* lift, bool& on);
+
+// The world place of the platform the lift moves (its `comp`, the `lift` child actor's root). False when unresolved.
+bool PlatformLocation(void* lift, FVector& out);
 
 }  // namespace ue_wrap::cargo_lift
