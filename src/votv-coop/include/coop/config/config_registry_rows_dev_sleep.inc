@@ -3,8 +3,7 @@
 // row keeps its place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 
 CFG_ENUM(sleep_drill, "sleep_drill", "dev", "off", "off|host_asleep|client_rest|beside", "VOTVCOOP_SLEEP_DRILL",
-    "Drill (BOTH peers), once a client's join is over: what a host's sleep and a client's rest do. Run the host "
-    "with world.sleep_speedup=host (--host-config): the default's host rests at 1 while the client is awake. "
+    "Drill (BOTH peers), once a client's join is over: what a host's sleep and a client's rest do. "
     "host_asleep: the host sets its need to 80 and sleeps natively and says the world's dilation it "
     "reads (20); the client reads its own world's dilation (1) and its clock for 10 s, and the clock "
     "must run at 0.9 of the native rate. client_rest: the host sleeps and prints its real seconds; "
