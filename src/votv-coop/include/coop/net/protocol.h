@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "coop/player/slot_count.h"  // kMaxPeers: the length of the per-slot acknowledgement arrays
+
 namespace coop::net {
 
 // Magic guard: rejects a stray datagram that hits our port. The spelling is "VMTP".
@@ -3245,8 +3247,6 @@ static_assert(sizeof(KeypadSyncPayload) == 72, "KeypadSyncPayload must be 72 byt
 static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
               "KeypadSyncPayload must fit in one reliable datagram");
 
-inline constexpr int kAckSlots = 8;
-
 // The power panel (PowerControlState), its breakers a mask in field order: bit0 coord, 1 downl, 2 play, 3 calc,
 // 4 light. Op 0, a client's press: `bits` the breakers it flipped, `flags` bit0 set when the laptop's breaker
 // page pressed them, `terminal` for a page press the portable PC it was made through, by element id (none: the
@@ -3263,10 +3263,10 @@ struct PowerPanelPayload {
     uint8_t  leverSlot;  // 1  -- whose lever made leverBits (0xFF when none)
     uint8_t  _pad;       // 1
     uint16_t seq;        // 2
-    uint16_t ack[kAckSlots];  // 16 -- by slot (kMaxPeers)
+    uint16_t ack[coop::players::kMaxPeers];  // 32 -- by slot
     uint32_t terminal;   // 4  -- op 0, a page press: the portable PC's element id, 0xFFFFFFFF for the laptop
 };
-static_assert(sizeof(PowerPanelPayload) == 28, "PowerPanelPayload must be 28 bytes");
+static_assert(sizeof(PowerPanelPayload) == 44, "PowerPanelPayload must be 44 bytes");
 static_assert(sizeof(PowerPanelPayload) <= 256 - 20 - 8, "PowerPanelPayload must fit one reliable datagram");
 // A page press through a portable PC that has no element id yet: the host cannot say where it stands.
 inline constexpr uint32_t kPowerPanelTerminalUnnamed = 0xFFFFFFFEu;
@@ -3312,7 +3312,7 @@ struct PowerGridPayload {
     uint8_t      index;    // 1  -- ops 1..4: the generator's place
     uint8_t      field;    // 1  -- op 4
     uint16_t     seq;      // 2  -- ops 1, 2, 4
-    uint16_t     ack[kAckSlots];  // 16 -- op 0, by slot (kMaxPeers)
+    uint16_t     ack[coop::players::kMaxPeers];  // 32 -- op 0, by slot
     float        damage;   // 4  -- op 3
     uint8_t      value;    // 1  -- op 4
     uint8_t      _pad;     // 1
@@ -3320,7 +3320,7 @@ struct PowerGridPayload {
 };
 static_assert(sizeof(PowerGridPuzzle) == 30, "PowerGridPuzzle must be 30 bytes");
 static_assert(sizeof(PowerGridRow) == 38, "PowerGridRow must be 38 bytes");
-static_assert(sizeof(PowerGridPayload) == 180, "PowerGridPayload must be 180 bytes");
+static_assert(sizeof(PowerGridPayload) == 196, "PowerGridPayload must be 196 bytes");
 static_assert(sizeof(PowerGridPayload) <= 256 - 20 - 8, "PowerGridPayload must fit one reliable datagram");
 
 // The fuse towers (FuseTowerState) by (kind, id); a row past `count` is unused. Op 0, the host's rows, with `ack`
@@ -3368,13 +3368,13 @@ struct FuseTowerPayload {
     uint8_t       kind;        // 1  -- ops 1..6: the tower's kind
     int32_t       tower;       // 4  -- ops 1..6: the tower's id
     uint16_t      seq;         // 2  -- ops 1..6
-    uint16_t      ack[kAckSlots];      // 16 -- op 0, by slot (kMaxPeers)
-    uint16_t      refused[kAckSlots];  // 16 -- op 0, by slot
+    uint16_t      ack[coop::players::kMaxPeers];      // 32 -- op 0, by slot
+    uint16_t      refused[coop::players::kMaxPeers];  // 32 -- op 0, by slot
     uint16_t      _pad2;       // 2
     FuseTowerRow rows[kFuseTowers];  // 80
 };
 static_assert(sizeof(FuseTowerRow) == 20, "FuseTowerRow must be 20 bytes");
-static_assert(sizeof(FuseTowerPayload) == 124, "FuseTowerPayload must be 124 bytes");
+static_assert(sizeof(FuseTowerPayload) == 156, "FuseTowerPayload must be 156 bytes");
 static_assert(sizeof(FuseTowerPayload) <= 256 - 20 - 8, "FuseTowerPayload must fit one reliable datagram");
 
 // The ATV's rig pose, velocity and condition (AtvState), keyed by its Key. A receiver keeps its own

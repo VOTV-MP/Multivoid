@@ -9,8 +9,10 @@
 namespace coop::players {
 
 // Peer session ids: the host is 0, clients count up from 1. Each peer has one local and up to
-// the maximum minus one puppets; the maximum covers a host and seven clients.
-inline constexpr uint8_t kMaxPeers       = 8;
+// the maximum minus one puppets; the maximum covers a host and fifteen clients. This is the hard
+// ceiling every peer agrees on (the element bands and the wire's per-slot arrays are sized by
+// it); how many seats a host opens is its `net.max_players` row, never above this.
+inline constexpr uint8_t kMaxPeers       = 16;
 inline constexpr uint8_t kPeerIdHost     = 0;
 inline constexpr uint8_t kPeerIdUnknown  = 0xFF;  // not in registry
 

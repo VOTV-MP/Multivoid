@@ -39,7 +39,7 @@
 
 namespace coop::net {
 
-// kMaxPeers (the host + 7 clients) is coop::players::kMaxPeers; the alias sizes this header's
+// kMaxPeers (the host + 15 clients) is coop::players::kMaxPeers; the alias sizes this header's
 // arrays.
 inline constexpr uint8_t kMaxPeers = coop::players::kMaxPeers;
 
@@ -526,7 +526,7 @@ private:
 
 public:
     // Public: peer_admission.cpp sizes its per-pending exchange rows to it.
-    static constexpr int      kMaxPending   = 8;  // sockets, not seats
+    static constexpr int      kMaxPending   = 16;  // sockets, not seats
     // How long an unproved socket may sit before SweepPending closes it. Generous: a pending entry
     // costs one socket, and on P2P the whole ICE negotiation runs between the host's park edge and
     // the client's Hello.
