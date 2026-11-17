@@ -1612,6 +1612,10 @@ msgid ""
 "meter: set the slider just above your room's noise."
 msgstr ""
 
+#: src/coop/cheats/cheat_request.cpp
+msgid "Started."
+msgstr ""
+
 #: src/ui/loading_screen.cpp
 msgid "Starting your server"
 msgstr ""

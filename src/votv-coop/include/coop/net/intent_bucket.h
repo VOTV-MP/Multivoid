@@ -35,6 +35,14 @@ public:
         return true;
     }
 
+    // Milliseconds from `nowMs` until the bucket holds a whole token again: 0 when it holds one now. A client's menu reads
+    // it to say when its next request is allowed.
+    uint64_t WaitMs(const IntentBudget& budget, uint64_t nowMs) {
+        Refill(budget, nowMs);
+        if (tokens_ >= 1.0f || !(budget.perSecond > 0.0f)) return 0;
+        return static_cast<uint64_t>((1.0f - tokens_) / budget.perSecond * 1000.0f) + 1;
+    }
+
     // A taken token back: the intent it paid for ran nothing.
     void Refund(const IntentBudget& budget) {
         tokens_ += 1.0f;

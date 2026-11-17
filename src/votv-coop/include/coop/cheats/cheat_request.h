@@ -10,7 +10,9 @@
 //
 // The panels call SpawnItem, AddPoints and FireEvent from the render thread; every engine touch is posted to the game
 // thread. A request is bounded per player (a burst of eight, then three a second); one past its budget is dropped
-// without work, answered Rate once and logged once per ten seconds.
+// without work, answered Rate once and logged once per ten seconds. A client keeps a bucket of the same size and offers
+// no request while it is empty (CanAsk), so an honest client does not reach that drop. A request from a sender whose
+// world the host has not marked ready is dropped without work or answer, which the client's menu never sends.
 
 #pragma once
 
@@ -33,6 +35,10 @@ bool PlayersMayCheat();
 // the projected grant `Cheats` the host sends (multivoid.dev.local.cheats). A gate on the UI only: a client moves its
 // own body without asking the host, and the host judges every request again. Any thread.
 bool ClientMayCheat();
+
+// Whether a panel may offer a request now: always on the host and in a solo game; on a client, once its world is
+// announced to the host and while its mirror of the host's bucket holds a token. Any thread.
+bool CanAsk();
 
 // Ask for a cheat. Any thread. `target` is coop::net::kCheatInFront or the slot of the player to spawn at.
 void SpawnItem(const std::string& name, int count, int target);

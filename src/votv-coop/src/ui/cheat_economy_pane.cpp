@@ -38,17 +38,22 @@ void RenderEconomy() {
     ImGui::Spacing();
     ImGui::SeparatorText(l10n::Label(l10n::T("Add points"), "add_points"));
     static const int kSteps[] = {100, 1000, 10000, 100000};
+    const bool canAsk = CH::CanAsk();   // a client's menu offers nothing the host would drop
+    ImGui::BeginDisabled(!canAsk);
     for (size_t i = 0; i < sizeof(kSteps) / sizeof(kSteps[0]); ++i) {
         if (i) ImGui::SameLine();
         std::snprintf(line, sizeof(line), "+%d###add%d", kSteps[i], kSteps[i]);
         if (ImGui::Button(line)) CH::AddPoints(kSteps[i]);
     }
+    ImGui::EndDisabled();
     ImGui::SeparatorText(l10n::Label(l10n::T("Remove points"), "remove_points"));
+    ImGui::BeginDisabled(!canAsk);
     for (size_t i = 0; i < sizeof(kSteps) / sizeof(kSteps[0]); ++i) {
         if (i) ImGui::SameLine();
         std::snprintf(line, sizeof(line), "-%d###sub%d", kSteps[i], kSteps[i]);
         if (ImGui::Button(line)) CH::AddPoints(-kSteps[i]);
     }
+    ImGui::EndDisabled();
 
     ImGui::SeparatorText(l10n::Label(l10n::T("Custom amount"), "custom_amount"));
     static int amount = 500;
@@ -57,9 +62,11 @@ void RenderEconomy() {
     ImGui::InputInt(l10n::Label(l10n::T("Amount"), "amount"), &amount, 100, 1000);
     if (amount < 1) amount = 1;
     if (amount > limit) amount = limit;
+    ImGui::BeginDisabled(!canAsk);
     if (ImGui::Button(l10n::Label(l10n::T("Add"), "add_custom"))) CH::AddPoints(amount);
     ImGui::SameLine();
     if (ImGui::Button(l10n::Label(l10n::T("Remove"), "remove_custom"))) CH::AddPoints(-amount);
+    ImGui::EndDisabled();
 
     const std::string status = CH::StatusLine(CH::LastStatus());
     if (!status.empty()) {

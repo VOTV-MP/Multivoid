@@ -56,6 +56,7 @@ const char* TimeText(const char* t) {
 
 void RenderEvents() {
     const bool authority = coop::dev_gate::Allowed();
+    const bool canAsk = CH::CanAsk();   // a client's menu offers nothing the host would drop
     if (authority) EF::RequestRefresh();   // keeps the ARMED badges live while the pane is open
     ImGui::TextDisabled("%s", l10n::T("Trigger a game event. 'day N' is the day it unlocks; the blue time is when the game "
                                       "schedules it."));
@@ -91,9 +92,11 @@ void RenderEvents() {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.40f, 1.0f));
         else if (ev.risk == ET::Risk::Caution)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.45f, 1.0f));
+        ImGui::BeginDisabled(!canAsk);
         const bool clicked = ImGui::Button(ev.name, ImVec2(S(150.f), 0));
+        ImGui::EndDisabled();
         if (ev.risk != ET::Risk::Safe) ImGui::PopStyleColor();
-        const bool hoveredBtn = ImGui::IsItemHovered();
+        const bool hoveredBtn = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
         ImGui::SameLine();
         char dayText[32];
         if (ev.dayZ >= 0) l10n::Fmt(dayText, sizeof(dayText), l10n::T("day %d"), ev.dayZ);

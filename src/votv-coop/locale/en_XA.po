@@ -1289,6 +1289,9 @@ msgstr ""
 "[[Speech louder than this transmits. Watch the mic\n"
 "meter: set the slider just above your room's noise.]]"
 
+msgid "Started."
+msgstr "[[Started.]]"
+
 msgid "Starting your server"
 msgstr "[[Starting your server]]"
 

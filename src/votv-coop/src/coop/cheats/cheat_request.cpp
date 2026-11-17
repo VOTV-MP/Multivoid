@@ -2,10 +2,12 @@
 
 #include "coop/cheats/cheat_request.h"
 
+#include "coop/cheats/cheat_limits.h"
 #include "coop/cheats/cheat_run.h"
 #include "coop/comms/chat_feed.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/dev/dev_gate.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
@@ -14,6 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/session/local_grants.h"
+#include "coop/session/net_pump.h"
 #include "coop/text/utf8_codec.h"
 #include "l10n/l10n.h"
 #include "ue_wrap/core/game_thread.h"
@@ -36,9 +39,6 @@ using coop::net::CheatReason;
 
 constexpr size_t kReasons = static_cast<size_t>(CheatReason::Count);
 
-// A player's budget: a burst of eight (a row of preset presses), then three a second. A button a person can hold down
-// costs the host nothing past it.
-constexpr coop::net::IntentBudget kBudget{8.0f, 3.0f};
 constexpr uint64_t kSayEveryMs = 10000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -46,6 +46,12 @@ coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acqu
 
 std::atomic<uint32_t> g_nextId{0};
 void (*g_observer)(const coop::net::CheatResultPayload&) = nullptr;
+
+// CLIENT: the request the status line waits on, and this machine's mirror of the host's bucket (game thread), which
+// publishes when its next request is allowed so the menu, on the render thread, can offer none before then.
+std::atomic<uint32_t> g_pendingId{0};
+coop::net::IntentBucket g_mirror;
+std::atomic<uint64_t> g_readyAtMs{0};
 
 std::mutex g_statusMutex;
 Status g_status;   // guarded by g_statusMutex
@@ -98,9 +104,10 @@ std::string Describe(const Request& r) {
 
 // ---- client ---------------------------------------------------------------------------------------------------
 
-bool SendRequest(coop::net::Session& s, const Request& r) {
+bool SendRequest(coop::net::Session& s, const Request& r, uint32_t* idOut) {
     coop::net::CheatRequestPayload p{};
     p.id = g_nextId.fetch_add(1) + 1;
+    *idOut = p.id;
     p.amount = r.amount;
     p.op = static_cast<uint8_t>(r.op);
     p.count = static_cast<uint8_t>(r.count < 0 ? 0 : r.count > 255 ? 255 : r.count);
@@ -132,8 +139,22 @@ void Route(Request r) {
             Status st;
             st.valid = true;
             st.op = r.op;
+            // The menu offers nothing before this machine's world is announced to the host or while its mirror of the
+            // host's bucket is empty (CanAsk). A call that arrives anyway is told no and sends nothing: the host would
+            // drop it unanswered.
+            const uint64_t now = coop::net::NowMs();
+            const bool settled = coop::net_pump::IsWorldSettled();
+            if (!settled || !g_mirror.Take(coop::cheats::kRequestBudget, now)) {
+                st.reason = settled ? CheatReason::Rate : CheatReason::NotReady;
+                SetStatus(st);
+                UE_LOGW("cheats: the request for %s was not sent (%s)", Describe(r).c_str(), ReasonName(st.reason));
+                return;
+            }
+            g_readyAtMs.store(now + g_mirror.WaitMs(coop::cheats::kRequestBudget, now), std::memory_order_release);
             st.pending = true;
-            if (SendRequest(*s, r)) {
+            uint32_t id = 0;
+            if (SendRequest(*s, r, &id)) {
+                g_pendingId.store(id, std::memory_order_release);
                 SetStatus(st);
                 UE_LOGI("cheats: asked the host for %s", Describe(r).c_str());
             } else {
@@ -255,7 +276,8 @@ std::string StatusLine(const Status& s) {
                 l10n::Fmt(buf, sizeof(buf), l10n::T("Spawned %d."), s.done);
                 return buf;
             }
-            return l10n::T("Done.");
+            // An event's fire is posted to the game: "Started" is what the host knows, not that it finished.
+            return s.op == CheatOp::Event ? l10n::T("Started.") : l10n::T("Done.");
         case CheatReason::Off: return l10n::T("The host has not allowed cheats.");
         case CheatReason::NotReady: return l10n::T("Not ready yet -- try again in a moment.");
         case CheatReason::Rate: return l10n::T("Too fast -- wait a moment.");
@@ -281,7 +303,7 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
         return;
     }
     const uint64_t now = coop::net::NowMs();
-    if (!g_bucket[senderSlot].Take(kBudget, now)) {
+    if (!g_bucket[senderSlot].Take(coop::cheats::kRequestBudget, now)) {
         if (now >= g_nextSayMs[senderSlot]) {
             g_nextSayMs[senderSlot] = now + kSayEveryMs;
             UE_LOGI("cheats: slot %u is over its request rate; requests dropped", static_cast<unsigned>(senderSlot));
@@ -289,6 +311,14 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
             rate.reason = CheatReason::Rate;
             Answer(*s, senderSlot, p, rate);   // told once per window, then dropped without an answer
         }
+        return;
+    }
+    // A sender whose world is not announced is dropped without work and without an answer: CheatResult is not a kind
+    // the host sends before a slot is world-ready, so the answer could not reach it, and a client's menu offers no
+    // request before its world is up (CanAsk). The drop costs a bucket token, which bounds this line.
+    if (!s->IsSlotWorldReady(senderSlot)) {
+        UE_LOGI("cheats: slot %u sent a request before its world was announced -- dropped",
+                static_cast<unsigned>(senderSlot));
         return;
     }
     const std::string nick = coop::text::ToUtf8(coop::roster_ledger::DisplayName(senderSlot));
@@ -310,7 +340,6 @@ void OnRequest(const coop::net::CheatRequestPayload& p, uint8_t senderSlot) {
         r.target = p.target;
         r.amount = p.amount;
         if (!SenderMayCheat(*s, senderSlot)) o.reason = CheatReason::Off;
-        else if (!s->IsSlotWorldReady(senderSlot)) o.reason = CheatReason::NotReady;
         else o = Run(r, senderSlot);
         UE_LOGI("cheats: slot %u (%s) asked for %s -> %s", static_cast<unsigned>(senderSlot), nick.c_str(),
                 Describe(r).c_str(), ReasonName(o.reason));
@@ -327,10 +356,19 @@ void OnResult(const coop::net::CheatResultPayload& p) {
     st.op = static_cast<CheatOp>(p.op);
     st.reason = static_cast<CheatReason>(p.reason);
     st.done = p.done;
-    SetStatus(st);
-    UE_LOGI("cheats: the host answered %s: %s", OpName(st.op), ReasonName(st.reason));
+    // The status line belongs to the request last sent: a late answer to an earlier one neither replaces it nor ends
+    // its "asked the host". Every answer is still logged, noticed and shown to the observer.
+    if (p.id == g_pendingId.load(std::memory_order_acquire)) SetStatus(st);
+    UE_LOGI("cheats: the host answered %s: %s (request %u)", OpName(st.op), ReasonName(st.reason),
+            static_cast<unsigned>(p.id));
     NoticeToFeed(st.reason);
     if (g_observer) g_observer(p);
+}
+
+bool CanAsk() {
+    if (coop::dev_gate::Allowed()) return true;   // the host, or a solo game: the cheat runs at once
+    return coop::net_pump::IsWorldSettled() &&
+           coop::net::NowMs() >= g_readyAtMs.load(std::memory_order_acquire);
 }
 
 void SetResultObserver(void (*fn)(const coop::net::CheatResultPayload& p)) { g_observer = fn; }
@@ -343,6 +381,9 @@ uint32_t AnsweredFor(int slot, CheatReason reason) {
 void OnDisconnect() {
     SetStatus(Status{});
     g_observer = nullptr;
+    g_pendingId.store(0, std::memory_order_release);
+    g_mirror.Reset();
+    g_readyAtMs.store(0, std::memory_order_release);
 }
 
 }  // namespace coop::cheats

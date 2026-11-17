@@ -1482,7 +1482,8 @@ enum class ReliableKind : uint16_t {
     // host runs only while its setting net.allow_player_cheats is on. The host judges everything (the setting, the
     // sender, the item, the target, what a player may fire or spawn, a rate) and the world is written by the host
     // alone; a client never acts on its own request. Answered by CheatResult to that client alone. Never relayed. Late join: none (a request
-    // carries no state). Pre-world: held until the sender's world is up. CheatRequestPayload.
+    // carries no state). Pre-world: not sent (the client's menu offers none before its world is announced); one that
+    // arrives is dropped by the host without work or answer. CheatRequestPayload.
     CheatRequest = 276,
 
     // Host to one client: what the host did with its CheatRequest (CheatReason). Never relayed. Late join: none. Trust:
@@ -2900,7 +2901,7 @@ enum class CheatOp : uint8_t {
 enum class CheatReason : uint8_t {
     Ok          = 0,  // the host did it
     Off         = 1,  // the host's setting net.allow_player_cheats is off, or the host withheld the sender's right
-    NotReady    = 2,  // the sender's world is not up, or the host's world, or the target has no place yet
+    NotReady    = 2,  // the host cannot do it yet: no balance to read, no place for the asker or the target yet
     Rate        = 3,  // too many requests in a moment
     BadRequest  = 4,  // a shape the host refuses: an unknown op, a count or amount out of bounds, a name that is not text
     UnknownItem = 5,  // the host's game lists no such prop, or its class does not load

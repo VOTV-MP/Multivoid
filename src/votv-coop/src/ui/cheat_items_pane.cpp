@@ -99,7 +99,8 @@ void RenderItems() {
         ImGui::TextUnformatted(line);
     }
 
-    ImGui::BeginDisabled(selected.empty());
+    const bool canAsk = CH::CanAsk();   // a client's menu offers nothing the host would drop
+    ImGui::BeginDisabled(selected.empty() || !canAsk);
     if (ImGui::Button(l10n::Label(l10n::T("Spawn in front of me"), "spawn_front")))
         CH::SpawnItem(selected, count, coop::net::kCheatInFront);
     if (ui::cheat_picker::Count() > 1) {
@@ -145,7 +146,7 @@ void RenderItems() {
             const bool isSel = name == selected;
             if (ImGui::Selectable(name.c_str(), isSel, ImGuiSelectableFlags_AllowDoubleClick)) {
                 selected = name;
-                if (ImGui::IsMouseDoubleClicked(0)) CH::SpawnItem(selected, count, coop::net::kCheatInFront);
+                if (ImGui::IsMouseDoubleClicked(0) && canAsk) CH::SpawnItem(selected, count, coop::net::kCheatInFront);
             }
             ImGui::PopID();
         }
