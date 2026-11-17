@@ -254,6 +254,7 @@ ClientStep g_client = ClientStep::WaitReady;
 ue_wrap::CachedObjRef g_board;
 ue_wrap::CachedObjRef g_pryer;
 uint64_t g_clientMs = 0;
+uint64_t g_pryMark = 0;   // the probe's enqueue count just before End: the births after it are this pry's
 
 void ClientGo(ClientStep s) {
     g_client = s;
@@ -324,7 +325,6 @@ void ClientPry(void* me) {
         return;
     }
     g_pryer.Set(shown);
-    PK::ForgetExitOf(L"prop_crowbar_C");
     ClientGo(ClientStep::End);
 }
 
@@ -339,6 +339,7 @@ void ClientEnd(void* me) {
     if (lp >= 0) std::memcpy(static_cast<uint8_t*>(p) + lp, &me, sizeof(me));
     std::vector<uint8_t> frame(static_cast<size_t>(R::FunctionFrameSize(fn)), 0u);
     frame[static_cast<size_t>(o1)] = ArmOf() == Arm::Open ? 1 : 0;
+    g_pryMark = PK::EnqueueMark();
     const bool ran = R::CallFunction(p, fn, frame.data());
     void* const board = g_board.Get();
     UE_LOGI("[CROWBARPRY] client: End(pryOpen=%d) ran=%d, the board static=%d", ArmOf() == Arm::Open ? 1 : 0, ran ? 1 : 0,
@@ -349,7 +350,7 @@ void ClientEnd(void* me) {
 
 // The end of the crowbar's birth, as the client's own drain says it: the event that decides the arm.
 void ClientWaitExit() {
-    const std::string exit = PK::LastExitOf(L"prop_crowbar_C");
+    const std::string exit = PK::ExitSince(L"prop_crowbar_C", g_pryMark);
     if (exit.empty()) {
         if (Now() - g_clientMs > kBoundMs) ClientSay(Outcome::Invalid, "client: %s", "the crowbar's birth never reached the drain");
         return;
@@ -358,9 +359,13 @@ void ClientWaitExit() {
     UE_LOGI("[CROWBARPRY] client: the pry's crowbar left the drain as '%s' (sent=%d), the hand holds a crowbar=%d",
             exit.c_str(), sent ? 1 : 0, HandHoldsCrowbar() ? 1 : 0);
     if (ArmOf() == Arm::Open) {
-        // The host judges the arrival; the client speaks only to say the birth was never sent.
-        if (sent) g_client = ClientStep::Done;
-        else ClientSay(Outcome::Fail, "client: the pry's crowbar was not sent (its drain ended '%s')", exit);
+        // The host judges the arrival. The client says FAIL only on the two exits a LOST crowbar makes (a birth no one
+        // authored, a key that never read); any other exit says nothing about authorship, so it is INVALID.
+        if (sent) { g_client = ClientStep::Done; return; }
+        if (exit == "not-a-place-nor-whitelisted-birth" || exit == "key-wait-expired")
+            ClientSay(Outcome::Fail, "client: the pry's crowbar was not sent (its drain ended '%s')", exit);
+        else
+            ClientSay(Outcome::Invalid, "client: the pry's crowbar ended '%s', which says nothing of its authorship", exit);
         return;
     }
     if (sent) { ClientSay(Outcome::Fail, "client: a world crowbar was sent although the pry was given up (%s)", exit); return; }

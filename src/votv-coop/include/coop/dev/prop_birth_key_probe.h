@@ -15,6 +15,7 @@
 // finish-spawn hook is role-gated after the birth record, not before.
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace coop::net { class Session; }
@@ -56,10 +57,11 @@ void NoteKeyReadable(void* actor, int tries);
 // An entry left the pending vector. `verdict` names the exit; `tries` is the drain ticks it waited.
 void NoteDrainExit(void* actor, const char* verdict, int tries, const std::wstring& key);
 
-// The verdict of the newest drain exit of an entry of class `cls` since the last ForgetExitOf(cls); empty when none. A
-// drill reads the end of a birth it caused (the crowbar a pry hands back) as the event that decides it. Dev only.
-std::string LastExitOf(const std::wstring& cls);
-void ForgetExitOf(const std::wstring& cls);
+// The enqueue count now, and the verdict of the drain exit of the newest entry of class `cls` enqueued AFTER `mark` (empty
+// while none of them has left). A drill takes the mark just before the call that causes a birth and reads that birth's
+// end as the event that decides it, whatever else of the class is born meanwhile. Dev only.
+uint64_t EnqueueMark();
+std::string ExitSince(const std::wstring& cls, uint64_t mark);
 
 // Print the tallies and the histogram. Totals are cumulative, so each print is the whole run so
 // far, and teardown prints the last.

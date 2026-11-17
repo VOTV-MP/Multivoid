@@ -33,9 +33,15 @@ struct Entry {
     std::wstring cls;
     std::wstring seamKey;          // as read at the seam; empty when the Key was not there yet
     bool         containerExtract = false;
+    uint64_t     seq = 0;          // the order of the enqueue, for a drill that names the births after a mark
 };
 std::unordered_map<void*, Entry> g_live;  // enqueued, not yet drained
-std::map<std::wstring, std::string> g_lastExit;  // the newest exit's verdict, by the class of the entry
+uint64_t g_enqSeq = 0;
+struct LastExit {
+    uint64_t    seq = 0;
+    std::string verdict;
+};
+std::map<std::wstring, LastExit> g_lastExit;  // the exit of the newest-enqueued entry that has left, by its class
 
 // Every keyed-prop birth seen, with the class and the key as read at the birth: the DESTROY line's
 // side table. A world's teardown does not pass K2_DestroyActor, so nothing erases the entries of a
@@ -97,7 +103,7 @@ void NoteEnqueue(void* actor, const std::wstring& cls, const std::wstring& seamK
     const bool present = !(seamKey.empty() || seamKey == L"None");
     if (present) ++g_keyAtSeam;
     if (g_live.size() < kLiveCap)
-        g_live[actor] = Entry{cls, present ? seamKey : std::wstring(), containerExtract};
+        g_live[actor] = Entry{cls, present ? seamKey : std::wstring(), containerExtract, ++g_enqSeq};
     UE_LOGW("prop_birth_key_probe: ENQUEUE actor=%p cls='%ls' key-at-seam='%ls' container-extract=%d "
             "world=%p (current %p)",
             actor, cls.c_str(), present ? seamKey.c_str() : L"<none>", containerExtract ? 1 : 0,
@@ -177,7 +183,10 @@ void NoteDrainExit(void* actor, const char* verdict, int tries, const std::wstri
 
     Entry e;
     if (auto it = g_live.find(actor); it != g_live.end()) { e = it->second; g_live.erase(it); }
-    if (!e.cls.empty()) g_lastExit[e.cls] = v;
+    if (!e.cls.empty()) {
+        LastExit& l = g_lastExit[e.cls];
+        if (e.seq >= l.seq) l = LastExit{e.seq, v};
+    }
     // A Key that was there at the seam and is a DIFFERENT one at the exit is the case a flag hides:
     // the identity was not ready, it was merely occupied.
     const bool seamKeyChanged = !e.seamKey.empty() && !key.empty() && e.seamKey != key;
@@ -196,12 +205,12 @@ void NoteDrainExit(void* actor, const char* verdict, int tries, const std::wstri
     g_dirty = true;
 }
 
-std::string LastExitOf(const std::wstring& cls) {
-    const auto it = g_lastExit.find(cls);
-    return it == g_lastExit.end() ? std::string() : it->second;
-}
+uint64_t EnqueueMark() { return g_enqSeq; }
 
-void ForgetExitOf(const std::wstring& cls) { g_lastExit.erase(cls); }
+std::string ExitSince(const std::wstring& cls, uint64_t mark) {
+    const auto it = g_lastExit.find(cls);
+    return (it == g_lastExit.end() || it->second.seq <= mark) ? std::string() : it->second.verdict;
+}
 
 void Tick() {
     if (!IsEnabled() || !g_dirty) return;
