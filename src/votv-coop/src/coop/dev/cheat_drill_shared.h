@@ -32,6 +32,7 @@ struct State {
     int32_t points = 0;
     unsigned fires = 0;
     unsigned replays = 0;
+    float liftStartZ = 0.f, liftedZ = 0.f;   // arm L: the body's height before the lift, and read back after it
     uint32_t answered[4] = {};
     bool sent = false;
     int resultIdx = 0;

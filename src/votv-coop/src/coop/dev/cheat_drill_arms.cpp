@@ -14,6 +14,7 @@
 #include "coop/permissions/permission_host.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
+#include "coop/session/teleport_client.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
@@ -36,11 +37,14 @@ using coop::net::CheatReason;
 // I  eight removals of 100000 against a balance of 50000 in one burst: one is Ok, seven Failed, the balance 0, never below.
 // J  two requests in flight: the status line stays with the later one while the earlier one's answer arrives.
 // K  the host withholds the right from the client: its request is answered Off and its projected right is clear.
-// L  the client's Unstuck lands it on the NavMesh.
+// L  the client's body is lifted off the mesh through the game's teleport, and its Unstuck puts it back on the
+//    NavMesh, at least 100 cm below where it was lifted to.
 
 constexpr const char* kArmTag[] = {"G", "H", "I", "J", "K", "L"};
 constexpr int kArms = 6;
 constexpr int32_t kStake = 50000;
+constexpr float kLiftCm = 150.f;      // arm L: how far the body is lifted; within the reach of Unstuck's NavMesh query
+constexpr float kMinDropCm = 100.f;   // arm L: how far below the lifted body the landing must be
 
 uint32_t Answered(CheatReason r) { return CH::AnsweredFor(1, r); }
 uint32_t Delta(int i, CheatReason r) { return Answered(r) - g.answered[i]; }
@@ -284,14 +288,31 @@ void ClientArmTick(coop::net::Session& s) {
         finished = true;
         break;
     case 5:   // L: Unstuck puts the body on the NavMesh
-        if (g.sub == 1) {
+        if (g.sub == 1) {   // lift the body 150 cm straight up, off the mesh, through the game's own teleport
+            void* const local = coop::players::Registry::Get().Local();
+            ue_wrap::FVector at{};
+            if (!local || !ue_wrap::engine::TryGetActorLocation(local, at)) { ClientInvalid(A, "this player's place does not read"); return; }
+            ue_wrap::FRotator view{};
+            if (void* const ctrl = ue_wrap::engine::GetController(local)) view = ue_wrap::engine::GetControlRotation(ctrl);
+            coop::teleport_client::ApplyArgs lift{at.X, at.Y, at.Z + kLiftCm, view.Pitch, view.Yaw, view.Roll};
+            if (!coop::teleport_client::ApplyLocally(lift)) { ClientInvalid(A, "the lift's teleport reported failure"); return; }
+            g.liftStartZ = at.Z;
+            Step();
+            return;
+        }
+        if (g.sub == 2) {   // the lift read back, then Unstuck on the next game-thread task
+            void* const local = coop::players::Registry::Get().Local();
+            ue_wrap::FVector at{};
+            if (!local || !ue_wrap::engine::TryGetActorLocation(local, at)) { ClientInvalid(A, "this player's place does not read"); return; }
+            if (at.Z < g.liftStartZ + kLiftCm * 0.5f) { ClientInvalid(A, "the lift did not move the body"); return; }
+            g.liftedZ = at.Z;
             g.crowbars = static_cast<int>(SL::Outcomes().landed);
             g.fires = SL::Outcomes().refused;
             SL::Unstuck();
             Step();
             return;
         }
-        if (g.sub == 2) {
+        if (g.sub == 3) {
             const auto o = SL::Outcomes();
             if (o.landed == static_cast<unsigned>(g.crowbars) && o.refused == g.fires) {
                 if (Timed(kEffectBoundMs)) ClientInvalid(A, "Unstuck did not run");
@@ -303,7 +324,12 @@ void ClientArmTick(coop::net::Session& s) {
             void* const local = coop::players::Registry::Get().Local();
             ue_wrap::FVector at{};
             if (!local || !ue_wrap::engine::TryGetActorLocation(local, at)) { ClientInvalid(A, "this player's place does not read"); return; }
-            // The body is read where it stands after the move and must be at the landing point, within its capsule.
+            // The landing is below where the body was lifted to, and the body is read where it stands after the move and
+            // must be at the landing point, within its capsule.
+            if (o.target.Z > g.liftedZ - kMinDropCm) {
+                ClientFail(A, "Unstuck landed " + std::to_string(static_cast<int>(g.liftedZ - o.target.Z)) + " cm below the lifted body, not " + std::to_string(static_cast<int>(kMinDropCm)));
+                return;
+            }
             const float half = ue_wrap::engine::GetActorCharacterHalfHeight(local);
             const float off = std::sqrt((at.X - o.target.X) * (at.X - o.target.X) + (at.Y - o.target.Y) * (at.Y - o.target.Y) +
                                         (at.Z - o.target.Z) * (at.Z - o.target.Z));
