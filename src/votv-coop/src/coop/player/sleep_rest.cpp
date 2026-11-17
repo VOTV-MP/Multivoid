@@ -8,6 +8,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/player/sleep_sync.h"
 
 #include "ue_wrap/actors/effects.h"
@@ -87,6 +88,14 @@ bool ConnectedClient() {
     return s && s->connected() && s->role() == coop::net::Role::Client;
 }
 
+// The session while this peer hosts one that runs, else null.
+coop::net::Session* HostSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->running() && s->role() == coop::net::Role::Host ? s : nullptr;
+}
+
+void HostEval();
+
 // The local player's body: the registry's (warm while the controller holds the sleeping pawn), else the
 // pawn `sleep` took from the controller.
 void* CurrentBody() {
@@ -162,6 +171,7 @@ void EndRest(const char* why) {
 // factor again: it is put back to 1 here as well, and begins no new rest. A second call the game refused
 // leaves the world at the 1 the rest holds, which is legal and returns before the factor check.
 void OnSleepPost(const sg::Call&) {
+    if (HostSession()) return HostEval();  // the host's own sleep begins: the row and who is awake decide its factor
     if (!ConnectedClient() || !g_wakeWatch.live) return;
     float asleep = 0.f;
     if (!V::Read(V::Field::Sleeping, &asleep) || asleep == 0.f) return;
@@ -190,6 +200,7 @@ void OnSleepPost(const sg::Call&) {
 // call), has put the world's dilation and the sleeping flag back. A call that left the flag up (a refusal) ends
 // nothing.
 void OnWakePost(const sg::Call&) {
+    if (HostSession()) return HostEval();  // the host woke (or a refused call left it asleep: nothing changes)
     if (!g_resting || !ConnectedClient()) return;
     float asleep = 0.f;
     if (!V::Read(V::Field::Sleeping, &asleep) || asleep != 0.f) return;
@@ -211,11 +222,11 @@ void SettleWatch(Watch& w) {
     sg::ResolvePendingNames();
     if (sg::NameWatchLive(*w.row, w.tag)) {
         w.settled = w.live = true;
-        UE_LOGI("sleep_rest: a client's %s is seen at the call (a script-gate watch on mainGamemode_C::%s)", w.what,
+        UE_LOGI("sleep_rest: this peer's %s is seen at the call (a script-gate watch on mainGamemode_C::%s)", w.what,
                 w.what);
     } else if (sg::NameWatchSettled(*w.row, w.tag)) {
         w.settled = true;
-        UE_LOGE("sleep_rest: the %s watch is dead -- a client's rest is not carried out", w.what);
+        UE_LOGE("sleep_rest: the %s watch is dead -- this peer's rest is not carried out", w.what);
     }
 }
 
@@ -254,35 +265,47 @@ bool HostRestsAtOne(coop::net::Session& s) {
     return false;
 }
 
-void TickRest();
-
 // The host asleep: the game's own sleep (the world at its factor) when the row says the host's sleep speeds the world
 // up, or everyone else sleeps; a client's rest (the world at 1, the body and the effects at the factor) otherwise.
-// Each switch is an edge of who sleeps or of the row, so it happens in the tick that sees it.
-void HostTick(coop::net::Session& s) {
-    const bool asleep = SLP::EnsureResolved() && SLP::IsSleeping();
-    if (!asleep) {
+// Every cause of a switch is announced, so each one runs this and nothing polls: the host's own `sleep` and `wakeup`
+// (the script gate's watches), a peer's rest state (sleep_sync's subscriber), a player's arrival or leaving (the
+// roster's), and the row (the config subscriber). Idempotent: the world's factor is set again on each run while the
+// host rests, since the game has no guard on a second `sleep` call, which sets its own factor again.
+void HostEval() {
+    auto* const s = HostSession();
+    if (!s || !SLP::EnsureResolved()) return;
+    if (!SLP::IsSleeping()) {
         if (g_resting) EndRest("the host woke");
         return;
     }
-    const bool atOne = HostRestsAtOne(s);
-    if (atOne && !g_resting) {
+    if (HostRestsAtOne(*s)) {
+        // A rest that could not end with the game's own wake would hold the body at the factor for good.
+        if (!g_wakeWatch.live) return;
         if (!SLP::SetGlobalTimeDilation(1.f)) {
             UE_LOGE("sleep_rest: the world's dilation could not be held at 1 for the host's rest");
             return;
         }
+        if (g_resting) return;
         BeginRest();
         UE_LOGI("sleep_rest: the host's sleep does not speed the world up now (world.sleep_speedup) -- the world "
                 "stays at 1");
         return;
     }
-    if (!atOne && g_resting) {
-        EndRest("the host's sleep speeds the world up now (world.sleep_speedup)");
-        if (SLP::SetGlobalTimeDilation(kNativeSleepDilation))
-            UE_LOGI("sleep_rest: the world runs at the game's %.0f", kNativeSleepDilation);
-        return;
-    }
-    if (g_resting) TickRest();
+    if (!g_resting) return;
+    EndRest("the host's sleep speeds the world up now (world.sleep_speedup)");
+    if (SLP::SetGlobalTimeDilation(kNativeSleepDilation))
+        UE_LOGI("sleep_rest: the world runs at the game's %.0f", kNativeSleepDilation);
+}
+
+// Slot 0 is the host's own state, which its `sleep` and `wakeup` watches already announce.
+void OnPeerRest(int slot, coop::net::SleepPeerState) {
+    if (slot > 0) HostEval();
+}
+
+// A player arrives (the roster row is born when its slot is ready: it is awake, so under `everyone` the world drops to
+// 1 at its join, the join of a peer mid-sleep included) or leaves (only connected slots count, so a leaver does not).
+void OnSlotReplaced(int slot, const coop::roster_ledger::Row&, const coop::roster_ledger::Row&) {
+    if (slot > 0) HostEval();
 }
 
 // A fall since the last read: food gets (1 - 1/F) of it back, coffee loses (F - 1) times it more. A rise
@@ -305,24 +328,7 @@ void SettleNeeds() {
     }
 }
 
-}  // namespace
-
-void Install(coop::net::Session* session) {
-    g_session.store(session, std::memory_order_release);
-}
-
-void Tick() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->running()) return;
-    if (s->role() == coop::net::Role::Host) return HostTick(*s);
-    EnsureWatch();
-    if (!g_resting) return;
-    if (!ConnectedClient()) return EndRest("the session left");
-    TickRest();
-}
-
-namespace {
-// A rest's own tick, a client's or the host's alone: its owner unchanged, the effects at the factor, the needs settled.
+// A rest's own tick, a client's or the host's at 1: its owner unchanged, the effects at the factor, the needs settled.
 void TickRest() {
     void* const gm = ue_wrap::world_singleton::Gamemode();
     if (!gm || gm != g_gm.Raw() || !g_gm.Alive()) return EndRest("the gamemode changed");
@@ -333,7 +339,30 @@ void TickRest() {
     FX::ForEachWorldEffect(&DilateEffect, &factor);
     SettleNeeds();
 }
+
 }  // namespace
+
+void Install(coop::net::Session* session) {
+    g_session.store(session, std::memory_order_release);
+    coop::sleep_sync::SubscribePeerRest(&OnPeerRest);
+    coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced);
+    coop::config::Subscribe(coop::config_registry::rows::world_sleep_speedup, &HostEval);
+}
+
+// The watches are asked about until live (a latched read after). The only per-tick work is a rest's own: the effects
+// the world spawns while it lasts take the factor, and the food and coffee are settled; nothing announces either.
+void Tick() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running()) return;
+    const bool host = s->role() == coop::net::Role::Host;
+    const bool wasSettled = g_sleepWatch.settled && g_wakeWatch.settled;
+    EnsureWatch();
+    // A host asleep before its watches were live: the rest it owes is seen now (every later change is an edge).
+    if (host && !wasSettled && g_sleepWatch.settled && g_wakeWatch.settled) HostEval();
+    if (!g_resting) return;
+    if (!host && !ConnectedClient()) return EndRest("the session left");
+    TickRest();
+}
 
 bool Resting() { return g_resting; }
 

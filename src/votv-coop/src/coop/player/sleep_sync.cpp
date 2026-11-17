@@ -52,15 +52,18 @@ WireKey        g_sentBed{};
 
 bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; }
 
-PeerRestFn g_onPeerRest = nullptr;
+constexpr size_t kMaxPeerRestSubscribers = 4;
+PeerRestFn g_onPeerRest[kMaxPeerRestSubscribers] = {};
+size_t     g_onPeerRestCount = 0;
 
-// Every write of a slot's state goes through here: the table, and the subscriber when the state itself changed (a
+// Every write of a slot's state goes through here: the table, and the subscribers when the state itself changed (a
 // bed that changed under the same state is not an edge).
 void SetPeerState(int slot, SleepPeerState state, const WireKey& bed) {
     const bool edge = g_state[slot] != state;
     g_state[slot] = state;
     g_bed[slot] = bed;
-    if (edge && g_onPeerRest) g_onPeerRest(slot, state);
+    if (!edge) return;
+    for (size_t i = 0; i < g_onPeerRestCount; ++i) g_onPeerRest[i](slot, state);
 }
 
 // Two beds are the same name: the length and the bytes inside it, whatever sits past them.
@@ -359,7 +362,13 @@ void OnDisconnectForSlot(int slot) {
     SendPeerRest(s, -1, slot);
 }
 
-void SubscribePeerRest(PeerRestFn fn) { g_onPeerRest = fn; }
+void SubscribePeerRest(PeerRestFn fn) {
+    if (!fn) return;
+    for (size_t i = 0; i < g_onPeerRestCount; ++i)
+        if (g_onPeerRest[i] == fn) return;  // a per-session install runs again: once per function
+    if (g_onPeerRestCount < kMaxPeerRestSubscribers) g_onPeerRest[g_onPeerRestCount++] = fn;
+    else UE_LOGE("sleep_sync: more than %zu peer-rest subscribers -- one is not told", kMaxPeerRestSubscribers);
+}
 
 SleepPeerState PeerState(int slot) {
     return (slot >= 0 && slot < static_cast<int>(coop::net::kMaxPeers)) ? g_state[slot]

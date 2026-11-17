@@ -29,15 +29,19 @@ namespace coop::sleep_rest {
 // effects instead of the world. Also the ratio between a sleep's world time and its real time.
 inline constexpr float kNativeSleepDilation = 20.0f;
 
-// Cache the session. Called from the subsystems Install fanout.
+// Cache the session and subscribe to the host rule's changes: a peer's rest state (coop/player/sleep_sync), a player's
+// arrival or leaving (coop/player/roster_ledger) and the row world.sleep_speedup. Called from the subsystems Install
+// fanout.
 void Install(coop::net::Session* session);
 
-// Per pump tick: on a connected client, register the sleep and wakeup watches until they are live; while a rest runs,
-// hold the factor on the effects and settle food and coffee. Cheap when idle: no engine read at all.
+// Per pump tick: register the sleep and wakeup watches until they are live; while a rest runs, hold the factor on the
+// effects and settle food and coffee. Cheap when idle: no engine read at all. A host's rest is switched on the edges
+// Install names and the watches announce, never here.
 void Tick();
 
-// A client's rest is in progress: begun in the frame of the game's own `sleep` call (the gate's watch announces it) and
-// over when the game's `wakeup` has run, which the wakeup watch announces. No engine read. Game thread.
+// A rest is in progress (a client's, or the host's at 1): begun in the frame of the game's own `sleep` call (the
+// gate's watch announces it) and over when the game's `wakeup` has run, which the wakeup watch announces. No engine
+// read. Game thread.
 bool Resting();
 
 // The session ended: a rest in progress is handed back at factor 1.
