@@ -47,6 +47,8 @@ struct Caller {
 constexpr Caller kCallers[] = {
     {L"mainPlayer_C", L"attack", From::kOwnPlayer},   // a melee hit's impact sound
     {L"kocker_C", L"knock", From::kHostWorld},        // the vent knocker's knocks (Ghezra/Multivoid#39)
+    {L"church_C", L"bell", From::kHostWorld},          // the wandering church's bells (Ghezra/Multivoid#39)
+    {L"church_C", L"ExecuteUbergraph_church", From::kHostWorld},   // its bell entry rings from the ubergraph too
 };
 constexpr int kCallerCount = static_cast<int>(sizeof(kCallers) / sizeof(kCallers[0]));
 

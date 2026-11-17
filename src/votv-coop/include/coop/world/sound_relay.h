@@ -1,8 +1,8 @@
 // coop/world/sound_relay.h -- a sound the game plays at a place on one machine alone, played there on every peer.
 //
 // GameplayStatics::PlaySoundAtLocation is a local one-shot. A player's melee hit (mainPlayer_C::attack, the struck
-// material's impact sound) is heard only by the hitter, and the vent knocker (kocker_C::knock), an event actor that
-// lives on the host alone, only by the host (Ghezra/Multivoid#41, #39). A pre hook on that call reads the Sound, its
+// material's impact sound) is heard only by the hitter, and the vent knocker (kocker_C::knock) and the wandering church's
+// bells (church_C), the host's world, only by the host (Ghezra/Multivoid#41, #39). A pre hook on that call reads the Sound, its
 // place, volume, pitch and attenuation when the calling Blueprint function is on this lane's list -- a player's own
 // (its object this machine's player, either role) or the host's world (sent by the host) -- and sends them (SoundAt):
 // a client to the host, which plays it and relays it to the other clients; the host to all. A receiver loads the two

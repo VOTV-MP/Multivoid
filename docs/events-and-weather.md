@@ -216,7 +216,10 @@ player's own, from the machine whose player ran it, or the host's world, from th
 client's and relays it). A receiver loads the assets by path and plays the same sound there; its own play has no
 Blueprint caller, so nothing echoes (`coop/world/sound_relay`) `[V]` (`coop/dev/hit_probe`: a client's three crowbar
 hits and the host's played on the other peer in the same second, and the host's knocks on the client). Whether a
-client's puppet in the vent trips the host's knocker is not measured `[?]`.
+client's puppet in the vent trips the host's knocker is not measured `[?]`. The wandering church (`church_C`) is on the list as
+the host's world too: its tick moves it, unseen, to a random place on the navigation mesh and rings its bell there, which a
+client's copy never did; the host's bells now play on every peer at the host's church `[V]` (`coop/dev/event_probe`,
+`church_C.bell`: each of the host's strikes played on the client in the same second).
 
 ### Emails and the daily task
 
