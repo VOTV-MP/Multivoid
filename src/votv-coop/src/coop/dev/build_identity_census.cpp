@@ -85,7 +85,7 @@ LevelCensus SayAndTotal(const char* role, const std::vector<Piece>& pieces) {
              p.level.c_str(), p.persistent ? 1 : 0);
         if (!p.persistent) continue;
         if (p.cls == "customWall_C") ++level.walls;
-        else if (p.cls == "poster_C") ++level.posters;
+        else if (p.cls.rfind("poster", 0) == 0) ++level.posters;  // poster_C and its children (the level's are poster_c)
         else continue;
         tokens.push_back(p.cls + "=" + Narrow(p.key));
     }
