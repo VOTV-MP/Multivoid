@@ -233,11 +233,15 @@ struct Found {
 };
 std::vector<Found> g_scanFound;  // pass scratch (GT-only)
 bool g_scanIsFull = false;                                  // pass context
+// Bumped as a save replay begins (OnLoadObjects): a pass begun before it found the decals the replay deletes.
+uint32_t g_replayEpoch = 0;
+uint32_t g_passEpoch = 0;
 
 void HubPassBegin(void*, bool isFull) {
     g_scanFound.clear();
     g_scanNextCache.clear();
     g_scanIsFull = isFull;
+    g_passEpoch = g_replayEpoch;
 }
 
 void HubMatch(void*, void* obj) {
@@ -261,6 +265,12 @@ void HubMatch(void*, void* obj) {
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
+    if (g_passEpoch != g_replayEpoch) {  // a save replay began inside this pass: what it found is being deleted
+        g_scanFound.clear();
+        g_scanNextCache.clear();
+        std::lock_guard<std::mutex> lk(g_indexMutex);
+        return g_byKey.size();
+    }
     const size_t added = g_scanFound.size();
     if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
     uint64_t posHash = 0;
@@ -337,6 +347,35 @@ constexpr int kTagGrimeFix   = 0x47524958;  // 'GRIX'
 bool g_cleanWatched = false;
 bool g_fixWatched = false;
 bool g_endSubscribed = false;
+
+// The save replay: the gamemode's loadObjects deletes the level's own decals and spawns the save's in their
+// places, at the same keys. Those deletes are no wipe, but an index that had reached the level's decals took
+// each for a wipe to zero, and the save's decals at its keys were lowered to it: a rehost in the same game
+// process came up with most of its grime gone (Ghezra/Multivoid#36), the first host of a process only when its
+// first pass beat the replay. As the replay begins, the index and this world's registers are forgotten.
+UE_FACT_FN(kRowLoadObjects, "grime_sync", L"mainGamemode_C", L"loadObjects", Declared);
+constexpr int kTagGrimeReplay = 0x47524C4F;  // 'GRLO'
+bool g_replayWatched = false;
+
+sg::Verdict OnLoadObjectsPre(const sg::Call&) {
+    ++g_replayEpoch;
+    size_t indexed = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_indexMutex);
+        indexed = g_byKey.size();
+        g_byKey.clear();
+    }
+    g_posKeyByActor.clear();
+    g_scanFound.clear();
+    g_scanNextCache.clear();
+    const size_t floors = Floor().size();
+    Floor().clear();
+    g_unmoved.Get().clear();
+    g_parked.Get().clear();
+    UE_LOGI("grime: the save replay begins -- the index forgets %zu decal(s) and %zu floor(s); its deletes are no wipe",
+            indexed, floors);
+    return sg::Verdict::Run;
+}
 
 // The decal a verb is running on and its process before the body. A verb never nests on one decal.
 void* g_lowering = nullptr;
@@ -519,6 +558,7 @@ void Tick() {
     if (!g_cleanWatched) g_cleanWatched = sg::WatchName(kRowClean, kTagGrimeClean, &OnLowerPre, &OnLowerPost);
     if (!g_fixWatched) g_fixWatched = sg::WatchName(kRowWallFixerFix, kTagGrimeFix, &OnLowerPre, &OnLowerPost);
     if (!g_endSubscribed && DS::Install()) g_endSubscribed = DS::SubscribeClass(L"grime_C", &OnGrimeEnd);
+    if (!g_replayWatched) g_replayWatched = sg::WatchName(kRowLoadObjects, kTagGrimeReplay, &OnLoadObjectsPre, nullptr);
     sg::ResolvePendingNames();
 }
 
