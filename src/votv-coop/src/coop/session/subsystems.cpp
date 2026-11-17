@@ -354,6 +354,7 @@ void Install(coop::net::Session& session) {
     coop::level_visit::Install(&session);  // a clip's trip to another map is the clipping player's alone
     coop::sleep_sync::Install(&session);  // who rests: each peer's rest state (client -> host -> clients) and the host's sleeping flag
     coop::sleep_rest::Install(&session);  // a client's rest at the native rate: its own sleep watch and the factor on its body and effects
+    coop::hunger_share::Install();  // the host's shared-hunger rule: written at the roster's and the rule's changes, a new body and an effect's end
     coop::wisp_attack_sync::Install(&session);  // Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
     // The per-player inventory installs at session start, pre-world: this install runs at
     // world-up, but the apply-blob receiver and the pre-materialise save hook must be live before
@@ -581,7 +582,6 @@ DisconnectStats DisconnectAll() {
     coop::level_visit::OnDisconnect();
     coop::puppet_hide::OnDisconnect();  // every copy hidden for a dream or a visit is shown
     coop::sleep_rest::OnDisconnect();  // a rest in progress goes back to factor 1
-    coop::hunger_share::OnDisconnect();  // this player's hunger rate is the game's again
     coop::prop_throw::OnDisconnect();  // the thrower's records of its own throws
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
     coop::wisp_tear_mirror::OnDisconnect();  // clear any armed victim-death deadline
@@ -746,7 +746,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameToSlot disk hook stays as the belt
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); coop::nightmare_roll::Tick(); coop::level_visit::Tick(); }  // the local rest-state poll + its send + the client's dream hold and its own roll; a visit to another map
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep_rest"}; coop::sleep_rest::Tick(); }  // a client's rest: the sleep watch until live, then the effects' factor and food and coffee while it lasts
-    coop::hunger_share::Tick(&session);  // the host's hunger rule on this peer's own player, once a second
+    coop::hunger_share::Tick();  // the host's hunger rule: its watches armed, and a write the player was not up for asked again
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // the client's profile stream / the host's on-join push (+ the inventory_selftest=1 read-verify)
