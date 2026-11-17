@@ -134,6 +134,7 @@ struct TableView {
     bool    trap = false;
     bool    blown = false;
     uint8_t blownBy = 0xFF;
+    uint8_t passengerSlot[3] = {0xFF, 0xFF, 0xFF};   // the passenger table: the slot in each passenger seat (0xFF free)
     void*   actor = nullptr;
 };
 

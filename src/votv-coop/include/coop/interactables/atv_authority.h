@@ -17,9 +17,11 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 struct AtvSeatPayload;
+struct AtvPassengerRequestPayload;
 struct AtvTakeoverPayload;
 struct AtvStatePayload;
 }  // namespace coop::net
@@ -35,6 +37,28 @@ enum class AtvRequest : uint8_t { Sit, Leave, Takeover };
 // world is not ready alone is counted and not answered.
 void OnSeat(const coop::net::AtvSeatPayload& p, uint8_t slot);
 void OnTakeover(const coop::net::AtvTakeoverPayload& p, uint8_t slot);
+
+// HOST: a client's AtvPassengerRequest (board or leave a passenger seat), from sender `slot` (1..kMaxPeers-1, checked by the
+// dispatch). The sender's world ready, the ATV known, the request well formed, a leave from a rider, then a board: the
+// sender alive and with a body, a pace, seated nowhere else (as driver or passenger), a seat free (an ATV has three, so a fourth rider is answered Full), within reach. Every
+// judged request is answered with AtvPassengerAnswer carrying the seat the sender holds on that ATV after it; a request from a
+// slot whose world is not ready alone is counted and not answered.
+void OnPassengerRequest(const coop::net::AtvPassengerRequestPayload& p, uint8_t slot);
+
+// HOST: the host's own player boards (`board`) or leaves its passenger seat on `e`: the table's tests only, no reach, no
+// bucket, no answer. True when granted; `seat` (optional) is the seat held after a board. Called from atv_passenger's Tick.
+bool JudgePassengerLocal(coop::atv_sync::AtvEntry& e, bool board, int* seat);
+
+// HOST: the passenger seat `slot` holds on `e`, or -1.
+int PassengerSeatOf(const coop::atv_sync::AtvEntry& e, uint8_t slot);
+
+// HOST: free every passenger seat `slot` holds, on every ATV (a departure); the changed tables are marked for a send. How many.
+int ClearPassenger(uint8_t slot);
+
+// DEV, for the passenger drill's `full` arm: with `on`, every FREE passenger seat of the ATV under `key` is taken by a slot that is
+// not a passenger (2, 3, then the host's 0), and with `!on` those seats are freed again; a table the host's own tables change
+// does not send. A two-player drill cannot fill three seats otherwise. Game thread.
+void DrillSetPassengerGhosts(const std::wstring& key, bool on);
 
 // HOST: the host's own player's sit, leave or takeover on `e`, judged by the table's tests only: a sit is refused by
 // `already_seated` and `occupied`, a takeover by `seated` and `synced`. No reach, no bucket, no answer (the host
@@ -82,6 +106,9 @@ struct Counters {
                                            // the ATV back at the first, so a second with none taken is a rule that did not act)
     unsigned long long idleStreamBlocks = 0;  // blocks admitted from a client syncer with the seat free and no carry
                                               // (the release stream before a hand-back)
+    unsigned long long passengerRefused[16] = {};  // by AtvPassengerRefusal; [0] unused
+    unsigned long long passengerAdmitted = 0;      // any passenger request granted (board or leave)
+    unsigned long long passengerSwept = 0;         // riders the host's pass took out (dead, or far from the seat)
     unsigned long long carriedStillBlocks = 0;  // blocks admitted with the grabbed bit whose speed and moved distance
                                                 // pass the rest test: a carry standing still, never handed back
 };

@@ -84,6 +84,12 @@ bool HandleCargoLiftEvent(net::Session& session,
 bool HandleRequesterFeedbackEvent(net::Session& session,
                                   const net::Session::ReliableMessage& msg);
 
+// ATV seat family: a client's seat in an ATV. AtvSeat (the driver's seat), AtvPassengerRequest (the passenger seats) and
+// AtvTakeover (a grav-hand hold) check role()==Host AND a client sender slot here and hand the request to the host's
+// judge (coop/interactables/atv_authority), which answers it.
+bool HandleAtvSeatEvent(net::Session& session,
+                        const net::Session::ReliableMessage& msg);
+
 // Kerfur-command family: a client's radial command for a kerfur and the host's answer to it. KerfurCommand checks
 // role()==Host and the sender slot here and hands the request to the host's lane (its short payload is counted in
 // that lane's tally); KerfurCommandAnswer is the HOST->CLIENT answer, dropped on the host and from any sender but

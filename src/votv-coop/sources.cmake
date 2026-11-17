@@ -82,6 +82,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_intent.cpp
     src/coop/dispatch/event_dispatch_prop_drive.cpp
     src/coop/dispatch/event_dispatch_requester_feedback.cpp
+    src/coop/dispatch/event_dispatch_atv_seat.cpp
     src/coop/dispatch/event_dispatch_kerfur_command.cpp
     src/coop/dispatch/event_dispatch_signal.cpp
     src/coop/dispatch/event_dispatch_state.cpp
