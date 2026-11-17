@@ -206,6 +206,11 @@ bool DropRowForGates(const std::wstring& key, void* actor) {
         Unpark(it);
         return true;
     }
+    if (it->second.intent &&
+        !coop::prop_record_gates::IntentRecordAllows(actor, it->second.senderSlot, it->second.rec)) {
+        Unpark(it);
+        return true;
+    }
     if (!coop::prop_record_gates::ApplyAllows(actor)) {
         UE_LOGI("prop_save_data: parked record for key '%ls' is dropped -- a gate on its class refuses it here",
                 key.c_str());
@@ -251,7 +256,7 @@ constexpr uint64_t kIntentWindowMs   = 10000;
 struct IntentRate { uint64_t windowStartMs = 0; int count = 0; bool warned = false; };
 std::map<uint8_t, IntentRate> g_intentRate;
 
-bool AllowIntent(uint8_t senderSlot) {
+bool AllowIntent(uint8_t senderSlot, bool* firstRefusal = nullptr) {
     IntentRate& r = g_intentRate[senderSlot];
     const uint64_t now = NowMs();
     if (now - r.windowStartMs >= kIntentWindowMs) {
@@ -262,6 +267,7 @@ bool AllowIntent(uint8_t senderSlot) {
     if (++r.count <= kIntentsPerWindow) return true;
     if (!r.warned) {
         r.warned = true;
+        if (firstRefusal) *firstRefusal = true;
         UE_LOGW("prop_save_data: slot %u is past %d save-record intents in %llu ms -- refusing the "
                 "rest of this window", static_cast<unsigned>(senderSlot), kIntentsPerWindow,
                 static_cast<unsigned long long>(kIntentWindowMs));
@@ -495,6 +501,16 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
     return peerSlot < 0 ? Publish(s, actor, w) : PublishToSlot(s, peerSlot, actor, w);
 }
 
+// A client's intent the host will not take is answered with the host's own record of that prop, to the sender alone, so a
+// copy the client already changed here un-diverges (MTA answers every refused request to its asker, CGame.cpp:3041-3043 and
+// 3347-3363). Nothing is sent for a key the host does not hold or a class this lane does not carry.
+void AnswerRefused(coop::net::Session& s, uint8_t senderSlot, const std::wstring& key) {
+    if (key.empty()) return;
+    void* const actor = coop::prop_key_index::Find(key);
+    if (!actor || !Covers(actor)) return;
+    PublishToSlot(&s, senderSlot, actor, key);
+}
+
 void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_t senderSlot,
              bool intent) {
     // An intent is a claim addressed to the authority; a client receiving one has nothing to do
@@ -511,19 +527,26 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     if (body.size() > coop::disc_record::MaxBodyBytes()) {
         if (g_oversizeLogged.size() >= kMaxOversizeLogged) g_oversizeLogged.clear();   // turns over, never quiet
         const std::wstring named = HeadKey(body);
-        if (g_oversizeLogged.insert(named).second)
+        if (g_oversizeLogged.insert(named).second) {
             UE_LOGW("prop_save_data: %s body for key '%ls' from slot %u is %zu B, over the %zu ceiling -- "
                     "refused (said once per key)", intent ? "intent" : "record", named.c_str(),
                     static_cast<unsigned>(senderSlot), body.size(), coop::disc_record::MaxBodyBytes());
+            if (intent) AnswerRefused(s, senderSlot, named);
+        }
         return;
     }
-    if (intent && !AllowIntent(senderSlot)) return;
+    bool firstRefusal = false;
+    if (intent && !AllowIntent(senderSlot, &firstRefusal)) {
+        if (firstRefusal) AnswerRefused(s, senderSlot, HeadKey(body));   // once a window: the answer is bounded by the bucket
+        return;
+    }
 
     std::wstring key;
     SR::SaveRecord rec;
     if (!ParseBody(body, key, rec)) {
         UE_LOGW("prop_save_data: ill-formed %s body from slot %u (%zu B) -- dropped whole",
                 intent ? "intent" : "record", static_cast<unsigned>(senderSlot), body.size());
+        if (intent) AnswerRefused(s, senderSlot, HeadKey(body));
         return;
     }
     if (!intent) {
@@ -548,7 +571,11 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     const bool birth = g_awaiting.count(key) != 0;
     // A class that has a rule about who writes its record judges the sender here (the gate logs its
     // refusals). A record for a prop this host does not index yet is judged where it lands, from the park.
-    if (actor && !coop::prop_record_gates::IntentAllows(actor, senderSlot)) return;
+    if (actor && !coop::prop_record_gates::IntentAllows(actor, senderSlot)) {
+        AnswerRefused(s, senderSlot, key);
+        return;
+    }
+    if (actor && !coop::prop_record_gates::IntentRecordAllows(actor, senderSlot, rec)) return;
     // A claim is published to every peer only once it has landed here and passed its class's gates; one
     // that parked is published by its land (Drive, ApplyParked), never at arrival unjudged.
     const bool landed = LandRecord(key, SR::SaveRecord(rec), senderSlot, body.size(), /*budgeted=*/false,
@@ -564,6 +591,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     }
     if (landed && !birth) SendBody(&s, -1, key, rec);
 }
+void DropParkedFor(const std::wstring& key) { DropParked(key); }
 
 bool ApplyParked(void* actor, const std::wstring& key) {
     if (!actor || key.empty()) return false;

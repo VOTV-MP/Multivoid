@@ -90,7 +90,6 @@ set(VOTVCOOP_SOURCES
     src/coop/comms/chat_rate.cpp
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/woodchipper_sync.cpp
-    src/coop/props/glowstick_sync.cpp
     src/coop/interactables/woodchipper_gate.cpp
     src/coop/interactables/atv_gate.cpp
     src/coop/interactables/atv_host_judge.cpp
@@ -301,6 +300,10 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_nametag.cpp
     src/coop/props/disc_record_ceiling.cpp
     src/coop/props/prop_record_gates.cpp
+    src/coop/props/glowstick_stick_record.cpp
+    src/coop/props/glowstick_stick_judge.cpp
+    src/coop/props/glowstick_struck.cpp
+    src/coop/props/glowstick_sync.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp
@@ -674,6 +677,9 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_drone_hover.cpp
     src/harness/autotest/autotest_desk_short.cpp
     src/harness/autotest/autotest_hacksaw.cpp
+    src/harness/autotest/autotest_glowstick.cpp
+    src/harness/autotest/glowstick_drill_common.cpp
+    src/harness/autotest/glowstick_drill_client.cpp
     src/harness/autotest/autotest_ambient_creature.cpp
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp

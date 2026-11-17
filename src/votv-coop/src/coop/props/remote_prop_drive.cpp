@@ -9,6 +9,7 @@
 #include "coop/interactables/interactable_sync.h"  // ContainerActor: a dragged swinger's key to its actor
 #include "coop/interactables/swinger_join_pose.h"   // Forget: a stream or release supersedes a parked connect pose
 #include "coop/props/active_drive.h"   // the fixed-delay snapshot interp, shared with the trash carry stream
+#include "coop/props/glowstick_sync.h"  // OnHoldBegin: a stuck glowstick is freed at a hold's begin
 #include "coop/props/prop_sound.h"
 #include "coop/props/trash_mirror.h"   // WeMade
 #include "coop/element/prop.h"
@@ -254,10 +255,10 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // gets with the tool: the holder had it off the wall. So a copy frozen here -- a mounted fire
     // extinguisher, a drive in a slot, anything the toolgun froze -- or stuck, asleep or on a
     // spawner's lifespan, gets the same, once per hold, at the first pose that starts its drive. What a
-    // subclass adds to its prelude is not replayed (the sprinkler's hose), and the glowstick's, which
-    // replaces the base one, gets the base one here. A closed hold's late pose never gets this far. A
-    // static prop cannot be held, so a stream for one that is static here and has no unstick means the
-    // two copies disagree on the flag: refused, said once per hold.
+    // subclass adds to its prelude is not replayed (the sprinkler's hose); the glowstick's, which replaces the
+    // base one with its releaseGlowstick, is run by glowstick_sync::OnHoldBegin and gets the base one here too. A
+    // closed hold's late pose never gets this far. A static prop cannot be held, so a stream for one that is static
+    // here and has no unstick means the two copies disagree on the flag: refused, said once per hold.
     HoldGate& hold = g_holds[slot];
     if (LocalDragsDoor(prop, slot, pose.holdGen)) return;
     if (ue_wrap::prop::IsDescendantOfProp(prop)) {
@@ -273,6 +274,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         }
         if (pose.holdGen == 0 || hold.preludeGen != pose.holdGen) {
             hold.preludeGen = pose.holdGen;
+            coop::glowstick_sync::OnHoldBegin(prop);   // a stuck glowstick's own grab frees it: its game runs releaseGlowstick
             const char* state = ue_wrap::prop::IsStatic(prop)   ? "static"
                                 : ue_wrap::prop::IsFrozen(prop) ? "frozen"
                                 : ue_wrap::prop::IsSleeping(prop) ? "asleep"

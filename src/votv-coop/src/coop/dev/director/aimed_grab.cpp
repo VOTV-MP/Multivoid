@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -39,6 +40,16 @@ const std::vector<std::pair<int, int>>& AimFan() {
         return v;
     }();
     return fan;
+}
+
+// The aim of a prop that names its body: pass 0 the actor's own location, pass 1 the centre of the body component's
+// bounds (USceneComponent::Bounds, an FBoxSphereBounds whose origin is its first member).
+bool AimAtBody(void* prop, void* body, int pass, ue_wrap::FVector& out) {
+    if (pass == 0) return E::TryGetActorLocation(prop, out);
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(body), L"Bounds");
+    if (off < 0) return false;
+    std::memcpy(&out, static_cast<const uint8_t*>(body) + off, sizeof(out));
+    return true;
 }
 
 }  // namespace
@@ -77,6 +88,12 @@ GrabState AimedGrab::Tick() {
         }
         if (ticks_ % kAimTicksPerPose != 1) return GrabState::Working;
         const auto& fan = AimFan();
+        if (poses_ >= static_cast<int>(fan.size()) && body_.Get() && pass_ == 0) {
+            pass_ = 1;   // the actor's location found no aim: the second fan aims at the body's bounds centre
+            poses_ = 0;
+            ticks_ = 0;
+            return GrabState::Working;
+        }
         if (poses_ >= static_cast<int>(fan.size())) {
             why_ = "no aim the player's trace would take";
             noAim_ = true;
@@ -87,10 +104,10 @@ GrabState AimedGrab::Tick() {
             void* const hitActor = E::ReadMainPlayerHitActor(player);
             void* const hitComp = E::ReadMainPlayerHitComponent(player);
             const float dx = centre.X - cam.X, dy = centre.Y - cam.Y, dz = centre.Z - cam.Z;
-            UE_LOGW("aimed_grab: no aim took the prop after %d poses -- camera (%.0f, %.0f, %.0f), the prop's bounds centre "
+            UE_LOGW("aimed_grab: no aim took the prop after %d poses (aim pass %d) -- camera (%.0f, %.0f, %.0f), the prop's bounds centre "
                     "(%.0f, %.0f, %.0f) extent (%.0f, %.0f, %.0f) %.0f uu away, the last trace hit actor %ls (%p) component "
                     "%ls (%p)",
-                    poses_, cam.X, cam.Y, cam.Z, centre.X, centre.Y, centre.Z, extent.X, extent.Y, extent.Z,
+                    poses_, pass_, cam.X, cam.Y, cam.Z, centre.X, centre.Y, centre.Z, extent.X, extent.Y, extent.Z,
                     std::sqrt(dx * dx + dy * dy + dz * dz),
                     hitActor ? R::ClassNameOf(hitActor).c_str() : L"none", hitActor,
                     hitComp ? R::ClassNameOf(hitComp).c_str() : L"none", hitComp);
@@ -98,10 +115,15 @@ GrabState AimedGrab::Tick() {
         }
         // The bounds' centre: a lying prop's origin can sit at the floor's surface.
         ue_wrap::FVector centre{}, extent{};
-        const bool bounds = E::GetActorBounds(prop, /*onlyColliding=*/true, centre, extent);
-        // Bounds wider than any hand-held prop take in a component left elsewhere (a glowstick's hook, which stays at
-        // the world origin until it sticks): its location is the aim then.
-        if ((!bounds || extent.X > 300.f || extent.Y > 300.f || extent.Z > 300.f) && !E::TryGetActorLocation(prop, centre)) {
+        if (void* const body = body_.Get()) {
+            // A prop whose bounds take in a component left elsewhere names its own body (a glowstick's hook stays at the
+            // world origin until it sticks): the first fan aims at the actor's location, and where that finds no aim
+            // (the origin sits on the floor) the second aims at the body's own bounds centre.
+            if (!AimAtBody(prop, body, pass_, centre)) {
+                why_ = "the prop's body has no location or bounds to aim at";
+                return GrabState::Failed;
+            }
+        } else if (!E::GetActorBounds(prop, /*onlyColliding=*/true, centre, extent) && !E::TryGetActorLocation(prop, centre)) {
             why_ = "the prop has neither bounds nor a location to aim at";
             return GrabState::Failed;
         }
