@@ -57,6 +57,16 @@ WorldKind CurrentWorldKind();
 // stamp is always stale.
 uint32_t Generation();
 
+// A function told, on the game thread, each time CurrentWorld is observed to change: it runs inside the refresh, in the
+// task that bumped Generation, after the bump and before any caller reads the new world. For a holder of something
+// that belongs to one world and must forget it at once, where Generation is a poll. It runs with the refresh's
+// re-entrancy brake held, so it may call into the engine but must not wait on the world being resolved. A plain
+// function, not a closure; at most kMaxWorldChangeListeners, none removed. Registering one twice is one entry. False
+// when the list is full. Game thread.
+using WorldChangeFn = void (*)();
+inline constexpr int kMaxWorldChangeListeners = 8;
+bool AddWorldChangeListener(WorldChangeFn fn);
+
 // True when the reflection lookups this module needs could not be resolved (a recook renamed
 // the owning-world, player-controller or local-players property, or either of the two classes
 // the chain needs). In that state CurrentWorld returns null, and every world term that guards
