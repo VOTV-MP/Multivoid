@@ -11,7 +11,6 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
 
 namespace ue_wrap::oven_screen {
 
@@ -24,9 +23,6 @@ inline constexpr uint8_t kAll     = 0x1F;
 
 // The oven a repair screen belongs to (its `kitchen`), or null when it names none. Game thread.
 void* OvenOfScreen(void* screen);
-
-// Every live kitchen_C of this world. A walk of the class's objects: callers keep the result.
-std::vector<void*> FindOvens();
 
 // The five bools of `oven`'s screen as a mask. False when the oven has no screen (it is repaired, or
 // not begun play) or a member does not resolve. Game thread.

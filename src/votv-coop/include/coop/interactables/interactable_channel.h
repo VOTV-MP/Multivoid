@@ -110,6 +110,11 @@ public:
             /*settleScans*/ 15, a_.ResolvedCount});
     }
 
+    // A lane that keeps state for devices this index may not hold yet is told when a hub pass has rebuilt the
+    // index, the point where a device first answers to KeyForActor and ActorForKey. One callback per channel,
+    // game thread, run after the index is stamped for the world and no lock is held.
+    void SetOnIndexed(void (*fn)()) { onIndexed_ = fn; }
+
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
     coop::net::Session* GetSession() const { return session_.load(std::memory_order_acquire); }
 
@@ -441,6 +446,7 @@ public:
             ++passes_;
             indexGen_ = worldGen;
         }
+        if (onIndexed_) onIndexed_();
         // The settle term behind kSettlePassesForExpiry, kept local: the hub exposes its own settle
         // signal only through a Debug accessor, and a count delta is all this needs.
         if (liveCount == lastCount_) { if (stablePasses_ < 1000000) ++stablePasses_; }
@@ -606,6 +612,7 @@ private:
     std::vector<std::pair<std::wstring, Ref>> scanFound_;  // hub-pass scratch (GT-only)
     uint32_t indexGen_ = 0;   // world gen of the last completed hub pass (GT-write, GT-read)
     bool scanRegistered_ = false;
+    void (*onIndexed_)() = nullptr;                        // SetOnIndexed's callback (GT-only)
 
     std::mutex stateMutex_;
     std::unordered_map<std::wstring, bool> lastKnown_;

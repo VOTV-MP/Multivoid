@@ -103,6 +103,16 @@ std::wstring DoorBoxKey(void* box);
 std::wstring ContainerKey(void* swinger);
 std::wstring OvenKey(void* oven);
 
+// The live oven the oven lane indexes under `key` (the key OvenKey gives), or null. Game thread.
+void* OvenActor(const std::wstring& key);
+
+// The oven lane's live indexed ovens, key and actor, appended to `out` (empty with a stale index). Game thread.
+void LiveOvens(std::vector<std::pair<std::wstring, void*>>& out);
+
+// `fn` runs after each rebuild of the oven index, the point a new oven first has a key (one callback; game thread).
+// For the oven repair-step lane, which keeps what it cannot place until its oven is indexed.
+void SetOvenIndexedListener(void (*fn)());
+
 // The live swinger the container lane indexes under `key` (the key ContainerKey gives: the portable `mv_` one where
 // the swinger has an identity, else its game key), or null. The held-item receiver's answer for a dragged lid,
 // a child actor the prop key index leaves out. Game thread.

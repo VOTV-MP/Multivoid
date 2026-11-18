@@ -399,6 +399,14 @@ std::chrono::steady_clock::duration ContainerWaitBackstop() { return kPendingTTL
 
 std::wstring OvenKey(void* oven) { return g_oven.KeyForActor(oven); }
 
+void* OvenActor(const std::wstring& key) {
+    return key.empty() || !ue_wrap::appliance::EnsureResolved() ? nullptr : g_oven.ActorForKey(key);
+}
+void LiveOvens(std::vector<std::pair<std::wstring, void*>>& out) {
+    if (ue_wrap::appliance::EnsureResolved()) g_oven.LiveIndexed(out);
+}
+void SetOvenIndexedListener(void (*fn)()) { g_oven.SetOnIndexed(fn); }
+
 std::wstring LightSwitchKey(void* sw) { return g_light.KeyForActor(sw); }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {

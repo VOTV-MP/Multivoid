@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/drill_chat.h"
+#include "coop/interactables/interactable_sync.h"  // LiveOvens
 #include "coop/interactables/oven_progress_sync.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace coop::dev::oven_progress_drill {
@@ -60,10 +62,11 @@ int      g_saidMask = -1;
 
 void* Oven() {
     if (void* o = g_oven.Get()) return o;
-    const std::vector<void*> ovens = OS::FindOvens();
+    std::vector<std::pair<std::wstring, void*>> ovens;
+    coop::interactable_sync::LiveOvens(ovens);
     if (ovens.empty()) return nullptr;
-    g_oven.Set(ovens.front());
-    return ovens.front();
+    g_oven.Set(ovens.front().second);
+    return ovens.front().second;
 }
 
 void Verdict(bool pass, const char* fmt, ...) {

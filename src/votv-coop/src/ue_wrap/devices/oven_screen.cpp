@@ -55,13 +55,6 @@ void* OvenOfScreen(void* screen) {
     return oven && R::IsLive(oven) && ue_wrap::appliance::IsOven(oven) ? oven : nullptr;
 }
 
-std::vector<void*> FindOvens() {
-    std::vector<void*> out;
-    for (void* o : R::FindObjectsByClass(L"kitchen_C"))
-        if (o && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__")) out.push_back(o);
-    return out;
-}
-
 bool TryReadProgress(void* oven, uint8_t& mask) {
     bool* b[5] = {};
     if (!Screen(oven, b)) return false;
