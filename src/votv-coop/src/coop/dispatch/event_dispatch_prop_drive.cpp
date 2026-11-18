@@ -22,6 +22,7 @@
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/player/chair_seat.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -310,6 +311,22 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::roomba_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::ChairSeatState:
+    case net::ReliableKind::ChairSeatIntent: {
+        // ChairSeatState HOST->ALL, ChairSeatIntent CLIENT->HOST (coop/player/chair_seat). Exact length.
+        const bool intent = msg.kind == net::ReliableKind::ChairSeatIntent;
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::ChairSeatPayload)) {
+            UE_LOGW("event_feed: a chair seat message the wrong way or the wrong length from slot %d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        net::ChairSeatPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.op > net::kChairSeatGetUp) break;
+        if (intent) ::coop::chair_seat::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::chair_seat::OnState(p);
         break;
     }
     case net::ReliableKind::WoodchipperState:

@@ -501,6 +501,7 @@ void RemotePlayer::Destroy() {
     actor_ = nullptr;
     internalIdx_ = -1;
     hasPose_ = false;
+    chairPose_ = false;
     window_.Close();
     dirty_ = false;
     bodyYaw_.Reset(0.f);    // clears the latch + dt clock; re-seeded at the next Spawn
@@ -525,6 +526,12 @@ void RemotePlayer::ApplySkin(const std::string& skinName) {
         appliedSkin_ = skinName;
 }
 
+// How far below the source's capsule a chair-seated body goes: the seat pose draws the body that far above its actor
+// (coop/player/chair_seat).
+constexpr float kChairBodyDropCm = 145.f;
+// And how far ahead along its facing: the seat pose draws the hips that far behind its actor (coop/player/chair_seat).
+constexpr float kChairBodyAheadCm = 80.f;
+
 void RemotePlayer::OnSeatReleased() {
     bodyYaw_.Reset(curYaw_);
     dirty_ = true;
@@ -541,6 +548,7 @@ void RemotePlayer::ApplyToEngine() {
         return;
     case RagdollDisplay::Drive::StoppedNow:
         bodyYaw_.Reset(curYaw_);
+        chairPose_ = false;  // the ragdoll's restore leaves the AnimBP standing: the seat bit is applied again below
         if (!RagdollRestoreOff()) coop::puppet_seat::OnBodyChanged(slot_);
         break;
     case RagdollDisplay::Drive::Inactive:
@@ -551,6 +559,11 @@ void RemotePlayer::ApplyToEngine() {
     // movement drive or footstep is written. curPos_ keeps tracking the wire, so the first apply after the seat lets go
     // resumes from the owner's pose. The cone and the head look below still run.
     const bool seated = coop::puppet_seat::HoldsBody(slot_);
+    // On a chair the source sits at the seat, its capsule there and attached to the chair, so the stream's pose is the
+    // seat's and the AnimBP's seat pose (the ATV's, which a kerfur rides in) is what shows it. Applied on the bit's edges.
+    const bool chair = !seated && (curStateBits_ & coop::net::kStateBitSeated) != 0;
+    if (seated) chairPose_ = false;  // the seat owner (an ATV's or a chair's) sets the pose and lets it go itself
+    else if (chair != chairPose_ && Pup::SetOnAtv(actor_, chair)) chairPose_ = chair;
     float shownYaw = bodyYaw_.Yaw();
     if (seated) {
         // The cone's yaw is measured against the body's actual world yaw, which the ATV turns.
@@ -560,7 +573,14 @@ void RemotePlayer::ApplyToEngine() {
         // The wire carries the source's actor Z (the capsule centre, MTA's vPos shape, unaffected by BP
         // init transients), and the puppet's actor is the wire pose unchanged: both ends are
         // mainPlayer_C, so no actor-level Z or yaw offset exists.
-        E::SetActorLocation(actor_, curPos_);
+        ue_wrap::FVector at = curPos_;
+        if (chair) {
+            const float yawRad = shownYaw * 0.01745329252f;
+            at.X += std::cos(yawRad) * kChairBodyAheadCm;
+            at.Y += std::sin(yawRad) * kChairBodyAheadCm;
+            at.Z -= kChairBodyDropCm;
+        }
+        E::SetActorLocation(actor_, at);
         // bodyYaw_ (the presentation), not curYaw_ (the wire truth): standing, the body holds so the
         // head can lead.
         E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, shownYaw, 0.f});
@@ -610,8 +630,8 @@ void RemotePlayer::ApplyToEngine() {
     // are ours. The source streams its actor yaw and a speed magnitude, so the planar velocity is
     // rebuilt along the body forward; the mode mirrors the in-air bit (MOVE_Falling or
     // MOVE_Walking), which the AnimBP reads for the foot-IK alpha. Through ue_wrap::puppet, so the
-    // CMC offsets stay in the wrapper. Not while seated: the attach is the pose.
-    if (!seated) {
+    // CMC offsets stay in the wrapper. Not while seated: the attach is the pose. Nor on a chair: the source is not walking.
+    if (!seated && !chair) {
         const float yawRad = curYaw_ * 0.01745329252f;  // PI/180
         const ue_wrap::FVector vel{
             std::cos(yawRad) * curSpeed_,
