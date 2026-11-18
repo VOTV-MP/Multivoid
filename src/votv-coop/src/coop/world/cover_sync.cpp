@@ -62,8 +62,9 @@ UE_FACT_FN(kRowUnscrew, "cover_sync", L"analogDScreenTest_C", L"unscrewPanel", D
 UE_FACT_FN(kRowDeskAction, "cover_sync", L"analogDScreenTest_C", L"actionOptionIndex", Declared);
 UE_FACT_FN(kRowDeskOverlap, "cover_sync", L"analogDScreenTest_C", L"ReceiveActorBeginOverlap", Declared);
 UE_FACT_FN(kRowStationAction, "cover_sync", L"generator_C", L"actionOptionIndex", Declared);
+UE_FACT_FN(kRowUpdPanels, "cover_sync", L"analogDScreenTest_C", L"updPanels", Declared);
 constexpr int kTagUnscrew = 0x43565201, kTagDeskAction = 0x43565202, kTagDeskOverlap = 0x43565203,
-              kTagStationAction = 0x43565204;  // 'CVR' 1..4
+              kTagStationAction = 0x43565204, kTagUpdPanels = 0x43565205;  // 'CVR' 1..5
 
 static_assert(N::kCoverDeskPanels == AD::kPlates, "the wire's plate count is the desk's");
 constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
@@ -195,34 +196,34 @@ void AskPutBacks(void* desk, uint8_t bits) {
         }
     }
 }
-bool g_deskWanted = false;   // the host's plates, held until the desk is read
+bool g_deskPending = false;  // the host's plates arrived with no desk to write: the desk's own updPanels at its load applies them
 bool g_haveDesk = false;     // the host's plates are known: the desk is kept at them
 uint8_t g_deskBits = 0;
-uint64_t g_nextDeskCheckMs = 0;
+uint64_t g_nextPutBackMs = 0;
 std::vector<int8_t> g_doorWanted;  // by station: -1 none, else the host's opened
 
+// The desk written to the host's plates when it differs; `arrived` when they have just come from the host, else the desk
+// moved here and is set back.
+void ConvergeDesk(void* desk, bool arrived) {
+    uint8_t bits = 0;
+    const bool read = AD::ReadPlates(desk, bits);
+    if (!read || bits != g_deskBits) {
+        WritePlates(desk, g_deskBits);
+        if (arrived)
+            UE_LOGI("cover_sync: CLIENT the desk's plates on=0x%x unbolted=0x%x, as the host's", g_deskBits & 0xF,
+                    g_deskBits >> 4);
+        else
+            UE_LOGW("cover_sync: CLIENT the desk's plates moved here to on=0x%x unbolted=0x%x -- set back to the "
+                    "host's on=0x%x unbolted=0x%x", bits & 0xF, bits >> 4, g_deskBits & 0xF, g_deskBits >> 4);
+    }
+    if (arrived) ++g_deskStatesApplied;
+}
+
 void TickClient() {
-    // The desk is kept at the host's plates: a write when they arrive, and a check every 100 ms after, which rewrites
-    // anything that moved them here.
     const uint64_t now = NowMs();
-    if ((g_deskWanted || (g_haveDesk && now >= g_nextDeskCheckMs))) {
-        g_nextDeskCheckMs = now + kScanEveryMs;
-        if (void* desk = AD::Find()) {
-            uint8_t bits = 0;
-            const bool read = AD::ReadPlates(desk, bits);
-            if (!read || bits != g_deskBits) {
-                WritePlates(desk, g_deskBits);
-                if (g_deskWanted)
-                    UE_LOGI("cover_sync: CLIENT the desk's plates on=0x%x unbolted=0x%x, as the host's", g_deskBits & 0xF,
-                            g_deskBits >> 4);
-                else
-                    UE_LOGW("cover_sync: CLIENT the desk's plates moved here to on=0x%x unbolted=0x%x -- set back to the "
-                            "host's on=0x%x unbolted=0x%x", bits & 0xF, bits >> 4, g_deskBits & 0xF, g_deskBits >> 4);
-            }
-            if (g_deskWanted) ++g_deskStatesApplied;
-            g_deskWanted = false;
-            AskPutBacks(desk, g_deskBits);
-        }
+    if (g_haveDesk && now >= g_nextPutBackMs) {
+        g_nextPutBackMs = now + kScanEveryMs;
+        if (void* desk = AD::Find()) AskPutBacks(desk, g_deskBits);
     }
     for (size_t i = 0; i < g_doorWanted.size(); ++i) {
         if (g_doorWanted[i] < 0) continue;
@@ -343,6 +344,21 @@ sg::Verdict OnDeskOverlapPre(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
+// The game's own updPanels, after it ran: it follows every plate change, the host judge's writes and a client's applied
+// ones included, and the game calls it when the desk loads. The host sends the plates it now shows; a client keeps its desk
+// at the host's (a state that arrived before the desk existed is written now; a write the lane did not make is undone).
+void OnUpdPanelsPost(const sg::Call& c) {
+    if (!c.object) return;
+    if (IsHost()) {
+        cover_judge::OnDeskUpdated(c.object);
+        return;
+    }
+    if (!IsClient() || g_applying || !g_haveDesk) return;
+    const bool arrived = g_deskPending;
+    g_deskPending = false;
+    ConvergeDesk(c.object, arrived);
+}
+
 // A client's E press on a station's door: asked of the host. Every other press runs.
 sg::Verdict OnStationActionPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object || !c.function || !c.locals) return sg::Verdict::Run;
@@ -365,9 +381,10 @@ void Install(coop::net::Session* session) {
     const bool a = sg::WatchName(kRowDeskAction, kTagDeskAction, &OnDeskActionPre, nullptr);
     const bool o = sg::WatchName(kRowDeskOverlap, kTagDeskOverlap, &OnDeskOverlapPre, nullptr);
     const bool s = sg::WatchName(kRowStationAction, kTagStationAction, &OnStationActionPre, nullptr);
-    if (!u || !a || !o || !s)
-        UE_LOGE("cover_sync: a watch was refused (unscrew=%d desk=%d overlap=%d station=%d)", u ? 1 : 0, a ? 1 : 0,
-                o ? 1 : 0, s ? 1 : 0);
+    const bool p = sg::WatchName(kRowUpdPanels, kTagUpdPanels, nullptr, &OnUpdPanelsPost);
+    if (!u || !a || !o || !s || !p)
+        UE_LOGE("cover_sync: a watch was refused (unscrew=%d desk=%d overlap=%d station=%d updPanels=%d)", u ? 1 : 0,
+                a ? 1 : 0, o ? 1 : 0, s ? 1 : 0, p ? 1 : 0);
 }
 
 void Tick() {
@@ -377,15 +394,17 @@ void Tick() {
     sg::ResolvePendingNames();
     if (!sg::NameWatchSettled(kRowUnscrew, kTagUnscrew) || !sg::NameWatchSettled(kRowDeskAction, kTagDeskAction) ||
         !sg::NameWatchSettled(kRowDeskOverlap, kTagDeskOverlap) ||
-        !sg::NameWatchSettled(kRowStationAction, kTagStationAction))
+        !sg::NameWatchSettled(kRowStationAction, kTagStationAction) || !sg::NameWatchSettled(kRowUpdPanels, kTagUpdPanels))
         return;
     g_settled = true;
     const bool u = sg::NameWatchLive(kRowUnscrew, kTagUnscrew), a = sg::NameWatchLive(kRowDeskAction, kTagDeskAction),
                o = sg::NameWatchLive(kRowDeskOverlap, kTagDeskOverlap),
-               s = sg::NameWatchLive(kRowStationAction, kTagStationAction);
-    if (u && a && o && s) UE_LOGI("cover_sync: the watches on the desk's plates and the stations' door press are live");
-    else UE_LOGE("cover_sync: a watch is dead (unscrew=%d desk=%d overlap=%d station=%d) -- a client's cover runs its own",
-                 u ? 1 : 0, a ? 1 : 0, o ? 1 : 0, s ? 1 : 0);
+               s = sg::NameWatchLive(kRowStationAction, kTagStationAction),
+               p = sg::NameWatchLive(kRowUpdPanels, kTagUpdPanels);
+    if (u && a && o && s && p)
+        UE_LOGI("cover_sync: the watches on the desk's plates and the stations' door press are live");
+    else UE_LOGE("cover_sync: a watch is dead (unscrew=%d desk=%d overlap=%d station=%d updPanels=%d) -- the covers are "
+                 "not kept", u ? 1 : 0, a ? 1 : 0, o ? 1 : 0, s ? 1 : 0, p ? 1 : 0);
 }
 
 void SendJoinSnapshotForSlot(int slot) { cover_judge::SendJoinSnapshotForSlot(slot); }
@@ -407,8 +426,9 @@ void OnState(const coop::net::CoverPayload& p) {
     if (p.op != N::kCoverOpState) return;
     if (p.what == N::kCoverDesk) {
         g_deskBits = p.bits;
-        g_deskWanted = true;
         g_haveDesk = true;
+        if (void* const desk = AD::Find()) ConvergeDesk(desk, true);
+        else g_deskPending = true;
     } else if (p.what == N::kCoverStation) {
         if (g_doorWanted.size() <= p.index) g_doorWanted.resize(static_cast<size_t>(p.index) + 1, -1);
         g_doorWanted[p.index] = (p.bits & 1u) ? 1 : 0;
@@ -440,7 +460,7 @@ bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t ei
 
 void OnDisconnect() {
     cover_judge::OnDisconnect();
-    g_deskWanted = false;
+    g_deskPending = false;
     g_haveDesk = false;
     for (bool& a : g_armed) a = false;
     g_doorWanted.clear();

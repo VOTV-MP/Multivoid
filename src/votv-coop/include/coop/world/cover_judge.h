@@ -12,7 +12,7 @@ namespace coop::cover_judge {
 // HOST, once: a slot that leaves is owed no answer, and its queued asks are dropped.
 void Install();
 
-// HOST, per frame: the answers owed, the fresh plate props tended, the queued asks judged, the changes sent.
+// HOST, per frame: the answers owed, the fresh plate props tended, the queued asks judged, the doors sent.
 void Tick();
 
 // HOST: a client's ask, queued for its judge.
@@ -20,6 +20,10 @@ void OnIntent(int senderSlot, const coop::net::CoverPayload& p);
 
 // HOST, at a joiner's world-ready edge: the desk's plates and every station's door, to that slot.
 void SendJoinSnapshotForSlot(int slot);
+
+// HOST, after the game's own updPanels on `desk` (every plate change runs it, the judge's own writes included): the plates
+// are sent when they differ from the last sent.
+void OnDeskUpdated(void* desk);
 
 // Whether `actor` is a plate prop a take-off just granted that has not yet left its lid in a hold, and whether any is.
 bool IsFresh(void* actor);

@@ -10,7 +10,7 @@
 // compares it with its own. A failed arm is said FAIL at once and no later arm runs; the host says `rig: VERDICT cover
 // PASS` when all held. A verdict is decided at its event (the answer, or the change a red lets through); a time bound
 // says INVALID only. Reds are host rows: cover_judge_off (`reach` FAILs), cover_wanted_off (`stale`), cover_hold_judge_off
-// (`carried`). cover_drill=measure runs the same arms with cover_measure logging on both peers.
+// (`carried`), cover_announce_off (`unbolt`). cover_drill=measure runs the same arms with cover_measure logging on both peers.
 
 
 #include "harness/autotest.h"
@@ -366,13 +366,23 @@ bool WalkNear(const char* what, const ue_wrap::FVector& at, float reachCm) {
     return true;
 }
 
+// The unbolt, then a second ask for the same state sent behind it on the same ordered lane. The host's plates reach this
+// client before its answer to the second ask (Already), so the answer is the point after which the plates cannot still be
+// coming: plate 0 unbolted here by then holds, and plate 0 still bolted is the host's unannounced change (cover_announce_off).
 bool ArmUnbolt() {
+    static uint32_t already0 = 0;
     return ClientArm("unbolt", [](std::string& why) {
         const Snap s = Read();
         if (!On(s, 0) || Loose(s, 0)) { why = "plate 0 is not on and bolted at the start"; return false; }
+        already0 = Seen(N::CoverReason::Already);
         SetLooking(Desk(), 0);
-        return Verb(Desk(), L"unscrewPanel") || (why = "unscrewPanel did not run", false);
-    }, [](std::string&) { return Loose(Read(), 0) ? Judge::Pass : Judge::Pending; });
+        if (!Verb(Desk(), L"unscrewPanel")) { why = "unscrewPanel did not run"; return false; }
+        return CS::DrillAsk(N::kCoverOpUnscrew, N::kCoverDesk, 0, 1, 0) || (why = "the fence ask was not sent", false);
+    }, [](std::string& why) {
+        if (Seen(N::CoverReason::Already) <= already0) return Judge::Pending;
+        if (!Loose(Read(), 0)) { why = "the host unbolted plate 0 and answered, but its plates never reached this client"; return Judge::Fail; }
+        return Judge::Pass;
+    });
 }
 
 // The unbolt asked again with the state it already holds, as a second client or a stale one asks it.

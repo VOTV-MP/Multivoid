@@ -1,5 +1,5 @@
 // coop/config/config_registry_rows_dev_cover.inc -- the [dev] rows of the cover drill (the signal desk's back plates and
-// a transformer station's door): its arm and its three red arms. Included by config_registry_rows_dev.inc after the
+// a transformer station's door): its arm and its four red arms. Included by config_registry_rows_dev.inc after the
 // cargo lift rows. The entry forms are config_registry_rows.inc's.
 
 CFG_ENUM(cover_drill, "cover_drill", "dev", "off", "off|run|measure", "VOTVCOOP_COVER_DRILL",
@@ -21,3 +21,6 @@ CFG_FLAG(cover_wanted_off, "cover_wanted_off", "dev", false, "VOTVCOOP_COVER_WAN
 CFG_FLAG(cover_hold_judge_off, "cover_hold_judge_off", "dev", false, "VOTVCOOP_COVER_HOLD_JUDGE_OFF",
     "Developer red arm of the cover drill: never set, on the host. A put-back is applied without the hold, the lid "
     "touch and the fresh-prop tests, so a plate prop nobody carried back is eaten and the put-back arm says FAIL.")
+CFG_FLAG(cover_announce_off, "cover_announce_off", "dev", false, "VOTVCOOP_COVER_ANNOUNCE_OFF",
+    "Developer red arm of the cover drill: never set, on the host. The host does not send the desk's plates when the "
+    "game updates them, so an unbolt it judged never reaches the client and the unbolt arm says FAIL.")

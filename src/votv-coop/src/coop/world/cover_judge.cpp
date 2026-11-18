@@ -199,19 +199,14 @@ void* TakeOff(void* desk, uint8_t plate, uint8_t bits) {
     const ue_wrap::FVector at = E::GetComponentLocation(mesh);
     const ue_wrap::FRotator rot = E::GetComponentWorldRotation(mesh);
     AD::WriteTakeoff(desk, true);  // the prop born touching its lid is not set back at once
-    // The plates' state goes out BEFORE the prop is spawned, so a client has the plate off when the prop's mirror reaches
-    // its lid: a mirror born on a lid whose plate is still on would read as a plate set back.
-    const uint8_t taken = static_cast<uint8_t>(bits & ~(1u << plate));
-    WritePlates(desk, taken);
-    SendDesk(taken, -1);
-    g_deskSent = taken;
-    g_deskSaid = true;
+    // The plates' state goes out BEFORE the prop is spawned (the updPanels the write runs announces it, OnDeskUpdated), so
+    // a client has the plate off when the prop's mirror reaches its lid: a mirror born on a lid whose plate is still on
+    // would read as a plate set back.
+    WritePlates(desk, static_cast<uint8_t>(bits & ~(1u << plate)));
     void* const prop = E::BeginDeferredSpawn(cls, at, rot);
     if (!prop || !E::FinishDeferredSpawn(prop, at, rot)) {  // no plate made: it stays on
         AD::WriteTakeoff(desk, false);
         WritePlates(desk, bits);
-        SendDesk(bits, -1);
-        g_deskSent = bits;
         UE_LOGW("cover_sync: HOST plate %u's prop did not spawn -- the plate stays on", plate);
         return nullptr;
     }
@@ -313,7 +308,6 @@ void JudgeDesk(const Ask& a) {
         if (!ok) Answer(a.slot, N::kCoverDesk, plate, why);
         UE_LOGI("cover_sync: HOST slot %d sets plate %u back (prop eid %u) -- %hs", a.slot, plate, a.p.eid, said);
     }
-    g_nextScanMs = 0;  // the change goes out at once
 }
 
 void JudgeDoor(const Ask& a) {
@@ -355,13 +349,6 @@ void Tick() {
     const uint64_t now = NowMs();
     if (now < g_nextScanMs) return;
     g_nextScanMs = now + kScanEveryMs;
-    uint8_t bits = 0;
-    if (void* desk = AD::Find(); desk && AD::ReadPlates(desk, bits) && (!g_deskSaid || bits != g_deskSent)) {
-        if (g_deskSaid) SendDesk(bits, -1);
-        if (g_deskSaid) UE_LOGI("cover_sync: HOST the desk's plates on=0x%x unbolted=0x%x -- sent", bits & 0xF, bits >> 4);
-        g_deskSaid = true;
-        g_deskSent = bits;
-    }
     std::vector<void*> gens;
     GEN::ReadGenerators(gens);
     if (g_doorSent.size() < gens.size()) g_doorSent.resize(gens.size(), -1);
@@ -375,6 +362,18 @@ void Tick() {
         }
         g_doorSent[i] = open ? 1 : 0;
     }
+}
+
+void OnDeskUpdated(void* desk) {
+    if (!CS::IsHost() || !CS::Session()->connected()) return;
+    // The drill's red (cover_announce_off): the host's own change is never sent, so the unbolt it judged stays its own.
+    static const bool s_announceOff = coop::config::ResolveFlag(coop::config_registry::rows::cover_announce_off);
+    uint8_t bits = 0;
+    if (s_announceOff || !desk || !AD::ReadPlates(desk, bits) || (g_deskSaid && bits == g_deskSent)) return;
+    SendDesk(bits, -1);
+    g_deskSaid = true;
+    g_deskSent = bits;
+    UE_LOGI("cover_sync: HOST the desk's plates on=0x%x unbolted=0x%x -- sent", bits & 0xF, bits >> 4);
 }
 
 bool IsFresh(void* actor) {
