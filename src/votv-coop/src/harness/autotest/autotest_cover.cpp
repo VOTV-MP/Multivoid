@@ -366,21 +366,22 @@ bool WalkNear(const char* what, const ue_wrap::FVector& at, float reachCm) {
     return true;
 }
 
-// The unbolt, then a second ask for the same state sent behind it on the same ordered lane. The host's plates reach this
-// client before its answer to the second ask (Already), so the answer is the point after which the plates cannot still be
-// coming: plate 0 unbolted here by then holds, and plate 0 still bolted is the host's unannounced change (cover_announce_off).
+// The unbolt, then a fence ask sent behind it on the same ordered lane: an unbolt of the desk's fixed plate, which the host
+// always refuses and changes nothing for (so no red can toggle it back). The host's plates reach this client before its
+// refusal, so the refusal is the point after which the plates cannot still be coming: plate 0 unbolted here by then holds, and
+// plate 0 still bolted is the host's unannounced change (cover_announce_off) or an unbolt it refused.
 bool ArmUnbolt() {
-    static uint32_t already0 = 0;
+    static uint32_t refused0 = 0;
     return ClientArm("unbolt", [](std::string& why) {
         const Snap s = Read();
         if (!On(s, 0) || Loose(s, 0)) { why = "plate 0 is not on and bolted at the start"; return false; }
-        already0 = Seen(N::CoverReason::Already);
+        refused0 = Refusals();
         SetLooking(Desk(), 0);
         if (!Verb(Desk(), L"unscrewPanel")) { why = "unscrewPanel did not run"; return false; }
-        return CS::DrillAsk(N::kCoverOpUnscrew, N::kCoverDesk, 0, 1, 0) || (why = "the fence ask was not sent", false);
+        return CS::DrillAsk(N::kCoverOpUnscrew, N::kCoverDesk, AD::kFixedPlate, 1, 0) || (why = "the fence ask was not sent", false);
     }, [](std::string& why) {
-        if (Seen(N::CoverReason::Already) <= already0) return Judge::Pending;
-        if (!Loose(Read(), 0)) { why = "the host unbolted plate 0 and answered, but its plates never reached this client"; return Judge::Fail; }
+        if (Refusals() <= refused0) return Judge::Pending;
+        if (!Loose(Read(), 0)) { why = "the host answered the fence but plate 0 is not unbolted here: its plates never reached this client"; return Judge::Fail; }
         return Judge::Pass;
     });
 }
@@ -484,9 +485,9 @@ bool StandBeforeProp(void* prop) {
 }
 
 // The plate prop taken in hand as the use key grabs it. The grab waits for the copy to be free of the host's drive stream and
-// is aimed afresh at the copy's current pose on each try (a new AimedGrab, again when its fan runs long or its chain fails).
+// is aimed afresh at the copy's current pose on each try (a new AimedGrab, again when its chain fails).
 bool GrabPlateProp(uint32_t eid) {
-    constexpr int kGrabTries = 5, kFanPolls = 60;  // a try's aim fan runs at most six seconds
+    constexpr int kGrabTries = 5;  // a failed chain is tried again; the aim fan ends itself
     if (!PS::WaitFor("the plate prop's copy to leave the host's drive stream", kStepBound, [&] {
             return OnGameThreadValue([&] { return FreeCopy(eid) != nullptr; });
         }))
@@ -499,12 +500,16 @@ bool GrabPlateProp(uint32_t eid) {
         if (!StandBeforeProp(prop)) return false;
         coop::director::AimedGrab grab(me, prop);
         coop::director::GrabState state = coop::director::GrabState::Working;
-        for (int polls = 0; polls < kFanPolls && state == coop::director::GrabState::Working; ++polls) {
+        while (state == coop::director::GrabState::Working) {  // the fan ends itself, and its own warning names the blocker
             state = OnGameThreadValue([&] { return grab.Tick(); });
             if (state == coop::director::GrabState::Working) ::Sleep(100);
         }
         if (state == coop::director::GrabState::Grabbed) return true;
-        why = state == coop::director::GrabState::Failed ? grab.Why() : "the aim fan found no pose in six seconds";
+        why = grab.Why();
+        if (grab.NoAim()) {  // a precondition of the grab, never reached: INVALID, as the grab's header says
+            RV::Say(kTag, RV::Outcome::Invalid, "putback: no aim in the fan took the plate prop: %s", why.c_str());
+            return false;
+        }
         UE_LOGI("cover: the grab try %d did not take (%s) -- aimed again at the copy's pose", tries + 1, why.c_str());
     }
     RV::Say(kTag, RV::Outcome::Invalid, "putback: the plate prop was not grabbed in %d tries: %s", kGrabTries, why.c_str());
