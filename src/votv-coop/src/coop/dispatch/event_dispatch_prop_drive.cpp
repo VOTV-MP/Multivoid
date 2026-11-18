@@ -31,6 +31,7 @@
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
 #include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
+#include "coop/props/bucket_sync.h"        // a bucket's water and concrete: the host's rows, a client's asks
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
 #include "coop/interactables/garbage_bin_sync.h"
@@ -565,6 +566,39 @@ bool HandlePropDriveEvent(net::Session& session,
         // CLIENT->HOST op 1, HOST->the requester op 2 or 3. The payload's exact size, the direction, the op and every
         // field are the module's to judge, counted there.
         ::coop::props::container_break::OnMessage(session, msg.senderPeerSlot, msg.payload, msg.payloadLen);
+        break;
+    }
+    case net::ReliableKind::BucketState:
+    case net::ReliableKind::BucketIntent: {
+        // BucketState HOST->ALL, BucketIntent CLIENT->HOST (coop/props/bucket_sync). Exact length, counts and ops bounded,
+        // every float finite.
+        const bool intent = msg.kind == net::ReliableKind::BucketIntent;
+        const size_t want = intent ? sizeof(net::BucketIntentPayload) : sizeof(net::BucketStatePayload);
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != want) {
+            UE_LOGW("event_feed: a bucket message the wrong way or the wrong length from slot %d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        auto rowOk = [](const net::BucketRow& r) {
+            return r.type <= net::kBucketBag && std::isfinite(r.level) && std::isfinite(r.progress);
+        };
+        if (intent) {
+            net::BucketIntentPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (p.op > net::kBucketIntentTake || !rowOk(p.bucket)) break;
+            ::coop::bucket_sync::OnIntent(msg.senderPeerSlot, p);
+        } else {
+            net::BucketStatePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (p.count == 0 || p.count > net::kBucketRowsMax) break;
+            bool ok = true;
+            for (int i = 0; i < p.count; ++i) ok = ok && rowOk(p.rows[i]);
+            if (!ok) {
+                UE_LOGW("event_feed: BucketState with a row of an unknown type or a non-finite value -- dropping");
+                break;
+            }
+            ::coop::bucket_sync::OnState(p);
+        }
         break;
     }
     default:

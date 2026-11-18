@@ -58,6 +58,7 @@
 #include "coop/interactables/garbage_bin_sync.h"
 #include "coop/props/prop_food_sync.h"  // every world food's condition again
 #include "coop/world/plant_sync.h"
+#include "coop/props/bucket_sync.h"
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
 #include "coop/interactables/verb_lanes.h"  // the interactable lanes on a device's own verbs, at the script gate
 #include "coop/creatures/kerfus_lanes.h"  // the plain kerfur: its brain on the host, its state and drive, its verbs
@@ -116,6 +117,7 @@ void ConnectReplayForSlot(int slot) {
     // included; a set not taken whole is retried from the lane's tick and can land after it.
     coop::dish_hashcode_sync::QueueConnectBroadcastForSlot(slot);
     coop::prop_snapshot::TriggerForSlot(slot);
+    coop::bucket_sync::OnPeerWorldReady(slot);  // every bucket's water and concrete
     coop::prop_drive_host::OnPeerWorldReady();  // every driven prop's pose again, so the joiner parks the resting ones the delta gate would never send it
     coop::kerfus_lanes::OnPeerWorldReady(slot);  // and every Kerfus's on, charging and energy
     coop::sat_console_sync::OnPeerWorldReady(slot);  // a SAT console typist back at a terminal still running finds it
