@@ -1,5 +1,6 @@
 // coop/props/body_push.cpp -- see coop/props/body_push.h.
 
+#include "coop/props/prop_drive_rules.h"
 #include "coop/props/body_push.h"
 
 #include "coop/config/config.h"
@@ -102,13 +103,6 @@ float Dist2(const FVector& a, const FVector& b) {
 
 // The squared distance from `at` to this peer's own body; large when it is not read.
 float BodyCm2(const Body& b, const FVector& at) { return b.have ? Dist2(at, b.at) : 1.0e18f; }
-
-float TurnDeg(const FRotator& a, const FRotator& b) {
-    const float p = std::fabs(ue_wrap::NormalizeAxis(a.Pitch - b.Pitch));
-    const float y = std::fabs(ue_wrap::NormalizeAxis(a.Yaw - b.Yaw));
-    const float r = std::fabs(ue_wrap::NormalizeAxis(a.Roll - b.Roll));
-    return std::fmax(p, std::fmax(y, r));
-}
 
 struct ListCtx {
     const Body* body;
@@ -254,7 +248,7 @@ void Tick(coop::net::Session& s, bool isHost) {
         }
         // The move is from an anchor, not from the last read: a prop slid at under 3 cm per read (a heavy one a pawn shoves)
         // would otherwise never be a push. The anchor follows a prop that no body is near and is re-set by each move read.
-        const bool moved = Dist2(loc, w.loc) > kMoveCm * kMoveCm || TurnDeg(rot, w.rot) > kTurnDeg;
+        const bool moved = Dist2(loc, w.loc) > kMoveCm * kMoveCm || coop::prop_drive_rules::TurnDeg(rot, w.rot) > kTurnDeg;
         const bool fell = moved && Fell(w.loc, loc);
         if (moved || BodyCm2(body, loc) > kTouchCm * kTouchCm) {
             w.loc = loc;

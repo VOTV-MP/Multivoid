@@ -41,16 +41,35 @@ constexpr size_t kMaxCoasting = 32;
 // (a spawn-menu pile, an event's debris) stands at the births' own bound, kMaxCoasting less this.
 constexpr size_t kCoastPushReserve = 8;
 
-// True when a pose moved past the send epsilons on any axis since `sentLoc`/`sentRot`, the last one that went out.
+// The angle in degrees of the turn from `b` to `a`: the quaternions' (UE4.27's FRotator::Quaternion) angle, not the axes'
+// differences. A prop lying at pitch +-90 has one pose for every yaw and roll of the same sum; the game reads it back
+// with a different pair from one read to the next, so a still drive on its side moves 6-90 degrees on each axis.
+inline float TurnDeg(const ue_wrap::FRotator& a, const ue_wrap::FRotator& b) {
+    constexpr double kHalfRad = 3.14159265358979323846 / 360.0;
+    auto quat = [](const ue_wrap::FRotator& r, double q[4]) {
+        const double sp = std::sin(r.Pitch * kHalfRad), cp = std::cos(r.Pitch * kHalfRad);
+        const double sy = std::sin(r.Yaw * kHalfRad), cy = std::cos(r.Yaw * kHalfRad);
+        const double sr = std::sin(r.Roll * kHalfRad), cr = std::cos(r.Roll * kHalfRad);
+        q[0] = cr * sp * sy - sr * cp * cy;
+        q[1] = -cr * sp * cy - sr * cp * sy;
+        q[2] = cr * cp * sy - sr * sp * cy;
+        q[3] = cr * cp * cy + sr * sp * sy;
+    };
+    double qa[4], qb[4];
+    quat(a, qa);
+    quat(b, qb);
+    const double dot = std::fabs(qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3]);
+    return static_cast<float>(2.0 * std::acos(dot < 1.0 ? dot : 1.0) / kHalfRad / 2.0);
+}
+
+// True when a pose moved past the send epsilons since `sentLoc`/`sentRot`, the last one that went out: any axis of the
+// location, or the turn's angle.
 inline bool MovedPastEps(const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
                          const ue_wrap::FVector& sentLoc, const ue_wrap::FRotator& sentRot) {
     if (std::fabs(loc.X - sentLoc.X) > kSendEpsCm) return true;
     if (std::fabs(loc.Y - sentLoc.Y) > kSendEpsCm) return true;
     if (std::fabs(loc.Z - sentLoc.Z) > kSendEpsCm) return true;
-    if (std::fabs(ue_wrap::NormalizeAxis(rot.Pitch - sentRot.Pitch)) > kSendEpsDeg) return true;
-    if (std::fabs(ue_wrap::NormalizeAxis(rot.Yaw   - sentRot.Yaw))   > kSendEpsDeg) return true;
-    if (std::fabs(ue_wrap::NormalizeAxis(rot.Roll  - sentRot.Roll))  > kSendEpsDeg) return true;
-    return false;
+    return TurnDeg(rot, sentRot) > kSendEpsDeg;
 }
 
 }  // namespace coop::prop_drive_rules
