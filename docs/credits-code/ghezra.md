@@ -304,3 +304,11 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   and every other copy follows that player's stream to the same rest. Kept as written: the claim of a body push and its
   watch around a player. On top: the host's own push flown by the host, a push's end left asleep at its pose only once
   the body sleeps, the watch reading only the player's own body, and a drill with a red for each mechanism.
+
+- **The desk's back plates and a station's door** ([#135](https://github.com/VOTV-MP/Multivoid/pull/135)): a back plate's
+  unbolt, take-off, put-back and bolt on the signal desk, and a transformer station's door, happened for one player only.
+  Now the host judges each and every peer sees the result. Kept as written: the asks, the host's judge, the plates and
+  doors sent on change and to a joiner. On top: an unbolt asks for the state it wants, every ask is answered with its
+  reason and a refused one shows the game's hint, a put-back is judged on the sender's reach and hold, a client's desk
+  never eats a plate the host handed back, the plates and doors are sent on the game's own updates instead of a poll,
+  and a drill with a red for each judge. Handing the taken-off plate into the asker's hand is a package of its own.
