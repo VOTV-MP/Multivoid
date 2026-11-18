@@ -21,6 +21,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/text/utf8_codec.h"
 #include "coop/world/cover_judge.h"
 #include "coop/world/cover_shared.h"
@@ -398,8 +399,19 @@ sg::Verdict OnStationActionPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object || !c.function || !c.locals) return sg::Verdict::Run;
     const int32_t off = R::FindParamOffset(c.function, L"action");
     if (off < 0 || c.locals[off] != kActionUse || !LookAtDoor(c.object)) return sg::Verdict::Run;
+    // A client's own world load runs natively: only a press in the announced world is the host's to judge.
+    if (!coop::net_pump::IsInAnnouncedWorld(c.object)) return sg::Verdict::Run;
     const int32_t index = GEN::IndexOf(c.object);
-    if (index < 0 || index > 255) return sg::Verdict::Run;
+    if (index < 0 || index > 255) {  // a station the game mode's list does not name: never a swing no host will follow
+        static bool s_said = false;
+        if (!s_said) {
+            s_said = true;
+            UE_LOGW("cover_sync: CLIENT station %ls is not in the game mode's list (index %d) -- its door press is refused",
+                    R::ToString(R::NameOf(c.object)).c_str(), index);
+        }
+        ShowRefusal(static_cast<uint8_t>(N::CoverReason::NoStation));
+        return sg::Verdict::Cancel;
+    }
     if (Paced()) Ask(N::kCoverOpDoor, N::kCoverStation, static_cast<uint8_t>(index), OpenedOr(c.object, false) ? 0 : 1, 0);
     return sg::Verdict::Cancel;
 }
