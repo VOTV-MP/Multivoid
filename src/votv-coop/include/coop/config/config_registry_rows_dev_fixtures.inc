@@ -1,6 +1,5 @@
 // coop/config/config_registry_rows_dev_fixtures.inc -- the [dev] rows of the drills for a fixture a player works
-// on. Included by config_registry_rows_dev.inc where these rows stood, so each keeps its place in
-// every expansion of the list. The entry forms are config_registry_rows.inc's.
+// on. Included by config_registry_rows_dev.inc, so its rows join every expansion of the list. The entry forms are config_registry_rows.inc's.
 CFG_ENUM(oven_progress_drill, "oven_progress_drill", "dev", "off", "off|host|client|join",
     "VOTVCOOP_OVEN_PROGRESS_DRILL",
     "Drill (BOTH peers): the oven's screws and lid. host and client: the acting peer sets a screw's "
