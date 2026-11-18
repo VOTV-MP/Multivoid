@@ -56,6 +56,7 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/food_tick_gate.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_record_wire.cpp
+    src/coop/props/bucket_sync.cpp
     src/coop/props/prop_can_state.cpp
     src/coop/props/pack_trash_intent.cpp
     src/coop/props/prop_drop_intent.cpp

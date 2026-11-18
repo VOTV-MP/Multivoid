@@ -176,6 +176,7 @@
 #include "coop/dev/perf_probe.h"
 #include "coop/dev/crowbarpry_drill.h"   // [dev] a client pries a board, its crowbar judged on the host
 #include "coop/dev/clean_drill.h"  // [dev] the grime lane's clean and leaves drill arms
+#include "coop/dev/bucket_drill.h"  // [dev] a mop bucket's water and concrete, acted on by one player, logged on every peer
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/walk_timer.h"
@@ -485,6 +486,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pause_menu_probe::Tick(&session);  // [dev] the pause-menu probe (a latched read when off)
     coop::dev::crowbarpry_drill::Tick(&session);  // [dev] the crowbar pry drill (a latched read when off)
     coop::dev::clean_drill::Tick(&session);  // [dev] the grime lane's clean and leaves arms (a latched enum read when off)
+    coop::dev::bucket_drill::Tick(&session);  // [dev] a mop bucket's water and concrete on every peer (a latched read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::rack_birth_drill::Tick();  // [dev] the rack birth drill (a latched read when off)
     coop::dev::burn_revive_drill::Tick();  // [dev] the burn revive drill (a latched read when off)

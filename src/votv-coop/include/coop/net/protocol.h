@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 316;
+inline constexpr uint16_t kProtocolVersion = 317;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1593,6 +1593,13 @@ enum class ReliableKind : uint16_t {
     // take-off of an outfit item ride PropActRequest. Not pre-world. KerfurDressPayload (272), KerfurDressPatPayload (273).
     KerfurDressState = 272,
     KerfurDressIntent = 273,
+    // A mop bucket's water and a concrete bucket's concrete (coop/props/bucket_sync). HOST->ALL: rows of the host's buckets
+    // and cement bags that changed, and every one to a joiner at its world-ready. Not pre-world. BucketStatePayload. CLIENT->HOST: this
+    // client's player changed a mop bucket's water (op 0, the bucket's water and soap after the verb), mixed cement into
+    // one (op 1) or took concrete out with the trowel (op 2); the host judges the reach and the items and runs it on its
+    // own, and its BucketState answers. Never relayed. Not pre-world. BucketIntentPayload.
+    BucketState = 283,
+    BucketIntent = 284,
 };
 
 #pragma pack(push, 1)
@@ -3165,6 +3172,36 @@ struct DingusReportPayload {
     WireKey key;     // 32 -- the save key of the dingus this client's touch found
 };
 static_assert(sizeof(DingusReportPayload) == 32, "DingusReportPayload must be 32 bytes");
+// BucketState and BucketIntent. A bucket by host element id. A mop bucket (prop_bucket_C): `level` its Height, `count`
+// its soap, `progress` its alcoholP, kBucketAlcohol and kBucketAlcReady its alcohol and alcReady. A concrete bucket
+// (prop_concreteBucket_C): `count` its units, `progress` its dryTimer, kBucketDry its dry. A cement bag (prop_cementBag_C,
+// what a mix takes from): `count` its units.
+inline constexpr uint8_t kBucketMop = 0, kBucketConcrete = 1, kBucketBag = 2;
+inline constexpr uint8_t kBucketAlcohol = 1, kBucketAlcReady = 2, kBucketDry = 4;
+struct BucketRow {
+    uint32_t eid;       // 4
+    uint8_t  type;      // 1 -- kBucketMop, kBucketConcrete, kBucketBag
+    uint8_t  flags;     // 1 -- kBucketAlcohol | kBucketAlcReady | kBucketDry
+    int16_t  count;     // 2
+    float    level;     // 4
+    float    progress;  // 4
+};
+static_assert(sizeof(BucketRow) == 16, "BucketRow must be 16 bytes");
+inline constexpr int kBucketRowsMax = 13;
+struct BucketStatePayload {
+    uint8_t   count;                  // 1 -- 1..kBucketRowsMax
+    uint8_t   _pad[3];                // 3 -- zero
+    BucketRow rows[kBucketRowsMax];   // 208
+};
+static_assert(sizeof(BucketStatePayload) == 212, "BucketStatePayload must be 212 bytes");
+inline constexpr uint8_t kBucketIntentWater = 0, kBucketIntentConcrete = 1, kBucketIntentTake = 2;
+struct BucketIntentPayload {
+    uint8_t   op;          // 1 -- kBucketIntent*
+    uint8_t   _pad[3];     // 3 -- zero
+    uint32_t  itemEid;     // 4 -- the cement bag (op 1) or the trowel (op 2); 0 for op 0
+    BucketRow bucket;      // 16 -- the bucket; op 0 carries its level and count after the verb
+};
+static_assert(sizeof(BucketIntentPayload) == 24, "BucketIntentPayload must be 24 bytes");
 
 // A client's ask to pocket, hold or use a world prop, or to put on or take off an Omega's outfit item (PropActRequest),
 // the host's answer (PropActReply) and the client's closing word (PropActCommit). `id` is the client's own, nonzero, and

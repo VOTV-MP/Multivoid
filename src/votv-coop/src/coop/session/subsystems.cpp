@@ -94,6 +94,7 @@
 #include "coop/creatures/kerfur_form_assembler.h"  // script-body gate consumer (observe-only + containment counter)
 #include "coop/world/vent_crawler_sync.h"
 #include "coop/props/prop_hold_claim.h"
+#include "coop/props/bucket_sync.h"
 #include "coop/props/prop_can_state.h"
 #include "coop/interactables/desk_short_sync.h"
 #include "coop/world/world_sound_sync.h"
@@ -312,6 +313,7 @@ void Install(coop::net::Session& session) {
     coop::props::container_contents_sync::Install(&session);  // container contents
     coop::props::prop_record_refresh::Install(&session);  // drive box + reel case republish their own record
     coop::vent_crawler_sync::Install(&session);  // the crawl's start, for a client's sounds
+    coop::bucket_sync::Install(&session);  // a mop bucket's water and a concrete bucket's concrete: the host's rows
     coop::props::prop_can_state::Install(&session);  // a canned food's lid and contents: its record on a change
     coop::desk_short_sync::Install(&session);  // the base computer's short circuit is the host's
     coop::world_sound_sync::Install(&session);  // the sky's two sounds, a faucet's click
@@ -670,6 +672,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hacksaw_cut"}; coop::props::hacksaw_cut::Tick(); }  // a saw's cut is forgotten at a world change
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_pry"}; coop::prop_pry_host::Tick(session); }  // HOST: judges one queued pry ask a tick a client (an empty queue costs one size check)
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
+    coop::bucket_sync::Tick();  // the host's rows of the buckets that changed, a client's asks
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hand_record"}; coop::hand_record_sync::Tick(); }  // the owner's hand read and sent, the host's parked records judged, the mirrors written
