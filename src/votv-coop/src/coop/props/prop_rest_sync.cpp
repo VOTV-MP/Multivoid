@@ -1,5 +1,6 @@
 // coop/props/prop_rest_sync.cpp -- a client's resting copy of a keyed prop put where the host's rests. See the header.
 
+#include "coop/props/prop_drive_rules.h"
 #include "coop/props/prop_rest_sync.h"
 
 #include "coop/element/registry.h"
@@ -54,13 +55,6 @@ N::Session* g_session = nullptr;
 float Dist2(const FVector& a, const FVector& b) {
     const float x = a.X - b.X, y = a.Y - b.Y, z = a.Z - b.Z;
     return x * x + y * y + z * z;
-}
-
-float TurnDeg(const FRotator& a, const FRotator& b) {
-    const float p = std::fabs(ue_wrap::NormalizeAxis(a.Pitch - b.Pitch));
-    const float y = std::fabs(ue_wrap::NormalizeAxis(a.Yaw - b.Yaw));
-    const float r = std::fabs(ue_wrap::NormalizeAxis(a.Roll - b.Roll));
-    return std::fmax(p, std::fmax(y, r));
 }
 
 bool AtRest(void* actor) {
@@ -242,7 +236,7 @@ void TickClient(Clock::time_point now) {
         FRotator rot{};
         bool drop = !actor || now >= w.until || Streamed(actor) || !E::TryGetActorLocation(actor, loc) ||
                     !E::TryGetActorRotation(actor, rot);
-        if (!drop && (Dist2(loc, w.loc) > kOffCm * kOffCm || TurnDeg(rot, w.rot) > kOffDeg)) {
+        if (!drop && (Dist2(loc, w.loc) > kOffCm * kOffCm || coop::prop_drive_rules::TurnDeg(rot, w.rot) > kOffDeg)) {
             ++g_endMoves;
             if (g_endMoves <= 3 || (g_endMoves & (g_endMoves - 1)) == 0)
                 UE_LOGI("prop_rest_sync: '%ls' moved %.1f cm by itself after its End -- the host's rest is asked for (#%llu)",
@@ -266,7 +260,7 @@ void TickClient(Clock::time_point now) {
             it = g_pending.erase(it);
             continue;
         }
-        if (Dist2(loc, pd.loc) > 0.25f || TurnDeg(rot, pd.rot) > 0.5f) {
+        if (Dist2(loc, pd.loc) > 0.25f || coop::prop_drive_rules::TurnDeg(rot, pd.rot) > 0.5f) {
             pd.loc = loc;
             pd.rot = rot;
             pd.stillSince = now;
@@ -295,7 +289,7 @@ void Apply(const N::PropRestRow& r) {
     const FVector to{r.loc[0], r.loc[1], r.loc[2]};
     const FRotator toRot{Deg(r.rotCdeg[0]), Deg(r.rotCdeg[1]), Deg(r.rotCdeg[2])};
     const float cm2 = Dist2(cur, to);
-    const float turn = TurnDeg(curRot, toRot);
+    const float turn = coop::prop_drive_rules::TurnDeg(curRot, toRot);
     if (cm2 <= kOffCm * kOffCm && turn <= kOffDeg) { ++g_agreed; return; }
     // A copy still moving here comes to rest first: its own move asks again when it does.
     if (!AtRest(actor)) { NoteLocalMove(actor); ++g_skipped; return; }
