@@ -111,6 +111,8 @@ void OpenDoor(void* gen, bool open) {
     g_applying = false;
 }
 
+bool Applying() { return g_applying; }
+
 bool OpenedOr(void* gen, bool fallback) {
     bool v = fallback;
     return GEN::ReadOpened(gen, v) ? v : fallback;
@@ -140,6 +142,8 @@ bool LookAtDoor(void* gen) {
 void Ask(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 
 uint64_t g_lastPutBackAskMs = 0;
+uint32_t g_answers[8] = {};   // the drill's read: op 5 answers seen, by CoverReason
+uint32_t g_lastTakeOffEid = 0;
 
 // Whether this player's hand grabs or holds one of `props`.
 bool HeldHere(const std::vector<void*>& props) {
@@ -386,6 +390,8 @@ void OnIntent(int senderSlot, const coop::net::CoverPayload& p) { cover_judge::O
 void OnState(const coop::net::CoverPayload& p) {
     if (!IsClient()) return;
     if (p.op == N::kCoverOpAnswer) {
+        if (p.bits < sizeof(g_answers) / sizeof(g_answers[0])) ++g_answers[p.bits];
+        if (p.eid && p.bits == static_cast<uint8_t>(N::CoverReason::Ok)) g_lastTakeOffEid = p.eid;
         if (p.eid && p.index < N::kCoverDeskPanels)
             UE_LOGI("cover_sync: CLIENT the host took plate %u off -- its prop eid %u lies where the plate was", p.index, p.eid);
         else UE_LOGI("cover_sync: CLIENT the host answered this player's ask of %hs %u: %hs",
@@ -402,6 +408,16 @@ void OnState(const coop::net::CoverPayload& p) {
         if (g_doorWanted.size() <= p.index) g_doorWanted.resize(static_cast<size_t>(p.index) + 1, -1);
         g_doorWanted[p.index] = (p.bits & 1u) ? 1 : 0;
     }
+}
+
+uint32_t AnswersSeen(uint8_t reason) { return reason < sizeof(g_answers) / sizeof(g_answers[0]) ? g_answers[reason] : 0; }
+
+uint32_t LastTakeOffEid() { return g_lastTakeOffEid; }
+
+bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid) {
+    if (!IsClient()) return false;
+    Ask(op, what, index, bits, eid);
+    return true;
 }
 
 void OnDisconnect() {

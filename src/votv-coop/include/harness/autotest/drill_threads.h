@@ -216,6 +216,8 @@ DWORD WINAPI ClassResolveDrillThread(LPVOID arg);
 // VOTVCOOP_RUN_CARGO_LIFT, both peers -- harness/autotest/autotest_cargo_lift.cpp
 // cargo_lift_drill (VOTVCOOP_RUN_CARGO_LIFT), both peers -- harness/autotest/autotest_cargo_lift.cpp
 DWORD WINAPI CargoLiftThread(LPVOID arg);
+// cover_drill (VOTVCOOP_COVER_DRILL), both peers -- harness/autotest/autotest_cover.cpp
+DWORD WINAPI CoverThread(LPVOID arg);
 // woodchipper_drill, both peers -- harness/autotest/autotest_woodchipper.cpp
 DWORD WINAPI WoodchipperThread(LPVOID arg);
 // VOTVCOOP_RUN_SV_REQUEST, both peers -- harness/autotest/autotest_sv_request.cpp

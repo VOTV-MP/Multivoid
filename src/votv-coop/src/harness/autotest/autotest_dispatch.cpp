@@ -217,6 +217,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_PLANT_STATE", "plant drill", &PlantStateThread, role);
     // The cargo lift, the base's elevator, as each peer sees it.
     SpawnIfRow(coop::config_registry::rows::cargo_lift_drill, "cargo lift drill", &CargoLiftThread, role);
+    // The signal desk's back plates and a station's door, as each peer sees them.
+    SpawnIfEnum(coop::config_registry::rows::cover_drill, "cover drill", &CoverThread, role);
     SpawnIf("VOTVCOOP_RUN_SV_REQUEST", "sv.request drill", &SvRequestThread, role);
     SpawnIf("VOTVCOOP_RUN_MODULE_BUY", "module row drill", &ModuleBuyThread, role);
     // A device's claim when its user ragdolls.

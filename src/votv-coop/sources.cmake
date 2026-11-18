@@ -585,6 +585,8 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_ambient_field.cpp
     src/harness/autotest/autotest_sus_hole.cpp
     src/harness/autotest/autotest_cargo_lift.cpp
+    src/harness/autotest/autotest_cover.cpp
+    src/harness/autotest/autotest_cover_measure.cpp
     src/harness/autotest/autotest_woodchipper.cpp
     src/harness/autotest/autotest_class_resolve.cpp
     src/harness/autotest/autotest_prop_props.cpp

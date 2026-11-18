@@ -40,6 +40,14 @@ void OnIntent(int senderSlot, const coop::net::CoverPayload& p);
 // CLIENT: the host's state or answer, its length checked by the dispatcher.
 void OnState(const coop::net::CoverPayload& p);
 
+// [dev] The cover drill's reads and its one raw ask. AnswersSeen: the op 5 answers this client has had with that
+// CoverReason (the byte of N::CoverReason); LastTakeOffEid: the plate prop's element id of the last granted take-off,
+// 0 before one; DrillAsk: an ask sent as the lane's own verbs send it, for a stale or out-of-reach ask the verbs cannot
+// make; false when it was not sent.
+uint32_t AnswersSeen(uint8_t reason);
+uint32_t LastTakeOffEid();
+bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
+
 // Session end: the records are cleared.
 void OnDisconnect();
 

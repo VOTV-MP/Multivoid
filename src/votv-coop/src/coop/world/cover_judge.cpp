@@ -7,6 +7,8 @@
 
 #include "coop/world/cover_judge.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
 #include "coop/net/intent_bucket.h"
@@ -222,7 +224,9 @@ void JudgeDesk(const Ask& a) {
     void* const mesh = AD::PlateMesh(desk, plate);
     const bool seen = mesh && EyeOf(a.slot, eye);
     const ue_wrap::FVector plateAt = mesh ? E::GetComponentLocation(mesh) : ue_wrap::FVector{};
-    const bool reach = seen && Dist2(eye, plateAt) <= kDeskReachCm * kDeskReachCm;
+    // The drill's red (cover_judge_off): the ask is applied wherever its sender stands.
+    static const bool s_judgeOff = coop::config::ResolveFlag(coop::config_registry::rows::cover_judge_off);
+    const bool reach = s_judgeOff || (seen && Dist2(eye, plateAt) <= kDeskReachCm * kDeskReachCm);
     if (!reach)
         UE_LOGI("cover_sync: HOST slot %d's eye (%.0f,%.0f,%.0f) is %.0f cm from plate %u at (%.0f,%.0f,%.0f)", a.slot,
                 eye.X, eye.Y, eye.Z, seen ? std::sqrt(Dist2(eye, plateAt)) : -1.f, plate, plateAt.X, plateAt.Y, plateAt.Z);
@@ -230,7 +234,9 @@ void JudgeDesk(const Ask& a) {
     if (a.p.op == N::kCoverOpUnscrew) {
         // The ask carries the state the sender wants (the game's verb is a toggle): a plate already so is left, so two
         // asks or a stale one cannot invert each other.
-        const bool want = (a.p.bits & 1u) != 0;
+        // The drill's red (cover_wanted_off): the ask toggles the plate whatever state it carries.
+        static const bool s_wantedOff = coop::config::ResolveFlag(coop::config_registry::rows::cover_wanted_off);
+        const bool want = s_wantedOff ? !PlateLoose(bits, plate) : (a.p.bits & 1u) != 0;
         const bool already = PlateLoose(bits, plate) == want;
         const bool ok = reach && plate != kFixedPlate && PlateOn(bits, plate) && !busy && !already;
         if (ok) {
@@ -268,9 +274,12 @@ void JudgeDesk(const Ask& a) {
         const bool reached =
             mine && EL::IntentTarget::ForClientIntent(*CS::Session(), static_cast<uint8_t>(a.slot), kDeskReachCm)
                         .Authorize(prop).outcome == EL::IntentOutcome::Ok;
-        const bool heldOk = mine && coop::prop_hold::WhoHolds(prop, a.slot) == coop::prop_hold::Holder::None;
-        const bool touches = mine && E::IsOverlappingActor(AD::Lid(desk, plate), prop);
-        const bool fresh = IsFresh(prop);  // not yet off its lid in a hold on the host
+        // The drill's red (cover_hold_judge_off): a prop nobody carried back is set back, whoever holds it, wherever it is.
+        static const bool s_holdOff = coop::config::ResolveFlag(coop::config_registry::rows::cover_hold_judge_off);
+        const bool heldOk =
+            mine && (s_holdOff || coop::prop_hold::WhoHolds(prop, a.slot) == coop::prop_hold::Holder::None);
+        const bool touches = mine && (s_holdOff || E::IsOverlappingActor(AD::Lid(desk, plate), prop));
+        const bool fresh = !s_holdOff && IsFresh(prop);  // not yet off its lid in a hold on the host
         const bool on = PlateOn(bits, plate);
         const bool ok = mine && reached && heldOk && touches && !fresh && !on;
         N::CoverReason why = N::CoverReason::Busy;

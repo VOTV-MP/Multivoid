@@ -37,4 +37,7 @@ bool MovingOr(void* gen, bool fallback);
 // Whether `prop` is more than 80 cm from the plate it came off.
 bool AwayFromPlate(void* desk, uint8_t plate, void* prop);
 
+// [dev] Whether this lane's own call into the desk or a station is running (the gate lets it through).
+bool Applying();
+
 }  // namespace coop::cover_sync
