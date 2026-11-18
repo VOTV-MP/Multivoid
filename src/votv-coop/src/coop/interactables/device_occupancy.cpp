@@ -272,6 +272,22 @@ void ForceExitLocal(void* local, const std::wstring& key, uint8_t holder) {
     PushBusyLine(key, fresh ? g_memoName : std::wstring(), holder);
 }
 
+// Whether a press at `aimed` would open the device's screen. The signal desk (analogDScreenTest_C, the "desk" claim) is
+// one actor for every console on it, and only its coordinates button (`button_coords`) enters the screen: its
+// actionOptionIndex compares the pressed component with each button. Its other buttons -- the import and export, the
+// processing and analyzer controls -- are plain presses, so they stay usable while another player is in the
+// coordinates view. Every other device is entered by any press on it. Game thread.
+bool PressOpensScreen(void* self, void* aimed, const std::wstring& key) {
+    if (key != kDeskClaim) return true;
+    static int32_t s_offLookComp = -2, s_offCoords = -2;
+    if (s_offLookComp == -2) s_offLookComp = R::FindPropertyOffset(R::ClassOf(self), L"lookAtComponent");
+    if (s_offCoords == -2) s_offCoords = R::FindPropertyOffset(R::ClassOf(aimed), L"button_coords");
+    if (s_offLookComp < 0 || s_offCoords < 0) return true;  // unread: the whole desk stays guarded, as before
+    void* const pressed = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(self) + s_offLookComp);
+    void* const coords = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(aimed) + s_offCoords);
+    return pressed && pressed == coords;
+}
+
 // The use-input deny gate (pre clears the aim, post restores). Both roles: any peer aiming
 // the use key at a device the wire says another peer holds gets the native chain no-opped
 // and the deny click. The door's discipline: leak-restore first in pre (a faulted dispatch
@@ -316,6 +332,7 @@ void OnUseInputPre(void* self, void*, void*) {
     g_memoLastTick = coop::net_pump::TickSerial() + kMemoFreshTicks;
     uint8_t holder = 0xFF;
     if (!BusyByOther(key, LocalSlot(), &holder)) return;  // free or our own
+    if (!PressOpensScreen(self, aimed, key)) return;  // a desk button beside the screen: a plain press
     if (DS::ClearAimForDispatch(self)) {
         g_denyPending = true;
         g_denyKey = key;

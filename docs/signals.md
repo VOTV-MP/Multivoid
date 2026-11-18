@@ -53,7 +53,10 @@ so each peer polls the player's active-interface field for the edge; the host ar
 first-wins claim table, a client claims optimistically and force-exits if the host answers that
 another slot holds the device, and a second peer's press is denied with the game's own denied
 sound (`coop/interactables/device_occupancy`). The claim engages only on the screen edge; the
-desk's physical buttons never set it, which is why the input lane below is claim-free.
+desk's physical buttons never set it, which is why the input lane below is claim-free. Nor are they denied: the
+desk is one actor for every console on it, and only its coordinates button enters the screen, so a press is refused
+only on that button, and the import and export, processing and analyzer buttons work while another player is in the
+coordinates view `[V]` (by hand, on the rig).
 While a peer's ping runs, the host keeps the desk claimed for that peer after it leaves, so no
 other aim moves the dots its machine is consuming. A pinger knocked down (a faint, a KO, a death)
 holds it no longer: its ragdoll left the desk as any exit does, and the next player can sit while the
