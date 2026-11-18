@@ -254,11 +254,32 @@ void Ask(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid) {
             index, ok ? 1 : 0);
 }
 
+const char* ReasonName(uint8_t bits) {
+    switch (static_cast<N::CoverReason>(bits)) {
+    case N::CoverReason::Ok: return "taken";
+    case N::CoverReason::OutOfReach: return "out of reach";
+    case N::CoverReason::Busy: return "refused by the desk or station";
+    case N::CoverReason::Already: return "already so";
+    case N::CoverReason::NotHeld: return "the plate is not in this player's hold";
+    case N::CoverReason::NoStation: return "no such desk or station";
+    case N::CoverReason::Rate: return "asked too fast";
+    }
+    return "unknown";
+}
+
 // The end of a client's timed unbolt: asked of the host, and the unbolt's widget taken down here.
 sg::Verdict OnUnscrewPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object) return sg::Verdict::Run;
     const int32_t plate = AD::LookingAtPanel(c.object);
-    if (plate >= 0 && plate < N::kCoverDeskPanels) Ask(N::kCoverOpUnscrew, N::kCoverDesk, static_cast<uint8_t>(plate), 0, 0);
+    uint8_t bits = 0;
+    if (plate >= 0 && plate < N::kCoverDeskPanels) {
+        // The game's verb flips the plate's bolt; the ask says the state that flip makes, so the host leaves a plate that
+        // is already there.
+        if (AD::ReadPlates(c.object, bits))
+            Ask(N::kCoverOpUnscrew, N::kCoverDesk, static_cast<uint8_t>(plate), PlateLoose(bits, plate) ? 0 : 1, 0);
+        else
+            UE_LOGW("cover_sync: CLIENT the desk's plates did not read -- the unbolt of plate %d is not asked", plate);
+    }
     g_applying = true;
     CC::CallParamlessNamed(c.object, L"resetUnscrew");
     g_applying = false;
@@ -344,7 +365,8 @@ void OnState(const coop::net::CoverPayload& p) {
     if (p.op == N::kCoverOpAnswer) {
         if (p.eid && p.index < N::kCoverDeskPanels)
             UE_LOGI("cover_sync: CLIENT the host took plate %u off -- its prop eid %u lies where the plate was", p.index, p.eid);
-        else UE_LOGI("cover_sync: CLIENT the host's desk refused this player's take-off of plate %u", p.index);
+        else UE_LOGI("cover_sync: CLIENT the host answered this player's ask of %hs %u: %hs",
+                     p.what == N::kCoverDesk ? "plate" : "station", p.index, ReasonName(p.bits));
         return;
     }
     if (p.op != N::kCoverOpState) return;

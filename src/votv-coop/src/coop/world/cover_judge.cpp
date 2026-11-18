@@ -87,12 +87,13 @@ void SendDoor(int index, bool open, int slot) {
     Send(p, slot);
 }
 
-void AnswerTakeOff(int slot, uint8_t plate, uint32_t eid) {
+// An ask's answer to its sender: the verdict in `bits`, and a granted take-off's prop in `eid`.
+void Answer(int slot, uint8_t what, uint8_t index, N::CoverReason why, uint32_t eid = 0) {
     N::CoverPayload p{};
     p.op = N::kCoverOpAnswer;
-    p.what = N::kCoverDesk;
-    p.index = plate;
-    p.bits = eid ? 1 : 0;
+    p.what = what;
+    p.index = index;
+    p.bits = static_cast<uint8_t>(why);
     p.eid = eid;
     Send(p, slot);
 }
@@ -169,7 +170,8 @@ void PayOwed() {
             ++i;
             continue;
         }
-        AnswerTakeOff(o.slot, o.plate, eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid));
+        Answer(o.slot, N::kCoverDesk, o.plate, eid == EL::kInvalidId ? N::CoverReason::Busy : N::CoverReason::Ok,
+               eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid));
         UE_LOGI("cover_sync: HOST slot %d's plate %u is prop eid %u -- answered", o.slot, o.plate,
                 eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid));
         g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
@@ -206,7 +208,7 @@ void JudgeDesk(const Ask& a) {
     const uint8_t plate = a.p.index;
     if (!desk || !AD::ReadPlates(desk, bits) || plate >= N::kCoverDeskPanels) {
         UE_LOGW("cover_sync: HOST slot %d asked of plate %u with no desk here -- refused", a.slot, plate);
-        if (a.p.op == N::kCoverOpTakeOff) AnswerTakeOff(a.slot, plate, 0);
+        Answer(a.slot, N::kCoverDesk, plate, N::CoverReason::NoStation);
         return;
     }
     ue_wrap::FVector eye{};
@@ -219,10 +221,19 @@ void JudgeDesk(const Ask& a) {
                 eye.X, eye.Y, eye.Z, seen ? std::sqrt(Dist2(eye, plateAt)) : -1.f, plate, plateAt.X, plateAt.Y, plateAt.Z);
     const bool busy = AD::ProcessOr(desk, false);
     if (a.p.op == N::kCoverOpUnscrew) {
-        const bool ok = reach && plate != kFixedPlate && PlateOn(bits, plate) && !busy;
-        if (ok) WritePlates(desk, static_cast<uint8_t>(bits ^ (1u << (4 + plate))));
-        UE_LOGI("cover_sync: HOST slot %d %hs plate %u -- %hs", a.slot, PlateLoose(bits, plate) ? "bolts" : "unbolts",
-                plate, ok ? "taken" : reach ? "refused by the desk" : "out of reach, refused");
+        // The ask carries the state the sender wants (the game's verb is a toggle): a plate already so is left, so two
+        // asks or a stale one cannot invert each other.
+        const bool want = (a.p.bits & 1u) != 0;
+        const bool already = PlateLoose(bits, plate) == want;
+        const bool ok = reach && plate != kFixedPlate && PlateOn(bits, plate) && !busy && !already;
+        if (ok) {
+            const uint8_t bolt = static_cast<uint8_t>(1u << (4 + plate));
+            WritePlates(desk, static_cast<uint8_t>(want ? (bits | bolt) : (bits & ~bolt)));
+        } else if (reach && already) {
+            Answer(a.slot, N::kCoverDesk, plate, N::CoverReason::Already);
+        }
+        UE_LOGI("cover_sync: HOST slot %d %hs plate %u -- %hs", a.slot, want ? "unbolts" : "bolts", plate,
+                ok ? "taken" : !reach ? "out of reach, refused" : already ? "already so, left" : "refused by the desk");
     } else if (a.p.op == N::kCoverOpTakeOff) {
         const bool ok = reach && PlateLoose(bits, plate) && PlateOn(bits, plate) && !busy;
         void* const prop = ok ? TakeOff(desk, plate, bits) : nullptr;
@@ -237,7 +248,7 @@ void JudgeDesk(const Ask& a) {
             g_fresh.back().plate = plate;
             g_fresh.back().since = NowMs();
         } else {
-            AnswerTakeOff(a.slot, plate, 0);
+            Answer(a.slot, N::kCoverDesk, plate, reach ? N::CoverReason::Busy : N::CoverReason::OutOfReach);
         }
         UE_LOGI("cover_sync: HOST slot %d takes plate %u off -- %hs", a.slot, plate,
                 prop ? "taken" : ok ? "the plate's prop was not made" : reach ? "refused by the desk" : "out of reach, refused");

@@ -708,11 +708,13 @@ enum class ReliableKind : uint16_t {
     // HOST->ALL: a cover's state (coop/world/cover_sync), when it changes and to a joiner at its ready edge. The signal
     // desk's four back plates: which are on and which are unbolted, written into the desk and shown through its own
     // updPanels. A transformer station's (generator_C) maintenance door: open or shut, shown through its own openDoor.
-    // Op 5, HOST->that client: its take-off was granted or refused. Never relayed; not pre-world. CoverPayload.
+    // Op 5, HOST->that client: its ask was answered, with a CoverReason (a granted take-off carries the prop's element
+    // id). Never relayed; not pre-world. CoverPayload.
     CoverState = 266,
-    // CLIENT->HOST: this client's player unbolted or bolted a back plate (op 1), took one off (op 2), set one back (op 3,
-    // the plate prop's element id), or pressed a transformer station's door (op 4, the state it wants). The host judges
-    // the sender's reach and its own desk's or station's state, runs the change on its copy, and CoverState answers.
+    // CLIENT->HOST: this client's player unbolted or bolted a back plate (op 1, the state it wants), took one off (op 2),
+    // set one back (op 3, the plate prop's element id), or pressed a transformer station's door (op 4, the state it
+    // wants). The host judges the sender's reach and its own desk's or station's state, runs the change on its copy, and
+    // CoverState answers.
     // Never relayed. CoverPayload.
     CoverIntent = 267,
 
@@ -4998,12 +5000,22 @@ inline constexpr uint8_t kCoverOpState = 0, kCoverOpUnscrew = 1, kCoverOpTakeOff
                          kCoverOpDoor = 4, kCoverOpAnswer = 5;
 inline constexpr uint8_t kCoverDesk = 0, kCoverStation = 1;
 inline constexpr uint8_t kCoverDeskPanels = 4;  // the desk's back plates: top left, bottom left, top right, bottom right
+// Op 5's answer to an ask, the host's verdict in `bits`.
+enum class CoverReason : uint8_t {
+    Ok = 0,          // the ask was taken
+    OutOfReach = 1,  // the sender's body is not near enough, or not here
+    Busy = 2,        // the desk or station is mid-move, or refuses the change
+    Already = 3,     // the plate or door is already in the wanted state
+    NotHeld = 4,     // a put-back of a plate prop the sender does not hold
+    NoStation = 5,   // the desk or the station named is not here
+    Rate = 6,        // the sender asked faster than the host answers
+};
 struct CoverPayload {
     uint8_t  op;     // kCoverOp*
     uint8_t  what;   // kCoverDesk, kCoverStation
     uint8_t  index;  // ops 1-3, 5: the plate; a station: its place in the gamemode's list
     uint8_t  bits;   // op 0 desk: plates on in bits 0-3, unbolted in bits 4-7; op 0 station and op 4: bit 0 open;
-                     // op 5: bit 0 granted
+                     // op 1: bit 0 the plate unbolted, as the sender wants it; op 5: a CoverReason
     uint32_t eid;    // op 3: the plate prop's element id; op 5: the plate the host spawned, 0 when refused
 };
 static_assert(sizeof(CoverPayload) == 8, "CoverPayload must be 8 bytes");
