@@ -12,6 +12,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_instances.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/types.h"
@@ -48,11 +49,12 @@ uint64_t g_nextRead = 0;
 
 uint64_t Now() { return ::GetTickCount64(); }
 
+// The level's spawners, from the object index's list of the class: never a walk of the object array, since the host
+// reads them twice a second.
 std::vector<void*> Spawners() {
-    std::vector<void*> out;
-    for (void* o : R::FindObjectsByClass(kSpawnerClass))
-        if (o && R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__")) out.push_back(o);
-    return out;
+    void* found[8];
+    const int32_t n = ue_wrap::world_instances::Find(kSpawnerClass, found, 8);
+    return std::vector<void*>(found, found + n);
 }
 
 void* Rock(void* spawner) {
