@@ -2,6 +2,8 @@
 
 #include "coop/interactables/oven_progress_sync.h"
 
+#include "coop/config/config.h"                    // [dev] oven_merge_off
+#include "coop/config/config_registry.h"
 #include "coop/interactables/interactable_sync.h"  // the oven lane's index: key <-> oven
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -62,6 +64,7 @@ constexpr size_t kMaxParked = 8;
 std::vector<ue_wrap::CachedObjRef> g_unsent;
 
 uint64_t g_raised = 0;
+uint64_t g_arrived = 0;
 
 int Bits(uint8_t m) {
     int n = 0;
@@ -92,6 +95,13 @@ bool Merge(void* oven, const std::wstring& key, uint8_t mask, const char* from) 
     uint8_t live = 0;
     if (!OS::TryReadProgress(oven, live)) return false;
     const uint8_t add = static_cast<uint8_t>(mask & OS::kAll & ~live);
+    if (add) ++g_arrived;
+    // [dev] oven_merge_off, the red arm of coop/dev/oven_progress_drill: the arrival is counted and the bit is not raised.
+    static const bool sMergeOff = coop::config::ResolveFlag(coop::config_registry::rows::oven_merge_off);
+    if (add && sMergeOff) {
+        UE_LOGW("oven_progress: [dev] oven_merge_off -- key='%ls' mask 0x%02X not raised (%s)", key.c_str(), add, from);
+        return true;
+    }
     // Set before the raise: the screen's own upd, which the raise runs, then finds nothing new to send.
     const uint8_t now = static_cast<uint8_t>(KnownOf(key) | live | add);
     KnownOf(key) = now;
@@ -245,6 +255,8 @@ void QueueConnectBroadcastForSlot(int slot) {
 }
 
 uint64_t BitsRaised() { return g_raised; }
+
+uint64_t MasksArrived() { return g_arrived; }
 
 void OnDisconnect() { Forget("session end"); }
 

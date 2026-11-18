@@ -37,6 +37,10 @@ void QueueConnectBroadcastForSlot(int slot);
 // How many bits this peer has raised on a screen from the wire. Game thread.
 uint64_t BitsRaised();
 
+// How many masks from the wire carried a bit the receiving screen lacked, counted where the screen is
+// read and before any bit is raised: the arrival event a drill judges on. Game thread.
+uint64_t MasksArrived();
+
 // Full state reset. Wired into the subsystems teardown fanout.
 void OnDisconnect();
 
