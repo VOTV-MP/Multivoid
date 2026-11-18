@@ -18,6 +18,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_instances.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/cargo_lift.h"
@@ -260,8 +261,11 @@ void HoldForRiders() {
     if (NowMs() < g_holdAtMs) return;
     g_holdAtMs = NowMs() + 100;
     std::vector<void*> held;
-    for (void* lift : R::FindObjectsByClass(L"cargoLift_C")) {
-        if (!lift || !R::IsLive(lift) || R::NameStartsWith(R::NameOf(lift), L"Default__")) continue;
+    // The level's lifts, from the object index's list of the class: never a walk of the object array, ten times a second.
+    void* lifts[16];
+    const int32_t n = ue_wrap::world_instances::Find(L"cargoLift_C", lifts, 16);
+    for (int32_t i = 0; i < n; ++i) {
+        void* const lift = lifts[i];
         bool moving = false;
         ue_wrap::FVector pl{};
         if (!L::ReadMoving(lift, moving) || !moving || !L::PlatformLocation(lift, pl) || !RemoteRider(pl)) continue;
