@@ -152,17 +152,18 @@ void OnUpdPost(const sg::Call& c) {
 void OnOvenIndexed() {
     if (g_parked.empty() && g_unsent.empty()) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    for (size_t i = g_parked.size(); i-- > 0;) {
-        void* oven = IS::OvenActor(g_parked[i].key);
-        if (!oven || !Merge(oven, g_parked[i].key, g_parked[i].mask, "parked")) continue;
-        g_parked.erase(g_parked.begin() + static_cast<std::ptrdiff_t>(i));
-    }
+    // This peer's own unsent steps go first: a parked mask merged before them would count them as known, and they would never be sent.
     for (size_t i = g_unsent.size(); i-- > 0;) {
         void* oven = g_unsent[i].Get();
         const std::wstring key = oven ? IS::OvenKey(oven) : std::wstring();
         if (oven && key.empty()) continue;
         if (oven && s && s->running()) SendLive(s, oven, key);
         g_unsent.erase(g_unsent.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+    for (size_t i = g_parked.size(); i-- > 0;) {
+        void* oven = IS::OvenActor(g_parked[i].key);
+        if (!oven || !Merge(oven, g_parked[i].key, g_parked[i].mask, "parked")) continue;
+        g_parked.erase(g_parked.begin() + static_cast<std::ptrdiff_t>(i));
     }
 }
 
