@@ -22,6 +22,9 @@ inline constexpr uint8_t kScrewBR = 1u << 3;
 inline constexpr uint8_t kLid     = 1u << 4;
 inline constexpr uint8_t kAll     = 0x1F;
 
+// The oven a repair screen belongs to (its `kitchen`), or null when it names none. Game thread.
+void* OvenOfScreen(void* screen);
+
 // Every live kitchen_C of this world. A walk of the class's objects: callers keep the result.
 std::vector<void*> FindOvens();
 

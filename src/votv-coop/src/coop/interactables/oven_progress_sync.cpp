@@ -8,7 +8,9 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/oven_screen.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
 #include <atomic>
@@ -22,7 +24,15 @@ namespace coop::oven_progress_sync {
 namespace {
 
 namespace OS = ue_wrap::oven_screen;
+namespace sg = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
+
+// The repair screen's own repaint. UI_oven's graph writes a screw's or the lid's bool and calls it at once
+// (UI_oven.cpp: TL, TR, BL, BR, lid), so its end is where the screen's mask has just changed.
+UE_FACT_FN(kRowUpd, "oven_progress_sync", L"UI_oven_C", L"upd", Declared);
+constexpr int kTagUpd = 0x4F564E01;  // 'OVN' 1
+bool g_watched = false;
+bool g_settled = false;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -42,12 +52,10 @@ struct Parked {
 std::vector<Parked> g_parked;
 constexpr size_t kMaxParked = 8;
 
-constexpr auto kPollEvery = std::chrono::milliseconds(250);
 // The scan walks the object array, a few milliseconds of one frame: every 3 s while no oven is known (a world
 // still loading), once a minute after, and at once when a known oven dies (a new world).
 constexpr auto kScanEvery = std::chrono::seconds(3);
 constexpr auto kRescanEvery = std::chrono::seconds(60);
-Clock::time_point g_nextPoll{};
 Clock::time_point g_nextScan{};
 uint64_t g_raised = 0;
 
@@ -115,35 +123,67 @@ void Scan() {
     }
 }
 
+Oven* ByOven(void* oven) {
+    for (auto& o : g_ovens)
+        if (o.ref.Get() == oven) return &o;
+    return nullptr;
+}
+
+// A screen's repaint just ran: the bits it gained since this peer last sent or took its mask go out. The
+// screen's own writes and the lane's merges both end here; a merge set `known` first, so it sends nothing.
+void OnUpdPost(const sg::Call& c) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->running()) return;
+    void* oven = OS::OvenOfScreen(c.object);
+    if (!oven) return;
+    Oven* o = ByOven(oven);
+    if (!o) {
+        Scan();
+        o = ByOven(oven);
+    }
+    if (!o) {
+        UE_LOGW("oven_progress: a screen's step on an oven with no key here -- not sent");
+        return;
+    }
+    uint8_t live = 0;
+    if (!OS::TryReadProgress(oven, live) || (live & ~o->known) == 0) return;
+    const uint8_t before = o->known;
+    o->known = static_cast<uint8_t>(o->known | live);
+    if (!s->connected()) return;
+    UE_LOGI("oven_progress: key='%ls' local step 0x%02X->0x%02X -- sent", o->key.c_str(), before, o->known);
+    Send(s, *o);
+}
+
 }  // namespace
 
-void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
+void Install(coop::net::Session* session) {
+    g_session.store(session, std::memory_order_release);
+    if (g_watched) return;
+    g_watched = true;
+    if (!sg::WatchName(kRowUpd, kTagUpd, nullptr, &OnUpdPost))
+        UE_LOGE("oven_progress: the watch on the repair screen's upd was refused -- no step is sent");
+}
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    const auto now = Clock::now();
-    if (now < g_nextPoll) return;
-    g_nextPoll = now + kPollEvery;
-    if (now >= g_nextScan) {
-        Scan();
-        g_nextScan = now + ((g_ovens.empty() || !g_parked.empty()) ? kScanEvery : kRescanEvery);
-    }
-    for (auto& o : g_ovens) {
-        void* oven = o.ref.Get();
-        uint8_t live = 0;
-        if (!oven) {
-            g_nextScan = now;  // its world is gone: the next poll scans the new one
-            continue;
+    if (g_watched && !g_settled) {
+        sg::ResolvePendingNames();
+        if (sg::NameWatchSettled(kRowUpd, kTagUpd)) {
+            g_settled = true;
+            if (sg::NameWatchLive(kRowUpd, kTagUpd)) UE_LOGI("oven_progress: the watch on the repair screen is live");
+            else UE_LOGE("oven_progress: the watch on the repair screen is dead -- no step is sent");
         }
-        if (!OS::TryReadProgress(oven, live)) continue;
-        if ((live & ~o.known) == 0) continue;
-        const uint8_t before = o.known;
-        o.known = static_cast<uint8_t>(o.known | live);
-        if (!s->connected()) continue;
-        UE_LOGI("oven_progress: key='%ls' local step 0x%02X->0x%02X -- sent", o.key.c_str(), before, o.known);
-        Send(s, o);
     }
+    const auto now = Clock::now();
+    for (const auto& o : g_ovens)
+        if (!o.ref.Get()) {
+            g_nextScan = {};  // its world is gone: scan the new one
+            break;
+        }
+    if (now < g_nextScan) return;
+    Scan();
+    g_nextScan = now + ((g_ovens.empty() || !g_parked.empty()) ? kScanEvery : kRescanEvery);
 }
 
 void OnProgress(const coop::net::OvenProgressStatePayload& p, uint8_t senderSlot) {
@@ -183,7 +223,6 @@ uint64_t BitsRaised() { return g_raised; }
 void OnDisconnect() {
     g_ovens.clear();
     g_parked.clear();
-    g_nextPoll = {};
     g_nextScan = {};
 }
 

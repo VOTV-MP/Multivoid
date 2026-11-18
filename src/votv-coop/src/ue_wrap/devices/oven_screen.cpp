@@ -15,6 +15,8 @@ namespace R = ue_wrap::reflection;
 // kitchen_C's `widget`, and the screen's bools in the mask's bit order, each on the class it is read
 // from.
 R::InstanceOffset g_widget{L"widget"};
+// UI_oven_C's back pointer to the kitchen_C it repairs.
+R::InstanceOffset g_kitchen{L"kitchen"};
 R::InstanceOffset g_bools[5] = {R::InstanceOffset{L"TL_unscrewed"}, R::InstanceOffset{L"TR_unscrewed"},
                                 R::InstanceOffset{L"BL_unscrewed"}, R::InstanceOffset{L"BR_unscrewed"},
                                 R::InstanceOffset{L"lid_taken"}};
@@ -44,6 +46,14 @@ void* Screen(void* oven, bool* out[5]) {
 }
 
 }  // namespace
+
+void* OvenOfScreen(void* screen) {
+    if (!screen || !R::IsLive(screen)) return nullptr;
+    const int32_t off = g_kitchen.Of(screen);
+    if (off < 0) return nullptr;
+    void* oven = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(screen) + off);
+    return oven && R::IsLive(oven) && ue_wrap::appliance::IsOven(oven) ? oven : nullptr;
+}
 
 std::vector<void*> FindOvens() {
     std::vector<void*> out;

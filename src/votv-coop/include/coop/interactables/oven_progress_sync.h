@@ -22,9 +22,9 @@ namespace coop::oven_progress_sync {
 // Idempotent: caches `session`.
 void Install(coop::net::Session* session);
 
-// Per net-pump pass, throttled: the ovens of this world are found, each screen's mask is compared
-// with what this peer last knew, and a mask that arrived before its oven was found is applied. Game
-// thread.
+// Per net-pump pass: the ovens of this world are found, and a mask that arrived before its oven was
+// found is applied. A screen's own steps are not polled: the game calls its upd() right after each
+// bool it writes, and a script-gate watch on it sends the new mask. Game thread.
 void Tick();
 
 // OvenProgressState from the wire (router: event_dispatch_signal.cpp).
