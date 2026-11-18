@@ -82,6 +82,7 @@
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_retrieve.h"
+#include "coop/props/dingus_sync.h"
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
 #include "coop/world/ufo_sync.h"  // the paths of the UFOs still flying, and the Midas run
@@ -112,6 +113,7 @@ void ConnectReplayForSlot(int slot) {
         coop::net::SnapshotSendScope scope(slot);  // the removes are the snapshot's, so the join gate passes them
         coop::join_window_baseline::SendDivergenceDeletes(slot);
         coop::hook_retrieve::SendJoinGone(slot);  // and the anchored hooks it holds that were taken since: its copy goes too
+        coop::dingus_sync::SendJoinFound(slot);  // and every dingus found this session: its copies go quiet as they appear
         coop::prop_nametag::SendJoinTags(slot);  // and every tag put on this session, ahead of the snapshot's props: a copy its save loaded takes it, one the snapshot births waits for it
     }
     // Every dish code, sent here and held by the join gate until the snapshot completes, so a set that goes whole lands

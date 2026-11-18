@@ -47,6 +47,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::DeskShortRequest:
     case ReliableKind::ContainerBreakRequest:
     case ReliableKind::MinerIntent:
+    case ReliableKind::DingusFound:       // op 0 a client's report; op 1 is the host's, its handler checks the slot
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:

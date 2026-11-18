@@ -50,6 +50,7 @@
 #include "coop/world/ufo_sync.h"             // the ambient UFOs: the host's paths and the Midas run
 #include "coop/props/roomba_sync.h"           // the robot cleaner: the host drives it and owns its switch
 #include "coop/props/fireext_thrust_sync.h"  // an extinguisher in runaway thrust: the host's
+#include "coop/props/dingus_sync.h"            // the dingus found once for every player
 #include "coop/player/puppet_identity.h"  // a puppet's touch never runs this machine's player's effects
 #include "coop/player/sleep_rest.h"
 #include "coop/player/hunger_share.h"  // the host's shared-hunger rule on this peer's own player
@@ -377,6 +378,7 @@ void Install(coop::net::Session& session) {
     coop::save_block::Install(&session);
     // Grey out the client pause menu's Save button; a no-op on the host.
     coop::save_button_disable::Install(&session);
+    coop::dingus_sync::Install(&session);  // the dingus found: the host's set, every copy under it quiet
     coop::save_notice::Install(&session);  // the host's world saves: a chat line on every peer, the save animation on a client
     // The shutdown install and the window title are called from the boot timeline directly, not
     // here: they must work before the local player is possessed, since a player may close the
@@ -648,7 +650,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // the server boxes: the watches settled, then the HOST's 1 Hz poll -> broadcast on change
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server_upgrade"}; coop::server_upgrade_sync::Tick(); }  // a parked canonical, applied once the servers resolve
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); coop::mirror_slot_entry::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim; the mirror entry's watches settle
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); coop::dingus_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists

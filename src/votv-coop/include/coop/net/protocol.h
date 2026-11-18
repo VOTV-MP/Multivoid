@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 311;
+inline constexpr uint16_t kProtocolVersion = 312;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1563,6 +1563,11 @@ enum class ReliableKind : uint16_t {
     // rig's `upgrade` or claim, whose hints go to the asker; a use it refuses gives the item back beside the sender. A
     // rig's record from a client is judged by the record lane's own gate (miner_sync). Never relayed. MinerPayload.
     MinerIntent = 248,
+
+    // The dingus found (coop/props/dingus_sync): a client's report of one it found, to the host (op 0), and the host's
+    // word that one is found, to every client and to a joiner (op 1); each peer marks its copies under the key found and
+    // turns their music off. Not pre-world. DingusFoundPayload.
+    DingusFound = 280,
 };
 
 #pragma pack(push, 1)
@@ -3071,6 +3076,16 @@ struct CheatResultPayload {
     uint16_t done;    // 2 -- SpawnItem: how many were spawned; otherwise 0
 };
 static_assert(sizeof(CheatResultPayload) == 8, "CheatResultPayload must be 8 bytes");
+
+// DingusFound. A dingus is named by its save key, which it keeps through the inventory.
+inline constexpr uint8_t kDingusFoundReport = 0;   // CLIENT->HOST: this peer's copy of it was found
+inline constexpr uint8_t kDingusFoundHost   = 1;   // HOST->ALL: it is found
+struct DingusFoundPayload {
+    WireKey key;     // 32 -- the dingus's save key
+    uint8_t op;      // 1 -- kDingusFound*
+    uint8_t pad[3];  // 3 -- zero
+};
+static_assert(sizeof(DingusFoundPayload) == 36, "DingusFoundPayload must be 36 bytes");
 
 // A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
 // closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element
