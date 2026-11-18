@@ -421,6 +421,8 @@ uint32_t LastTakeOffEid() { return g_lastTakeOffEid; }
 
 uint32_t DeskStatesApplied() { return g_deskStatesApplied; }
 
+bool PlateArmed(uint8_t plate) { return plate < N::kCoverDeskPanels && g_armed[plate]; }
+
 void NoteBroadcastDestroy(void* actor) {
     if (IsClient() && AD::PlateOfProp(actor) >= 0) {
         ++g_clientPlateDestroys;

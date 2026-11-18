@@ -47,6 +47,7 @@ void OnState(const coop::net::CoverPayload& p);
 uint32_t AnswersSeen(uint8_t reason);
 uint32_t LastTakeOffEid();
 uint32_t DeskStatesApplied();  // the host's plate states written into this client's desk
+bool PlateArmed(uint8_t plate);  // the lane has seen plate `plate`'s prop in this player's hand, off its lid: a touch asks the put-back
 bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 
 // [dev] A client's broadcast of an actor's destroy (prop_destroy_seam), counted when the actor is a plate prop: a client

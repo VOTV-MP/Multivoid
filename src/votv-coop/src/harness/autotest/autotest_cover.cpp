@@ -43,6 +43,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_nav.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
@@ -68,7 +69,7 @@ namespace CS  = coop::cover_sync;
 namespace N   = coop::net;
 
 constexpr const char* kTag = "cover";
-constexpr int kStepBound = 120;   // the bound on one step of the other peer's; INVALID only
+constexpr int kStepBound = 240;   // the bound on one step of the other peer's (the put-back's grab and carry are one); INVALID only
 constexpr int kWalkBound = 240;   // the client's staged walk; INVALID only
 constexpr int kStagedWalkBound = 120;  // the station leg after the game's own teleport: a few metres of walk, and its teleport; INVALID only
 constexpr int kArmBound = 40;     // an arm's own event; INVALID only
@@ -426,26 +427,79 @@ bool ArmCarried() {
     });
 }
 
-// The plate prop taken in hand as the use key grabs it, then carried onto its lid: the plate is on and the prop gone. The
-// grab waits for the copy to be free of the drive stream and is tried again, on the next readiness, when its chain fails.
-// The prop's destroy and the plates' state ride different lanes: the verdict is judged on a state applied after the prop
-// went, never in the gap between them.
+bool HeldHere(void* prop) {
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    return prop && ue_wrap::engine::ReadMainPlayerGrabState(coop::players::Registry::Get().Local(), gs) &&
+           (gs.grabbingActor == prop || gs.holdingActor == prop);
+}
+
+bool LaneArmed() { return OnGameThreadValue([] { return CS::PlateArmed(0); }); }
+
+// The plate prop taken in hand as the use key grabs it. The grab waits for the copy to be free of the host's drive stream and
+// is aimed afresh at the copy's current pose on each try (a new AimedGrab, again when its fan runs long or its chain fails).
+bool GrabPlateProp(uint32_t eid) {
+    constexpr int kGrabTries = 5, kFanPolls = 60;  // a try's aim fan runs at most six seconds
+    if (!PS::WaitFor("the plate prop's copy to leave the host's drive stream", kStepBound, [&] {
+            return OnGameThreadValue([&] { return FreeCopy(eid) != nullptr; });
+        }))
+        return false;
+    std::string why = "no try";
+    for (int tries = 0; tries < kGrabTries; ++tries) {
+        void* const me = OnGameThreadValue([] { return coop::players::Registry::Get().Local(); });
+        void* const prop = OnGameThreadValue([&] { return FreeCopy(eid); });
+        if (!me || !prop) { why = "the player or the plate prop copy is gone"; break; }
+        coop::director::AimedGrab grab(me, prop);
+        coop::director::GrabState state = coop::director::GrabState::Working;
+        for (int polls = 0; polls < kFanPolls && state == coop::director::GrabState::Working; ++polls) {
+            state = OnGameThreadValue([&] { return grab.Tick(); });
+            if (state == coop::director::GrabState::Working) ::Sleep(100);
+        }
+        if (state == coop::director::GrabState::Grabbed) return true;
+        why = state == coop::director::GrabState::Failed ? grab.Why() : "the aim fan found no pose in six seconds";
+        UE_LOGI("cover: the grab try %d did not take (%s) -- aimed again at the copy's pose", tries + 1, why.c_str());
+    }
+    RV::Say(kTag, RV::Outcome::Invalid, "putback: the plate prop was not grabbed in %d tries: %s", kGrabTries, why.c_str());
+    return false;
+}
+
+// The held prop carried beyond the lane's arming distance from its plate: the lane's own line (the prop in this player's hand,
+// off its lid) is the readiness event. A grab that already holds it there needs no walk; otherwise the director walks the
+// player back from the desk, still holding it.
+bool CarryPlateAway() {
+    if (PS::WaitFor("the lane to arm the plate prop", 3, [&] { return LaneArmed(); }, false)) return true;
+    ue_wrap::FVector me{}, plate{}, away{};
+    const bool read = OnGameThreadValue([&] {
+        void* const mesh = AD::PlateMesh(Desk(), 0);
+        if (!mesh || !E::TryGetComponentLocation(mesh, plate) ||
+            !E::TryGetActorLocation(coop::players::Registry::Get().Local(), me))
+            return false;
+        float dx = me.X - plate.X, dy = me.Y - plate.Y;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1.f) { dx /= len; dy /= len; } else { dx = 1.f; dy = 0.f; }
+        away = {plate.X + dx * (len + 250.f), plate.Y + dy * (len + 250.f), me.Z};
+        return true;
+    });
+    if (!read) {
+        RV::Say(kTag, RV::Outcome::Invalid, "putback: the player or plate 0 did not read");
+        return false;
+    }
+    if (!WalkNear("a place back from the signal desk", away, 150.f)) return false;
+    return PS::WaitFor("the lane to arm the plate prop", 20, [&] { return LaneArmed(); });
+}
+
+// The prop carried back to its lid, still held: the plate is on and the prop gone, from a CoverState applied after the
+// prop's destroy (its destroy and the state ride different lanes, so never judged in the gap). A hold that drops on the way
+// is INVALID: the arm measures the put-back, not the hold.
 bool ArmPutBack() {
-    static coop::director::AimedGrab* s_grab = nullptr;
-    static bool s_carrying = false, s_gone = false;
-    static int s_tries = 0;
+    if (!GrabPlateProp(CS::LastTakeOffEid()) || !CarryPlateAway()) return false;
+    static bool s_gone = false;
     static uint32_t s_statesAtGone = 0;
-    constexpr int kGrabTries = 5;
     return ClientArm("putback", [](std::string& why) {
-        if (!PlateProp() || !coop::players::Registry::Get().Local()) { why = "no plate prop or no player"; return false; }
-        delete s_grab;
-        s_grab = nullptr;
-        s_carrying = s_gone = false;
-        s_tries = 0;
+        s_gone = false;
+        if (!HeldHere(PlateProp())) { why = "the plate prop is not held after the carry"; return false; }
         return true;
     }, [](std::string& why) {
-        void* const me = coop::players::Registry::Get().Local();
-        if (On(Read(), 0)) { delete s_grab; s_grab = nullptr; return Judge::Pass; }
+        if (On(Read(), 0)) return Judge::Pass;
         void* const prop = PlateProp();
         if (!prop) {
             if (!s_gone) {
@@ -458,27 +512,7 @@ bool ArmPutBack() {
             }
             return Judge::Pending;
         }
-        if (!s_grab) {
-            if (!me || !FreeCopy(CS::LastTakeOffEid())) return Judge::Pending;
-            s_grab = new coop::director::AimedGrab(me, prop);
-            s_carrying = false;
-            return Judge::Pending;
-        }
-        if (!s_carrying) {
-            const coop::director::GrabState g = s_grab->Tick();
-            if (g == coop::director::GrabState::Failed) {
-                UE_LOGI("cover: the grab chain failed (%s) -- tried again on the copy's next readiness", s_grab->Why());
-                if (++s_tries >= kGrabTries) {
-                    why = std::string("the grab failed ") + std::to_string(kGrabTries) + " times: " + s_grab->Why();
-                    return Judge::Invalid;
-                }
-                delete s_grab;
-                s_grab = nullptr;
-            } else {
-                s_carrying = g == coop::director::GrabState::Grabbed;
-            }
-            return Judge::Pending;
-        }
+        if (!HeldHere(prop)) { why = "the hold dropped before the prop reached its lid"; return Judge::Invalid; }
         ue_wrap::FVector lidAt{};
         void* const lid = AD::Lid(Desk(), 0);
         if (lid && E::TryGetComponentLocation(lid, lidAt)) E::SetActorLocation(prop, lidAt);
