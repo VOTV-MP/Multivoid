@@ -10,6 +10,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/oven_screen.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -30,6 +31,10 @@ namespace sg = ue_wrap::script_gate;
 // (UI_oven.cpp: TL, TR, BL, BR, lid), so its end is where the screen's mask has just changed.
 UE_FACT_FN(kRowUpd, "oven_progress_sync", L"UI_oven_C", L"upd", Declared);
 constexpr int kTagUpd = 0x4F564E01;  // 'OVN' 1
+// The oven's own BeginPlay creates its repair screen (kitchen.cpp: ReceiveBeginPlay creates the widget and sets its
+// `kitchen`), so its end is the moment a screen first exists to take a mask.
+UE_FACT_FN(kRowBegin, "oven_progress_sync", L"kitchen_C", L"ReceiveBeginPlay", Declared);
+constexpr int kTagBegin = 0x4F564E02;  // 'OVN' 2
 bool g_watched = false;
 bool g_settled = false;
 
@@ -43,7 +48,8 @@ struct Known {
 std::vector<Known> g_known;
 
 // A mask that named an oven this peer cannot place yet: the oven is not indexed (a joiner's replay racing its
-// world load) or has no screen. It waits for the oven lane's index and is applied when the oven answers.
+// world load) or has no screen. It is applied when the oven lane's index names the oven with a screen, or when
+// the oven's BeginPlay makes the screen, and dropped, with a line, when the world changes.
 struct Parked {
     std::wstring key;
     uint8_t mask = 0;
@@ -150,25 +156,58 @@ void OnOvenIndexed() {
     }
 }
 
+// An oven's BeginPlay ended, so its screen exists: a mask parked for it because it had none is applied now. An oven
+// the oven lane has not indexed yet has no key to match; the index's rebuild places its mask.
+void OnBeginPlayPost(const sg::Call& c) {
+    if (g_parked.empty() || !c.object) return;
+    const std::wstring key = IS::OvenKey(c.object);
+    if (key.empty()) return;
+    for (size_t i = 0; i < g_parked.size(); ++i) {
+        if (g_parked[i].key != key) continue;
+        if (Merge(c.object, key, g_parked[i].mask, "parked, screen made"))
+            g_parked.erase(g_parked.begin() + static_cast<std::ptrdiff_t>(i));
+        return;
+    }
+}
+
+// What this peer kept for the world that went. A parked mask whose oven never appeared in it has no oven to wait
+// for any more.
+void Forget(const char* why) {
+    if (!g_parked.empty())
+        UE_LOGI("oven_progress: %zu parked mask(s) dropped (%s): their ovens are not in this world", g_parked.size(),
+                why);
+    g_known.clear();
+    g_parked.clear();
+    g_unsent.clear();
+}
+
+void OnWorldChange() noexcept { Forget("world change"); }
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_watched) return;
     g_watched = true;
-    if (!sg::WatchName(kRowUpd, kTagUpd, nullptr, &OnUpdPost))
-        UE_LOGE("oven_progress: the watch on the repair screen's upd was refused -- no step is sent");
+    const bool u = sg::WatchName(kRowUpd, kTagUpd, nullptr, &OnUpdPost);
+    const bool b = sg::WatchName(kRowBegin, kTagBegin, nullptr, &OnBeginPlayPost);
+    if (!u || !b)
+        UE_LOGE("oven_progress: a watch was refused (screen upd=%d oven begin=%d)", u ? 1 : 0, b ? 1 : 0);
     IS::SetOvenIndexedListener(&OnOvenIndexed);
+    if (!ue_wrap::world_identity::AddWorldChangeListener(&OnWorldChange))
+        UE_LOGE("oven_progress: the world-change list is full -- parked masks are dropped at the session's end only");
 }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || !g_watched || g_settled) return;
     sg::ResolvePendingNames();
-    if (!sg::NameWatchSettled(kRowUpd, kTagUpd)) return;
+    if (!sg::NameWatchSettled(kRowUpd, kTagUpd) || !sg::NameWatchSettled(kRowBegin, kTagBegin)) return;
     g_settled = true;
-    if (sg::NameWatchLive(kRowUpd, kTagUpd)) UE_LOGI("oven_progress: the watch on the repair screen is live");
-    else UE_LOGE("oven_progress: the watch on the repair screen is dead -- no step is sent");
+    const bool u = sg::NameWatchLive(kRowUpd, kTagUpd), b = sg::NameWatchLive(kRowBegin, kTagBegin);
+    if (u && b) UE_LOGI("oven_progress: the watches on the repair screen and the oven's start are live");
+    else UE_LOGE("oven_progress: a watch is dead (screen upd=%d oven begin=%d) -- the steps are not kept", u ? 1 : 0,
+                 b ? 1 : 0);
 }
 
 void OnProgress(const coop::net::OvenProgressStatePayload& p, uint8_t senderSlot) {
@@ -207,10 +246,6 @@ void QueueConnectBroadcastForSlot(int slot) {
 
 uint64_t BitsRaised() { return g_raised; }
 
-void OnDisconnect() {
-    g_known.clear();
-    g_parked.clear();
-    g_unsent.clear();
-}
+void OnDisconnect() { Forget("session end"); }
 
 }  // namespace coop::oven_progress_sync
