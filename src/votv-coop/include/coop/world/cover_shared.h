@@ -12,8 +12,6 @@ class Session;
 
 namespace coop::cover_sync {
 
-inline constexpr uint64_t kScanEveryMs = 100;  // the host's look at the covers
-
 coop::net::Session* Session();
 bool IsHost();
 bool IsClient();

@@ -72,6 +72,7 @@ constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
 constexpr uint8_t  kActionUse = 4;        // EInteractionActions: the E press
 constexpr uint8_t  kHintRefusal = 1;      // addHint's type for a refusal, as the game's own refusals use
 constexpr uint64_t kAskEveryMs = 250;     // this client's asks of the host, one per this
+constexpr uint64_t kPutBackPollMs = 100;  // the put-back's lid touch, looked for this often while a plate is off
 
 coop::net::Session* g_session = nullptr;
 bool g_watched = false;
@@ -162,13 +163,15 @@ bool g_armed[N::kCoverDeskPanels] = {};  // a plate's prop has been seen off its
 // A plate prop touching the lid of a plate that is off, here: asked of the host, which sets it back on its desk. The
 // desk's own set-back never runs on a client (its overlap is cancelled at the gate), so a copy born or carried there
 // is never eaten.
+// This is a poll because nothing announces the touch: measured, a held plate prop overlaps the desk once, at its body, and
+// never again at the lid, whose overlap the engine reports to a native delegate no seam sees. It runs only while a plate is
+// off (TickClient) and, for a plate, in two steps: a prop seen off its lid in this player's hand arms the plate (as the
+// desk's panelTakeoff waits for the prop's end-overlap), and only an armed plate looks for the touch. The arming ends
+// with the plate's return (OnState) or the prop's end.
 void AskPutBacks(void* desk, uint8_t bits) {
     const uint64_t now = NowMs();
     for (int i = 0; i < N::kCoverDeskPanels; ++i) {
-        if (PlateOn(bits, i) || i == kFixedPlate) {
-            g_armed[i] = false;  // as the desk's panelTakeoff: a prop born on its lid is not set back until it has left
-            continue;
-        }
+        if (PlateOn(bits, i) || i == kFixedPlate) continue;
         void* const lid = AD::Lid(desk, i);
         void* const cls = R::FindClass(AD::PlatePropClass(i));
         if (!lid || !cls) continue;
@@ -177,23 +180,29 @@ void AskPutBacks(void* desk, uint8_t bits) {
             if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
                 static_cast<std::vector<void*>*>(ctx)->push_back(obj);
         }, &props);
-        bool touching = false;
-        for (void* prop : props) {
-            const EL::ElementId eid = EL::Registry::Get().EidForActor(prop);
-            if (eid == EL::kInvalidId || !E::IsOverlappingActor(lid, prop)) continue;
-            touching = true;
-            if (!g_armed[i] || now - g_lastPutBackAskMs < 1000) break;
-            g_lastPutBackAskMs = now;
-            Ask(N::kCoverOpPutBack, N::kCoverDesk, static_cast<uint8_t>(i), 0, static_cast<uint32_t>(eid));
-            return;
+        if (props.empty()) {
+            g_armed[i] = false;
+            continue;
+        }
+        if (g_armed[i]) {
+            if (now - g_lastPutBackAskMs < 1000) continue;
+            for (void* prop : props) {
+                const EL::ElementId eid = EL::Registry::Get().EidForActor(prop);
+                if (eid == EL::kInvalidId || !E::IsOverlappingActor(lid, prop)) continue;
+                g_lastPutBackAskMs = now;
+                Ask(N::kCoverOpPutBack, N::kCoverDesk, static_cast<uint8_t>(i), 0, static_cast<uint32_t>(eid));
+                return;
+            }
+            continue;
         }
         // Armed off its lid in this player's own hand, as on the host: a copy that falls off the lid before the player
         // grabs it is lifted back through it by that grab.
-        bool away = false;
-        for (void* prop : props) away = away || AwayFromPlate(desk, static_cast<uint8_t>(i), prop);
-        if (!touching && away && HeldHere(props) && !g_armed[i]) {
+        if (!HeldHere(props)) continue;
+        for (void* prop : props) {
+            if (!AwayFromPlate(desk, static_cast<uint8_t>(i), prop)) continue;
             g_armed[i] = true;
             UE_LOGI("cover_sync: CLIENT plate %d's prop is in this player's hand, off its lid -- a touch sets it back", i);
+            break;
         }
     }
 }
@@ -220,12 +229,15 @@ void ConvergeDesk(void* desk, bool arrived) {
     if (arrived) ++g_deskStatesApplied;
 }
 
+// The one thing a client reads on a clock: the put-back's lid touch (AskPutBacks), and only while the host's plates have a
+// plate off. Everything else it keeps is written when the game announces it (OnUpdPanelsPost, OnDoorFinishedPost).
 void TickClient() {
+    bool anyOff = false;
+    for (int i = 0; i < N::kCoverDeskPanels; ++i) anyOff = anyOff || (i != kFixedPlate && !PlateOn(g_deskBits, i));
     const uint64_t now = NowMs();
-    if (g_haveDesk && now >= g_nextPutBackMs) {
-        g_nextPutBackMs = now + kScanEveryMs;
-        if (void* desk = AD::Find()) AskPutBacks(desk, g_deskBits);
-    }
+    if (!g_haveDesk || !anyOff || now < g_nextPutBackMs) return;
+    g_nextPutBackMs = now + kPutBackPollMs;
+    if (void* desk = AD::Find()) AskPutBacks(desk, g_deskBits);
 }
 
 // Station `index`'s door swung to the host's when it differs. A door still moving is left: the timeline's end runs this
@@ -442,6 +454,8 @@ void OnState(const coop::net::CoverPayload& p) {
     if (p.what == N::kCoverDesk) {
         g_deskBits = p.bits;
         g_haveDesk = true;
+        for (int i = 0; i < N::kCoverDeskPanels; ++i)
+            if (PlateOn(p.bits, i)) g_armed[i] = false;  // a plate set back is armed afresh when it next comes off
         if (void* const desk = AD::Find()) ConvergeDesk(desk, true);
         else g_deskPending = true;
     } else if (p.what == N::kCoverStation) {
