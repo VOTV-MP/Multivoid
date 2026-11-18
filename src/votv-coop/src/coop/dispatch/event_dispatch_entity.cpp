@@ -18,6 +18,7 @@
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
 #include "coop/items/hook_retrieve.h"
+#include "coop/props/dingus_sync.h"  // the dingus found once for every player
 #include "coop/items/hook_sync.h"  // the hook lane
 #include "coop/element/bind_wait.h"  // Holds: a held convert is no failed spawn
 #include "coop/element/quiescence_drain.h"  // the pending position corrections
@@ -467,6 +468,15 @@ bool HandleEntityEvent(net::Session& session,
         ue_wrap::game_thread::Post([p, slot] {
             ::coop::hook_sync::OnDestroyMsg(p, slot);
         });
+        break;
+    }
+    case net::ReliableKind::DingusFound: {
+        // op 0 a client's report of a dingus it found, to the host; op 1 the host's word that one is found.
+        if (msg.payloadLen < sizeof(net::DingusFoundPayload)) break;
+        net::DingusFoundPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] { ::coop::dingus_sync::OnMsg(p, slot); });
         break;
     }
     case net::ReliableKind::HookRetrieve: {

@@ -171,6 +171,21 @@ an id the character's spawn carries (`coop/creatures/kerfur_reconcile`). The rob
 are data-only subclasses, so the spawned class is the skin; the same bodies serve as player skins
 on [players.md](players.md).
 
+### The dingus
+
+The dingus (`prop_dingus_C` and its kin, Maxwell among them) is a prop that plays its music on its `ws1` component from
+its spawn until it is found: its first grab (`playerGrabbed`, then `Touch`) sets `isused` and deactivates the music, and
+its own `loadData` does the same for a record whose `isused` is set. Both are one peer's: the grab runs on the
+grabber's machine alone, and a dingus born on another peer from a drop does not take its record there, the dingus
+being a food the food lane owns. The others kept hearing the music of a dingus someone had found. The found set is
+the host's, by the dingus's save key, which it keeps through the inventory: each peer looks at its copies twice a
+second, the host puts a found one's key in the set and tells every client, a client tells the host of one it found,
+and every peer marks each copy under a key of the set found as `Touch` does, so a copy born later goes quiet at its
+first look; a joiner gets the set before its snapshot (`coop/props/dingus_sync`) `[V]` (`coop/dev/dingus_probe`,
+`VOTVCOOP_DINGUS_PROBE=host|client`: the finder grabs it, pockets it and drops it; with either peer the finder, the
+other's copy went quiet within a second of the grab, and the copy the drop made on the other peer within a second of
+its birth).
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -195,6 +210,7 @@ on [players.md](players.md).
 | `RoachState`, `RoachConsumed` | the host to all; a client to the host | a page of the infestation; a stomped or eaten roach |
 | `KerfurConvertRequest`, `KerfurConvert` | a client to the host; the host to all | a turn-on or turn-off to perform; the form transition with both ids, the form, the class and the pose |
 | `KerfurCommand` | a client to the host | a radial verb with the sender's request number, which the host runs serving the sender |
+| `DingusFound` | a client to the host (op 0); the host to all and to a joiner (op 1) | a dingus's save key: a client found it; it is found |
 | `KerfurCommandAnswer` | the host to the requester | the host's refusal of a command (busy, gone, murderous, out of reach, queue full, not an Omega, unavailable) or its wait for a body of the sender, as an enum the client words itself |
 
 ## Late join
@@ -232,5 +248,6 @@ wisp in flight is transient and owes nothing.
 | the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `harness/autotest/autotest_orb.cpp` (`orb_drill`) |
 | roaches | `coop/creatures/roach_sync` |
 | the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
+| the dingus | `coop/props/dingus_sync`; `coop/dev/dingus_probe` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |
 | tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it) |
