@@ -46,6 +46,7 @@ void OnState(const coop::net::CoverPayload& p);
 // make; false when it was not sent.
 uint32_t AnswersSeen(uint8_t reason);
 uint32_t LastTakeOffEid();
+uint32_t DeskStatesApplied();  // the host's plate states written into this client's desk
 bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 
 // [dev] A client's broadcast of an actor's destroy (prop_destroy_seam), counted when the actor is a plate prop: a client

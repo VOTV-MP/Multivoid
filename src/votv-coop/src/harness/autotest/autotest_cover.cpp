@@ -3,8 +3,9 @@
 //
 // The host changes a plate and the first station's door before the client's world is up (arm `join`). The client walks to
 // the desk with the director and, at each arm, acts as a player does and judges its own copy: `unbolt`, `stale` (the same
-// unbolt asked again: Already, the plate stays), `takeoff`, `putback` (the prop carried to its lid is eaten), `carried` (a
-// put-back of a prop nobody carried back is refused); then at the station `door` and `reach` (a desk ask from out of reach
+// unbolt asked again: Already, the plate stays), `takeoff`, `carried` (a put-back of a prop nobody carried back is refused),
+// `putback` (the prop carried to its lid is eaten); then, placed by the game's teleport beside the station, `door` and
+// `reach` (a desk ask from out of reach
 // is answered OutOfReach and changes nothing). After each arm the client tells the host what its copy shows and the host
 // compares it with its own. A failed arm is said FAIL at once and no later arm runs; the host says `rig: VERDICT cover
 // PASS` when all held. A verdict is decided at its event (the answer, or the change a red lets through); a time bound
@@ -21,7 +22,10 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/director/aimed_grab.h"
 #include "coop/net/protocol.h"
+#include "coop/element/registry.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_drive_stream.h"
+#include "coop/session/teleport_client.h"
 #include "coop/props/join_membership_sweep.h"
 #include "coop/session/host_world_settle.h"
 #include "coop/session/join_progress.h"
@@ -38,6 +42,8 @@
 #include "ue_wrap/devices/generator.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/engine/engine_nav.h"
+#include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
 
@@ -64,6 +70,7 @@ namespace N   = coop::net;
 constexpr const char* kTag = "cover";
 constexpr int kStepBound = 120;   // the bound on one step of the other peer's; INVALID only
 constexpr int kWalkBound = 240;   // the client's staged walk; INVALID only
+constexpr int kStagedWalkBound = 120;  // the station leg after the game's own teleport: a few metres of walk, and its teleport; INVALID only
 constexpr int kArmBound = 40;     // an arm's own event; INVALID only
 constexpr float kDeskStandCm = 180.f;
 constexpr float kStationStandCm = 300.f;
@@ -153,6 +160,10 @@ enum : unsigned { kBits = 1, kProps = 2, kOpened = 4 };
 bool HostArm(const std::string& name, unsigned compare) {
     std::string said;
     if (!PS::AwaitText((name + "_c").c_str(), said, kStepBound)) return false;
+    if (said.rfind("invalid", 0) == 0) {
+        RV::Say(kTag, RV::Outcome::Invalid, "%s: %s", name.c_str(), said.c_str());
+        return false;
+    }
     if (said.rfind("fail", 0) == 0) {
         RV::Say(kTag, RV::Outcome::Fail, "%s: %s", name.c_str(), said.c_str());
         return false;
@@ -175,7 +186,7 @@ bool HostArm(const std::string& name, unsigned compare) {
 }
 
 // What an arm's poll says: still waiting, the arm held, or it failed with `why`.
-enum class Judge { Pending, Pass, Fail };
+enum class Judge { Pending, Pass, Fail, Invalid };
 
 // The client's half of an arm: `act` runs on the game thread (false: a precondition is missing, INVALID), `poll` judges its
 // own copy every 100 ms until it settles, then the report goes to the host, whose answer gates the next arm.
@@ -200,6 +211,11 @@ bool ClientArm(const std::string& name, const std::function<bool(std::string&)>&
             return verdict != Judge::Pending;
         }))
         return false;
+    if (verdict == Judge::Invalid) {
+        PS::Mark((name + "_c").c_str(), "invalid " + why);
+        RV::Say(kTag, RV::Outcome::Invalid, "%s: %s", name.c_str(), why.c_str());
+        return false;
+    }
     if (verdict == Judge::Fail) {
         UE_LOGI("cover: CHECK %s client FAIL -- %s", name.c_str(), why.c_str());
         PS::Mark((name + "_c").c_str(), "fail " + why);
@@ -272,9 +288,9 @@ void RunHost(bool measure) {
     if (measure) cover_measure::Census();
     if (!PS::Await("client_at_desk", kWalkBound)) return;
     if (!HostArm("unbolt", kBits) || !HostArm("stale", kBits) || !HostArm("takeoff", kBits | kProps) ||
-        !HostArm("putback", kBits | kProps) || !HostArm("carried", kBits | kProps))
+        !HostArm("carried", kBits | kProps) || !HostArm("putback", kBits | kProps))
         return;
-    if (!PS::Await("client_at_station", kWalkBound)) return;
+    if (!PS::Await("client_at_station", kStagedWalkBound)) return;
     if (!HostArm("door", kBits | kOpened) || !HostArm("reach", kBits)) return;
     std::string word;
     if (!PS::AwaitText("client_done", word, kStepBound) || word != "ok") return;
@@ -300,6 +316,44 @@ bool ClientJoin() {
     return ClientArm("join", [](std::string&) { return true; }, [](std::string&) {
         const Snap s = Read();
         return Loose(s, 3) && s.opened == 1 ? Judge::Pass : Judge::Pending;
+    });
+}
+
+// The client's own staging for a place far from the desk: the game's own teleport onto a NavMesh point beside it (never a
+// raw SetActorLocation, which can land inside geometry), as the self-teleport lane lands a player; the walk that follows
+// is the director's. The landing is read back by an event, the player standing near the stand; the bound says INVALID.
+bool StageNear(const char* what, const ue_wrap::FVector& at) {
+    constexpr float kRingCm = 250.f;
+    ue_wrap::FVector stand{};
+    const bool sent = OnGameThreadValue([&] {
+        void* const me = coop::players::Registry::Get().Local();
+        const float half = me ? E::GetActorCharacterHalfHeight(me) : 0.f;
+        if (!me || !(half > 0.f)) return false;
+        const ue_wrap::FVector extent{150.f, 150.f, 250.f};
+        const ue_wrap::FVector tries[] = {at, {at.X + kRingCm, at.Y, at.Z}, {at.X - kRingCm, at.Y, at.Z},
+                                          {at.X, at.Y + kRingCm, at.Z}, {at.X, at.Y - kRingCm, at.Z}};
+        ue_wrap::FVector floor{};
+        bool found = false;
+        for (const ue_wrap::FVector& t : tries) found = found || E::ProjectToNav(me, t, extent, &floor);
+        if (!found) return false;
+        ue_wrap::FRotator view{};
+        if (void* const ctrl = E::GetController(me)) view = E::GetControlRotation(ctrl);
+        coop::teleport_client::ApplyArgs args{floor.X, floor.Y, floor.Z + half, view.Pitch, view.Yaw, view.Roll};
+        stand = {args.locX, args.locY, args.locZ};
+        return coop::teleport_client::ApplyLocally(args);
+    });
+    if (!sent) {
+        RV::Say(kTag, RV::Outcome::Invalid, "no NavMesh stand beside %s, or the game's teleport did not run", what);
+        return false;
+    }
+    UE_LOGI("cover: the client was placed by the game's teleport at (%.0f,%.0f,%.0f) for %s", stand.X, stand.Y, stand.Z, what);
+    return PS::WaitFor("the client to stand at its staged place", 20, [&] {
+        return OnGameThreadValue([&] {
+            ue_wrap::FVector now{};
+            if (!E::TryGetActorLocation(coop::players::Registry::Get().Local(), now)) return false;
+            return std::sqrt((now.X - stand.X) * (now.X - stand.X) + (now.Y - stand.Y) * (now.Y - stand.Y) +
+                             (now.Z - stand.Z) * (now.Z - stand.Z)) < 400.f;
+        });
     });
 }
 
@@ -345,61 +399,90 @@ bool ArmTakeOff() {
     });
 }
 
-// The plate prop taken in hand as the use key grabs it, then carried onto its lid: the plate is on and the prop gone.
+// The plate prop's copy here, once the host's drive stream is done with it: the End of its stream was applied, or the copy
+// is no longer parked and simulates. A grab before that is taken from a parked copy and does not take.
+void* FreeCopy(uint32_t eid) {
+    void* const prop = coop::element::LiveActorOfType(static_cast<coop::element::ElementId>(eid), coop::element::ElementType::Prop);
+    if (!prop) return nullptr;
+    coop::prop_drive_stream::AppliedEnd ends[coop::prop_drive_stream::kRecentEnds];
+    const size_t n = coop::prop_drive_stream::RecentEnds(ends, coop::prop_drive_stream::kRecentEnds);
+    for (size_t i = 0; i < n; ++i)
+        if (ends[i].eid == eid) return prop;
+    return !coop::prop_drive_stream::IsParked(prop) && E::IsActorRootSimulatingPhysics(prop) ? prop : nullptr;
+}
+
+// A put-back asked for a plate prop nobody has carried back: refused, and the plate stays off. Asked of the take-off's own
+// prop, which the arm before left on its lid, before anything carries it.
+bool ArmCarried() {
+    static uint32_t refused0 = 0;
+    return ClientArm("carried", [](std::string& why) {
+        refused0 = Refusals();
+        const uint32_t eid = CS::LastTakeOffEid();
+        if (eid == 0 || On(Read(), 0) || !PlateProp()) { why = "no plate prop of the take-off, or plate 0 is on"; return false; }
+        return CS::DrillAsk(N::kCoverOpPutBack, N::kCoverDesk, 0, 0, eid) || (why = "the ask was not sent", false);
+    }, [](std::string& why) {
+        if (On(Read(), 0)) { why = "a put-back nobody carried was applied: plate 0 is on"; return Judge::Fail; }
+        return Refusals() > refused0 ? Judge::Pass : Judge::Pending;
+    });
+}
+
+// The plate prop taken in hand as the use key grabs it, then carried onto its lid: the plate is on and the prop gone. The
+// grab waits for the copy to be free of the drive stream and is tried again, on the next readiness, when its chain fails.
+// The prop's destroy and the plates' state ride different lanes: the verdict is judged on a state applied after the prop
+// went, never in the gap between them.
 bool ArmPutBack() {
     static coop::director::AimedGrab* s_grab = nullptr;
-    static bool s_carrying = false;
+    static bool s_carrying = false, s_gone = false;
+    static int s_tries = 0;
+    static uint32_t s_statesAtGone = 0;
+    constexpr int kGrabTries = 5;
     return ClientArm("putback", [](std::string& why) {
-        void* const prop = PlateProp();
-        void* const me = coop::players::Registry::Get().Local();
-        if (!prop || !me) { why = "no plate prop or no player"; return false; }
+        if (!PlateProp() || !coop::players::Registry::Get().Local()) { why = "no plate prop or no player"; return false; }
         delete s_grab;
-        s_grab = new coop::director::AimedGrab(me, prop);
-        s_carrying = false;
+        s_grab = nullptr;
+        s_carrying = s_gone = false;
+        s_tries = 0;
         return true;
     }, [](std::string& why) {
-        void* const prop = PlateProp();
+        void* const me = coop::players::Registry::Get().Local();
         if (On(Read(), 0)) { delete s_grab; s_grab = nullptr; return Judge::Pass; }
-        if (!prop) { why = "the plate prop is gone and plate 0 is still off"; return Judge::Fail; }
+        void* const prop = PlateProp();
+        if (!prop) {
+            if (!s_gone) {
+                s_gone = true;
+                s_statesAtGone = CS::DeskStatesApplied();
+            }
+            if (CS::DeskStatesApplied() > s_statesAtGone) {
+                why = "the plate prop is gone and the state that followed left plate 0 off";
+                return Judge::Fail;
+            }
+            return Judge::Pending;
+        }
+        if (!s_grab) {
+            if (!me || !FreeCopy(CS::LastTakeOffEid())) return Judge::Pending;
+            s_grab = new coop::director::AimedGrab(me, prop);
+            s_carrying = false;
+            return Judge::Pending;
+        }
         if (!s_carrying) {
             const coop::director::GrabState g = s_grab->Tick();
             if (g == coop::director::GrabState::Failed) {
-                why = std::string("the grab failed: ") + s_grab->Why();
+                UE_LOGI("cover: the grab chain failed (%s) -- tried again on the copy's next readiness", s_grab->Why());
+                if (++s_tries >= kGrabTries) {
+                    why = std::string("the grab failed ") + std::to_string(kGrabTries) + " times: " + s_grab->Why();
+                    return Judge::Invalid;
+                }
                 delete s_grab;
                 s_grab = nullptr;
-                return Judge::Fail;
+            } else {
+                s_carrying = g == coop::director::GrabState::Grabbed;
             }
-            s_carrying = g == coop::director::GrabState::Grabbed;
             return Judge::Pending;
         }
         ue_wrap::FVector lidAt{};
         void* const lid = AD::Lid(Desk(), 0);
         if (lid && E::TryGetComponentLocation(lid, lidAt)) E::SetActorLocation(prop, lidAt);
         return Judge::Pending;
-    });
-}
-
-// A put-back asked for a plate prop nobody has carried back: refused, and the plate stays off.
-bool ArmCarried() {
-    static uint32_t refused0 = 0;
-    static int stage = 0;
-    return ClientArm("carried", [](std::string& why) {
-        refused0 = Refusals();
-        stage = 0;
-        SetLooking(Desk(), 0);
-        return PressE(Desk()) || (why = "the E press did not run", false);
-    }, [](std::string& why) {
-        const Snap s = Read();
-        if (stage == 0) {
-            if (Refusals() > refused0) { why = "the host refused the second take-off of plate 0"; return Judge::Fail; }
-            const uint32_t eid = CS::LastTakeOffEid();
-            if (On(s, 0) || s.props < 1 || eid == 0) return Judge::Pending;
-            refused0 = Refusals();
-            stage = CS::DrillAsk(N::kCoverOpPutBack, N::kCoverDesk, 0, 0, eid) ? 1 : -1;
-            return stage < 0 ? Judge::Fail : Judge::Pending;
-        }
-        if (On(s, 0)) { why = "a put-back nobody carried was applied: plate 0 is on"; return Judge::Fail; }
-        return Refusals() > refused0 ? Judge::Pass : Judge::Pending;
     });
 }
 
@@ -469,8 +552,8 @@ void RunClient(bool measure) {
     }
     if (!WalkNear("the signal desk", plateAt, kDeskStandCm)) return;
     PS::Mark("client_at_desk");
-    if (!ArmUnbolt() || !ArmStale() || !ArmTakeOff() || !ArmPutBack() || !ArmCarried()) return;
-    if (!WalkNear("the first transformer station", stationAt, kStationStandCm)) return;
+    if (!ArmUnbolt() || !ArmStale() || !ArmTakeOff() || !ArmCarried() || !ArmPutBack()) return;
+    if (!StageNear("the first transformer station", stationAt) || !WalkNear("the first transformer station", stationAt, kStationStandCm)) return;
     PS::Mark("client_at_station");
     PS::Mark("client_done", ArmDoor() && ArmReach() ? "ok" : "fail");
 }

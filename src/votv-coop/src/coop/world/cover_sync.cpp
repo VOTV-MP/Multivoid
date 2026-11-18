@@ -145,6 +145,7 @@ uint64_t g_lastPutBackAskMs = 0;
 uint32_t g_answers[8] = {};   // the drill's read: op 5 answers seen, by CoverReason
 uint32_t g_lastTakeOffEid = 0;
 uint32_t g_clientPlateDestroys = 0;
+uint32_t g_deskStatesApplied = 0;
 
 // Whether this player's hand grabs or holds one of `props`.
 bool HeldHere(const std::vector<void*>& props) {
@@ -218,6 +219,7 @@ void TickClient() {
                     UE_LOGW("cover_sync: CLIENT the desk's plates moved here to on=0x%x unbolted=0x%x -- set back to the "
                             "host's on=0x%x unbolted=0x%x", bits & 0xF, bits >> 4, g_deskBits & 0xF, g_deskBits >> 4);
             }
+            if (g_deskWanted) ++g_deskStatesApplied;
             g_deskWanted = false;
             AskPutBacks(desk, g_deskBits);
         }
@@ -416,6 +418,8 @@ void OnState(const coop::net::CoverPayload& p) {
 uint32_t AnswersSeen(uint8_t reason) { return reason < sizeof(g_answers) / sizeof(g_answers[0]) ? g_answers[reason] : 0; }
 
 uint32_t LastTakeOffEid() { return g_lastTakeOffEid; }
+
+uint32_t DeskStatesApplied() { return g_deskStatesApplied; }
 
 void NoteBroadcastDestroy(void* actor) {
     if (IsClient() && AD::PlateOfProp(actor) >= 0) {
