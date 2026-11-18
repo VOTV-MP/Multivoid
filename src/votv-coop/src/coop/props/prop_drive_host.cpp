@@ -2,6 +2,7 @@
 
 #include "coop/props/body_push.h"
 #include "coop/props/prop_drive_host.h"
+#include "coop/props/prop_rest_sync.h"
 
 #include "coop/config/config.h"
 #include "coop/dev/end_trace.h"                // NoteOpenRow: a dev line for each open row
@@ -148,7 +149,7 @@ Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0, Coa
     UE_LOGI("[PROP-DRIVE] HOST %s eid=%u gen=%u key='%ls' (%s%s) -- %zu driven",
             syncer ? "GRANT" : (claimed ? "CLAIM" : "COAST"), g_driven.back().eid,
             static_cast<unsigned>(g_driven.back().gen), keyW.c_str(), why,
-            claimed || syncer ? "" : (cause == CoastCause::LetGo ? ", let-go" : cause == CoastCause::BodyPush ? ", body push" : ", verb"),
+            claimed || syncer ? "" : (cause == CoastCause::LetGo ? ", let-go" : cause == CoastCause::BodyPush ? ", body push" : cause == CoastCause::Settle ? ", settle" : ", verb"),
             g_driven.size());
     return &g_driven.back();
 }
@@ -276,7 +277,7 @@ bool Coast(void* actor, const char* reason, CoastCause cause) {
     if (Driven* d = Find(actor)) {
         // A body's push opens a row and touches none: the row that stands (a let-go's, a verb's, a client's) is the prop's
         // one source, and a prop that still moves re-times its own row at each read.
-        if (cause == CoastCause::BodyPush) return false;
+        if (cause == CoastCause::BodyPush || cause == CoastCause::Settle) return false;
         // A push on a prop a client syncs: the row becomes the host's, coasting from the client's last pose (the
         // same override as Claim's).
         if (d->syncer != 0) {
@@ -538,6 +539,7 @@ static void Tick(coop::net::Session& s) {
 void Pump(coop::net::Session& s, bool isHost) {
     coop::prop_syncer::Tick(s, isHost);   // first: the role for a feeder's Claim, and a client's rows of the props it syncs
     coop::props::body_push::Tick(s, isHost);   // a feeder: the props a player's body walks into
+    coop::prop_rest_sync::Tick(s, isHost);     // the resting copies put where the host's rest
     if (isHost) {
         // The order is the point: a client's rows are judged first, so the row's turn in Tick publishes what
         // this tick admitted, and the apply tick then advances the host's copies they just fed.
@@ -549,6 +551,7 @@ void Pump(coop::net::Session& s, bool isHost) {
 
 void OnDisconnect() {
     coop::props::body_push::OnDisconnect();
+    coop::prop_rest_sync::OnDisconnect();
     coop::prop_wire_parity::OnDisconnect();
     g_driven.clear();
     g_turn = 0;

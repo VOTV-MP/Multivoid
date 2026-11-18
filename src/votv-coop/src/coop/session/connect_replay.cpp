@@ -82,6 +82,7 @@
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
 #include "coop/world/ufo_sync.h"  // the paths of the UFOs still flying, and the Midas run
+#include "coop/props/prop_rest_sync.h"  // the joiner's rest rest pass
 #include "coop/props/roomba_sync.h"  // every robot cleaner's switch
 #include "coop/world/spill_sync.h"
 #include "coop/world/vent_crawler_sync.h"
@@ -116,6 +117,7 @@ void ConnectReplayForSlot(int slot) {
     // included; a set not taken whole is retried from the lane's tick and can land after it.
     coop::dish_hashcode_sync::QueueConnectBroadcastForSlot(slot);
     coop::prop_snapshot::TriggerForSlot(slot);
+    coop::prop_rest_sync::OnPeerWorldReady(slot);  // and in 30 s, once its world settled, every keyed prop's rest pose
     coop::prop_drive_host::OnPeerWorldReady();  // every driven prop's pose again, so the joiner parks the resting ones the delta gate would never send it
     coop::kerfus_lanes::OnPeerWorldReady(slot);  // and every Kerfus's on, charging and energy
     coop::sat_console_sync::OnPeerWorldReady(slot);  // a SAT console typist back at a terminal still running finds it

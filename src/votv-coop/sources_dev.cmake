@@ -415,6 +415,8 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/hand_record_drill_wire.cpp
     src/coop/dev/sleep_speedup_drill.cpp
     src/coop/dev/crowbarpry_drill.cpp
+    src/coop/dev/prop_accuracy_drill.cpp
+    src/coop/dev/prop_census_drift.cpp
 )
 # Per-developer local sources: a gitignored file on this box may append its own entries to
 # VOTVCOOP_DEV_SOURCES and add its own include root. Absent from the public tree; a no-op without it.

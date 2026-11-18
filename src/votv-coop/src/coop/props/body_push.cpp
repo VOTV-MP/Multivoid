@@ -8,9 +8,11 @@
 #include "coop/net/session.h"
 #include "coop/net/throw_bounds.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_drive_stream.h"
 #include "coop/props/prop_hold_claim.h"
+#include "coop/props/prop_rest_sync.h"
 #include "coop/props/prop_syncer.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -64,6 +66,7 @@ std::vector<void*> g_classes;
 uint64_t g_classVersion = ~0ull;
 Clock::time_point g_nextList{}, g_nextRead{};
 uint32_t g_pushes = 0;
+uint32_t g_settles = 0;   // the host's settle coasts (Settle)
 uint64_t g_cut = 0;   // the refreshes that found more props in reach than the list holds
 
 // Why a move of a prop within this player's reach was not taken as a push: counted per reason and said at the first three
@@ -85,14 +88,25 @@ void NoteSkip(Skip why, void* actor) {
 // This peer's own player's body: the only one a push is read from. A push is the pusher's own contact on the pusher's own peer
 // (MTA's push is the local player's contact, CClientGame.cpp:4712-4733); a puppet's contact on the peer that shows it is not
 // claimed, so the wrong peer never syncs the prop.
+// On the HOST the other players' puppets are read too, for the settle watch only: a prop near any player that moves
+// with no hand, row or host body on it is a settle the host streams (Settle below). Never a push of theirs.
 struct Body {
     FVector at{};
     bool have = false;
+    FVector others[coop::net::kMaxPeers]{};
+    int nOthers = 0;
 };
 
-void ReadBody(Body& b) {
+void ReadBody(Body& b, bool isHost) {
     void* me = coop::players::Registry::Get().Local();
     b.have = me && E::TryGetRootLocationRaw(me, b.at);
+    b.nOthers = 0;
+    if (!isHost) return;
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
+        void* actor = rp && rp->valid() ? rp->actor() : nullptr;
+        if (actor && E::TryGetRootLocationRaw(actor, b.others[b.nOthers])) ++b.nOthers;
+    }
 }
 
 float Dist2(const FVector& a, const FVector& b) {
@@ -102,6 +116,16 @@ float Dist2(const FVector& a, const FVector& b) {
 
 // The squared distance from `at` to this peer's own body; large when it is not read.
 float BodyCm2(const Body& b, const FVector& at) { return b.have ? Dist2(at, b.at) : 1.0e18f; }
+
+// The squared distance from `at` to the nearest other player's puppet (the host's settle watch); large when none is read.
+float OthersCm2(const Body& b, const FVector& at) {
+    float best = 1.0e18f;
+    for (int i = 0; i < b.nOthers; ++i) best = std::fmin(best, Dist2(at, b.others[i]));
+    return best;
+}
+
+// The squared distance from `at` to the nearest body this peer watches round: its own, and on the host every puppet's.
+float NearestCm2(const Body& b, const FVector& at) { return std::fmin(BodyCm2(b, at), OthersCm2(b, at)); }
 
 float TurnDeg(const FRotator& a, const FRotator& b) {
     const float p = std::fabs(ue_wrap::NormalizeAxis(a.Pitch - b.Pitch));
@@ -122,7 +146,7 @@ void EachProp(void* ctx, void* obj, int32_t) {
     FVector loc{};
     FRotator rot{};
     if (!E::TryGetRootPoseRaw(obj, loc, rot)) return;
-    const float near2 = BodyCm2(*c->body, loc);
+    const float near2 = NearestCm2(*c->body, loc);
     if (near2 > kListCm * kListCm) return;
     Watched w;
     w.ref.Set(obj);
@@ -187,16 +211,45 @@ bool ClaimOff() {
     return off;
 }
 
+// The host's settle watch off (VOTVCOOP_SETTLE_OFF=1): every peer's copy of a prop that falls with nothing on it settles by
+// its own physics again -- the red arm of the prop accuracy drill. Resolved once.
+bool SettleOff() {
+    static const bool off = coop::config::ReadEnv("VOTVCOOP_SETTLE_OFF") == "1";
+    return off;
+}
+
 // The nearest kListCap of the props in reach, as the list: said when the cap cuts, at the first three and each doubling.
-void KeepNearest(std::vector<Watched>& fresh) {
-    if (fresh.size() <= kListCap) return;
-    std::nth_element(fresh.begin(), fresh.begin() + kListCap, fresh.end(),
+void KeepNearest(std::vector<Watched>& fresh, size_t bodies) {
+    const size_t cap = kListCap * bodies;
+    if (fresh.size() <= cap) return;
+    std::nth_element(fresh.begin(), fresh.begin() + static_cast<std::ptrdiff_t>(cap), fresh.end(),
                      [](const Watched& a, const Watched& b) { return a.nearestCm2 < b.nearestCm2; });
     const uint64_t n = ++g_cut;
     if (n <= 3 || (n & (n - 1)) == 0)
         UE_LOGI("body_push: %zu props within %.0f cm of a body, watching the nearest %zu; cut %llu time(s) this session",
-                fresh.size(), kListCm, kListCap, static_cast<unsigned long long>(n));
-    fresh.resize(kListCap);
+                fresh.size(), kListCm, cap, static_cast<unsigned long long>(n));
+    fresh.resize(cap);
+}
+
+// HOST: a prop near some player moved with no hand, no row and no host body on it -- the plate on a chair a client picked
+// up, a can a thrown box knocked, a stack that slid. Every peer's copy used to fall by its own physics and come to rest
+// where it would: the plate 55 cm and 110 degrees from the host's. The host's copy is the one truth, so the host streams it
+// until it rests (a Settle coast), and every other copy is parked and follows it, its End the resting pose. A move a
+// client's own body makes near its puppet is left to that client's claim (a push, not a fall).
+void Settle(void* actor, const FVector& at, const Body& body, bool fell) {
+    if (!fell && OthersCm2(body, at) <= kTouchCm * kTouchCm) return;
+    if (coop::prop_drive_host::IsDriven(actor)) return;   // a row streams it already: a let-go's, a verb's, a client's
+    if (!Pushable(actor, at)) return;
+    if (SettleOff()) return;
+    if (coop::prop_drive_host::CoastCapReached(actor, "settle")) { NoteSkip(Skip::Capped, actor); return; }
+    if (!coop::prop_drive_host::Coast(actor, "settle", coop::prop_drive_host::CoastCause::Settle)) {
+        NoteSkip(Skip::NotCoasted, actor);
+        return;
+    }
+    ++g_settles;
+    if (g_settles <= 3 || (g_settles % 50) == 0)
+        UE_LOGI("body_push: '%ls' %p moved with nothing on it (%s) -- the host streams its settle (#%u)",
+                R::ClassNameOf(actor).c_str(), actor, fell ? "a fall" : "a slide", g_settles);
 }
 
 }  // namespace
@@ -212,13 +265,13 @@ void Tick(coop::net::Session& s, bool isHost) {
         void* world = ue_wrap::world_identity::CurrentWorld();
         if (world) {
             ue_wrap::ScopedWalkTimer walk{"body_push:list"};
-            ReadBody(body);
+            ReadBody(body, isHost);
             read = true;
             RefreshClasses();
             std::vector<Watched> fresh;
             ListCtx ctx{&body, &fresh, world};
             for (void* cls : g_classes) ue_wrap::object_index::ForEachInstance(cls, &EachProp, &ctx);
-            KeepNearest(fresh);
+            KeepNearest(fresh, 1 + static_cast<size_t>(body.nOthers));
             // Keep the last read of a prop already watched, so a move across the refresh is not lost.
             for (Watched& f : fresh)
                 for (const Watched& old : g_list)
@@ -239,7 +292,7 @@ void Tick(coop::net::Session& s, bool isHost) {
     // ours sees, and NotifyHit is native. The body-push drill's HITS lines carry the counts.
     if (now < g_nextRead) return;
     g_nextRead = now + kReadEvery;
-    if (!read) ReadBody(body);
+    if (!read) ReadBody(body, isHost);
     for (Watched& w : g_list) {
         void* actor = w.ref.Get();
         FVector loc{};
@@ -260,11 +313,15 @@ void Tick(coop::net::Session& s, bool isHost) {
             w.loc = loc;
             w.rot = rot;
         }
-        if (!moved || fell) continue;
+        if (!moved) continue;
         if (isHost) {
+            // Not the host's own body's push (a fall, or a move with the host's body away): a settle the host streams.
+            if (fell || BodyCm2(body, loc) > kTouchCm * kTouchCm) {
+                Settle(actor, loc, body, fell);
+                continue;
+            }
             // The host's own body: a prop a row already streams (a let-go's, a verb's, a client's) has its source, and a
             // client's claim for it is judged by prop_syncer_host::OnClaim, which takes a row that only coasts.
-            if (BodyCm2(body, loc) > kTouchCm * kTouchCm) continue;
             if (coop::prop_drive_host::IsDriven(actor)) { NoteSkip(Skip::Driven, actor); continue; }
             if (!Pushable(actor, loc)) { NoteSkip(Skip::NotPushable, actor); continue; }
             if (PushOff()) continue;
@@ -278,6 +335,14 @@ void Tick(coop::net::Session& s, bool isHost) {
                 UE_LOGI("body_push: a body pushed '%ls' %p -- the host coasts it (#%u)", R::ClassNameOf(actor).c_str(), actor,
                         g_pushes);
         } else {
+            // Not this client's own body's push (a fall, or a move with its body away): its copy moved alone, unless a
+            // stream parks it. If the host's copy fell too, the host's settle coast parks it; if not, the host's rest is
+            // asked for once it rests.
+            if (fell || BodyCm2(body, loc) > kTouchCm * kTouchCm) {
+                if (!coop::prop_drive_stream::IsParked(actor) && Pushable(actor, loc))
+                    coop::prop_rest_sync::NoteLocalMove(actor);
+                continue;
+            }
             // This client's own player walked into it: the player who bumps an unsynced prop syncs it (MTA's push, the
             // server's CUnoccupiedVehicleSync.cpp:476-509); the host judges the claim.
             if (BodyCm2(body, loc) > kTouchCm * kTouchCm) continue;
@@ -286,6 +351,7 @@ void Tick(coop::net::Session& s, bool isHost) {
             if (ClaimOff()) continue;
             if (!coop::prop_syncer::Claim(actor, coop::net::PropSyncReason::BodyPush)) {
                 NoteSkip(Skip::ClaimNotSent, actor);   // held off, open or refused
+                coop::prop_rest_sync::NoteLocalMove(actor);   // the copy moved alone: the host's rest is asked for
                 continue;
             }
             ++g_pushes;
@@ -305,8 +371,9 @@ void Rebase(void* actor) {
 }
 
 void OnDisconnect() {
-    if (g_pushes) UE_LOGI("body_push: session end -- %u pushes taken", g_pushes);
+    if (g_pushes || g_settles) UE_LOGI("body_push: session end -- %u pushes taken, %u settles streamed", g_pushes, g_settles);
     g_pushes = 0;
+    g_settles = 0;
     g_cut = 0;
     for (uint32_t& n : g_skips) n = 0;
     g_list.clear();

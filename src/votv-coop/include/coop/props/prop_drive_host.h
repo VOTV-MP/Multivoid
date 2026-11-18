@@ -56,8 +56,10 @@ void Release(void* actor);
 // it (the row becomes the host's). A BodyPush is a body that walked into the prop: it opens a row only where none stands,
 // since a row already streaming the prop (a let-go's, a verb's, a client's) is its source and re-times itself by its own
 // moves. A LetGo is a hand's plain release (CoastLetGo): it takes a client's row as a Verb does, and is its own cause so a
-// drill can tell it from a body's push.
-enum class CoastCause : uint8_t { Verb, LetGo, BodyPush };
+// drill can tell it from a body's push. A Settle is a prop that moved with no hand, verb or body on it -- its support
+// was taken from under it, something knocked it, it slid -- seen by body_push near some player; it opens a row only where
+// none stands, as a BodyPush does, so every peer's copy follows the host's fall instead of falling on its own.
+enum class CoastCause : uint8_t { Verb, LetGo, BodyPush, Settle };
 
 // An instant push moved `actor`: stream it, coasting, until it rests. A prop a verb has claimed
 // stays claimed, and one already coasting starts its rest clock again; the refusals are Claim's.

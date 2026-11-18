@@ -31,6 +31,7 @@
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
 #include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
+#include "coop/props/prop_rest_sync.h"     // where a keyed prop rests: a client's ask, the host's rows
 #include "coop/props/prop_syncer_host.h"   // the host's claim judge and a client's End
 
 #include "coop/interactables/garbage_bin_sync.h"
@@ -565,6 +566,37 @@ bool HandlePropDriveEvent(net::Session& session,
         // CLIENT->HOST op 1, HOST->the requester op 2 or 3. The payload's exact size, the direction, the op and every
         // field are the module's to judge, counted there.
         ::coop::props::container_break::OnMessage(session, msg.senderPeerSlot, msg.payload, msg.payloadLen);
+        break;
+    }
+    case net::ReliableKind::PropRestQuery:
+    case net::ReliableKind::PropRestPose: {
+        // PropRestQuery CLIENT->HOST, PropRestPose HOST->CLIENT (coop/props/prop_rest_sync). Exact length, counts bounded,
+        // every float finite and in bounds.
+        const bool query = msg.kind == net::ReliableKind::PropRestQuery;
+        const size_t want = query ? sizeof(net::PropRestQueryPayload) : sizeof(net::PropRestPosePayload);
+        if (query != (session.role() == net::Role::Host) || msg.payloadLen != want) {
+            UE_LOGW("event_feed: a prop rest message the wrong way or the wrong length from slot %d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (query) {
+            net::PropRestQueryPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (p.count == 0 || p.count > net::kPropRestQueryMax) break;
+            ::coop::prop_rest_sync::OnQuery(msg.senderPeerSlot, p);
+        } else {
+            net::PropRestPosePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (p.count == 0 || p.count > net::kPropRestPoseMax) break;
+            bool ok = true;
+            for (int i = 0; i < p.count; ++i)
+                for (const float v : p.rows[i].loc) ok = ok && std::isfinite(v) && std::fabs(v) <= net::kMaxCoord;
+            if (!ok) {
+                UE_LOGW("event_feed: PropRestPose with a place non-finite or out of bounds -- dropping");
+                break;
+            }
+            ::coop::prop_rest_sync::OnPose(p);
+        }
         break;
     }
     default:
