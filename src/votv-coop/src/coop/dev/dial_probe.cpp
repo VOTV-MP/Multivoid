@@ -6,9 +6,13 @@
 // VOTVCOOP_DIAL_SCRIPT=a or b turns dials: it switches both filters on at 10 s, then each turn is notches of
 // VOTVCOOP_DIAL_STEP (default 2) on the speed, 80 ms apart: six up, 1.5 s held, six back to 0, then 1.5 s on a
 // one-notch nudge undone 150 ms later. Script a turns the frequency dial at 12 s and the polarity dial at 28 s; script b
-// the polarity dial at 20 s and the frequency dial at 28 s, the dial a turned first, while a turns the other. EVERY
-// PEER, every 20 ms from 10 s to 40 s: the wall clock and the desk's two speeds and offsets; at 42 s the DeskInput
-// deltas it sent and received, by field (`[DIAL]`).
+// the polarity dial at 20 s and the frequency dial at 28 s, the dial a turned first, while a turns the other. With
+// VOTVCOOP_DIAL_SAME=1 both then turn the SAME dial at once, timed by the wall clock the rig's peers share (each one's
+// own clock starts when it sees every peer, seconds apart): at the first 30 s boundary of it at least 36 s after its
+// start, a turns the frequency dial up and b, 40 ms later, down, six notches each, a's held 1.5 s and b's 1 s, so all
+// of b's turn falls inside a's, and turned back to 0.
+// EVERY PEER, every 20 ms from 10 s to 40 s (to 8 s past the same-dial turn with it): the wall clock and the desk's two
+// speeds and offsets; then the DeskInput deltas it sent and received, by field (`[DIAL]`).
 
 #include "coop/dev/dial_probe.h"
 
@@ -103,6 +107,20 @@ void AddTurn(std::vector<Step>& out, uint64_t at, int dial, float step) {
     out.push_back({nudge + 150u, dial, -step, "nudge stop"});
 }
 
+// Both clients on one dial: six notches of `by` 80 ms apart, held `holdMs`, six back.
+void AddSameTurn(std::vector<Step>& out, uint64_t at, float by, uint64_t holdMs) {
+    for (int i = 0; i < 6; ++i) out.push_back({at + 80u * i, 0, by, i == 0 ? "same turn" : "same notch"});
+    const uint64_t back = at + 400u + holdMs;
+    for (int i = 0; i < 6; ++i) out.push_back({back + 80u * i, 0, -by, i == 5 ? "same stop" : "same back"});
+}
+
+uint64_t g_sameAt = 0;  // the same-dial turn, on this peer's own clock; every peer's falls at one wall time
+
+bool Same() {
+    static const bool v = coop::config::ReadEnv("VOTVCOOP_DIAL_SAME") == "1";
+    return v;
+}
+
 std::vector<Step> g_steps;
 size_t g_next = 0;
 uint64_t g_seenAt = 0, g_reportAt = 0;
@@ -154,6 +172,16 @@ void Tick(coop::net::Session* session) {
             AddTurn(g_steps, 20000u, 1, step);
             AddTurn(g_steps, 28000u, 0, step);
         }
+        if (Same()) {
+            const uint64_t wall = WallMs();
+            const uint64_t target = ((wall + 36000u) / 30000u + 1u) * 30000u;
+            g_sameAt = target - wall;
+            // b's whole turn falls inside a's (held 1 s against 1.5 s), so with one turner at a time every b notch
+            // meets a's hold.
+            if (Script() == "a") AddSameTurn(g_steps, g_sameAt, step, 1500u);
+            if (Script() == "b") AddSameTurn(g_steps, g_sameAt + 40u, -step, 1000u);
+            UE_LOGI("[DIAL] the same-dial turn is at wall=%llu", static_cast<unsigned long long>(target));
+        }
         std::sort(g_steps.begin(), g_steps.end(), [](const Step& x, const Step& y) { return x.atMs < y.atMs; });
         UE_LOGI("[DIAL] probe armed role=%s script=%s fast_off=%d at wall=%llu", host ? "host" : "client",
                 Script().empty() ? "-" : Script().c_str(),
@@ -170,11 +198,12 @@ void Tick(coop::net::Session* session) {
         const Step& s = g_steps[g_next++];
         Notch(s.dial, s.by, s.what);
     }
-    if (t >= 42000u && !g_counted) {
+    const uint64_t endMs = Same() ? g_sameAt + 8000u : 40000u;
+    if (t >= endMs + 2000u && !g_counted) {
         g_counted = true;
         LogCounts(host);
     }
-    if (t < 10000u || t > 40000u || Now() < g_reportAt) return;
+    if (t < 10000u || t > endMs || Now() < g_reportAt) return;
     g_reportAt = Now() + 20;
     const float* const frS = FloatField(L"DL_FrFilterSpeed");
     const float* const poS = FloatField(L"DL_poFilterSpeed");
