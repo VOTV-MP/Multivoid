@@ -25,7 +25,6 @@
 #include "coop/world/cover_judge.h"
 #include "coop/world/cover_shared.h"
 #include "l10n/l10n.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
@@ -153,7 +152,8 @@ bool HeldHere(const std::vector<void*>& props) {
 bool g_armed[N::kCoverDeskPanels] = {};  // a plate's prop has been seen off its lid since the plate came off
 
 // A plate prop touching the lid of a plate that is off, here: asked of the host, which sets it back on its desk. The
-// desk's own set-back never runs on a client (panelTakeoff is held), so a copy born or carried there is never eaten.
+// desk's own set-back never runs on a client (its overlap is cancelled at the gate), so a copy born or carried there
+// is never eaten.
 void AskPutBacks(void* desk, uint8_t bits) {
     const uint64_t now = NowMs();
     for (int i = 0; i < N::kCoverDeskPanels; ++i) {
@@ -196,15 +196,6 @@ uint64_t g_nextDeskCheckMs = 0;
 std::vector<int8_t> g_doorWanted;  // by station: -1 none, else the host's opened
 
 void TickClient() {
-    // The desk's own set-back returns at once while panelTakeoff is set: held every frame on a client, so a plate
-    // prop born or carried onto its lid here is never eaten by this copy.
-    static ue_wrap::CachedObjRef s_desk;
-    void* held = s_desk.Get();
-    if (!held) {
-        held = AD::Find();
-        s_desk.Set(held);
-    }
-    if (held) AD::WriteTakeoff(held, true);
     // The desk is kept at the host's plates: a write when they arrive, and a check every 100 ms after, which rewrites
     // anything that moved them here.
     const uint64_t now = NowMs();
