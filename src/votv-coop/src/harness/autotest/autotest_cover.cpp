@@ -435,6 +435,44 @@ bool HeldHere(void* prop) {
 
 bool LaneArmed() { return OnGameThreadValue([] { return CS::PlateArmed(0); }); }
 
+// Before each grab try: the director walks the client to a NavMesh point about 120 cm from the prop copy's current pose, on
+// the side toward the client, and the player turns to face it, so the aim fan starts within arm's reach and in view. A prop no
+// NavMesh point reaches ends INVALID with its pose logged.
+bool StandBeforeProp(void* prop) {
+    constexpr float kStandCm = 120.f;
+    ue_wrap::FVector at{}, stand{};
+    bool known = false, projected = false;
+    OnGameThread([&] {
+        ue_wrap::FVector me{};
+        void* const local = coop::players::Registry::Get().Local();
+        if (!local || !E::TryGetActorLocation(prop, at) || !E::TryGetActorLocation(local, me)) return;
+        known = true;
+        float dx = me.X - at.X, dy = me.Y - at.Y;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1.f) { dx /= len; dy /= len; } else { dx = 1.f; dy = 0.f; }
+        const ue_wrap::FVector want{at.X + dx * kStandCm, at.Y + dy * kStandCm, at.Z};
+        projected = E::ProjectToNav(local, want, ue_wrap::FVector{150.f, 150.f, 250.f}, &stand);
+    });
+    if (!known || !projected) {
+        RV::Say(kTag, RV::Outcome::Invalid, "putback: no NavMesh stand beside the plate prop at (%.0f,%.0f,%.0f)", at.X, at.Y,
+                at.Z);
+        return false;
+    }
+    if (!WalkNear("the plate prop", stand, 60.f)) return false;
+    OnGameThread([&] {
+        void* const local = coop::players::Registry::Get().Local();
+        void* const ctrl = local ? E::GetController(local) : nullptr;
+        ue_wrap::FVector me{};
+        if (!ctrl || !E::TryGetActorLocation(local, me) || !E::TryGetActorLocation(prop, at)) return;
+        const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
+        ue_wrap::FRotator face{};
+        face.Yaw = std::atan2(dy, dx) * 57.2957795f;
+        face.Pitch = std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * 57.2957795f;
+        E::SetControlRotation(ctrl, face);
+    });
+    return true;
+}
+
 // The plate prop taken in hand as the use key grabs it. The grab waits for the copy to be free of the host's drive stream and
 // is aimed afresh at the copy's current pose on each try (a new AimedGrab, again when its fan runs long or its chain fails).
 bool GrabPlateProp(uint32_t eid) {
@@ -448,6 +486,7 @@ bool GrabPlateProp(uint32_t eid) {
         void* const me = OnGameThreadValue([] { return coop::players::Registry::Get().Local(); });
         void* const prop = OnGameThreadValue([&] { return FreeCopy(eid); });
         if (!me || !prop) { why = "the player or the plate prop copy is gone"; break; }
+        if (!StandBeforeProp(prop)) return false;
         coop::director::AimedGrab grab(me, prop);
         coop::director::GrabState state = coop::director::GrabState::Working;
         for (int polls = 0; polls < kFanPolls && state == coop::director::GrabState::Working; ++polls) {
