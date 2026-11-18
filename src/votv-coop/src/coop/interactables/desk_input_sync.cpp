@@ -4,8 +4,11 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/comms/peer_action_feed.h"  // the busy line a refused notch says
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/props/prop_sound.h"  // the deny click
 
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/core/log.h"
@@ -40,6 +43,18 @@ struct DialOwn {
     uint64_t untilMs = 0;
 };
 DialOwn g_dial[2];
+
+// The dial lock: one player turns a dial at a time. The host gives a free dial to the first player whose speed reaches it
+// and says so (DeskInputField::DialHolder); every peer then applies only the holder's speeds and stopped offset for that
+// dial, and a notch of any other player's own is put back on its desk at once, with the deny click and a line. The
+// holder lets go with its stopped offset, its leave, or kDialHoldIdleMs stopped without one. Game thread.
+constexpr uint8_t kNoHolder = 0xFF;
+constexpr uint64_t kDialHoldIdleMs = 3000;
+constexpr uint64_t kDialDenyLineMs = 3000;
+uint8_t g_holder[2] = {kNoHolder, kNoHolder};
+uint64_t g_holderStoppedAt[2] = {};   // HOST: when the holder's speed came to 0 with no offset yet; 0 while it turns
+float g_lastSpeedFrom[coop::players::kMaxPeers][2] = {};  // each slot's newest speed for each dial, for a put-back
+uint64_t g_lastDenyLineMs = 0;
 uint32_t g_sentBy[static_cast<int>(DeskInputField::Count)] = {};       // dev::Counts
 uint32_t g_receivedBy[static_cast<int>(DeskInputField::Count)] = {};
 
@@ -154,6 +169,27 @@ void SendDelta(coop::net::Session* s, DeskInputField field,
         s->SendReliableToSlot(0, coop::net::ReliableKind::DeskInput, &p, sizeof(p));
 }
 
+uint8_t LocalSlot() { return coop::players::Registry::Get().LocalPeerId(); }
+
+int DialOf(DeskInputField f) {
+    if (f == DeskInputField::FrFilterSpeed || f == DeskInputField::FrFilterOffset) return 0;
+    if (f == DeskInputField::PoFilterSpeed || f == DeskInputField::PoFilterOffset) return 1;
+    return -1;
+}
+
+const wchar_t* DialName(int dial) { return dial == 0 ? L"the frequency dial" : L"the polarity dial"; }
+
+// HOST: dial `dial` goes to `slot` (kNoHolder: free), and every peer is told.
+void HostSetHolder(coop::net::Session* s, int dial, uint8_t slot) {
+    if (g_holder[dial] == slot) return;
+    g_holder[dial] = slot;
+    g_holderStoppedAt[dial] = 0;
+    UE_LOGI("desk_input: %ls is %s%u", DialName(dial), slot == kNoHolder ? "free" : "held by slot ",
+            slot == kNoHolder ? 0u : static_cast<unsigned>(slot));
+    if (s->connected())
+        SendDelta(s, DeskInputField::DialHolder, 0, dial | (static_cast<int32_t>(slot) << 8), slot != kNoHolder);
+}
+
 void SendScan(coop::net::Session* s, float observed) {
     coop::net::DeskScanEventPayload p{};
     p.observedCooldown = observed;
@@ -243,8 +279,33 @@ void PollDials(coop::net::Session* s) {
     const float offsets[2] = {cur.dlFrFilterOffset, cur.dlPoFilterOffset};
     const DeskInputField speedField[2] = {DeskInputField::FrFilterSpeed, DeskInputField::PoFilterSpeed};
     const DeskInputField offsetField[2] = {DeskInputField::FrFilterOffset, DeskInputField::PoFilterOffset};
+    const uint8_t me = LocalSlot();
+    const bool host = s->role() == coop::net::Role::Host;
     for (int k = 0; k < 2; ++k) {
         if (speeds[k] == *base[k] || !std::isfinite(speeds[k])) continue;
+        // Another player holds this dial: this notch is put back on this desk, and nothing is sent.
+        const uint8_t holder = g_holder[k];
+        if (holder != kNoHolder && holder != me) {
+            const float back = holder < coop::players::kMaxPeers ? g_lastSpeedFrom[holder][k] : 0.f;
+            coop::net::DeskInputPayload p{};
+            p.field = static_cast<uint8_t>(speedField[k]);
+            p.floatVal = back;
+            CD::Scalars sc = cur;
+            {
+                coop::desk_snd_fx::ScopedWireApply guard;
+                ApplyField(p, sc);
+            }
+            *base[k] = back;
+            g_dial[k] = DialOwn{};
+            if (NowMs() >= g_lastDenyLineMs + kDialDenyLineMs) {
+                g_lastDenyLineMs = NowMs();
+                if (void* local = coop::players::Registry::Get().Local()) coop::prop_sound::PlayDenyClick(local);
+                coop::peer_action_feed::AnnounceDirect(holder, coop::peer_action_feed::Action::UsingDevice, DialName(k));
+            }
+            continue;
+        }
+        if (host && holder == kNoHolder) HostSetHolder(s, k, me);
+        if (me < coop::players::kMaxPeers) g_lastSpeedFrom[me][k] = speeds[k];
         SendDelta(s, speedField[k], speeds[k], 0, false);
         *base[k] = speeds[k];
         DialOwn& d = g_dial[k];
@@ -255,6 +316,7 @@ void PollDials(coop::net::Session* s) {
             d.settling = true;
             d.sent = offsets[k];
             d.untilMs = NowMs() + kDialHandoffMs;
+            if (host) HostSetHolder(s, k, kNoHolder);  // the host's own stop lets the dial go
         }
     }
 }
@@ -348,6 +410,16 @@ void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     if (!DialFastOff() && s->connected() && CD::EnsureResolved() && CD::Instance()) PollDials(s);
+    // HOST: a holder that left, or stopped without its offset for kDialHoldIdleMs, lets the dial go.
+    if (s->role() == coop::net::Role::Host) {
+        for (int k = 0; k < 2; ++k) {
+            const uint8_t h = g_holder[k];
+            if (h == kNoHolder || h == LocalSlot()) continue;
+            const bool gone = h >= coop::players::kMaxPeers || !coop::players::Registry::Get().Puppet(h);
+            const uint64_t stopped = g_holderStoppedAt[k];
+            if (gone || (stopped != 0 && NowMs() >= stopped + kDialHoldIdleMs)) HostSetHolder(s, k, kNoHolder);
+        }
+    }
     const auto now = Clock::now();
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPoll;
@@ -373,6 +445,47 @@ void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     if (wire.field >= static_cast<uint8_t>(DeskInputField::Count)) return;
     if (!std::isfinite(wire.floatVal)) return;
     ++g_receivedBy[wire.field];
+    const bool host = s->role() == coop::net::Role::Host;
+    // The dial lock's word is the host's alone: a client takes it from slot 0, the host takes none.
+    if (wire.field == static_cast<uint8_t>(DeskInputField::DialHolder)) {
+        const int dial = wire.intVal & 0xFF;
+        const uint8_t slot = wire.boolVal ? static_cast<uint8_t>((wire.intVal >> 8) & 0xFF) : kNoHolder;
+        if (host || senderSlot != 0 || dial > 1) return;
+        g_holder[dial] = slot;
+        // Another player has it: this peer's own turn of it is over, and its desk takes the holder's speed.
+        if (slot != kNoHolder && slot != LocalSlot()) {
+            g_dial[dial] = DialOwn{};
+            if (CD::EnsureResolved() && CD::Instance()) {
+                CD::Scalars sc;
+                if (CD::ReadScalars(sc)) {
+                    coop::net::DeskInputPayload p{};
+                    p.field = static_cast<uint8_t>(dial == 0 ? DeskInputField::FrFilterSpeed : DeskInputField::PoFilterSpeed);
+                    p.floatVal = slot < coop::players::kMaxPeers ? g_lastSpeedFrom[slot][dial] : 0.f;
+                    coop::desk_snd_fx::ScopedWireApply guard;
+                    if (ApplyField(p, sc) && g_primed) PatchScalar(p, g_baseline);
+                }
+            }
+        }
+        return;
+    }
+    const int dial = DialOf(static_cast<DeskInputField>(wire.field));
+    if (dial >= 0) {
+        const bool speed = wire.field == static_cast<uint8_t>(DeskInputField::FrFilterSpeed) ||
+                           wire.field == static_cast<uint8_t>(DeskInputField::PoFilterSpeed);
+        if (speed && senderSlot < coop::players::kMaxPeers) g_lastSpeedFrom[senderSlot][dial] = wire.floatVal;
+        if (host && senderSlot != 0) {
+            // The host's arbitration: a free dial goes to the first player whose speed reaches it.
+            if (g_holder[dial] == kNoHolder && speed) HostSetHolder(s, dial, senderSlot);
+            if (g_holder[dial] != senderSlot) {
+                UE_LOGI("desk_input: slot %u's %s on %ls refused -- slot %u holds it", static_cast<unsigned>(senderSlot),
+                        speed ? "speed" : "stop", DialName(dial), static_cast<unsigned>(g_holder[dial]));
+                return;
+            }
+            if (speed) g_holderStoppedAt[dial] = wire.floatVal == 0.f ? NowMs() : 0;
+        } else if (g_holder[dial] != kNoHolder && g_holder[dial] != senderSlot) {
+            return;  // a client: another player's turn of a dial someone else holds is not shown
+        }
+    }
     // The remap bounds are clamped to the range updRemap clamps to (the way a wire codec clamps a field
     // to its range): the echo-prime below then stores what the desk will hold, and a peer's out-of-range
     // value cannot read as a local edge on the next poll and bounce back through the host.
@@ -414,6 +527,11 @@ void OnDeskInput(const coop::net::DeskInputPayload& wire, uint8_t senderSlot) {
     // same GT task -- the next poll never reads this apply as a local edge.
     if (g_primed) PatchScalar(p, g_baseline);
     else { g_baseline = sc; g_primed = true; }
+    // HOST: the holder's stopped offset ends its turn, and the dial is free.
+    if (host && dial >= 0 && senderSlot != 0 && g_holder[dial] == senderSlot &&
+        (p.field == static_cast<uint8_t>(DeskInputField::FrFilterOffset) ||
+         p.field == static_cast<uint8_t>(DeskInputField::PoFilterOffset)))
+        HostSetHolder(s, dial, kNoHolder);
 }
 
 bool OwnsDialOffset(int dial, float hostOffset) {

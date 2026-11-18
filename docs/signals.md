@@ -91,9 +91,15 @@ did not move past its stop, against up to 523 ms past it before; the host moved 
 against 239 to 282; the other client in 120 to 180 ms, against 251 to 269; all three settled on
 the same offsets in both arms, and an earlier two-peer run lost a 150 ms nudge before. The cost
 is one delta per notch rather than four a second at most, and a stopped offset per stop: the four
-turns' DeskInput deltas, counted where received, went from 63 to 135).
-The cooldown charge is detected as an upward jump, and the same jump classifies the quick-scan,
-whose accepted-branch effects the mirrors replay.
+turns' DeskInput deltas, counted where received, went from 63 to 135). One player turns a dial at a time: a notch adds
+to the dial's one speed, so two players turning it at once left it spinning on every peer when both had turned back
+(speed 6 against 0, the dial still climbing 8 s on). The host gives a free dial to the first player whose speed reaches
+it and says so (`DeskInputField::DialHolder`); every peer then takes only the holder's speeds and stopped offset, and
+another player's own notch is put back on its desk at once, with the deny click and a line naming the holder. The holder
+lets go with its stopped offset, its leave, or 3 s stopped without one `[V]` (the dial probe's `VOTVCOOP_DIAL_SAME=1`
+step, three peers: both clients turning the frequency dial 40 ms apart, the second's turn inside the first's; the dial
+followed the first alone, the second's one raced notch refused by the host, and it stopped at speed 0 on every peer). The cooldown charge is detected as an upward jump, and the same jump classifies the
+quick-scan, whose accepted-branch effects the mirrors replay.
 
 The signal view's settings ride the same poll: the two bounds of `remapValue` and `visualizerMode`, graph or
 spectrogram, the red button the spectrogram module unlocks. A bound repaints through the game's `updRemap`, and
