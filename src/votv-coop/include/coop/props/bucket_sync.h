@@ -1,13 +1,12 @@
 // coop/props/bucket_sync.h -- a mop bucket's water and a concrete bucket's concrete are the host's, on every peer.
 //
-// prop_bucket_C holds its water as Height (soap and brewing alcohol beside it), changed by its own tick (poured out
-// when tipped, filled under water, brewing) and by verbs: its left click fills it from water, waters a plant or throws
-// the water out, a sponge dips in it, a jar takes from it. A cement bag's left click on one with water turns it into a
-// prop_concreteBucket_C (lib.replaceProp), whose units the trowel's left click takes one at a time and a tip spills five
-// at a time, that dries on a 600 s timer, and that turns back into a mop bucket when empty. All of it ran wherever it
-// ran and nowhere else. Now, on BucketState and BucketIntent:
-//   HOST   -- reads its buckets four times a second and tells every client the ones that changed, and every bucket to a
-//             joiner at its world-ready; a client's ask (below) it judges and runs on its own copies.
+// prop_bucket_C holds its water as Height (with soap and brewing alcohol), changed by its tick (poured when tipped,
+// filled under water, brewing) and by verbs (filled, thrown out, a plant watered, a sponge or jar dipped). A cement bag
+// on one with water makes it a prop_concreteBucket_C (lib.replaceProp), whose units a trowel takes one at a time and a
+// tip five, that dries in 600 s and turns back into a mop bucket when empty. On BucketState and BucketIntent:
+//   HOST   -- tells every client a bucket when it changes: after its own tick, or the verb that changed it (its player's
+//             cement bag, a client's ask, which it judges and runs on its own copies), ten rows a second at most for one
+//             bucket; nothing runs while none changes. A joiner gets every bucket at its world-ready.
 //   CLIENT -- puts each row on its copy. Its concrete buckets' tick does not run (the spill, the drying and the turn back
 //             into a mop bucket are the host's). Its mop buckets' tick runs, for the water's look while tipped; a change
 //             to its copy outside that tick (one of its own verbs) is asked of the host as the water and soap the verb
@@ -29,8 +28,8 @@ namespace coop::bucket_sync {
 // Cache the session. Idempotent.
 void Install(coop::net::Session* session);
 
-// Per gameplay tick: the watches' names resolve until they are live; the host reads its buckets and sends what
-// changed; a client sends its asks.
+// Per gameplay tick: the watches' names resolve until they are live; the host sends the buckets marked changed; a
+// client sends its asks.
 void Tick();
 
 // HOST: slot `slot`'s world is up (the connect replay): every bucket the host holds, to it alone.
