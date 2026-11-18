@@ -63,8 +63,9 @@ UE_FACT_FN(kRowDeskAction, "cover_sync", L"analogDScreenTest_C", L"actionOptionI
 UE_FACT_FN(kRowDeskOverlap, "cover_sync", L"analogDScreenTest_C", L"ReceiveActorBeginOverlap", Declared);
 UE_FACT_FN(kRowStationAction, "cover_sync", L"generator_C", L"actionOptionIndex", Declared);
 UE_FACT_FN(kRowUpdPanels, "cover_sync", L"analogDScreenTest_C", L"updPanels", Declared);
+UE_FACT_FN(kRowDoorEnd, "cover_sync", L"generator_C", L"doorAnim_TL__FinishedFunc", Declared);
 constexpr int kTagUnscrew = 0x43565201, kTagDeskAction = 0x43565202, kTagDeskOverlap = 0x43565203,
-              kTagStationAction = 0x43565204, kTagUpdPanels = 0x43565205;  // 'CVR' 1..5
+              kTagStationAction = 0x43565204, kTagUpdPanels = 0x43565205, kTagDoorEnd = 0x43565206;  // 'CVR' 1..6
 
 static_assert(N::kCoverDeskPanels == AD::kPlates, "the wire's plate count is the desk's");
 constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
@@ -225,18 +226,17 @@ void TickClient() {
         g_nextPutBackMs = now + kScanEveryMs;
         if (void* desk = AD::Find()) AskPutBacks(desk, g_deskBits);
     }
-    for (size_t i = 0; i < g_doorWanted.size(); ++i) {
-        if (g_doorWanted[i] < 0) continue;
-        void* const gen = GEN::At(static_cast<int>(i));
-        bool open = false;
-        if (!gen || !GEN::ReadOpened(gen, open) || MovingOr(gen, true)) continue;
-        const bool want = g_doorWanted[i] == 1;
-        if (open != want) {
-            OpenDoor(gen, want);
-            UE_LOGI("cover_sync: CLIENT station %zu's door %hs, as the host's", i, want ? "opens" : "shuts");
-        }
-        g_doorWanted[i] = -1;
-    }
+}
+
+// Station `index`'s door swung to the host's when it differs. A door still moving is left: the timeline's end runs this
+// again (OnDoorFinishedPost).
+void ConvergeDoor(void* gen, size_t index) {
+    bool open = false;
+    if (index >= g_doorWanted.size() || g_doorWanted[index] < 0 || !GEN::ReadOpened(gen, open) || MovingOr(gen, true)) return;
+    const bool want = g_doorWanted[index] == 1;
+    if (open == want) return;
+    OpenDoor(gen, want);
+    UE_LOGI("cover_sync: CLIENT station %zu's door %hs, as the host's", index, want ? "opens" : "shuts");
 }
 
 // ---- the gate ------------------------------------------------------------------------------------------------------
@@ -359,6 +359,19 @@ void OnUpdPanelsPost(const sg::Call& c) {
     ConvergeDesk(c.object, arrived);
 }
 
+// A station's door timeline ended, where `opened` changes: the host sends the state; a client brings the door to the
+// host's if a state came while it moved.
+void OnDoorFinishedPost(const sg::Call& c) {
+    if (!c.object) return;
+    if (IsHost()) {
+        cover_judge::OnDoorFinished(c.object);
+        return;
+    }
+    if (!IsClient() || g_applying) return;
+    const int32_t index = GEN::IndexOf(c.object);
+    if (index >= 0) ConvergeDoor(c.object, static_cast<size_t>(index));
+}
+
 // A client's E press on a station's door: asked of the host. Every other press runs.
 sg::Verdict OnStationActionPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object || !c.function || !c.locals) return sg::Verdict::Run;
@@ -382,9 +395,10 @@ void Install(coop::net::Session* session) {
     const bool o = sg::WatchName(kRowDeskOverlap, kTagDeskOverlap, &OnDeskOverlapPre, nullptr);
     const bool s = sg::WatchName(kRowStationAction, kTagStationAction, &OnStationActionPre, nullptr);
     const bool p = sg::WatchName(kRowUpdPanels, kTagUpdPanels, nullptr, &OnUpdPanelsPost);
-    if (!u || !a || !o || !s || !p)
-        UE_LOGE("cover_sync: a watch was refused (unscrew=%d desk=%d overlap=%d station=%d updPanels=%d)", u ? 1 : 0,
-                a ? 1 : 0, o ? 1 : 0, s ? 1 : 0, p ? 1 : 0);
+    const bool d = sg::WatchName(kRowDoorEnd, kTagDoorEnd, nullptr, &OnDoorFinishedPost);
+    if (!u || !a || !o || !s || !p || !d)
+        UE_LOGE("cover_sync: a watch was refused (unscrew=%d desk=%d overlap=%d station=%d updPanels=%d doorEnd=%d)",
+                u ? 1 : 0, a ? 1 : 0, o ? 1 : 0, s ? 1 : 0, p ? 1 : 0, d ? 1 : 0);
 }
 
 void Tick() {
@@ -394,17 +408,18 @@ void Tick() {
     sg::ResolvePendingNames();
     if (!sg::NameWatchSettled(kRowUnscrew, kTagUnscrew) || !sg::NameWatchSettled(kRowDeskAction, kTagDeskAction) ||
         !sg::NameWatchSettled(kRowDeskOverlap, kTagDeskOverlap) ||
-        !sg::NameWatchSettled(kRowStationAction, kTagStationAction) || !sg::NameWatchSettled(kRowUpdPanels, kTagUpdPanels))
+        !sg::NameWatchSettled(kRowStationAction, kTagStationAction) || !sg::NameWatchSettled(kRowUpdPanels, kTagUpdPanels) ||
+        !sg::NameWatchSettled(kRowDoorEnd, kTagDoorEnd))
         return;
     g_settled = true;
     const bool u = sg::NameWatchLive(kRowUnscrew, kTagUnscrew), a = sg::NameWatchLive(kRowDeskAction, kTagDeskAction),
                o = sg::NameWatchLive(kRowDeskOverlap, kTagDeskOverlap),
                s = sg::NameWatchLive(kRowStationAction, kTagStationAction),
-               p = sg::NameWatchLive(kRowUpdPanels, kTagUpdPanels);
-    if (u && a && o && s && p)
-        UE_LOGI("cover_sync: the watches on the desk's plates and the stations' door press are live");
-    else UE_LOGE("cover_sync: a watch is dead (unscrew=%d desk=%d overlap=%d station=%d updPanels=%d) -- the covers are "
-                 "not kept", u ? 1 : 0, a ? 1 : 0, o ? 1 : 0, s ? 1 : 0, p ? 1 : 0);
+               p = sg::NameWatchLive(kRowUpdPanels, kTagUpdPanels), d = sg::NameWatchLive(kRowDoorEnd, kTagDoorEnd);
+    if (u && a && o && s && p && d)
+        UE_LOGI("cover_sync: the watches on the desk's plates and the stations' door are live");
+    else UE_LOGE("cover_sync: a watch is dead (unscrew=%d desk=%d overlap=%d station=%d updPanels=%d doorEnd=%d) -- the "
+                 "covers are not kept", u ? 1 : 0, a ? 1 : 0, o ? 1 : 0, s ? 1 : 0, p ? 1 : 0, d ? 1 : 0);
 }
 
 void SendJoinSnapshotForSlot(int slot) { cover_judge::SendJoinSnapshotForSlot(slot); }
@@ -432,6 +447,7 @@ void OnState(const coop::net::CoverPayload& p) {
     } else if (p.what == N::kCoverStation) {
         if (g_doorWanted.size() <= p.index) g_doorWanted.resize(static_cast<size_t>(p.index) + 1, -1);
         g_doorWanted[p.index] = (p.bits & 1u) ? 1 : 0;
+        if (void* const gen = GEN::At(p.index)) ConvergeDoor(gen, p.index);
     }
 }
 

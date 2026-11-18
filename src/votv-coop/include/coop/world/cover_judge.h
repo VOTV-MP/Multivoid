@@ -25,6 +25,9 @@ void SendJoinSnapshotForSlot(int slot);
 // are sent when they differ from the last sent.
 void OnDeskUpdated(void* desk);
 
+// HOST, after a station's door timeline ended (doorAnim_TL__FinishedFunc, where `opened` changes): its state is sent.
+void OnDoorFinished(void* gen);
+
 // Whether `actor` is a plate prop a take-off just granted that has not yet left its lid in a hold, and whether any is.
 bool IsFresh(void* actor);
 bool AnyFresh();

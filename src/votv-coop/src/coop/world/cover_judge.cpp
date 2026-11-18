@@ -53,7 +53,6 @@ using CS::PlateOn;
 using CS::SoundDetach;
 using CS::WritePlates;
 using CS::AwayFromPlate;
-using CS::kScanEveryMs;
 
 constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
 constexpr float    kDeskReachCm = 400.f;  // a client's ask, from its eye to the plate
@@ -69,10 +68,8 @@ constexpr N::IntentBudget kAskBudget{4.f, 2.f};
 constexpr uint64_t kRateSayMs = 10000;
 coop::roster_ledger::PerSlotState<N::IntentBucket> g_bucket;
 coop::roster_ledger::PerSlotState<uint64_t> g_nextRateSayMs;
-uint64_t g_nextScanMs = 0;
 bool g_deskSaid = false;
 uint8_t g_deskSent = 0;
-std::vector<int8_t> g_doorSent;  // by station: -1 not said, else opened
 
 void Send(const N::CoverPayload& p, int slot) {
     if (slot >= 0) CS::Session()->SendReliableToSlot(slot, N::ReliableKind::CoverState, &p, sizeof(p));
@@ -346,22 +343,18 @@ void Tick() {
         if (a.p.what == N::kCoverDesk) JudgeDesk(a);
         else JudgeDoor(a);
     }
-    const uint64_t now = NowMs();
-    if (now < g_nextScanMs) return;
-    g_nextScanMs = now + kScanEveryMs;
-    std::vector<void*> gens;
-    GEN::ReadGenerators(gens);
-    if (g_doorSent.size() < gens.size()) g_doorSent.resize(gens.size(), -1);
-    for (size_t i = 0; i < gens.size(); ++i) {
-        bool open = false;
-        if (!gens[i] || !GEN::ReadOpened(gens[i], open)) continue;
-        if (g_doorSent[i] == (open ? 1 : 0)) continue;
-        if (g_doorSent[i] >= 0) {
-            SendDoor(static_cast<int>(i), open, -1);
-            UE_LOGI("cover_sync: HOST station %zu's door %hs -- sent", i, open ? "opened" : "shut");
-        }
-        g_doorSent[i] = open ? 1 : 0;
+}
+
+void OnDoorFinished(void* gen) {
+    if (!CS::IsHost() || !CS::Session()->connected()) return;
+    const int32_t index = GEN::IndexOf(gen);
+    bool open = false;
+    if (index < 0 || index > 255 || !GEN::ReadOpened(gen, open)) {
+        UE_LOGW("cover_sync: HOST a station's door finished but its place (%d) or its state did not read -- not sent", index);
+        return;
     }
+    SendDoor(index, open, -1);
+    UE_LOGI("cover_sync: HOST station %d's door %hs -- sent", index, open ? "opened" : "shut");
 }
 
 void OnDeskUpdated(void* desk) {
@@ -433,7 +426,6 @@ void OnDisconnect() {
     g_owed.clear();
     g_fresh.clear();
     g_deskSaid = false;
-    g_doorSent.clear();
 }
 
 }  // namespace coop::cover_judge
