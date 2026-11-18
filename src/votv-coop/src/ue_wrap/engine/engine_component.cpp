@@ -450,4 +450,12 @@ bool IsAudioComponentPlaying(void* audio) {
     return fn && f.valid() && Call(audio, f) && f.Get<bool>(L"ReturnValue");
 }
 
+bool IsOverlappingActor(void* component, void* actor) {
+    if (!component || !actor || !R::IsLive(component) || !R::IsLive(actor)) return false;
+    // IsOverlappingActor is UPrimitiveComponent's; the dispatch cache climbs to it.
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(component), L"IsOverlappingActor");
+    ParamFrame f(fn);
+    return fn && f.valid() && f.Set<void*>(L"Other", actor) && Call(component, f) && f.Get<bool>(L"ReturnValue");
+}
+
 }  // namespace ue_wrap::engine

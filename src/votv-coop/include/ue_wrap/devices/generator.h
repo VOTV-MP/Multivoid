@@ -39,6 +39,18 @@ size_t ReadGenerators(std::vector<void*>& out);
 // `gen`'s place in gamemode.generators, or -1. Game thread.
 int32_t IndexOf(void* gen);
 
+// The generator at place `index` of gamemode.generators; null when the list is unread, the index is outside it, or its
+// slot is empty or dead. Game thread.
+void* At(int32_t index);
+
+// The maintenance door: `opened` (its timeline ended open), `moving` (the timeline is running) and `lookAtDoor` (the
+// last look-at hit the door), each false-returning when the field did not resolve; and openDoor(open), the call a door
+// press makes, which does nothing while the door moves. False when the call did not run. Game thread.
+bool ReadOpened(void* gen, bool& value);
+bool ReadMoving(void* gen, bool& value);
+bool ReadLookAtDoor(void* gen, bool& value);
+bool CallOpenDoor(void* gen, bool open);
+
 bool ReadRow(void* gen, Row& out);
 
 // Raw writes of the row's plain fields: nothing repaints. Game thread.

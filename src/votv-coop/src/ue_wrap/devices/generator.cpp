@@ -182,6 +182,51 @@ int32_t IndexOf(void* gen) {
     return -1;
 }
 
+void* At(int32_t index) {
+    const field_io::TArrayView* arr = List();
+    if (!arr || index < 0 || index >= arr->num) return nullptr;
+    void* const gen = reinterpret_cast<void* const*>(arr->data)[index];
+    return gen && R::IsLive(gen) ? gen : nullptr;
+}
+
+namespace {
+
+// A Blueprint bool is an FBoolProperty: its byte offset and the bit inside that byte, found once per class object.
+struct BoolField {
+    const wchar_t* name;
+    void* cls = nullptr;
+    int32_t off = -1;
+    uint8_t mask = 0;
+};
+BoolField g_opened{L"opened"};
+BoolField g_moving{L"moving"};
+BoolField g_lookDoor{L"lookAtDoor"};
+
+bool ReadDoorFlag(void* gen, BoolField& f, bool& out) {
+    void* const cls = gen ? R::ClassOf(gen) : nullptr;
+    if (!cls) return false;
+    if (f.cls != cls) {
+        f.cls = cls;
+        f.off = -1;
+        f.mask = 0;
+        if (!R::FindBoolProperty(cls, f.name, f.off, f.mask) || f.off < 0 || !f.mask) f.off = -1;
+    }
+    if (f.off < 0) return false;
+    out = ReadBit(gen, f.off, f.mask);
+    return true;
+}
+
+}  // namespace
+
+bool ReadOpened(void* gen, bool& v) { return ReadDoorFlag(gen, g_opened, v); }
+bool ReadMoving(void* gen, bool& v) { return ReadDoorFlag(gen, g_moving, v); }
+bool ReadLookAtDoor(void* gen, bool& v) { return ReadDoorFlag(gen, g_lookDoor, v); }
+
+bool CallOpenDoor(void* gen, bool open) {
+    ParamFrame f(gen ? R::FindDispatchFunctionCached(R::ClassOf(gen), L"openDoor") : nullptr);
+    return f.valid() && f.Set<bool>(L"open", open) && Call(gen, f);
+}
+
 bool ReadRow(void* gen, Row& out) {
     if (!gen || !g_resolved) return false;
     out.broken = ReadBit(gen, g_offBroken, g_maskBroken);

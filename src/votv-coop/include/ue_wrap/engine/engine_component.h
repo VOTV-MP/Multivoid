@@ -120,4 +120,8 @@ bool PlayAudioComponent(void* audio);
 // live, the call does not dispatch, or nothing plays. Game thread.
 bool IsAudioComponentPlaying(void* audio);
 
+// UPrimitiveComponent::IsOverlappingActor: whether `component` overlaps `actor` now. False when either is null or not
+// live, the call does not dispatch, or nothing overlaps. Game thread.
+bool IsOverlappingActor(void* component, void* actor);
+
 }  // namespace ue_wrap::engine

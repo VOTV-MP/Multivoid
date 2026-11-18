@@ -27,12 +27,12 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
-#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/desk/analog_desk.h"
 #include "ue_wrap/devices/generator.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
@@ -53,6 +53,7 @@ namespace OI  = ue_wrap::object_index;
 namespace sg  = ue_wrap::script_gate;
 namespace CC  = ue_wrap::component_calls;
 namespace GEN = ue_wrap::generator;
+namespace AD  = ue_wrap::analog_desk;
 namespace EL  = coop::element;
 namespace N   = coop::net;
 
@@ -63,13 +64,8 @@ UE_FACT_FN(kRowStationAction, "cover_sync", L"generator_C", L"actionOptionIndex"
 constexpr int kTagUnscrew = 0x43565201, kTagDeskAction = 0x43565202, kTagDeskOverlap = 0x43565203,
               kTagStationAction = 0x43565204;  // 'CVR' 1..4
 
-constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
-// The plates' prop classes, by plate.
-const wchar_t* const kPlateClass[N::kCoverDeskPanels] = {L"prop_computerBackPanel_tl_C", L"prop_computerBackPanel_bl_C",
-                                                         L"prop_computerBackPanel_tr_C", L"prop_computerBackPanel_br_C"};
-// Each plate's lid, the component a plate prop must touch to be set back (the top right has none that moves).
-const wchar_t* const kLid[N::kCoverDeskPanels] = {L"lid1", L"lid2", L"lid3_no", L"lid4"};
-constexpr uint8_t  kFixedPlate = 2;       // the top right plate, which the game never lets move
+static_assert(N::kCoverDeskPanels == AD::kPlates, "the wire's plate count is the desk's");
+constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
 constexpr uint8_t  kActionUse = 4;        // EInteractionActions: the E press
 constexpr float    kDeskReachCm = 400.f;  // a client's ask, from its eye to the plate
 constexpr float    kPlateNearCm = 300.f;  // a plate set back, from the prop to its place
@@ -96,130 +92,39 @@ float Dist2(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return dx * dx + dy * dy + dz * dz;
 }
 
-bool ReadBool(void* obj, const wchar_t* name, bool& out) {
-    int32_t off = -1;
-    uint8_t mask = 0;
-    if (!obj || !R::FindBoolProperty(R::ClassOf(obj), name, off, mask)) return false;
-    out = (static_cast<const uint8_t*>(obj)[off] & mask) != 0;
-    return true;
-}
-
-bool BoolOr(void* obj, const wchar_t* name, bool fallback) {
-    bool v = fallback;
-    return ReadBool(obj, name, v) ? v : fallback;
-}
-
-void WriteBool(void* obj, const wchar_t* name, bool v) {
-    int32_t off = -1;
-    uint8_t mask = 0;
-    if (!obj || !R::FindBoolProperty(R::ClassOf(obj), name, off, mask)) return;
-    uint8_t& b = static_cast<uint8_t*>(obj)[off];
-    b = v ? static_cast<uint8_t>(b | mask) : static_cast<uint8_t>(b & ~mask);
-}
-
-int32_t IntOr(void* obj, const wchar_t* name, int32_t fallback) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    return off >= 0 ? *reinterpret_cast<const int32_t*>(static_cast<const char*>(obj) + off) : fallback;
-}
-
-const ue_wrap::field_io::TArrayView* ArrayOf(void* obj, const wchar_t* name) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    return off >= 0 ? reinterpret_cast<const ue_wrap::field_io::TArrayView*>(static_cast<const char*>(obj) + off)
-                    : nullptr;
-}
-
-// ---- the desk ------------------------------------------------------------------------------------------------------
-
-void* Desk() {
-    void* const cls = OI::ClassByName(kDeskClass);
-    if (!cls) return nullptr;
-    void* found = nullptr;
-    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-        void*& f = *static_cast<void**>(ctx);
-        if (!f && obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) f = obj;
-    }, &found);
-    return found;
-}
-
-// The plates as one byte: on in bits 0-3, unbolted in bits 4-7. False when either array is short.
-bool ReadPlates(void* desk, uint8_t& bits) {
-    const auto* on = ArrayOf(desk, L"panelsState");
-    const auto* loose = ArrayOf(desk, L"panelsUnscrew");
-    if (!on || !loose || !on->data || !loose->data || on->num < N::kCoverDeskPanels || loose->num < N::kCoverDeskPanels)
-        return false;
-    bits = 0;
-    for (int i = 0; i < N::kCoverDeskPanels; ++i) {
-        if (on->data[i]) bits |= static_cast<uint8_t>(1u << i);
-        if (loose->data[i]) bits |= static_cast<uint8_t>(1u << (4 + i));
-    }
-    return true;
+// The desk's and a station's own calls this lane makes, which the gate lets run.
+void WritePlates(void* desk, uint8_t bits) {
+    if (!AD::WritePlateArrays(desk, bits)) return;
+    g_applying = true;
+    AD::CallUpdPanels(desk);
+    g_applying = false;
 }
 
 bool PlateOn(uint8_t bits, int i) { return (bits >> i) & 1u; }
 bool PlateLoose(uint8_t bits, int i) { return (bits >> (4 + i)) & 1u; }
 
-// The plates written and shown through the desk's own updPanels.
-void WritePlates(void* desk, uint8_t bits) {
-    auto* on = const_cast<ue_wrap::field_io::TArrayView*>(ArrayOf(desk, L"panelsState"));
-    auto* loose = const_cast<ue_wrap::field_io::TArrayView*>(ArrayOf(desk, L"panelsUnscrew"));
-    if (!on || !loose || !on->data || !loose->data || on->num < N::kCoverDeskPanels || loose->num < N::kCoverDeskPanels)
-        return;
-    for (int i = 0; i < N::kCoverDeskPanels; ++i) {
-        on->data[i] = PlateOn(bits, i) ? 1 : 0;
-        loose->data[i] = PlateLoose(bits, i) ? 1 : 0;
-    }
+void SoundDetach(void* desk, const ue_wrap::FVector& at) {
     g_applying = true;
-    CC::CallParamlessNamed(desk, L"updPanels");
+    AD::CallSoundDetach(desk, at);
     g_applying = false;
 }
 
-void* PlateMesh(void* desk, int i) {
-    const auto* panels = ArrayOf(desk, L"panels");
-    if (!panels || !panels->data || i < 0 || i >= panels->num) return nullptr;
-    void* const mesh = reinterpret_cast<void* const*>(panels->data)[i];
-    return mesh && R::IsLive(mesh) ? mesh : nullptr;
+bool OpenedOr(void* gen, bool fallback) {
+    bool v = fallback;
+    return GEN::ReadOpened(gen, v) ? v : fallback;
 }
-
-int PlateOfClass(void* actor) {
-    if (!actor) return -1;
-    const std::wstring cls = R::ClassNameOf(actor);
-    for (int i = 0; i < N::kCoverDeskPanels; ++i)
-        if (_wcsicmp(cls.c_str(), kPlateClass[i]) == 0) return i;
-    return -1;
+bool MovingOr(void* gen, bool fallback) {
+    bool v = fallback;
+    return GEN::ReadMoving(gen, v) ? v : fallback;
 }
-
-void SoundDetach(void* desk, const ue_wrap::FVector& at) {
-    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(desk), L"soundDetachPanel"));
-    if (f.valid() && f.Set<ue_wrap::FVector>(L"location", at)) {
-        g_applying = true;
-        ue_wrap::Call(desk, f);
-        g_applying = false;
-    }
-}
-
-void* MemberObj(void* obj, const wchar_t* name) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    return off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const char*>(obj) + off) : nullptr;
-}
-
-bool Touches(void* lid, void* actor) {
-    ue_wrap::ParamFrame f(lid ? R::FindDispatchFunctionCached(R::ClassOf(lid), L"IsOverlappingActor") : nullptr);
-    return f.valid() && f.Set<void*>(L"Other", actor) && ue_wrap::Call(lid, f) && f.Get<bool>(L"ReturnValue");
-}
-
-// ---- the stations --------------------------------------------------------------------------------------------------
-
-void* Station(int index) {
-    std::vector<void*> gens;
-    GEN::ReadGenerators(gens);
-    return index >= 0 && index < static_cast<int>(gens.size()) ? gens[static_cast<size_t>(index)] : nullptr;
+bool LookAtDoor(void* gen) {
+    bool v = false;
+    return GEN::ReadLookAtDoor(gen, v) && v;
 }
 
 void OpenDoor(void* gen, bool open) {
-    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(gen), L"openDoor"));
-    if (!f.valid() || !f.Set<bool>(L"open", open)) return;
     g_applying = true;
-    ue_wrap::Call(gen, f);
+    GEN::CallOpenDoor(gen, open);
     g_applying = false;
 }
 
@@ -294,7 +199,7 @@ constexpr float    kArmAwayCm = 80.f;    // and a held one once this far from it
 
 // Whether `prop` is more than kArmAwayCm from the plate it came off.
 bool AwayFromPlate(void* desk, uint8_t plate, void* prop) {
-    void* const mesh = PlateMesh(desk, plate);
+    void* const mesh = AD::PlateMesh(desk, plate);
     ue_wrap::FVector at{};
     return mesh && E::TryGetActorLocation(prop, at) &&
            Dist2(at, E::GetComponentLocation(mesh)) > kArmAwayCm * kArmAwayCm;
@@ -310,14 +215,14 @@ bool IsFresh(void* actor) {
 // panelTakeoff.
 void TendFresh() {
     if (g_fresh.empty()) return;
-    void* const desk = Desk();
+    void* const desk = AD::Find();
     const uint64_t now = NowMs();
     for (size_t i = 0; i < g_fresh.size();) {
         Fresh& f = g_fresh[i];
         void* const prop = f.prop.Get();
-        void* const lid = desk ? MemberObj(desk, kLid[f.plate]) : nullptr;
+        void* const lid = desk ? AD::Lid(desk, f.plate) : nullptr;
         const bool gone = !prop || !lid || now - f.since > kFreshMaxMs;
-        const bool on = !gone && Touches(lid, prop);
+        const bool on = !gone && E::IsOverlappingActor(lid, prop);
         if (on) f.touched = true;
         // Off its lid in a player's hold, as the game's take-off hands it straight to its taker: until that hold arrives
         // the host's copy falls off the lid by its own physics, and the hold lifts it back through it. A prop nobody
@@ -333,12 +238,12 @@ void TendFresh() {
                         "lid (%.0f,%.0f,%.0f), %.0f cm)", f.plate, pa.X, pa.Y, pa.Z, la.X, la.Y, la.Z, std::sqrt(Dist2(pa, la)));
             }
             g_fresh.erase(g_fresh.begin() + static_cast<std::ptrdiff_t>(i));
-            if (g_fresh.empty() && desk) WriteBool(desk, L"panelTakeoff", false);
+            if (g_fresh.empty() && desk) AD::WriteTakeoff(desk, false);
             continue;
         }
         ++i;
     }
-    if (!g_fresh.empty() && desk) WriteBool(desk, L"panelTakeoff", true);
+    if (!g_fresh.empty() && desk) AD::WriteTakeoff(desk, true);
 }
 
 void PayOwed() {
@@ -361,19 +266,19 @@ void PayOwed() {
 // A take-off: the plate off on the host's desk, and its prop the host's, spawned where the plate was, so every peer
 // has it. The asker takes it into its hand when its copy arrives.
 void* TakeOff(void* desk, uint8_t plate, uint8_t bits) {
-    void* const mesh = PlateMesh(desk, plate);
-    void* const cls = R::FindClass(kPlateClass[plate]);
+    void* const mesh = AD::PlateMesh(desk, plate);
+    void* const cls = R::FindClass(AD::PlatePropClass(plate));
     if (!mesh || !cls) {
-        UE_LOGW("cover_sync: HOST plate %u's mesh or prop class (%ls) is not here", plate, kPlateClass[plate]);
+        UE_LOGW("cover_sync: HOST plate %u's mesh or prop class (%ls) is not here", plate, AD::PlatePropClass(plate));
         return nullptr;
     }
     const ue_wrap::FVector at = E::GetComponentLocation(mesh);
     const ue_wrap::FRotator rot = E::GetComponentWorldRotation(mesh);
-    WriteBool(desk, L"panelTakeoff", true);  // the prop born touching its lid is not set back at once
+    AD::WriteTakeoff(desk, true);  // the prop born touching its lid is not set back at once
     WritePlates(desk, static_cast<uint8_t>(bits & ~(1u << plate)));
     void* const prop = E::BeginDeferredSpawn(cls, at, rot);
     if (!prop || !E::FinishDeferredSpawn(prop, at, rot)) {  // no plate made: it stays on
-        WriteBool(desk, L"panelTakeoff", false);
+        AD::WriteTakeoff(desk, false);
         WritePlates(desk, bits);
         UE_LOGW("cover_sync: HOST plate %u's prop did not spawn -- the plate stays on", plate);
         return nullptr;
@@ -383,23 +288,23 @@ void* TakeOff(void* desk, uint8_t plate, uint8_t bits) {
 }
 
 void JudgeDesk(const Ask& a) {
-    void* const desk = Desk();
+    void* const desk = AD::Find();
     uint8_t bits = 0;
     const uint8_t plate = a.p.index;
-    if (!desk || !ReadPlates(desk, bits) || plate >= N::kCoverDeskPanels) {
+    if (!desk || !AD::ReadPlates(desk, bits) || plate >= N::kCoverDeskPanels) {
         UE_LOGW("cover_sync: HOST slot %d asked of plate %u with no desk here -- refused", a.slot, plate);
         if (a.p.op == N::kCoverOpTakeOff) AnswerTakeOff(a.slot, plate, 0);
         return;
     }
     ue_wrap::FVector eye{};
-    void* const mesh = PlateMesh(desk, plate);
+    void* const mesh = AD::PlateMesh(desk, plate);
     const bool seen = mesh && EyeOf(a.slot, eye);
     const ue_wrap::FVector plateAt = mesh ? E::GetComponentLocation(mesh) : ue_wrap::FVector{};
     const bool reach = seen && Dist2(eye, plateAt) <= kDeskReachCm * kDeskReachCm;
     if (!reach)
         UE_LOGI("cover_sync: HOST slot %d's eye (%.0f,%.0f,%.0f) is %.0f cm from plate %u at (%.0f,%.0f,%.0f)", a.slot,
                 eye.X, eye.Y, eye.Z, seen ? std::sqrt(Dist2(eye, plateAt)) : -1.f, plate, plateAt.X, plateAt.Y, plateAt.Z);
-    const bool busy = BoolOr(desk, L"panelsProcess", false);
+    const bool busy = AD::ProcessOr(desk, false);
     if (a.p.op == N::kCoverOpUnscrew) {
         const bool ok = reach && plate != kFixedPlate && PlateOn(bits, plate) && !busy;
         if (ok) WritePlates(desk, static_cast<uint8_t>(bits ^ (1u << (4 + plate))));
@@ -429,7 +334,7 @@ void JudgeDesk(const Ask& a) {
         const bool near = prop && mesh && E::TryGetActorLocation(prop, at) &&
                           Dist2(at, E::GetComponentLocation(mesh)) <= kPlateNearCm * kPlateNearCm;
         const bool fresh = IsFresh(prop);  // not yet off its lid in a hold on the host
-        const bool ok = near && !fresh && PlateOfClass(prop) == plate && !PlateOn(bits, plate);
+        const bool ok = near && !fresh && AD::PlateOfProp(prop) == plate && !PlateOn(bits, plate);
         if (ok) {
             WritePlates(desk, static_cast<uint8_t>(bits | (1u << plate)));
             CC::CallParamlessNamed(prop, L"K2_DestroyActor");
@@ -442,7 +347,7 @@ void JudgeDesk(const Ask& a) {
 }
 
 void JudgeDoor(const Ask& a) {
-    void* const gen = Station(a.p.index);
+    void* const gen = GEN::At(a.p.index);
     ue_wrap::FVector eye{}, at{};
     const bool seen = gen && EyeOf(a.slot, eye) && E::TryGetActorLocation(gen, at);
     const bool reach = seen && Dist2(eye, at) <= kDoorReachCm * kDoorReachCm;
@@ -450,7 +355,7 @@ void JudgeDoor(const Ask& a) {
         UE_LOGI("cover_sync: HOST slot %d's eye (%.0f,%.0f,%.0f) is %.0f cm from station %u at (%.0f,%.0f,%.0f)", a.slot,
                 eye.X, eye.Y, eye.Z, seen ? std::sqrt(Dist2(eye, at)) : -1.f, a.p.index, at.X, at.Y, at.Z);
     const bool want = (a.p.bits & 1u) != 0;
-    const bool ok = reach && !BoolOr(gen, L"moving", true) && BoolOr(gen, L"opened", !want) != want;
+    const bool ok = reach && !MovingOr(gen, true) && OpenedOr(gen, !want) != want;
     if (ok) OpenDoor(gen, want);
     UE_LOGI("cover_sync: HOST slot %d %hs station %u's door -- %hs", a.slot, want ? "opens" : "shuts", a.p.index,
             ok ? "taken" : reach ? "refused by the station" : "out of reach, refused");
@@ -474,7 +379,7 @@ void TickHost() {
     if (now < g_nextScanMs) return;
     g_nextScanMs = now + kScanEveryMs;
     uint8_t bits = 0;
-    if (void* desk = Desk(); desk && ReadPlates(desk, bits) && (!g_deskSaid || bits != g_deskSent)) {
+    if (void* desk = AD::Find(); desk && AD::ReadPlates(desk, bits) && (!g_deskSaid || bits != g_deskSent)) {
         if (g_deskSaid) SendDesk(bits, -1);
         if (g_deskSaid) UE_LOGI("cover_sync: HOST the desk's plates on=0x%x unbolted=0x%x -- sent", bits & 0xF, bits >> 4);
         g_deskSaid = true;
@@ -485,7 +390,7 @@ void TickHost() {
     if (g_doorSent.size() < gens.size()) g_doorSent.resize(gens.size(), -1);
     for (size_t i = 0; i < gens.size(); ++i) {
         bool open = false;
-        if (!gens[i] || !ReadBool(gens[i], L"opened", open)) continue;
+        if (!gens[i] || !GEN::ReadOpened(gens[i], open)) continue;
         if (g_doorSent[i] == (open ? 1 : 0)) continue;
         if (g_doorSent[i] >= 0) {
             SendDoor(static_cast<int>(i), open, -1);
@@ -519,8 +424,8 @@ void AskPutBacks(void* desk, uint8_t bits) {
             g_armed[i] = false;  // as the desk's panelTakeoff: a prop born on its lid is not set back until it has left
             continue;
         }
-        void* const lid = MemberObj(desk, kLid[i]);
-        void* const cls = R::FindClass(kPlateClass[i]);
+        void* const lid = AD::Lid(desk, i);
+        void* const cls = R::FindClass(AD::PlatePropClass(i));
         if (!lid || !cls) continue;
         std::vector<void*> props;
         OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
@@ -530,7 +435,7 @@ void AskPutBacks(void* desk, uint8_t bits) {
         bool touching = false;
         for (void* prop : props) {
             const EL::ElementId eid = EL::Registry::Get().EidForActor(prop);
-            if (eid == EL::kInvalidId || !Touches(lid, prop)) continue;
+            if (eid == EL::kInvalidId || !E::IsOverlappingActor(lid, prop)) continue;
             touching = true;
             if (!g_armed[i] || now - g_lastPutBackAskMs < 1000) break;
             g_lastPutBackAskMs = now;
@@ -559,18 +464,18 @@ void TickClient() {
     static ue_wrap::CachedObjRef s_desk;
     void* held = s_desk.Get();
     if (!held) {
-        held = Desk();
+        held = AD::Find();
         s_desk.Set(held);
     }
-    if (held) WriteBool(held, L"panelTakeoff", true);
+    if (held) AD::WriteTakeoff(held, true);
     // The desk is kept at the host's plates: a write when they arrive, and a check every 100 ms after, which rewrites
     // anything that moved them here.
     const uint64_t now = NowMs();
     if ((g_deskWanted || (g_haveDesk && now >= g_nextDeskCheckMs))) {
         g_nextDeskCheckMs = now + kScanEveryMs;
-        if (void* desk = Desk()) {
+        if (void* desk = AD::Find()) {
             uint8_t bits = 0;
-            const bool read = ReadPlates(desk, bits);
+            const bool read = AD::ReadPlates(desk, bits);
             if (!read || bits != g_deskBits) {
                 WritePlates(desk, g_deskBits);
                 if (g_deskWanted)
@@ -586,9 +491,9 @@ void TickClient() {
     }
     for (size_t i = 0; i < g_doorWanted.size(); ++i) {
         if (g_doorWanted[i] < 0) continue;
-        void* const gen = Station(static_cast<int>(i));
+        void* const gen = GEN::At(static_cast<int>(i));
         bool open = false;
-        if (!gen || !ReadBool(gen, L"opened", open) || BoolOr(gen, L"moving", true)) continue;
+        if (!gen || !GEN::ReadOpened(gen, open) || MovingOr(gen, true)) continue;
         const bool want = g_doorWanted[i] == 1;
         if (open != want) {
             OpenDoor(gen, want);
@@ -622,7 +527,7 @@ void Ask(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid) {
 // The end of a client's timed unbolt: asked of the host, and the unbolt's widget taken down here.
 sg::Verdict OnUnscrewPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object) return sg::Verdict::Run;
-    const int32_t plate = IntOr(c.object, L"lookingAtPanel", -1);
+    const int32_t plate = AD::LookingAtPanel(c.object);
     if (plate >= 0 && plate < N::kCoverDeskPanels) Ask(N::kCoverOpUnscrew, N::kCoverDesk, static_cast<uint8_t>(plate), 0, 0);
     g_applying = true;
     CC::CallParamlessNamed(c.object, L"resetUnscrew");
@@ -633,10 +538,10 @@ sg::Verdict OnUnscrewPre(const sg::Call& c) {
 // A client's E press on an unbolted plate that is on: a take-off, asked of the host. Every other press runs.
 sg::Verdict OnDeskActionPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object) return sg::Verdict::Run;
-    const int32_t plate = IntOr(c.object, L"lookingAtPanel", -1);
+    const int32_t plate = AD::LookingAtPanel(c.object);
     uint8_t bits = 0;
-    if (plate < 0 || plate >= N::kCoverDeskPanels || BoolOr(c.object, L"panelsProcess", true) ||
-        !ReadPlates(c.object, bits) || !PlateLoose(bits, plate) || !PlateOn(bits, plate))
+    if (plate < 0 || plate >= N::kCoverDeskPanels || AD::ProcessOr(c.object, true) ||
+        !AD::ReadPlates(c.object, bits) || !PlateLoose(bits, plate) || !PlateOn(bits, plate))
         return sg::Verdict::Run;
     if (Paced()) Ask(N::kCoverOpTakeOff, N::kCoverDesk, static_cast<uint8_t>(plate), 0, 0);
     return sg::Verdict::Cancel;
@@ -660,10 +565,10 @@ sg::Verdict OnDeskOverlapPre(const sg::Call& c) {
 sg::Verdict OnStationActionPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object || !c.function || !c.locals) return sg::Verdict::Run;
     const int32_t off = R::FindParamOffset(c.function, L"action");
-    if (off < 0 || c.locals[off] != kActionUse || !BoolOr(c.object, L"lookAtDoor", false)) return sg::Verdict::Run;
+    if (off < 0 || c.locals[off] != kActionUse || !LookAtDoor(c.object)) return sg::Verdict::Run;
     const int32_t index = GEN::IndexOf(c.object);
     if (index < 0 || index > 255) return sg::Verdict::Run;
-    if (Paced()) Ask(N::kCoverOpDoor, N::kCoverStation, static_cast<uint8_t>(index), BoolOr(c.object, L"opened", false) ? 0 : 1, 0);
+    if (Paced()) Ask(N::kCoverOpDoor, N::kCoverStation, static_cast<uint8_t>(index), OpenedOr(c.object, false) ? 0 : 1, 0);
     return sg::Verdict::Cancel;
 }
 
@@ -703,12 +608,12 @@ void Tick() {
 void SendJoinSnapshotForSlot(int slot) {
     if (!IsHost() || slot <= 0) return;
     uint8_t bits = 0;
-    if (void* desk = Desk(); desk && ReadPlates(desk, bits)) SendDesk(bits, slot);
+    if (void* desk = AD::Find(); desk && AD::ReadPlates(desk, bits)) SendDesk(bits, slot);
     std::vector<void*> gens;
     GEN::ReadGenerators(gens);
     for (size_t i = 0; i < gens.size() && i < 256; ++i) {
         bool open = false;
-        if (gens[i] && ReadBool(gens[i], L"opened", open)) SendDoor(static_cast<int>(i), open, slot);
+        if (gens[i] && GEN::ReadOpened(gens[i], open)) SendDoor(static_cast<int>(i), open, slot);
     }
 }
 
