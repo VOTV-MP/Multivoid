@@ -131,8 +131,11 @@ std::vector<Fresh> g_fresh;
 constexpr uint64_t kFreshMaxMs = 60000;  // a prop left on its lid this long is the desk's again
 constexpr uint64_t kUnheldArmMs = 3000;  // a prop no one has taken by this is armed once off its lid
 
-// HOST, each tick: a fresh prop seen off its lid is armed, and the hold ends with the last one, as the end-overlap ends
-// panelTakeoff.
+// HOST, each tick, only while a granted take-off's prop is fresh: a fresh prop seen off its lid is armed, and the hold ends
+// with the last one, as the end-overlap ends panelTakeoff. This stays on a clock because no event gives it: the prop's
+// leaving its lid is physics motion (its end-overlap reaches the desk as a native delegate no seam sees, and an
+// end-overlap of any other actor clears the same flag), a player's hold has no announcement, and a prop nobody takes is
+// armed by time alone.
 void TendFresh() {
     if (g_fresh.empty()) return;
     void* const desk = AD::Find();
@@ -166,6 +169,8 @@ void TendFresh() {
     if (!g_fresh.empty() && desk) AD::WriteTakeoff(desk, true);
 }
 
+// Each tick while a take-off's answer is owed: the prop's element id is given by the spawn seam after the spawn returns,
+// and nothing else announces it here, so it is read until it binds or the prop is gone (2 s).
 void PayOwed() {
     const uint64_t now = NowMs();
     for (size_t i = 0; i < g_owed.size();) {
@@ -329,6 +334,8 @@ void JudgeDoor(const Ask& a) {
 
 }  // namespace
 
+// The plates and the doors are sent by the game's own announcements (OnDeskUpdated, OnDoorFinished); this is what remains on
+// a tick: the queued asks, and the two waits above.
 void Tick() {
     PayOwed();
     TendFresh();

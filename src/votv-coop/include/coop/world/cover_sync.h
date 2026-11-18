@@ -25,10 +25,13 @@ struct CoverPayload;
 
 namespace coop::cover_sync {
 
-// Keep the session and register the watches on the desk's plates and the stations' door press. Idempotent.
+// Keep the session and register the watches: the desk's plates and the stations' door press, and the game's announcements
+// of a plate change (updPanels) and a door's end (doorAnim_TL__FinishedFunc). Idempotent.
 void Install(coop::net::Session* session);
 
-// HOST: judge the queued asks, send each change. CLIENT: apply the host's states. Settles the watches. Per frame.
+// HOST: judge the queued asks and tend a fresh plate prop. CLIENT: look for a put-back's lid touch while a plate is off.
+// Settles the watches. Per frame. The plates and the doors are not read here: the game's updPanels and its door timeline's
+// end send them (HOST) and keep them (CLIENT).
 void Tick();
 
 // HOST, at a joiner's world-ready edge: the desk's plates and every station's door, to that slot.
