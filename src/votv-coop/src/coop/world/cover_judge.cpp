@@ -7,6 +7,7 @@
 
 #include "coop/world/cover_judge.h"
 
+#include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
@@ -54,7 +55,6 @@ using CS::kScanEveryMs;
 
 constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
 constexpr float    kDeskReachCm = 400.f;  // a client's ask, from its eye to the plate
-constexpr float    kPlateNearCm = 300.f;  // a plate set back, from the prop to its place
 constexpr float    kDoorReachCm = 600.f;  // a client's door press, from its eye to the station
 constexpr uint64_t kBodyWaitMs = 5000;    // an ask waits this long for its sender's body here
 constexpr size_t   kAskQueueMax = 64;     // asks waiting, over all senders
@@ -262,21 +262,39 @@ void JudgeDesk(const Ask& a) {
                 prop ? "taken" : ok ? "the plate's prop was not made" : reach ? "refused by the desk" : "out of reach, refused");
     } else {  // a plate set back
         void* const prop = EL::LiveActorOfType(static_cast<EL::ElementId>(a.p.eid), EL::ElementType::Prop);
-        ue_wrap::FVector at{};
-        const bool near = prop && mesh && E::TryGetActorLocation(prop, at) &&
-                          Dist2(at, E::GetComponentLocation(mesh)) <= kPlateNearCm * kPlateNearCm;
+        // The prop is a host element: the sender must reach it, hold it or leave it unheld, and the host's copy must touch
+        // the plate's lid, as the desk's own overlap would test it.
+        const bool mine = prop && AD::PlateOfProp(prop) == plate;
+        const bool reached =
+            mine && EL::IntentTarget::ForClientIntent(*CS::Session(), static_cast<uint8_t>(a.slot), kDeskReachCm)
+                        .Authorize(prop).outcome == EL::IntentOutcome::Ok;
+        const bool heldOk = mine && coop::prop_hold::WhoHolds(prop, a.slot) == coop::prop_hold::Holder::None;
+        const bool touches = mine && E::IsOverlappingActor(AD::Lid(desk, plate), prop);
         const bool fresh = IsFresh(prop);  // not yet off its lid in a hold on the host
-        const bool ok = near && !fresh && AD::PlateOfProp(prop) == plate && !PlateOn(bits, plate);
+        const bool on = PlateOn(bits, plate);
+        const bool ok = mine && reached && heldOk && touches && !fresh && !on;
+        N::CoverReason why = N::CoverReason::Busy;
+        const char* said = fresh ? "refused, not yet off its lid" : "refused";
         if (ok) {
+            ue_wrap::FVector at{};
+            E::TryGetActorLocation(prop, at);
             WritePlates(desk, static_cast<uint8_t>(bits | (1u << plate)));
             CC::CallParamlessNamed(prop, L"K2_DestroyActor");
             SoundDetach(desk, at);
-        } else {
-            Answer(a.slot, N::kCoverDesk, plate,
-                   PlateOn(bits, plate) ? N::CoverReason::Already : !near ? N::CoverReason::OutOfReach : N::CoverReason::Busy);
+            said = "taken";
+        } else if (on) {
+            why = N::CoverReason::Already, said = "already on";
+        } else if (!mine) {
+            said = "refused, not this plate's prop";
+        } else if (!reached) {
+            why = N::CoverReason::OutOfReach, said = "refused, the prop is out of reach";
+        } else if (!heldOk) {
+            why = N::CoverReason::NotHeld, said = "refused, another player holds it";
+        } else if (!touches) {
+            why = N::CoverReason::OutOfReach, said = "refused, the prop is not on the lid";
         }
-        UE_LOGI("cover_sync: HOST slot %d sets plate %u back (prop eid %u) -- %hs", a.slot, plate, a.p.eid,
-                ok ? "taken" : PlateOn(bits, plate) ? "already on" : fresh ? "refused, not yet off its lid" : "refused");
+        if (!ok) Answer(a.slot, N::kCoverDesk, plate, why);
+        UE_LOGI("cover_sync: HOST slot %d sets plate %u back (prop eid %u) -- %hs", a.slot, plate, a.p.eid, said);
     }
     g_nextScanMs = 0;  // the change goes out at once
 }
