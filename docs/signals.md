@@ -225,7 +225,7 @@ until it has been held off its lid, and a client's desk never sets a plate back 
 once the plate it holds has left its lid and comes back to it. The host sends the plates on change and to a joiner (`CoverState`),
 and a client writes them and repaints through the desk's own `updPanels`; the same lane carries a
 transformer station's door, swung through the station's own `openDoor` (`coop/world/cover_sync`)
-`[V]` (`coop/dev/cover_probe`, `VOTVCOOP_COVER_PROBE=1`: a client's unbolt, take-off, set-back and
+`[?]` (read from the log-only probe the cover drill replaced (`harness/autotest/autotest_cover`, `cover_drill=run`), until the drill's run says it: a client's unbolt, take-off, set-back and
 bolt each ran on the host and showed on both desks, a client's door press swung both doors, and the
 host's own unbolt and door reached the client). The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second
@@ -380,4 +380,4 @@ arrive with the save and never again.
 | the join seeds | `coop/session/join_seed` |
 | tests and instruments | `coop/dev/drive_selftest`, `coop/dev/drive_drill`, `coop/dev/download_drill`, `coop/dev/desk_diag`, `coop/dev/sat_console_drill`, `coop/dev/calib_drill`, `coop/dev/desk_ping_drill`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |
 | the desk's short circuit | `coop/interactables/desk_short_sync`, `ue_wrap/desk/desk_short` |
-| the desk's back plates and the stations' doors | `coop/world/cover_sync`; `coop/dev/cover_probe` |
+| the desk's back plates and the stations' doors | `coop/world/cover_sync`; `harness/autotest/autotest_cover` |

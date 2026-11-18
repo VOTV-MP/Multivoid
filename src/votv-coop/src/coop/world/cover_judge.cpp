@@ -120,8 +120,8 @@ struct Owed {
     uint64_t since = 0;
 };
 std::vector<Owed> g_owed;
-// A granted take-off's prop, born on its lid, moves from the plate to its asker's hand over the next frames and can
-// brush the lid again on the way. As the desk's own panelTakeoff waits for the prop's end-overlap, the host's desk does
+// A granted take-off's prop, born on its lid, falls off it by its own physics and can brush the lid again until its asker
+// picks it up by hand, as any prop. As the desk's own panelTakeoff waits for the prop's end-overlap, the host's desk does
 // not set that prop back until it has been seen off its lid in a hold: panelTakeoff is held while it is fresh, and the
 // desk's set-back is refused for it at the gate, since an end-overlap of another actor clears the flag between ticks.
 struct Fresh {
@@ -147,7 +147,7 @@ void TendFresh() {
         const bool gone = !prop || !lid || now - f.since > kFreshMaxMs;
         const bool on = !gone && E::IsOverlappingActor(lid, prop);
         if (on) f.touched = true;
-        // Off its lid in a player's hold, as the game's take-off hands it straight to its taker: until that hold arrives
+        // Off its lid in a player's hold: until that hold arrives
         // the host's copy falls off the lid by its own physics, and the hold lifts it back through it. A prop nobody
         // takes is armed off its lid after kUnheldArmMs.
         const bool held = !gone && coop::prop_hold::WhoHolds(prop, 0) != coop::prop_hold::Holder::None;
@@ -188,7 +188,7 @@ void PayOwed() {
 }
 
 // A take-off: the plate off on the host's desk, and its prop the host's, spawned where the plate was, so every peer
-// has it. The asker takes it into its hand when its copy arrives.
+// has it. The asker picks it up by hand, as any prop; no hold is handed to it.
 void* TakeOff(void* desk, uint8_t plate, uint8_t bits) {
     void* const mesh = AD::PlateMesh(desk, plate);
     void* const cls = R::FindClass(AD::PlatePropClass(plate));

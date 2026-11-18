@@ -699,12 +699,6 @@ enum class ReliableKind : uint16_t {
     // stood at its cut, and its connect replay sends it, alone, an op 2 for each prop whose tag this session published,
     // ahead of the snapshot's props: a copy the save loaded takes it, a prop the snapshot births waits for it by key.
     PropNametag = 261,
-    // A player's held item's own save record (coop/player/hand_record_sync), chunked (BlobChunkPayload) as
-    // [u8 slot][the record]: its owner's, when the item or its record changes, a client's to the host, which decodes it,
-    // checks the sender's applied hand holds that class, stores its own copy and sends that on to every peer but the
-    // sender, the host's own to everyone, and every hand's to a joiner at its ready edge. Each peer writes it into its
-    // mirror of that hand through the item's own loadData.
-    HandRecord = 268,
     // HOST->ALL: a cover's state (coop/world/cover_sync), when it changes and to a joiner at its ready edge. The signal
     // desk's four back plates: which are on and which are unbolted, written into the desk and shown through its own
     // updPanels. A transformer station's (generator_C) maintenance door: open or shut, shown through its own openDoor.
@@ -717,6 +711,12 @@ enum class ReliableKind : uint16_t {
     // CoverState answers.
     // Never relayed. CoverPayload.
     CoverIntent = 267,
+    // A player's held item's own save record (coop/player/hand_record_sync), chunked (BlobChunkPayload) as
+    // [u8 slot][the record]: its owner's, when the item or its record changes, a client's to the host, which decodes it,
+    // checks the sender's applied hand holds that class, stores its own copy and sends that on to every peer but the
+    // sender, the host's own to everyone, and every hand's to a joiner at its ready edge. Each peer writes it into its
+    // mirror of that hand through the item's own loadData.
+    HandRecord = 268,
 
     // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
     // to all with the canonical set; a peer to the host with the outcome of a slot its own game
