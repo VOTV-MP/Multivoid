@@ -1691,6 +1691,14 @@ msgstr ""
 msgid "That is being held"
 msgstr ""
 
+#: src/coop/world/cover_sync.cpp
+msgid "That is busy right now."
+msgstr ""
+
+#: src/coop/world/cover_sync.cpp
+msgid "That is not available right now."
+msgstr ""
+
 #: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
 msgid "That item is gone."
 msgstr ""
@@ -2086,6 +2094,10 @@ msgstr ""
 msgid "Too many password attempts. Try again in ten minutes."
 msgstr ""
 
+#: src/coop/world/cover_sync.cpp
+msgid "Too many requests, try again in a moment."
+msgstr ""
+
 #: src/ui/player_tools_pane.cpp
 msgid "Tools the host grants"
 msgstr ""
@@ -2314,8 +2326,16 @@ msgstr ""
 msgid "You are not holding a toolgun"
 msgstr ""
 
+#: src/coop/world/cover_sync.cpp
+msgid "You are not holding that plate."
+msgstr ""
+
 #: src/coop/creatures/kerfur_command_answer.cpp
 msgid "You are too far from that kerfur."
+msgstr ""
+
+#: src/coop/world/cover_sync.cpp
+msgid "You are too far from that."
 msgstr ""
 
 #: src/ui/game_build_dialog.cpp

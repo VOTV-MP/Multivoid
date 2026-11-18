@@ -1349,6 +1349,12 @@ msgstr "[[That container is too far away.]]"
 msgid "That is being held"
 msgstr "[[That is being held]]"
 
+msgid "That is busy right now."
+msgstr "[[That is busy right now.]]"
+
+msgid "That is not available right now."
+msgstr "[[That is not available right now.]]"
+
 msgid "That item is gone."
 msgstr "[[That item is gone.]]"
 
@@ -1652,6 +1658,9 @@ msgstr "[[Too many kerfur commands at once, try again.]]"
 msgid "Too many password attempts. Try again in ten minutes."
 msgstr "[[Too many password attempts. Try again in ten minutes.]]"
 
+msgid "Too many requests, try again in a moment."
+msgstr "[[Too many requests, try again in a moment.]]"
+
 msgid "Tools the host grants"
 msgstr "[[Tools the host grants]]"
 
@@ -1827,8 +1836,14 @@ msgstr "[[You are banned from this server.]]"
 msgid "You are not holding a toolgun"
 msgstr "[[You are not holding a toolgun]]"
 
+msgid "You are not holding that plate."
+msgstr "[[You are not holding that plate.]]"
+
 msgid "You are too far from that kerfur."
 msgstr "[[You are too far from that kerfur.]]"
+
+msgid "You are too far from that."
+msgstr "[[You are too far from that.]]"
 
 msgid "You can play anyway. This message will not show again for this game version."
 msgstr "[[You can play anyway. This message will not show again for this game version.]]"

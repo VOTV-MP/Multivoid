@@ -21,8 +21,10 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/text/utf8_codec.h"
 #include "coop/world/cover_judge.h"
 #include "coop/world/cover_shared.h"
+#include "l10n/l10n.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
@@ -37,8 +39,11 @@
 #include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/facts/function_row.h"
+#include "ue_wrap/world/votv_lib.h"
 
 #include <chrono>
+#include <cstring>
+#include <string>
 #include <vector>
 
 namespace coop::cover_sync {
@@ -64,6 +69,8 @@ constexpr int kTagUnscrew = 0x43565201, kTagDeskAction = 0x43565202, kTagDeskOve
 static_assert(N::kCoverDeskPanels == AD::kPlates, "the wire's plate count is the desk's");
 constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
 constexpr uint8_t  kActionUse = 4;        // EInteractionActions: the E press
+constexpr uint8_t  kHintRefusal = 1;      // addHint's type for a refusal, as the game's own refusals use
+constexpr uint64_t kAskEveryMs = 250;     // this client's asks of the host, one per this
 
 coop::net::Session* g_session = nullptr;
 bool g_watched = false;
@@ -267,6 +274,30 @@ const char* ReasonName(uint8_t bits) {
     return "unknown";
 }
 
+// The player's own line for a refusal, in its language; null for an answer that is no refusal (taken, or already so,
+// which the state the host sends already shows).
+const char* RefusalLine(uint8_t bits) {
+    switch (static_cast<N::CoverReason>(bits)) {
+    case N::CoverReason::OutOfReach: return l10n::T("You are too far from that.");
+    case N::CoverReason::Busy: return l10n::T("That is busy right now.");
+    case N::CoverReason::NotHeld: return l10n::T("You are not holding that plate.");
+    case N::CoverReason::NoStation: return l10n::T("That is not available right now.");
+    case N::CoverReason::Rate: return l10n::T("Too many requests, try again in a moment.");
+    case N::CoverReason::Ok:
+    case N::CoverReason::Already: return nullptr;
+    }
+    return nullptr;
+}
+
+// The refusal as the game's own hint on this machine's player.
+void ShowRefusal(uint8_t bits) {
+    const char* const line = RefusalLine(bits);
+    void* const local = coop::players::Registry::Get().Local();
+    std::wstring text;
+    if (line && local && coop::text::FromUtf8Strict(line, std::strlen(line), &text))
+        ue_wrap::votv_lib::AddHint(text, kHintRefusal, local);
+}
+
 // The end of a client's timed unbolt: asked of the host, and the unbolt's widget taken down here.
 sg::Verdict OnUnscrewPre(const sg::Call& c) {
     if (!IsClient() || g_applying || !c.object) return sg::Verdict::Run;
@@ -327,6 +358,7 @@ sg::Verdict OnStationActionPre(const sg::Call& c) {
 
 void Install(coop::net::Session* session) {
     g_session = session;
+    cover_judge::Install();
     if (g_watched) return;
     g_watched = true;
     const bool u = sg::WatchName(kRowUnscrew, kTagUnscrew, &OnUnscrewPre, nullptr);
@@ -367,6 +399,7 @@ void OnState(const coop::net::CoverPayload& p) {
             UE_LOGI("cover_sync: CLIENT the host took plate %u off -- its prop eid %u lies where the plate was", p.index, p.eid);
         else UE_LOGI("cover_sync: CLIENT the host answered this player's ask of %hs %u: %hs",
                      p.what == N::kCoverDesk ? "plate" : "station", p.index, ReasonName(p.bits));
+        ShowRefusal(p.bits);
         return;
     }
     if (p.op != N::kCoverOpState) return;

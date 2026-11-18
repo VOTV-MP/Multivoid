@@ -9,6 +9,9 @@ struct CoverPayload;
 
 namespace coop::cover_judge {
 
+// HOST, once: a slot that leaves is owed no answer, and its queued asks are dropped.
+void Install();
+
 // HOST, per frame: the answers owed, the fresh plate props tended, the queued asks judged, the changes sent.
 void Tick();
 

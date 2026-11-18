@@ -69,6 +69,7 @@ ALLOWLIST = [
     "src/coop/session/player_handshake_prefs.cpp",
     "src/coop/session/player_handshake_version.cpp",
     "src/coop/session/server_settings_sync.cpp",
+    "src/coop/world/cover_sync.cpp",
     "src/ui/admin_panel.cpp",
     "src/ui/browser_input_screens.cpp",
     "src/ui/bug_report_pane.cpp",

@@ -12,7 +12,6 @@ class Session;
 
 namespace coop::cover_sync {
 
-inline constexpr uint64_t kAskEveryMs = 250;   // a slot's asks, one per this
 inline constexpr uint64_t kScanEveryMs = 100;  // the host's look at the covers
 
 coop::net::Session* Session();

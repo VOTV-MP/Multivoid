@@ -8,10 +8,12 @@
 #include "coop/world/cover_judge.h"
 
 #include "coop/element/registry.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
+#include "coop/player/roster_ledger.h"
 #include "coop/props/prop_hold.h"
 #include "coop/world/cover_shared.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -48,7 +50,6 @@ using CS::PlateOn;
 using CS::SoundDetach;
 using CS::WritePlates;
 using CS::AwayFromPlate;
-using CS::kAskEveryMs;
 using CS::kScanEveryMs;
 
 constexpr uint8_t  kFixedPlate = AD::kFixedPlate;
@@ -56,10 +57,16 @@ constexpr float    kDeskReachCm = 400.f;  // a client's ask, from its eye to the
 constexpr float    kPlateNearCm = 300.f;  // a plate set back, from the prop to its place
 constexpr float    kDoorReachCm = 600.f;  // a client's door press, from its eye to the station
 constexpr uint64_t kBodyWaitMs = 5000;    // an ask waits this long for its sender's body here
+constexpr size_t   kAskQueueMax = 64;     // asks waiting, over all senders
 
 struct Ask { int slot; N::CoverPayload p; uint64_t since; };
 std::vector<Ask> g_asks;
-uint64_t g_lastAskMs[N::kMaxPeers] = {};
+// A sender's budget of asks: four at once, two a second. Past it an ask is dropped and its sender told, once in
+// kRateSayMs, that it asked too fast. Both clear with the slot's occupant.
+constexpr N::IntentBudget kAskBudget{4.f, 2.f};
+constexpr uint64_t kRateSayMs = 10000;
+coop::roster_ledger::PerSlotState<N::IntentBucket> g_bucket;
+coop::roster_ledger::PerSlotState<uint64_t> g_nextRateSayMs;
 uint64_t g_nextScanMs = 0;
 bool g_deskSaid = false;
 uint8_t g_deskSent = 0;
@@ -229,8 +236,9 @@ void JudgeDesk(const Ask& a) {
         if (ok) {
             const uint8_t bolt = static_cast<uint8_t>(1u << (4 + plate));
             WritePlates(desk, static_cast<uint8_t>(want ? (bits | bolt) : (bits & ~bolt)));
-        } else if (reach && already) {
-            Answer(a.slot, N::kCoverDesk, plate, N::CoverReason::Already);
+        } else {
+            Answer(a.slot, N::kCoverDesk, plate,
+                   !reach ? N::CoverReason::OutOfReach : already ? N::CoverReason::Already : N::CoverReason::Busy);
         }
         UE_LOGI("cover_sync: HOST slot %d %hs plate %u -- %hs", a.slot, want ? "unbolts" : "bolts", plate,
                 ok ? "taken" : !reach ? "out of reach, refused" : already ? "already so, left" : "refused by the desk");
@@ -263,6 +271,9 @@ void JudgeDesk(const Ask& a) {
             WritePlates(desk, static_cast<uint8_t>(bits | (1u << plate)));
             CC::CallParamlessNamed(prop, L"K2_DestroyActor");
             SoundDetach(desk, at);
+        } else {
+            Answer(a.slot, N::kCoverDesk, plate,
+                   PlateOn(bits, plate) ? N::CoverReason::Already : !near ? N::CoverReason::OutOfReach : N::CoverReason::Busy);
         }
         UE_LOGI("cover_sync: HOST slot %d sets plate %u back (prop eid %u) -- %hs", a.slot, plate, a.p.eid,
                 ok ? "taken" : PlateOn(bits, plate) ? "already on" : fresh ? "refused, not yet off its lid" : "refused");
@@ -279,8 +290,13 @@ void JudgeDoor(const Ask& a) {
         UE_LOGI("cover_sync: HOST slot %d's eye (%.0f,%.0f,%.0f) is %.0f cm from station %u at (%.0f,%.0f,%.0f)", a.slot,
                 eye.X, eye.Y, eye.Z, seen ? std::sqrt(Dist2(eye, at)) : -1.f, a.p.index, at.X, at.Y, at.Z);
     const bool want = (a.p.bits & 1u) != 0;
-    const bool ok = reach && !MovingOr(gen, true) && OpenedOr(gen, !want) != want;
+    const bool moving = MovingOr(gen, true);
+    const bool already = OpenedOr(gen, !want) == want;
+    const bool ok = reach && !moving && !already;
     if (ok) OpenDoor(gen, want);
+    else Answer(a.slot, N::kCoverStation, a.p.index,
+                !gen ? N::CoverReason::NoStation : !reach ? N::CoverReason::OutOfReach
+                : already ? N::CoverReason::Already : N::CoverReason::Busy);
     UE_LOGI("cover_sync: HOST slot %d %hs station %u's door -- %hs", a.slot, want ? "opens" : "shuts", a.p.index,
             ok ? "taken" : reach ? "refused by the station" : "out of reach, refused");
 }
@@ -347,23 +363,41 @@ void SendJoinSnapshotForSlot(int slot) {
 }
 
 void OnIntent(int senderSlot, const coop::net::CoverPayload& p) {
-    if (!CS::IsHost() || senderSlot <= 0 || senderSlot >= static_cast<int>(N::kMaxPeers) || g_asks.size() >= 64) return;
+    if (!CS::IsHost() || senderSlot <= 0 || senderSlot >= static_cast<int>(N::kMaxPeers)) return;
     const bool desk = p.what == N::kCoverDesk &&
                       (p.op == N::kCoverOpUnscrew || p.op == N::kCoverOpTakeOff || p.op == N::kCoverOpPutBack) &&
                       p.index < N::kCoverDeskPanels;
     const bool door = p.what == N::kCoverStation && p.op == N::kCoverOpDoor;
     if (!desk && !door) return;
     const uint64_t now = NowMs();
-    if (now - g_lastAskMs[senderSlot] < kAskEveryMs) return;
-    g_lastAskMs[senderSlot] = now;
+    if (g_asks.size() >= kAskQueueMax || !g_bucket[senderSlot].TakeN(kAskBudget, now, 1.0f)) {
+        if (now < g_nextRateSayMs[senderSlot]) return;
+        g_nextRateSayMs[senderSlot] = now + kRateSayMs;
+        UE_LOGI("cover_sync: HOST slot %d asks faster than it is answered; its asks are dropped", senderSlot);
+        Answer(senderSlot, p.what, p.index, N::CoverReason::Rate);
+        return;
+    }
     g_asks.push_back({senderSlot, p, now});
 }
+
+// A slot that left or was replaced is owed no answer, and its queued asks are not judged for its successor.
+static void OnSlotReplaced(int slot, const coop::roster_ledger::Row&, const coop::roster_ledger::Row&) {
+    for (size_t i = 0; i < g_asks.size();) {
+        if (g_asks[i].slot == slot) g_asks.erase(g_asks.begin() + static_cast<std::ptrdiff_t>(i));
+        else ++i;
+    }
+    for (size_t i = 0; i < g_owed.size();) {
+        if (g_owed[i].slot == slot) g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
+        else ++i;
+    }
+}
+
+void Install() { coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced); }
 
 void OnDisconnect() {
     g_asks.clear();
     g_owed.clear();
     g_fresh.clear();
-    for (uint64_t& t : g_lastAskMs) t = 0;
     g_deskSaid = false;
     g_doorSent.clear();
 }
