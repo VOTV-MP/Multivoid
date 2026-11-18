@@ -688,7 +688,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hand_record"}; coop::hand_record_sync::Tick(); }  // the owner's hand read and sent, the host's parked records judged, the mirrors written
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cover"}; coop::cover_sync::Tick(); }  // the host's poll and its asks, the client's states
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cover"}; coop::cover_sync::Tick(); }  // the host's asks and fresh plate prop, the client's put-back touch
     coop::plant_sync::Tick();  // the plants' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)

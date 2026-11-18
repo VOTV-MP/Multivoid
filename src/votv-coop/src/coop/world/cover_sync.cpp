@@ -17,6 +17,8 @@
 
 #include "coop/world/cover_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -96,11 +98,12 @@ float Dist2(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return dx * dx + dy * dy + dz * dz;
 }
 
-void WritePlates(void* desk, uint8_t bits) {
-    if (!AD::WritePlateArrays(desk, bits)) return;
+bool WritePlates(void* desk, uint8_t bits) {
+    if (!AD::WritePlateArrays(desk, bits)) return false;
     g_applying = true;
     AD::CallUpdPanels(desk);
     g_applying = false;
+    return true;
 }
 
 void SoundDetach(void* desk, const ue_wrap::FVector& at) {
@@ -228,7 +231,11 @@ void ConvergeDesk(void* desk, bool arrived) {
     uint8_t bits = 0;
     const bool read = AD::ReadPlates(desk, bits);
     if (!read || bits != g_deskBits) {
-        WritePlates(desk, g_deskBits);
+        if (!WritePlates(desk, g_deskBits)) {
+            UE_LOGW("cover_sync: CLIENT the desk's plate arrays did not take the host's on=0x%x unbolted=0x%x",
+                    g_deskBits & 0xF, g_deskBits >> 4);
+            return;
+        }
         if (arrived)
             UE_LOGI("cover_sync: CLIENT the desk's plates on=0x%x unbolted=0x%x, as the host's", g_deskBits & 0xF,
                     g_deskBits >> 4);
@@ -503,7 +510,9 @@ uint32_t DeskStatesApplied() { return g_deskStatesApplied; }
 bool PlateArmed(uint8_t plate) { return plate < N::kCoverDeskPanels && g_armed[plate]; }
 
 void NoteBroadcastDestroy(void* actor) {
-    if (IsClient() && AD::PlateOfProp(actor) >= 0) {
+    // The drill's reading only: a production destroy never pays the class-name compare.
+    static const bool s_drill = coop::config::ResolveEnum(coop::config_registry::rows::cover_drill) != "off";
+    if (s_drill && IsClient() && AD::PlateOfProp(actor) >= 0) {
         ++g_clientPlateDestroys;
         UE_LOGW("cover_sync: CLIENT broadcast the destroy of a plate prop it did not author (#%u)", g_clientPlateDestroys);
     }

@@ -132,10 +132,10 @@ constexpr uint64_t kFreshMaxMs = 60000;  // a prop left on its lid this long is 
 constexpr uint64_t kUnheldArmMs = 3000;  // a prop no one has taken by this is armed once off its lid
 
 // HOST, each tick, only while a granted take-off's prop is fresh: a fresh prop seen off its lid is armed, and the hold ends
-// with the last one, as the end-overlap ends panelTakeoff. This stays on a clock because no event gives it: the prop's
-// leaving its lid is physics motion (its end-overlap reaches the desk as a native delegate no seam sees, and an
-// end-overlap of any other actor clears the same flag), a player's hold has no announcement, and a prop nobody takes is
-// armed by time alone.
+// with the last one, as the end-overlap ends panelTakeoff. This stays on a clock because the prop's leaving its lid is
+// physics motion read against its lid (the desk's end-overlap is any actor's and clears the same flag, so it does not say
+// this prop left; the end-overlap was not measured), a player's hold has no announcement, and a prop nobody takes is armed
+// by time alone.
 void TendFresh() {
     if (g_fresh.empty()) return;
     void* const desk = AD::Find();
@@ -181,10 +181,10 @@ void PayOwed() {
             ++i;
             continue;
         }
-        Answer(o.slot, N::kCoverDesk, o.plate, eid == EL::kInvalidId ? N::CoverReason::Busy : N::CoverReason::Ok,
-               eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid));
-        UE_LOGI("cover_sync: HOST slot %d's plate %u is prop eid %u -- answered", o.slot, o.plate,
-                eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid));
+        // The plate did come off: the asker is told so (Ok); a prop whose id never bound is said in the log, not as a refusal.
+        Answer(o.slot, N::kCoverDesk, o.plate, N::CoverReason::Ok, eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid));
+        UE_LOGI("cover_sync: HOST slot %d's plate %u is prop eid %u -- answered%hs", o.slot, o.plate,
+                eid == EL::kInvalidId ? 0u : static_cast<uint32_t>(eid), eid == EL::kInvalidId ? " (no element id bound)" : "");
         g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
     }
 }
@@ -431,6 +431,9 @@ void Install() { coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced); }
 void OnDisconnect() {
     g_asks.clear();
     g_owed.clear();
+    // The hold TendFresh keeps on the desk's set-back ends with the records, as it ends with the last fresh prop.
+    if (!g_fresh.empty())
+        if (void* const desk = AD::Find()) AD::WriteTakeoff(desk, false);
     g_fresh.clear();
     g_deskSaid = false;
 }

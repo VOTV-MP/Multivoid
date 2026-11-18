@@ -24,7 +24,7 @@ inline bool PlateLoose(uint8_t bits, int i) { return (bits >> (4 + i)) & 1u; }
 
 // The desk's and a station's own calls this lane makes, which the gate lets run: the plates written and repainted,
 // the detach sound, the door swung.
-void WritePlates(void* desk, uint8_t bits);
+bool WritePlates(void* desk, uint8_t bits);  // false when the arrays were not written (no repaint then)
 void SoundDetach(void* desk, const ue_wrap::FVector& at);
 void OpenDoor(void* gen, bool open);
 
