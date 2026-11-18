@@ -410,6 +410,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/pi3_arms.cpp
     src/coop/dev/pi3_drill.cpp
     src/coop/dev/native_spawn_probe.cpp
+    src/coop/dev/dingus_probe.cpp
     src/coop/dev/hand_record_drill.cpp
     src/coop/dev/hand_record_drill_can.cpp
     src/coop/dev/hand_record_drill_wire.cpp
