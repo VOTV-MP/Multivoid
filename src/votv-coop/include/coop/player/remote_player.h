@@ -248,6 +248,8 @@ private:
     // interpolated. ApplyToEngine drives the movement mode from bit 0: set is falling, clear is
     // walking, which the AnimBP reads to gate the foot IK.
     uint8_t          curStateBits_ = 0;
+    // The AnimBP's seat pose as ApplyToEngine last set it for the seat bit (kStateBitSeated): set on the bit's edges.
+    bool             chairPose_ = false;
     // The ragdoll display. Its whole lifecycle (the wire-bit edge spawning an invisible
     // playerRagdoll_C attached at the pelvis, the pelvis stream, the attached-transform drive, the
     // teardown) lives in coop/player/remote_player_ragdoll.h; the glue here keys off its returns

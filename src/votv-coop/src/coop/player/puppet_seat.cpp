@@ -38,6 +38,7 @@ struct SlotState {
 
 SlotState g_slots[kSlots];
 Resolver g_resolve = nullptr;
+Resolver g_resolveChair = nullptr;  // keys under kChairKeyPrefix (coop/player/chair_seat)
 Observer g_observer = nullptr;
 
 // Tells the observer an outcome, with what a drill judges it by: the body's distance from the ATV's root, its AnimBP's seat
@@ -69,8 +70,9 @@ void WarnOnce(int slot, SlotState& s, const char* what) {
 
 void Release(int slot, SlotState& s, RemotePlayer& p, void* body) {
     void* parent = nullptr;
-    // An ATV destroyed under the body detached it already; its pose and collision are restored all the same.
-    const bool detach = E::GetAttachParentActor(body, parent) && parent && ue_wrap::atv::IsAtv(parent);
+    // An ATV or a chair destroyed under the body detached it already; its pose and collision are restored all the same.
+    const bool detach = E::GetAttachParentActor(body, parent) && parent &&
+                        (parent == s.atvAttached || ue_wrap::atv::IsAtv(parent));
     if (detach) E::DetachActorFromParent(body);
     ue_wrap::puppet::SetOnAtv(body, false);
     E::SetActorEnableCollision(body, true);
@@ -86,7 +88,9 @@ void Seat(int slot, SlotState& s, RemotePlayer& p, void* body) {
     int32_t atvIdx = -1;
     ue_wrap::FVector loc{};
     ue_wrap::FRotator rot{};
-    if (!g_resolve || !g_resolve(s.key, s.seatIndex, atv, atvIdx, loc, rot)) {
+    const bool chair = s.key.rfind(kChairKeyPrefix, 0) == 0;
+    const Resolver resolve = chair ? g_resolveChair : g_resolve;
+    if (!resolve || !resolve(s.key, s.seatIndex, atv, atvIdx, loc, rot)) {
         // A body this owner attached to its old ATV is let go the way a seat's end lets it go: left attached, with collision
         // off, it would be held by nobody while the stream writes its location.
         if (s.seatedBody == body && s.atvAttached) Release(slot, s, p, body);
@@ -149,6 +153,8 @@ void DropSlot(SlotState& s) {
 }  // namespace
 
 void SetResolver(Resolver fn) { g_resolve = fn; }
+
+void SetChairResolver(Resolver fn) { g_resolveChair = fn; }
 
 void SetObserver(Observer fn) { g_observer = fn; }
 

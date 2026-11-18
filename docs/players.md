@@ -61,6 +61,20 @@ and slaves the body's pelvis velocity to the streamed ragdoll pose so the flop t
 the puppet stays attached as the anchor for the nameplate and the recovery hand-off
 (`coop/player/remote_player_ragdoll`).
 
+### Sitting on a chair
+
+The game's sit (`mainPlayer_C::sit`, from a chair's `sitBox_C`) attaches the sitter to the chair at the box's `sitting`
+location; its unsit stands it up. Each peer reads its own player's `sittingOn` for those edges. The host files its own
+sit and judges a client's `ChairSeatIntent`: within 5 m, the chair free and in no other player's hand. It tells every
+peer who sits where (`ChairSeatState`), and each other peer attaches the sitter's body to its own copy of the chair, in
+the riding pose an ATV passenger shows, 145 cm under the sitter's capsule and 80 cm ahead along the seat's facing, so it
+moves with the chair. A sitter's own copy of its chair is frozen while it sits, as the game freezes the laptop's seat,
+so its own body cannot push that copy over where no other copy feels it. When another player takes the chair in hand,
+or the host refuses the sit, the host tells the sitter to get up (`coop/player/chair_seat`). Until the seat arrives, a
+state bit in the pose shows the pose at the sitter's own place (`coop/player/remote_player`). `[V]`
+(`coop/dev/sit_probe`, `VOTVCOOP_SIT_PROBE=1`: a client sat on an office chair and a folding chair, the host saw it
+seated on its copy; the host's grab of the chair stood the client up.)
+
 ### What the player holds and toggles
 
 The item in a player's hand is player state, not a world entity: the game destroys and respawns
@@ -462,6 +476,7 @@ is mirrored by the balance lane; an event is broadcast by the event watch.
 | State | Owner | Shape |
 |---|---|---|
 | pose, vitals, ragdoll | that peer | a sender-authored stream, never gated on receive |
+| who sits on which chair | the host | a client's sit is a request it judges; each peer seats the body on its own copy |
 | the display name | the host | assigned for uniqueness; every peer adopts it |
 | nameplate visibility, colour, skin | that peer | a preference, relayed to all |
 | the hand item, the flashlight | that peer | on change, mirrored for display |
@@ -477,6 +492,7 @@ is mirrored by the balance lane; an event is broadcast by the event watch.
 | Kind | Direction | Carries |
 |---|---|---|
 | `PoseSnapshot` (stream) | each peer | position, yaw, pitch, head delta, speed, state bits, three vitals |
+| `ChairSeatIntent`, `ChairSeatState` | a client to the host; the host to all | a sit on or a stand from a chair, by its element id; who sits where, and the word to get up |
 | `RagdollPose` (stream) | each peer, while ragdolled | pelvis transform and velocity |
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
@@ -497,12 +513,14 @@ at its ready edge. A joiner is sent the host's sleeping flag and the rest state 
 that is not awake. A joiner that rests before the host holds its world ready has that report refused, and repeats
 it each time the host's sleeping flag reaches it, which the host sends once it holds the joiner ready. The inventory is seeded before the world. A peer's death state is not seeded; a joiner sees a
 dead peer through the ragdoll bit of its next pose.
+A joiner is sent every chair seat.
 
 ## Known limits
 
 | Limit | Evidence |
 |---|---|
 | A remote player casts no shadow from any light, as a real player's own body casts none on its own screen: the game turns that off for a player, and a puppet follows it so its flashlight is not shadowed by its own body | `[V]` `ue_wrap/actors/puppet_spawn` sets `SetCastShadow(false)` on both body meshes; `harness/autotest/autotest_beam_look.cpp` |
+| A seated player shows the game's riding pose, its hands low and its legs drawn in: the body has no chair pose of its own | `[V]` `coop/player/chair_seat` |
 | No chat line announces a death | `[V]` `coop/comms/chat_sync` carries no such kind |
 | After a revive the player can drift horizontally from where it woke, metres over seconds; the cause is unmeasured | `[V]` `harness/autotest/death_state_probe.cpp` reads the position back |
 | Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` `coop/player/player_damage` |

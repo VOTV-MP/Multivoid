@@ -23,6 +23,11 @@ using Resolver = bool (*)(const std::wstring& key, uint8_t seatIndex, void*& atv
                           ue_wrap::FRotator& rot);
 void SetResolver(Resolver fn);
 
+// A chair a peer sits on (coop/player/chair_seat) is filed under a key that starts with this, and resolved by the chair
+// resolver instead: the live chair, its object index and where the body goes on it. The rest is the ATV seat's own path.
+inline constexpr const wchar_t* kChairKeyPrefix = L"chair:";
+void SetChairResolver(Resolver fn);
+
 // What the owner did for a slot, told to the observer after each outcome: released, attached, held (a target and no body yet)
 // or failed (no live ATV, no seat transform, or an attach that did not run). `offsetCm` is the body's distance from the ATV's
 // root at an attach, `onAtv` its AnimBP's seat pose and `collision` its collision, read after the outcome's own writes.
