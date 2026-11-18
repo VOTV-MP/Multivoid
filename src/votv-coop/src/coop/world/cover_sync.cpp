@@ -145,6 +145,12 @@ bool LookAtDoor(void* gen) {
 void Ask(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 
 uint64_t g_lastPutBackAskMs = 0;
+// The put-back last asked and not yet answered: its plate and prop, and the prop whose refusal the player was last shown
+// (a prop left on its lid is asked again every second; its refusal is shown once, not each time).
+bool g_putBackPending = false;
+uint8_t g_putBackPlate = 0;
+uint32_t g_putBackEid = 0;
+uint32_t g_putBackHintedEid = 0;
 uint32_t g_answers[8] = {};   // the drill's read: op 5 answers seen, by CoverReason
 uint32_t g_lastTakeOffEid = 0;
 uint32_t g_clientPlateDestroys = 0;
@@ -167,13 +173,13 @@ bool g_armed[N::kCoverDeskPanels] = {};  // a plate's prop has been seen off its
 // never again at the lid, whose overlap the engine reports to a native delegate no seam sees. It runs only while a plate is
 // off (TickClient) and, for a plate, in two steps: a prop seen off its lid in this player's hand arms the plate (as the
 // desk's panelTakeoff waits for the prop's end-overlap), and only an armed plate looks for the touch. The arming ends
-// with the plate's return (OnState) or the prop's end.
+// with the plate's return (OnState) or the prop's end. The class is one lookup by name (no object walk, a miss too).
 void AskPutBacks(void* desk, uint8_t bits) {
     const uint64_t now = NowMs();
     for (int i = 0; i < N::kCoverDeskPanels; ++i) {
         if (PlateOn(bits, i) || i == kFixedPlate) continue;
         void* const lid = AD::Lid(desk, i);
-        void* const cls = R::FindClass(AD::PlatePropClass(i));
+        void* const cls = OI::ClassByName(AD::PlatePropClass(i));
         if (!lid || !cls) continue;
         std::vector<void*> props;
         OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
@@ -190,6 +196,9 @@ void AskPutBacks(void* desk, uint8_t bits) {
                 const EL::ElementId eid = EL::Registry::Get().EidForActor(prop);
                 if (eid == EL::kInvalidId || !E::IsOverlappingActor(lid, prop)) continue;
                 g_lastPutBackAskMs = now;
+                g_putBackPending = true;
+                g_putBackPlate = static_cast<uint8_t>(i);
+                g_putBackEid = static_cast<uint32_t>(eid);
                 Ask(N::kCoverOpPutBack, N::kCoverDesk, static_cast<uint8_t>(i), 0, static_cast<uint32_t>(eid));
                 return;
             }
@@ -447,15 +456,23 @@ void OnState(const coop::net::CoverPayload& p) {
             UE_LOGI("cover_sync: CLIENT the host took plate %u off -- its prop eid %u lies where the plate was", p.index, p.eid);
         else UE_LOGI("cover_sync: CLIENT the host answered this player's ask of %hs %u: %hs",
                      p.what == N::kCoverDesk ? "plate" : "station", p.index, ReasonName(p.bits));
-        ShowRefusal(p.bits);
+        // The answer to the put-back asked a moment ago: a refusal for a prop already shown it is not shown again.
+        const bool putBack = g_putBackPending && p.what == N::kCoverDesk && p.index == g_putBackPlate;
+        if (putBack) g_putBackPending = false;
+        const bool seen = putBack && RefusalLine(p.bits) && g_putBackHintedEid == g_putBackEid;
+        if (!seen) ShowRefusal(p.bits);
+        if (putBack && RefusalLine(p.bits)) g_putBackHintedEid = g_putBackEid;
         return;
     }
     if (p.op != N::kCoverOpState) return;
     if (p.what == N::kCoverDesk) {
         g_deskBits = p.bits;
         g_haveDesk = true;
-        for (int i = 0; i < N::kCoverDeskPanels; ++i)
-            if (PlateOn(p.bits, i)) g_armed[i] = false;  // a plate set back is armed afresh when it next comes off
+        for (int i = 0; i < N::kCoverDeskPanels; ++i) {
+            if (!PlateOn(p.bits, i)) continue;
+            g_armed[i] = false;  // a plate set back is armed afresh when it next comes off
+            if (g_putBackPending && g_putBackPlate == i) g_putBackPending = false;  // its put-back was taken
+        }
         if (void* const desk = AD::Find()) ConvergeDesk(desk, true);
         else g_deskPending = true;
     } else if (p.what == N::kCoverStation) {
@@ -494,6 +511,8 @@ void OnDisconnect() {
     g_haveDesk = false;
     for (bool& a : g_armed) a = false;
     g_doorWanted.clear();
+    g_putBackPending = false;
+    g_putBackHintedEid = 0;
 }
 
 }  // namespace coop::cover_sync
