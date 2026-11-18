@@ -12,6 +12,7 @@
 
 #include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the conversion's hold on a kerfur prop death
 #include "coop/dev/dronesack_drill.h"        // NoteDestroy, NoteBroadcast (the drone sack drill's record)
+#include "coop/world/cover_sync.h"        // NoteBroadcastDestroy: the cover drill counts a client's plate-prop destroy
 #include "coop/dev/prop_birth_key_probe.h"   // NoteDestroy (who destroyed a prop it saw born)
 #include "coop/dev/spawn_match_probe.h"      // NoteDestroy (the fuzzy-adoption watch)
 #include "coop/element/prop.h"
@@ -247,6 +248,7 @@ void DestroySeamBody(void* self, HandView handView) {
     if (!actLatched) {
         s->SendPropDestroy(dp);  // channel queues internally; always accepted
         coop::dev::dronesack_drill::NoteBroadcast(self);
+        coop::cover_sync::NoteBroadcastDestroy(self);
     }
     // A client that just destroyed a keyed prop may be about to re-place the same prop (a
     // pickup, then a place). The key is parked so the place authors a host-authoritative drop

@@ -188,7 +188,15 @@ bool ClientArm(const std::string& name, const std::function<bool(std::string&)>&
     }
     Judge verdict = Judge::Pending;
     if (!PS::WaitFor(name.c_str(), kArmBound, [&] {
-            verdict = OnGameThreadValue([&] { return poll(why); });
+            verdict = OnGameThreadValue([&] {
+                // At every arm: a client authors no plate prop, so a destroy of one it broadcasts is the desk eating a host
+                // prop's mirror on this copy.
+                if (CS::ClientPlateDestroys() != 0) {
+                    why = "this client broadcast the destroy of a plate prop it did not author";
+                    return Judge::Fail;
+                }
+                return poll(why);
+            });
             return verdict != Judge::Pending;
         }))
         return false;

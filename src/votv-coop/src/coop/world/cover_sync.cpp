@@ -144,6 +144,7 @@ void Ask(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 uint64_t g_lastPutBackAskMs = 0;
 uint32_t g_answers[8] = {};   // the drill's read: op 5 answers seen, by CoverReason
 uint32_t g_lastTakeOffEid = 0;
+uint32_t g_clientPlateDestroys = 0;
 
 // Whether this player's hand grabs or holds one of `props`.
 bool HeldHere(const std::vector<void*>& props) {
@@ -324,12 +325,14 @@ sg::Verdict OnDeskActionPre(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
-// A plate touching its place on a client's desk: nothing is set back here. The client's put-back is asked of the host by
-// AskPutBacks, once the plate's prop has left its lid and comes back to it, as the desk's own panelTakeoff waits. On the
-// host, a granted take-off's prop is not set back while it is fresh (TendFresh).
+// A plate touching its place on a client's desk: the desk's own set-back never runs here, whatever this lane is applying
+// (g_applying exempts only the lane's own writes to the desk, never an overlap: a host prop mirror born on a lid while the
+// plates are being written would otherwise be set back and destroyed on this copy). The client's put-back is asked of the
+// host by AskPutBacks, once the plate's prop has left its lid and comes back to it. On the host, a granted take-off's prop
+// is not set back while it is fresh (TendFresh).
 sg::Verdict OnDeskOverlapPre(const sg::Call& c) {
-    if (g_applying) return sg::Verdict::Run;
     if (IsClient()) return sg::Verdict::Cancel;
+    if (g_applying) return sg::Verdict::Run;
     if (!IsHost() || !cover_judge::AnyFresh() || !c.function || !c.locals) return sg::Verdict::Run;
     const int32_t off = R::FindParamOffset(c.function, L"OtherActor");
     void* const other = off >= 0 ? *reinterpret_cast<void* const*>(c.locals + off) : nullptr;
@@ -413,6 +416,15 @@ void OnState(const coop::net::CoverPayload& p) {
 uint32_t AnswersSeen(uint8_t reason) { return reason < sizeof(g_answers) / sizeof(g_answers[0]) ? g_answers[reason] : 0; }
 
 uint32_t LastTakeOffEid() { return g_lastTakeOffEid; }
+
+void NoteBroadcastDestroy(void* actor) {
+    if (IsClient() && AD::PlateOfProp(actor) >= 0) {
+        ++g_clientPlateDestroys;
+        UE_LOGW("cover_sync: CLIENT broadcast the destroy of a plate prop it did not author (#%u)", g_clientPlateDestroys);
+    }
+}
+
+uint32_t ClientPlateDestroys() { return g_clientPlateDestroys; }
 
 bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid) {
     if (!IsClient()) return false;

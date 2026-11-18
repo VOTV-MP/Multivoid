@@ -48,6 +48,11 @@ uint32_t AnswersSeen(uint8_t reason);
 uint32_t LastTakeOffEid();
 bool DrillAsk(uint8_t op, uint8_t what, uint8_t index, uint8_t bits, uint32_t eid);
 
+// [dev] A client's broadcast of an actor's destroy (prop_destroy_seam), counted when the actor is a plate prop: a client
+// authors none, so any is a plate prop the desk destroyed on its own copy. ClientPlateDestroys is the count.
+void NoteBroadcastDestroy(void* actor);
+uint32_t ClientPlateDestroys();
+
 // Session end: the records are cleared.
 void OnDisconnect();
 

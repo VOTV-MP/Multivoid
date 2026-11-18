@@ -199,11 +199,19 @@ void* TakeOff(void* desk, uint8_t plate, uint8_t bits) {
     const ue_wrap::FVector at = E::GetComponentLocation(mesh);
     const ue_wrap::FRotator rot = E::GetComponentWorldRotation(mesh);
     AD::WriteTakeoff(desk, true);  // the prop born touching its lid is not set back at once
-    WritePlates(desk, static_cast<uint8_t>(bits & ~(1u << plate)));
+    // The plates' state goes out BEFORE the prop is spawned, so a client has the plate off when the prop's mirror reaches
+    // its lid: a mirror born on a lid whose plate is still on would read as a plate set back.
+    const uint8_t taken = static_cast<uint8_t>(bits & ~(1u << plate));
+    WritePlates(desk, taken);
+    SendDesk(taken, -1);
+    g_deskSent = taken;
+    g_deskSaid = true;
     void* const prop = E::BeginDeferredSpawn(cls, at, rot);
     if (!prop || !E::FinishDeferredSpawn(prop, at, rot)) {  // no plate made: it stays on
         AD::WriteTakeoff(desk, false);
         WritePlates(desk, bits);
+        SendDesk(bits, -1);
+        g_deskSent = bits;
         UE_LOGW("cover_sync: HOST plate %u's prop did not spawn -- the plate stays on", plate);
         return nullptr;
     }
