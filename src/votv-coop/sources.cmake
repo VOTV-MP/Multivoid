@@ -241,6 +241,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/vent_crawler_sync.cpp
     src/coop/player/hand_record_sync.cpp
     src/coop/world/cover_sync.cpp
+    src/coop/world/cover_judge.cpp
     src/ue_wrap/actors/food.cpp
     src/coop/world/plant_sync.cpp
     src/coop/interactables/desk_short_sync.cpp
