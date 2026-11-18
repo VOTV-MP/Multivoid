@@ -11,6 +11,8 @@
 // PASS` when all held. A verdict is decided at its event (the answer, or the change a red lets through); a time bound
 // says INVALID only. Reds are host rows: cover_judge_off (`reach` FAILs), cover_wanted_off (`stale`), cover_hold_judge_off
 // (`carried`), cover_announce_off (`unbolt`). cover_drill=measure runs the same arms with cover_measure logging on both peers.
+// Not measured: the powertool's sound after a cancelled client unscrew (the arms call unscrewPanel directly, so the unbolt's
+// sound timer never runs), and the host judge's hold test (NotHeld), which needs the host's own player to hold the prop.
 
 
 #include "harness/autotest.h"
@@ -424,17 +426,25 @@ void* FreeCopy(uint32_t eid) {
 }
 
 // A put-back asked for a plate prop nobody has carried back: refused, and the plate stays off. Asked of the take-off's own
-// prop, which the arm before left on its lid, before anything carries it.
+// prop, which the arm before left on its lid, before anything carries it. The host refuses it as a prop still fresh on its lid
+// (Busy) or, once it has fallen off, as not on the lid (OutOfReach); any other answer, NotHeld included, is a wrong refusal.
+// The hold test (NotHeld) is not judged by any arm: it needs the host's own player to hold the prop.
 bool ArmCarried() {
-    static uint32_t refused0 = 0;
+    static uint32_t busy0 = 0, reach0 = 0, other0 = 0;
     return ClientArm("carried", [](std::string& why) {
-        refused0 = Refusals();
+        busy0 = Seen(N::CoverReason::Busy);
+        reach0 = Seen(N::CoverReason::OutOfReach);
+        other0 = Seen(N::CoverReason::NotHeld) + Seen(N::CoverReason::NoStation);
         const uint32_t eid = CS::LastTakeOffEid();
         if (eid == 0 || On(Read(), 0) || !PlateProp()) { why = "no plate prop of the take-off, or plate 0 is on"; return false; }
         return CS::DrillAsk(N::kCoverOpPutBack, N::kCoverDesk, 0, 0, eid) || (why = "the ask was not sent", false);
     }, [](std::string& why) {
         if (On(Read(), 0)) { why = "a put-back nobody carried was applied: plate 0 is on"; return Judge::Fail; }
-        return Refusals() > refused0 ? Judge::Pass : Judge::Pending;
+        if (Seen(N::CoverReason::NotHeld) + Seen(N::CoverReason::NoStation) > other0) {
+            why = "the put-back of a prop nobody holds was refused for the wrong reason (not Busy or OutOfReach)";
+            return Judge::Fail;
+        }
+        return Seen(N::CoverReason::Busy) > busy0 || Seen(N::CoverReason::OutOfReach) > reach0 ? Judge::Pass : Judge::Pending;
     });
 }
 
