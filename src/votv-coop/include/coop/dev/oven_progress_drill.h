@@ -10,7 +10,7 @@
 // `INVALID`, and each PASS and FAIL is decided on an arrival: the watching peer's next mask for the
 // acting peer, a mask counted at the receiving screen for the watching peer and the joiner. A wait
 // whose event never comes ends INVALID after a bound, never FAIL. An oven the save holds repaired has
-// no screen, which fails the run by name. Red arm: `oven_merge_off` on the watching peer (or the
+// no screen, which ends the arm INVALID by name. Red arm: `oven_merge_off` on the watching peer (or the
 // joiner) counts the arrival and does not raise the bits, so that peer's judge FAILs at the arrival.
 
 #pragma once

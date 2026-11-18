@@ -8,7 +8,7 @@ CFG_ENUM(oven_progress_drill, "oven_progress_drill", "dev", "off", "off|host|cli
     "host's screen takes all five before anyone joins and the joiner judges its own screen when the "
     "host's mask reaches it. One `[OVEN-DRILL] [H|C] PASS` or `FAIL` line per judge, each decided "
     "when a mask arrives; a wait that never ends says `INVALID`. An oven the save holds repaired "
-    "fails by name.")
+    "ends INVALID by name.")
 CFG_FLAG(oven_merge_off, "oven_merge_off", "dev", false, "VOTVCOOP_OVEN_MERGE_OFF",
     "Developer red arm of the oven drill: never set. This peer counts a repair-step mask that reaches it "
     "with a bit its screen lacks and does not raise the bit, so the drill's judge on this peer must FAIL at "

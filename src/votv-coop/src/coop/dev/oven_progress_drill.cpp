@@ -172,13 +172,12 @@ void TickActor() {
     if (!oven) return Wait("the oven in the lane's index");
     uint8_t mine = 0;
     if (!OS::TryReadProgress(oven, mine))
-        return Verdict(false, "the acting peer's oven has no repair screen (repaired in this save, or not found)");
+        return Invalid("the acting peer's oven has no repair screen (repaired in this save, or not found)");
     int theirs = -2;
     if (!TheirMask(theirs)) return Wait("the watching peer's first mask");
     if (!g_started) {
         if (mine != 0 || theirs != 0)
-            return Verdict(false, "fixture: both screens must start with every screw in; here 0x%02X, there %d", mine,
-                           theirs);
+            return Invalid("fixture: both screens must start with every screw in; here 0x%02X, there %d", mine, theirs);
         g_started = true;
         g_lastTheirs = theirs;
         Progress();
