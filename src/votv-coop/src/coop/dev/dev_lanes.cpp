@@ -137,6 +137,7 @@
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/deskaudio_probe.h"   // [dev] the signal desk's sound components: spatial or not
 #include "coop/dev/vent_probe.h"   // [dev] a crouched player's steps counted on the other peer
+#include "coop/dev/dingus_probe.h"   // [dev] the dingus found, pocketed and dropped, its music logged on every peer
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
 #include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
 #include "coop/dev/miner_drill.h"  // [dev] the mining rig drill: use, claim, record and join, judged by the host
@@ -492,6 +493,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
     coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
     coop::dev::deskaudio_probe::Tick(&session);  // [dev] the desk's sound components (a latched read when off)
+    coop::dev::dingus_probe::Tick(&session);  // [dev] the dingus (a latched read when off)
     coop::dev::sleep_speedup_drill::Tick(&session);  // [dev] whose sleep speeds the world up (a latched read when off)
     coop::dev::vent_probe::Tick(&session);  // [dev] the vent crawl drill (a latched read when off)
     coop::dev::miner_drill::Tick(&session);  // [dev] the mining rig drill (a latched enum read when off)
