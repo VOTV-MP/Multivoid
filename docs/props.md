@@ -475,13 +475,16 @@ when tipped, fills it under water and brews; verbs fill it, throw it out, water 
 cement bag on a bucket with water (`canConcrete`) makes it (`lib.replaceProp`) a concrete bucket
 (`prop_concreteBucket_C`) of round(Height / MaxHeight * 20) `units` from the bag; a trowel takes one, a tip spills five,
 600 s dry it, and an empty one turns back. All of it ran only where it ran, a client's concrete bucket on its screen
-alone (`coop/props/bucket_sync`). The host reads its buckets and cement bags four times a second and sends what changed
-(`BucketState`), and all of them to a joiner. A client's concrete buckets are refused their tick, so the spill, the
+alone (`coop/props/bucket_sync`). The host sends a bucket or a cement bag when it changes (`BucketState`): a bucket's
+own tick marks it when it moved past a row's worth, a verb the host runs marks what it changed, one bucket goes ten
+times a second at most, and the lane does no work while none changes; a joiner gets all of them. A client's concrete buckets are refused their tick, so the spill, the
 drying and the turn back are the host's; a change to its mop bucket outside its tick (its own verb) goes to the host
 (`BucketIntent` op 0), and its cement bag on a bucket (op 1) and trowel on concrete (op 2) are refused and asked. The
 host judges each within 6 m of the sender, mixes by the bag's own rule, runs `takeConcrete`, and answers a refusal
 with its row to the sender. `[V]` on the rig, three peers (`coop/dev/bucket_drill`, once by a client and once by the
 host): every step's water, units, stage and bag on all three; before, a client's every step stayed on its own copy.
+The lane, its ReceiveTick watch included, measured 0.56 ms a second on the host and 0.45 to 0.54 on a client, against
+0.64 and 1.03 to 1.06 when the host polled four times a second and looked fields up on every read.
 
 ## Who owns what
 
@@ -524,7 +527,6 @@ host): every step's water, units, stage and bag on all three; before, a client's
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
 | `ContainerState`, `ContainerContents`, `ContainerBreakRequest` | the presser; the host; a client to the host (op 1) and the host to the requester (op 2 refusal, op 3 grant of a cut) | open or closed; one slice of the host's object array, its nested containers' contents in its tail; a break the host makes for a client, its refusal with a reason, or the grant of a saw's cut |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
-| `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
 
 ## Late join
 

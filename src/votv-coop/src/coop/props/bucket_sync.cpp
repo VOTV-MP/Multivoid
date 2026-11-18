@@ -43,8 +43,7 @@ UE_FACT_FN(kRowTick, "bucket_sync", nullptr, L"ReceiveTick", AnyClass);
 UE_FACT_FN(kRowHandUse, "bucket_sync", nullptr, L"playerHandUse_LMB", AnyClass);
 constexpr int kTag = 0x424B5453;   // 'BKTS'
 
-constexpr uint64_t kPollMs = 250;        // the host reads its buckets four times a second
-constexpr uint64_t kDiscoverMs = 1000;   // and looks for new ones once a second
+constexpr uint64_t kMinGapMs = 100;      // one bucket's rows at most ten a second (a tipped bucket pours every tick)
 constexpr uint64_t kParkMs = 10000;      // a row for a bucket not bound here yet waits this long
 constexpr float    kLevelEps = 0.5f;     // a change of water worth a row
 constexpr float    kAlcEps = 0.05f;      // of brewing
@@ -55,7 +54,8 @@ std::atomic<N::Session*> g_session{nullptr};
 
 uint64_t Now() { return ::GetTickCount64(); }
 
-// The four classes, by name, per world: a Blueprint class is a new object in every world.
+// The four classes, by name, per world: a Blueprint class is a new object in every world. The world's generation is
+// read once a frame (RefreshForWorld, from Tick), not in the watch's callbacks, which run for every Blueprint tick.
 struct Classes {
     void* mop = nullptr;
     void* concrete = nullptr;
@@ -64,16 +64,22 @@ struct Classes {
     uint32_t gen = 0;
 };
 Classes g_cls;
-const Classes& Cls() {
+const Classes& Cls() { return g_cls; }
+
+void ClearOffsets();
+// A class not loaded yet is asked again each frame until it is: the concrete bucket's loads with its first one.
+void RefreshForWorld() {
     const uint32_t gen = ue_wrap::world_identity::Generation();
-    if (gen != g_cls.gen || !g_cls.mop) {
+    const bool fresh = gen != g_cls.gen;
+    if (fresh) {
+        g_cls = Classes{};
         g_cls.gen = gen;
-        g_cls.mop = OI::ClassByName(L"prop_bucket_C");
-        g_cls.concrete = OI::ClassByName(L"prop_concreteBucket_C");
-        g_cls.bag = OI::ClassByName(L"prop_cementBag_C");
-        g_cls.fixer = OI::ClassByName(L"prop_wallfixer_C");
+        ClearOffsets();
     }
-    return g_cls;
+    if (!g_cls.mop) g_cls.mop = OI::ClassByName(L"prop_bucket_C");
+    if (!g_cls.concrete) g_cls.concrete = OI::ClassByName(L"prop_concreteBucket_C");
+    if (!g_cls.bag) g_cls.bag = OI::ClassByName(L"prop_cementBag_C");
+    if (!g_cls.fixer) g_cls.fixer = OI::ClassByName(L"prop_wallfixer_C");
 }
 
 int TypeOf(void* actor) {
@@ -86,14 +92,35 @@ int TypeOf(void* actor) {
     return -1;
 }
 
+// A field's offset on a class, looked up once (the reflection walk is linear) and kept for the world: the key is the
+// class and the name's literal, and the table goes with the world's generation, as the classes do.
+struct OffKey {
+    void* cls;
+    const wchar_t* name;
+    bool operator==(const OffKey& o) const { return cls == o.cls && name == o.name; }
+};
+struct OffHash {
+    size_t operator()(const OffKey& k) const {
+        return std::hash<void*>()(k.cls) ^ (std::hash<const void*>()(k.name) * 31u);
+    }
+};
+std::unordered_map<OffKey, int32_t, OffHash> g_offs;
+void ClearOffsets() { g_offs.clear(); }
+int32_t Off(void* obj, const wchar_t* name) {
+    void* const cls = obj ? R::ClassOf(obj) : nullptr;
+    if (!cls) return -1;
+    auto it = g_offs.find(OffKey{cls, name});
+    if (it == g_offs.end()) it = g_offs.emplace(OffKey{cls, name}, R::FindPropertyOffset(cls, name)).first;
+    return it->second;
+}
 template <class T>
 T Get(void* obj, const wchar_t* name, T dflt) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
+    const int32_t off = Off(obj, name);
     return off >= 0 ? *reinterpret_cast<const T*>(static_cast<const char*>(obj) + off) : dflt;
 }
 template <class T>
 void Put(void* obj, const wchar_t* name, T v) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
+    const int32_t off = Off(obj, name);
     if (off >= 0) *reinterpret_cast<T*>(static_cast<char*>(obj) + off) = v;
 }
 
@@ -175,35 +202,35 @@ bool IsClient() {
     return s && s->running() && s->role() != N::Role::Host;
 }
 
+bool IsHost() {
+    N::Session* s = g_session.load(std::memory_order_acquire);
+    return s && s->running() && s->role() == N::Role::Host;
+}
+
 // ---------------------------------------------------------------- HOST
 
-struct Watched {
-    void* actor = nullptr;
+// What the host last told of each bucket and bag it has seen, by actor. A bucket's own tick marks it when its state
+// moved past a row's worth since; a verb the host runs (its player's cement bag, a client's ask) marks what it changed.
+// The mod's tick sends the marked ones and does nothing when none is marked: no read on a timer, no walk for new
+// buckets (a new one is seen at its first tick, a bag at its first mix).
+struct Known {
+    uint32_t eid = 0;
     N::BucketRow sent{};
     bool everSent = false;
+    bool dirty = false;
+    uint64_t sentAt = 0;
 };
-std::unordered_map<uint32_t, Watched> g_watched;
-uint64_t g_pollAt = 0, g_discoverAt = 0;
+std::unordered_map<void*, Known> g_known;
+std::vector<void*> g_dirty;
 uint64_t g_rowsSent = 0, g_intentsRun = 0, g_intentsRefused = 0;
+constexpr size_t kPruneAbove = 256;   // past this many known actors the dead ones go
 
-void Discover() {
-    std::unordered_map<uint32_t, Watched> next;
-    const Classes& k = Cls();
-    for (void* cls : {k.mop, k.concrete, k.bag}) {
-        if (!cls) continue;
-        OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-            auto* out = static_cast<std::unordered_map<uint32_t, Watched>*>(ctx);
-            if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-            const uint32_t eid = EidOf(obj);
-            if (!eid) return;
-            Watched w;
-            w.actor = obj;
-            auto it = g_watched.find(eid);
-            if (it != g_watched.end() && it->second.actor == obj) w = it->second;
-            (*out)[eid] = w;
-        }, &next);
-    }
-    g_watched.swap(next);
+void MarkDirty(void* actor) {
+    if (!actor || TypeOf(actor) < 0) return;
+    Known& k = g_known[actor];
+    if (k.dirty) return;
+    k.dirty = true;
+    g_dirty.push_back(actor);
 }
 
 void SendRows(N::Session& s, const std::vector<N::BucketRow>& rows, int slot) {
@@ -217,33 +244,57 @@ void SendRows(N::Session& s, const std::vector<N::BucketRow>& rows, int slot) {
     }
 }
 
+// HOST, after a bucket's tick: marked when its state moved past a row's worth since what was told.
+void HostAfterTick(void* actor) {
+    Known& k = g_known[actor];
+    if (k.dirty) return;
+    if (k.everSent && !Changed(k.sent, Read(actor, k.eid))) return;
+    k.dirty = true;
+    g_dirty.push_back(actor);
+}
+
 void HostTick(N::Session& s) {
+    if (g_dirty.empty()) return;
+    const bool anyone = s.AnyWorldReadyPeer();
     const uint64_t now = Now();
-    if (now >= g_discoverAt) {
-        g_discoverAt = now + kDiscoverMs;
-        Discover();
-    }
-    if (now < g_pollAt) return;
-    g_pollAt = now + kPollMs;
-    if (!s.AnyWorldReadyPeer()) return;
     std::vector<N::BucketRow> rows;
-    for (auto& [eid, w] : g_watched) {
-        if (!R::IsLive(w.actor)) continue;
-        const N::BucketRow r = Read(w.actor, eid);
-        if (r.type == 0xFF) continue;
-        if (w.everSent && !Changed(w.sent, r)) continue;
-        if (!w.everSent && r.type == N::kBucketBag) {   // a bag is told when its units move, not when first seen
-            w.sent = r;
-            w.everSent = true;
+    std::vector<void*> keep;
+    for (void* actor : g_dirty) {
+        auto it = g_known.find(actor);
+        if (it == g_known.end()) continue;
+        Known& k = it->second;
+        if (!R::IsLive(actor) || TypeOf(actor) < 0) {
+            g_known.erase(it);
             continue;
         }
-        w.sent = r;
-        w.everSent = true;
+        if (!anyone) {   // no one to tell; a joiner is sent every bucket at its world-ready
+            k.dirty = false;
+            continue;
+        }
+        if (!k.eid || ActorOf(k.eid) != actor) {   // a new actor, or a new one where a dead one was
+            const uint32_t eid = EidOf(actor);
+            if (eid != k.eid) k.everSent = false;
+            k.eid = eid;
+        }
+        if (!k.eid || (k.everSent && now - k.sentAt < kMinGapMs)) {   // not bound yet, or told too lately: later
+            keep.push_back(actor);
+            continue;
+        }
+        k.dirty = false;
+        const N::BucketRow r = Read(actor, k.eid);
+        if (k.everSent && !Changed(k.sent, r)) continue;
+        k.sent = r;
+        k.everSent = true;
+        k.sentAt = now;
         rows.push_back(r);
         if (r.type == N::kBucketBag)
-            UE_LOGI("bucket_sync: cement bag eid=%u now %d units -- told", eid, static_cast<int>(r.count));
+            UE_LOGI("bucket_sync: cement bag eid=%u now %d units -- told", k.eid, static_cast<int>(r.count));
     }
+    g_dirty.swap(keep);
     if (!rows.empty()) SendRows(s, rows, -1);
+    if (g_known.size() > kPruneAbove)
+        for (auto it = g_known.begin(); it != g_known.end();)
+            it = (!it->second.dirty && !R::IsLive(it->first)) ? g_known.erase(it) : std::next(it);
 }
 
 // Whether slot `slot`'s player stands within reach of `actor`; a player out of it is said with its distance.
@@ -261,8 +312,6 @@ bool InReach(int slot, void* actor) {
                 p.Y, p.Z, std::sqrt(d2), a.X, a.Y, a.Z);
     return d2 <= kReachCm * kReachCm;
 }
-
-void SendRows(N::Session& s, const std::vector<N::BucketRow>& rows, int slot);
 
 // A refused ask leaves the sender's copy as its verb left it: the host's row of the bucket, to the sender alone, puts
 // it back.
@@ -296,6 +345,7 @@ void Mix(int slot, void* bucket, void* bag, uint32_t eid) {
     void* made = f.Get<void*>(L"Return");
     if (!made || TypeOf(made) != N::kBucketConcrete) return Refuse(slot, "replaceProp made no concrete bucket", eid);
     Put<int32_t>(bag, L"units", have - need);
+    MarkDirty(bag);   // the concrete bucket is told at its first tick
     Put<int32_t>(made, L"units", need);
     CallNoArgs(made, L"updStage");
     E::DestroyActor(bucket);
@@ -351,8 +401,20 @@ sg::Verdict OnTickPre(const sg::Call& c) {
 }
 
 void OnTickPost(const sg::Call& c) {
-    if (!c.object || !IsClient() || TypeOf(c.object) != N::kBucketMop) return;
-    g_post[c.object] = Read(c.object, EidOf(c.object));
+    if (!c.object) return;
+    const int t = TypeOf(c.object);
+    if (t < 0) return;
+    if (IsHost()) return HostAfterTick(c.object);
+    if (t == N::kBucketMop && IsClient()) g_post[c.object] = Read(c.object, EidOf(c.object));
+}
+
+// HOST: its player's cement bag ran its own body (a mix, or units passed to another bag): the bags it touched are told.
+void OnHandPost(const sg::Call& c) {
+    if (!c.object || !IsHost() || TypeOf(c.object) != N::kBucketBag) return;
+    MarkDirty(c.object);
+    void* const player = PlayerOf(c);
+    void* const hit = player ? E::ReadMainPlayerHitActor(player) : nullptr;
+    if (TypeOf(hit) == N::kBucketBag) MarkDirty(hit);
 }
 
 sg::Verdict OnHandPre(const sg::Call& c) {
@@ -429,7 +491,7 @@ void SettleWatches() {
     if (!g_watchesRegistered) {
         g_watchesRegistered = true;
         const bool a = sg::WatchName(kRowTick, kTag, &OnTickPre, &OnTickPost);
-        const bool b = sg::WatchName(kRowHandUse, kTag, &OnHandPre, nullptr);
+        const bool b = sg::WatchName(kRowHandUse, kTag, &OnHandPre, &OnHandPost);
         if (!a || !b) {
             g_watchesSettled = true;
             UE_LOGE("bucket_sync: the gate took no watch on %ls -- a client's buckets run on their own",
@@ -452,6 +514,7 @@ void Install(coop::net::Session* session) { g_session.store(session, std::memory
 void Tick() {
     N::Session* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
+    RefreshForWorld();
     SettleWatches();
     if (s->role() == N::Role::Host) HostTick(*s);
     else ClientTick(*s);
@@ -460,12 +523,16 @@ void Tick() {
 void OnPeerWorldReady(int slot) {
     N::Session* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != N::Role::Host) return;
-    Discover();
+    // The one walk of the buckets: a joiner is told every one, whatever it last heard.
     std::vector<N::BucketRow> rows;
-    for (auto& [eid, w] : g_watched) {
-        if (!R::IsLive(w.actor)) continue;
-        const N::BucketRow r = Read(w.actor, eid);
-        if (r.type != 0xFF) rows.push_back(r);
+    const Classes& k = Cls();
+    for (void* cls : {k.mop, k.concrete, k.bag}) {
+        if (!cls) continue;
+        OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+            if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            const uint32_t eid = EidOf(obj);
+            if (eid) static_cast<std::vector<N::BucketRow>*>(ctx)->push_back(Read(obj, eid));
+        }, &rows);
     }
     if (!rows.empty()) SendRows(*s, rows, slot);
     UE_LOGI("bucket_sync: slot %d's world is up -- %zu buckets and bags sent to it", slot, rows.size());
@@ -484,6 +551,7 @@ void OnIntent(int slot, const coop::net::BucketIntentPayload& p) {
         Put<float>(bucket, L"Height", level);
         Put<int32_t>(bucket, L"soap", std::max<int32_t>(0, p.bucket.count));
         CallNoArgs(bucket, L"upd");
+        MarkDirty(bucket);
         ++g_intentsRun;
         UE_LOGI("bucket_sync: slot %d's verb left bucket eid=%u at water %.1f soap %d", slot, p.bucket.eid, level,
                 static_cast<int>(p.bucket.count));
@@ -506,6 +574,7 @@ void OnIntent(int slot, const coop::net::BucketIntentPayload& p) {
         if (!fn || !f.valid() || !ue_wrap::Call(bucket, f)) return Refuse(slot, "takeConcrete did not run", p.bucket.eid);
         Put<int32_t>(fixer, L"concrete", 5);
         CallNoArgs(fixer, L"updConcrete");
+        MarkDirty(bucket);
         ++g_intentsRun;
         UE_LOGI("bucket_sync: slot %d's trowel eid=%u took from concrete bucket eid=%u", slot, p.itemEid, p.bucket.eid);
         return;
@@ -526,13 +595,13 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_rowsSent), static_cast<unsigned long long>(g_intentsRun),
                 static_cast<unsigned long long>(g_intentsRefused), static_cast<unsigned long long>(g_applied),
                 static_cast<unsigned long long>(g_asked));
-    g_watched.clear();
+    g_known.clear();
+    g_dirty.clear();
     g_post.clear();
     g_hostRow.clear();
     g_parked.clear();
     g_asks.clear();
     g_rowsSent = g_intentsRun = g_intentsRefused = g_applied = g_asked = 0;
-    g_pollAt = g_discoverAt = 0;
 }
 
 }  // namespace coop::bucket_sync
