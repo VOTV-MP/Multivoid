@@ -41,3 +41,7 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   tool or wheel in its hand, the ATV's state) and runs on its own copy. Kept as written: the asks and the judge. On top: the battery
   half is left to the battery lane already on main, the hand is read the way every judge reads it (the tool by its class), a
   refused part comes back only when nothing of the act ran, and a drill with a red for each judge.
+- **A pried plank, radiator or security TV** ([#150](https://github.com/VOTV-MP/Multivoid/pull/150)): a client's crowbar pry
+  freed the board on its own screen only. His commit sent the pry to every peer; on top, a client's pry is an ask the host
+  judges (reach, the crowbar, not yet pried), the fall is the host's physics streamed to every copy, a radiator's or a TV's
+  four joints break in the host's order on every peer, and a joiner takes the host's joints with the prop's row.
