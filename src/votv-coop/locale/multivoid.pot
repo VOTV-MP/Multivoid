@@ -176,6 +176,16 @@ msgstr ""
 msgid "%1$s deleted an email: %2$s"
 msgstr ""
 
+#: src/coop/comms/peer_action_feed.cpp
+#, c-format
+msgid "%1$s does not have the 3D printer model '%2$s'"
+msgstr ""
+
+#: src/coop/comms/peer_action_feed.cpp
+#, c-format
+msgid "%1$s has a different copy of the 3D printer model '%2$s'"
+msgstr ""
+
 #: src/coop/player/sleep_sync.cpp
 #, c-format
 msgid "%1$s is asleep -- sleeping does not speed the world up"

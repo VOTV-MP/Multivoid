@@ -469,6 +469,25 @@ its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use 
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
 answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
 
+### The 3D printer
+
+The printer (`3dPrinterAnim_C`) reads a model from the player's own disc, `<asset folder>\meshes\printer\<name>`, and at
+its print's end spawns a `printedObject_C`, no `prop_C`, whose `load` reads that file again and destroys the object when
+it is missing (VOTV-MP/Multivoid#49). A print is the host's and runs only when every connected player holds the same
+model, named by its folder's hash (`coop/props/printer_models`): a client's `print` is asked of the host (`PrintAsk`, 8
+m), the host's own waits for the same check, and the host asks each client its hash (`PrintCheck`, `PrintCheckReply`, 5
+s). A mismatch refuses it with a chat line on the host, the asker and each player lacking the model (`PrintNotice`). The
+host gives a printed object a keyless prop element, so the held-prop stream carries it, and sends its key, model, hash,
+light, bites and rest when they change (`PrintedState`); a client spawns it or adopts its save-loaded copy by key and
+builds it from its own file when the hashes match, else keeps a hidden placeholder without collision and tells the host
+(`PrintedIntent`), which puts the line in chat on the host and that player. A client's light is asked of the host; its
+bite is told to it. The run, its head tracing each layer, is its tick: the host sends a print's start and end
+(`PrinterState`, and each printing printer to a joiner), a client's copy runs the game's own `selectMesh` and `print`
+between, and the object its run spawns is refused at its `loadFromPrinter` and destroyed `[V]` (`coop/dev/kprint_probe`,
+three peers: a client's print, both clients' objects, a lift's rest and the light, a late joiner's adoption, a missing
+model refused before a join, a placeholder after, a 45 s run on the asker's copy a step from the host's, one object on
+each peer). Not measured `[?]`: a held throw, a client's light and bite, a differing copy, a joiner mid-print.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -507,6 +526,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | `ContainerState`, `ContainerContents`, `ContainerBreakRequest` | the presser; the host; a client to the host (op 1) and the host to the requester (op 2 refusal, op 3 grant of a cut) | open or closed; one slice of the host's object array, its nested containers' contents in its tail; a break the host makes for a client, its refusal with a reason, or the grant of a saw's cut |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
 | `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
+| `PrintAsk`, `PrintCheck`, `PrintCheckReply`, `PrintNotice`, `PrinterState`, `PrintedState`, `PrintedIntent` | a client to the host; the host to each client and back; the host to all; a client to the host | a client's print; the host's check of a model and each hash, 0 for none; a chat line on who lacks which; a print's start or end on a printer; a printed object's key, model, hash, light, bites and rest, or its end; a client's light, bite or lacking model |
 
 ## Late join
 
@@ -529,7 +549,7 @@ world is ready, since the release and the end edge that close them are not sent 
 not ready either: a prop held at the join resolves on the first pose after it, and at the ready edge
 the host re-sends every driven prop's pose, the resting ones included, which the delta gate would
 otherwise never send. An end edge that reaches a joiner before the prop it names is kept until the
-prop resolves.
+prop resolves. A joiner gets every printed object, a copy its save loaded adopted by its key.
 
 ## Known limits
 
@@ -575,5 +595,6 @@ prop resolves.
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |
+| the 3D printer and its printed objects | `coop/props/printer_sync`, `coop/props/printer_models`; `coop/dev/kprint_probe` |
 | the spawners a client must not run | `coop/world/spawn_authority` |
 | tests | `harness/autotest/autotest_grab.cpp` |

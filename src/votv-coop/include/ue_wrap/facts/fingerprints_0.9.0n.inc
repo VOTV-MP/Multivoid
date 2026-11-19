@@ -2,6 +2,7 @@
 // mod's capture on that build (docs/bytecode-fingerprint.md); do not edit. Included by the census.
 inline constexpr const char* kRefBuild = "0.9.0n";
 inline constexpr RefFn kRefFns[] = {
+    {L"3dprinteranim_c", L"print", L"3dprinteranim_c.print", 0x6a2d5d90ab51fa2dull, 0xbbeedfe94ec0e895ull},
     {L"animblueprint_kerfuromega_kelheadless_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_kelheadless_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x6deb0b10d29f3b75ull},
     {L"animblueprint_kerfuromega_regular_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_regular_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x2250f6e374f73414ull},
     {L"animblueprint_kerfuromega_skerfuro_c", L"blueprintupdateanimation", L"animblueprint_kerfuromega_skerfuro_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x043f72b999157c31ull},
@@ -29,6 +30,9 @@ inline constexpr RefFn kRefFns[] = {
     {L"marsstruct_test1_skeleton_animblueprint_c", L"blueprintupdateanimation", L"marsstruct_test1_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x0ffc590698427747ull},
     {L"mmann_rigg_skeleton_animblueprint_c", L"blueprintupdateanimation", L"mmann_rigg_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xe4ee9b42fe7fe767ull},
     {L"piramid_sk_prot_skeleton_animblueprint_c", L"blueprintupdateanimation", L"piramid_sk_prot_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x967dd224b19e6260ull},
+    {L"printedobject_c", L"actionoptionindex", L"printedobject_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0xa160e2afbdbe020aull},
+    {L"printedobject_c", L"load", L"printedobject_c.load", 0x2f25c0b6553982baull, 0xf81e9616089cd432ull},
+    {L"printedobject_c", L"loadfromprinter", L"printedobject_c.loadfromprinter", 0x65af99d1a46b0320ull, 0xfe121ae80c4fa6f4ull},
     {L"rufus_skeleton_animblueprint_c", L"blueprintupdateanimation", L"rufus_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf4ab9b5d37adac21ull},
     {L"shitduende_rigged_skeleton_animblueprint_c", L"blueprintupdateanimation", L"shitduende_rigged_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x13309a9ea9590d69ull},
     {L"tentacleball_prot_skeleton_animblueprint1_c", L"blueprintupdateanimation", L"tentacleball_prot_skeleton_animblueprint1_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf253073b0390594dull},

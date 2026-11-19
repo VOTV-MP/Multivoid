@@ -43,6 +43,9 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::HandRecord:
     case ReliableKind::RoombaIntent:
     case ReliableKind::CoverIntent:
+    case ReliableKind::PrintAsk:
+    case ReliableKind::PrintCheckReply:
+    case ReliableKind::PrintedIntent:
     case ReliableKind::DeskShortRequest:
     case ReliableKind::ContainerBreakRequest:
     case ReliableKind::PropSpawn:
@@ -201,6 +204,10 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::SaveTransferChunk:
     case ReliableKind::TurbineState:
     case ReliableKind::WoodchipperState:
+    case ReliableKind::PrintCheck:
+    case ReliableKind::PrintNotice:
+    case ReliableKind::PrintedState:
+    case ReliableKind::PrinterState:
     case ReliableKind::AtvHostState:
     case ReliableKind::SkySignalState:
     case ReliableKind::EmailAppend:
