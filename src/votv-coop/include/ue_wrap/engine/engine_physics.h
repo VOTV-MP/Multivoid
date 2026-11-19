@@ -1,6 +1,5 @@
 // ue_wrap/engine/engine_physics.h -- a primitive component's rigid body: simulation on or off,
-// whether it simulates, its linear and angular velocity, its centre of mass, and a physics constraint's broken state.
-// Engine-wrapper layer (principle 7):
+// whether it simulates, its linear and angular velocity, and its centre of mass. Engine-wrapper layer (principle 7):
 // each call is one reflected UFunction call on the component, with a stack parameter frame and no
 // allocation, so the held-prop drive can make one every tick. Each UFunction resolves once; one
 // that does not resolve is said once and its call is a no-op from then on. Game thread.
@@ -55,10 +54,5 @@ using ComponentVisitor = void (*)(void* ctx, void* component);
 // order, each handed to `visit`: its scene parts, its constraints, its child-actor slots. Found once per class name,
 // as StopActorSimulating finds them. Returns how many were visited; 0 for no actor. Game thread.
 int ForEachMemberComponent(void* actor, ComponentVisitor visit, void* ctx);
-
-// UPhysicsConstraintComponent::IsBroken: whether the constraint has been broken. False, `out` untouched, for anything
-// that is not a live constraint component, a build whose class lacks the function, or a call that did not run.
-// Game thread.
-bool ReadConstraintBroken(void* constraint, bool& out);
 
 }  // namespace ue_wrap::engine

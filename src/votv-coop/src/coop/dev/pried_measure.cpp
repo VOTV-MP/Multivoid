@@ -29,7 +29,6 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -169,18 +168,6 @@ bool Bind(const std::wstring& key) {
     return true;
 }
 
-// How many of the constraints read as broken now, or -1 when the engine's IsBroken did not answer.
-int ConstraintsBroken() {
-    int broken = 0;
-    for (const Part& p : g_parts) {
-        if (!p.constraint) continue;
-        bool b = false;
-        if (!E::ReadConstraintBroken(p.ref.Get(), b)) return -1;
-        if (b) ++broken;
-    }
-    return broken;
-}
-
 void PartLine(const char* label, size_t i) {
     const Part& p = g_parts[i];
     void* c = p.ref.Get();
@@ -189,12 +176,7 @@ void PartLine(const char* label, size_t i) {
     FRotator rot{};
     const bool okLoc = E::TryGetComponentLocation(c, loc), okRot = E::TryGetComponentWorldRotation(c, rot);
     char brk[48] = "";
-    if (p.constraint) {
-        bool b = false;
-        if (E::ReadConstraintBroken(c, b)) std::snprintf(brk, sizeof(brk), " isBroken=%d", b ? 1 : 0);
-        else std::snprintf(brk, sizeof(brk), " isBroken=?");
-        std::snprintf(brk + std::strlen(brk), sizeof(brk) - std::strlen(brk), " hookBreaks=%d", p.hookBreaks);
-    }
+    if (p.constraint) std::snprintf(brk, sizeof(brk), " hookBreaks=%d", p.hookBreaks);
     Line("%s PART %zu class=%s name=%s primitive=%d sim=%d loc=(%.1f,%.1f,%.1f)%s rot=(%.1f,%.1f,%.1f)%s%s", label, i,
          p.cls.c_str(), p.name.c_str(), E::IsPrimitiveComponent(c) ? 1 : 0, E::IsComponentSimulatingPhysics(c) ? 1 : 0,
          loc.X, loc.Y, loc.Z, okLoc ? "" : "(unread)", rot.Pitch, rot.Yaw, rot.Roll, okRot ? "" : "(unread)", brk);
@@ -210,9 +192,9 @@ void ReadAll(const char* label) {
     FRotator rot{};
     const bool okLoc = E::TryGetActorLocation(t, at), okRot = E::TryGetActorRotation(t, rot);
     Line("%s key='%ls' class=%ls %s actor=(%.1f,%.1f,%.1f)%s rot=(%.1f,%.1f,%.1f)%s parts=%zu constraints=%d "
-         "isBroken=%d hookBreaks=%d", label, g_key.c_str(), R::ClassNameOf(t).c_str(), fl, at.X, at.Y, at.Z,
+         "hookBreaks=%d", label, g_key.c_str(), R::ClassNameOf(t).c_str(), fl, at.X, at.Y, at.Z,
          okLoc ? "" : "(unread)", rot.Pitch, rot.Yaw, rot.Roll, okRot ? "" : "(unread)", g_parts.size(), g_nConstraints,
-         ConstraintsBroken(), g_breaks);
+         g_breaks);
     for (size_t i = 0; i < g_parts.size(); ++i) PartLine(label, i);
 }
 
@@ -233,8 +215,8 @@ void Sample() {
         p.prev = loc;
         p.hasPrev = true;
     }
-    Line("SAMPLE %d %s actor=(%.1f,%.1f,%.1f) isBroken=%d/%d hookBreaks=%d moved=[%s]", g_sampleN++, fl, at.X, at.Y,
-         at.Z, ConstraintsBroken(), g_nConstraints, g_breaks, moved);
+    Line("SAMPLE %d %s actor=(%.1f,%.1f,%.1f) hookBreaks=%d/%d moved=[%s]", g_sampleN++, fl, at.X, at.Y, at.Z, g_breaks,
+         g_nConstraints, moved);
 }
 
 void Pump() {
@@ -532,6 +514,13 @@ void Tick(coop::net::Session& session, bool radiator) {
 }
 
 void OnDisconnect() {
+    // The host that has read its own rest keeps the measured prop: the client leaving is the rig's rejoin, and the
+    // joiner must read the SAME prop, not a fresh unpried one. The host's wait for a joiner starts over from now.
+    if (coop::roster::LocalIsHost() && (g_step == Step::WaitJoiner || g_step == Step::WaitJoinerDone)) {
+        g_sampling = false;
+        Go(Step::WaitJoiner);
+        return;
+    }
     g_step = Step::WaitReady;
     g_stepMs = 0;
     g_startMs = 0;

@@ -4,7 +4,7 @@
 //
 // Every line carries the PRY-MEASURE tag, a millisecond clock (one for both peers on a machine) and the peer's H or C.
 //   BEFORE, REST, JOINER-READ, HOST-AT-JOINER: the static, frozen, sleep, simulating and awake flags, the pose, and
-//        one PART line per member component (class, name, pose, simulating, a constraint's IsBroken);
+//        one PART line per member component (class, name, pose, simulating, a constraint's break count);
 //   crowbarOpen, breakingSequence and ExecuteUbergraph (with its entry point) PRE|POST, and BreakConstraint (a native
 //        post hook): each call on the pried prop, with the flags;
 //   SAMPLE every 500 ms until 5 s after the last of those events: pose, flags, constraints broken, parts moved.
@@ -24,7 +24,8 @@ namespace coop::dev::pried_measure {
 // watches. Game thread.
 void Tick(coop::net::Session& session, bool radiator);
 
-// Back to the first step. Net disconnect.
+// Net disconnect: back to the first step, except on the host after its own rest read, when a client's drop only waits for
+// the joiner, on the same prop.
 void OnDisconnect();
 
 }  // namespace coop::dev::pried_measure
