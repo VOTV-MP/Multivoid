@@ -84,8 +84,8 @@ int      g_step = 0;            // the repair arm's next step
 bool     g_fixCalled = false;
 bool     g_rawSent = false;
 bool     g_c2Said = false;
+bool     g_ovenSeen = false;   // the oven and its key are indexed
 uint64_t g_waitMs = 0;
-J::Stats g_base{};              // the judge's counters when the arm started
 
 void* Oven() {
     if (void* o = g_oven.Get()) return o;
@@ -162,7 +162,6 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
     if (!g_started) {
         if (!Fixture(oven, key)) return;
         g_started = true;
-        g_base = J::GetStats();
     }
     // The reach arm stays where the client spawned; the others walk to the box first.
     if (arm != Arm::Reach && !g_walkSaid) {
@@ -218,12 +217,12 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
         bool fixed = false;
         A::TryReadOvenFixed(oven, fixed);
         UE_LOGI("[OVEN-DRILL] [C] called the oven's fix(): dispatched=%d held=%llu ran here=%llu fixed here=%d", ran ? 1 : 0,
-                static_cast<unsigned long long>(st.held - g_base.held),
-                static_cast<unsigned long long>(st.ranHere - g_base.ranHere), fixed ? 1 : 0);
-        if (st.ranHere != g_base.ranHere || fixed)
+                static_cast<unsigned long long>(st.held),
+                static_cast<unsigned long long>(st.ranHere), fixed ? 1 : 0);
+        if (st.ranHere != 0 || fixed)
             return Verdict(false, "repair: this client's own fix() ran here before the host's grant (fixed here=%d)",
                            fixed ? 1 : 0);
-        if (st.held == g_base.held)
+        if (st.held == 0)
             return Invalid("repair: the client's fix() was neither held nor run -- the repair gate did not see it");
         Progress();
         return;
@@ -232,7 +231,7 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
     if (A::TryReadOvenFixed(oven, fixed) && fixed) {
         const J::Stats st = J::GetStats();
         return Verdict(true, "repair: the oven reads fixed on this client from the host's grant; its own fix() was held "
-                       "(%llu) and never ran here", static_cast<unsigned long long>(st.held - g_base.held));
+                       "(%llu) and never ran here", static_cast<unsigned long long>(st.held));
     }
     Wait("the host's grant of the repair");
 }
@@ -243,9 +242,10 @@ void TickHost(void* oven, const std::wstring& key) {
     if (!g_started) {
         if (!Fixture(oven, key)) return;
         g_started = true;
-        g_base = J::GetStats();
     }
     if (DC::SeenHas(kSayWalkFail)) return Invalid("the client's walk to the oven's switch box failed");
+    // The judge's counters are this session's, from zero: the fixture holds the record empty, so every move is the client's own
+    // message. A baseline taken at the host's first tick would miss a refusal that came before the join window closed.
     const J::Stats st = J::GetStats();
     bool fixed = false;
     A::TryReadOvenFixed(oven, fixed);
@@ -253,15 +253,15 @@ void TickHost(void* oven, const std::wstring& key) {
     if (arm == Arm::Repair) {
         if (!DC::SeenHas(kSayWalked)) return;
         if (!fixed) return Wait("the repair's grant");
-        if (st.grantedRepairs == g_base.grantedRepairs)
+        if (st.grantedRepairs == 0)
             return Verdict(false, "repair: the host's oven reads fixed with no grant by the judge");
         return Verdict(true, "repair: the judge granted %llu step message(s) and the repair; the record holds 0x%02X and the "
-                       "host reads fixed", static_cast<unsigned long long>(st.grantedSteps - g_base.grantedSteps), record);
+                       "host reads fixed", static_cast<unsigned long long>(st.grantedSteps), record);
     }
     if (!DC::SeenHas(kSayRawSent)) return;
-    const uint64_t dReach = st.refusedReach - g_base.refusedReach, dOrder = st.refusedOrder - g_base.refusedOrder;
-    const uint64_t dOther = (st.refusedNooven - g_base.refusedNooven) + (st.refusedNobody - g_base.refusedNobody) +
-                            (st.refusedBucket - g_base.refusedBucket) + (st.refusedAction - g_base.refusedAction);
+    const uint64_t dReach = st.refusedReach, dOrder = st.refusedOrder;
+    const uint64_t dOther = (st.refusedNooven) + (st.refusedNobody) +
+                            (st.refusedBucket) + (st.refusedAction);
     if (arm == Arm::Reach) {
         if (record & kRawScrew) return Verdict(false, "reach: the far client's raw screw bit reached the host's record 0x%02X", record);
         if (dReach) {
@@ -276,7 +276,7 @@ void TickHost(void* oven, const std::wstring& key) {
                                    static_cast<unsigned long long>(dOrder), record);
         if (dReach) return Invalid("order: the raw lid was refused for reach, not order -- the client was not at the box");
     } else {
-        if (fixed || st.grantedRepairs != g_base.grantedRepairs)
+        if (fixed || st.grantedRepairs != 0)
             return Verdict(false, "fixearly: a repair with no lid in the record fixed the host's oven");
         if (dOrder) return Verdict(true, "fixearly: refused_order moved by %llu and the host's oven is not fixed",
                                    static_cast<unsigned long long>(dOrder));
@@ -333,7 +333,8 @@ void Tick(coop::net::Session* session) {
     void* oven = Oven();
     const std::wstring key = oven ? IS::OvenKey(oven) : std::wstring();
     if (!oven || key.empty()) return Wait("the oven in the lane's index");
-    Progress();
+    // The wait for the oven ends here, once; each later wait starts at the event that arms it, never at a tick.
+    if (!g_ovenSeen) { g_ovenSeen = true; Progress(); }
     if (Host()) return TickHost(oven, key);
     if (ActingClient()) return TickActing(*session, oven, key);
     if (ArmOf() == Arm::Reach) return TickReader(oven, key);
@@ -351,8 +352,8 @@ void OnDisconnect() {
     g_fixCalled = false;
     g_rawSent = false;
     g_c2Said = false;
+    g_ovenSeen = false;
     g_waitMs = 0;
-    g_base = J::Stats{};
 }
 
 }  // namespace coop::dev::oven_judge_drill
