@@ -23,6 +23,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/session/teleport_client.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
@@ -171,13 +172,27 @@ bool SpawnRow(const wchar_t* row, const FVector& at) {
            f.Set<int32_t>(L"amount", 1) && ue_wrap::Call(gm, f);
 }
 
+// VOTVCOOP_BUCKET_CLASS: the mop bucket's class the actor works on, prop_bucket_C by default. Another (prop_bucket_mop_C,
+// the base's mop bucket, a prop_bucket_C with nothing of its own: Ghezra/Multivoid issue 42) is spawned by the host
+// beside the save's bucket at its setup.
+const wchar_t* BucketCls() {
+    static const std::wstring c = [] {
+        const std::string v = coop::config::ReadEnv("VOTVCOOP_BUCKET_CLASS");
+        return v.empty() ? std::wstring(L"prop_bucket_C") : std::wstring(v.begin(), v.end());
+    }();
+    return c.c_str();
+}
+
 void Report() {
     const unsigned long long w = WallMs();
-    for (void* a : All(L"prop_bucket_C")) {
+    std::vector<void*> buckets = All(L"prop_bucket_C");
+    if (std::wstring(BucketCls()) != L"prop_bucket_C")
+        for (void* a : All(BucketCls())) buckets.push_back(a);
+    for (void* a : buckets) {
         FVector p{};
         if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
-        UE_LOGI("[BKT] wall=%llu bucket key=%s eid=%u height=%.2f soap=%d empty=%d alc=%d alcP=%.3f canConcrete=%d", w,
-                Key(a).c_str(), Eid(a), Get<float>(a, L"Height", -1.f), Get<int32_t>(a, L"soap", -1),
+        UE_LOGI("[BKT] wall=%llu bucket %ls key=%s eid=%u height=%.2f soap=%d empty=%d alc=%d alcP=%.3f canConcrete=%d", w,
+                R::ClassNameOf(a).c_str(), Key(a).c_str(), Eid(a), Get<float>(a, L"Height", -1.f), Get<int32_t>(a, L"soap", -1),
                 Get<uint8_t>(a, L"Empty", 9), Get<uint8_t>(a, L"alcohol", 9), Get<float>(a, L"alcoholP", -1.f),
                 Get<uint8_t>(a, L"canConcrete", 9));
     }
@@ -240,6 +255,12 @@ void Tick(coop::net::Session* session) {
             !fixerRow.empty() && SpawnRow(fixerRow.c_str(), {g_anchor.X - 100.f, g_anchor.Y, g_anchor.Z + 30.f});
         UE_LOGI("[BKT] host: spawned a cement bag '%ls' (ran=%d) and a trowel '%ls' (ran=%d)", bagRow.c_str(), bag ? 1 : 0,
                 fixerRow.c_str(), fixer ? 1 : 0);
+        if (std::wstring(BucketCls()) != L"prop_bucket_C") {
+            const std::wstring path = L"/Game/objects/prop_bucket_mop." + std::wstring(BucketCls());
+            void* const cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
+            void* const b = cls ? E::SpawnActor(cls, {g_anchor.X, g_anchor.Y + 120.f, g_anchor.Z + 30.f}) : nullptr;
+            UE_LOGI("[BKT] host: spawned a %ls %p beside the save's bucket", BucketCls(), b);
+        }
     }
     // HOST: a concrete bucket a take has stood 3 s after is left one unit, so the second take empties it.
     if (host && !g_hostLeftOne && g_takenAt && Now() - g_takenAt >= 3000) {
@@ -277,7 +298,7 @@ void Tick(coop::net::Session* session) {
         UE_LOGI("[BKT] the actor stands beside the bucket (moved=%d)", moved ? 1 : 0);
     }
     if (acts && me && g_step < 6 && t >= d + kStepMs * static_cast<uint64_t>(g_step == 5 ? 6 : g_step)) {
-        void* const bucket = Near(L"prop_bucket_C");
+        void* const bucket = Near(BucketCls());
         switch (g_step) {
         case 0:
         case 2:

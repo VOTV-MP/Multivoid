@@ -2,6 +2,7 @@
 
 #include "coop/props/bucket_sync.h"
 
+#include "coop/config/config.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -82,15 +83,46 @@ void RefreshForWorld() {
     if (!g_cls.fixer) g_cls.fixer = OI::ClassByName(L"prop_wallfixer_C");
 }
 
-int TypeOf(void* actor) {
-    if (!actor) return -1;
-    void* const c = R::ClassOf(actor);
+// What a class is to this lane: a mop bucket, a concrete bucket, a cement bag, or none, by its parent chain, so a
+// subclass with no body of its own counts as its parent (prop_bucket_mop_C, the base's mop bucket, is a prop_bucket_C
+// with nothing of its own: Ghezra/Multivoid issue 42, where a host's mop bucket matched nothing and never synced). One
+// walk per class, kept for the world.
+std::unordered_map<void*, int> g_types;
+void* g_lastCls = nullptr;   // the tick's watch asks about one class after another: the last answer, kept
+int g_lastType = -1;
+int TypeOfClass(void* cls) {
+    if (!cls) return -1;
+    const Classes& k0 = Cls();
+    if (cls == k0.mop) return N::kBucketMop;
+    if (cls == k0.concrete) return N::kBucketConcrete;
+    if (cls == k0.bag) return N::kBucketBag;
+    // VOTVCOOP_BUCKET_EXACT=1: the exact classes alone, as before issue 42 -- the bucket drill's red arm. Resolved once.
+    static const bool exact = coop::config::ReadEnv("VOTVCOOP_BUCKET_EXACT") == "1";
+    if (exact) return -1;
+    if (cls == g_lastCls) return g_lastType;
+    auto it = g_types.find(cls);
+    if (it != g_types.end()) {
+        g_lastCls = cls;
+        g_lastType = it->second;
+        return it->second;
+    }
     const Classes& k = Cls();
-    if (c && c == k.mop) return N::kBucketMop;
-    if (c && c == k.concrete) return N::kBucketConcrete;
-    if (c && c == k.bag) return N::kBucketBag;
-    return -1;
+    int type = -1;
+    for (void* c = cls; c && type < 0; c = R::SuperStructOf(c)) {
+        if (c == k.mop) type = N::kBucketMop;
+        else if (c == k.concrete) type = N::kBucketConcrete;
+        else if (c == k.bag) type = N::kBucketBag;
+    }
+    // A base not loaded yet decides nothing: asked again once it is.
+    if (type >= 0 || (k.mop && k.concrete && k.bag)) {
+        g_types.emplace(cls, type);
+        g_lastCls = cls;
+        g_lastType = type;
+    }
+    return type;
 }
+
+int TypeOf(void* actor) { return actor ? TypeOfClass(R::ClassOf(actor)) : -1; }
 
 // A field's offset on a class, looked up once (the reflection walk is linear) and kept for the world: the key is the
 // class and the name's literal, and the table goes with the world's generation, as the classes do.
@@ -105,7 +137,11 @@ struct OffHash {
     }
 };
 std::unordered_map<OffKey, int32_t, OffHash> g_offs;
-void ClearOffsets() { g_offs.clear(); }
+void ClearOffsets() {
+    g_offs.clear();
+    g_types.clear();
+    g_lastCls = nullptr;
+}
 int32_t Off(void* obj, const wchar_t* name) {
     void* const cls = obj ? R::ClassOf(obj) : nullptr;
     if (!cls) return -1;
@@ -526,8 +562,13 @@ void OnPeerWorldReady(int slot) {
     // The one walk of the buckets: a joiner is told every one, whatever it last heard.
     std::vector<N::BucketRow> rows;
     const Classes& k = Cls();
-    for (void* cls : {k.mop, k.concrete, k.bag}) {
-        if (!cls) continue;
+    // The instance index lists each class by itself: every loaded class the lane counts, subclasses included.
+    std::vector<void*> classes;
+    OI::ForEachClass([](void* ctx, void* cls, void*) {
+        if (TypeOfClass(cls) >= 0) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
+    }, &classes);
+    (void)k;
+    for (void* cls : classes) {
         OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
             if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
             const uint32_t eid = EidOf(obj);
