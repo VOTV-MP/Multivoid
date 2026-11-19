@@ -20,6 +20,37 @@ bool PropFlameBaseValid(void* prop) {
     return flame && reflection::IsLive(flame);
 }
 
+namespace {
+
+// The address of the prop's physicsImpact component's `health`; null when either is not there.
+float* ImpactHealth(void* prop) {
+    static reflection::InstanceOffset kImpact{L"physicsImpact"};
+    static reflection::InstanceOffset kHealth{L"health"};
+    const int32_t off = prop ? kImpact.Of(prop) : -1;
+    if (off < 0) return nullptr;
+    void* comp = nullptr;
+    std::memcpy(&comp, reinterpret_cast<const uint8_t*>(prop) + off, sizeof(comp));
+    if (!comp || !reflection::IsLive(comp)) return nullptr;
+    const int32_t h = kHealth.Of(comp);
+    return h < 0 ? nullptr : reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(comp) + h);
+}
+
+}  // namespace
+
+bool ReadImpactHealth(void* prop, float& out) {
+    const float* const p = ImpactHealth(prop);
+    if (!p) return false;
+    out = *p;
+    return true;
+}
+
+bool WriteImpactHealth(void* prop, float health) {
+    float* const p = ImpactHealth(prop);
+    if (!p) return false;
+    *p = health;
+    return true;
+}
+
 bool CallAttemptIgnite(void* prop) {
     void* fn = reflection::FindDispatchFunctionCached(reflection::ClassOf(prop), L"attemptIgnite");
     if (!fn) return false;

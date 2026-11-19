@@ -106,7 +106,7 @@
 #include "coop/props/prop_food_sync.h"
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
 #include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors are the host's
-#include "coop/props/fireext_sync.h"  // a fire extinguisher's foam: the host's rays, every peer's view
+#include "coop/props/fireext_sync.h"  // a fire extinguisher's foam shown on every peer, and a client's damage asked of the host
 #include "coop/world/plant_gate.h"  // the plant bodies a client refuses: its counts end with the session
 #include "coop/interactables/woodchipper_gate.h"  // the chipper bodies a client refuses: its counts end with the session
 #include "coop/world/plant_sync.h"
@@ -318,7 +318,7 @@ void Install(coop::net::Session& session) {
     coop::props::prop_food_sync::Install(&session);  // a world food's one author, the host
     coop::hand_record_sync::Install(&session);  // a held item's record: its owner sends it, each mirror takes it
     coop::cover_sync::Install(&session);  // the desk's plates and the stations' doors: a client's changes are asked of the host
-    coop::fireext_sync::Install(&session);  // an extinguisher: a client refuses its thrust and ray, its spray is told the host
+    coop::fireext_sync::Install(&session);  // an extinguisher: a spray is told the host, a client's damage asks it, every peer shows the foam
     coop::plant_sync::Install(&session);  // the host runs every plant
     coop::props::prop_food_state::Install();  // the food family claims its own live state off the record lane
     coop::subsystems::desk::Install(session);
@@ -431,7 +431,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::trash_channel::OnGrabHolderLeft(session, static_cast<uint8_t>(slot));  // the leaver's carried clump is let go: it falls, streams, lands
     coop::broom_stroke::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's stroke rate goes with it
     coop::hand_record_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's hand record goes
-    coop::fireext_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's spray ends
+    coop::fireext_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's spray ends and its intent tallies are printed
     coop::kerfus_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and the Kerfuses it turned on follow the host again (its verbs' queue goes with its slot)
     coop::dish_calib_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its precision-intent budget
     coop::drive_payload_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its drive rows in assembly, its brought drives
@@ -514,7 +514,7 @@ DisconnectStats DisconnectAll() {
     coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
     coop::hand_record_sync::OnDisconnect();  // the hands' records and half-assemblies
     coop::cover_sync::OnDisconnect();  // the covers sent, the asks and states queued
-    coop::fireext_sync::OnDisconnect();  // the sprays shown, the thrusts known and queued
+    coop::fireext_sync::OnDisconnect();  // the sprays shown, the thrusts waiting for a copy, the asks and the tallies
     coop::desk_short_sync::OnDisconnect();
     coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
@@ -692,7 +692,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:explosion_coast"}; coop::explosion_parking::Tick(&session); }  // HOST: the props a blast flung, handed to the driven-prop channel (before its tick below; an empty list costs one size check)
-    coop::fireext_thrust_sync::Tick(&session);  // the extinguisher's names, then HOST: an extinguisher in runaway thrust, onto the driven-prop channel (returns at once when none is)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:fireext_thrust"}; coop::fireext_thrust_sync::Tick(&session); }  // the extinguisher's names, then HOST: an extinguisher in runaway thrust, onto the driven-prop channel (returns at once when none is)
     coop::walker_lanes::Tick(session, isHost);  // the walkers: HOST claims the born ones into the drive stream (before the pump below); CLIENT hears its copies end and judges its gaze
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Pump(session, isHost); }  // the driven props, both roles: HOST judges a syncing client's rows, publishes the props that moved, closes the streams that rested (after the hook poll that feeds it); then both park + drive what the host streams (an empty set costs one size check)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_short"}; coop::desk_short_sync::Tick(); }  // the desk short watch resolves its names, and the host serves the requests (an empty inbox costs one size check)
@@ -705,7 +705,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hand_record"}; coop::hand_record_sync::Tick(); }  // the owner's hand read and sent, the host's parked records judged, the mirrors written
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cover"}; coop::cover_sync::Tick(); }  // the host's asks and fresh plate prop, the client's put-back touch
-    coop::fireext_sync::Tick();  // the host's rays and thrust poll, every peer's spray mirrors
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:fireext"}; coop::fireext_sync::Tick(); }  // the host's sprays' counts, every peer's rays and display of the other players' sprays
     coop::plant_sync::Tick();  // the plants' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)

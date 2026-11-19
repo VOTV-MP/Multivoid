@@ -62,14 +62,16 @@ namespace PR = ue_wrap::prop;
 
 // carry: the host takes it off and carries it off. short: the host lets go the moment it holds it.
 // client: the client carries, the host watches. join: the host takes it off while a joiner loads. runaway: the host lets go
-// and damages it, which starts its runaway thrust.
-enum class Arm { Off, Carry, Short, Client, Join, Runaway };
+// and damages it, which starts its runaway thrust. spray and spray_join: the foam on both peers, no extinguisher taken off a
+// mount (fireext_drill_foam.cpp).
+enum class Arm { Off, Carry, Short, Client, Join, Runaway, Spray, SprayJoin };
 
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::fireext_drill);
         return v == "carry" ? Arm::Carry : v == "short" ? Arm::Short : v == "client" ? Arm::Client
-             : v == "join" ? Arm::Join : v == "runaway" ? Arm::Runaway : Arm::Off;
+             : v == "join" ? Arm::Join : v == "runaway" ? Arm::Runaway : v == "spray" ? Arm::Spray
+             : v == "spray_join" ? Arm::SprayJoin : Arm::Off;
     }();
     return a;
 }
@@ -385,8 +387,13 @@ namespace detail {
 // INCONCLUSIVE, so a drill that measured nothing never ends on the done marker a measurement prints.
 void Invalid(const char* why) {
     UE_LOGW("[FIREEXT-DRILL] INVALID %s", why);
-    if (ArmOf() == Arm::Runaway) coop::rig_verdict::Say("fireext-runaway", coop::rig_verdict::Outcome::Invalid, "%s", why);
+    if (const char* tag = VerdictTag()) coop::rig_verdict::Say(tag, coop::rig_verdict::Outcome::Invalid, "%s", why);
     g_step = Step::Invalid;
+}
+
+const char* VerdictTag() {
+    return ArmOf() == Arm::Runaway ? "fireext-runaway" : ArmOf() == Arm::Spray ? "fireext-spray"
+         : ArmOf() == Arm::SprayJoin ? "fireext-spray-join" : nullptr;
 }
 
 void Go(Step s) {
@@ -569,6 +576,8 @@ void ActStep(coop::net::Session& s, void* player) {
     case Step::Damage:
     case Step::RunRest:
     case Step::WaitClient:
+    case Step::Leg2Spawn:
+    case Step::Leg2Wait:
         detail::RunawayHostStep(player);
         return;
     case Step::Done:
@@ -589,17 +598,23 @@ bool g_namesFailSaid = false;  // the names' FAIL is said once a session
 bool IsEnabled() { return ArmOf() != Arm::Off; }
 
 void Tick(coop::net::Session* session) {
-    if (!IsEnabled() || !session || !session->connected()) return;
+    // The spray_join host acts before any client has connected, so its session is running and not yet connected.
+    const bool soloHost = ArmOf() == Arm::SprayJoin && session && session->running() && session->role() == coop::net::Role::Host;
+    if (!IsEnabled() || !session || !(session->connected() || soloHost)) return;
     // The names are the thrust lane's to resolve (coop/props/fireext_thrust_sync), never the drill's: the drill shares the
     // process with the lane, so a resolve of its own would stand in for the lane's. Once the lane has ticked they are there.
     if (!FX::NamesResolved()) {
         if (coop::fireext_thrust_sync::HasTicked() && !g_namesFailSaid) {
             g_namesFailSaid = true;
             UE_LOGW("[FIREEXT-DRILL] [%c] FAIL the thrust lane ticked and the extinguisher's class names are still unresolved", Who());
-            if (ArmOf() == Arm::Runaway && coop::roster::LocalIsHost())
-                coop::rig_verdict::Say("fireext-runaway", coop::rig_verdict::Outcome::Fail,
+            if (const char* tag = detail::VerdictTag(); tag && coop::roster::LocalIsHost())
+                coop::rig_verdict::Say(tag, coop::rig_verdict::Outcome::Fail,
                                        "the thrust lane ticked and the extinguisher's class names are still unresolved");
         }
+        return;
+    }
+    if (ArmOf() == Arm::Spray || ArmOf() == Arm::SprayJoin) {
+        detail::FoamTick(*session, ArmOf() == Arm::SprayJoin);
         return;
     }
     if (LocalActs()) {
@@ -649,6 +664,7 @@ void OnDisconnect() {
     g_tailEnded = false;
     g_walk.reset();
     detail::RunawayReset();
+    detail::FoamReset();
 }
 
 }  // namespace coop::dev::fireext_drill

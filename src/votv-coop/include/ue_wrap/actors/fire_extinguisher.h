@@ -47,4 +47,31 @@ bool ReadThrusting(void* ext, bool& out);
 // an extinguisher, a member that does not resolve or a component that does not read. Game thread.
 bool ReadComponentRotation(void* ext, const wchar_t* member, FRotator& out);
 
+// The extinguisher's `life`, `firing` and `active` written in place, with no call and none of the game's own side effects
+// (a hand mirror's display, a client copy's thrust display, a charge the host counted). False, nothing written, for
+// anything that is not an extinguisher or a member that does not resolve. Game thread.
+bool WriteCharge(void* ext, float life);
+bool WriteSpraying(void* ext, bool on);
+bool WriteThrusting(void* ext, bool on);
+
+// Whether the extinguisher's PhysicsThruster is active: the thruster's own state, which the game's `shoot` turns on, so a
+// copy whose own `shoot` ran reads true and one that only shows the thrust reads false. False, `out` untouched, when it
+// does not read. Game thread.
+bool ReadThrusterOn(void* ext, bool& out);
+
+// A member component of the extinguisher by its property name: FireExtSprayEffectProp, FireExtThrustEffectProp,
+// FireExtThrustSoundProp or FireExtThrusterProp (ue_wrap/core/sdk_profile_names.h). Null for another name, for anything that
+// is not an extinguisher, and for a member that is unset or not live. The offset is kept per class. Game thread.
+void* Member(void* ext, const wchar_t* name);
+
+// The game's own extinguishing ray, `extinguishRay(start, end, radius)`: a sphere trace that puts out what it touches in
+// this peer's world. It never reads who holds the extinguisher, and a direct call never runs the extinguisher's tick.
+// False when the call does not run. Game thread.
+bool CastExtinguishRay(void* ext, const FVector& start, const FVector& end, float radius);
+
+// The game's own runaway verb, `fireDamage(0)`: it never reads its argument and keeps its own checks (an extinguisher that is
+// already `active` or being destroyed does nothing), so a thrust starts only if the game would start it. False when the call
+// does not run; true is not a thrust. Game thread.
+bool StartRunaway(void* ext);
+
 }  // namespace ue_wrap::fire_extinguisher

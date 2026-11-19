@@ -264,6 +264,11 @@ inline constexpr const wchar_t* FireExtMountHeldProp = L"fireExt";
 inline constexpr const wchar_t* FireExtChargeProp = L"life";
 inline constexpr const wchar_t* FireExtSprayingProp = L"firing";
 inline constexpr const wchar_t* FireExtThrustingProp = L"active";
+// Its member components, by property name (FX::Member): the spray effect, the thrust effect and sound, the thruster.
+inline constexpr const wchar_t* FireExtSprayEffectProp = L"eff_ext";
+inline constexpr const wchar_t* FireExtThrustEffectProp = L"eff_fireExtThr";
+inline constexpr const wchar_t* FireExtThrustSoundProp = L"fireExtThrust";
+inline constexpr const wchar_t* FireExtThrusterProp = L"PhysicsThruster";
 
 // The held item's right mouse button, int_objects_C's playerHandUse_RMB / playerHandRelease_RMB:
 // the player's input reaches the item in its hand through these, with itself as the argument.

@@ -17,4 +17,11 @@ bool CallAttemptIgnite(void* prop);
 // or the call could not run. Game thread.
 bool CallIgnite(void* prop, float fuel);
 
+// The health of the prop's `physicsImpact` component, the figure its fire damage and its impacts take from before the
+// component destroys the prop (comp_physicsImpact_C: the burning prop's `fireDamage` subtracts 4 to 5 each hit). Read, and
+// written in place with no call and none of the component's own side effects. False, nothing written, when the prop has no
+// live component or the component declares no `health`. Game thread.
+bool ReadImpactHealth(void* prop, float& out);
+bool WriteImpactHealth(void* prop, float health);
+
 }  // namespace ue_wrap::prop

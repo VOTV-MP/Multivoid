@@ -23,8 +23,10 @@ its own fall and the copies came to rest apart; at most 32 props (`prop_drive_ru
 a burst past that falls locally, the refusals counted in a line (`prop_drive_host::CoastCapReached`). The fourth is a
 let-go: a prop a hand releases without a throw, a client's or the host's own, coasts on the host from the release
 until it rests, under the same cap (`prop_drive_host::CoastLetGo`). A fire extinguisher's runaway thrust is the host's
-as well: a client's copy is refused its own, and the host claims one that goes off for as long as it thrusts
-(`coop/props/fireext_thrust_sync`); a client sees the flight without the thrust's particles and sound. A prop a
+as well: a client's copy is refused its own and asks the host when it takes damage, and the host claims one that
+goes off for as long as it thrusts (`coop/props/fireext_thrust_sync`). The host also says each thrust to every peer
+(`FireExtState` op 0: when it begins, twice a second with its charge while it runs, and when it ends, and to a
+joiner), so a client sees the flight with the thrust's particles and sound and the copy's charge. A prop a
 player's body walks into is the fifth, and the player who bumps it syncs it, as MTA's push does: a client's push is a
 claim (`PropSyncReason::BodyPush`) the host judges like a throw's election, so its copy streams and every other copy
 is driven, while the host's own body makes the host coast a prop no row streams, under the same cap, and a client's

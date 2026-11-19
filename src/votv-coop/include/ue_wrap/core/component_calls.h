@@ -26,6 +26,9 @@ bool SetActive(void* comp, bool value, bool reset);
 // semantics (e.g. the desk's FClamp(v/10, 0.1, 5)).
 bool SetVolumeMultiplier(void* comp, float mult);
 
+// USceneComponent::SetWorldScale3D(FVector) with the same scale on all three axes.
+bool SetWorldScale3D(void* comp, float uniformScale);
+
 // Dispatch a parameterless UFunction on obj (fn already resolved by the caller).
 bool CallParamless(void* obj, void* fn);
 

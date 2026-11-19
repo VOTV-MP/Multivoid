@@ -717,15 +717,19 @@ enum class ReliableKind : uint16_t {
     // sender, the host's own to everyone, and every hand's to a joiner at its ready edge. Each peer writes it into its
     // mirror of that hand through the item's own loadData.
     HandRecord = 268,
-    // HOST->ALL: a fire extinguisher's foam (coop/props/fireext_sync). Op 0: a world extinguisher's runaway thrust (its
-    // `active` with charge left) and its charge, when either changes and to a joiner at its ready edge; a client's copy
-    // shows the thrust's foam and sound, and never runs the thrust itself. Op 1: a player's spray from the extinguisher
-    // in its hand, on or off, with the host's count of its charge, sent twice a second while it runs: the sprayer's hand and
-    // every mirror of it take it. Never relayed; not pre-world. FireExtPayload.
+    // HOST->ALL: a fire extinguisher's foam (coop/props/fireext_sync). Op 0, sent by the thrust lane
+    // (coop/props/fireext_thrust_sync): a world extinguisher's runaway thrust (its `active` with charge left) and its charge,
+    // when it begins, twice a second while it runs, when it ends, and to a joiner at its ready edge; a client's copy shows
+    // the thrust's foam and sound and never runs the thrust itself. Op 1: a player's spray from the extinguisher in its
+    // hand, on or off, with the host's count of its charge, sent twice a second while it runs: the sprayer's hand and every
+    // mirror of it take it. Never relayed; not pre-world. FireExtPayload.
     FireExtState = 264,
     // CLIENT->HOST: this client's player started or stopped spraying the extinguisher in its hand (op 2), with the hand's
-    // charge. The host checks the sender's hand holds one, sprays the game's own extinguishing ray along the sender's aim
-    // while it is on, drains its own count of the charge, never above the hand's word, and sends op 1 to every peer.
+    // charge. The host judges the sender's spray budget and its hand, shows the spray on its mirror, drains its own count
+    // of the charge, never above the hand's word, and sends op 1 to every peer; every peer casts the game's own
+    // extinguishing ray from its mirror of that hand. Op 3: this client's copy of an extinguisher took damage that would
+    // start its runaway (`eid` names the copy): the host judges the sender's ask budget, its reach and the copy, and
+    // answers with the game's own verb on its copy, so the thrust reaches every peer as op 0; a refusal sends nothing.
     // Never relayed. FireExtPayload.
     FireExtIntent = 265,
 
@@ -5117,14 +5121,15 @@ struct CoverPayload {
 };
 static_assert(sizeof(CoverPayload) == 8, "CoverPayload must be 8 bytes");
 // A fire extinguisher's foam (FireExtState, FireExtIntent).
-inline constexpr uint8_t kFireExtOpThrust = 0, kFireExtOpSpray = 1, kFireExtOpSprayAsk = 2;
+inline constexpr uint8_t kFireExtOpThrust = 0, kFireExtOpSpray = 1, kFireExtOpSprayAsk = 2, kFireExtOpRunawayAsk = 3;
 struct FireExtPayload {
-    uint32_t eid;   // op 0: the extinguisher's prop element id; ops 1, 2: zero
+    uint32_t eid;   // ops 0, 3: the extinguisher's prop element id; ops 1, 2: zero
     uint8_t  op;    // kFireExtOp*
-    uint8_t  slot;  // op 1: the sprayer's slot
-    uint8_t  on;    // 1 the thrust or the spray runs
-    uint8_t  charged;  // ops 1, 2: 1 when `life` is the hand's charge (op 1: the host's count of it)
-    float    life;  // op 0: the charge, 0..1; ops 1, 2: the hand's charge
+    uint8_t  slot;  // op 1: the sprayer's slot; op 3: zero
+    uint8_t  on;    // 1 the thrust or the spray runs; op 3: zero
+    uint8_t  charged;  // ops 1, 2: 1 when `life` is the hand's charge (op 1: the host's count of it); op 0: 1 when `life` is the
+                       // charge, 0 only for the end of a thrust whose extinguisher is gone; op 3: zero
+    float    life;  // op 0: the charge, 0..1; ops 1, 2: the hand's charge; op 3: zero
 };
 static_assert(sizeof(FireExtPayload) == 12, "FireExtPayload must be 12 bytes");
 

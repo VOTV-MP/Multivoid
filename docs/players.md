@@ -106,17 +106,30 @@ A fire extinguisher (`prop_fireExt_C`) sprays from the hand: its `fire`, the han
 release, turns its spray effect and sound on, and its tick aims the spray along that machine's camera,
 drains the charge and casts the game's `extinguishRay`, which puts out what it touches. Hit hard or
 burnt in the world, its `shoot` sends it thrusting with its own foam and rays until the charge is
-gone. Each ran on the one machine, so the other players saw no foam. The foam is the host's: a
-player's spray goes to the host (`FireExtIntent`), which checks the sender's hand holds an
-extinguisher, shows the spray on its mirror of that hand, casts the extinguishing ray along the
-sender's aim each frame while it runs, and tells every peer (`FireExtState`), each showing it on its
-mirror of that hand. A client's own ray and its `shoot` are refused, so a fire goes out, and an
-extinguisher thrusts, only on the host; the host sends each world extinguisher's thrust and charge
-when they change and to a joiner, and a client's copy shows the thrust's foam and sound
-(`coop/props/fireext_sync`) `[V]` (`coop/dev/foam_probe`, `VOTVCOOP_FOAM_PROBE=1`: each player's
-spray showed on the other's mirror within a second, the host cast 365 rays along a client's aim, and
-a world extinguisher the host set thrusting thrusted on the client's copy). A fire put out by a
-client's spray is not measured `[?]`. The charge in a client's hand is the host's count: the spray's
+gone. Each ran on the one machine, so the other players saw no foam. Every peer now shows it: a
+player's spray goes to the host (`FireExtIntent`), which spends one of the sender's spray tokens,
+checks the sender's hand holds an extinguisher, shows the spray on its mirror of that hand and tells
+every peer (`FireExtState`), each showing it on its mirror of that hand. Every peer casts the game's
+extinguishing ray from its mirror of the sprayer's hand, from the puppet's synced eye along its
+synced aim, each frame the spray is on, and the sprayer's own tick casts its own, so the fire in a
+peer's own world goes out when that peer's ray reaches it. Each peer rolls its own scatter and aims
+along the puppet's interpolated aim, a frame or more behind the sprayer's camera, so a fire at the
+edge of the reach can go out on one machine and burn on another. That is transitional: fire runs on
+every peer separately until fire itself is synced, and a peer's own ray is the only way its fire goes
+out; once fire is the host's, the host's ray becomes the only one. A hand's let-go and this player's own hold change end the spray
+as events, and the host's count of a client's charge starts afresh with each new hold.
+The runaway thrust is the host's: a client's copy never runs its `shoot` (a client's own held
+extinguisher is refused too, and its damage reaches nobody), and a client's damage to a world copy
+asks the host (`FireExtIntent` op 3), which judges the sender's ask budget, its reach and the copy
+and runs the game's own verb on its copy. The host says each thrust and its charge to every peer
+(`FireExtState` op 0), when it begins, twice a second while it runs and when it ends, and a client's
+copy shows the thrust's foam and sound (`coop/props/fireext_sync`, `coop/props/fireext_thrust_sync`)
+`[V]` (`coop/dev/fireext_drill`'s spray, spray_join and runaway arms each PASS on the rig and each
+red arm FAILs). A joiner is told, at its ready edge, every spray under way (the host's own, read off
+its hand, and each client's) and every extinguisher that thrusts or has lost charge; a client's ask in
+flight is a one-shot and is not replayed. A thrust is shown, not re-cast: a client's copy casts none
+of the thrust's rays, and a thrust of an extinguisher in the host's own hand is shown to nobody, until
+fire itself is synced and a held prop's thrust has a lane. The charge in a client's hand is the host's count: the spray's
 start and end carry the hand's charge, the host drains its own count at the game's rate while it runs,
 never above the hand's word, and sends it twice a second and at the end, so the hand, every mirror of
 it and a drop carry it `[V]` (`VOTVCOOP_ITEM_TRIP_ITEM=ext` of the item trip probe: six seconds' spray
@@ -502,7 +515,7 @@ is mirrored by the balance lane; an event is broadcast by the event watch.
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
 | `HandRecord` | each peer to the host; the host to all | a held item's own save record, chunked, for its hand mirrors |
 | `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
-| `FireExtState`, `FireExtIntent` | the host to all; a client to the host | a world extinguisher's thrust and charge, a player's spray; a client's spray on or off |
+| `FireExtState`, `FireExtIntent` | the host to all; a client to the host | a world extinguisher's thrust and charge, a player's spray; a client's spray on or off, and its damage to a copy asked of the host |
 | `PlayerHit` | host to the hit peer | a parked creature's hit on the peer's puppet: the verb (addDamage or punch) to run on its own player |
 | `SleepState` | a client to the host; the host to all | a rest state with its bed (awake, resting, dreaming); the host's sleeping flag; one peer's rest state relayed |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |
@@ -544,7 +557,7 @@ dead peer through the ragdoll bit of its next pose.
 | skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `assets/paks/` |
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
 | a held item's record on its mirrors | `coop/player/hand_record_sync` |
-| an extinguisher's foam | `coop/props/fireext_sync`; `coop/dev/foam_probe` |
+| an extinguisher's foam | `coop/props/fireext_sync`, `coop/props/fireext_thrust_sync`, `coop/props/fireext_runaway_ask` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/run_end_travel`, `coop/player/ragdoll_gate` |
 | leaving during an event | `coop/player/leave_in_event` |
 | sleep | `coop/player/sleep_sync`, `coop/player/sleep_rest`, `coop/player/nightmare_roll`, `harness/autotest/autotest_nightmare.cpp` (the drill) |

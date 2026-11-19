@@ -6,6 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 
 namespace ue_wrap::component_calls {
 namespace {
@@ -80,6 +81,15 @@ bool SetVolumeMultiplier(void* comp, float mult) {
     if (!f.valid()) return false;
     f.Set<float>(L"NewVolumeMultiplier", mult);
     return ue_wrap::Call(comp, f);
+}
+
+bool SetWorldScale3D(void* comp, float uniformScale) {
+    // Declared on USceneComponent, which no component class a caller holds is.
+    void* fn = comp ? R::FindDispatchFunctionCached(R::ClassOf(comp), L"SetWorldScale3D") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && f.Set<ue_wrap::FVector>(L"NewScale", ue_wrap::FVector{uniformScale, uniformScale, uniformScale}) &&
+           ue_wrap::Call(comp, f);
 }
 
 bool CallParamless(void* obj, void* fn) {

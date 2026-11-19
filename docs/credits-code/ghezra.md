@@ -312,3 +312,10 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   reason and a refused one shows the game's hint, a put-back is judged on the sender's reach and hold, a client's desk
   never eats a plate the host handed back, the plates and doors are sent on the game's own updates instead of a poll,
   and a drill with a red for each judge. Handing the taken-off plate into the asker's hand is a package of its own.
+
+- **An extinguisher's foam on every peer** ([#134](https://github.com/VOTV-MP/Multivoid/pull/134)): a spray from the hand and a runaway's
+  thrust showed only on the machine that ran them. Now every peer shows each player's spray on its copy of that hand and the
+  thrust on its copy of the extinguisher, a joiner is told both, and the charge is the host's count. Kept as written: the spray
+  told to the host and every peer, the host's count of the charge. On top: every peer casts the game's ray from its copy of the
+  sprayer's hand, so each player's own fire still goes out; a client's damage to its copy asks the host, which judges it and
+  sets its own copy off; a hand change ends a spray at once; and drills with a red for each half.

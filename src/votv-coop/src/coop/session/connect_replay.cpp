@@ -74,7 +74,7 @@
 #include "coop/props/prop_nametag.h"  // the tags put on this session, again
 #include "coop/player/hand_record_sync.h"  // every held item's own record
 #include "coop/world/cover_sync.h"  // the desk's plates and every station's door
-#include "coop/props/fireext_sync.h"  // every extinguisher's thrust and every spray
+#include "coop/props/fireext_sync.h"  // every spray, thrust and partly spent extinguisher
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
@@ -200,7 +200,7 @@ void ConnectReplayForSlot(int slot) {
     coop::roomba_sync::SendJoinSnapshotForSlot(slot);
     // The desk's back plates and every transformer station's door.
     coop::cover_sync::SendJoinSnapshotForSlot(slot);
-    // Every thrusting extinguisher and every spray.
+    // Every spray, every thrusting extinguisher and every partly spent charge.
     coop::fireext_sync::SendJoinSnapshotForSlot(slot);
     // The alarm lane's late-join answer: the current alarm state, unconditionally, so a mid-alarm
     // joiner starts its klaxon on arrival.

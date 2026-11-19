@@ -49,6 +49,30 @@
 
 namespace coop::event_feed {
 
+namespace {
+
+// An extinguisher message's fields, checked before any lane sees them. A State is op 0 (a thrust) or op 1 (a spray); an
+// Intent is op 2 (a spray's start or stop, with the hand's charge) or op 3 (a runaway ask: only `eid` is set).
+bool FireExtWellFormed(bool intent, const net::FireExtPayload& p) {
+    if (!std::isfinite(p.life) || p.life < -0.01f || p.life > 1.01f) return false;
+    if (!intent) return p.op <= net::kFireExtOpSpray && p.on <= 1 && p.charged <= 1 && p.slot < net::kMaxPeers;
+    if (p.op == net::kFireExtOpSprayAsk) return p.on <= 1;
+    return p.op == net::kFireExtOpRunawayAsk && p.slot == 0 && p.on == 0 && p.charged == 0 && p.life == 0.f;
+}
+
+// Every extinguisher message the dispatcher drops (the wrong way, the wrong length or out of range) is counted on one
+// counter, logged at the first and each power of two.
+void DropFireExt(const net::Session::ReliableMessage& msg) {
+    static uint64_t s_dropped = 0;
+    const uint64_t n = ++s_dropped;
+    if ((n & (n - 1)) == 0)
+        UE_LOGW("event_feed: an extinguisher message dropped (the wrong way, of %zu bytes or out of range), from slot %d: "
+                "%llu so far", static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot,
+                static_cast<unsigned long long>(n));
+}
+
+}  // namespace
+
 bool HandlePropDriveEvent(net::Session& session,
                           const net::Session::ReliableMessage& msg) {
     switch (msg.kind) {
@@ -276,15 +300,14 @@ bool HandlePropDriveEvent(net::Session& session,
     case net::ReliableKind::FireExtIntent: {
         // FireExtState HOST->ALL, FireExtIntent CLIENT->HOST (coop/props/fireext_sync). Exact length.
         const bool intent = msg.kind == net::ReliableKind::FireExtIntent;
+        net::FireExtPayload p{};
         if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::FireExtPayload)) {
-            UE_LOGW("event_feed: an extinguisher message the wrong way or of %zu bytes from slot %d -- dropping",
-                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            DropFireExt(msg);
             break;
         }
-        net::FireExtPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (!std::isfinite(p.life) || p.life < -0.01f || p.life > 1.01f) {
-            UE_LOGW("event_feed: an extinguisher message malformed -- dropping");
+        if (!FireExtWellFormed(intent, p)) {
+            DropFireExt(msg);
             break;
         }
         if (intent) ::coop::fireext_sync::OnIntent(msg.senderPeerSlot, p);
