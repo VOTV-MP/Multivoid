@@ -23,7 +23,8 @@ namespace coop::prop_pry_host {
 // queue refuses it. Game thread.
 void OnAsk(coop::net::Session& session, const coop::net::PryAskPayload& payload, uint8_t senderSlot);
 
-// HOST: judges one queued ask a tick for each sender. Game thread, once per pump tick.
+// HOST: judges one queued ask a tick for each sender, and arms the BreakConstraint hook that reports a pried radiator's
+// joints. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // Session end: the counters are said and cleared. A sender's queue and its latches live in its slot's state.

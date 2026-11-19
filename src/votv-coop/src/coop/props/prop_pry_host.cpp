@@ -20,6 +20,8 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <cmath>
 #include <cstdint>
@@ -85,19 +87,42 @@ void Refuse(uint8_t slot, const std::wstring& key, Why why) {
             key.c_str(), WhyName(why), static_cast<unsigned long long>(g_counts.refused));
 }
 
-// A plank's pry on the host's copy: the flags its crowbarOpen clears, the sound it plays and the kick along the crowbar's
-// right vector the client read, renormalised: a client's kick is a direction, never a magnitude.
+// A pry on the host's copy. A plank: the flags its crowbarOpen clears, the sound it plays and the kick along the crowbar's
+// right vector the client read, renormalised -- a client's kick is a direction, never a magnitude. A radiator or a
+// security TV: its own crowbarOpen, whose breakingSequence draws its own shuffle and spin on the host's body alone and
+// reaches the clients as the joints its BreakConstraint breaks (OnBreakPost).
 bool RunPry(void* prop, const coop::net::PryAskPayload& p) {
-    float x = p.kickX, y = p.kickY, z = p.kickZ;
-    const float len = std::sqrt(x * x + y * y + z * z);
-    if (len > 1e-3f) { x /= len; y /= len; z /= len; } else { x = y = z = 0.f; }
     // The pry writes the copy's flags and physics, so a client that syncs the prop loses it first, as to a host verb. A
     // no-op for a prop with no client row.
     coop::prop_drive_host::OverrideClientSyncer(prop, "pry");
+    if (PP::KindOf(prop) == PP::Kind::Hanging) return PS::RunOwn(prop);
+    float x = p.kickX, y = p.kickY, z = p.kickZ;
+    const float len = std::sqrt(x * x + y * y + z * z);
+    if (len > 1e-3f) { x /= len; y /= len; z /= len; } else { x = y = z = 0.f; }
     if (!PP::FreePlank(prop, x, y, z)) return false;
     coop::prop_sound::PlayDamagedSound(prop);
     PS::MarkPried(prop);
     return true;
+}
+
+// UPhysicsConstraintComponent::BreakConstraint, native, so the gate cannot see it: a post hook on its Func, which fires
+// for every route into it, the Blueprint's own call among them. The host's break of a radiator's or a TV's joint goes
+// to the clients as the joint, in the host's order.
+UE_FACT_FN(kRowBreakConstraint, "prop_pry_host", L"PhysicsConstraintComponent", L"BreakConstraint", Declared);
+bool g_hookInstalled = false;
+uint64_t g_hookTryMs = 0;
+bool g_hostActive = false;  // the host's session runs: set by Tick, read by the hook
+
+void OnBreakPost(void* context, void*, void*) {
+    if (!g_hostActive || !context) return;
+    void* owner = R::OuterOf(context);
+    const int joint = PP::JointOf(owner, context);
+    if (joint == 0) return;
+    PS::NoteBroken(owner, joint);
+    // The loop's random spin follows this call on the host's body, and the radiator hangs between breaks long enough for
+    // a row to end (kRestMs, 500, against 1.5 to 3 s), so each break opens or re-times a row of its own, whatever the body
+    // is doing at this instant: CoastLetGo would refuse a body at rest. Every copy parks on the row's first pose again.
+    if (!coop::prop_drive_host::CoastCapReached(owner, "pry-break")) coop::prop_drive_host::Coast(owner, "pry-break");
 }
 
 // False keeps the ask at its sender's queue head: the host has no body for the sender yet (its first pose has not
@@ -162,7 +187,15 @@ void OnAsk(coop::net::Session&, const coop::net::PryAskPayload& payload, uint8_t
 
 void Tick(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("prop_pry_host::Tick");
-    if (!session.running() || session.role() != coop::net::Role::Host) return;
+    g_hostActive = session.running() && session.role() == coop::net::Role::Host;
+    if (!g_hostActive) return;
+    const uint64_t now = coop::net::NowMs();
+    if (!g_hookInstalled && now >= g_hookTryMs) {
+        g_hookTryMs = now + 1000;  // the class is looked up through the object array on a miss
+        const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBreakConstraint);
+        g_hookInstalled = fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnBreakPost);
+        if (g_hookInstalled) UE_LOGI("prop_pry_host: BreakConstraint's post hook is live");
+    }
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         Slot& sl = g_slots[slot];
         sl.queue.Serve(kBudget, coop::net::NowMs, [&](const coop::net::PryAskPayload& p) {
@@ -179,6 +212,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_counts.granted), static_cast<unsigned long long>(g_counts.refused),
                 static_cast<unsigned long long>(g_counts.farRefused));
     g_counts = Counts{};
+    g_hostActive = false;
 }
 
 }  // namespace coop::prop_pry_host
