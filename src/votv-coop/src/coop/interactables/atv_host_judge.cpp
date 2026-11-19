@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/props/remote_prop.h"
 #include "coop/player/hand_spend.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
@@ -251,7 +252,7 @@ void Applied(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& 
 
 // Fuelling: fuelUp's own body is fuel += the gain, and the empty mark cleared when the tank rose.
 uint8_t Refuel(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    if (!JudgeOff() && !coop::hand_item::HeldClassIs(slot, kCanClass)) return why::kNoItem;
+    if (!JudgeOff() && !(coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass))) return why::kNoItem;
     // The client's copy ran the pour as the game wrote it, so the amount is the fuel its own can gave; the host's copy
     // of that can is the hand mirror, which carries no amount, so the bound is the tank's room, as the chipper's.
     const float room = kMax - v.fuel;

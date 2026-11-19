@@ -33,6 +33,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <cwchar>
 #include <array>
 #include <cstring>
 #include <string>
@@ -87,6 +88,16 @@ bool IsDrivenBy(void* actor, int slot) {
     UE_ASSERT_GAME_THREAD("remote_prop::IsDrivenBy");
     if (!actor || slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
     return g_drives[slot].actor == actor;
+}
+
+bool CarriesClassA(int slot, const wchar_t* base) {
+    UE_ASSERT_GAME_THREAD("remote_prop::CarriesClassA");
+    if (!base || slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
+    void* const actor = g_drives[slot].actor;
+    if (!actor || !R::IsLive(actor)) return false;
+    for (void* c = R::ClassOf(actor); c; c = R::SuperStructOf(c))
+        if (::_wcsicmp(R::ToString(R::NameOf(c)).c_str(), base) == 0) return true;
+    return false;
 }
 
 void RefuseHold(int slot, uint16_t holdGen) {

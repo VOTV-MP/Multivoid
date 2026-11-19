@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/props/remote_prop.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
@@ -261,7 +262,7 @@ bool Pour(const Payload& p, uint8_t slot, void* chipper, const std::wstring& key
     }
     float add = p.fuel;
     if (!PourCheckOff()) {
-        if (!coop::hand_item::HeldClassIs(slot, kCanClass)) {
+        if (!(coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass))) {
             Refuse(kNoCan, slot, key, nullptr);
             Answer(chipper, slot);
             return true;
