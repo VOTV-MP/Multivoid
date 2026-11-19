@@ -77,7 +77,7 @@ with its one dropped nail item on both, an unfinished wall, its finish, a wet wa
 on its copy within 110 ms and on the host's wall, a log thrown by each peer counted once, the host's break, a client's
 wall builder).
 
-A poster on a wall rides the same lane. A poster item's put spawns a `poster_c` (the treehouse's and the custom poster's
+A poster on a wall rides the same lane. A poster item's put spawns a `poster_C` (the treehouse's and the custom poster's
 classes too), a save actor whose record carries its picture (`type`, and `filename` for a custom one); the poster's own
 action 7 takes it down into the taker's hand and destroys it, and the item is a prop the prop lanes carry. Each ran on the
 one machine, so a poster put up or taken down on one peer stayed as it was on the others. The host now sends each

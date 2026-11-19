@@ -403,7 +403,10 @@ void RunHost() {
         void* n = an.empty() ? nullptr : PieceByKey(an[0]);
         ue_wrap::save_record::SaveRecord rec;
         if (!n || !B::Capture(n, rec) || rec.names.empty() || rec.names[0].size() < 2) return;
-        rec.className = L"nail_pin_C";
+        // VOTVCOOP_BUILD_PIN_CLASS: another nail class for this step (nail_ax_super_C, which the build lane once left
+        // out); its pin-only checks then say so, and the client's find of it by key is the step that counts.
+        const std::string pc = coop::config::ReadEnv("VOTVCOOP_BUILD_PIN_CLASS");
+        rec.className = pc.empty() ? std::wstring(L"nail_pin_C") : std::wstring(pc.begin(), pc.end());
         rec.key = L"drillpin" + std::to_wstring(::GetTickCount64());
         rec.names[0][1] = L"None";
         void* p = B::Spawn(rec);

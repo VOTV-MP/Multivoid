@@ -32,12 +32,13 @@ constexpr ClassRow kClasses[] = {
     {L"nail_ax_C", Kind::Nail},
     {L"nail_pin_C", Kind::Nail},
     {L"nail_super_C", Kind::Nail},
+    {L"nail_ax_super_C", Kind::Nail},   // the super axe's nail (mainPlayer_C maps prop_nail_ax_super_C to it)
     {L"customWall_unfinished_C", Kind::Unfinished},
     {L"customWall_C", Kind::Wall},
     {L"customWall_rad_C", Kind::Wall},
     {L"customWall_wetConcrete_C", Kind::WetWall},
     // A poster on a wall: a poster item's put spawns it, its own action 7 takes it down into the hand.
-    {L"poster_c", Kind::Poster},
+    {L"poster_C", Kind::Poster},
     {L"poster_c_C", Kind::Poster},
     {L"poster_treehouse_C", Kind::Poster},
 };
