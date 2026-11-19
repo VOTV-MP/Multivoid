@@ -300,10 +300,11 @@ const char* Judge(const coop::net::AtvPartIntentPayload& p, const AC::Snapshot& 
 // refund after kPartly would be a second part beside the one the ATV already holds.
 enum class Got { kNothing, kPartly, kAll };
 
-// Whether the ATV's presence now reads as the op leaves it. An ATV that no longer reads holds nothing of it.
+// Whether the ATV's presence now reads as the op leaves it. An ATV that does not read back counts as landed: a refund
+// beside a part the ATV may already hold could duplicate it, and no refund at worst loses one part the host never took.
 bool Landed(void* atv, uint8_t what, uint8_t bit) {
     AC::Snapshot now;
-    if (!AC::Read(atv, now)) return false;
+    if (!AC::Read(atv, now)) return true;
     switch (what) {
     case op::kFitWheel:   return (now.mask & bit) != 0;
     case op::kStowSpare:  return now.hasSpare;

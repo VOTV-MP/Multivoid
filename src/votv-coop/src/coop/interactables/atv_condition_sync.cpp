@@ -225,7 +225,10 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     if (!fromHost || fromSyncer) {
         auto c01  = [](float& v) { if (v < 0.f) v = 0.f; else if (v > 1.f)   v = 1.f; };
         auto c100 = [](float& v) { if (v < 0.f) v = 0.f; else if (v > 100.f) v = 100.f; };
-        for (int i = 0; i < 4; ++i) { c100(in.dur[i]); c01(in.dirt[i]); }
+        for (int i = 0; i < 4; ++i) {
+            c100(in.dur[i]); c01(in.dirt[i]);
+            if (in.fixes[i] < -1) in.fixes[i] = -1; else if (in.fixes[i] > 3) in.fixes[i] = 3;  // the game's own range, as the part lane bounds it
+        }
         c01(in.bodyDirt); c100(in.spareDur); c01(in.spareDirt); c100(in.fuel);
         if (in.health < -1.f) in.health = -1.f; else if (in.health > 100.f) in.health = 100.f;
     }
