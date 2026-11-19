@@ -7,8 +7,12 @@
 // came to rest, and the watching peer judges its own copy: freed by the lane's replay, moved, and
 // resting near the acting peer's. Every verdict is one line, `[PRIED-DRILL]` with the peer's tag and
 // `PASS` or `FAIL`.
+//
+// Arms measure_plank and measure_radiator measure the same pry instead of judging it (pried_measure.h).
 
 #pragma once
+
+#include <string>
 
 namespace coop::net {
 class Session;
@@ -17,6 +21,13 @@ class Session;
 namespace coop::dev::pried_drill {
 
 bool IsEnabled();
+
+// This peer's join is over: a client's own, or on the host one client's with its window closed.
+bool JoinOver(coop::net::Session& s);
+
+// The first key, in order, among the live props of `clsName` or below, the stuck ones first; empty when none stands.
+// One walk of the object array. Shared with pried_measure.
+std::wstring PickByClass(const wchar_t* clsName);
 
 // The drill's pass on either peer. A single read when off. Game thread.
 void Tick(coop::net::Session* session);

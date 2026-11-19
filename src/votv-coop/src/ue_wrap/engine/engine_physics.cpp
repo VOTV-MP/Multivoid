@@ -184,4 +184,43 @@ int StopActorSimulating(void* actor) {
     return stopped;
 }
 
+int ForEachMemberComponent(void* actor, ComponentVisitor visit, void* ctx) {
+    void* cls = actor ? R::ClassOf(actor) : nullptr;
+    if (!cls || !visit) return 0;
+    int visited = 0;
+    for (int32_t off : ComponentMembers(cls)) {
+        void* comp = *reinterpret_cast<void* const*>(static_cast<const char*>(actor) + off);
+        // Only the actor's own: a variable can hold another actor's component.
+        if (!comp || !R::IsLive(comp) || R::OuterOf(comp) != actor) continue;
+        visit(ctx, comp);
+        ++visited;
+    }
+    return visited;
+}
+
+bool ReadConstraintBroken(void* constraint, bool& out) {
+    if (!constraint || !R::IsLive(constraint)) return false;
+    void* cls = R::ClassOf(constraint);
+    void* fn = cls ? R::FindDispatchFunctionCached(cls, L"IsBroken") : nullptr;
+    if (!fn) return false;
+    // The function is asked of a constraint component only: another class's own IsBroken is no answer.
+    static void* s_fn = nullptr;
+    static bool s_ok = false;
+    static int32_t s_off = -1;
+    if (fn != s_fn) {
+        s_fn = fn;
+        void* owner = R::OuterOf(fn);
+        s_ok = owner && R::ToString(R::NameOf(owner)) == L"PhysicsConstraintComponent" &&
+               R::FunctionFrameSize(fn) <= kFrameBytes;
+        s_off = s_ok ? R::FindParamOffset(fn, L"ReturnValue") : -1;
+        UE_LOGI("engine_physics: IsBroken on %ls %s (ReturnValue@%d)", R::ClassNameOf(constraint).c_str(),
+                s_ok && s_off >= 0 ? "resolved" : "did not resolve", s_off);
+    }
+    if (!s_ok || s_off < 0) return false;
+    unsigned char frame[kFrameBytes] = {};
+    if (!R::CallFunction(constraint, fn, frame)) return false;
+    out = *reinterpret_cast<bool*>(frame + s_off);
+    return true;
+}
+
 }  // namespace ue_wrap::engine

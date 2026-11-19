@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/drill_chat.h"
+#include "coop/dev/pried_measure.h"
 #include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -43,15 +44,18 @@ enum class Kind { Off, Plank, Radiator };
 struct Arm {
     Kind kind;
     bool clientActs;
+    bool measure;  // measure_plank / measure_radiator: pried_measure, the client pries
 };
 
 Arm ArmOf() {
     static const Arm a = [] {
-        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::pried_drill);
-        const bool client = v.size() > 7 && v.compare(v.size() - 7, 7, "_client") == 0;
+        std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::pried_drill);
+        const bool measure = v.rfind("measure_", 0) == 0;
+        if (measure) v.erase(0, 8);
+        const bool client = measure || (v.size() > 7 && v.compare(v.size() - 7, 7, "_client") == 0);
         const Kind k = v.rfind("plank", 0) == 0 ? Kind::Plank
                      : v.rfind("radiator", 0) == 0 ? Kind::Radiator : Kind::Off;
-        return Arm{k, client};
+        return Arm{k, client, measure};
     }();
     return a;
 }
@@ -107,41 +111,6 @@ void Verdict(bool pass, const char* fmt, ...) {
     if (pass) UE_LOGI("[PRIED-DRILL] [%c] PASS %s", Who(), msg);
     else      UE_LOGW("[PRIED-DRILL] [%c] FAIL %s", Who(), msg);
     Go(Step::Done);
-}
-
-// This peer's join is over: a client's own, or on the host one client's with its window closed.
-bool JoinOver(coop::net::Session& s) {
-    if (!coop::roster::LocalIsHost())
-        return coop::net_pump::HasAnnouncedWorldReady() &&
-               coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
-    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
-        if (s.IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot) &&
-            !coop::join_window_baseline::IsLateWindowOpen(slot))
-            return true;
-    return false;
-}
-
-// One walk of the object array: the first key, in order, among the live props of `cls` or below,
-// the stuck ones first.
-std::wstring PickByClass(const wchar_t* clsName) {
-    void* cls = R::FindClass(clsName);
-    std::vector<std::wstring> stuck, loose;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; cls && i < n; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o)) continue;
-        void* oc = R::ClassOf(o);
-        if (!oc || !(oc == cls || R::IsDescendantOfAny(oc, &cls, 1))) continue;
-        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
-        std::wstring key = PR::GetInteractableKeyString(o);
-        if (key.empty() || key == L"None") continue;
-        (Stuck(o) ? stuck : loose).push_back(std::move(key));
-    }
-    auto& from = stuck.empty() ? loose : stuck;
-    UE_LOGI("[PRIED-DRILL] [%c] %ls: %zu stuck, %zu loose", Who(), clsName, stuck.size(), loose.size());
-    if (from.empty()) return {};
-    std::sort(from.begin(), from.end());
-    return from.front();
 }
 
 std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }
@@ -241,6 +210,38 @@ void TickPlaced(coop::net::Session& s) {
 
 }  // namespace
 
+bool JoinOver(coop::net::Session& s) {
+    if (!coop::roster::LocalIsHost())
+        return coop::net_pump::HasAnnouncedWorldReady() &&
+               coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
+        if (s.IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot) &&
+            !coop::join_window_baseline::IsLateWindowOpen(slot))
+            return true;
+    return false;
+}
+
+std::wstring PickByClass(const wchar_t* clsName) {
+    void* cls = R::FindClass(clsName);
+    std::vector<std::wstring> stuck, loose;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; cls && i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        void* oc = R::ClassOf(o);
+        if (!oc || !(oc == cls || R::IsDescendantOfAny(oc, &cls, 1))) continue;
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+        std::wstring key = PR::GetInteractableKeyString(o);
+        if (key.empty() || key == L"None") continue;
+        (Stuck(o) ? stuck : loose).push_back(std::move(key));
+    }
+    auto& from = stuck.empty() ? loose : stuck;
+    UE_LOGI("[PRIED-DRILL] [%c] %ls: %zu stuck, %zu loose", Who(), clsName, stuck.size(), loose.size());
+    if (from.empty()) return {};
+    std::sort(from.begin(), from.end());
+    return from.front();
+}
+
 bool IsEnabled() { return ArmOf().kind != Kind::Off; }
 
 void Tick(coop::net::Session* session) {
@@ -248,10 +249,12 @@ void Tick(coop::net::Session* session) {
     // The chat history records from its first read on, so it is read from the first pass: a line the
     // other peer says before this one is ready to act on it is still found.
     DC::SeenHas(kSayReady);
+    if (ArmOf().measure) return coop::dev::pried_measure::Tick(*session, ArmOf().kind == Kind::Radiator);
     TickPlaced(*session);
 }
 
 void OnDisconnect() {
+    coop::dev::pried_measure::OnDisconnect();
     g_step = Step::WaitJoin;
     g_stepMs = 0;
     g_target.Reset();

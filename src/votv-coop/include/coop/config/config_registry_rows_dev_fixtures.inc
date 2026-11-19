@@ -14,9 +14,15 @@ CFG_FLAG(oven_merge_off, "oven_merge_off", "dev", false, "VOTVCOOP_OVEN_MERGE_OF
     "with a bit its screen lacks and does not raise the bit, so the drill's judge on this peer must FAIL at "
     "that arrival.")
 CFG_ENUM(pried_drill, "pried_drill", "dev", "off",
-    "off|plank_host|plank_client|radiator_host|radiator_client",
+    "off|plank_host|plank_client|radiator_host|radiator_client|measure_plank|measure_radiator",
     "VOTVCOOP_PRIED_DRILL",
     "Drill (BOTH peers): a crowbar's pry of a prop with no wall-attach component, by the prop's own "
     "crowbarOpen with no crowbar. The watching peer names the first stuck prop of the class (a plank, a "
     "radiator), the acting peer pries it and says where its copy rests, and the watching peer judges its "
-    "own copy. One `[PRIED-DRILL] [H|C] PASS` or `FAIL` line per judge.")
+    "own copy. One `[PRIED-DRILL] [H|C] PASS` or `FAIL` line per judge. measure_plank and measure_radiator "
+    "judge nothing: the host names the prop, the client pries it, and each peer logs `[PRY-MEASURE]` lines "
+    "(every crowbarOpen, a radiator's breakingSequence and BreakConstraint, each part's pose every 500 ms "
+    "until 5 s after the last break, the rest poses). Run with the rig's --rejoin, --rejoin-marker "
+    "'pried-measure: REJOIN MARKER' and --rejoin-env VOTVCOOP_PRIED_MEASURE_REJOIN=1: the rejoined client "
+    "logs what it sees of the same prop, and the host ends on 'rig: VERDICT pry-measure DONE' (INVALID when "
+    "a wait ran out). Run it on a fresh host world.")
