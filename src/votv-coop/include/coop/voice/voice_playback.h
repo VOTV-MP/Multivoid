@@ -79,6 +79,18 @@ public:
 
     static std::vector<std::string> EnumerateDevices();
 
+    // ---- the camcorder's voice track (coop/voice/camcorder_voice) ----
+    // Game thread: while `on`, the mixer also mixes every channel as heard at the camera (x, y, z, yaw) -- the same
+    // distance gain, vertical fade and pan as for the listener, each slot's own volume, not the master volume -- into
+    // a stereo ring the game thread drains. `selfSlot` (or -1) names the channel that carries this peer's own voice
+    // for the camera alone: it is never played. Turning the camera off resets that channel.
+    void SetCamera(bool on, float x, float y, float z, float yawDeg, int selfSlot);
+    // Game thread: this peer's own outgoing frame, decoded into channel `slot` for the camera mix only.
+    void OnSelfFrame(int slot, const coop::net::VoiceFramePayload& f);
+    // Game thread: the camera mix since the last drain, interleaved stereo s16 at 48 kHz, appended to `out`. Returns
+    // the frames the ring dropped since Start (the game thread fell a second behind).
+    uint64_t DrainCamera(std::vector<int16_t>& out);
+
 private:
     struct Channel {
         // Jitter buffer (GT only).
@@ -116,6 +128,17 @@ private:
     Channel channels_[coop::players::kMaxPeers];
 
     std::atomic<float> listenerX_{0}, listenerY_{0}, listenerZ_{0}, listenerYaw_{0};
+
+    // The camera mix: the position the camera hears from, the self channel, and a stereo SPSC ring (the callback
+    // produces, the game thread drains), allocated at Start.
+    static constexpr uint32_t kCamRingFrames = 48000;   // 1 s
+    static constexpr uint32_t kCamBlockFrames = 4096;   // the scratch block; a longer callback is mixed in pieces
+    std::atomic<bool> camOn_{false};
+    std::atomic<float> camX_{0}, camY_{0}, camZ_{0}, camYaw_{0};
+    std::atomic<int> camSelf_{-1};
+    std::vector<float> camRing_;      // 2 * kCamRingFrames
+    std::vector<float> camScratch_;   // 2 * kCamBlockFrames
+    std::atomic<uint64_t> camWrite_{0}, camRead_{0}, camDropped_{0};
     std::atomic<float> masterVolume_{1.0f};
     std::atomic<float> distanceCm_{4800.0f};
     int jitterThreshold_ = 3;

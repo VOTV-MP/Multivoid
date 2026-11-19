@@ -21,6 +21,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/class_resolve.cpp
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
+    src/ue_wrap/core/process_launch.cpp
     src/ue_wrap/core/hook_drill.cpp
     src/ue_wrap/core/game_thread.cpp
     src/ue_wrap/core/game_thread_wait.cpp
