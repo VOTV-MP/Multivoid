@@ -193,6 +193,40 @@ void NoteBroken(void* prop, int joint) {
     PublishState(*s, key, r.mask);
 }
 
+void StampRow(void* prop, uint8_t& physFlags, uint8_t& pryMask) {
+    if (g_rec.empty()) return;  // a snapshot's rows are many and a pried prop is rare: no key read for each
+    auto* s = LaneSession();
+    if (!s || s->role() != coop::net::Role::Host) return;
+    const auto it = g_rec.find(KeyOf(prop));
+    if (it == g_rec.end()) return;
+    physFlags |= coop::net::propspawn_flags::kPried;
+    pryMask = it->second.mask;
+}
+
+void ConvergePried(void* actor, uint8_t physFlags, uint8_t pryMask, int senderSlot) {
+    UE_ASSERT_GAME_THREAD("prop_pry_sync::ConvergePried");
+    if (!(physFlags & coop::net::propspawn_flags::kPried) || senderSlot != 0) return;
+    auto* s = LaneSession();
+    if (!s || s->role() != coop::net::Role::Client) return;
+    const PP::Kind kind = PP::KindOf(actor);
+    const std::wstring key = KeyOf(actor);
+    if (kind == PP::Kind::None || key.empty()) {
+        UE_LOGW("prop_pry_sync: a row says '%ls' is pried, but %p is no prop this lane pries (class '%ls')", key.c_str(),
+                actor, R::ClassNameOf(actor).c_str());
+        return;
+    }
+    Rec& r = g_rec[key];
+    if (kind != PP::Kind::Hanging) return;
+    for (int n = 1; n <= PP::kJoints; ++n) {
+        const uint8_t bit = static_cast<uint8_t>(1u << (n - 1));
+        if (!(pryMask & bit) || (r.mask & bit)) continue;
+        r.mask |= bit;
+        if (!PP::BreakJoint(actor, n, false))
+            UE_LOGW("prop_pry_sync: joint %d of '%ls' did not break from its row -- the copy hangs on it", n, key.c_str());
+        ++g_stats.jointsBroken;
+    }
+}
+
 bool RunOwn(void* prop) {
     UE_ASSERT_GAME_THREAD("prop_pry_sync::RunOwn");
     ++g_grantDepth;

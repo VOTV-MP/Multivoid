@@ -50,6 +50,16 @@ void NoteBroken(void* prop, int joint);
 // Game thread.
 bool RunOwn(void* prop);
 
+// HOST: the pry bits of `prop`'s row for a joiner, from the record: physFlags gains propspawn_flags::kPried and `pryMask`
+// the joints broken so far, for a prop the host has pried; both are left alone for any other, and on a client. Game thread.
+void StampRow(void* prop, uint8_t& physFlags, uint8_t& pryMask);
+
+// CLIENT: a prop row the host sent says this copy is pried (propspawn_flags::kPried) with `pryMask` joints broken. The
+// copy is recorded as pried and breaks each masked joint, silently: the save already freed the body, and the sound and
+// the break effect belong to the moment of the pry. Nothing for a row without the flag, for a row another client sent
+// (`senderSlot` is not the host's 0), and on the host. Game thread.
+void ConvergePried(void* actor, uint8_t physFlags, uint8_t pryMask, int senderSlot);
+
 // CLIENT: the host's state of one pried prop, its format checked by the dispatcher. This peer's copy takes the pry the
 // first time the state says pried, and breaks each joint the mask names that it has not broken. A key that resolves to
 // no prop here is counted and dropped. Game thread.

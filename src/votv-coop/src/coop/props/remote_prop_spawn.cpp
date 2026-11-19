@@ -38,6 +38,7 @@
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_stick_sync.h"    // ConvergeStuck, a wall-attach copy's stuck state
+#include "coop/props/prop_pry_sync.h"      // ConvergePried: a pried radiator's broken joints, from the host's row
 #include "coop/props/prop_throw.h"         // SeqFor: the actor this peer just threw or swung is not converged
 #include "coop/props/prop_wire_parity.h"   // the shared physics and collision helpers
 #include "coop/props/remote_prop.h"
@@ -183,6 +184,7 @@ void AdoptByPosition(const coop::net::PropSpawnPayload& payload, int senderSlot,
     ue_wrap::engine::SetActorRotation(fuzzy,
         ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
     coop::prop_stick_sync::ConvergeStuck(fuzzy, payload.physFlags);
+    coop::prop_pry_sync::ConvergePried(fuzzy, payload.physFlags, payload.pryMask, senderSlot);
     ConvergeFrozenSleep(fuzzy, payload.physFlags);
     RestoreSpParityPhysicsAfterConverge(fuzzy, payload.physFlags);
     // Rekey the matched actor to the wire Key: it otherwise keeps its client-local Key while
@@ -475,6 +477,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // stuck, froze or woke in place after the blob was cut. The game's own verbs, which wake
             // nothing that agrees.
             coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
+            coop::prop_pry_sync::ConvergePried(existing, payload.physFlags, payload.pryMask, senderSlot);
             ConvergeFrozenSleep(existing, payload.physFlags);
         } else {
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm%s), converging transform to host (loc=(%.1f,%.1f,%.1f))",
@@ -495,6 +498,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // mount is no longer frozen there, a sign it pried is no longer on its wall), then the
             // simulate state the flags give.
             coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
+            coop::prop_pry_sync::ConvergePried(existing, payload.physFlags, payload.pryMask, senderSlot);
             ConvergeFrozenSleep(existing, payload.physFlags);
             RestoreSpParityPhysicsAfterConverge(existing, payload.physFlags);
         }

@@ -1526,7 +1526,8 @@ enum class ReliableKind : uint16_t {
 
     // Host to all clients: a pried prop's state, the whole of it each time -- whether it is pried and which of a hanging
     // prop's four joints the host has broken. A receiver applies the difference to its own copy. Never relayed; from
-    // the host alone. PryStatePayload.
+    // the host alone. Late join: a joiner's prop row carries the same two values (PropSpawnPayload physFlags kPried
+    // and pryMask), and PryState follows for what breaks after. PryStatePayload.
     PryState = 279,
 };
 
@@ -2519,7 +2520,8 @@ struct PropSpawnPayload {
     uint8_t       chipType;         // 1  -- the trash variant (enum_chipPileType); 0 for other props
     uint8_t       hasMatchPos;      // 1  -- match_form: matchX/Y/Z carry this trash entity's save-time position,
                                     //       and the value is the FORM the joiner loaded there
-    uint8_t       _pad;             // 1
+    uint8_t       pryMask;          // 1  -- a pried radiator's or security TV's broken joints (bit N-1 for
+                                    //       PhysicsConstraintN); valid with propspawn_flags::kPried, else 0
     float         initLinVelX, initLinVelY, initLinVelZ;  // 12 -- initial velocity (cm/s), usually zero
     float         initAngVelX, initAngVelY, initAngVelZ;  // 12
     // The prop's element id in the sender's range (host range from the host, peer range from a
@@ -2554,6 +2556,9 @@ inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn
 // the sender's live Aprop_C instead (PhysFlagsOf), and only then does a receiver make an existing
 // copy's frozen and sleep match them (the join-window correction also makes static match).
 inline constexpr uint8_t kLiveState       = 0x40;
+// The host has this prop pried (coop/props/prop_pry_sync): the row's pryMask says which joints it has broken. A joiner
+// records it and breaks them, as PryState would have told it. Read from the host's own rows only.
+inline constexpr uint8_t kPried           = 0x80;
 }  // namespace propspawn_flags
 
 // A prop death (PropDestroy): the key, and the sender's element id for the mirror binding. The

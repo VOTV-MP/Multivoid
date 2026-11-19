@@ -18,6 +18,7 @@
 #include "coop/config/config_registry.h"  // [dev] hold_snapshot_sec, the held-bracket drill
 #include "coop/session/join_beacon.h"  // a deferred or draining bracket says so, once a second
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf
+#include "coop/props/prop_pry_sync.h"  // StampRow: a pried prop's row carries its joints
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
 #include "coop/save/join_window_baseline.h"  // TryGetPileXform / ClumpXform, the join snapshot's match key
@@ -381,9 +382,11 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // and removeWOrespawn bits and the list_props Name go too, so the receiver's init builds the
     // real prop (mesh, mass, collision), not the CDO cube.
     p.physFlags = 0;
+    p.pryMask = 0;
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(obj)) {
         p.physFlags = coop::prop_wire_parity::PhysFlagsOf(obj);
+        coop::prop_pry_sync::StampRow(obj, p.physFlags, p.pryMask);  // a prop the host has pried: its joints so far
         const std::wstring nm = ue_wrap::prop::GetPropNameString(obj);
         for (size_t j = 0; j < nm.size() && j < 31; ++j) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
