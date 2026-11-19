@@ -400,6 +400,8 @@ inline constexpr RefFn kRefFns[] = {
     {L"primitivecomponent", L"setcollisionenabled", L"primitivecomponent.setcollisionenabled", 0xa7e3c00da9693394ull, 0xcbf29ce484222325ull},
     {L"primitivecomponent", L"setphysicsangularvelocityindegrees", L"primitivecomponent.setphysicsangularvelocityindegrees", 0xe11ba67ff77558d6ull, 0xcbf29ce484222325ull},
     {L"primitivecomponent", L"setphysicslinearvelocity", L"primitivecomponent.setphysicslinearvelocity", 0x977a7e6c3b4e7196ull, 0xcbf29ce484222325ull},
+    {L"prop_asologopiece_c", L"breakingsequence", L"prop_asologopiece_c.breakingsequence", 0x6a2d5d90ab51fa2dull, 0x17d65ee9e06cb37cull},
+    {L"prop_asologopiece_c", L"executeubergraph_prop_asologopiece", L"prop_asologopiece_c.executeubergraph_prop_asologopiece", 0xd3c93c9d2749b427ull, 0xb0a8c0b26da26792ull},
     {L"prop_box_c", L"receiveactorbeginoverlap", L"prop_box_c.receiveactorbeginoverlap", 0x21b3fbf6adea9c01ull, 0xb226fa573bcd098full},
     {L"prop_box_c", L"upd", L"prop_box_c.upd", 0xaf92a12c06639e88ull, 0x311fac73bf63e88cull},
     {L"prop_c", L"canbecollected", L"prop_c.canbecollected", 0xea5bec26c2f18a61ull, 0x238bd7d35aff7d73ull},
