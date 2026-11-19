@@ -7,6 +7,7 @@
 #include "coop/interactables/atv_drill_events.h"
 #include "coop/interactables/atv_gate.h"
 #include "coop/interactables/atv_host_judge.h"
+#include "coop/interactables/atv_part_intent.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -190,6 +191,7 @@ void Tick() {
         ClearGate("a world change");
     }
     coop::atv_gate::SettleWatches();
+    coop::atv_part_intent::SettleWatches();
     if (s->role() == coop::net::Role::Host) coop::atv_host_judge::Tick(*s);
 }
 

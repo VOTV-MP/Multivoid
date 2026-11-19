@@ -65,6 +65,8 @@ constexpr const wchar_t* kWheelClass   = L"prop_atvWheel_C";
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchAsked = false;
+uint32_t g_registered = 0;  // bit i: row i's watch registered (game thread)
+bool g_settled = false;
 Stats g_stats{};
 
 // HOST, per sender: its budget. The part a fit or stow spends is counted by hand_spend, one use per hold.
@@ -223,6 +225,13 @@ sg::Verdict OnActionPre(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
+// The four watches, one row each: a refused registration leaves the others standing.
+constexpr int kRowCount = 4;
+const ue_wrap::facts::Function* const kRows[kRowCount] = {&kRowUnscrewPanel, &kRowPutTire, &kRowPlayerUsedOn,
+                                                          &kRowActionOptionIndex};
+const sg::PreFn kPres[kRowCount] = {&OnUnscrewPre, &OnPutTirePre, &OnPlayerUsedOnPre, &OnActionPre};
+const char* const kRowTag[kRowCount] = {"unbolt", "fit", "spare stow", "spare take"};
+
 // ---- HOST: the judge and the change --------------------------------------------------------------
 
 bool HoldsUnscrewTool(uint8_t slot) {
@@ -343,13 +352,28 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_watchAsked) return;
     g_watchAsked = true;
-    const bool ok = sg::WatchName(kRowUnscrewPanel, kTagPart, &OnUnscrewPre, nullptr) &&
-                    sg::WatchName(kRowPutTire, kTagPart, &OnPutTirePre, nullptr) &&
-                    sg::WatchName(kRowPlayerUsedOn, kTagPart, &OnPlayerUsedOnPre, nullptr) &&
-                    sg::WatchName(kRowActionOptionIndex, kTagPart, &OnActionPre, nullptr);
-    if (!ok)
-        UE_LOGE("atv_part: the script gate refused a watch on ATV_C -- for the rest of this process a client's "
-                "wheel or spare work changes only its own copy");
+    int watched = 0;
+    for (int i = 0; i < kRowCount; ++i) {
+        if (sg::WatchName(*kRows[i], kTagPart, kPres[i], nullptr)) {
+            g_registered |= 1u << i;
+            ++watched;
+        } else {
+            UE_LOGE("atv_part: the watch on ATV_C::%ls did not register -- a client's %s changes only its own copy",
+                    kRows[i]->Name(), kRowTag[i]);
+        }
+    }
+    UE_LOGI("atv_part: %d/%d ATV watches registered by class and name", watched, kRowCount);
+}
+
+void SettleWatches() {
+    if (g_settled || !g_registered) return;
+    for (int i = 0; i < kRowCount; ++i)
+        if ((g_registered & (1u << i)) && !sg::NameWatchSettled(*kRows[i], kTagPart)) return;
+    g_settled = true;
+    for (int i = 0; i < kRowCount; ++i)
+        if ((g_registered & (1u << i)) && !sg::NameWatchLive(*kRows[i], kTagPart))
+            UE_LOGW("atv_part: the watch on ATV_C::%ls settled dead -- a client's %s changes only its own copy",
+                    kRows[i]->Name(), kRowTag[i]);
 }
 
 void OnIntent(coop::net::Session& session, const coop::net::AtvPartIntentPayload& payload, uint8_t senderSlot) {

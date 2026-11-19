@@ -25,6 +25,10 @@ namespace coop::atv_part_intent {
 // Idempotent: caches `session` and registers the four script-gate watches on ATV_C, once.
 void Install(coop::net::Session* session);
 
+// Once a tick on the game thread, beside atv_gate's: when every registered watch has settled, says each one that
+// settled dead. A no-op after that.
+void SettleWatches();
+
 // HOST: a client's AtvPartIntent (router: event_dispatch_atv_part.cpp). Game thread.
 void OnIntent(coop::net::Session& session, const coop::net::AtvPartIntentPayload& payload, uint8_t senderSlot);
 
