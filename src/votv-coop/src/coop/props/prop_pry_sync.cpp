@@ -15,6 +15,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_events.h"
 #include "ue_wrap/actors/prop_pry.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -22,11 +23,13 @@
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::prop_pry_sync {
 namespace {
@@ -46,6 +49,9 @@ bool g_watchAsked = false;
 // record of what it ran, a client's of what the host told it.
 struct Rec {
     uint8_t mask = 0;
+    bool freed = false;   // this copy's flags are cleared (a client: by a state or by a row)
+    bool cued = false;    // the moment's cue has played here: a plank's sound, a hanging prop's break effect
+    ue_wrap::CachedObjRef prop;   // the host's: the prop the record was made for, so a row finds it with no key read
 };
 std::unordered_map<std::wstring, Rec> g_rec;
 
@@ -54,7 +60,7 @@ std::unordered_map<std::wstring, Rec> g_rec;
 int g_grantDepth = 0;
 
 Stats g_stats{};
-uint64_t g_nextNoKeySayMs = 0;
+std::vector<std::wstring> g_keylessSaid;  // classes whose keyless pry was cancelled and said
 
 // The session this lane works in: the host's runs with no client yet, a client's is connected to the host.
 coop::net::Session* LaneSession() {
@@ -72,7 +78,8 @@ void* CrowbarOf(const sg::Call& c) {
 
 // The pry a client would run is asked of the host instead. The body is cancelled whatever the answer: it never moves
 // this copy, and the host's PryState does. Cancelling leaves the minigame's end() to drop the crowbar, as it does when a
-// pry opens nothing. A prop with no key has nothing to name it by, so its pry runs here alone, said.
+// pry opens nothing. A prop with no key cannot be named to the host, so its pry is cancelled too, said once per class:
+// running it here would free this copy alone.
 sg::Verdict ClientPre(coop::net::Session& s, const sg::Call& c, const std::wstring& key) {
     // The pried drill's client red arm: the client runs its own pry and asks nobody. Resolved once.
     static const bool s_askOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_ask_off);
@@ -84,12 +91,13 @@ sg::Verdict ClientPre(coop::net::Session& s, const sg::Call& c, const std::wstri
         return sg::Verdict::Run;
     }
     if (key.empty()) {
-        const uint64_t now = coop::net::NowMs();
-        if (now >= g_nextNoKeySayMs) {
-            g_nextNoKeySayMs = now + 3000;
-            UE_LOGW("prop_pry_sync: a pry of %p, which has no key the host could resolve, runs here alone", c.object);
+        const std::wstring cls = R::ClassNameOf(c.object);
+        if (std::find(g_keylessSaid.begin(), g_keylessSaid.end(), cls) == g_keylessSaid.end()) {
+            g_keylessSaid.push_back(cls);
+            UE_LOGW("prop_pry_sync: a pry of a '%ls' with no key is cancelled -- the host cannot be asked to pry what it "
+                    "cannot name (said once a class)", cls.c_str());
         }
-        return sg::Verdict::Run;
+        return sg::Verdict::Cancel;
     }
     if (IsPried(key)) {
         ++g_stats.twiceCancelled;
@@ -156,7 +164,8 @@ bool IsPried(const std::wstring& key) { return g_rec.find(key) != g_rec.end(); }
 void ForgetIfStale(void* prop) {
     if (g_rec.empty()) return;
     const auto it = g_rec.find(KeyOf(prop));
-    if (it != g_rec.end() && (ue_wrap::prop::IsStatic(prop) || ue_wrap::prop::IsFrozen(prop))) g_rec.erase(it);
+    // Static again only: a pried prop the toolgun froze is still pried, not another world's.
+    if (it != g_rec.end() && ue_wrap::prop::IsStatic(prop)) g_rec.erase(it);
 }
 
 namespace {
@@ -167,7 +176,14 @@ void PublishState(coop::net::Session& s, const std::wstring& key, uint8_t mask) 
     coop::net::WireKeyFromString(key, p.key);
     p.flags = coop::net::pry_flags::kPried;
     p.brokenMask = mask;
-    s.SendReliable(coop::net::ReliableKind::PryState, &p, sizeof(p));
+    if (!s.SendReliable(coop::net::ReliableKind::PryState, &p, sizeof(p))) {
+        static bool s_said = false;
+        if (!s_said) {
+            s_said = true;
+            UE_LOGW("prop_pry_sync: the session refused PryState for '%ls' -- the clients are not told (said once)", key.c_str());
+        }
+        return;
+    }
     ++g_stats.sent;
     UE_LOGI("prop_pry_sync: PRIED '%ls' mask=%02x -- told the clients (#%llu)", key.c_str(),
             static_cast<unsigned>(mask), static_cast<unsigned long long>(g_stats.sent));
@@ -184,7 +200,9 @@ void MarkPried(void* prop) {
         UE_LOGW("prop_pry_sync: pried prop %p has no key -- the clients are not told", prop);
         return;
     }
-    if (!g_rec.try_emplace(key).second) return;
+    const auto made = g_rec.try_emplace(key);
+    if (!made.second) return;
+    made.first->second.prop.Set(prop);
     PublishState(*s, key, 0);
     // The freed body falls on the host alone: every copy parks on the host's first pose and follows its stream, and
     // snaps to its rest at the stream's end, so no peer simulates the fall (MTA: an element's motion is the server's).
@@ -203,6 +221,7 @@ void NoteBroken(void* prop, int joint) {
         return;
     }
     Rec& r = g_rec[key];
+    if (!r.prop.Alive()) r.prop.Set(prop);
     const uint8_t bit = static_cast<uint8_t>(1u << (joint - 1));
     if (r.mask & bit) return;
     r.mask |= bit;
@@ -216,11 +235,15 @@ void StampRow(void* prop, uint8_t& physFlags, uint8_t& pryMask) {
     if (s_rowOff) return;
     auto* s = LaneSession();
     if (!s || s->role() != coop::net::Role::Host) return;
-    ForgetIfStale(prop);
-    const auto it = g_rec.find(KeyOf(prop));
-    if (it == g_rec.end()) return;
-    physFlags |= coop::net::propspawn_flags::kPried;
-    pryMask = it->second.mask;
+    // Found by the prop itself, no key read: a record made for another world's prop, or for a prop that is static again,
+    // matches none, so its row carries nothing.
+    for (const auto& kv : g_rec) {
+        const Rec& r = kv.second;
+        if (!r.prop.Alive() || r.prop.Raw() != prop || ue_wrap::prop::IsStatic(prop)) continue;
+        physFlags |= coop::net::propspawn_flags::kPried;
+        pryMask = r.mask;
+        return;
+    }
 }
 
 void ConvergePried(void* actor, uint8_t physFlags, uint8_t pryMask, int senderSlot) {
@@ -236,6 +259,15 @@ void ConvergePried(void* actor, uint8_t physFlags, uint8_t pryMask, int senderSl
         return;
     }
     Rec& r = g_rec[key];
+    // The row is the whole of the pry this copy missed: a copy still static or frozen (its blob was cut before the pry)
+    // is freed as the state would free it, silently, and the record says what was done, so a later PryState does not skip
+    // the cue the row left out.
+    if (!r.freed) {
+        if (ue_wrap::prop::IsStatic(actor) || ue_wrap::prop::IsFrozen(actor))
+            r.freed = ue_wrap::prop::CallBaseSetPropProps(actor, false, false, false);
+        else
+            r.freed = true;
+    }
     if (kind != PP::Kind::Hanging) return;
     for (int n = 1; n <= PP::kJoints; ++n) {
         const uint8_t bit = static_cast<uint8_t>(1u << (n - 1));
@@ -249,10 +281,11 @@ void ConvergePried(void* actor, uint8_t physFlags, uint8_t pryMask, int senderSl
 
 bool RunOwn(void* prop) {
     UE_ASSERT_GAME_THREAD("prop_pry_sync::RunOwn");
-    ++g_grantDepth;
-    const bool ran = ue_wrap::prop::CallCrowbarOpen(prop);
-    --g_grantDepth;
-    return ran;
+    struct Depth {
+        Depth() { ++g_grantDepth; }
+        ~Depth() { --g_grantDepth; }
+    } depth;
+    return ue_wrap::prop::CallCrowbarOpen(prop);
 }
 
 void OnState(const coop::net::PryStatePayload& payload) {
@@ -274,18 +307,23 @@ void OnState(const coop::net::PryStatePayload& payload) {
     }
     // A joint in the mask is a pry in progress, whatever the flag says.
     if (!(payload.flags & coop::net::pry_flags::kPried) && payload.brokenMask == 0) return;
-    const auto [it, first] = g_rec.try_emplace(key);
-    if (first) {
+    const auto it = g_rec.try_emplace(key).first;
+    Rec& rec = it->second;
+    if (!rec.freed || !rec.cued) {
         // The deterministic part of the pry, which every peer runs alike: the flags, and what the prop's own body does
         // at that moment outside the shuffle and the joint loop -- a plank's sound, a hanging prop's break effect. The
         // plank's kick and the loop's random spin are the host's body alone; this copy takes the fall from the host. No
-        // peer calls SetConstrainedComponents or the shuffle, so a joint once broken is never revived.
-        const bool freed = ue_wrap::prop::CallBaseSetPropProps(prop, false, false, false);
-        if (kind == PP::Kind::Plank) coop::prop_sound::PlayDamagedSound(prop);
-        else PP::CallBreakEffect(prop);
+        // peer calls SetConstrainedComponents or the shuffle, so a joint once broken is never revived. A step a row already
+        // did (the flags) is not done twice; one it left out (the cue) is done now.
+        if (!rec.freed) rec.freed = ue_wrap::prop::CallBaseSetPropProps(prop, false, false, false);
+        if (!rec.cued) {
+            rec.cued = true;
+            if (kind == PP::Kind::Plank) coop::prop_sound::PlayDamagedSound(prop);
+            else PP::CallBreakEffect(prop);
+        }
         ++g_stats.applied;
         UE_LOGI("prop_pry_sync: PRY applied '%ls' (%s; #%llu)", key.c_str(),
-                freed ? "flags cleared" : "setPropProps did not run", static_cast<unsigned long long>(g_stats.applied));
+                rec.freed ? "flags cleared" : "setPropProps did not run", static_cast<unsigned long long>(g_stats.applied));
     }
     if (kind != PP::Kind::Hanging) return;
     for (int n = 1; n <= PP::kJoints; ++n) {
@@ -315,7 +353,6 @@ void OnDisconnect() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!(s && s->running() && s->role() == coop::net::Role::Host)) g_rec.clear();
     g_grantDepth = 0;
-    g_nextNoKeySayMs = 0;
 }
 
 }  // namespace coop::prop_pry_sync

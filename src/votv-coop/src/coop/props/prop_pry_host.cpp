@@ -47,12 +47,13 @@ constexpr coop::net::IntentBudget kBudget{4.0f, 4.0f};
 constexpr size_t   kMaxPending   = 8;
 constexpr uint64_t kRefusalSayMs = 10000;
 
-enum class Why : uint8_t { NoProp, OutOfReach, NoCrowbar, Already, NotStuck, Failed, QueueFull };
+enum class Why : uint8_t { NoProp, OutOfReach, NoTarget, NoCrowbar, Already, NotStuck, Failed, QueueFull };
 
 const char* WhyName(Why w) {
     switch (w) {
     case Why::NoProp:     return "the key names no pryable prop on the host";
     case Why::OutOfReach: return "the prop is out of the sender's reach";
+    case Why::NoTarget:   return "the prop's place does not read, so its reach cannot be measured";
     case Why::NoCrowbar:  return "the sender's hand did not hold a crowbar last";
     case Why::Already:    return "the prop is already pried";
     case Why::NotStuck:   return "the host's copy is no longer static or frozen";
@@ -149,7 +150,7 @@ bool Execute(coop::net::Session& s, const coop::net::PryAskPayload& p, uint8_t s
     // The pried drill's far red arm: the reach is not checked, so an out-of-reach ask runs. Resolved once.
     static const bool s_judgeOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_judge_off);
     if (!subject && !s_judgeOff) {
-        Refuse(slot, key, Why::OutOfReach);
+        Refuse(slot, key, subject.outcome == coop::element::IntentOutcome::NoTarget ? Why::NoTarget : Why::OutOfReach);
         return true;
     }
     // The prying crowbar destroys the held one as it goes into the prop, so a pry ends with the hand empty: the sender's

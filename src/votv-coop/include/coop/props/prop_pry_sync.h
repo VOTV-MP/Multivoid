@@ -35,7 +35,7 @@ std::wstring KeyOf(void* prop);
 // Game thread.
 bool IsPried(const std::wstring& key);
 
-// Forgets `prop`'s record when the copy is static or frozen again: a pried prop is free, so the record is another world's. Game thread.
+// Forgets `prop`'s record when the copy is static again (a toolgun freeze is not an unpry): a pried prop is free, so the record is another world's. Game thread.
 void ForgetIfStale(void* prop);
 
 // HOST: `prop`'s pry has run on the host's copy (its own crowbarOpen's end, or a grant). Records the key as pried, sends
@@ -58,7 +58,8 @@ bool RunOwn(void* prop);
 void StampRow(void* prop, uint8_t& physFlags, uint8_t& pryMask);
 
 // CLIENT: a prop row the host sent says this copy is pried (propspawn_flags::kPried) with `pryMask` joints broken. The
-// copy is recorded as pried and breaks each masked joint, silently: the save already freed the body, and the sound and
+// copy is recorded as pried, freed if it is still static or frozen (its blob was cut before the pry), and breaks each masked
+// joint, silently: the sound and
 // the break effect belong to the moment of the pry. Nothing for a row without the flag, for a row another client sent
 // (`senderSlot` is not the host's 0), and on the host. Game thread.
 void ConvergePried(void* actor, uint8_t physFlags, uint8_t pryMask, int senderSlot);

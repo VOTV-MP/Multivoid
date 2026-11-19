@@ -4,6 +4,7 @@
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_events.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -13,6 +14,7 @@
 #include "ue_wrap/engine/engine_physics.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace ue_wrap::prop_pry {
 namespace {
@@ -29,6 +31,12 @@ constexpr float kPlankKickDegS = 150.f;
 R::InstanceOffset g_joint[kJoints] = {R::InstanceOffset(L"PhysicsConstraint1"), R::InstanceOffset(L"PhysicsConstraint2"),
                                       R::InstanceOffset(L"PhysicsConstraint3"), R::InstanceOffset(L"PhysicsConstraint4")};
 R::InstanceOffset g_audioObject(L"audio_object");
+
+struct ClassKind {
+    ue_wrap::CachedObjRef cls;
+    Kind kind = Kind::None;
+};
+std::vector<ClassKind> g_kinds;
 
 bool IsA(void* obj, const wchar_t* className) {
     void* base = R::FindClass(className);
@@ -47,8 +55,19 @@ void* MemberAt(void* actor, int32_t off) {
 
 Kind KindOf(void* obj) {
     if (!obj || !R::IsLive(obj)) return Kind::None;
-    if (IsA(obj, kPlankClass)) return Kind::Plank;
-    return (IsA(obj, kRadiatorClass) || IsA(obj, kTvClass)) ? Kind::Hanging : Kind::None;
+    // BreakConstraint, which the lane's hook watches, is called by every ungrab and every ATV, so each class is classified
+    // once and then found by its pointer, held by slot and serial as a freed class is not served again.
+    void* cls = R::ClassOf(obj);
+    if (!cls) return Kind::None;
+    for (const ClassKind& k : g_kinds)
+        if (k.cls.Alive() && k.cls.Raw() == cls) return k.kind;
+    const Kind kind = IsA(obj, kPlankClass) ? Kind::Plank
+                    : (IsA(obj, kRadiatorClass) || IsA(obj, kTvClass)) ? Kind::Hanging : Kind::None;
+    if (g_kinds.size() >= 32) g_kinds.erase(g_kinds.begin());
+    g_kinds.push_back(ClassKind{});
+    g_kinds.back().cls.Set(cls);
+    g_kinds.back().kind = kind;
+    return kind;
 }
 
 bool ReadRightVector(void* crowbar, float out[3]) {
