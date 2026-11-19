@@ -13,8 +13,8 @@
 #include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/engine/engine_physics.h"
 
+#include <chrono>
 #include <cstdint>
-#include <vector>
 
 namespace ue_wrap::prop_pry {
 namespace {
@@ -32,17 +32,27 @@ R::InstanceOffset g_joint[kJoints] = {R::InstanceOffset(L"PhysicsConstraint1"), 
                                       R::InstanceOffset(L"PhysicsConstraint3"), R::InstanceOffset(L"PhysicsConstraint4")};
 R::InstanceOffset g_audioObject(L"audio_object");
 
-struct ClassKind {
+// The pryable base classes, each resolved once and held by slot and serial (a class that dies with its world is found
+// again), a null read asked again at most once a second. Their children -- the plank's edges-only variant, the placed
+// radiator_base1_C and radiator_base2_C -- are found by the descendant test, so no child is resolved of its own.
+struct Pryable {
+    const wchar_t* name;
+    Kind kind;
     ue_wrap::CachedObjRef cls;
-    Kind kind = Kind::None;
+    int64_t nextTryMs = 0;
 };
-std::vector<ClassKind> g_kinds;
+Pryable g_pryable[3] = {{kPlankClass, Kind::Plank}, {kRadiatorClass, Kind::Hanging}, {kTvClass, Kind::Hanging}};
 
-bool IsA(void* obj, const wchar_t* className) {
-    void* base = R::FindClass(className);
-    void* cls = obj ? R::ClassOf(obj) : nullptr;
-    return base && cls && R::IsDescendantOfAny(cls, &base, 1);
+void* ResolveClass(Pryable& p) {
+    if (p.cls.Alive()) return p.cls.Raw();
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now < p.nextTryMs) return nullptr;
+    p.nextTryMs = now + 1000;
+    p.cls.Set(R::FindClass(p.name));
+    return p.cls.Alive() ? p.cls.Raw() : nullptr;
 }
+
 
 // The component the actor's variable at `off` holds, when it is a live one of the actor's own.
 void* MemberAt(void* actor, int32_t off) {
@@ -55,19 +65,14 @@ void* MemberAt(void* actor, int32_t off) {
 
 Kind KindOf(void* obj) {
     if (!obj || !R::IsLive(obj)) return Kind::None;
-    // BreakConstraint, which the lane's hook watches, is called by every ungrab and every ATV, so each class is classified
-    // once and then found by its pointer, held by slot and serial as a freed class is not served again.
+    // BreakConstraint, which the lane's hook watches, is called by every ungrab and every ATV: pointer compares only.
     void* cls = R::ClassOf(obj);
     if (!cls) return Kind::None;
-    for (const ClassKind& k : g_kinds)
-        if (k.cls.Alive() && k.cls.Raw() == cls) return k.kind;
-    const Kind kind = IsA(obj, kPlankClass) ? Kind::Plank
-                    : (IsA(obj, kRadiatorClass) || IsA(obj, kTvClass)) ? Kind::Hanging : Kind::None;
-    if (g_kinds.size() >= 32) g_kinds.erase(g_kinds.begin());
-    g_kinds.push_back(ClassKind{});
-    g_kinds.back().cls.Set(cls);
-    g_kinds.back().kind = kind;
-    return kind;
+    for (Pryable& p : g_pryable) {
+        void* base = ResolveClass(p);
+        if (base && R::IsDescendantOfAny(cls, &base, 1)) return p.kind;
+    }
+    return Kind::None;
 }
 
 bool ReadRightVector(void* crowbar, float out[3]) {
