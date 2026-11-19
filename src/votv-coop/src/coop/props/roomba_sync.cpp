@@ -109,15 +109,27 @@ uint32_t EidOf(void* roomba) {
 
 bool IsLiveRoomba(void* obj) { return obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"); }
 
-// A joiner's snapshot is the one scan: nothing announces what a joiner missed.
+// A cleaner is a prop_roomba_C or a subclass of it: prop_roomba_mx_C, the MX cleaner, has no body of its own and runs
+// the cleaner's graph, and an exact match left it on each peer alone (the exact-class sweep, 2026-11-19). A walk of
+// raw class pointers, safe off the game thread.
+bool IsCleanerClass(void* cls) {
+    void* const base = OI::ClassByName(L"prop_roomba_C");
+    return base && R::IsDescendantOfAny(cls, &base, 1, 16);
+}
+
+// A joiner's snapshot is the one scan: nothing announces what a joiner missed. The object index lists each class's own
+// instances, so every loaded cleaner class is walked.
 template <class F>
 void ForEachRoomba(F&& fn) {
-    void* const cls = OI::ClassByName(L"prop_roomba_C");
-    if (!cls) return;
+    std::vector<void*> classes;
+    OI::ForEachClass([](void* ctx, void* cls, void*) {
+        if (IsCleanerClass(cls)) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
+    }, &classes);
     std::vector<void*> found;
-    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-        if (IsLiveRoomba(obj)) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
-    }, &found);
+    for (void* cls : classes)
+        OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+            if (IsLiveRoomba(obj)) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
+        }, &found);
     for (void* r : found) fn(r);
 }
 
@@ -149,7 +161,7 @@ bool SendState(void* roomba, bool active, int slot) {
 }
 
 bool Press5(void* roomba) {
-    ue_wrap::ParamFrame f(R::FindFunction(R::ClassOf(roomba), L"actionOptionIndex"));
+    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(roomba), L"actionOptionIndex"));
     if (!f.valid()) return false;
     f.Set<uint8_t>(L"action", kActionSwitch);
     return ue_wrap::Call(roomba, f);
@@ -167,7 +179,7 @@ void JudgePresses() {
         }
         void* const roomba = EL::LiveActorOfType(static_cast<EL::ElementId>(pr.p.eid), EL::ElementType::Prop);
         bool active = false;
-        if (!roomba || !ReadActive(roomba, active) || R::ClassNameOf(roomba) != L"prop_roomba_C") {
+        if (!roomba || !ReadActive(roomba, active) || !IsCleanerClass(R::ClassOf(roomba))) {
             UE_LOGW("roomba_sync: HOST slot %d pressed eid %u, which is no cleaner here -- refused", pr.slot, pr.p.eid);
             continue;
         }
@@ -258,7 +270,7 @@ void RefreshClass() {
 // MarkPropElement's callback, any thread: a cleaner is recognised by its class pointer and queued.
 void OnExpressed(void* actor, EL::ElementId eid) {
     void* const cls = g_roombaClass.load(std::memory_order_acquire);
-    if (!cls || !actor || R::ClassOf(actor) != cls) return;
+    if (!cls || !actor || !R::IsDescendantOfAny(R::ClassOf(actor), &cls, 1, 16)) return;
     bool full = false;
     {
         std::lock_guard<std::mutex> lk(g_bornMutex);
@@ -323,7 +335,7 @@ bool ApplyTo(void* roomba, const N::RoombaPayload& p) {
     if (!ReadActive(roomba, active)) return false;
     if (active != (p.active != 0)) {
         WriteActive(roomba, p.active != 0);
-        void* const use = R::FindFunction(R::ClassOf(roomba), L"use");
+        void* const use = R::FindDispatchFunctionCached(R::ClassOf(roomba), L"use");
         const bool ran = use && R::CallFunction(roomba, use, nullptr);  // its light, sound, box and motor loop
         g_statesApplied.fetch_add(1);
         UE_LOGI("roomba_sync: CLIENT cleaner eid %u is %hs, as the host's (use ran=%d)", p.eid, p.active ? "on" : "off",
@@ -468,7 +480,7 @@ void OnState(const coop::net::RoombaPayload& p) {
 }
 
 void OnBound(uint32_t eid, void* actor, const wchar_t* cls) {
-    if (!IsClient() || !actor || !cls || _wcsicmp(cls, L"prop_roomba_C") != 0) return;
+    if (!IsClient() || !actor || !cls || !IsCleanerClass(R::ClassOf(actor))) return;
     bool listed = false;
     for (const ue_wrap::CachedObjRef& r : g_cleaners) listed = listed || r.Is(actor);
     if (!listed) {
