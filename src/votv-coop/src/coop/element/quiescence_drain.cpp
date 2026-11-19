@@ -477,6 +477,9 @@ void ApplyPendingPosCorrections() {
         // Then the host's stuck state, static, frozen and sleep, where it moved a keyed prop through a verb
         // that changed them: the extinguisher it took off a mount is not frozen at its new place, and
         // a sign it pried off its wall is not stuck there.
+        // A prop the host pried in the join window moves and takes this path too, but it also has its prop row (every keyed
+        // prop does), which carries the pry bit and the joints to its copy (prop_pry_sync::ConvergePried, in OnSpawn), so
+        // this correction, whose message has no field for them, converges none.
         coop::prop_stick_sync::ConvergeStuck(actor, c.physFlags);
         coop::prop_wire_parity::ConvergeStatic(actor, c.physFlags);
         coop::prop_wire_parity::ConvergeFrozenSleep(actor, c.physFlags);

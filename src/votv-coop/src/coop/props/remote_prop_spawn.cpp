@@ -397,6 +397,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // The claim: the host snapshot accounts for this pre-existing client actor, so the
         // unclaimed sweep at SnapshotComplete spares it; it covers the early returns below.
         coop::join_membership_sweep::RecordClaimIfTracking(existing);
+        // The host's pry of this prop, before any early return below: a copy the stream parks, a hand holds or a throw owns
+        // still takes the pry from its row. It touches no pose.
+        coop::prop_pry_sync::ConvergePried(existing, payload.physFlags, payload.pryMask, senderSlot);
         // The read-only join-window trace: a keyed prop the host expresses onto our pre-existing
         // copy, with the host position, whether the host held it and an order stamp; no work when
         // disabled.
@@ -477,7 +480,6 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // stuck, froze or woke in place after the blob was cut. The game's own verbs, which wake
             // nothing that agrees.
             coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
-            coop::prop_pry_sync::ConvergePried(existing, payload.physFlags, payload.pryMask, senderSlot);
             ConvergeFrozenSleep(existing, payload.physFlags);
         } else {
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm%s), converging transform to host (loc=(%.1f,%.1f,%.1f))",
@@ -498,7 +500,6 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // mount is no longer frozen there, a sign it pried is no longer on its wall), then the
             // simulate state the flags give.
             coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
-            coop::prop_pry_sync::ConvergePried(existing, payload.physFlags, payload.pryMask, senderSlot);
             ConvergeFrozenSleep(existing, payload.physFlags);
             RestoreSpParityPhysicsAfterConverge(existing, payload.physFlags);
         }
