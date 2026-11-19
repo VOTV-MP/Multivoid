@@ -35,6 +35,13 @@ struct Counts {
 };
 Counts GetCounts();
 
+// [dev] The pried drill's witness of a joint's break, on either role: `fn` is called, after the engine's BreakConstraint
+// ran, with the radiator or TV and its joint (1..4), by the same hook the host reports joints with, installed by Tick once a
+// listener is set. One patch serves both. BreakHookLive says the hook is on. Game thread.
+using BreakListener = void (*)(void* prop, int joint);
+void SetBreakListener(BreakListener fn);
+bool BreakHookLive();
+
 // Session end: the counters are said and cleared. A sender's queue and its latches live in its slot's state.
 void OnDisconnect();
 

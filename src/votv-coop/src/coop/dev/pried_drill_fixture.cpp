@@ -6,6 +6,7 @@
 #include "coop/dev/drill_hand.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_pry_host.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_flags.h"
@@ -17,7 +18,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
-#include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/facts/function_row.h"
@@ -37,13 +37,11 @@ namespace E  = ue_wrap::engine;
 namespace PR = ue_wrap::prop;
 namespace PP = ue_wrap::prop_pry;
 namespace sg = ue_wrap::script_gate;
-namespace UH = ue_wrap::ufunction_hook;
 namespace OI = ue_wrap::object_index;
 using ue_wrap::FVector;
 
 // The two witnesses: the native that breaks a joint, and a post watch on the pry's own body (the lane's own watch is its
 // own; this one only counts).
-UE_FACT_FN(kRowBreakConstraint, "pried_drill", L"PhysicsConstraintComponent", L"BreakConstraint", Declared);
 UE_FACT_FN(kRowCrowbarOpen, "pried_drill", nullptr, L"crowbarOpen", AnyClass);
 constexpr int kTagBody = 0x50445742;  // 'PDWB'
 
@@ -63,20 +61,15 @@ Mark& MarkOf(void* prop) {
     return g_marks.back();
 }
 
-void OnBreakPost(void* context, void*, void*) {
-    if (!context) return;
-    void* owner = R::OuterOf(context);
-    const int joint = PP::JointOf(owner, context);
-    if (joint == 0) return;
-    MarkOf(owner).mask |= static_cast<uint8_t>(1u << (joint - 1));
-}
+// The lane's own BreakConstraint hook calls this (prop_pry_host::SetBreakListener): one patch on the seam.
+void OnBreak(void* owner, int joint) { MarkOf(owner).mask |= static_cast<uint8_t>(1u << (joint - 1)); }
 
 void OnBodyPost(const sg::Call& c) {
     if (PP::KindOf(c.object) != PP::Kind::None) ++MarkOf(c.object).bodies;
 }
 
-bool g_watchAsked = false, g_watchOk = false, g_hookInstalled = false;
-uint64_t g_hookTryMs = 0;
+bool g_watchAsked = false, g_watchOk = false;
+bool g_missSaid[3] = {};  // each unmet witness condition is said once, on its first miss
 
 // ---- the client's real pry ----------------------------------------------------------------------------------------
 
@@ -205,13 +198,16 @@ bool WitnessesLive() {
         g_watchAsked = true;
         g_watchOk = sg::WatchName(kRowCrowbarOpen, kTagBody, nullptr, &OnBodyPost);
     }
-    const uint64_t now = ::GetTickCount64();
-    if (!g_hookInstalled && now >= g_hookTryMs) {
-        g_hookTryMs = now + 1000;  // the class is looked up through the object array on a miss
-        const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBreakConstraint);
-        g_hookInstalled = fn && UH::InstallPostHook(fn, &OnBreakPost);
-    }
-    return g_watchOk && g_hookInstalled && sg::NameWatchLive(kRowCrowbarOpen, kTagBody);
+    coop::prop_pry_host::SetBreakListener(&OnBreak);  // the lane's Tick then installs the hook on either role
+    const bool conds[3] = {g_watchOk, coop::prop_pry_host::BreakHookLive(), sg::NameWatchLive(kRowCrowbarOpen, kTagBody)};
+    static const char* const kNames[3] = {"the crowbarOpen watch was refused", "BreakConstraint's hook is not on yet",
+                                          "the crowbarOpen name has not resolved yet"};
+    for (int i = 0; i < 3; ++i)
+        if (!conds[i] && !g_missSaid[i]) {
+            g_missSaid[i] = true;
+            UE_LOGI("[PRIED-DRILL] witnesses not live: %s", kNames[i]);
+        }
+    return conds[0] && conds[1] && conds[2];
 }
 
 uint8_t JointMask(void* prop) {

@@ -588,6 +588,7 @@ void Tick(coop::net::Session* session) {
         // The first Seen* read starts the chat history: lines reach a peer while its join window is still open, and the feed
         // retires a row after about ten seconds.
         g_armed = true;
+        g_stepMs = ::GetTickCount64();  // the first step's bound counts from here, not from an unset clock
         DC::SeenHas(kReadyPrefix);
         UE_LOGI("[PRIED-DRILL] [%c] started (arm %s): reading the chat history", Who(), Tag());
     }

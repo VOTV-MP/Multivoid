@@ -109,12 +109,15 @@ UE_FACT_FN(kRowBreakConstraint, "prop_pry_host", L"PhysicsConstraintComponent", 
 bool g_hookInstalled = false;
 uint64_t g_hookTryMs = 0;
 bool g_hostActive = false;  // the host's session runs: set by Tick, read by the hook
+BreakListener g_listener = nullptr;
 
 void OnBreakPost(void* context, void*, void*) {
-    if (!g_hostActive || !context) return;
+    if (!context || (!g_hostActive && !g_listener)) return;
     void* owner = R::OuterOf(context);
     const int joint = PP::JointOf(owner, context);
     if (joint == 0) return;
+    if (g_listener) g_listener(owner, joint);
+    if (!g_hostActive) return;
     PS::NoteBroken(owner, joint);
     // The loop's random spin follows this call on the host's body, and the radiator hangs between breaks long enough for
     // a row to end (kRestMs, 500, against 1.5 to 3 s), so each break opens or re-times a row of its own, whatever the body
@@ -189,14 +192,15 @@ void OnAsk(coop::net::Session&, const coop::net::PryAskPayload& payload, uint8_t
 void Tick(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("prop_pry_host::Tick");
     g_hostActive = session.running() && session.role() == coop::net::Role::Host;
-    if (!g_hostActive) return;
+    // The one patch on BreakConstraint: the host needs it to report joints, a drill's listener on either role.
     const uint64_t now = coop::net::NowMs();
-    if (!g_hookInstalled && now >= g_hookTryMs) {
+    if ((g_hostActive || g_listener) && !g_hookInstalled && now >= g_hookTryMs) {
         g_hookTryMs = now + 1000;  // the class is looked up through the object array on a miss
         const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBreakConstraint);
         g_hookInstalled = fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnBreakPost);
         if (g_hookInstalled) UE_LOGI("prop_pry_host: BreakConstraint's post hook is live");
     }
+    if (!g_hostActive) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         Slot& sl = g_slots[slot];
         sl.queue.Serve(kBudget, coop::net::NowMs, [&](const coop::net::PryAskPayload& p) {
@@ -208,6 +212,9 @@ void Tick(coop::net::Session& session) {
 }
 
 Counts GetCounts() { return g_counts; }
+
+void SetBreakListener(BreakListener fn) { g_listener = fn; }
+bool BreakHookLive() { return g_hookInstalled; }
 
 void OnDisconnect() {
     if (g_counts.granted || g_counts.refused)
