@@ -96,10 +96,15 @@ stow carries are the client's claim, bounded at the receive edge (finite; durabi
 wheel pristine, the same trust as a module's fit. A refused act is refunded only when nothing of it
 ran on the host's copy; one that ran in part is counted ran, said, and not refunded. The battery is not here: its fit and unscrew are the host's by `AtvRequest`
 (below), and this lane lets a battery's `unscrewPanel` and `playerUsedOn` run for that one.
-`coop/dev/atv_part_drill` (`VOTVCOOP_ATV_PART_DRILL=wheel`, both peers): the client, a wrench in its
-hand, unbolts a wheel and fits a held one back; both peers should hold the same tyre mask and wheel
-props after each, and the host should run both asked changes and refuse none. `[?]` built on this
-tree, not yet run; the spare's stow and take have no drill.
+`coop/dev/atv_part_drill` (`VOTVCOOP_ATV_PART_DRILL=wheel`, both peers): five legs, each decided by an
+event (the host's hand and counter lines, the peers' said tyre masks and wheel props) and never a
+clock: an unbolt with an empty hand (the host refuses), two unbolts with a wrench and a fit of a held
+wheel (the host runs each; both peers show the same mask and props), and a second fit forged on the
+hold the first spent (refused, nothing given back). A bound says INVALID only, a FAIL or INVALID of
+either peer is told to the other, and the host's `rig: VERDICT atv-part PASS` rests on its own
+counters (ran 3, refused 2, refunded 0). Reds, each failing at its own leg: `atv_part_red=cancel_off`
+(client), `atv_part_red=tool_judge_off` (host) and the host's `hand_spend_drill=hand_spend_no_latch`.
+`[?]` built on this tree, not yet run; the spare's stow and take, and the reach, have no leg.
 
 ### What the host owns beyond the rig
 

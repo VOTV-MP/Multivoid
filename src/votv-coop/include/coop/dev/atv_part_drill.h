@@ -2,13 +2,19 @@
 //
 // The part lane (coop/interactables/atv_part_intent) cancels a client's own body and asks the host.
 // The host spawns an ATV beside the players and names it in the lobby chat. Arm (`atv_part_drill`):
-// wheel -- the client runs the wrench's last step on wheel 0 of its copy, and both peers must lose
-// that wheel and gain one wheel prop; the client then takes a wheel into its hand and runs putTire,
-// and both must show the wheel on again, the hand empty. Each peer says its copy's tyre mask and its
-// count of wheel props whenever they change; the client judges every step against both, the host
-// judges its own counters when the client says it is done. Every verdict is one line,
-// `[ATV-PART-DRILL]` with the peer's tag and `PASS` or `FAIL`. Run with join_at_host=1, so the client
-// stands within the host's reach of the ATV.
+// wheel -- five legs in order: the client unbolts a wheel with an empty hand (the host must refuse and the
+// wheel stays), unbolts two wheels with a wrench and fits a held wheel (the host must run each; both peers must
+// show the same tyre mask and wheel props), then sends a second fit on the hold the first spent (the host must
+// refuse it and give nothing back).
+//
+// Every leg is decided by an event, never a clock: the host says what its hand lane holds of the client's hand
+// and its own ran, refused and refunded counters, each peer says its copy's tyre mask and wheel props when they
+// change, and the client acts on and judges what it has been told. A time bound can only say INVALID. A FAIL or
+// INVALID of either peer is told to the other, so both logs carry `rig: VERDICT atv-part FAIL|INVALID`; the
+// host's `PASS` rests on its own counters (ran 3, refused 2, refunded 0). Reds, each of which must FAIL at its
+// leg: the row `atv_part_red` (cancel_off on the client, tool_judge_off on the host) and the host row
+// `hand_spend_drill=hand_spend_no_latch`. Run with join_at_host=1, so the client stands within the host's reach
+// of the ATV.
 
 #pragma once
 

@@ -10,7 +10,9 @@
 #include "coop/interactables/atv_part_intent.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/net/net_clock.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
@@ -18,6 +20,7 @@
 #include "coop/save/join_window_baseline.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
@@ -30,6 +33,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cwchar>
 #include <string>
 
 namespace coop::dev::atv_part_drill {
@@ -41,6 +45,7 @@ namespace AC = ue_wrap::atv_condition;
 namespace AP = ue_wrap::atv_parts;
 namespace DC = coop::dev::drill_chat;
 namespace SN = coop::dev::atv_spawn_near;
+namespace RV = coop::rig_verdict;
 using ue_wrap::FVector;
 
 enum class Arm { Off, Wheel };
@@ -56,16 +61,18 @@ Arm ArmOf() {
 bool Host() { return coop::roster::LocalIsHost(); }
 char Who() { return Host() ? 'H' : 'C'; }
 
-constexpr int      kWheel       = 0;
-constexpr uint8_t  kBit         = 1u << kWheel;
+constexpr const char* kTag = "atv-part";  // the rig's verdict tag
+constexpr uint8_t  kNeedBits    = 0x07;    // the wheels the legs touch (0, 1, 2) are on at the start
+constexpr int      kSlot        = 1;       // the rig's client; the only peer that acts
 constexpr float    kAheadCm     = 220.f;   // the ATV is born this far ahead of the host's player
-constexpr uint64_t kDwellMs     = 2500;    // a step's state must still stand this long after it
-constexpr uint64_t kStepBoundMs = 15000;
-constexpr uint64_t kHandMs      = 2500;    // the part in the client's hand reaches the host's record of it
+// A bound on a wait for an event: a run that never reaches it is INVALID, never a verdict.
+constexpr uint64_t kWaitBoundMs  = 30000;
 constexpr uint64_t kStartBoundMs = 90000;
 const char* const  kSayKey   = "atvpart key ";
 const char* const  kSayState = "atvpart state ";
-const char* const  kSayDone  = "atvpart done";
+const char* const  kSayHand  = "atvpart hand ";
+const char* const  kSayCount = "atvpart cnt ";
+const char* const  kSayEnd   = "atvpart end ";
 
 constexpr const wchar_t* kPartClass = L"prop_atvWheel_C";
 constexpr const wchar_t* kPartItem = L"atvwheel";
@@ -76,6 +83,45 @@ struct State {
     int mask = -1, props = -1;
     bool operator==(const State& o) const { return mask == o.mask && props == o.props; }
 };
+
+// What the host's hand lane says the client's hand holds.
+enum class Hand { None, Wrench, Wheel, Keep };
+
+const char* HandWord(Hand h) {
+    switch (h) {
+    case Hand::None:   return "none";
+    case Hand::Wrench: return "wrench";
+    case Hand::Wheel:  return "wheel";
+    default:           return "other";
+    }
+}
+
+enum class Act { Unscrew, Fit, ForgedFit };
+
+// One leg: the hand it needs, the act, the wheel, and what the host must do with it. The wheels differ from one
+// leg to the next, so the client's own repeat guard never swallows an ask.
+struct Leg {
+    const char* name;
+    Hand hand;
+    Act act;
+    int wheel;
+    bool hostRuns;
+};
+constexpr Leg kLegs[] = {
+    {"unbolt with an empty hand", Hand::None, Act::Unscrew, 2, false},
+    {"unbolt wheel 0 with the wrench", Hand::Wrench, Act::Unscrew, 0, true},
+    {"unbolt wheel 1 with the wrench", Hand::Wrench, Act::Unscrew, 1, true},
+    {"fit the held wheel into socket 0", Hand::Wheel, Act::Fit, 0, true},
+    {"a second fit on the hold the first spent", Hand::Keep, Act::ForgedFit, 1, false},
+};
+constexpr int kLegCount = static_cast<int>(sizeof(kLegs) / sizeof(kLegs[0]));
+
+constexpr unsigned long long ExpectedRan() {
+    unsigned long long n = 0;
+    for (const Leg& l : kLegs) n += l.hostRuns ? 1 : 0;
+    return n;
+}
+constexpr unsigned long long ExpectedRefused() { return kLegCount - ExpectedRan(); }
 
 ue_wrap::CachedObjRef g_atv;
 std::wstring g_key;
@@ -88,6 +134,17 @@ int PartProps() {
             ++n;
     return n;
 }
+
+// This peer's copy as the last poll read it (the walk of the wheel props is dev-only and runs at the poll's pace).
+State g_mine{};
+bool g_haveMine = false;
+State g_said{};
+Hand g_saidHand = Hand::None;
+bool g_saidHandAny = false;
+bool g_saidCount = false;
+coop::atv_part_intent::Stats g_saidStats{};
+coop::atv_part_intent::Stats g_statsAtStart{};
+bool g_named = false;  // HOST: the ATV is named and the counters' baseline taken
 
 bool ReadState(State& out) {
     void* atv = g_atv.Get();
@@ -104,15 +161,66 @@ bool TheirState(State& out) {
     return sscanf_s(rest.c_str(), "%d %d", &out.mask, &out.props) == 2;
 }
 
-State g_said{};
-void SayStateOnChange() {
+struct Counts {
+    unsigned long long ran = 0, refused = 0, refunded = 0;
+};
+
+// CLIENT: the host's counters, as it last said them.
+bool HostCounts(Counts& out) {
+    std::string rest;
+    if (!DC::SeenRestOf(kSayCount, &rest)) return false;
+    return sscanf_s(rest.c_str(), "%llu %llu %llu", &out.ran, &out.refused, &out.refunded) == 3;
+}
+
+// HOST: what the client's hand holds, by the lane that judges it.
+Hand HostHandKind() {
+    if (!coop::hand_item::HoldsItem(kSlot)) return Hand::None;
+    const std::wstring item = coop::hand_item::HeldItem(kSlot);
+    if (_wcsicmp(item.c_str(), L"tool_w") == 0 || _wcsicmp(item.c_str(), L"powertool") == 0) return Hand::Wrench;
+    return coop::hand_item::HeldClassIs(kSlot, kPartClass) ? Hand::Wheel : Hand::Keep;
+}
+
+// CLIENT: the hand the host last said.
+bool HostSaysHand(Hand want) {
+    std::string rest;
+    return DC::SeenRestOf(kSayHand, &rest) && rest == HandWord(want);
+}
+
+// Each peer reads its copy and says what changed, at the poll's pace. The host also says its hand lane's view of
+// the client's hand and its counters: the events the client's legs wait on.
+void Poll() {
     State now{};
-    if (!DC::PollDue() || !ReadState(now) || now == g_said) return;
-    g_said = now;
-    char line[64];
-    std::snprintf(line, sizeof(line), "%s%c %d %d", kSayState, Who(), now.mask, now.props);
-    DC::Say(line);
-    UE_LOGI("[ATV-PART-DRILL] [%c] state mask=0x%X wheel props=%d", Who(), now.mask, now.props);
+    if (ReadState(now)) {
+        g_mine = now;
+        g_haveMine = true;
+        if (!(now == g_said)) {
+            g_said = now;
+            char line[64];
+            std::snprintf(line, sizeof(line), "%s%c %d %d", kSayState, Who(), now.mask, now.props);
+            DC::Say(line);
+            UE_LOGI("[ATV-PART-DRILL] [%c] state mask=0x%X wheel props=%d", Who(), now.mask, now.props);
+        }
+    }
+    if (!Host() || !g_named) return;
+    const Hand hand = HostHandKind();
+    if (!g_saidHandAny || hand != g_saidHand) {
+        g_saidHandAny = true;
+        g_saidHand = hand;
+        DC::Say(std::string(kSayHand) + HandWord(hand));
+        UE_LOGI("[ATV-PART-DRILL] [H] the client's hand holds: %s", HandWord(hand));
+    }
+    const auto st = coop::atv_part_intent::GetStats();
+    if (!g_saidCount || st.ran != g_saidStats.ran || st.refused != g_saidStats.refused ||
+        st.refunded != g_saidStats.refunded) {
+        g_saidCount = true;
+        g_saidStats = st;
+        char line[96];
+        std::snprintf(line, sizeof(line), "%s%llu %llu %llu", kSayCount,
+                      static_cast<unsigned long long>(st.ran - g_statsAtStart.ran),
+                      static_cast<unsigned long long>(st.refused - g_statsAtStart.refused),
+                      static_cast<unsigned long long>(st.refunded - g_statsAtStart.refunded));
+        DC::Say(line);
+    }
 }
 
 bool JoinOver(coop::net::Session& s) {
@@ -126,20 +234,15 @@ bool JoinOver(coop::net::Session& s) {
     return false;
 }
 
-enum class Step { Start, Named, Remove, Hand, Fit, Done };
+enum class Step { Start, Named, Hand, Act, Await, Done };
 Step g_step = Step::Start;
 uint64_t g_stepMs = 0;
 bool g_acted = false;
-State g_base{};
-coop::atv_part_intent::Stats g_statsAtStart{};
-
-const char* Name(Step s) {
-    switch (s) {
-    case Step::Remove: return "unbolt";
-    case Step::Fit:    return "fit";
-    default:           return "?";
-    }
-}
+int g_leg = 0;
+State g_legStart{};
+Counts g_legCounts{};
+coop::atv_part_intent::Stats g_legAsked{};
+bool g_ended = false;
 
 void Go(Step s) {
     g_step = s;
@@ -148,103 +251,168 @@ void Go(Step s) {
 }
 uint64_t InStepMs() { return coop::net::NowMs() - g_stepMs; }
 
-void Verdict(bool pass, const char* fmt, ...) {
-    char msg[360];
+// This peer's verdict, said once, and told to the other peer, which says its own: the host's log carries the run's
+// verdict whichever peer decided it. The client's PASS is not said here: the host's PASS rests on its own counters.
+void End(RV::Outcome o, const char* fmt, ...) {
+    if (g_ended) return;
+    g_ended = true;
+    char msg[300];
     va_list ap;
     va_start(ap, fmt);
     std::vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
-    if (pass) UE_LOGI("[ATV-PART-DRILL] [%c] PASS %s", Who(), msg);
-    else      UE_LOGW("[ATV-PART-DRILL] [%c] FAIL %s", Who(), msg);
+    RV::Say(kTag, o, "%s", msg);
+    char line[160];
+    std::snprintf(line, sizeof(line), "%s%c %c %.100s", kSayEnd, Who(), o == RV::Outcome::Fail ? 'F' : 'I', msg);
+    DC::Say(line);
     Go(Step::Done);
 }
 
-// Has the step's state stood on both peers for the dwell? Fails the run at the bound.
-bool Stands(const State& want) {
-    State mine{}, theirs{};
-    const bool haveMine = ReadState(mine), haveTheirs = TheirState(theirs);
-    if (haveMine && haveTheirs && mine == want && theirs == want && InStepMs() >= kDwellMs) {
-        UE_LOGI("[ATV-PART-DRILL] [%c] %s stands on both peers: mask=0x%X wheel props=%d", Who(), Name(g_step),
-                want.mask, want.props);
+// The other peer's end: its FAIL or INVALID is this peer's verdict too; the client's `P` is judged by the host.
+bool AdoptOtherEnd() {
+    std::string rest;
+    const std::string prefix = std::string(kSayEnd) + (Host() ? "C " : "H ");
+    if (!DC::SeenRestOf(prefix, &rest) || rest.empty() || g_ended) return false;
+    const char kind = rest[0];
+    const std::string text = rest.size() > 2 ? rest.substr(2) : std::string();
+    g_ended = true;
+    Go(Step::Done);
+    if (kind == 'P') {
+        const auto st = coop::atv_part_intent::GetStats();
+        const unsigned long long ran = st.ran - g_statsAtStart.ran, refused = st.refused - g_statsAtStart.refused,
+                                 refunded = st.refunded - g_statsAtStart.refunded;
+        if (ran == ExpectedRan() && refused == ExpectedRefused() && refunded == 0)
+            RV::Say(kTag, RV::Outcome::Pass, "the host ran %llu asks, refused %llu and gave nothing back; every leg "
+                    "stood on both peers", ran, refused);
+        else
+            RV::Say(kTag, RV::Outcome::Fail, "the host ran %llu and refused %llu and refunded %llu (%llu, %llu and 0 "
+                    "wanted)", ran, refused, refunded, ExpectedRan(), ExpectedRefused());
         return true;
     }
-    if (InStepMs() > kStepBoundMs) {
-        const auto st = coop::atv_part_intent::GetStats();
-        Verdict(false, "%s: wanted mask=0x%X props=%d; here mask=0x%X props=%d, there mask=0x%X props=%d "
-                "(asked here %llu)", Name(g_step), want.mask, want.props, mine.mask, mine.props, theirs.mask,
-                theirs.props, static_cast<unsigned long long>(st.asked - g_statsAtStart.asked));
-    }
-    return false;
+    RV::Say(kTag, kind == 'F' ? RV::Outcome::Fail : RV::Outcome::Invalid, "told by the %s: %s",
+            Host() ? "client" : "host", text.c_str());
+    return true;
 }
 
-// ---- The host: the fixture, then its own counters ------------------------------------------------
+// ---- The host: the fixture, then the events it says ----------------------------------------------
 
 void TickHost(coop::net::Session& s) {
     void* me = coop::players::Registry::Get().Local();
-    switch (g_step) {
-    case Step::Start: {
-        FVector at{};
-        if (!JoinOver(s) || !me || !E::TryGetActorLocation(me, at)) return;
-        if (!g_stepMs) g_stepMs = coop::net::NowMs();
-        if (!g_atv.Get()) {
-            const FVector fwd = E::GetActorForwardVector(me);
-            const float side[4][2] = {{fwd.X, fwd.Y}, {-fwd.Y, fwd.X}, {fwd.Y, -fwd.X}, {-fwd.X, -fwd.Y}};
-            SN::Spawned sp;
-            for (const auto& d : side) {
-                sp = SN::Spawned{};
-                if (SN::SpawnAtNav(me, FVector{at.X + d[0] * kAheadCm, at.Y + d[1] * kAheadCm, at.Z + SN::kLiftCm}, sp))
-                    break;
-            }
-            if (!sp.actor) return Verdict(false, "fixture: no ATV could be spawned beside the host (%s, got %s)",
-                                          sp.what ? sp.what : "?", sp.got);
-            g_atv.Set(sp.actor);
-            return;
+    if (g_step != Step::Start) return;
+    FVector at{};
+    if (!JoinOver(s) || !me || !E::TryGetActorLocation(me, at)) return;
+    if (!g_stepMs) g_stepMs = coop::net::NowMs();
+    if (!g_atv.Get()) {
+        const FVector fwd = E::GetActorForwardVector(me);
+        const float side[4][2] = {{fwd.X, fwd.Y}, {-fwd.Y, fwd.X}, {fwd.Y, -fwd.X}, {-fwd.X, -fwd.Y}};
+        SN::Spawned sp;
+        for (const auto& d : side) {
+            sp = SN::Spawned{};
+            if (SN::SpawnAtNav(me, FVector{at.X + d[0] * kAheadCm, at.Y + d[1] * kAheadCm, at.Z + SN::kLiftCm}, sp))
+                break;
         }
-        const char* why = nullptr;
-        const SN::Key k = SN::KeyOf(g_atv.Get(), &g_key, &why);
-        if (k == SN::Key::Bad) return Verdict(false, "fixture: the spawned ATV's key cannot ride a chat line (%s)", why);
-        if (k != SN::Key::Ok) {
-            if (InStepMs() > kStartBoundMs) Verdict(false, "fixture: the lane's table never held the spawned ATV");
-            return;
-        }
-        // The wheel the drill works on is on the ATV to start with.
-        AC::Snapshot snap;
-        void* atv = g_atv.Get();
-        if ((!AC::Resolved() && !AC::Resolve()) || !AC::Read(atv, snap))
-            return Verdict(false, "fixture: the spawned ATV's condition does not read");
-        if (!(snap.mask & kBit)) {
-            AC::WritePresence(atv, static_cast<uint8_t>(snap.mask | kBit), snap.hasSpare);
-            AC::CallVerb(atv, AC::Verb::UpdTires);
-        }
-        g_statsAtStart = coop::atv_part_intent::GetStats();
-        DC::Say(std::string(kSayKey) + std::string(g_key.begin(), g_key.end()));
-        UE_LOGI("[ATV-PART-DRILL] [H] spawned the ATV '%ls' (mask=0x%X) and named it", g_key.c_str(), snap.mask);
-        return Go(Step::Named);
-    }
-    case Step::Named: {
-        if (!DC::SeenHas(kSayDone)) return;
-        const auto st = coop::atv_part_intent::GetStats();
-        const unsigned long long ran = st.ran - g_statsAtStart.ran, refused = st.refused - g_statsAtStart.refused;
-        State mine{};
-        ReadState(mine);
-        if (ran != 2 || refused != 0)
-            return Verdict(false, "the host ran %llu asked changes and refused %llu (2 and 0 wanted)", ran, refused);
-        return Verdict(true, "the host ran both asked changes and refused none; mask=0x%X wheel props=%d", mine.mask,
-                       mine.props);
-    }
-    default:
+        if (!sp.actor)
+            return End(RV::Outcome::Invalid, "fixture: no ATV could be spawned beside the host (%s, got %s)",
+                       sp.what ? sp.what : "?", sp.got);
+        g_atv.Set(sp.actor);
         return;
     }
+    const char* why = nullptr;
+    const SN::Key k = SN::KeyOf(g_atv.Get(), &g_key, &why);
+    if (k == SN::Key::Bad)
+        return End(RV::Outcome::Invalid, "fixture: the spawned ATV's key cannot ride a chat line (%s)", why);
+    if (k != SN::Key::Ok) {
+        if (InStepMs() > kStartBoundMs)
+            End(RV::Outcome::Invalid, "fixture: the lane's table never held the spawned ATV");
+        return;
+    }
+    // The wheels the legs work on are on the ATV to start with.
+    AC::Snapshot snap;
+    void* atv = g_atv.Get();
+    if ((!AC::Resolved() && !AC::Resolve()) || !AC::Read(atv, snap))
+        return End(RV::Outcome::Invalid, "fixture: the spawned ATV's condition does not read");
+    if ((snap.mask & kNeedBits) != kNeedBits) {
+        AC::WritePresence(atv, static_cast<uint8_t>(snap.mask | kNeedBits), snap.hasSpare);
+        AC::CallVerb(atv, AC::Verb::UpdTires);
+    }
+    g_statsAtStart = coop::atv_part_intent::GetStats();
+    g_named = true;
+    DC::Say(std::string(kSayKey) + std::string(g_key.begin(), g_key.end()));
+    UE_LOGI("[ATV-PART-DRILL] [H] spawned the ATV '%ls' (mask=0x%X) and named it", g_key.c_str(), snap.mask);
+    Go(Step::Named);
 }
 
-// ---- The client: the wrench's last step, then the part put back ----------------------------------
+// ---- The client: the legs --------------------------------------------------------------------------
 
-bool CallFit(void* atv, void* held) {
+bool CallFit(void* atv, void* held, int wheel) {
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(atv), L"putTire");
     if (!fn) return false;
     ue_wrap::ParamFrame f(fn);
-    return f.valid() && f.Set<int32_t>(L"index", kWheel) && f.Set<void*>(L"wheelObject", held) &&
-           ue_wrap::Call(atv, f);
+    return f.valid() && f.Set<int32_t>(L"index", wheel) && f.Set<void*>(L"wheelObject", held) && ue_wrap::Call(atv, f);
+}
+
+State WantAfter(const Leg& l, const State& from) {
+    const int bit = 1 << l.wheel;
+    if (!l.hostRuns) return from;
+    return l.act == Act::Unscrew ? State{from.mask & ~bit, from.props + 1} : State{from.mask | bit, from.props};
+}
+
+// The hand a leg needs: taken here, then the host's hand lane must say it holds it.
+bool TakeHand(Hand h) {
+    switch (h) {
+    case Hand::None:   return coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr);
+    case Hand::Wrench: return coop::dev::drill_hand::TakeIntoHandNow(L"tool_w", L"prop_wrenchtool_C");
+    case Hand::Wheel:  return coop::dev::drill_hand::TakeIntoHandNow(kPartItem, kPartClass);
+    default:           return true;
+    }
+}
+
+// The act of a leg. False when the leg is decided (a verdict said) and the sequence stops.
+bool DoAct(coop::net::Session& s, const Leg& l) {
+    const auto before = coop::atv_part_intent::GetStats();
+    if (l.act == Act::ForgedFit) {
+        // A fit asked with no wheel in this client's hand: what a client that lies sends.
+        coop::net::AtvPartIntentPayload p{};
+        coop::net::WireKeyFromString(g_key, p.key);
+        p.op = coop::net::atv_part::kFitWheel;
+        p.index = static_cast<uint8_t>(l.wheel);
+        p.durability = 50.f;
+        if (!s.SendReliable(coop::net::ReliableKind::AtvPartIntent, &p, sizeof(p))) {
+            End(RV::Outcome::Invalid, "%s: the session refused the forged ask", l.name);
+            return false;
+        }
+        UE_LOGI("[ATV-PART-DRILL] [C] sent a second fit of socket %d with no wheel held", l.wheel);
+        return true;
+    }
+    bool dispatched = false;
+    if (l.act == Act::Unscrew) {
+        dispatched = AP::RunUnscrew(g_atv.Get(), l.wheel);
+    } else {
+        void* held = coop::hand_item::LocalHandActor();
+        // A wheel fresh from its class can carry no durability, which a fit refuses as broken.
+        const int32_t durOff = held ? R::FindPropertyOffset(R::ClassOf(held), L"durability") : -1;
+        if (durOff >= 0) {
+            float& durability = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(held) + durOff);
+            if (durability <= 0.f) durability = 50.f;
+        }
+        dispatched = held && CallFit(g_atv.Get(), held, l.wheel);
+    }
+    const auto st = coop::atv_part_intent::GetStats();
+    UE_LOGI("[ATV-PART-DRILL] [C] leg '%s': dispatched=%d, asked of the host %llu", l.name, dispatched ? 1 : 0,
+            static_cast<unsigned long long>(st.asked - before.asked));
+    if (st.asked == before.asked) {
+        End(RV::Outcome::Fail, "%s: the client's body was not cancelled and asked of the host (it ran on this copy)",
+            l.name);
+        return false;
+    }
+    if (l.act == Act::Fit) {
+        void* after = coop::hand_item::LocalHandActor();
+        if (after && R::IsLive(after)) {
+            End(RV::Outcome::Fail, "%s: the part stayed in the client's hand", l.name);
+            return false;
+        }
+    }
+    return true;
 }
 
 void TickClient(coop::net::Session& s) {
@@ -255,78 +423,82 @@ void TickClient(coop::net::Session& s) {
         std::string rest;
         coop::atv_sync::TableView view{};
         State theirs{};
+        Counts counts{};
         const bool named = DC::SeenRestOf(kSayKey, &rest);
         if (named && !g_atv.Get()) {
             g_key = std::wstring(rest.begin(), rest.end());
             if (coop::atv_sync::ReadTable(g_key, view) && view.actor) g_atv.Set(view.actor);
         }
-        const bool ready = g_atv.Get() && AP::Resolve() && ReadState(g_base) && TheirState(theirs) &&
-                           theirs == g_base && coop::atv_sync::ReadTable(g_key, view) && view.syncerSlot == 0 &&
-                           (g_base.mask & kBit) != 0;
+        const bool ready = g_atv.Get() && AP::Resolve() && g_haveMine && TheirState(theirs) && theirs == g_mine &&
+                           HostCounts(counts) && coop::atv_sync::ReadTable(g_key, view) && view.syncerSlot == 0 &&
+                           (g_mine.mask & kNeedBits) == kNeedBits;
         if (!ready) {
             if (InStepMs() > kStartBoundMs)
-                Verdict(false, "fixture: the named ATV with its wheel on never stood on both peers under the host's "
-                        "sync (named=%d resolved=%d here mask=0x%X props=%d, there mask=0x%X props=%d)",
-                        named ? 1 : 0, g_atv.Get() ? 1 : 0, g_base.mask, g_base.props, theirs.mask, theirs.props);
+                End(RV::Outcome::Invalid, "fixture: the named ATV with its wheels on never stood on both peers under "
+                    "the host's sync (named=%d resolved=%d here mask=0x%X props=%d, there mask=0x%X props=%d)",
+                    named ? 1 : 0, g_atv.Get() ? 1 : 0, g_mine.mask, g_mine.props, theirs.mask, theirs.props);
             return;
         }
-        g_statsAtStart = coop::atv_part_intent::GetStats();
-        // The host judges an unbolt against the tool in the sender's hand.
-        if (!coop::dev::drill_hand::TakeIntoHandNow(L"tool_w", L"prop_wrenchtool_C"))
-            return Verdict(false, "unbolt: the client's hand did not take a wrench");
-        return Go(Step::Remove);
-    }
-    case Step::Remove: {
-        if (!g_acted) {
-            if (InStepMs() < kHandMs) return;  // the wrench reaches the host's record of the hand
-            g_acted = true;
-            g_stepMs = coop::net::NowMs();
-            const bool ran = AP::RunUnscrew(g_atv.Get(), kWheel);
-            const auto st = coop::atv_part_intent::GetStats();
-            UE_LOGI("[ATV-PART-DRILL] [C] ran the wrench's last step on wheel 0: dispatched=%d, asked of the host %llu",
-                    ran ? 1 : 0, static_cast<unsigned long long>(st.asked - g_statsAtStart.asked));
-            if (st.asked == g_statsAtStart.asked)
-                return Verdict(false, "unbolt: the client's body was not cancelled and asked of the host");
-        }
-        const State want{g_base.mask & ~kBit, g_base.props + 1};
-        if (Stands(want)) Go(Step::Hand);
-        return;
+        g_leg = 0;
+        return Go(Step::Hand);
     }
     case Step::Hand: {
-        if (!g_acted) {
-            g_acted = true;
-            if (!coop::dev::drill_hand::TakeIntoHandNow(kPartItem, kPartClass))
-                return Verdict(false, "fit: the client's hand did not take the wheel");
-        }
-        if (InStepMs() >= kHandMs) Go(Step::Fit);
-        return;
-    }
-    case Step::Fit: {
-        if (!g_acted) {
-            g_acted = true;
-            void* held = coop::hand_item::LocalHandActor();
-            // A wheel fresh from its class can carry no durability, which a fit refuses as broken.
-            const int32_t durOff = held ? R::FindPropertyOffset(R::ClassOf(held), L"durability") : -1;
-            if (durOff >= 0) {
-                float& durability = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(held) + durOff);
-                if (durability <= 0.f) durability = 50.f;
+        const Leg& l = kLegs[g_leg];
+        if (l.hand != Hand::Keep) {
+            if (!g_acted) {
+                g_acted = true;
+                if (!TakeHand(l.hand))
+                    return End(RV::Outcome::Invalid, "%s: the client's hand did not take the %s", l.name,
+                               HandWord(l.hand));
             }
-            const auto before = coop::atv_part_intent::GetStats();
-            const bool ran = held && CallFit(g_atv.Get(), held);
-            const auto st = coop::atv_part_intent::GetStats();
-            void* after = coop::hand_item::LocalHandActor();
-            UE_LOGI("[ATV-PART-DRILL] [C] ran the part's fit: dispatched=%d, asked of the host %llu, the hand is %s",
-                    ran ? 1 : 0, static_cast<unsigned long long>(st.asked - before.asked),
-                    (after && R::IsLive(after)) ? "still full" : "empty");
-            if (st.asked == before.asked)
-                return Verdict(false, "fit: the client's body was not cancelled and asked of the host");
-            if (after && R::IsLive(after)) return Verdict(false, "fit: the part stayed in the client's hand");
+            // Readiness is the host's own word on the hand, never a wait of so many seconds.
+            if (!HostSaysHand(l.hand)) {
+                if (InStepMs() > kWaitBoundMs)
+                    End(RV::Outcome::Invalid, "%s: the host's hand lane never said the hand held the %s", l.name,
+                        HandWord(l.hand));
+                return;
+            }
         }
-        const State want{g_base.mask, g_base.props + 1};
-        if (!Stands(want)) return;
-        DC::Say(kSayDone);
-        return Verdict(true, "the unbolt and the fit each stood on both peers: mask=0x%X, one wheel "
-                       "prop more than at the start", want.mask);
+        return Go(Step::Act);
+    }
+    case Step::Act: {
+        const Leg& l = kLegs[g_leg];
+        if (!g_haveMine || !HostCounts(g_legCounts)) return;
+        g_legStart = g_mine;
+        if (!DoAct(s, l)) return;
+        return Go(Step::Await);
+    }
+    case Step::Await: {
+        const Leg& l = kLegs[g_leg];
+        Counts c{};
+        State theirs{};
+        // The event: the host judged the ask (its ran or refused counter moved).
+        if (!HostCounts(c) || (c.ran == g_legCounts.ran && c.refused == g_legCounts.refused)) {
+            if (InStepMs() > kWaitBoundMs)
+                End(RV::Outcome::Invalid, "%s: the host's counters never moved for the ask", l.name);
+            return;
+        }
+        if (l.hostRuns && c.refused != g_legCounts.refused)
+            return End(RV::Outcome::Fail, "%s: the host refused an ask it had to run (its DENY line says why)", l.name);
+        if (!l.hostRuns && c.ran != g_legCounts.ran)
+            return End(RV::Outcome::Fail, "%s: the host ran an ask it had to refuse", l.name);
+        if (c.refunded != g_legCounts.refunded)
+            return End(RV::Outcome::Fail, "%s: the host gave a part back that no part was owed for", l.name);
+        const State want = WantAfter(l, g_legStart);
+        if (!(g_haveMine && TheirState(theirs) && g_mine == want && theirs == want)) {
+            if (InStepMs() > kWaitBoundMs)
+                End(RV::Outcome::Invalid, "%s: wanted mask=0x%X props=%d on both peers; here mask=0x%X props=%d, "
+                    "there mask=0x%X props=%d", l.name, want.mask, want.props, g_mine.mask, g_mine.props,
+                    theirs.mask, theirs.props);
+            return;
+        }
+        UE_LOGI("[ATV-PART-DRILL] [C] leg '%s' stands on both peers: mask=0x%X wheel props=%d", l.name, want.mask,
+                want.props);
+        if (++g_leg < kLegCount) return Go(Step::Hand);
+        DC::Say(std::string(kSayEnd) + "C P");
+        UE_LOGI("[ATV-PART-DRILL] [C] every leg held; the host judges its own counters");
+        g_ended = true;
+        return Go(Step::Done);
     }
     default:
         return;
@@ -339,8 +511,9 @@ bool IsEnabled() { return ArmOf() != Arm::Off; }
 
 void Tick(coop::net::Session* session) {
     if (!IsEnabled() || !session || !session->connected()) return;
-    SayStateOnChange();
+    if (DC::PollDue()) Poll();
     if (g_step == Step::Done) return;
+    if (AdoptOtherEnd()) return;
     if (Host()) TickHost(*session);
     else TickClient(*session);
 }
@@ -349,10 +522,17 @@ void OnDisconnect() {
     g_step = Step::Start;
     g_stepMs = 0;
     g_acted = false;
+    g_leg = 0;
+    g_ended = false;
+    g_named = false;
     g_atv.Reset();
     g_key.clear();
     g_said = State{};
-    g_base = State{};
+    g_mine = State{};
+    g_haveMine = false;
+    g_saidHand = Hand::None;
+    g_saidHandAny = false;
+    g_saidCount = false;
 }
 
 }  // namespace coop::dev::atv_part_drill

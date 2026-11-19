@@ -2,6 +2,8 @@
 
 #include "coop/interactables/atv_part_intent.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/atv_sync_internal.h"  // the row's expressed baseline, reseeded after the host's change
@@ -96,9 +98,15 @@ bool TakesHeldPart(uint8_t o) { return o == op::kFitWheel || o == op::kStowSpare
 int8_t ClampI8(int32_t v) { return static_cast<int8_t>(v < -128 ? -128 : v > 127 ? 127 : v); }
 float Clamp(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+// The part drill's red arms (config row atv_part_red), read here only, by the rule each turns off.
+bool Red(const char* value) { return coop::config::ResolveEnum(::coop::config_registry::rows::atv_part_red) == value; }
+bool CancelOff() { static const bool on = Red("cancel_off"); return on; }        // a client's bodies are not cancelled
+bool ToolJudgeOff() { static const bool on = Red("tool_judge_off"); return on; }  // the host does not check the tool
+
 // ---- CLIENT: the bodies cancelled and asked of the host ----------------------------------------
 
 coop::net::Session* ClientSession() {
+    if (CancelOff()) return nullptr;
     auto* s = g_session.load(std::memory_order_acquire);
     return (s && s->running() && s->connected() && s->role() == coop::net::Role::Client) ? s : nullptr;
 }
@@ -271,7 +279,7 @@ const char* Judge(const coop::net::AtvPartIntentPayload& p, const AC::Snapshot& 
     switch (p.op) {
     case op::kRemoveWheel:
         if (!(snap.mask & bit)) return "that wheel is off already";
-        return HoldsUnscrewTool(slot) ? nullptr : "the sender's hand holds no wrench or power tool";
+        return ToolJudgeOff() || HoldsUnscrewTool(slot) ? nullptr : "the sender's hand holds no wrench or power tool";
     case op::kFitWheel:
         if (snap.mask & bit) return "the socket is occupied";
         return p.durability > 0.0f ? nullptr : "the wheel is broken";
