@@ -147,6 +147,14 @@ gate refuses its own turn-on or turn-off and asks the host, which runs the real 
 never converts a kerfur itself; the host's verb converges at its return on the successor actor
 captured deterministically at its spawn through the gate's window
 (`coop/creatures/kerfur_form_assembler`), and every client takes the new form from the broadcast.
+The gamer Omega's prop (`prop_kerfurOmega_col_gamer_C`) turns on in its own `actionOptionIndex`, spawning
+`kerfurOmega_col_gamer_C` itself without `spawnKerfuro`, so it used to convert on its own machine alone: the host's
+reached no client (VOTV-MP/Multivoid#185). In a session that action is refused and `spawnKerfuro` run in its place,
+with the prop's empty `spawnKerfur` set to the gamer Omega, and the host's return writes the prop's `Type` and
+`sentient` on it as the gamer body does. Its rainbow is its tick's alone, each frame into its materials' `color`, and a
+client's copy is inert, so it stood black there; a client now writes the same rainbow on such a copy each frame `[V]`
+(`coop/dev/kgamer_probe`, three peers: before, the host's gamer Omega had no element and no client had it; after, both
+clients had it at the host's element through a turn-off and on again, coloured, where it had stood at a zero colour).
 
 The radial menu (follow, idle, patrol, fix the servers, get the reports, fix the transformers) is
 relayed host-authoritatively (`coop/creatures/kerfur_command`): the host cancels the local
