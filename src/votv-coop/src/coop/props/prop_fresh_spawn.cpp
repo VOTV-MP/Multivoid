@@ -8,6 +8,7 @@
 #include "coop/element/mirror_defer.h"        // instant-world: hide the fresh mirror until reveal
 #include "coop/props/join_membership_sweep.h" // RecordClaimIfTracking (claim BEFORE any failure return)
 #include "coop/props/prop_echo_suppress.h"    // ScopedMirrorSpawn + MarkMirrorSpawn
+#include "coop/props/prop_pry_sync.h"         // ConvergePried: a pried prop's joints, from the host's row
 #include "coop/props/prop_element_tracker.h"  // TrackActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/prop_save_data.h"
@@ -288,6 +289,8 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         UE_LOGI("remote_prop::OnSpawn: physics applied (sim=%d hasLinVel=%d hasAngVel=%d)",
                 sim ? 1 : 0, hasLinVel ? 1 : 0, hasAngVel ? 1 : 0);
     }
+    // A row the host stamped pried: this fresh copy takes the joints the host has broken, as a save-loaded one does.
+    coop::prop_pry_sync::ConvergePried(spawned, payload.physFlags, payload.pryMask, senderSlot);
     // The mushroom fall-through guard, defensive: the mushroom's init runs as part of the finish
     // and conditionally writes collision. A pure wire spawn likely lands correct, but the write is
     // cheap and idempotent, and the restore call is kept symmetric across all three spawn
