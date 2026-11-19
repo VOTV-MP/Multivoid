@@ -110,7 +110,7 @@ uint32_t EidOf(void* roomba) {
 bool IsLiveRoomba(void* obj) { return obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"); }
 
 // A cleaner is a prop_roomba_C or a subclass of it: prop_roomba_mx_C, the MX cleaner, has no body of its own and runs
-// the cleaner's graph, and an exact match left it on each peer alone (the exact-class sweep, 2026-11-19). A walk of
+// the cleaner's graph, and an exact match left it on each peer alone. A walk of
 // raw class pointers, safe off the game thread.
 bool IsCleanerClass(void* cls) {
     void* const base = OI::ClassByName(L"prop_roomba_C");
