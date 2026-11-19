@@ -30,7 +30,10 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -47,7 +50,8 @@ namespace panels = ui::server_browser_panels;
 
 using ue_wrap::FLinearColor;
 
-// Slate units, the window's own; the row metrics live with the rows.
+// Slate units, the window's own; the row metrics live with the rows. This is the size the layout
+// is measured at and the least the player can drag it to; the window grows from it.
 constexpr float kWindowW  = 980.f;
 constexpr float kWindowH  = 662.f;
 // Frame and spacing, from the native windows.
@@ -61,9 +65,13 @@ constexpr float kPadPx    = 6.f;
 // probe reads what is left over.
 constexpr float kListH    = 396.f;
 // The two body columns: the list is the subject; the panes hold prose and need enough to spell a
-// sentence. The save browser this mirrors splits about the same way.
-constexpr float kListWeight   = 0.63f;
-constexpr float kPanelsWeight = 0.37f;
+// sentence. The save browser this mirrors splits about 63/37. The panes keep the width that split
+// gives them at kWindowW; a wider window widens the list, whose server names are what grows.
+constexpr float kPanelsW = 354.f;
+// The resize grip, the window's bottom right corner: the area that takes the press, and its inset
+// from the frame's outer edge.
+constexpr float kGripPx    = 18.f;
+constexpr float kGripInset = 2.f;
 // The construction kit (alignment enums, palette, widget primitives) is ui/native_screen, shared
 // with the hosting window; the names are re-bound so the call sites read unchanged.
 namespace NS = ui::native_screen;
@@ -90,8 +98,18 @@ void* g_root     = nullptr;   // our UUserWidget
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
 void* g_backBtn  = nullptr;   // BACK, bottom left, the lowest widget of the list's column
 void* g_frame    = nullptr;   // the window's frame, what the fit probe measures against
-// Whether the list's column (the master tabs, the list, the actions, Back) fits kWindowH.
+void* g_listBox  = nullptr;   // the list's SizeBox: its height is the window's less the rest
+void* g_grip     = nullptr;   // the resize grip's box, bottom right
+// Whether the list's column (the master tabs, the list, the actions, Back) fits the window.
 NS::FitProbe g_fit("server_browser_native", kWindowH);
+// The window's size, in Slate units: read from the config once, then the player's drag. Kept
+// across menu instances, so a rebuilt browser opens at the size it was left at.
+float g_winW = 0.f, g_winH = 0.f;
+// A drag of the grip: where it started (the cursor, in widget space; the window's size), and the
+// widget space's pixels per Slate unit, read off the frame when it started.
+bool  g_dragging = false;
+long  g_dragX0 = 0, g_dragY0 = 0;
+float g_dragW0 = 0.f, g_dragH0 = 0.f, g_dragScale = 1.f;
 // LBUTTON edge state for the chrome poll, primed on Show so the release that opened the screen
 // is not read as a click on whatever sits under the cursor.
 bool  g_prevLmb   = false;
@@ -128,6 +146,117 @@ constexpr uint64_t kRefreshMs    = 5000;
 void SyncRows() {
     rows::Sync();
     panels::Sync(true);
+}
+
+void LoadWindowSize() {
+    if (g_winW > 0.f) return;
+    const long w = coop::config::ResolveInt(::coop::config_registry::rows::browser_width);
+    const long h = coop::config::ResolveInt(::coop::config_registry::rows::browser_height);
+    g_winW = (std::max)(kWindowW, static_cast<float>(w));
+    g_winH = (std::max)(kWindowH, static_cast<float>(h));
+}
+
+// The size in force: the frame, and the list's height, which takes every unit the window grew by.
+void ApplyWindowSize() {
+    if (g_frame) {
+        U::SetSizeBoxWidth(g_frame, g_winW);
+        U::SetSizeBoxHeight(g_frame, g_winH);
+    }
+    if (g_listBox) U::SetSizeBoxHeight(g_listBox, kListH + (g_winH - kWindowH));
+    g_fit.SetWindowH(g_winH);
+}
+
+// The largest the window may be: the screen it sits on, in the same Slate units (the scrim fills
+// the screen). Unmeasured, only the config row's own ceiling holds.
+void MaxWindowSize(float& maxW, float& maxH) {
+    maxW = 7680.f; maxH = 4320.f;
+    ue_wrap::FVector2D sz{};
+    if (g_scrimW && U::WidgetLocalSize(g_scrimW, sz) && sz.X > kWindowW && sz.Y > kWindowH) {
+        maxW = sz.X; maxH = sz.Y;
+    }
+}
+
+void SaveWindowSize() {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%ld", static_cast<long>(g_winW + 0.5f));
+    const auto w = coop::config::SetValue(::coop::config_registry::rows::browser_width, buf);
+    std::snprintf(buf, sizeof(buf), "%ld", static_cast<long>(g_winH + 0.5f));
+    const auto h = coop::config::SetValue(::coop::config_registry::rows::browser_height, buf);
+    // The cursor beside the frame's corner: a drag that tracks ends with the two together, to
+    // within the grip's own offset from the corner (or apart where a limit stopped the window).
+    long cx = 0, cy = 0;
+    ue_wrap::FVector2D tl{}, sz{};
+    NS::CursorInWidgetSpace(cx, cy);
+    U::WidgetScreenRect(g_frame, tl, sz);
+    UE_LOGI("server_browser_native: resized to %.0f x %.0f (%s; cursor %ld,%ld, frame corner "
+            "%.0f,%.0f)", g_winW, g_winH,
+            (w == coop::config::SetResult::Saved && h == coop::config::SetResult::Saved)
+                ? "saved" : "NOT saved; this session only",
+            cx, cy, tl.X + sz.X, tl.Y + sz.Y);
+}
+
+// The grip: small squares in three steps rising to the corner, the usual resize mark, drawn from
+// tinted rects like the rows' padlock. The SizeBox is what a press is tested against.
+void* BuildGrip(void* frame) {
+    void* box = frame ? Spawn(L"SizeBox", frame) : nullptr;
+    void* ovl = box ? Spawn(L"Overlay", box) : nullptr;
+    if (!box || !ovl) return nullptr;
+    U::SetSizeBoxWidth(box, kGripPx);
+    U::SetSizeBoxHeight(box, kGripPx);
+    // {left, top} of each 3x3 square in the 18x18 box, the last row and column 1 unit in from its
+    // right and bottom edges.
+    const float kDots[6][2] = {{14.f, 6.f}, {10.f, 10.f}, {14.f, 10.f},
+                               {6.f, 14.f}, {10.f, 14.f}, {14.f, 14.f}};
+    for (const auto& d : kDots) {
+        void* img = Spawn(L"Image", ovl);
+        if (!img) return nullptr;
+        U::SetImageTintRaw(img, NS::Dim());
+        E::SetWidgetVisibility(img, 3);   // HitTestInvisible
+        if (void* s = U::AddChild(ovl, img)) {
+            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+            NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding, d[0], d[1],
+                               kGripPx - d[0] - 3.f, kGripPx - d[1] - 3.f);
+        }
+    }
+    U::SetContent(box, ovl);
+    // Added after the column, so it draws over the status pane's corner.
+    if (void* s = U::AddChild(frame, box)) {
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                        NS::kRight, kBottom);
+        NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding, 0.f, 0.f, kGripInset, kGripInset);
+    }
+    return box;
+}
+
+// A press on the grip starts a drag; while the button is held the window follows the cursor; the
+// release ends it and saves the size. The window stays centred, so its corner moves half as far as
+// its size changes: the size changes by twice the cursor's travel, which keeps the corner under it.
+void StartDrag(long cx, long cy) {
+    ue_wrap::FVector2D tl{}, sz{};
+    if (!U::WidgetScreenRect(g_frame, tl, sz) || sz.X < 1.f || g_winW < 1.f) return;
+    g_dragScale = sz.X / g_winW;
+    g_dragX0 = cx; g_dragY0 = cy;
+    g_dragW0 = g_winW; g_dragH0 = g_winH;
+    g_dragging = true;
+    UE_LOGI("server_browser_native: resize started at %.0f x %.0f (cursor %ld,%ld; frame %.0f,%.0f "
+            "+%.0fx%.0f px, %.3f px a unit)", g_winW, g_winH, cx, cy, tl.X, tl.Y, sz.X, sz.Y,
+            g_dragScale);
+}
+
+void UpdateDrag() {
+    long cx = 0, cy = 0;
+    if (!NS::CursorInWidgetSpace(cx, cy) || g_dragScale <= 0.f) return;
+    float maxW = 0.f, maxH = 0.f;
+    MaxWindowSize(maxW, maxH);
+    const float w = std::clamp(g_dragW0 + 2.f * static_cast<float>(cx - g_dragX0) / g_dragScale,
+                               kWindowW, maxW);
+    const float h = std::clamp(g_dragH0 + 2.f * static_cast<float>(cy - g_dragY0) / g_dragScale,
+                               kWindowH, maxH);
+    // Whole units, and only on a change: each write is a reflected call and a layout pass.
+    const float rw = std::floor(w), rh = std::floor(h);
+    if (rw == g_winW && rh == g_winH) return;
+    g_winW = rw; g_winH = rh;
+    ApplyWindowSize();
 }
 
 // Builds the screen once per menu instance. Fail closed: a null donor means no build and a
@@ -198,8 +327,9 @@ bool BuildScreen(void* switcher) {
     // screen. The title carries no build identity: the main menu shows the mod's pair top left, and
     // each server's pair is in the details panel. fillDonor stays required although the window
     // authors its own frame: it is the canary for a moved menu layout.
+    LoadWindowSize();
     NS::WindowShell shell;
-    if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
+    if (!NS::BuildWindowShell(switcher, g_winW, g_winH,
                               coop::text::FromUtf8Lossy(l10n::T("Multivoid  -  Server Browser")).c_str(), shell))
         return false;
     void* root = shell.root;
@@ -214,7 +344,7 @@ bool BuildScreen(void* switcher) {
 
     void* leftCol = Spawn(L"VerticalBox", body);
     if (!leftCol) return false;
-    if (void* s = NS::AddHFill(body, leftCol, kListWeight, kFill, kFill))
+    if (void* s = NS::AddHFill(body, leftCol, 1.f, kFill, kFill))
         NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding, 0.f, 0.f, kPadPx, 0.f);
 
     // The master tabs sit on the list they choose, the way MTA's source tabs sit on theirs.
@@ -227,7 +357,7 @@ bool BuildScreen(void* switcher) {
     void* listOvl = listBox ? AddFramedBox(listBox, NS::Panel(), kBorderPx) : nullptr;
     void* list    = listOvl ? Spawn(L"ScrollBox", listOvl) : nullptr;
     if (!listBox || !listOvl || !list) return false;
-    U::SetSizeBoxHeight(listBox, kListH);
+    g_listBox = listBox;   // its height is set with the window's, below
     // The settings list's scrollbar treatment: a server list is the long-list case, and
     // ui_saveSlots' own ScrollBox sets no bar style. Nine brushes.
     U::CloneStyle(list, P::off::UScrollBox_WidgetBarStyle, barDonor,
@@ -269,14 +399,21 @@ bool BuildScreen(void* switcher) {
             NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
     }
 
-    void* rightCol = Spawn(L"VerticalBox", body);
-    if (!rightCol) return false;
-    NS::AddHFill(body, rightCol, kPanelsWeight, kFill, kFill);
+    // The panes' fixed width: a SizeBox in an Automatic slot, so the list's Fill takes the rest.
+    void* rightBox = Spawn(L"SizeBox", body);
+    void* rightCol = rightBox ? Spawn(L"VerticalBox", rightBox) : nullptr;
+    if (!rightBox || !rightCol) return false;
+    U::SetSizeBoxWidth(rightBox, kPanelsW);
+    U::SetContent(rightBox, rightCol);
+    NS::AddHFill(body, rightBox, 0.f, kFill, kFill);
     if (!panels::BuildDetails(rightCol)) return false;
     // Connect sits directly under the panel that describes what it joins; the other actions stay in
     // the grid beneath the list, since they do not depend on the chosen row.
     if (!ui::server_browser_actions::BuildConnect(rightCol, backDonor)) return false;
     if (!panels::BuildStatus(rightCol)) return false;
+
+    g_grip = BuildGrip(shell.frame);   // cosmetic if absent: the window keeps its size
+    ApplyWindowSize();
 
     g_root  = root;
     // The list goes to its owner, which also drops every row identity from the menu instance that
@@ -400,6 +537,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_menu = menu;
         g_root = nullptr;
         g_backBtn = nullptr; g_scrimW = nullptr; g_frame = nullptr;
+        g_listBox = nullptr; g_grip = nullptr; g_dragging = false;
         ui::server_browser_actions::Forget();
         ui::server_browser_tabs::Forget();
         panels::Forget();
@@ -514,7 +652,26 @@ void OnMenuTick(void* menu, void* switcher) {
         const bool down = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         if (!g_lmbPrimed) { g_lmbPrimed = true; g_prevLmb = down; }
         const bool releaseEdge = !down && g_prevLmb;
+        const bool pressEdge   = down && !g_prevLmb;
         g_prevLmb = down;
+        // A drag of the grip owns the button from its press to its release: the release is not a
+        // click on whatever the cursor ends over.
+        if (g_dragging) {
+            if (down) {
+                UpdateDrag();
+            } else {
+                g_dragging = false;
+                SaveWindowSize();
+            }
+            return;
+        }
+        if (pressEdge && g_grip && ui::input_focus::IsOurWindowForeground()) {
+            long cx = 0, cy = 0;
+            if (NS::CursorInWidgetSpace(cx, cy) && NS::WidgetContains(g_grip, cx, cy)) {
+                StartDrag(cx, cy);
+                if (g_dragging) return;
+            }
+        }
         if (releaseEdge && ui::input_focus::IsOurWindowForeground()) {
             // IsHovered is right here: a real UButton answers it, and a geometry test on the same
             // button once turned a passing close into a failing one.

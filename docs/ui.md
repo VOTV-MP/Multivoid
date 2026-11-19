@@ -32,7 +32,11 @@ list with name, players, version, world and age, one word for how a lobby's play
 (Relay, Direct, LAN, or `--` when the host reports no one; the counts behind it on the details panel's
 connection line),
 an amber mark on a version pair that differs from ours, which always means the connect will be
-refused, a Host button and a Join. A row of tabs
+refused, a Host button and a Join. A grip in the window's bottom right corner resizes it,
+centred, from its 980 by 662 units up to the screen; only the server names' column and the
+list's height grow, while the facts beside each name and the panes on the right keep their
+widths. The size is remembered in `browser.width` and `browser.height` when the drag ends. A
+row of tabs
 above the list picks which master's list it is, one tab per master, the chosen one filled; the
 choice is remembered in the ini and is also where a hosted game is listed
 (`ui/server_browser_tabs`, [master-server.md](master-server.md)). When a master stops answering,
