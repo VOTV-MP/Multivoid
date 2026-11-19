@@ -125,7 +125,8 @@ bool HandleSignalEvent(net::Session& session, const net::Session::ReliableMessag
         break;
     }
     case net::ReliableKind::OvenProgressState: {
-        // The steps of an oven's repair another peer's screen holds; this peer's screen takes the bits it lacks.
+        // The steps of an oven's repair: the host's record, which this client's screen takes the bits of it lacks, or a
+        // client's mask, which the host's judge takes (coop/interactables/oven_progress_sync::OnProgress).
         if (msg.payloadLen < sizeof(net::OvenProgressStatePayload)) {
             UE_LOGW("event_feed: OvenProgressState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::OvenProgressStatePayload));

@@ -1516,10 +1516,12 @@ enum class ReliableKind : uint16_t {
     // request is an act. AtvPartIntentPayload.
     AtvPartIntent = 274,
 
-    // Any peer to all (a client's through the host's relay), and host to a joiner at its connect replay: the steps
-    // of one kitchen oven's repair that come before its wiring, as a mask of the four screws out and the lid off.
-    // The bits are never cleared, so a receiver raises on its own repair screen every bit it lacks. Client-allowed;
-    // relayed. OvenProgressStatePayload.
+    // Host to the clients, and to a joiner at its connect replay: the steps of one kitchen oven's repair that come
+    // before its wiring, as a mask of the four screws out and the lid off. The bits are never cleared, so a receiver
+    // raises on its own repair screen every bit it lacks. Client to host: the steps the client's screen holds, an ask:
+    // the host judges the oven, the sender's reach of its switch box and the game's order (the lid needs four
+    // screws), records what it grants and sends the record to every client but the asker. Never relayed.
+    // OvenProgressStatePayload.
     OvenProgressState = 275,
 
     // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
