@@ -10,6 +10,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"  // the sender's tool and part; this peer's own hand actor
+#include "coop/player/hand_spend.h"  // the part a hold spends: one use per hold
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: an ATV of a world still loading is not asked about
@@ -62,10 +63,8 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchAsked = false;
 Stats g_stats{};
 
-// HOST, per sender: its budget, and the hand state (hand_item::StatesApplied + 1) its last judged fit,
-// or stow stood on. One hand state gives one part.
+// HOST, per sender: its budget. The part a fit or stow spends is counted by hand_spend, one use per hold.
 coop::net::IntentBucket g_buckets[coop::net::kMaxPeers];
-uint32_t g_partTakenAt[coop::net::kMaxPeers] = {};
 
 // CLIENT: the last unbolt or spare take asked, so a body the game re-runs every tick asks once.
 struct LastAsk {
@@ -337,17 +336,15 @@ void OnIntent(coop::net::Session& session, const coop::net::AtvPartIntentPayload
         why = "malformed";
     } else {
         // The hand is judged before the pace: the client destroyed its part when it asked, so a paced
-        // ask that did carry a part owes it back. One part per hand state keeps a flood from minting more.
+        // ask that did carry a part owes it back. The hold owed by the hand lane's pace, announced ahead
+        // of this ask on the one ordered lane, is applied first, so the ask is judged against the hand it
+        // was sent from. One use per hold keeps a flood from minting more parts.
+        coop::hand_item::ApplyOwedNow(session, senderSlot);
         if (TakesHeldPart(payload.op)) {
-            const uint32_t handState = coop::hand_item::StatesApplied(senderSlot) + 1;
-            if (!coop::hand_item::LastHeldClassIs(senderSlot, kWheelClass))
-                why = "the sender's hand did not hold that part last";
-            else if (g_partTakenAt[senderSlot] == handState)
-                why = "the part in the sender's hand was given already";
-            else {
-                g_partTakenAt[senderSlot] = handState;
+            if (!coop::hand_spend::Spend(senderSlot, kWheelClass, 1))
+                why = "the sender's hand held no part of that hold to give";
+            else
                 partOwed = true;
-            }
         }
         if (!why && !g_buckets[senderSlot].Take(kBudget, coop::atv_sync::NowMs())) why = "paced";
     }
@@ -397,7 +394,6 @@ void OnDisconnect() {
     g_stats = Stats{};
     g_lastAsk = LastAsk{};
     for (auto& b : g_buckets) b.Reset();
-    for (auto& t : g_partTakenAt) t = 0;
 }
 
 }  // namespace coop::atv_part_intent

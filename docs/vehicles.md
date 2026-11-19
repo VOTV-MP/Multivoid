@@ -85,8 +85,8 @@ and asked of the host with `AtvPartIntent` (`coop/interactables/atv_part_intent`
 for a looked-at wheel, `putTire` for a fit, `playerUsedOn` for the spare's stow, and
 `actionOptionIndex` for the spare's take. A fit or stow destroys the wheel in the client's hand as
 the body would and carries its scalars. The host judges the sender's world, the ATV by its key, that
-the host itself syncs it, the reach, the tool or the wheel its hand held last (one hand state gives
-one wheel) and the ATV's own state. An unbolt then runs the game's own `unscrewPanel` on the host's
+the host itself syncs it, the reach, the tool or the wheel its hand held last (one use of a wheel per hold)
+and the ATV's own state. An unbolt then runs the game's own `unscrewPanel` on the host's
 copy with the look fields set for the call; a fit or stow writes the fields the body writes and runs
 its reducer; the spare is born as a wheel prop beside the sender. The wheel's birth crosses as the
 host's and presence follows in `AtvState`. A refused fit or stow gives the wheel back as a prop
