@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 303;
+inline constexpr uint16_t kProtocolVersion = 304;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1489,6 +1489,13 @@ enum class ReliableKind : uint16_t {
     // op 4: the granted cut ended without its destroy, and the host ends its record. Never relayed. Late join: none, a break
     // is an act. ContainerBreakPayload.
     ContainerBreakRequest = 263,
+    // A custom-colour Kerfur Omega's or Kerfus's colour, its `hsv` (coop/creatures/kerfur_color_sync). HOST->ALL: an
+    // actor's colour when the host's picker applied one, when a kerfur changed form, and every one to a joiner; a client
+    // writes it and repaints. Not pre-world. KerfurColorPayload. CLIENT->HOST: this client's player picked a colour for
+    // one (the picker's colour, as the game's intComs_applyColor takes it); the host judges the reach and applies it on
+    // its own copy, and its KerfurColorState answers. Never relayed. Not pre-world. KerfurColorIntentPayload.
+    KerfurColorState = 285,
+    KerfurColorIntent = 286,
 
     // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
     // host runs only while its setting net.allow_player_cheats is on and the sender holds the right
@@ -2309,6 +2316,19 @@ struct RoombaPayload {
     uint8_t  pad[3];  // zero
 };
 static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
+
+// KerfurColorState. An actor by host element id and its `hsv` (H in degrees, S, V), as the game's RGBToHSV left it.
+struct KerfurColorPayload {
+    uint32_t eid;     // 4
+    float    hsv[3];  // 12
+};
+static_assert(sizeof(KerfurColorPayload) == 16, "KerfurColorPayload must be 16 bytes");
+// KerfurColorIntent. A prop by host element id and the picker's linear colour (R, G, B, A).
+struct KerfurColorIntentPayload {
+    uint32_t eid;       // 4
+    float    color[4];  // 16
+};
+static_assert(sizeof(KerfurColorIntentPayload) == 20, "KerfurColorIntentPayload must be 20 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

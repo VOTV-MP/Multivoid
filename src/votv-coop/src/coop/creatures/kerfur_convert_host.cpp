@@ -172,7 +172,7 @@ int RequestSlotFor(void* object) {
     return (object && object == g_runningObject) ? g_runningSlot : -1;
 }
 
-void ConvergeAtReturn(void* oldActor, int32_t oldIdx, EL::ElementId oldEid, bool toProp, int requestSlot) {
+void* ConvergeAtReturn(void* oldActor, int32_t oldIdx, EL::ElementId oldEid, bool toProp, int requestSlot) {
     char who[32];
     if (requestSlot >= 0) std::snprintf(who, sizeof(who), "slot %d's request", requestSlot);
     else std::snprintf(who, sizeof(who), "the host's own");
@@ -184,7 +184,7 @@ void ConvergeAtReturn(void* oldActor, int32_t oldIdx, EL::ElementId oldEid, bool
         // none once its gate refused, so a refusal sends nothing.
         UE_LOGI("kerfur_convert: %s eid=%u (%s) refused by the game -- nothing converted",
                 toProp ? "turn_off" : "turn-on", static_cast<unsigned>(oldEid), who);
-        return;
+        return nullptr;
     }
     // The old form is gone: the successor the verb's bracket captured is the new form. An old form
     // with no element id (a kerfur never enrolled) converges the same way: the bind mints its kerfur
@@ -192,6 +192,7 @@ void ConvergeAtReturn(void* oldActor, int32_t oldIdx, EL::ElementId oldEid, bool
     const auto cap = coop::kerfur_form_assembler::ConsumeCapturedForm(/*wantNpc=*/!toProp);
     if (toProp) ConvergeTurnOff(oldActor, oldEid, cap.actor, who);
     else ConvergeTurnOn(oldActor, oldEid, cap.actor, who);
+    return cap.actor;
 }
 
 namespace {

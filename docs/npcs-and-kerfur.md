@@ -147,11 +147,11 @@ gate refuses its own turn-on or turn-off and asks the host, which runs the real 
 never converts a kerfur itself; the host's verb converges at its return on the successor actor
 captured deterministically at its spawn through the gate's window
 (`coop/creatures/kerfur_form_assembler`), and every client takes the new form from the broadcast.
-The gamer Omega's prop (`prop_kerfurOmega_col_gamer_C`) turns on in its own `actionOptionIndex`, spawning
-`kerfurOmega_col_gamer_C` itself without `spawnKerfuro`, so it used to convert on its own machine alone: the host's
-reached no client (VOTV-MP/Multivoid#185). In a session that action is refused and `spawnKerfuro` run in its place,
-with the prop's empty `spawnKerfur` set to the gamer Omega, and the host's return writes the prop's `Type` and
-`sentient` on it as the gamer body does. Its rainbow is its tick's alone, each frame into its materials' `color`, and a
+The gamer Omega's prop (`prop_kerfurOmega_col_gamer_C`) and the custom-colour Omega's (`prop_kerfurOmega_col_C`) turn
+on in their own `actionOptionIndex`, spawning their Omega themselves without `spawnKerfuro`, so they used to convert on
+their own machine alone: the host's reached no client (VOTV-MP/Multivoid#185). In a session that action is refused and
+`spawnKerfuro` run in its place, with the prop's empty `spawnKerfur` set to its Omega, and the host's return writes the
+prop's `Type`, `sentient` and, for the custom colour, `hsv` on the new Omega as the prop's body does, and repaints it. Its rainbow is its tick's alone, each frame into its materials' `color`, and a
 client's copy is inert, so it stood black there; a client now writes the same rainbow on such a copy each frame `[V]`
 (`coop/dev/kgamer_probe`, three peers: before, the host's gamer Omega had no element and no client had it; after, both
 clients had it at the host's element through a turn-off and on again, coloured, where it had stood at a zero colour).
@@ -179,6 +179,17 @@ an id the character's spawn carries (`coop/creatures/kerfur_reconcile`). The rob
 are data-only subclasses, so the spawned class is the skin; the same bodies serve as player skins
 on [players.md](players.md).
 
+A custom-colour Omega or Kerfus (`prop_kerfurOmega_col_C`, `kerfurOmega_col_C`, `p_kerfus_col_C`) holds its colour in
+`hsv`. The game's colour picker calls the prop's `intComs_applyColor`, which stores `RGBToHSV` of the colour and repaints
+that copy alone, so a colour one player picked was seen by nobody else. The colour is the host's
+(`coop/creatures/kerfur_color_sync`): a client's pick is refused on its copy and asked of the host
+(`KerfurColorIntent`), which applies it on its own copy for a sender within 800 cm; the host sends an actor's colour
+after its own apply, after a kerfur changes form (the new form took its colour from the old on the host alone), and to
+a joiner (`KerfurColorState`). A client writes `hsv` and runs the class's own paint (`setColor`, `SetStyle`, `upd`).
+`[V]` (`coop/dev/kgamer_probe`, `VOTVCOOP_KGAMER_COLOR=1`, three peers: a client's green on the Omega's prop held on
+every peer through a turn-on, a turn-off and a turn-on again, its material green on each; on the Kerfus every peer held
+the green; a client joining after it all took the green Omega.)
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -203,6 +214,7 @@ on [players.md](players.md).
 | `RoachState`, `RoachConsumed` | the host to all; a client to the host | a page of the infestation; a stomped or eaten roach |
 | `KerfurConvertRequest`, `KerfurConvert` | a client to the host; the host to all | a turn-on or turn-off to perform; the form transition with both ids, the form, the class and the pose |
 | `KerfurCommand` | a client to the host | a radial verb with the sender's request number, which the host runs serving the sender |
+| `KerfurColorState`, `KerfurColorIntent` | the host to all and to a joiner; a client to the host | a custom-colour kerfur's `hsv` by element id; a client's picked colour |
 | `KerfurCommandAnswer` | the host to the requester | the host's refusal of a command (busy, gone, murderous, out of reach, queue full, not an Omega, unavailable) or its wait for a body of the sender, as an enum the client words itself |
 
 ## Late join
@@ -212,7 +224,7 @@ adopts the save-loaded twins by class and creates the rest. A kerfur prop is ado
 and pose after the load tail settles; a kerfur turned on during the window arrives as a character
 whose spawn names the off-prop to retire. The roach infestation is re-sent as pages. A stalker
 that another peer owns keeps announcing itself, so a joiner picks it up on its next keepalive. A
-wisp in flight is transient and owes nothing.
+wisp in flight is transient and owes nothing. Every custom-colour kerfur's colour is sent to the joiner at its ready edge.
 
 ## Known limits
 
@@ -239,6 +251,6 @@ wisp in flight is transient and owes nothing.
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
 | the black orb | `coop/creatures/orb_authority`, `coop/player/puppet_identity` (its touch row); `harness/autotest/autotest_orb.cpp` (`orb_drill`) |
 | roaches | `coop/creatures/roach_sync` |
-| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
+| the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player`, `coop/creatures/kerfur_color_sync` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |
-| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it) |
+| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it), `coop/dev/kgamer_probe` (a gamer or custom-colour Omega and Kerfus) |

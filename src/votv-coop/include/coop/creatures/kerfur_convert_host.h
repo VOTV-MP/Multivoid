@@ -68,9 +68,10 @@ int RequestSlotFor(void* object);
 // client never runs the verb, so it is only logged. Otherwise the successor the verb's bracket
 // captured is registered silently, the old form released, and BindFormActor broadcasts the one
 // KerfurConvert; no captured successor, or one that cannot be bound, is a plain death, relayed. The
-// conversion's floppy is an ordinary keyed prop, expressed where every fresh prop is. Game thread.
-void ConvergeAtReturn(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid, bool toProp,
-                      int requestSlot);
+// conversion's floppy is an ordinary keyed prop, expressed where every fresh prop is. Returns the new form's
+// actor, or null when nothing converted. Game thread.
+void* ConvergeAtReturn(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid, bool toProp,
+                       int requestSlot);
 
 // Clear the running request and the tally. Net disconnect (fanned from kerfur_convert::OnDisconnect).
 void OnDisconnect();

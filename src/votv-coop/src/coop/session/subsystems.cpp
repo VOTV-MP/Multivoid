@@ -137,6 +137,7 @@
 #include "coop/player/puppet_events.h"  // RunSelftest
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
+#include "coop/creatures/kerfur_color_sync.h"   // a custom-colour kerfur's colour
 #include "coop/props/glowstick_sync.h"   // a glowstick stuck to a surface, on every peer
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_gate.h"
@@ -286,6 +287,7 @@ void Install(coop::net::Session& session) {
     coop::nick_color::Install(&session);  // nick-color announce path + local-slot mirror refresh
     coop::turbine_sync::Install(&session);  // wind-turbine facing/spin mirror (host-auth ~1 Hz)
     coop::woodchipper_sync::Install(&session);  // the host's woodchippers
+    coop::kerfur_color_sync::Install(&session);  // a custom-colour kerfur's colour: the host's
     coop::glowstick_sync::Install(&session);    // a glowstick's stick, through its record
     coop::atv_host_sync::Install(&session);  // what of an ATV is the host's beyond its rig
     coop::upgrade_sync::Install(&session);  // a client's upgrade purchase is charged and written by the host
@@ -564,6 +566,7 @@ DisconnectStats DisconnectAll() {
     coop::turbine_sync::OnDisconnect();
     coop::woodchipper_sync::OnDisconnect();
     coop::atv_host_sync::OnDisconnect();
+    coop::kerfur_color_sync::OnDisconnect();
     coop::glowstick_sync::OnDisconnect();
     coop::upgrade_sync::OnDisconnect();  // and its own upgrade panel buys locally again
     coop::device_occupancy::OnDisconnect();
@@ -686,6 +689,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hacksaw_cut"}; coop::props::hacksaw_cut::Tick(); }  // a saw's cut is forgotten at a world change
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::kerfur_convert::PaintGamerCopies();  // a client's gamer Omega copy gets the rainbow its own tick paints
+    coop::kerfur_color_sync::Tick();  // the picker's watches, a client's asks and the colours it parked
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hand_record"}; coop::hand_record_sync::Tick(); }  // the owner's hand read and sent, the host's parked records judged, the mirrors written

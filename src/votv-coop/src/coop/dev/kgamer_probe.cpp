@@ -4,7 +4,9 @@
 // materials' `color` each frame. HOST, after it armed: at 100 s spawns the catalog's gamer Omega prop 1.5 m before its
 // player, at 110 s turns it on (the prop's actionOptionIndex, action 8, as the E-press), at 130 s off (the Omega's dropKerfurProp), at 145 s on again.
 // EVERY PEER, every 2 s from 95 s to 175 s: each gamer Omega it holds, in either form, with its hidden flag, whether it
-// ticks, and its mesh's first material's `color` (`[KGAMER]`).
+// ticks, its `hsv` and its mesh's first material's `color` (`[KGAMER]`). VOTVCOOP_KGAMER_PROP and _NPC name other
+// classes (the custom-colour Omega, a Kerfus); _COLOR=1 has client slot 1 pick green for the prop 3 s after it holds
+// one, through the prop's intComs_applyColor as the picker calls it; _T0 moves the host's steps (seconds, 100).
 
 #include "coop/dev/kgamer_probe.h"
 
@@ -26,6 +28,8 @@
 
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -36,6 +40,20 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace OI = ue_wrap::object_index;
 using ue_wrap::FVector;
+
+std::wstring EnvW(const char* name, const wchar_t* dflt) {
+    const std::string v = coop::config::ReadEnv(name);
+    return v.empty() ? std::wstring(dflt) : std::wstring(v.begin(), v.end());
+}
+// The prop and Omega classes, VOTVCOOP_KGAMER_PROP and VOTVCOOP_KGAMER_NPC (the gamer pair by default).
+const std::wstring& PropCls() {
+    static const std::wstring c = EnvW("VOTVCOOP_KGAMER_PROP", L"prop_kerfurOmega_col_gamer_C");
+    return c;
+}
+const std::wstring& NpcCls() {
+    static const std::wstring c = EnvW("VOTVCOOP_KGAMER_NPC", L"kerfurOmega_col_gamer_C");
+    return c;
+}
 
 bool On() {
     static const bool on = coop::config::ReadEnv("VOTVCOOP_KGAMER_PROBE") == "1";
@@ -92,15 +110,18 @@ std::string ColorOf(void* actor) {
 }
 
 void Report() {
-    for (const wchar_t* cls : {L"kerfurOmega_col_gamer_C", L"prop_kerfurOmega_col_gamer_C"})
+    for (const wchar_t* cls : {NpcCls().c_str(), PropCls().c_str()})
         for (void* a : All(cls)) {
             FVector p{};
             E::TryGetActorLocation(a, p);
             const unsigned eid = static_cast<unsigned>(coop::element::Registry::Get().EidForActor(a));
             const int32_t hidOff = R::FindPropertyOffset(R::ClassOf(a), L"bHidden");
             const int hidden = hidOff >= 0 ? (*(static_cast<const uint8_t*>(a) + hidOff) != 0) : -1;
-            UE_LOGI("[KGAMER] %ls eid=%u at (%.0f,%.0f,%.0f) tick=%d hiddenByte=%d mat=%s", cls, eid, p.X, p.Y, p.Z,
-                    E::IsActorTickEnabled(a) ? 1 : 0, hidden, ColorOf(a).c_str());
+            const int32_t hsvOff = R::FindPropertyOffset(R::ClassOf(a), L"hsv");
+            float hsv[3] = {-1.f, -1.f, -1.f};
+            if (hsvOff >= 0) std::memcpy(hsv, static_cast<const char*>(a) + hsvOff, sizeof(hsv));
+            UE_LOGI("[KGAMER] %ls eid=%u at (%.0f,%.0f,%.0f) tick=%d hiddenByte=%d hsv=(%.2f,%.2f,%.2f) mat=%s", cls, eid, p.X,
+                    p.Y, p.Z, E::IsActorTickEnabled(a) ? 1 : 0, hidden, hsv[0], hsv[1], hsv[2], ColorOf(a).c_str());
         }
 }
 
@@ -153,13 +174,18 @@ void Tick(coop::net::Session* session) {
         UE_LOGI("[KGAMER] probe armed role=%s", host ? "host" : "client");
     }
     const uint64_t t = Now() - g_armedAt;
+    // VOTVCOOP_KGAMER_T0 (seconds, 100 by default) moves the host's steps, so they can end before a late joiner.
+    static const uint64_t t0 = [] {
+        const std::string v = coop::config::ReadEnv("VOTVCOOP_KGAMER_T0");
+        return v.empty() ? 100000ull : static_cast<uint64_t>(std::strtoul(v.c_str(), nullptr, 10)) * 1000ull;
+    }();
     if (host) {
-        if (g_step == 0 && t >= 100000) {
+        if (g_step == 0 && t >= t0) {
             g_step = 1;
             // No catalog row names it, so the prop is spawned by its class, as the game's own spawns of it are.
             const std::wstring row = GamerRow();
             void* const me = coop::players::Registry::Get().Local();
-            void* const cls = OI::ClassByName(L"prop_kerfurOmega_col_gamer_C");
+            void* const cls = OI::ClassByName(PropCls().c_str());
             FVector at{};
             bool ran = false;
             if (cls && me && E::TryGetActorLocation(me, at)) {
@@ -171,22 +197,37 @@ void Tick(coop::net::Session* session) {
                 ran = SpawnRow(row, {at.X + 150.f, at.Y, at.Z});
             }
             UE_LOGI("[KGAMER] host: spawned the gamer Omega prop (class %d, ran=%d)", cls ? 1 : 0, ran ? 1 : 0);
-        } else if ((g_step == 1 && t >= 110000) || (g_step == 3 && t >= 145000)) {
+        } else if ((g_step == 1 && t >= t0 + 10000) || (g_step == 3 && t >= t0 + 45000)) {
             ++g_step;
             // As the player's E-press turns it on: the prop's own actionOptionIndex with action 8.
-            void* const prop = First(L"prop_kerfurOmega_col_gamer_C");
+            void* const prop = First(PropCls().c_str());
             void* const fn = prop ? R::FindDispatchFunctionCached(R::ClassOf(prop), L"actionOptionIndex") : nullptr;
             ue_wrap::ParamFrame f(fn);
             const bool ran = fn && f.valid() && f.Set<void*>(L"player", coop::players::Registry::Get().Local()) &&
                              f.Set<uint8_t>(L"action", 8) && ue_wrap::Call(prop, f);
             UE_LOGI("[KGAMER] host: turned on (ran=%d)", ran ? 1 : 0);
-        } else if (g_step == 2 && t >= 130000) {
+        } else if (g_step == 2 && t >= t0 + 30000) {
             g_step = 3;
-            UE_LOGI("[KGAMER] host: turned off (ran=%d)", CallNoArgs(First(L"kerfurOmega_col_gamer_C"), L"dropKerfurProp") ? 1 : 0);
-        } else if (g_step == 4 && t >= 160000) {
+            UE_LOGI("[KGAMER] host: turned off (ran=%d)", CallNoArgs(First(NpcCls().c_str()), L"dropKerfurProp") ? 1 : 0);
+        } else if (g_step == 4 && t >= t0 + 60000) {
             g_step = 5;
             UE_LOGI("[KGAMER] DONE");
         }
+    }
+    // A client (slot 1) picks green for the prop 3 s after it first holds it, as the colour picker's apply does.
+    static bool s_coloured = false;
+    static uint64_t s_seenAt = 0;
+    void* const seen = (!host && !s_coloured) ? First(PropCls().c_str()) : nullptr;
+    if (seen && !s_seenAt) s_seenAt = Now();
+    if (seen && Now() - s_seenAt >= 3000 && coop::players::Registry::Get().LocalPeerId() == 1 &&
+        coop::config::ReadEnv("VOTVCOOP_KGAMER_COLOR") == "1") {
+        s_coloured = true;
+        void* const prop = seen;
+        void* const fn = prop ? R::FindDispatchFunctionCached(R::ClassOf(prop), L"intComs_applyColor") : nullptr;
+        ue_wrap::ParamFrame f(fn);
+        const float green[4] = {0.f, 1.f, 0.f, 1.f};
+        const bool ran = fn && f.valid() && f.SetRaw(L"color", green, sizeof(green)) && ue_wrap::Call(prop, f);
+        UE_LOGI("[KGAMER] client: picked green for the prop (ran=%d)", ran ? 1 : 0);
     }
     if (t < 95000 || t > 175000 || Now() < g_reportAt) return;
     g_reportAt = Now() + 2000;
