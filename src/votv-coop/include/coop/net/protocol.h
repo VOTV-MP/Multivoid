@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 304;
+inline constexpr uint16_t kProtocolVersion = 305;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1495,6 +1495,23 @@ enum class ReliableKind : uint16_t {
     // The bits are never cleared, so a receiver raises on its own repair screen every bit it lacks. Client-allowed;
     // relayed. OvenProgressStatePayload.
     OvenProgressState = 275,
+    // A 3D printer's print and the object it prints (coop/props/printer_sync), VOTV-MP/Multivoid#49. A print is the
+    // host's, and runs only when every connected player holds the same model folder. CLIENT->HOST: this client's player
+    // asked its copy of a printer to print a model (PrintAsk); the host judges the reach and checks the model. HOST->
+    // CLIENT: what is your copy of this model (PrintCheck), and the client's hash of its folder, 0 for none
+    // (PrintCheckReply, CLIENT->HOST). HOST->CLIENT: a player lacks a model, or holds another copy of it, to show in
+    // chat (PrintNotice). HOST->ALL: a printed object, its key, model, light, bites and where it is, at its print, at a
+    // change, when it comes to rest moved and every one to a joiner; or that it is gone (PrintedState). CLIENT->HOST: this
+    // client's player toggled a printed object's light, bit it, or lacks its model (PrintedIntent). A held printed
+    // object rides the held-prop stream by its element id.
+    // Never relayed. Not pre-world. PrintAskPayload, PrintCheckPayload, PrintCheckReplyPayload, PrintNoticePayload,
+    // PrintedStatePayload, PrintedIntentPayload.
+    PrintAsk = 287,
+    PrintCheck = 288,
+    PrintCheckReply = 289,
+    PrintNotice = 290,
+    PrintedState = 291,
+    PrintedIntent = 292,
 
     // Client to host: one cheat a player asks for -- spawn items, add or remove points, fire a game event -- which the
     // host runs only while its setting net.allow_player_cheats is on and the sender holds the right
@@ -2315,6 +2332,77 @@ struct RoombaPayload {
     uint8_t  pad[3];  // zero
 };
 static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
+
+// The 3D printer's lane (coop/props/printer_sync). A model is its folder's name, UTF-8, 1 to 95 bytes, not terminated;
+// a printed object is the host's element id of it, with its save key (an FName as text, up to 63 bytes) for a joiner's
+// save-loaded copy.
+inline constexpr int kPrintNameMax = 95;
+inline constexpr int kPrintKeyMax = 63;
+// PrintAsk. The host's element id of the printer, and the model.
+struct PrintAskPayload {
+    uint32_t printerEid;           // 4
+    uint8_t  nameLen;              // 1
+    char     name[kPrintNameMax];  // 95
+};
+static_assert(sizeof(PrintAskPayload) == 100, "PrintAskPayload must be 100 bytes");
+// PrintCheck. The host's question, numbered, and the model.
+struct PrintCheckPayload {
+    uint32_t request;              // 4
+    uint8_t  nameLen;              // 1
+    char     name[kPrintNameMax];  // 95
+};
+static_assert(sizeof(PrintCheckPayload) == 100, "PrintCheckPayload must be 100 bytes");
+// PrintCheckReply. The answer, and the client's hash of its model folder (coop/props/printer_models), 0 for none.
+struct PrintCheckReplyPayload {
+    uint32_t request;  // 4
+    uint32_t pad;      // 4
+    uint64_t hash;     // 8
+};
+static_assert(sizeof(PrintCheckReplyPayload) == 16, "PrintCheckReplyPayload must be 16 bytes");
+// PrintNotice. Who lacks the model (a slot), why, and the model.
+inline constexpr uint8_t kPrintLacks = 0;    // no copy of the model
+inline constexpr uint8_t kPrintDiffers = 1;  // another copy of it
+struct PrintNoticePayload {
+    uint8_t subject;              // 1
+    uint8_t reason;               // 1
+    uint8_t nameLen;              // 1
+    uint8_t pad;                  // 1
+    char    name[kPrintNameMax];  // 95
+    uint8_t pad2;                 // 1
+};
+static_assert(sizeof(PrintNoticePayload) == 100, "PrintNoticePayload must be 100 bytes");
+// PrintedState. op kPrintedBorn: a printed object as the host holds it, where it rests; op kPrintedGone: destroyed on
+// the host (eid alone). The hash is the host's model folder's, so a client tells its own copy from it.
+inline constexpr uint8_t kPrintedBorn = 0;
+inline constexpr uint8_t kPrintedGone = 1;
+struct PrintedStatePayload {
+    uint32_t eid;                    // 4
+    uint8_t  op;                     // 1
+    uint8_t  light;                  // 1 -- lightActive
+    uint8_t  keyLen;                 // 1
+    uint8_t  nameLen;                // 1
+    int32_t  bites;                  // 4
+    uint32_t pad;                    // 4
+    uint64_t hash;                   // 8
+    float    loc[3];                 // 12
+    float    rot[3];                 // 12 -- pitch, yaw, roll
+    char     key[kPrintKeyMax + 1];  // 64
+    char     name[kPrintNameMax];    // 95
+    uint8_t  pad2;                   // 1
+};
+static_assert(sizeof(PrintedStatePayload) == 208, "PrintedStatePayload must be 208 bytes");
+// PrintedIntent. op kPrintedLight: toggle its light; kPrintedBite: this client's player took a bite; kPrintedLacking:
+// this client holds no copy of its model (arg kPrintLacks) or another (kPrintDiffers).
+inline constexpr uint8_t kPrintedLight = 0;
+inline constexpr uint8_t kPrintedBite = 1;
+inline constexpr uint8_t kPrintedLacking = 2;
+struct PrintedIntentPayload {
+    uint32_t eid;  // 4
+    uint8_t  op;   // 1
+    uint8_t  arg;  // 1
+    uint16_t pad;  // 2
+};
+static_assert(sizeof(PrintedIntentPayload) == 8, "PrintedIntentPayload must be 8 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

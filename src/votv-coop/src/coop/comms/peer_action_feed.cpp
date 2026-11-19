@@ -80,6 +80,9 @@ constexpr Row kRows[] = {
      nullptr, Kind::None},
     {Action::SaveMaybeNotTaken, L10N_MARK("%1$s saved the game, but the save may not have taken"), nullptr,
      Kind::None},
+    {Action::PrintModelMissing, L10N_MARK("%1$s does not have the 3D printer model '%2$s'"), nullptr, Kind::Name},
+    {Action::PrintModelDiffers, L10N_MARK("%1$s has a different copy of the 3D printer model '%2$s'"), nullptr,
+     Kind::Name},
 };
 static_assert(sizeof(kRows) / sizeof(kRows[0]) == static_cast<size_t>(Action::kCount),
               "one sentence per Action");

@@ -22,6 +22,7 @@
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/props/printer_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -310,6 +311,65 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::roomba_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::PrintAsk:
+    case net::ReliableKind::PrintCheck:
+    case net::ReliableKind::PrintCheckReply:
+    case net::ReliableKind::PrintNotice:
+    case net::ReliableKind::PrintedState:
+    case net::ReliableKind::PrintedIntent: {
+        // The 3D printer's lane (coop/props/printer_sync): each kind its exact length, the right way, and its text
+        // lengths inside their fields.
+        const auto k = msg.kind;
+        const bool toHost = k == net::ReliableKind::PrintAsk || k == net::ReliableKind::PrintCheckReply ||
+                            k == net::ReliableKind::PrintedIntent;
+        const size_t want = k == net::ReliableKind::PrintAsk          ? sizeof(net::PrintAskPayload)
+                            : k == net::ReliableKind::PrintCheck      ? sizeof(net::PrintCheckPayload)
+                            : k == net::ReliableKind::PrintCheckReply ? sizeof(net::PrintCheckReplyPayload)
+                            : k == net::ReliableKind::PrintNotice     ? sizeof(net::PrintNoticePayload)
+                            : k == net::ReliableKind::PrintedState    ? sizeof(net::PrintedStatePayload)
+                                                                      : sizeof(net::PrintedIntentPayload);
+        if (toHost != (session.role() == net::Role::Host) || msg.payloadLen != want) {
+            UE_LOGW("event_feed: a printer message the wrong way or the wrong length from slot %d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (k == net::ReliableKind::PrintAsk) {
+            net::PrintAskPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.printerEid || !p.nameLen || p.nameLen > net::kPrintNameMax) break;
+            ::coop::printer_sync::OnAsk(msg.senderPeerSlot, p);
+        } else if (k == net::ReliableKind::PrintCheck) {
+            net::PrintCheckPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.nameLen || p.nameLen > net::kPrintNameMax) break;
+            ::coop::printer_sync::OnCheck(p);
+        } else if (k == net::ReliableKind::PrintCheckReply) {
+            net::PrintCheckReplyPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            ::coop::printer_sync::OnCheckReply(msg.senderPeerSlot, p);
+        } else if (k == net::ReliableKind::PrintNotice) {
+            net::PrintNoticePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.nameLen || p.nameLen > net::kPrintNameMax || p.reason > net::kPrintDiffers) break;
+            ::coop::printer_sync::OnNotice(p);
+        } else if (k == net::ReliableKind::PrintedState) {
+            net::PrintedStatePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.eid || p.op > net::kPrintedGone || p.keyLen > net::kPrintKeyMax || p.nameLen > net::kPrintNameMax)
+                break;
+            if (p.op == net::kPrintedBorn &&
+                (!p.nameLen || !std::isfinite(p.loc[0]) || !std::isfinite(p.loc[1]) || !std::isfinite(p.loc[2]) ||
+                 !std::isfinite(p.rot[0]) || !std::isfinite(p.rot[1]) || !std::isfinite(p.rot[2])))
+                break;
+            ::coop::printer_sync::OnState(p);
+        } else {
+            net::PrintedIntentPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.eid || p.op > net::kPrintedLacking) break;
+            ::coop::printer_sync::OnIntent(msg.senderPeerSlot, p);
+        }
         break;
     }
     case net::ReliableKind::WoodchipperState:
