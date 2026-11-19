@@ -99,6 +99,7 @@ bool JoinArm() { return ArmOf() == Arm::Join || ArmOf() == Arm::MidJoin; }
 
 constexpr float    kAheadCm   = 300.f;   // the fixture's distance in front of the client's puppet
 constexpr float    kFarCm     = 3000.f;  // the far arm's: past the judge's reach with its allowance
+constexpr float    kTvLiftCm  = 200.f;   // the security TV's extra height, so its fall is one the drill can see
 constexpr float    kMovedCm   = 5.f;     // a freed fixture must have ended further than this from where it hung
 constexpr int      kMarkTicks = 90;      // still ticks before a rest is marked: the End has landed
 constexpr uint8_t  kAllJoints = 0x0F;
@@ -237,7 +238,8 @@ void HostWaitPeer(coop::net::Session& s) {
         return;
     }
     const float ahead = ArmOf() == Arm::Far ? kFarCm : kAheadCm;
-    g_spot = {at.X + fwd.X * ahead, at.Y + fwd.Y * ahead, at.Z};
+    // A security TV stands tall: from a waist-high spot it rests within a few cm of where it hung, so it hangs higher.
+    g_spot = {at.X + fwd.X * ahead, at.Y + fwd.Y * ahead, at.Z + (ArmOf() == Arm::Tv ? kTvLiftCm : 0.f)};
     void* prop = D::SpawnFixture(FixtureFor(), g_spot);
     if (!prop) { Invalid("the fixture did not spawn"); return; }
     g_prop.Set(prop);
