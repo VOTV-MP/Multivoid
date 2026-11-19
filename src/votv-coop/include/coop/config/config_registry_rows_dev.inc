@@ -618,8 +618,8 @@ CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", fal
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "
     "the host whenever it crossed; each peer logs every change of its state. Lines tagged "
-    "[TOGGLE-DRILL]; the client's DONE line ends it. One way: oven (the client repairs the oven, the "
-    "host reads it) and oven_host (the host repairs it once a client's world is ready); the host puts "
+    "[TOGGLE-DRILL]; the client's DONE line ends it. One way: oven_host (the host repairs the oven once a client's world is ready, the "
+    "client reads it; a client's own repair is an ask the host judges, drilled by oven_progress_drill=repair); the host puts "
     "back an oven its save had repaired before any client connects, and the reader's DONE line ends it.")
 // The swinger drill's row: its own file, one concept, included as _dev_nb.inc is below.
 #include "coop/config/config_registry_rows_dev_swinger.inc"

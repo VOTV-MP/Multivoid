@@ -46,7 +46,7 @@ constexpr auto kCrossBound = std::chrono::seconds(30);
 constexpr auto kNameBound = std::chrono::seconds(60);
 
 // One kind of device: how it is picked, read and toggled, as its own lane keys and reads it. A
-// one-way kind's state goes 0 to 1 once (a repair): one peer makes the change and the other reads it
+// one-way kind's state goes 0 to 1 once (a repair): the host makes the change and the client reads it
 // cross, and the host's fixture, before any client connects, puts back a device its save had changed,
 // so the joiner's world (the host's, captured live at the join) starts from 0 too.
 struct Kind {
@@ -58,7 +58,6 @@ struct Kind {
     bool (*Ready)(void* obj);                  // may take a toggle now; null: always
     bool (*Toggle)(void* obj, void* player);   // the device's own verb
     bool oneWay = false;
-    bool hostAuthors = false;                  // one way: the host makes the change, else the client
     bool (*Break)(void* obj) = nullptr;        // one way: the host's fixture
 };
 
@@ -83,10 +82,8 @@ constexpr Kind kKinds[] = {
     { "tap", &A::EnsureResolved, &A::IsTap, &IS::ApplianceKey, &A::TryReadState, nullptr, &TapToggle },
     { "locker", &DB::EnsureResolved, &DB::IsLocker, &IS::DoorBoxKey, &DB::TryReadOpened, nullptr, &LockerToggle },
     { "lid", &SW::EnsureResolved, &IsSteadyLid, &IS::ContainerKey, &SW::TryReadOpen, nullptr, &LidToggle },
-    { "oven", &A::EnsureResolved, &A::IsOven, &IS::OvenKey, &A::TryReadOvenFixed, nullptr, &OvenRepair,
-      true, false, &OvenBreak },
     { "oven_host", &A::EnsureResolved, &A::IsOven, &IS::OvenKey, &A::TryReadOvenFixed, nullptr, &OvenRepair,
-      true, true, &OvenBreak },
+      true, &OvenBreak },
 };
 
 enum class Phase { Unpicked, Waiting, Toggled, Done };
@@ -115,7 +112,7 @@ const char* Side() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 bool RoleIsReady() {
     if (coop::roster::LocalIsHost()) return true;
     if (!coop::net_pump::HasAnnouncedWorldReady()) return false;
-    return (g_kind->oneWay && g_kind->hostAuthors) ||
+    return g_kind->oneWay ||
            coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
 }
 
@@ -216,7 +213,7 @@ const Kind* KindOf() {
         if (want.empty()) return nullptr;
         for (const Kind& k : kKinds)
             if (want == k.name) return &k;
-        UE_LOGW("[TOGGLE-DRILL] toggle_drill='%s' names no kind (garage, tap, locker, lid, oven, oven_host) -- "
+        UE_LOGW("[TOGGLE-DRILL] toggle_drill='%s' names no kind (garage, tap, locker, lid, oven_host) -- "
                 "the drill is off",
                 want.c_str());
         return nullptr;
@@ -283,7 +280,7 @@ void Tick(coop::net::Session* session) {
             return;
         }
         g_start = g_last = on ? 1 : 0;
-        const bool author = !g_kind->oneWay || host == g_kind->hostAuthors;
+        const bool author = !g_kind->oneWay || host;
         g_phase = (host && !g_kind->oneWay) || !author ? Phase::Waiting : Phase::Toggled;
         if (!host && author) Owe();
         g_since = Clock::now();
@@ -320,10 +317,10 @@ void Tick(coop::net::Session* session) {
         if (g_phase == Phase::Waiting) {
             // The reader: its copy shows the other peer's change once it crossed.
             if (cur != g_start) {
-                UE_LOGI("[TOGGLE-DRILL] %s SAW the %s's change key='%ls' after %lld ms", Side(),
-                        host ? "client" : "host", g_key.c_str(), ms);
+                UE_LOGI("[TOGGLE-DRILL] %s SAW the host's change key='%ls' after %lld ms", Side(),
+                        g_key.c_str(), ms);
                 Done("crossed=1 one way");
-            } else if (!host && Clock::now() - g_since > kCrossBound) {
+            } else if (Clock::now() - g_since > kCrossBound) {
                 UE_LOGW("[TOGGLE-DRILL] client: the host's change did not cross within %lld s -- FAIL",
                         static_cast<long long>(kCrossBound.count()));
                 Done("crossed=0");

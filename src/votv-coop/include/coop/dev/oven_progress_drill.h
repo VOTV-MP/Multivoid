@@ -21,7 +21,14 @@ class Session;
 
 namespace coop::dev::oven_progress_drill {
 
+// True when any arm of the oven drill runs on this peer. The client of the client arm is walked to the oven's switch
+// box by the director before its first step: the host judges a client's steps by their reach of it. The arms repair,
+// reach, order and fixearly are coop/dev/oven_judge_drill's.
 bool IsEnabled();
+
+// Whether this peer's join is over: the client's world announced ready and its join idle, or a client of the host's
+// world-ready with its snapshot bracket closed. Both drills of the oven start on it. Game thread.
+bool PeersJoined(coop::net::Session& session);
 
 // The drill's pass on either peer. A single read when off. Game thread.
 void Tick(coop::net::Session* session);

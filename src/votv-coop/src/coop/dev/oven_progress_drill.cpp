@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/drill_chat.h"
+#include "coop/dev/oven_judge_drill.h"  // the judge arms, and the client's walk to the box
 #include "coop/interactables/interactable_sync.h"  // LiveOvens
 #include "coop/interactables/oven_progress_sync.h"
 #include "coop/net/net_clock.h"
@@ -60,6 +61,7 @@ int      g_step = 0;           // the next step to raise
 uint64_t g_waitMs = 0;         // when the current wait began; 0 = none
 bool     g_raisedStep = false;
 bool     g_started = false;    // the actor's fixture check has passed
+bool     g_walked = false;     // the client is at the oven's switch box (the host's judge measures its reach)
 bool     g_done = false;
 int      g_saidMask = -2;      // the watching peer's last said mask; -1 for an oven with no screen
 int      g_lastTheirs = -2;    // the acting peer's last read of the watching peer's mask
@@ -173,6 +175,19 @@ void TickActor() {
     uint8_t mine = 0;
     if (!OS::TryReadProgress(oven, mine))
         return Invalid("the acting peer's oven has no repair screen (repaired in this save, or not found)");
+    // A client's steps are judged by the host's reach of the oven's switch box: the director walks it there first.
+    if (!Host() && !g_walked) {
+        switch (coop::dev::oven_judge_drill::WalkToBox(oven)) {
+        case coop::dev::oven_judge_drill::Walk::Going: return;
+        case coop::dev::oven_judge_drill::Walk::Failed:
+            return Invalid("the director's walk to the oven's switch box failed");
+        case coop::dev::oven_judge_drill::Walk::Arrived:
+            g_walked = true;
+            Progress();
+            UE_LOGI("[OVEN-DRILL] [C] walked to the oven's switch box");
+            break;
+        }
+    }
     int theirs = -2;
     if (!TheirMask(theirs)) return Wait("the watching peer's first mask");
     if (!g_started) {
@@ -229,9 +244,12 @@ void TickJoin(coop::net::Session* session) {
 
 }  // namespace
 
-bool IsEnabled() { return ArmOf() != Arm::Off; }
+bool IsEnabled() { return ArmOf() != Arm::Off || coop::dev::oven_judge_drill::IsJudgeArm(); }
+
+bool PeersJoined(coop::net::Session& session) { return JoinOver(session); }
 
 void Tick(coop::net::Session* session) {
+    if (coop::dev::oven_judge_drill::IsJudgeArm()) return coop::dev::oven_judge_drill::Tick(session);
     if (!IsEnabled() || !session || g_done) return;
     if (!g_baseTaken) {
         g_baseTaken = true;
@@ -246,6 +264,8 @@ void Tick(coop::net::Session* session) {
 }
 
 void OnDisconnect() {
+    coop::dev::oven_judge_drill::OnDisconnect();
+    g_walked = false;
     g_oven.Reset();
     g_step = 0;
     g_waitMs = 0;

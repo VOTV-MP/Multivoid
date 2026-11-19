@@ -8,8 +8,8 @@
 // A toggle waits for its device to take one (a garage mid-swing ignores its runTrigger), not for a
 // clock; a step whose change never arrives ends at a bound and says so. The kinds (toggle_drill=):
 // garage (its runTrigger), tap (a faucet's or a sink's action 5), locker (its action 10), lid (a
-// prop_swinger's open or close); one way, the oven's fix(): oven (the client repairs, the host reads)
-// and oven_host (the host repairs once a client's world is ready, the client reads), from an oven
+// prop_swinger's open or close); one way, the oven's fix(): oven_host (the host repairs once a client's world is ready,
+// the client reads; a client's own repair is an ask the host judges: coop/dev/oven_judge_drill), from an oven
 // the host puts back before any client connects. Lines are tagged [TOGGLE-DRILL]; run on both peers
 // of a pair; the client's DONE line ends it, a one-way kind's reader's.
 
