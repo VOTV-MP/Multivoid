@@ -90,7 +90,11 @@ and the ATV's own state. An unbolt then runs the game's own `unscrewPanel` on th
 copy with the look fields set for the call; a fit or stow writes the fields the body writes and runs
 its reducer; the spare is born as a wheel prop beside the sender. The wheel's birth crosses as the
 host's and presence follows in `AtvState`. A refused fit or stow gives the wheel back as a prop
-beside the sender. The battery is not here: its fit and unscrew are the host's by `AtvRequest`
+beside the sender. The host has no copy of the wheel a client's hand held, so the scalars a fit or
+stow carries are the client's claim, bounded at the receive edge (finite; durability 0..100, dirt
+0..1, the repair countdown -1..3, the domain the condition read measured): a client can make a held
+wheel pristine, the same trust as a module's fit. A refused act is refunded only when nothing of it
+ran on the host's copy; one that ran in part is counted ran, said, and not refunded. The battery is not here: its fit and unscrew are the host's by `AtvRequest`
 (below), and this lane lets a battery's `unscrewPanel` and `playerUsedOn` run for that one.
 `coop/dev/atv_part_drill` (`VOTVCOOP_ATV_PART_DRILL=wheel`, both peers): the client, a wrench in its
 hand, unbolts a wheel and fits a held one back; both peers should hold the same tyre mask and wheel

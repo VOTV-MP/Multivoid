@@ -54,6 +54,10 @@ constexpr uint8_t  kActionTakeSpare = 7;   // the radial option that hands out t
 constexpr float    kReachUU = 400.0f;      // the seat's and a pry's reach; the authority adds the ATV's bounds
 constexpr float    kBesideCm = 70.0f;      // a part given to a sender is born this far ahead of its puppet
 constexpr float    kBesideUpCm = 20.0f;
+// The repair countdown's domain, the one the condition read measured (atv_condition.h, Read); a client's claim is
+// held to it, since the host has no copy of the wheel a client's hand held.
+constexpr int32_t  kFixesMin = -1;
+constexpr int32_t  kFixesMax = 3;
 constexpr uint64_t kRepeatMs = 700;        // a second ask of one unbolt or spare take inside this is not sent
 constexpr coop::net::IntentBudget kBudget{6.0f, 2.0f};
 
@@ -236,8 +240,11 @@ bool SpotBesideSender(uint8_t slot, ue_wrap::FVector& out) {
     return true;
 }
 
+// The wheel a client's ask names, every scalar within the game's own domain: the one place a client's
+// claim becomes the host's.
 AP::Wheel WheelOf(const coop::net::AtvPartIntentPayload& p) {
-    return AP::Wheel{Clamp(p.durability, 0.0f, 100.0f), Clamp(p.dirt, 0.0f, 1.0f), p.fixes};
+    const int32_t fixes = p.fixes < kFixesMin ? kFixesMin : p.fixes > kFixesMax ? kFixesMax : p.fixes;
+    return AP::Wheel{Clamp(p.durability, 0.0f, 100.0f), Clamp(p.dirt, 0.0f, 1.0f), fixes};
 }
 
 // The wheel a refused fit or stow took out of the sender's hand, born again beside the sender.
@@ -268,39 +275,65 @@ const char* Judge(const coop::net::AtvPartIntentPayload& p, const AC::Snapshot& 
     }
 }
 
+// How far a change got on the host's copy. A part the sender gave up is returned only for kNothing: a
+// refund after kPartly would be a second part beside the one the ATV already holds.
+enum class Got { kNothing, kPartly, kAll };
+
+// Whether the ATV's presence now reads as the op leaves it. An ATV that no longer reads holds nothing of it.
+bool Landed(void* atv, uint8_t what, uint8_t bit) {
+    AC::Snapshot now;
+    if (!AC::Read(atv, now)) return false;
+    switch (what) {
+    case op::kFitWheel:   return (now.mask & bit) != 0;
+    case op::kStowSpare:  return now.hasSpare;
+    case op::kTakeSpare:  return !now.hasSpare;
+    default:              return false;
+    }
+}
+
 // The change on the host's copy: the game's own unscrew for a part that leaves, the fields the body
-// writes and its reducer for one that arrives. False when it did not take.
-bool Run(void* atv, const coop::net::AtvPartIntentPayload& p, AC::Snapshot snap, uint8_t slot) {
+// writes and its reducer for one that arrives. A spare's take clears the box first and spawns its wheel
+// last, giving the spare back when no wheel came, so no failure leaves both a spare and a prop.
+Got Run(void* atv, const coop::net::AtvPartIntentPayload& p, AC::Snapshot snap, uint8_t slot) {
     const uint8_t bit = static_cast<uint8_t>(1u << p.index);
     AC::Snapshot after;
     switch (p.op) {
     case op::kRemoveWheel:
-        return AP::RunUnscrew(atv, p.index) && AC::Read(atv, after) && !(after.mask & bit);
+        return AP::RunUnscrew(atv, p.index) && AC::Read(atv, after) && !(after.mask & bit) ? Got::kAll
+                                                                                           : Got::kNothing;
     case op::kFitWheel: {
         const AP::Wheel w = WheelOf(p);
         snap.mask |= bit;
         snap.dur[p.index] = w.durability;
         snap.dirt[p.index] = w.dirt;
-        snap.fixes[p.index] = p.fixes;
-        return AC::WriteAccumulators(atv, snap) && AC::WritePresence(atv, snap.mask, snap.hasSpare) &&
-               AC::CallVerb(atv, AC::Verb::UpdTires);
+        snap.fixes[p.index] = static_cast<int8_t>(w.fixes);
+        if (AC::WriteAccumulators(atv, snap) && AC::WritePresence(atv, snap.mask, snap.hasSpare) &&
+            AC::CallVerb(atv, AC::Verb::UpdTires))
+            return Got::kAll;
+        return Landed(atv, p.op, bit) ? Got::kPartly : Got::kNothing;
     }
     case op::kStowSpare: {
         const AP::Wheel w = WheelOf(p);
         snap.spareDur = w.durability;
         snap.spareDirt = w.dirt;
-        snap.spareFixes = p.fixes;
-        return AC::WriteAccumulators(atv, snap) && AC::WritePresence(atv, snap.mask, true) &&
-               AC::CallVerb(atv, AC::Verb::UpdSpareTire);
+        snap.spareFixes = static_cast<int8_t>(w.fixes);
+        if (AC::WriteAccumulators(atv, snap) && AC::WritePresence(atv, snap.mask, true) &&
+            AC::CallVerb(atv, AC::Verb::UpdSpareTire))
+            return Got::kAll;
+        return Landed(atv, p.op, bit) ? Got::kPartly : Got::kNothing;
     }
     case op::kTakeSpare: {
         ue_wrap::FVector at{};
-        if (!SpotBesideSender(slot, at)) return false;
-        if (!AP::SpawnWheel(at, AP::Wheel{snap.spareDur, snap.spareDirt, snap.spareFixes})) return false;
-        return AC::WritePresence(atv, snap.mask, false) && AC::CallVerb(atv, AC::Verb::UpdSpareTire);
+        if (!SpotBesideSender(slot, at)) return Got::kNothing;
+        if (!AC::WritePresence(atv, snap.mask, false) && !Landed(atv, p.op, bit)) return Got::kNothing;
+        const bool shown = AC::CallVerb(atv, AC::Verb::UpdSpareTire);
+        if (AP::SpawnWheel(at, AP::Wheel{snap.spareDur, snap.spareDirt, snap.spareFixes}))
+            return shown ? Got::kAll : Got::kPartly;
+        const bool back = AC::WritePresence(atv, snap.mask, true) && AC::CallVerb(atv, AC::Verb::UpdSpareTire);
+        return back ? Got::kNothing : Got::kPartly;
     }
     default:
-        return false;
+        return Got::kNothing;
     }
 }
 
@@ -364,7 +397,11 @@ void OnIntent(coop::net::Session& session, const coop::net::AtvPartIntentPayload
             why = Judge(payload, snap, senderSlot);
         }
     }
-    if (!why && !Run(view.actor, payload, snap, senderSlot)) why = "the change did not take on the host's copy";
+    Got got = Got::kNothing;
+    if (!why) {
+        got = Run(view.actor, payload, snap, senderSlot);
+        if (got == Got::kNothing) why = "the change did not take on the host's copy";
+    }
     if (why) {
         ++g_stats.refused;
         const bool refunded = partOwed && Refund(senderSlot, payload);
@@ -376,6 +413,10 @@ void OnIntent(coop::net::Session& session, const coop::net::AtvPartIntentPayload
         return;
     }
     ++g_stats.ran;
+    if (got == Got::kPartly)
+        UE_LOGW("atv_part: slot %u's ask to %s on '%ls' took only partly on the host's copy -- nothing is "
+                "given back, since a second part would duplicate the one the change already placed",
+                static_cast<unsigned>(senderSlot), OpName(payload.op), key.c_str());
     // The host's copy changed under the row's expressed baseline: the next block applied to it seeds
     // the baseline from the actor again.
     if (auto* e = coop::atv_sync::FindEntryMutable(key)) e->condExpressedSeeded = false;
