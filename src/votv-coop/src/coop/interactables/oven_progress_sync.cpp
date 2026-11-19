@@ -5,13 +5,13 @@
 #include "coop/config/config.h"                    // [dev] oven_merge_off
 #include "coop/config/config_registry.h"
 #include "coop/interactables/interactable_sync.h"  // the oven lane's index: key <-> oven
-#include "coop/interactables/oven_repair_judge.h"  // HOST: a client's steps are judged
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/devices/appliance.h"  // TryReadOvenFixed
 #include "ue_wrap/devices/oven_screen.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
@@ -232,12 +232,6 @@ void Tick() {
 }
 
 void OnProgress(const coop::net::OvenProgressStatePayload& p, uint8_t senderSlot) {
-    // On the host a client's mask is an ask: the judge takes it before the record or the parking (the host never parks a
-    // client's step) and grants through GrantSteps. A client takes the host's masks as they are.
-    if (auto* s = g_session.load(std::memory_order_acquire); s && s->role() == coop::net::Role::Host) {
-        coop::oven_repair_judge::OnSteps(*s, p, senderSlot);
-        return;
-    }
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     const uint8_t mask = static_cast<uint8_t>(p.mask & OS::kAll);
     if (key.empty() || !mask) return;
@@ -263,11 +257,17 @@ void QueueConnectBroadcastForSlot(int slot) {
     std::vector<std::pair<std::wstring, void*>> ovens;
     IS::LiveOvens(ovens);
     for (const auto& o : ovens) {
+        // The record is the state: a granted step whose raise failed, or an oven with no screen open, still reaches the
+        // joiner. A repaired oven has no steps to take, so it sends none.
+        bool fixed = false;
+        if (ue_wrap::appliance::TryReadOvenFixed(o.second, fixed) && fixed) continue;
         uint8_t live = 0;
-        if (!OS::TryReadProgress(o.second, live) || !live) continue;
-        KnownOf(o.first) |= live;
-        Send(s, o.first, live, slot);
-        UE_LOGI("oven_progress: key='%ls' mask 0x%02X -> joiner slot %d", o.first.c_str(), live, slot);
+        OS::TryReadProgress(o.second, live);
+        const uint8_t now = static_cast<uint8_t>(KnownOf(o.first) | live);
+        if (!now) continue;
+        KnownOf(o.first) = now;
+        Send(s, o.first, now, slot);
+        UE_LOGI("oven_progress: key='%ls' mask 0x%02X -> joiner slot %d", o.first.c_str(), now, slot);
     }
 }
 

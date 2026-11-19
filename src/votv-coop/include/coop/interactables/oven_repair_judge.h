@@ -33,17 +33,18 @@ struct Stats {
     uint64_t loadNative = 0;       // CLIENT: fix() calls of its own world's load, run natively
     uint64_t grantedSteps = 0;     // HOST: steps granted
     uint64_t grantedRepairs = 0;   // HOST: repairs granted
-    uint64_t already = 0;          // HOST: asks on an oven already fixed, answered to the asker alone
+    uint64_t already = 0;          // HOST: asks or steps on an oven already fixed (an ask is answered to the asker alone)
     uint64_t refusedReach = 0;     // HOST: out of reach of the switch box (or the box unreadable)
     uint64_t refusedOrder = 0;     // HOST: a lid without four screws, a repair without the lid
     uint64_t refusedBucket = 0;    // HOST: the sender's queue was full
     uint64_t refusedNooven = 0;    // HOST: a key naming no oven the host indexes
     uint64_t refusedNobody = 0;    // HOST: the sender took no pose within the wait
     uint64_t refusedAction = 0;    // HOST: a repair message that was not action 1
+    uint64_t refusedEmpty = 0;     // HOST: a steps message with no key or no bit
     uint64_t fixFailed = 0;        // HOST: the granted fix() did not run
 };
 
-// Registers the watch on `fix`. The per-tick retry pump, so a refused watch is asked again. Game thread.
+// Registers the watch on `fix`, once: a refusal (a full gate table) is final, and said. Game thread.
 void Install(coop::net::Session* session);
 
 // Both roles: settles the watch. Host: serves each sender's queue, one head a tick. Game thread.

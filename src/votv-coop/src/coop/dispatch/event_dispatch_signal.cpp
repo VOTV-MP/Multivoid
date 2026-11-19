@@ -24,6 +24,7 @@
 #include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // PhysModsState
 #include "coop/interactables/oven_progress_sync.h"  // OvenProgressState
+#include "coop/interactables/oven_repair_judge.h"  // HOST: a client's steps are judged
 #include "coop/interactables/sat_console_sync.h"  // SatConsole
 #include "coop/interactables/drive_payload_sync.h"  // DrivePayload
 #include "coop/interactables/drive_sync.h"       // DriveSlotState
@@ -126,7 +127,7 @@ bool HandleSignalEvent(net::Session& session, const net::Session::ReliableMessag
     }
     case net::ReliableKind::OvenProgressState: {
         // The steps of an oven's repair: the host's record, which this client's screen takes the bits of it lacks, or a
-        // client's mask, which the host's judge takes (coop/interactables/oven_progress_sync::OnProgress).
+        // client's mask, which the host's judge takes: routed here on this dispatcher's session, as OvenRepairState is.
         if (msg.payloadLen < sizeof(net::OvenProgressStatePayload)) {
             UE_LOGW("event_feed: OvenProgressState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::OvenProgressStatePayload));
@@ -138,7 +139,8 @@ bool HandleSignalEvent(net::Session& session, const net::Session::ReliableMessag
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::oven_progress_sync::OnProgress(op, opslot);
+        if (session.role() == net::Role::Host) coop::oven_repair_judge::OnSteps(session, op, opslot);
+        else coop::oven_progress_sync::OnProgress(op, opslot);
         break;
     }
     case net::ReliableKind::DriveSlotState: {

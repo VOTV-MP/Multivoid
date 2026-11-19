@@ -7,7 +7,7 @@
 // it grants to the other clients, and a receiver raises on its own screen every bit it lacks. The wiring under the lid is drawn at random per screen and stays each peer's own;
 // the repair it ends in crosses as OvenRepairState (coop/interactables/interactable_sync). The save
 // carries no step, so a joiner's screen starts closed and the host's connect replay sends it the
-// host's mask. docs/devices.md carries the lane.
+// host's record of the steps. docs/devices.md carries the lane.
 
 #pragma once
 
@@ -29,11 +29,11 @@ void Install(coop::net::Session* session);
 // its oven was indexed. Game thread.
 void Tick();
 
-// OvenProgressState from the wire (router: event_dispatch_signal.cpp). On the host a client's mask is handed to the
-// judge, never merged here.
+// OvenProgressState from the wire (router: event_dispatch_signal.cpp), as a CLIENT takes it: the host's record. On the host a
+// client's mask is routed to the judge instead (coop/interactables/oven_repair_judge), never to this.
 void OnProgress(const coop::net::OvenProgressStatePayload& p, uint8_t senderSlot);
 
-// HOST: ship every oven's mask that has a bit to a joiner (connect replay).
+// HOST: ship the record of every unrepaired oven that holds a step, its screen's bits included, to a joiner (connect replay).
 void QueueConnectBroadcastForSlot(int slot);
 
 // The steps this peer's record holds for the oven under `key`: what it sent, took or granted, which the save does not

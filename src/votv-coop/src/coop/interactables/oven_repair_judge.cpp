@@ -50,9 +50,12 @@ constexpr float kOvenReachCm = 400.0f;
 // is only felt by a stalled or flooding client.
 constexpr coop::net::IntentBudget kBudget{8.0f, 4.0f};
 constexpr size_t   kMaxPending = 8;
-// How long a head waits for its sender's first pose before it is refused: a joiner's pose is seconds away, not a minute.
+// How long a head waits for its sender's first pose before it is refused: a joiner's pose is seconds away, not a minute, so the
+// wait is 10 s. While it waits, each tick re-reads the box's place (one engine call per waiting sender, bounded by this).
 constexpr uint64_t kNoBodyBoundMs = 10000;
 constexpr uint64_t kSayMs = 10000;
+// The next time a refusal that no queue rate-limits (a repair message of action 0) is said.
+uint64_t g_nextActionSayMs = 0;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchAsked = false;
@@ -149,6 +152,13 @@ bool Execute(coop::net::Session& s, Item& it, uint8_t slot) {
         }
     }
     if (!it.repair) {
+        // A repaired oven has no steps to take: nothing is recorded or sent, so no client parks a mask for it.
+        bool repaired = false;
+        if (A::TryReadOvenFixed(oven, repaired) && repaired) {
+            ++g_stats.already;
+            Deny("steps on an oven already fixed", it, slot, distUU);
+            return true;
+        }
         const uint8_t grant = JudgeSteps(it, slot, PS::KnownMask(it.key), distUU);
         if (!grant) return true;  // nothing new, or only a refused lid (said)
         PS::GrantSteps(s, oven, it.key, grant, slot);
@@ -213,7 +223,8 @@ void Push(coop::net::Session& session, Item&& item, uint8_t senderSlot) {
 // ---- the client's hold -----------------------------------------------------------------------
 // The repair a client would run is asked of the host instead. The body is cancelled whatever the answer: it never moves
 // this copy, and the host's OvenRepairState does. A kitchen with no key cannot be named to the host, so its repair is
-// cancelled too, said once: running it here would fix this copy alone.
+// cancelled too, said once: running it here would fix this copy alone. A refused or lost ask gets no reply: the screen
+// has already closed itself after the cancelled call, and the oven stays unfixed, so the player works the wiring again.
 sg::Verdict OnFixPre(const sg::Call& c) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
@@ -270,6 +281,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick(coop::net::Session& session) {
+    sg::ResolvePendingNames();
     if (!g_settled && g_watchAsked) {
         if (sg::NameWatchLive(kRowFix, kTagFix)) {
             g_settled = true;
@@ -291,8 +303,14 @@ void OnAsk(coop::net::Session& session, const coop::net::KeyedTogglePayload& pay
     // The game never unfixes an oven, so a client's repair message is action 1 alone.
     if (payload.action != 1) {
         ++g_stats.refusedAction;
-        UE_LOGW("[OVEN-JUDGE] slot %u sent a repair message of action %u -- refused: the game never unfixes an oven",
-                static_cast<unsigned>(senderSlot), static_cast<unsigned>(payload.action));
+        // Said before any queue or bucket, so it is rate-limited here, as the queue-full line is.
+        const uint64_t now = NowMs();
+        if (now >= g_nextActionSayMs) {
+            g_nextActionSayMs = now + kSayMs;
+            UE_LOGW("[OVEN-JUDGE] slot %u sent a repair message of action %u -- refused: the game never unfixes an oven "
+                    "(said once in %llu s)", static_cast<unsigned>(senderSlot), static_cast<unsigned>(payload.action),
+                    static_cast<unsigned long long>(kSayMs / 1000));
+        }
         return;
     }
     Item it;
@@ -305,7 +323,10 @@ void OnSteps(coop::net::Session& session, const coop::net::OvenProgressStatePayl
     Item it;
     it.key = coop::net::StringFromWireKey(payload.key);
     it.mask = static_cast<uint8_t>(payload.mask & OS::kAll);
-    if (it.key.empty() || !it.mask) return;
+    if (it.key.empty() || !it.mask) {
+        ++g_stats.refusedEmpty;  // counted, said in the session's summary
+        return;
+    }
     Push(session, std::move(it), senderSlot);
 }
 
@@ -314,10 +335,10 @@ Stats GetStats() { return g_stats; }
 void OnDisconnect() {
     const Stats t = GetStats();
     if (t.asked || t.held || t.ranHere || t.loadNative || t.grantedSteps || t.grantedRepairs || t.already ||
-        t.refusedReach || t.refusedOrder || t.refusedBucket || t.refusedNooven || t.refusedNobody || t.refusedAction ||
+        t.refusedReach || t.refusedOrder || t.refusedBucket || t.refusedNooven || t.refusedNobody || t.refusedAction || t.refusedEmpty ||
         t.fixFailed)
         UE_LOGI("[OVEN-JUDGE] session end -- asked=%llu held=%llu ran here=%llu own load run natively=%llu granted steps=%llu "
-                "repairs=%llu already=%llu refused: reach=%llu order=%llu bucket=%llu nooven=%llu nobody=%llu action=%llu; "
+                "repairs=%llu already=%llu refused: reach=%llu order=%llu bucket=%llu nooven=%llu nobody=%llu action=%llu empty=%llu; "
                 "fix failed=%llu",
                 static_cast<unsigned long long>(t.asked), static_cast<unsigned long long>(t.held),
                 static_cast<unsigned long long>(t.ranHere), static_cast<unsigned long long>(t.loadNative),
@@ -325,7 +346,8 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(t.already), static_cast<unsigned long long>(t.refusedReach),
                 static_cast<unsigned long long>(t.refusedOrder), static_cast<unsigned long long>(t.refusedBucket),
                 static_cast<unsigned long long>(t.refusedNooven), static_cast<unsigned long long>(t.refusedNobody),
-                static_cast<unsigned long long>(t.refusedAction), static_cast<unsigned long long>(t.fixFailed));
+                static_cast<unsigned long long>(t.refusedAction), static_cast<unsigned long long>(t.refusedEmpty),
+                static_cast<unsigned long long>(t.fixFailed));
     g_stats = Stats{};
 }
 
