@@ -171,6 +171,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PropPropsIntent:
     case ReliableKind::WalkerSeen:
     case ReliableKind::CheatRequest:
+    case ReliableKind::BucketIntent:
         return ClientAuthorship::Client;
     // The Host row matches MTA's protected element data, which a client may not write: opt-in there
     // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2743-2755), the only mode here.
@@ -279,6 +280,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::OrbEvent:
     case ReliableKind::UfoEvent:
     case ReliableKind::CheatResult:
+    case ReliableKind::BucketState:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a value that names no kind: refused like Host
