@@ -35,6 +35,9 @@ std::wstring KeyOf(void* prop);
 // Game thread.
 bool IsPried(const std::wstring& key);
 
+// Forgets `prop`'s record when the copy is static or frozen again: a pried prop is free, so the record is another world's. Game thread.
+void ForgetIfStale(void* prop);
+
 // HOST: `prop`'s pry has run on the host's copy (its own crowbarOpen's end, or a grant). Records the key as pried, sends
 // PryState to every client and hands the freed body to the driven-prop stream as the host's coast, once: a second mark of
 // a pried key is a no-op. Game thread.

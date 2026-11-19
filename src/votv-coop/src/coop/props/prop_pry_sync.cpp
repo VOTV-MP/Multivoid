@@ -121,6 +121,7 @@ sg::Verdict OnCrowbarPre(const sg::Call& c) {
     // granted another player's pry of the same prop.
     // The pried drill's twice red arm: a second pry of a pried prop runs its body again. Resolved once.
     static const bool s_againOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_again_off);
+    if (!s_againOff) ForgetIfStale(c.object);
     if (s_againOff || key.empty() || g_grantDepth > 0 || !IsPried(key)) return sg::Verdict::Run;
     ++g_stats.twiceCancelled;
     UE_LOGI("prop_pry_sync: a second pry of '%ls' cancelled -- it is already pried here", key.c_str());
@@ -151,6 +152,12 @@ std::wstring KeyOf(void* prop) {
 }
 
 bool IsPried(const std::wstring& key) { return g_rec.find(key) != g_rec.end(); }
+
+void ForgetIfStale(void* prop) {
+    if (g_rec.empty()) return;
+    const auto it = g_rec.find(KeyOf(prop));
+    if (it != g_rec.end() && (ue_wrap::prop::IsStatic(prop) || ue_wrap::prop::IsFrozen(prop))) g_rec.erase(it);
+}
 
 namespace {
 
@@ -209,6 +216,7 @@ void StampRow(void* prop, uint8_t& physFlags, uint8_t& pryMask) {
     if (s_rowOff) return;
     auto* s = LaneSession();
     if (!s || s->role() != coop::net::Role::Host) return;
+    ForgetIfStale(prop);
     const auto it = g_rec.find(KeyOf(prop));
     if (it == g_rec.end()) return;
     physFlags |= coop::net::propspawn_flags::kPried;
@@ -302,7 +310,10 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_stats.asked), static_cast<unsigned long long>(g_stats.twiceCancelled),
                 static_cast<unsigned long long>(g_stats.loadNative), static_cast<unsigned long long>(g_stats.unresolved));
     g_stats = Stats{};
-    g_rec.clear();
+    // The host's record is its world's, not a client's: it outlives the last client so a rejoiner's row carries it. A record
+    // left by another world is dropped where it is met (ForgetIfStale: a pried prop is never static).
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!(s && s->running() && s->role() == coop::net::Role::Host)) g_rec.clear();
     g_grantDepth = 0;
     g_nextNoKeySayMs = 0;
 }

@@ -160,6 +160,7 @@ bool Execute(coop::net::Session& s, const coop::net::PryAskPayload& p, uint8_t s
         Refuse(slot, key, Why::NoCrowbar);
         return true;
     }
+    PS::ForgetIfStale(prop);
     if (PS::IsPried(key)) {
         Refuse(slot, key, Why::Already);
         return true;
