@@ -22,6 +22,7 @@
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
+#include "coop/creatures/kerfur_color_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -310,6 +311,33 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::roomba_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::KerfurColorState:
+    case net::ReliableKind::KerfurColorIntent: {
+        // KerfurColorState HOST->ALL, KerfurColorIntent CLIENT->HOST (coop/creatures/kerfur_color_sync). Exact length,
+        // every float finite and in the range the game's colours take.
+        const bool intent = msg.kind == net::ReliableKind::KerfurColorIntent;
+        const size_t want = intent ? sizeof(net::KerfurColorIntentPayload) : sizeof(net::KerfurColorPayload);
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != want) {
+            UE_LOGW("event_feed: a kerfur colour message the wrong way or the wrong length from slot %d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        auto inRange = [](float v, float hi) { return std::isfinite(v) && v >= 0.f && v <= hi; };
+        if (intent) {
+            net::KerfurColorIntentPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.eid || !inRange(p.color[0], 64.f) || !inRange(p.color[1], 64.f) || !inRange(p.color[2], 64.f) ||
+                !inRange(p.color[3], 64.f))
+                break;
+            ::coop::kerfur_color_sync::OnIntent(msg.senderPeerSlot, p);
+        } else {
+            net::KerfurColorPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.eid || !inRange(p.hsv[0], 360.f) || !inRange(p.hsv[1], 1.f) || !inRange(p.hsv[2], 64.f)) break;
+            ::coop::kerfur_color_sync::OnState(p);
+        }
         break;
     }
     case net::ReliableKind::WoodchipperState:

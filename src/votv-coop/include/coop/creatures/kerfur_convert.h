@@ -42,4 +42,7 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
 // Clear the open verbs and fan the disconnect to the host half.
 void OnDisconnect();
 
+// CLIENT, per gameplay tick: a gamer Omega copy that does not tick gets the rainbow its own tick paints. Game thread.
+void PaintGamerCopies();
+
 }  // namespace coop::kerfur_convert

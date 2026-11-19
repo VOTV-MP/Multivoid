@@ -5,6 +5,7 @@
 
 #include "coop/creatures/kerfur_convert.h"
 
+#include "coop/creatures/kerfur_color_sync.h"      // a new form's colour
 #include "coop/creatures/kerfur_convert_client.h"  // the wire apply
 #include "coop/creatures/kerfur_convert_host.h"    // the converge and the request execution
 #include "coop/creatures/kerfur_entity.h"          // the resolved classes, ReleaseKerfurForEid
@@ -12,14 +13,22 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <windows.h>
+
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -56,6 +65,27 @@ constexpr const wchar_t* kTurnOnVerb  = L"spawnKerfuro";
 UE_FACT_FN(kRowDropKerfurProp, "kerfur_convert", nullptr, L"dropKerfurProp", AnyClass);
 UE_FACT_FN(kRowSpawnKerfuro, "kerfur_convert", nullptr, L"spawnKerfuro", AnyClass);
 constexpr int kWatchTurnOff = 0x4B430001;  // 'KC' 1
+// The gamer Omega's prop and the custom-colour Omega's (prop_kerfurOmega_col_gamer_C, prop_kerfurOmega_col_C) turn on
+// in their own actionOptionIndex: action 8 spawns the Omega itself, with the prop's Type and sentient (and the colour's
+// hsv), and never calls spawnKerfuro, so this lane never saw it -- the host's Omega reached no client, and a client's
+// turned on on its screen alone (VOTV-MP/Multivoid#185). In a session that action is refused and spawnKerfuro called
+// in its place, with the prop's spawnKerfur (which these props leave empty) set to its Omega, so it converts as every
+// other kerfur does; the host's return writes the prop's fields on the new Omega, as the prop's body does.
+UE_FACT_FN(kRowActionOptionIndex, "kerfur_convert", nullptr, L"actionOptionIndex", AnyClass);
+constexpr int kWatchGamerUse = 0x4B430003;  // 'KC' 3
+constexpr uint8_t kActionTurnOn = 8;        // the interaction actions' turn-on, as the props' graphs compare it
+struct InlineTurnOn {
+    const wchar_t* prop;
+    const wchar_t* npc;
+    bool hsv;           // the colour's: the Omega's hsv, painted by its SetStyle
+    void* propClass;
+    void* npcClass;
+};
+InlineTurnOn g_inline[] = {
+    {L"prop_kerfurOmega_col_gamer_C", L"kerfurOmega_col_gamer_C", false, nullptr, nullptr},
+    {L"prop_kerfurOmega_col_C", L"kerfurOmega_col_C", true, nullptr, nullptr},
+};
+void* g_gamerNpcClass = nullptr;   // the gamer Omega, whose copies PaintGamerCopies paints
 constexpr int kWatchTurnOn  = 0x4B430002;
 
 // ---- the verb, on a client: refused, and asked of the host ----------------------------------
@@ -111,6 +141,69 @@ struct OpenVerb {
 };
 std::vector<OpenVerb> g_open;
 
+// The inline turn-on `actor` is the prop of, or null.
+const InlineTurnOn* InlineOf(void* actor) {
+    void* const cls = actor ? R::ClassOf(actor) : nullptr;
+    for (const InlineTurnOn& k : g_inline)
+        if (cls && k.propClass && k.npcClass && cls == k.propClass) return &k;
+    return nullptr;
+}
+
+// The prop's spawnKerfur set to its Omega, which spawnKerfuro spawns. False when it cannot be.
+bool PointInlineSpawn(void* prop, const InlineTurnOn& k) {
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(prop), L"spawnKerfur");
+    if (off < 0) return false;
+    *reinterpret_cast<void**>(static_cast<char*>(prop) + off) = k.npcClass;
+    return true;
+}
+
+// The host's turn-on of such a prop: the prop's Type, sentient and hsv, for its return to write on the new Omega.
+struct InlineCarry {
+    void* prop = nullptr;
+    const InlineTurnOn* kind = nullptr;
+    int32_t type = 0;
+    uint8_t sentient = 0;
+    ue_wrap::FVector hsv{};
+};
+InlineCarry g_carry;
+
+std::vector<void*> NpcsOf(void* cls) {
+    std::vector<void*> out;
+    if (cls)
+        ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
+                static_cast<std::vector<void*>*>(ctx)->push_back(obj);
+        }, &out);
+    return out;
+}
+std::vector<void*> GamerNpcs() { return NpcsOf(g_gamerNpcClass); }
+
+template <class T>
+T Field(void* obj, const wchar_t* name, T dflt) {
+    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
+    return off >= 0 ? *reinterpret_cast<const T*>(static_cast<const char*>(obj) + off) : dflt;
+}
+template <class T>
+void SetField(void* obj, const wchar_t* name, T v) {
+    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
+    if (off >= 0) *reinterpret_cast<T*>(static_cast<char*>(obj) + off) = v;
+}
+
+// Such a prop's action 8 in a session: refused, and spawnKerfuro run on the prop instead, whose watch below asks the
+// host (a client) or converts it (the host). Any other action, and a solo game, run the game's own.
+sg::Verdict OnGamerUsePre(const sg::Call& c) {
+    auto* s = LoadSession();
+    const InlineTurnOn* const k = InlineOf(c.object);
+    if (!s || !s->running() || !k) return sg::Verdict::Run;
+    const int32_t off = c.locals ? R::FindParamOffset(c.function, L"action") : -1;
+    if (off < 0 || c.locals[off] != kActionTurnOn) return sg::Verdict::Run;
+    if (!PointInlineSpawn(c.object, *k) || !g_spawnKerfuroFn) return sg::Verdict::Run;
+    ue_wrap::ParamFrame f(g_spawnKerfuroFn);
+    const bool ran = f.valid() && ue_wrap::Call(c.object, f);
+    UE_LOGI("kerfur_convert: %ls's own turn-on on %p is run as spawnKerfuro (ran=%d)", k->prop, c.object, ran ? 1 : 0);
+    return sg::Verdict::Cancel;
+}
+
 sg::Verdict OnVerbPre(const sg::Call& c) {
     auto* s = LoadSession();
     if (!s || !s->running()) return sg::Verdict::Run;
@@ -118,6 +211,14 @@ sg::Verdict OnVerbPre(const sg::Call& c) {
     if (s->role() == coop::net::Role::Client) {
         RefuseOnClient(s, c, toProp);
         return sg::Verdict::Cancel;
+    }
+    if (const InlineTurnOn* k = toProp ? nullptr : InlineOf(c.object)) {   // a request runs spawnKerfuro straight
+        PointInlineSpawn(c.object, *k);
+        g_carry.prop = c.object;
+        g_carry.kind = k;
+        g_carry.type = Field<int32_t>(c.object, L"Type", 0);
+        g_carry.sentient = Field<uint8_t>(c.object, L"sentient", 0);
+        g_carry.hsv = Field<ue_wrap::FVector>(c.object, L"hsv", ue_wrap::FVector{});
     }
     const OpenVerb entry{c.object, R::InternalIndexOf(c.object), c.function,
                          EL::Registry::Get().EidForActor(c.object), toProp,
@@ -136,7 +237,22 @@ void OnVerbPost(const sg::Call& c) {
         if (it->object != c.object) continue;
         const OpenVerb o = *it;
         g_open.erase(it);
-        coop::kerfur_convert_host::ConvergeAtReturn(o.object, o.idx, o.eid, o.toProp, o.requestSlot);
+        void* const fresh = coop::kerfur_convert_host::ConvergeAtReturn(o.object, o.idx, o.eid, o.toProp, o.requestSlot);
+        const bool carried = !o.toProp && g_carry.prop == o.object && g_carry.kind;
+        if (carried && fresh && R::ClassOf(fresh) == g_carry.kind->npcClass) {   // the prop body's writes on its Omega
+            SetField<int32_t>(fresh, L"Type", g_carry.type);
+            SetField<uint8_t>(fresh, L"sentient", g_carry.sentient);
+            if (g_carry.kind->hsv) {
+                // The body sets hsv before the Omega's construction paints it; here it lands after, so it is painted.
+                SetField<ue_wrap::FVector>(fresh, L"hsv", g_carry.hsv);
+                void* const paint = R::FindDispatchFunctionCached(R::ClassOf(fresh), L"SetStyle");
+                ue_wrap::ParamFrame f(paint);
+                if (paint && f.valid()) ue_wrap::Call(fresh, f);
+            }
+        }
+        if (carried) g_carry = InlineCarry{};
+        // A custom-colour kerfur's new form took its colour from the old on the host alone: it goes out behind the convert.
+        if (fresh) coop::kerfur_color_sync::HostAnnounce(fresh);
         return;
     }
 }
@@ -197,6 +313,19 @@ void Install(coop::net::Session* session) {
     // pending names); a refused registration is a full table, logged by the gate.
     const bool off = sg::WatchName(kRowDropKerfurProp, kWatchTurnOff, &OnVerbPre, &OnVerbPost);
     const bool on  = sg::WatchName(kRowSpawnKerfuro, kWatchTurnOn, &OnVerbPre, &OnVerbPost);
+    bool anyInline = false;
+    for (InlineTurnOn& k : g_inline) {
+        k.propClass = ue_wrap::object_index::ClassByName(k.prop);
+        k.npcClass = ue_wrap::object_index::ClassByName(k.npc);
+        if (!k.propClass || !k.npcClass)
+            UE_LOGW("kerfur_convert: %ls's turn-on is not watched (prop %p, Omega %p) -- it converts on its own machine "
+                    "alone", k.prop, k.propClass, k.npcClass);
+        anyInline = anyInline || (k.propClass && k.npcClass);
+    }
+    g_gamerNpcClass = g_inline[0].npcClass;
+    if (anyInline && !sg::WatchName(kRowActionOptionIndex, kWatchGamerUse, &OnGamerUsePre, nullptr))
+        UE_LOGW("kerfur_convert: the gate took no watch on actionOptionIndex -- the inline turn-ons convert on their own "
+                "machine alone");
     if (!off || !on) {
         UE_LOGE("kerfur_convert: the gate refused a verb watch (turn_off=%d turn-on=%d) -- module DISABLED",
                 off ? 1 : 0, on ? 1 : 0);
@@ -232,8 +361,68 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     return true;
 }
 
+// The gamer Omega's colour is its tick's alone: each frame it writes HSVToRGB(time alive x 360, 1, 2) into its mesh's
+// materials' `color`. A client's copy of an Omega is inert and does not tick, so it stood black, and with the material's
+// colour at zero it could read as unseen (VOTV-MP/Multivoid#185). Here the same rainbow is written on such a copy, from
+// this machine's clock: the hue is the copy's own, as each machine's own tick would make it. It is painted 30 times a
+// second, not each frame (a paint is ~12 us), from a list of the copies refreshed twice a second.
+namespace {
+struct GamerCopy {
+    void* npc;
+    int32_t idx;
+    void* mesh;
+};
+std::vector<GamerCopy> g_gamerCopies;
+std::chrono::steady_clock::time_point g_gamerScanAt{}, g_gamerPaintAt{};
+constexpr auto kGamerScanGap = std::chrono::milliseconds(500);
+constexpr auto kGamerPaintGap = std::chrono::microseconds(33333);
+}  // namespace
+
+void PaintGamerCopies() {
+    auto* s = LoadSession();
+    if (!s || !s->running() || s->role() == coop::net::Role::Host || !g_gamerNpcClass) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_gamerPaintAt) return;
+    g_gamerPaintAt += kGamerPaintGap;   // on a schedule, so it averages 30 at any frame rate above that
+    if (g_gamerPaintAt < now) g_gamerPaintAt = now;
+    if (now >= g_gamerScanAt) {
+        g_gamerScanAt = now + kGamerScanGap;
+        g_gamerCopies.clear();
+        for (void* npc : GamerNpcs()) {
+            if (ue_wrap::engine::IsActorTickEnabled(npc)) continue;   // a copy that ticks paints itself
+            if (void* const mesh = Field<void*>(npc, L"Mesh", nullptr))
+                g_gamerCopies.push_back(GamerCopy{npc, R::InternalIndexOf(npc), mesh});
+        }
+    }
+    if (g_gamerCopies.empty()) return;
+    // UE4's FLinearColor::HSVToLinearRGB with H in degrees, S 1 and V 2, as the gamer graph calls it.
+    const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+    const double h = std::fmod(seconds * 360.0, 360.0), c = 2.0;
+    const double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
+    double r = 0, g = 0, b = 0;
+    switch (static_cast<int>(h / 60.0) % 6) {
+    case 0: r = c; g = x; break;
+    case 1: r = x; g = c; break;
+    case 2: g = c; b = x; break;
+    case 3: g = x; b = c; break;
+    case 4: r = x; b = c; break;
+    default: r = c; b = x; break;
+    }
+    const ue_wrap::FVector rgb{static_cast<float>(r), static_cast<float>(g), static_cast<float>(b)};
+    static const R::FName kColor = ue_wrap::fname_utils::StringToFName(L"color");
+    for (const GamerCopy& copy : g_gamerCopies) {
+        if (!R::IsLiveByIndex(copy.npc, copy.idx)) continue;
+        void* const fn = R::FindDispatchFunctionCached(R::ClassOf(copy.mesh), L"SetVectorParameterValueOnMaterials");
+        ue_wrap::ParamFrame f(fn);
+        if (fn && f.valid() && f.SetRaw(L"ParameterName", &kColor, sizeof(kColor)) &&
+            f.Set<ue_wrap::FVector>(L"ParameterValue", rgb))
+            ue_wrap::Call(copy.mesh, f);
+    }
+}
+
 void OnDisconnect() {
     g_open.clear();  // game thread, as the gate callbacks and the destroy seam that read it
+    g_gamerCopies.clear();
     g_saidEventRefusal = false;
     coop::kerfur_convert_host::OnDisconnect();
 }

@@ -614,6 +614,7 @@ set(VOTVCOOP_SOURCES
     src/l10n/locale_choice.cpp
     src/l10n/l10n.cpp
     src/l10n/l10n_selftest.cpp
+    src/coop/creatures/kerfur_color_sync.cpp
 )
 
 include(${CMAKE_CURRENT_LIST_DIR}/sources_dev.cmake)
