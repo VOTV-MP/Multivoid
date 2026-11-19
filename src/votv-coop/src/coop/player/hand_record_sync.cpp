@@ -29,6 +29,7 @@
 #include <string>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <vector>
 #include <wchar.h>
@@ -62,7 +63,7 @@ constexpr size_t kMaxRecordBytes = 4096;
 constexpr size_t kMaxGroups = 16;      // groups of one kind
 constexpr size_t kMaxPerGroup = 64;    // elements of one group
 constexpr size_t kMaxChars = 96;       // a name, a string, a class leaf
-constexpr size_t kMaxSignals = 8;      // signal rows (a disc carrier's)
+constexpr size_t kMaxSignals = 16;     // signal rows (a disc carrier's; a drive box holds 16, VOTV-MP/Multivoid#192)
 constexpr size_t kMaxClassNames = 64;  // every class leaf of a record, all groups: each is a probe of the class index
 // How long a class the sender held counts as held: the host applies a client's hand states at a pace (kHandBudget), so
 // a record can arrive behind the hand it was read from. Covers that pace with margin.
@@ -150,34 +151,64 @@ bool RecordFinite(const SR::SaveRecord& r) {
     return true;
 }
 
+// Which of a record's counts or lengths is past the lane's bound, as text for the refusal's line; empty when all are
+// within: a client's refused hand has its reason said, not only its class.
 template <class G>
-bool GroupsWithin(const G& groups) {
-    if (groups.size() > kMaxGroups) return false;
-    for (const auto& grp : groups) if (grp.size() > kMaxPerGroup) return false;
-    return true;
+std::string GroupsFault(const G& groups, const char* kind) {
+    char b[96];
+    if (groups.size() > kMaxGroups) {
+        std::snprintf(b, sizeof(b), "%zu %s groups (bound %zu)", groups.size(), kind, kMaxGroups);
+        return b;
+    }
+    for (const auto& grp : groups)
+        if (grp.size() > kMaxPerGroup) {
+            std::snprintf(b, sizeof(b), "a %s group of %zu (bound %zu)", kind, grp.size(), kMaxPerGroup);
+            return b;
+        }
+    return {};
 }
 
-bool TextsWithin(const std::vector<std::vector<std::wstring>>& groups) {
-    if (!GroupsWithin(groups)) return false;
-    for (const auto& grp : groups) for (const auto& s : grp) if (s.size() > kMaxChars) return false;
-    return true;
+std::string TextsFault(const std::vector<std::vector<std::wstring>>& groups, const char* kind) {
+    std::string f = GroupsFault(groups, kind);
+    if (!f.empty()) return f;
+    for (const auto& grp : groups)
+        for (const auto& s : grp)
+            if (s.size() > kMaxChars) {
+                char b[96];
+                std::snprintf(b, sizeof(b), "a %s of %zu chars (bound %zu)", kind, s.size(), kMaxChars);
+                return b;
+            }
+    return {};
 }
 
-// The counts and lengths a record's groups may carry, before anything of it is stored or relayed.
-bool RecordWithinBounds(const SR::SaveRecord& r) {
-    if (r.className.size() > kMaxChars || r.key.size() > kMaxChars) return false;
-    if (!GroupsWithin(r.bools) || !GroupsWithin(r.floats) || !GroupsWithin(r.ints) || !GroupsWithin(r.vectors) ||
-        !GroupsWithin(r.rotators) || !GroupsWithin(r.transforms) || !GroupsWithin(r.bytes))
-        return false;
-    if (!TextsWithin(r.strings) || !TextsWithin(r.classes) || !TextsWithin(r.names)) return false;
+}  // namespace
+
+std::string BoundsFault(const SR::SaveRecord& r) {
+    if (r.className.size() > kMaxChars || r.key.size() > kMaxChars) return "a class or key past its length";
+    for (const std::string& f : {GroupsFault(r.bools, "bool"), GroupsFault(r.floats, "float"), GroupsFault(r.ints, "int"),
+                                 GroupsFault(r.vectors, "vector"), GroupsFault(r.rotators, "rotator"),
+                                 GroupsFault(r.transforms, "transform"), GroupsFault(r.bytes, "byte"),
+                                 TextsFault(r.strings, "string"), TextsFault(r.classes, "class"),
+                                 TextsFault(r.names, "name")})
+        if (!f.empty()) return f;
     size_t classNames = 0;
     for (const auto& grp : r.classes) classNames += grp.size();
-    if (classNames > kMaxClassNames || r.signals.size() > kMaxSignals) return false;
+    char b[96];
+    if (classNames > kMaxClassNames) {
+        std::snprintf(b, sizeof(b), "%zu class names (bound %zu)", classNames, kMaxClassNames);
+        return b;
+    }
+    if (r.signals.size() > kMaxSignals) {
+        std::snprintf(b, sizeof(b), "%zu signals (bound %zu)", r.signals.size(), kMaxSignals);
+        return b;
+    }
     for (const auto& s : r.signals)
         if (s.name.size() > kMaxChars || s.id.size() > kMaxChars || s.object.size() > kMaxChars || s.signal.size() > kMaxChars)
-            return false;
-    return true;
+            return "a signal's text past its length";
+    return {};
 }
+
+namespace {
 
 bool Decode(const std::vector<uint8_t>& blob, uint8_t& slot, SR::SaveRecord& rec) {
     size_t o = 0;
@@ -280,7 +311,12 @@ bool DecodeAndCheck(uint8_t sender, Parked& p) {
     // A held item is a keyed prop: a record without its key is a can mid-construction or a forgery.
     if (p.rec.key.empty() || p.rec.key == L"None") { Refuse(sender, Refusal::Keyless, cls); return false; }
     if (!RecordFinite(p.rec)) { Refuse(sender, Refusal::NonFinite, cls); return false; }
-    if (!RecordWithinBounds(p.rec)) { Refuse(sender, Refusal::Bounds, cls); return false; }
+    if (const std::string why = BoundsFault(p.rec); !why.empty()) {
+        Refuse(sender, Refusal::Bounds, cls);
+        UE_LOGW("hand_record: slot %u's %.64ls record is past a bound: %s", static_cast<unsigned>(sender), cls ? cls : L"",
+                why.c_str());
+        return false;
+    }
     return true;
 }
 

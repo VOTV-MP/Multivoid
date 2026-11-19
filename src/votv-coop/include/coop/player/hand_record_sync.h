@@ -16,6 +16,9 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+
+#include "ue_wrap/actors/save_record.h"
 
 namespace coop::net {
 class Session;
@@ -26,6 +29,9 @@ namespace coop::hand_record_sync {
 
 // Keep the session, and watch the game's own hold change (mainPlayer.updateHold) for the owner's side. Idempotent.
 void Install(coop::net::Session* session);
+
+// Which count or length of `r` is past this lane's bounds, said for a line; empty when the record is within them. Pure.
+std::string BoundsFault(const ue_wrap::save_record::SaveRecord& r);
 
 // The local hand item `actor` changed under the same hold (a can's init: opened, eaten from): its record is read and
 // sent at the next Tick. Nothing for an actor that is not this player's hand. Game thread.

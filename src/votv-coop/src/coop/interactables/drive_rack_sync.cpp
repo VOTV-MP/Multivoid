@@ -6,6 +6,7 @@
 
 #include "coop/interactables/drive_rack_sync.h"
 
+#include "coop/config/config.h"
 #include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_snd_fx.h"   // ScopedWireApply (the shared desk wire guard)
@@ -15,6 +16,7 @@
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
 #include "coop/props/prop_save_data.h"        // DeclareClassOwnedElsewhere (the rack's rows are this lane's)
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -50,6 +52,19 @@ std::map<uint32_t, std::vector<uint8_t>> g_rackShadow;  // rack eid -> last cano
 // MTA keeps an element's state on the element (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientObject.cpp);
 // ours is the engine's actor, so the lane tags each shadow with the actor it was read from.
 std::map<uint32_t, ue_wrap::CachedObjRef> g_rackActor;  // rack eid -> the actor its shadow was taken from
+
+// HOST: a box that goes holding drives, by its save key, and the drives it held. A player's pocket destroys the box and
+// its take back out spawns a new one under the same key, born empty here: the drives are in no record this lane takes
+// (the class is this lane's, and a client's record of it is not trusted), so the host's empty rows went out as the
+// canonical and the box came back empty on every peer (VOTV-MP/Multivoid#192). The host keeps the rows it last held
+// and puts them back on the first sight of an empty box of that key. Never a client's rows: the host's own last copy.
+std::map<uint32_t, std::wstring> g_rackKey;  // rack eid -> its save key, read at its sight
+struct GoneRack {
+    std::vector<uint8_t> blob;   // its last canonical blob
+    Clock::time_point at;
+};
+std::map<std::wstring, GoneRack> g_goneRacks;
+constexpr size_t kMaxGoneRacks = 64;
 std::set<uint32_t> g_wrongClassSaid;  // eids a canonical named that are no rack here (said once a session)
 
 bool g_primed = false;
@@ -187,10 +202,70 @@ void ClientSendRackOp(uint32_t rackEid, uint8_t op, uint8_t idx, const SD::Row* 
 }
 
 // Derive index ops from the shadow (client) or broadcast canonical (host).
+// HOST: the boxes seen before that are gone now, those holding a drive kept by key (the oldest goes past the cap).
+void NoteGoneRacks(const std::vector<std::pair<uint32_t, void*>>& live) {
+    std::set<uint32_t> here;
+    for (const auto& r : live) here.insert(r.first);
+    for (auto it = g_rackActor.begin(); it != g_rackActor.end();) {
+        if (here.count(it->first) || it->second.Get()) { ++it; continue; }
+        const uint32_t eid = it->first;
+        const auto key = g_rackKey.find(eid);
+        const auto sh = g_rackShadow.find(eid);
+        DC::RackRow rows[DC::kRackSlots];
+        int held = 0;
+        if (sh != g_rackShadow.end() && ParseRackCanonical(sh->second, rows))
+            for (const DC::RackRow& r : rows) held += r.has ? 1 : 0;
+        if (held && key != g_rackKey.end() && !key->second.empty()) {
+            if (g_goneRacks.size() >= kMaxGoneRacks && !g_goneRacks.count(key->second)) {
+                auto oldest = g_goneRacks.begin();
+                for (auto g = g_goneRacks.begin(); g != g_goneRacks.end(); ++g)
+                    if (g->second.at < oldest->second.at) oldest = g;
+                g_goneRacks.erase(oldest);
+            }
+            g_goneRacks[key->second] = GoneRack{sh->second, Clock::now()};
+            UE_LOGI("drive_rack: host rack eid=%u key '%ls' went holding %d drive(s) -- its rows are kept for its return",
+                    eid, key->second.c_str(), held);
+        }
+        g_rackBase.erase(eid);
+        g_rackShadow.erase(eid);
+        if (key != g_rackKey.end()) g_rackKey.erase(key);
+        it = g_rackActor.erase(it);
+    }
+}
+
+// HOST: a box first seen here empty whose key went holding drives gets those rows back, through the rack's own rows and
+// gen(), before its canonical goes out. True when it put them back.
+bool RestoreReturnedRack(uint32_t eid, void* rack, const std::wstring& key, DC::RackRow rows[DC::kRackSlots]) {
+    // VOTVCOOP_RACK_RESTORE_OFF=1: the box comes back as the host spawned it, the item trip probe's red arm.
+    static const bool off = coop::config::ReadEnv("VOTVCOOP_RACK_RESTORE_OFF") == "1";
+    const auto g = g_goneRacks.find(key);
+    if (off || key.empty() || g == g_goneRacks.end()) return false;
+    for (int i = 0; i < DC::kRackSlots; ++i)
+        if (rows[i].has) return false;   // it came back holding drives of its own: those stand
+    DC::RackRow kept[DC::kRackSlots];
+    if (!ParseRackCanonical(g->second.blob, kept)) return false;
+    int n = 0;
+    {
+        coop::desk_snd_fx::ScopedWireApply guard;
+        for (int i = 0; i < DC::kRackSlots; ++i) {
+            DC::WriteRackRow(rack, i, kept[i]);
+            n += kept[i].has ? 1 : 0;
+        }
+        DC::CallRackGen(rack);
+    }
+    g_goneRacks.erase(g);
+    int read = 0;
+    DC::ReadRack(rack, rows, read);
+    UE_LOGI("drive_rack: host rack eid=%u key '%ls' came back empty -- the %d drive(s) it went with are put back", eid,
+            key.c_str(), n);
+    return true;
+}
+
 void SweepRacks(bool announce) {
     std::vector<std::pair<uint32_t, void*>> racks;
     SnapshotRacks(racks);
     const bool host = IsHost();
+    if (host) NoteGoneRacks(racks);
     for (const auto& [eid, rack] : racks) {
         DC::RackRow rows[DC::kRackSlots];
         int n = 0;
@@ -202,6 +277,18 @@ void SweepRacks(bool announce) {
         const bool sameActor = act != g_rackActor.end() && act->second.Is(rack);
         if (it != g_rackBase.end() && sameActor && it->second == h) continue;
         if (!announce || it == g_rackBase.end() || !sameActor) {  // first sight of this actor
+            if (host) {
+                const std::wstring key = ue_wrap::prop::GetInteractableKeyString(rack);
+                g_rackKey[eid] = key;
+                if (announce && RestoreReturnedRack(eid, rack, key, rows)) {
+                    blob = RackCanonicalBlob(eid, rows);
+                    g_rackBase[eid] = coop::blob_chunks::Fnv64(blob);
+                    g_rackShadow[eid] = std::move(blob);
+                    g_rackActor[eid].Set(rack);
+                    HostBroadcastRackCanonical(eid, rack, -1);
+                    continue;
+                }
+            }
             g_rackBase[eid] = h;
             g_rackShadow[eid] = std::move(blob);
             if (announce && host) {
@@ -555,6 +642,8 @@ uint64_t HostCanonicalsSent() {
 }
 
 void OnDisconnect() {
+    g_rackKey.clear();
+    g_goneRacks.clear();
     g_wrongClassSaid.clear();
     g_rackDirty.store(false, std::memory_order_relaxed);
     g_rackBase.clear();
