@@ -36,3 +36,8 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   of steps, raised and never cleared, and the connect replay. On top: a step is read when the game repaints its screen, ovens come
   from the oven channel's own index instead of a scan, a mask waits for an oven whose screen does not exist yet, and a drill with a
   red. The rest of this request (pries, the ATV's wheels and spare) is adopted part by part.
+- **An ATV's wheels and spare** ([#150](https://github.com/VOTV-MP/Multivoid/pull/150)): a client unbolting, fitting or stowing a
+  wheel, or taking the spare, changed the ATV on its own screen only. Now each is an ask the host judges (the sender's reach, the
+  tool or wheel in its hand, the ATV's state) and runs on its own copy. Kept as written: the asks and the judge. On top: the battery
+  half is left to the battery lane already on main, the hand is read the way every judge reads it (the tool by its class), a
+  refused part comes back only when nothing of the act ran, and a drill with a red for each judge.
