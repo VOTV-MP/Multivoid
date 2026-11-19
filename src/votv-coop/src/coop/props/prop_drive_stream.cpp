@@ -1,5 +1,6 @@
 // coop/props/prop_drive_stream.cpp -- see coop/props/prop_drive_stream.h.
 
+#include "coop/props/prop_rest_sync.h"  // a copy watched after its End, for a move of its own
 #include "coop/props/prop_drive_stream.h"
 
 #include "coop/dev/end_trace.h"                 // OnEndApplied: the measure of what a slept copy does next
@@ -413,6 +414,7 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
         if (actor) {
             if (PR::IsDescendantOfProp(actor) && !coop::prop_drive_host::InAHand(actor)) {
                 ApplyEnd(actor, p, /*parkedHere=*/false);
+                coop::prop_rest_sync::WatchAfterEnd(actor);
                 UE_LOGI("[PROP-DRIVE] CLIENT END eid=%u gen=%u -> (%.1f,%.1f,%.1f) (never parked here)",
                         p.eid, static_cast<unsigned>(p.gen), p.x, p.y, p.z);
             }
@@ -436,6 +438,7 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
         } else {
             ApplyEnd(actor, p, dr.physicsParked);
             dr.physicsParked = false;
+            coop::prop_rest_sync::WatchAfterEnd(actor);
             UE_LOGI("[PROP-DRIVE] CLIENT END eid=%u gen=%u -> (%.1f,%.1f,%.1f) flags=0x%02x",
                     p.eid, static_cast<unsigned>(p.gen), p.x, p.y, p.z,
                     static_cast<unsigned>(p.physFlags));

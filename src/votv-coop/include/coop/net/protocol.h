@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 303;
+inline constexpr uint16_t kProtocolVersion = 304;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1502,6 +1502,13 @@ enum class ReliableKind : uint16_t {
     // Host to one client: what the host did with its CheatRequest (CheatReason). Never relayed. Late join: none. Trust:
     // from the host alone. CheatResultPayload.
     CheatResult = 277,
+    // Where a keyed prop rests (coop/props/prop_rest_sync). CLIENT->HOST: the host element ids of props this client's
+    // own copy moved with no stream on, now at rest; the host answers the sender alone. Never relayed. Not pre-world.
+    // PropRestQueryPayload. HOST->CLIENT: the host's own pose of each asked prop it holds at rest, in no hand and under
+    // no row, and 30 s after a joiner's world is ready every keyed prop at rest, paced; the client puts a resting copy
+    // off by over 2 cm or 3 degrees there. To one client. Trust: from the host alone. PropRestPosePayload.
+    PropRestQuery = 281,
+    PropRestPose = 282,
 };
 
 #pragma pack(push, 1)
@@ -2684,7 +2691,7 @@ static_assert(sizeof(KeypadIntentPayload) <= 256 - 20 - 8,
 struct DeviceClaimPayload {
     WireKey  key;        // 32 -- the device claim key
     uint8_t  slot;       // 1  -- holding peer slot
-    uint8_t  busy;       // 1  -- 1 = claimed, 0 = released
+    uint8_t  busy;       // 1  -- 1 = claimed, 0 = released, 2 = taken over
     uint8_t  _pad[2];    // 2  -- alignment / reserved
 };
 static_assert(sizeof(DeviceClaimPayload) == 36, "DeviceClaimPayload must be 36 bytes");
@@ -2954,6 +2961,33 @@ struct CheatResultPayload {
     uint16_t done;    // 2 -- SpawnItem: how many were spawned; otherwise 0
 };
 static_assert(sizeof(CheatResultPayload) == 8, "CheatResultPayload must be 8 bytes");
+
+// PropRestQuery: the props by host element id.
+inline constexpr int kPropRestQueryMax = 54;
+struct PropRestQueryPayload {
+    uint8_t  count;                        // 1 -- 1..kPropRestQueryMax
+    uint8_t  _pad[3];                      // 3 -- zero
+    uint32_t eids[kPropRestQueryMax];      // 216
+};
+static_assert(sizeof(PropRestQueryPayload) == 220, "PropRestQueryPayload must be 220 bytes");
+// One prop at rest on the host: its element id, its place, its rotation in 1/100 degree, its propspawn_flags (static,
+// frozen, sleep) and the claim generation of its last driven row (prop_drive_host::ContextOf), which the client orders
+// it by.
+struct PropRestRow {
+    uint32_t eid;          // 4
+    float    loc[3];       // 12
+    int16_t  rotCdeg[3];   // 6 -- pitch, yaw, roll, NormalizeAxis'd, x100
+    uint8_t  physFlags;    // 1
+    uint8_t  driveGen;     // 1
+};
+static_assert(sizeof(PropRestRow) == 24, "PropRestRow must be 24 bytes");
+inline constexpr int kPropRestPoseMax = 9;
+struct PropRestPosePayload {
+    uint8_t     count;                    // 1 -- 1..kPropRestPoseMax
+    uint8_t     _pad[3];                  // 3 -- zero
+    PropRestRow rows[kPropRestPoseMax];   // 216
+};
+static_assert(sizeof(PropRestPosePayload) == 220, "PropRestPosePayload must be 220 bytes");
 
 // A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
 // closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element

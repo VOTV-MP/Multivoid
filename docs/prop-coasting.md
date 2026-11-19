@@ -42,7 +42,7 @@ native `[V]` (the body-push drill's HITS lines, on both peers). A coast that res
 resend: the joiner's snapshot is cut after the rest and carries it `[V]` (the coast drill's join arm: the joiner's copy
 rests within 1 cm of the host's with no End sent to it). A push or a runaway thrust in flight when a peer joins is the
 same stream, which every drive row of the prop joins the peer to, so nothing more is owed `[?]` until a join arm reads
-it. A prop that a pushed prop knocks has no verb of its own and is not streamed. Every later correction of a copy's resting place is logged with its distance as
+it. A prop that a pushed prop knocks, or whose support is taken away, is the settle watch's below. Every later correction of a copy's resting place is logged with its distance as
 `[PROP-CORRECT]`, each one and a 30 s summary (`coop/props/prop_wire_parity`). A receiver parks the prop on the first
 pose and follows the stream the way a carried trash clump is followed -- the fixed-delay interpolation, frozen at the
 last pose across a gap -- where a held prop snaps to each pose; a reliable end edge carries the final pose, the host's
@@ -59,3 +59,28 @@ not held awake by the pawn it was measured against; a dev row (`open_row_trace`,
 and pose delta once a second. A hand always wins: a claimed prop
 somebody grabs leaves the set and rides the held-prop stream, and a receiver yields at once to its own player's grab,
 which no stream from the host knows of yet, handing back the physics its park took.
+
+## A prop that moves on its own, and a copy that rests apart
+
+The sixth feeder is the settle: a prop that moves with no hand, no row and no host body on it -- the plate on a chair a
+client picked up, a can a thrown box knocked, a drive left on a table a client dragged. Before it every peer's copy fell by
+its own physics: the plate came to rest 55 cm and 110 degrees from the host's, and the drives on a dragged table 29 to 122
+cm from it, on both clients. The host's body-push list takes the props near every player's puppet as well as its own (64
+per body), and a move there over 3 cm, or a fall anywhere in it, that no hand, row or host body explains is a Settle coast
+(`prop_drive_host::CoastCause::Settle`), which opens a row only where none stands, as a push does, under the same cap; a
+move a client's own body makes near its puppet is left to that client's push claim. The prop accuracy drill
+(`VOTVCOOP_PROP_ACC`, with the drift census `VOTVCOOP_PROP_DRIFT`; `VOTVCOOP_SETTLE_OFF=1` is its red arm) drags that
+table from a client: with the watch every item ends within 1 cm of the host's on both clients `[V]`.
+
+Some copies still rest apart with no stream to correct them: a joiner's world settles as it loads (110 of 1100 props near
+the base over 5 cm off, a kerfur 49 cm), a thin prop an End teleports onto a table top can be pushed through it (a drive
+fell 100 cm to the floor on one client), and a client's own body can move its copy alone. The host is the truth of where a
+prop rests (`coop/props/prop_rest_sync`): 30 s after a joiner's world is ready the host sends it the rest pose of every
+keyed prop at rest, in no hand and under no row (PropRestPose, nine to a message, 150 a second: about 2300 props in 15 s),
+and a client asks for a prop by eid (PropRestQuery) once its own copy has moved with no stream on it and rested a second --
+one its body-push list saw move, and any copy that moves over 2 cm or 3 degrees in the 6 s after an End put it at the host's
+pose. A client puts a resting copy that is over 2 cm or 3 degrees from a row where the row says, with the host's static,
+frozen and sleep, asleep, and leaves alone one it corrected three times in a minute. In the drill's session the observing
+client's worst resting prop ends 1.5 cm from the host's, p95 0.12 cm `[V]`; props that fell out of the world (two glowsticks
+under the floor) and a kerfur are what the other client still holds apart.
+
