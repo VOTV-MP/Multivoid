@@ -27,6 +27,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -362,39 +363,66 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
 
 // The gamer Omega's colour is its tick's alone: each frame it writes HSVToRGB(time alive x 360, 1, 2) into its mesh's
 // materials' `color`. A client's copy of an Omega is inert and does not tick, so it stood black, and with the material's
-// colour at zero it could read as unseen (VOTV-MP/Multivoid#185). Here the same rainbow is written on such a copy each
-// frame, from this machine's clock: the hue is the copy's own, as each machine's own tick would make it.
+// colour at zero it could read as unseen (VOTV-MP/Multivoid#185). Here the same rainbow is written on such a copy, from
+// this machine's clock: the hue is the copy's own, as each machine's own tick would make it. It is painted 30 times a
+// second, not each frame (a paint is ~12 us), from a list of the copies refreshed twice a second.
+namespace {
+struct GamerCopy {
+    void* npc;
+    int32_t idx;
+    void* mesh;
+};
+std::vector<GamerCopy> g_gamerCopies;
+std::chrono::steady_clock::time_point g_gamerScanAt{}, g_gamerPaintAt{};
+constexpr auto kGamerScanGap = std::chrono::milliseconds(500);
+constexpr auto kGamerPaintGap = std::chrono::microseconds(33333);
+}  // namespace
+
 void PaintGamerCopies() {
     auto* s = LoadSession();
     if (!s || !s->running() || s->role() == coop::net::Role::Host || !g_gamerNpcClass) return;
-    static const R::FName kColor = ue_wrap::fname_utils::StringToFName(L"color");
-    const double seconds = static_cast<double>(::GetTickCount64()) / 1000.0;
-    for (void* npc : GamerNpcs()) {
-        if (ue_wrap::engine::IsActorTickEnabled(npc)) continue;   // a copy that ticks paints itself
-        void* const mesh = Field<void*>(npc, L"Mesh", nullptr);
-        void* const fn = mesh ? R::FindDispatchFunctionCached(R::ClassOf(mesh), L"SetVectorParameterValueOnMaterials") : nullptr;
-        if (!fn) continue;
-        // UE4's FLinearColor::HSVToLinearRGB with H in degrees, S 1 and V 2, as the gamer graph calls it.
-        const double h = std::fmod(seconds * 360.0, 360.0), v = 2.0, c = v;
-        const double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
-        double r = 0, g = 0, b = 0;
-        switch (static_cast<int>(h / 60.0) % 6) {
-        case 0: r = c; g = x; break;
-        case 1: r = x; g = c; break;
-        case 2: g = c; b = x; break;
-        case 3: g = x; b = c; break;
-        case 4: r = x; b = c; break;
-        default: r = c; b = x; break;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_gamerPaintAt) return;
+    g_gamerPaintAt += kGamerPaintGap;   // on a schedule, so it averages 30 at any frame rate above that
+    if (g_gamerPaintAt < now) g_gamerPaintAt = now;
+    if (now >= g_gamerScanAt) {
+        g_gamerScanAt = now + kGamerScanGap;
+        g_gamerCopies.clear();
+        for (void* npc : GamerNpcs()) {
+            if (ue_wrap::engine::IsActorTickEnabled(npc)) continue;   // a copy that ticks paints itself
+            if (void* const mesh = Field<void*>(npc, L"Mesh", nullptr))
+                g_gamerCopies.push_back(GamerCopy{npc, R::InternalIndexOf(npc), mesh});
         }
+    }
+    if (g_gamerCopies.empty()) return;
+    // UE4's FLinearColor::HSVToLinearRGB with H in degrees, S 1 and V 2, as the gamer graph calls it.
+    const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+    const double h = std::fmod(seconds * 360.0, 360.0), c = 2.0;
+    const double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
+    double r = 0, g = 0, b = 0;
+    switch (static_cast<int>(h / 60.0) % 6) {
+    case 0: r = c; g = x; break;
+    case 1: r = x; g = c; break;
+    case 2: g = c; b = x; break;
+    case 3: g = x; b = c; break;
+    case 4: r = x; b = c; break;
+    default: r = c; b = x; break;
+    }
+    const ue_wrap::FVector rgb{static_cast<float>(r), static_cast<float>(g), static_cast<float>(b)};
+    static const R::FName kColor = ue_wrap::fname_utils::StringToFName(L"color");
+    for (const GamerCopy& copy : g_gamerCopies) {
+        if (!R::IsLiveByIndex(copy.npc, copy.idx)) continue;
+        void* const fn = R::FindDispatchFunctionCached(R::ClassOf(copy.mesh), L"SetVectorParameterValueOnMaterials");
         ue_wrap::ParamFrame f(fn);
-        const ue_wrap::FVector rgb{static_cast<float>(r), static_cast<float>(g), static_cast<float>(b)};
-        if (f.valid() && f.SetRaw(L"ParameterName", &kColor, sizeof(kColor)) && f.Set<ue_wrap::FVector>(L"ParameterValue", rgb))
-            ue_wrap::Call(mesh, f);
+        if (fn && f.valid() && f.SetRaw(L"ParameterName", &kColor, sizeof(kColor)) &&
+            f.Set<ue_wrap::FVector>(L"ParameterValue", rgb))
+            ue_wrap::Call(copy.mesh, f);
     }
 }
 
 void OnDisconnect() {
     g_open.clear();  // game thread, as the gate callbacks and the destroy seam that read it
+    g_gamerCopies.clear();
     g_saidEventRefusal = false;
     coop::kerfur_convert_host::OnDisconnect();
 }

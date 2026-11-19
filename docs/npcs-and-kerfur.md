@@ -152,7 +152,7 @@ on in their own `actionOptionIndex`, spawning their Omega themselves without `sp
 their own machine alone: the host's reached no client (VOTV-MP/Multivoid#185). In a session that action is refused and
 `spawnKerfuro` run in its place, with the prop's empty `spawnKerfur` set to its Omega, and the host's return writes the
 prop's `Type`, `sentient` and, for the custom colour, `hsv` on the new Omega as the prop's body does, and repaints it. Its rainbow is its tick's alone, each frame into its materials' `color`, and a
-client's copy is inert, so it stood black there; a client now writes the same rainbow on such a copy each frame `[V]`
+client's copy is inert, so it stood black there; a client now writes the same rainbow on such a copy 30 times a second `[V]`
 (`coop/dev/kgamer_probe`, three peers: before, the host's gamer Omega had no element and no client had it; after, both
 clients had it at the host's element through a turn-off and on again, coloured, where it had stood at a zero colour).
 

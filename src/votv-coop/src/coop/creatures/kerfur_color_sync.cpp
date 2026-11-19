@@ -61,12 +61,17 @@ Painted g_classes[] = {
 
 uint64_t Now() { return ::GetTickCount64(); }
 
+// Once a second until all three are found; a class, once loaded, lives for the process.
 void ResolveClasses() {
+    static bool all = false;
     static uint64_t next = 0;
-    if (Now() < next) return;
+    if (all || Now() < next) return;
     next = Now() + 1000;
-    for (Painted& p : g_classes)
+    all = true;
+    for (Painted& p : g_classes) {
         if (!p.resolved) p.resolved = OI::ClassByName(p.cls);
+        all = all && p.resolved;
+    }
 }
 
 const Painted* PaintedOf(void* actor) {
@@ -114,11 +119,13 @@ bool MakePayload(void* actor, N::KerfurColorPayload& p) {
 
 // ---- the client --------------------------------------------------------------------------------
 
+// A client's pick waiting to be sent, by element id; it is dropped a second after its last send.
 struct Ask {
     N::KerfurColorIntentPayload p;
     uint64_t lastSent = 0;
     bool due = false;
 };
+constexpr uint64_t kAskForgetMs = 1000;
 std::unordered_map<uint32_t, Ask> g_asks;
 struct Parked {
     N::KerfurColorPayload p;
@@ -157,14 +164,21 @@ sg::Verdict OnApplyPre(const sg::Call& c) {
 
 void ClientTick(N::Session& s) {
     const uint64_t now = Now();
-    for (auto& [eid, a] : g_asks) {
-        if (!a.due || now - a.lastSent < kAskGapMs) continue;
-        if (!s.SendReliable(N::ReliableKind::KerfurColorIntent, &a.p, sizeof(a.p))) continue;
-        a.due = false;
-        a.lastSent = now;
-        ++g_asked;
-        UE_LOGI("kerfur_color_sync: this client picked (%.2f,%.2f,%.2f) for eid=%u -- asked of the host", a.p.color[0],
-                a.p.color[1], a.p.color[2], eid);
+    for (auto it = g_asks.begin(); it != g_asks.end();) {
+        Ask& a = it->second;
+        if (!a.due) {
+            if (now - a.lastSent >= kAskForgetMs) it = g_asks.erase(it);
+            else ++it;
+            continue;
+        }
+        if (now - a.lastSent >= kAskGapMs && s.SendReliable(N::ReliableKind::KerfurColorIntent, &a.p, sizeof(a.p))) {
+            a.due = false;
+            a.lastSent = now;
+            ++g_asked;
+            UE_LOGI("kerfur_color_sync: this client picked (%.2f,%.2f,%.2f) for eid=%u -- asked of the host",
+                    a.p.color[0], a.p.color[1], a.p.color[2], it->first);
+        }
+        ++it;
     }
     for (auto it = g_parked.begin(); it != g_parked.end();) {
         if (now >= it->second.until || Apply(it->second.p)) it = g_parked.erase(it);
