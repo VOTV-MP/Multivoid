@@ -314,7 +314,7 @@ interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the
 monotone: a wipe only lowers them, so each peer broadcasts a decrease and the receiver keeps the
 minimum, and two peers wiping at once converge with no oscillation; the grime decals are keyed by
 their quantised world position, since both peers place them from the same save
-(`coop/interactables/window_sync`, `coop/interactables/grime_sync`).
+(`coop/interactables/window_sync`, `coop/interactables/grime_sync`). A decal that ends (cleaned or repaired past zero, raked) goes out as `kGrimeGone`, below every dirt, and every peer destroys its own, as the game's clean does below zero; a zero had left it standing, unseen, on the others `[V]` (`coop/dev/clean_drill`: the six decals a client cleaned away ended on the host and the other client, and no decal stood on one peer alone after).
 
 A spilled liquid is the host's (`coop/world/spill_sync`). A coffee cup tipped or flung fast, beer, wine and a gas
 bottle spill through a `grimeProjectile_C` that flies and leaves its grime decal (`grime_coffee_C` and the rest)

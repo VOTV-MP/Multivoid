@@ -11,7 +11,7 @@
 // for it is kept there as an unused floor. Only a FALL is propagated, read before and after a lowering
 // verb's body on the script gate (clean; the wall fixer's repair of a crack), so MIN(local, wire)
 // converges concurrent wipes. A verb that takes the process below zero destroys the decal inside the
-// Blueprint; the engine's end of play says destroyed, a wipe sent as zero, or streamed out, whose
+// Blueprint; the engine's end of play says destroyed, a wipe sent as kGrimeGone that every peer destroys its own by, or streamed out, whose
 // process is kept as the key's floor for the decal's return.
 
 #pragma once
