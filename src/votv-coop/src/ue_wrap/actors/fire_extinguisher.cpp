@@ -79,6 +79,8 @@ bool ResolveNames() {
     return true;
 }
 
+bool NamesResolved() { return g_namesResolved; }
+
 bool IsExtinguisher(void* obj) { return IsA(obj, g_extName); }
 bool IsMount(void* obj) { return IsA(obj, g_mountName); }
 

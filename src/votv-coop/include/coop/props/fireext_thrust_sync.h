@@ -19,8 +19,13 @@ namespace coop::fireext_thrust_sync {
 // Both roles, pre-world: the session, and the watch on prop_fireExt_C::shoot (once per process).
 void Install(coop::net::Session* s);
 
-// Host, game thread, every gameplay tick, before prop_drive_host::Pump. Returns at once when none thrusts.
+// Both roles, game thread, every gameplay tick, before prop_drive_host::Pump: resolves the extinguisher's class names
+// (ue_wrap/actors/fire_extinguisher) once, a top-level pass as their resolve needs; then, on the host, streams the
+// extinguishers in runaway thrust. Returns at once when none thrusts.
 void Tick(coop::net::Session* s);
+
+// True once Tick has run in this process: the drill's question of whether the lane had its chance to resolve the names.
+bool HasTicked();
 
 // Forgets the extinguishers it held.
 void OnDisconnect();

@@ -15,6 +15,7 @@
 #include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
+#include "coop/props/fireext_thrust_sync.h"  // HasTicked: who resolves the extinguisher's names
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"  // IsActorUnderAnyDrive: the re-latch probe
 #include "coop/save/join_window_baseline.h"
@@ -581,13 +582,26 @@ void ActStep(coop::net::Session& s, void* player) {
     }
 }
 
+bool g_namesFailSaid = false;  // the names' FAIL is said once a session
+
 }  // namespace
 
 bool IsEnabled() { return ArmOf() != Arm::Off; }
 
 void Tick(coop::net::Session* session) {
     if (!IsEnabled() || !session || !session->connected()) return;
-    if (!FX::ResolveNames()) return;
+    // The names are the thrust lane's to resolve (coop/props/fireext_thrust_sync), never the drill's: the drill shares the
+    // process with the lane, so a resolve of its own would stand in for the lane's. Once the lane has ticked they are there.
+    if (!FX::NamesResolved()) {
+        if (coop::fireext_thrust_sync::HasTicked() && !g_namesFailSaid) {
+            g_namesFailSaid = true;
+            UE_LOGW("[FIREEXT-DRILL] [%c] FAIL the thrust lane ticked and the extinguisher's class names are still unresolved", Who());
+            if (ArmOf() == Arm::Runaway && coop::roster::LocalIsHost())
+                coop::rig_verdict::Say("fireext-runaway", coop::rig_verdict::Outcome::Fail,
+                                       "the thrust lane ticked and the extinguisher's class names are still unresolved");
+        }
+        return;
+    }
     if (LocalActs()) {
         if (g_step != Step::Invalid) {
             void* player = coop::players::Registry::Get().Local();
@@ -617,6 +631,7 @@ void Tick(coop::net::Session* session) {
 }
 
 void OnDisconnect() {
+    g_namesFailSaid = false;
     g_tailSet = false;  // the session drops its own local pose at the end
     g_watched.clear();
     g_mounts.clear();

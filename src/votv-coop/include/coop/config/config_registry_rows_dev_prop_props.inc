@@ -50,6 +50,10 @@ CFG_FLAG(fireext_cancel_off, "fireext_cancel_off", "dev", false, "VOTVCOOP_FIREE
     "Developer red arm of the fire extinguisher drill's runaway arm (client): never set. A client's copy is not refused its "
     "own shoot, so the leg where its own copy takes damage lets it thrust and the drill must say FAIL at that leg. A host "
     "leg that rests apart first says INVALID, since the cancel was not what it turned.")
+CFG_FLAG(fireext_names_off, "fireext_names_off", "dev", false, "VOTVCOOP_FIREEXT_NAMES_OFF",
+    "Developer red arm of the fire extinguisher drill (both peers): never set. The thrust lane does not resolve the "
+    "extinguisher's class names, and the drill never does, so every read of an extinguisher is false: once the lane has "
+    "ticked, the drill logs FAIL on both peers and stops, and the runaway arm's host says the FAIL verdict.")
 CFG_FLAG(collision_probe, "collision_probe", "dev", false, "VOTVCOOP_COLLISION_PROBE",
     "Probe (either peer, default off): logs every primitive component of the local pawn and of each puppet with its collision "
     "flag, object type and responses to PhysicsBody, Pawn, WorldDynamic, WorldStatic and Vehicle, when first seen and two "

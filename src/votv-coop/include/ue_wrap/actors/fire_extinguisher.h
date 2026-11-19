@@ -23,6 +23,9 @@ namespace ue_wrap::fire_extinguisher {
 // top-level game-thread pass, never from inside a hook. Idempotent; true once resolved.
 bool ResolveNames();
 
+// True once ResolveNames has succeeded. Game thread.
+bool NamesResolved();
+
 // True iff `obj` is an extinguisher (prop_fireExt_C or a subclass), or a mount. False before
 // ResolveNames. Game thread.
 bool IsExtinguisher(void* obj);

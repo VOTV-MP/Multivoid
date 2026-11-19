@@ -51,6 +51,12 @@ bool CancelOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::fireext_cancel_off);
     return off;
 }
+// The red arm of the names' resolve: the lane never resolves them, and nothing else does.
+bool NamesOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::fireext_names_off);
+    return off;
+}
+bool g_ticked = false;
 
 // A client's copy starts no runaway of its own.
 SG::Verdict OnShootPre(const SG::Call& call) {
@@ -92,6 +98,9 @@ void Install(coop::net::Session* s) {
 }
 
 void Tick(coop::net::Session* s) {
+    g_ticked = true;
+    // Every read below goes through the extinguisher's class names, false until they resolve (a latched bool after).
+    if (!NamesOff()) FX::ResolveNames();
     if (g_held.empty()) return;
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     for (size_t i = 0; i < g_held.size();) {
@@ -113,6 +122,8 @@ void Tick(coop::net::Session* s) {
         g_held.pop_back();
     }
 }
+
+bool HasTicked() { return g_ticked; }
 
 void OnDisconnect() {
     if (g_refused > 0)
