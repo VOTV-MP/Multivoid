@@ -16,6 +16,7 @@
 #include "coop/interactables/drone_sync.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/oven_repair_judge.h"  // CLIENT->HOST an oven repair ask, judged before the channel
 #include "coop/interactables/cord_sync.h"
 #include "coop/interactables/swinger_join_pose.h"  // HOST->CLIENT an open lid's rest place
 #include "coop/creatures/kerfur_convert_client.h"
@@ -48,7 +49,7 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ContainerState:
     case net::ReliableKind::GarageDoorState:
     case net::ReliableKind::ApplianceState:
-    case net::ReliableKind::OvenRepairState:    // the oven's repair, one way
+    case net::ReliableKind::OvenRepairState:    // the oven's repair: the host's state to the clients, a client's ask to the host
     case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
     case net::ReliableKind::CameraActiveState:  // a security camera's active bit, host-authored
     case net::ReliableKind::CameraLightState:   // a security camera's spotlight bit, host-authored
@@ -59,9 +60,9 @@ bool HandleStateEvent(net::Session& session,
         // cameras, the pollution host authority prevents. The host's receive edge refuses a client's
         // copy (client_authorship.h), and the host relays none of them, so here they come from the host.
         // A peer toggled a keyed interactable (a light switch, a container lid, a garage, an
-        // appliance, a locker) or repaired an oven, or the host moved a door or a light group. On a symmetric kind any
+        // appliance, a locker), or the host moved a door or a light group or repaired an oven. On a symmetric kind any
         // peer can send, and the host relays a client-originated edge to the other clients before
-        // this drain runs. interactable_sync
+        // this drain runs; an oven is not relayed: a client's repair is an ask the host judges and sends itself. interactable_sync
         // routes by kind to the right channel, resolves the instance by key and applies
         // idempotently on the game thread, echo-suppressed. The keypad is not here; it carries a
         // richer payload.
@@ -83,6 +84,12 @@ bool HandleStateEvent(net::Session& session,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
+        // A client's OvenRepairState is an ask: the host's judge takes it before the oven channel, whose receive would
+        // park an unresolved key and apply it unjudged.
+        if (msg.kind == net::ReliableKind::OvenRepairState && session.role() == net::Role::Host) {
+            coop::oven_repair_judge::OnAsk(session, p, senderSlot);
+            break;
+        }
         coop::interactable_sync::OnReliable(static_cast<uint16_t>(msg.kind), p, senderSlot);
         break;
     }

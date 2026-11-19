@@ -17,6 +17,7 @@
 #include "coop/interactables/eraser_press_intent.h"
 #include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
+#include "coop/interactables/oven_repair_judge.h"
 #include "coop/interactables/toggle_verbs.h"
 #include "coop/items/point_sack_intent.h"
 #include "coop/props/prop_nametag.h"
@@ -34,6 +35,7 @@ void Install(coop::net::Session& session) {
     coop::door_state_verbs::Install(&session);   // a door's open state moves at doorOpen/doorClose: the host sends, a client refuses its own
     coop::lightgroup_verbs::Install(&session);   // a light group's state moves at its runTrigger: the host sends, a client refuses its own
     coop::toggle_verbs::Install(&session);       // a symmetric device's state goes at the verb that writes it: each peer sends its own
+    coop::oven_repair_judge::Install(&session);  // a client's oven repair is held and asked of the host, which judges it
     coop::keypad_verbs::Install(&session);       // a keypad's verbs: the host sends each, a client's own entries run on the host
     coop::desk_verb_intent::Install(&session);   // a client's press on the desk's save family is run by the host
     coop::point_sack_intent::Install(&session);  // a client's opened point sack is paid by the host
@@ -55,6 +57,7 @@ void Tick(coop::net::Session& session) {
     coop::door_state_verbs::Tick();     // settle the door state watches
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
+    coop::oven_repair_judge::Tick(session);  // settle its gate; HOST: judge one queued oven step or repair a tick a client
     coop::point_sack_intent::Tick();    // settle the point sack watch
     coop::prop_nametag::Tick();         // settle the nametag watch
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
@@ -80,6 +83,7 @@ void OnDisconnect() {
     coop::door_state_verbs::OnDisconnect();
     coop::lightgroup_verbs::OnDisconnect();
     coop::toggle_verbs::OnDisconnect();
+    coop::oven_repair_judge::OnDisconnect();
     coop::keypad_verbs::OnDisconnect();
     coop::desk_verb_intent::OnDisconnect();
     coop::point_sack_intent::OnDisconnect();

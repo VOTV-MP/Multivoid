@@ -5,6 +5,7 @@
 #include "coop/config/config.h"                    // [dev] oven_merge_off
 #include "coop/config/config_registry.h"
 #include "coop/interactables/interactable_sync.h"  // the oven lane's index: key <-> oven
+#include "coop/interactables/oven_repair_judge.h"  // HOST: a client's steps are judged
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 
@@ -79,21 +80,25 @@ uint8_t& KnownOf(const std::wstring& key) {
     return g_known.back().mask;
 }
 
-void Send(coop::net::Session* s, const std::wstring& key, uint8_t mask, int onlySlot = -1) {
+// To every peer but `skipSlot`, or to `onlySlot` alone.
+void Send(coop::net::Session* s, const std::wstring& key, uint8_t mask, int onlySlot = -1, int skipSlot = -1) {
     coop::net::OvenProgressStatePayload p{};
     coop::net::WireKeyFromString(key, p.key);
     p.mask = mask;
     if (onlySlot >= 0)
         s->SendReliableToSlot(onlySlot, coop::net::ReliableKind::OvenProgressState, &p, sizeof(p));
     else
-        s->SendReliable(coop::net::ReliableKind::OvenProgressState, &p, sizeof(p));
+        s->SendReliable(coop::net::ReliableKind::OvenProgressState, &p, sizeof(p), skipSlot);
 }
 
-// Raise on the oven's screen the bits of `mask` it lacks. False when the oven has no screen yet (the caller
-// keeps the mask); an oven repaired in this save never has one.
-bool Merge(void* oven, const std::wstring& key, uint8_t mask, const char* from) {
+// Take the bits of `mask` the screen lacks: the record first, then the screen's bools. False when the oven has no
+// screen yet and `screenless` is not set (the caller keeps the mask); an oven repaired in this save never has one.
+// `screenless` is the host's judged grant: its record is the state, so an oven with no screen records the bits and
+// raises none.
+bool Merge(void* oven, const std::wstring& key, uint8_t mask, const char* from, bool screenless = false) {
     uint8_t live = 0;
-    if (!OS::TryReadProgress(oven, live)) return false;
+    const bool screen = OS::TryReadProgress(oven, live);
+    if (!screen && !screenless) return false;
     const uint8_t add = static_cast<uint8_t>(mask & OS::kAll & ~live);
     if (add) ++g_arrived;
     // [dev] oven_merge_off, the red arm of coop/dev/oven_progress_drill: the arrival is counted and the bit is not raised.
@@ -106,6 +111,11 @@ bool Merge(void* oven, const std::wstring& key, uint8_t mask, const char* from) 
     const uint8_t now = static_cast<uint8_t>(KnownOf(key) | live | add);
     KnownOf(key) = now;
     if (!add) return true;
+    if (!screen) {
+        UE_LOGI("oven_progress: key='%ls' recorded 0x%02X, now 0x%02X -- no screen to raise it on (%s)", key.c_str(), add,
+                now, from);
+        return true;
+    }
     if (!OS::RaiseProgress(oven, add)) {
         UE_LOGW("oven_progress: key='%ls' -- the screen did not take mask 0x%02X (%s)", key.c_str(), add, from);
         return true;
@@ -222,6 +232,12 @@ void Tick() {
 }
 
 void OnProgress(const coop::net::OvenProgressStatePayload& p, uint8_t senderSlot) {
+    // On the host a client's mask is an ask: the judge takes it before the record or the parking (the host never parks a
+    // client's step) and grants through GrantSteps. A client takes the host's masks as they are.
+    if (auto* s = g_session.load(std::memory_order_acquire); s && s->role() == coop::net::Role::Host) {
+        coop::oven_repair_judge::OnSteps(*s, p, senderSlot);
+        return;
+    }
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     const uint8_t mask = static_cast<uint8_t>(p.mask & OS::kAll);
     if (key.empty() || !mask) return;
@@ -253,6 +269,30 @@ void QueueConnectBroadcastForSlot(int slot) {
         Send(s, o.first, live, slot);
         UE_LOGI("oven_progress: key='%ls' mask 0x%02X -> joiner slot %d", o.first.c_str(), live, slot);
     }
+}
+
+uint8_t KnownMask(const std::wstring& key) {
+    for (const auto& k : g_known)
+        if (k.key == key) return k.mask;
+    return 0;
+}
+
+void GrantSteps(coop::net::Session& s, void* oven, const std::wstring& key, uint8_t add, uint8_t exceptSlot) {
+    char from[24];
+    std::snprintf(from, sizeof(from), "granted, slot %u", static_cast<unsigned>(exceptSlot));
+    Merge(oven, key, add, from, true);
+    // The asker's own screen holds what it asked; the others take the record's whole mask.
+    if (const uint8_t now = KnownMask(key)) Send(&s, key, now, -1, exceptSlot);
+}
+
+void ResendCumulative(coop::net::Session& s, void* oven, const std::wstring& key) {
+    uint8_t live = 0;
+    OS::TryReadProgress(oven, live);
+    const uint8_t now = static_cast<uint8_t>(KnownOf(key) | live);
+    KnownOf(key) = now;
+    if (!now) return;
+    UE_LOGI("oven_progress: key='%ls' mask 0x%02X sent again ahead of the repair ask", key.c_str(), now);
+    Send(&s, key, now);
 }
 
 uint64_t BitsRaised() { return g_raised; }

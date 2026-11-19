@@ -24,6 +24,15 @@ inline constexpr uint8_t kAll     = 0x1F;
 // The oven a repair screen belongs to (its `kitchen`), or null when it names none. Game thread.
 void* OvenOfScreen(void* screen);
 
+// The oven's repair screen when a player has it open (enter() made it visible, quit() has not collapsed it), else
+// null: an oven with no screen, a collapsed one, or a visibility that does not read. Read BEFORE the oven's fix(),
+// which drops the screen from the oven. Game thread.
+void* OpenScreenOf(void* oven);
+
+// Run the screen's own quit(): the game's exit of it (the input mode back to the game, the cursor off, the player's
+// active interface cleared, the screen collapsed). False when it did not run. Game thread.
+bool CallScreenQuit(void* screen);
+
 // The five bools of `oven`'s screen as a mask. False when the oven has no screen (it is repaired, or
 // not begun play) or a member does not resolve. Game thread.
 bool TryReadProgress(void* oven, uint8_t& mask);

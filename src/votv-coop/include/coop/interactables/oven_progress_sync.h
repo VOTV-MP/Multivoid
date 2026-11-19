@@ -14,6 +14,7 @@
 #include "coop/net/protocol.h"
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net { class Session; }
 
@@ -33,6 +34,20 @@ void OnProgress(const coop::net::OvenProgressStatePayload& p, uint8_t senderSlot
 
 // HOST: ship every oven's mask that has a bit to a joiner (connect replay).
 void QueueConnectBroadcastForSlot(int slot);
+
+// The steps this peer's record holds for the oven under `key`: what it sent, took or granted, which the save does not
+// carry. 0 for a key it has never held. The host's judge reads its own record, never the screen, so an oven with no
+// screen open still judges (coop/interactables/oven_repair_judge). Game thread.
+uint8_t KnownMask(const std::wstring& key);
+
+// HOST: the judge granted `add` (bits the record lacked). The record takes them FIRST, then the host's own screen if the
+// oven has one open, and the record's whole mask goes to every client but `exceptSlot`, the asker, whose screen holds
+// what it asked. A failed raise on the host's screen still records and sends: the record is the state. Game thread.
+void GrantSteps(coop::net::Session& s, void* oven, const std::wstring& key, uint8_t add, uint8_t exceptSlot);
+
+// CLIENT, ahead of a repair ask: the record and the screen's bits as one mask, to the host, so a step the host never took
+// reaches it before the ask in the same ordered lane. Sends nothing when no step is held. Game thread.
+void ResendCumulative(coop::net::Session& s, void* oven, const std::wstring& key);
 
 // How many bits this peer has raised on a screen from the wire. Game thread.
 uint64_t BitsRaised();

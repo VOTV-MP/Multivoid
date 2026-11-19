@@ -11,6 +11,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine_component.h"
 
 #include <cstdint>
 #include <cwchar>
@@ -79,6 +80,8 @@ void* Verb(void* a, const wchar_t* name) {
 
 // The oven's `fixed`, on the class of the oven it is read from.
 R::InstanceOffset g_ovenFixed{L"fixed"};
+// The oven's switch box, the component whose hit opens the repair screen.
+R::InstanceOffset g_ovenSwitch{L"switch_oven"};
 
 // Find the descriptor whose class matches `obj` -- exact-class pointer compare first (the
 // common case: an appliance instance IS its class), then a hierarchy walk for any subclass.
@@ -233,6 +236,15 @@ bool TryReadOvenFixed(void* oven, bool& fixed) {
 }
 
 bool CallOvenFix(void* oven) { return IsOven(oven) && component_calls::CallParamlessNamed(oven, L"fix"); }
+
+bool TryReadOvenSwitchLocation(void* oven, ue_wrap::FVector& out) {
+    out = ue_wrap::FVector{};
+    if (!IsOven(oven)) return false;
+    const int32_t off = g_ovenSwitch.Of(oven);
+    if (off < 0) return false;
+    void* box = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(oven) + off);
+    return box && R::IsLive(box) && ue_wrap::engine::TryGetComponentLocation(box, out);
+}
 
 bool WriteOvenFixed(void* oven, bool fixed) {
     if (!IsOven(oven)) return false;

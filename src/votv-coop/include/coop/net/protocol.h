@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 307;
+inline constexpr uint16_t kProtocolVersion = 308;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -917,11 +917,14 @@ enum class ReliableKind : uint16_t {
     // relayed. Late join: nothing to replay, as for DoorVerbIntent. KeypadIntentPayload.
     KeypadIntent = 150,
 
-    // Any peer, relayed by the host: the kitchen oven's repair, keyed as ApplianceState keys the
-    // oven. Its `fixed` goes false to true once, in its fix() (the repair widget's last step; loadData
-    // calls it for a saved repair), and nothing sets it back, so a receiver writes it and repaints on
-    // 1 and refuses 0. Late join: the transferred save carries `fixed`, and the connect snapshot says
-    // it again. KeyedTogglePayload.
+    // The kitchen oven's repair, keyed as ApplianceState keys the oven. Its `fixed` goes false to true
+    // once, in its fix() (the repair widget's last step; loadData calls it for a saved repair), and
+    // nothing sets it back. Host to all, and to an asker alone for an oven already fixed: the state,
+    // which a receiver writes and repaints on 1 and refuses 0. Client to host: an ask, action 1 alone,
+    // sent where the client's own fix() was cancelled; the host judges the oven, the sender's reach of
+    // its switch box and the lid in its record of the steps, runs its own fix() on a grant, and the
+    // state then reaches every peer. Never relayed. Late join: the transferred save carries `fixed`,
+    // and the connect snapshot says it again. KeyedTogglePayload.
     OvenRepairState = 151,
 
     // Host to all: the delivery order queue (saveSlot.orders), which a client mirrors and never

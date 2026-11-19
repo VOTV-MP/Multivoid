@@ -17,6 +17,8 @@ namespace R = ue_wrap::reflection;
 R::InstanceOffset g_widget{L"widget"};
 // UI_oven_C's back pointer to the kitchen_C it repairs.
 R::InstanceOffset g_kitchen{L"kitchen"};
+// UWidget::Visibility, the byte the screen's enter() sets visible and its quit() collapses.
+R::InstanceOffset g_visibility{L"Visibility"};
 R::InstanceOffset g_bools[5] = {R::InstanceOffset{L"TL_unscrewed"}, R::InstanceOffset{L"TR_unscrewed"},
                                 R::InstanceOffset{L"BL_unscrewed"}, R::InstanceOffset{L"BR_unscrewed"},
                                 R::InstanceOffset{L"lid_taken"}};
@@ -53,6 +55,23 @@ void* OvenOfScreen(void* screen) {
     if (off < 0) return nullptr;
     void* oven = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(screen) + off);
     return oven && R::IsLive(oven) && ue_wrap::appliance::IsOven(oven) ? oven : nullptr;
+}
+
+void* OpenScreenOf(void* oven) {
+    if (!ue_wrap::appliance::IsOven(oven)) return nullptr;
+    const int32_t wOff = g_widget.Of(oven);
+    if (wOff < 0) return nullptr;
+    void* screen = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(oven) + wOff);
+    if (!screen || !R::IsLive(screen)) return nullptr;
+    const int32_t vOff = g_visibility.Of(screen);
+    if (vOff < 0) return nullptr;
+    // ESlateVisibility: 1 is Collapsed, which the screen's own quit() sets and its class default holds until enter().
+    constexpr uint8_t kCollapsed = 1;
+    return *(reinterpret_cast<const uint8_t*>(screen) + vOff) == kCollapsed ? nullptr : screen;
+}
+
+bool CallScreenQuit(void* screen) {
+    return screen && R::IsLive(screen) && component_calls::CallParamlessNamed(screen, L"quit");
 }
 
 bool TryReadProgress(void* oven, uint8_t& mask) {

@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"  // FVector
+
 #include <cstdint>
 #include <string>
 
@@ -70,6 +72,11 @@ bool TryReadOvenFixed(void* oven, bool& fixed);
 // Run the oven's own fix(). False when the class has no such verb or the call did not run. Game
 // thread.
 bool CallOvenFix(void* oven);
+
+// The WORLD place of the oven's switch box (`switch_oven`, the box whose hit opens its repair screen): the point
+// a player's use of the oven is measured to. False, `out` zeroed, when the oven or the box does not read, so a
+// caller fails closed. Game thread.
+bool TryReadOvenSwitchLocation(void* oven, ue_wrap::FVector& out);
 
 // Write the oven's `fixed` and repaint it (upd): fix()'s own work without its screen. The apply of a
 // repair another peer made -- fix() would also drop this peer's repair screen, if one is open, without
