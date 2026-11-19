@@ -76,6 +76,8 @@ const char* const  kSayEnd   = "atvpart end ";
 
 constexpr const wchar_t* kPartClass = L"prop_atvWheel_C";
 constexpr const wchar_t* kPartItem = L"atvwheel";
+constexpr const wchar_t* kWrenchClass = L"prop_wrenchtool_C";
+constexpr const wchar_t* kPowerToolClass = L"prop_powertool_C";
 
 // What a peer's copy holds: the tyre mask and the wheel's world props (a hand item and its mirrors are
 // no world props).
@@ -175,8 +177,8 @@ bool HostCounts(Counts& out) {
 // HOST: what the client's hand holds, by the lane that judges it.
 Hand HostHandKind() {
     if (!coop::hand_item::HoldsItem(kSlot)) return Hand::None;
-    const std::wstring item = coop::hand_item::HeldItem(kSlot);
-    if (_wcsicmp(item.c_str(), L"tool_w") == 0 || _wcsicmp(item.c_str(), L"powertool") == 0) return Hand::Wrench;
+    if (coop::hand_item::HeldClassIs(kSlot, kWrenchClass) || coop::hand_item::HeldClassIs(kSlot, kPowerToolClass))
+        return Hand::Wrench;
     return coop::hand_item::HeldClassIs(kSlot, kPartClass) ? Hand::Wheel : Hand::Keep;
 }
 
@@ -243,6 +245,7 @@ State g_legStart{};
 Counts g_legCounts{};
 coop::atv_part_intent::Stats g_legAsked{};
 bool g_ended = false;
+Hand g_equipped = Hand::Keep;  // CLIENT: the hand this drill last took (Keep: none yet)
 
 void Go(Step s) {
     g_step = s;
@@ -361,7 +364,7 @@ State WantAfter(const Leg& l, const State& from) {
 bool TakeHand(Hand h) {
     switch (h) {
     case Hand::None:   return coop::dev::drill_hand::TakeIntoHandNow(L"None", nullptr);
-    case Hand::Wrench: return coop::dev::drill_hand::TakeIntoHandNow(L"tool_w", L"prop_wrenchtool_C");
+    case Hand::Wrench: return coop::dev::drill_hand::TakeIntoHandNow(L"tool_w", kWrenchClass);
     case Hand::Wheel:  return coop::dev::drill_hand::TakeIntoHandNow(kPartItem, kPartClass);
     default:           return true;
     }
@@ -447,9 +450,14 @@ void TickClient(coop::net::Session& s) {
         if (l.hand != Hand::Keep) {
             if (!g_acted) {
                 g_acted = true;
-                if (!TakeHand(l.hand))
-                    return End(RV::Outcome::Invalid, "%s: the client's hand did not take the %s", l.name,
-                               HandWord(l.hand));
+                // A hand already holding the leg's item is left alone: taking the same tool up again destroys
+                // and respawns its hold, which a player's next unbolt never does.
+                if (l.hand != g_equipped) {
+                    if (!TakeHand(l.hand))
+                        return End(RV::Outcome::Invalid, "%s: the client's hand did not take the %s", l.name,
+                                   HandWord(l.hand));
+                    g_equipped = l.hand;
+                }
             }
             // Readiness is the host's own word on the hand, never a wait of so many seconds.
             if (!HostSaysHand(l.hand)) {
@@ -524,6 +532,7 @@ void OnDisconnect() {
     g_acted = false;
     g_leg = 0;
     g_ended = false;
+    g_equipped = Hand::Keep;
     g_named = false;
     g_atv.Reset();
     g_key.clear();

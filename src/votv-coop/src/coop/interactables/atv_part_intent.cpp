@@ -244,9 +244,11 @@ const char* const kRowTag[kRowCount] = {"unbolt", "fit", "spare stow", "spare ta
 
 // ---- HOST: the judge and the change --------------------------------------------------------------
 
+// The tool is known by the class the hand lane records for the hold, as the house judges do: the item name the
+// hold slot carries is rewritten by the game when the hand takes the same tool up again, the class is not.
 bool HoldsUnscrewTool(uint8_t slot) {
-    const std::wstring item = coop::hand_item::HeldItem(slot);
-    return _wcsicmp(item.c_str(), L"tool_w") == 0 || _wcsicmp(item.c_str(), L"powertool") == 0;
+    return coop::hand_item::HeldClassIs(slot, L"prop_wrenchtool_C") ||
+           coop::hand_item::HeldClassIs(slot, L"prop_powertool_C");
 }
 
 bool SpotBesideSender(uint8_t slot, ue_wrap::FVector& out) {
