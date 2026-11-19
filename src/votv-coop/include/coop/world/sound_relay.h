@@ -7,7 +7,9 @@
 // (its object this machine's player, either role) or the host's world (sent by the host) -- and sends them (SoundAt):
 // a client to the host, which plays it and relays it to the other clients; the host to all. A receiver loads the two
 // assets by path (cached) and plays the same sound at the same place. The relayed play has no Blueprint caller, so it
-// is never sent again. Game thread.
+// is never sent again. A scrubbed grime decal's own sound (grime_C's clean) is sent by the machine that cleaned it, and
+// a PlaySound2D, heard by this machine's player alone, is sent when the item in its hand played it (a mop's dip, a
+// bucket's scoop or its water thrown out), placed at the player with the game's att_default. Game thread.
 
 #pragma once
 

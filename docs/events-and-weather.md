@@ -215,7 +215,14 @@ that call sends the sound, place, volume, pitch and attenuation when the calling
 player's own, from the machine whose player ran it, or the host's world, from the host (`SoundAt`; the host plays a
 client's and relays it). A receiver loads the assets by path and plays the same sound there; its own play has no
 Blueprint caller, so nothing echoes (`coop/world/sound_relay`) `[V]` (`coop/dev/hit_probe`: a client's three crowbar
-hits and the host's played on the other peer in the same second, and the host's knocks on the client). Whether a
+hits and the host's played on the other peer in the same second, and the host's knocks on the client). A scrubbed
+grime decal's own squelch (`grime_C::clean`'s `Sound`, `poop_Cue` at the decal) is on the list as the cleaner's: `clean`
+runs only where a mop, a sponge or a cleaner scrubbed it, since another peer takes the dirt from the grime lane. And a
+`PlaySound2D`, heard by its own machine's player alone, crosses when the item in that player's hand played it (a mop's or
+a sponge's dip, a bucket's scoop, its water thrown out or poured on a plant): a second pre hook sends it as a placed
+sound at the player, with the game's `att_default` `[V]` (the clean drill of Ghezra/Multivoid's line, three peers, a
+client and then the host cleaning: each of the 18 to 20 scrubs, and the hand bucket's `wade_Cue` and
+`water_splash_Cue`, played on both other peers; before the change, none). Whether a
 client's puppet in the vent trips the host's knocker is not measured `[?]`.
 
 ### Emails and the daily task
