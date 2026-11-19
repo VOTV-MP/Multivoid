@@ -150,7 +150,7 @@
 #include "coop/dev/build_identity_drill.h"  // [dev] the nail, wall and poster pieces carry keys the prop lane reads, across a rejoin
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/oven_progress_drill.h"  // [dev] the oven's screws and lid raised on one screen, read on the other
-#include "coop/dev/pried_drill.h"  // [dev] a plank, a radiator and a closed dynamite box pried, judged on both peers
+#include "coop/dev/pried_drill.h"  // [dev] a plank, a radiator and a security TV pried, judged from the host
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/recycled_slot_drill.h"  // [dev] a recycled object slot, staged on the local pawn
 #include "coop/dev/rng_roll_census.h"  // the dev roll census

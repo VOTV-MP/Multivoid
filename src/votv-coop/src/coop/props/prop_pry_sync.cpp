@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_pry_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"  // the pry drill's red arms
 #include "coop/net/net_clock.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -72,6 +74,9 @@ void* CrowbarOf(const sg::Call& c) {
 // this copy, and the host's PryState does. Cancelling leaves the minigame's end() to drop the crowbar, as it does when a
 // pry opens nothing. A prop with no key has nothing to name it by, so its pry runs here alone, said.
 sg::Verdict ClientPre(coop::net::Session& s, const sg::Call& c, const std::wstring& key) {
+    // The pried drill's client red arm: the client runs its own pry and asks nobody. Resolved once.
+    static const bool s_askOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_ask_off);
+    if (s_askOff) return sg::Verdict::Run;
     // A call on an object of a world this client has not announced ready is that world's load, the host's save: it runs
     // natively, and the host's state of what the lane owns follows the announce.
     if (!coop::net_pump::IsInAnnouncedWorld(c.object)) {
@@ -114,7 +119,9 @@ sg::Verdict OnCrowbarPre(const sg::Call& c) {
     if (s->role() == coop::net::Role::Client) return ClientPre(*s, c, key);
     // The host runs its own pry, and cancels only a second one of a pried key: a minigame that ends after the host
     // granted another player's pry of the same prop.
-    if (key.empty() || g_grantDepth > 0 || !IsPried(key)) return sg::Verdict::Run;
+    // The pried drill's twice red arm: a second pry of a pried prop runs its body again. Resolved once.
+    static const bool s_againOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_again_off);
+    if (s_againOff || key.empty() || g_grantDepth > 0 || !IsPried(key)) return sg::Verdict::Run;
     ++g_stats.twiceCancelled;
     UE_LOGI("prop_pry_sync: a second pry of '%ls' cancelled -- it is already pried here", key.c_str());
     return sg::Verdict::Cancel;
@@ -174,7 +181,9 @@ void MarkPried(void* prop) {
     PublishState(*s, key, 0);
     // The freed body falls on the host alone: every copy parks on the host's first pose and follows its stream, and
     // snaps to its rest at the stream's end, so no peer simulates the fall (MTA: an element's motion is the server's).
-    coop::prop_drive_host::CoastLetGo(prop, "pry");
+    // The pried drill's coast red arm hands the body to no stream: each peer simulates the fall. Resolved once.
+    static const bool s_coastOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_coast_off);
+    if (!s_coastOff) coop::prop_drive_host::CoastLetGo(prop, "pry");
 }
 
 void NoteBroken(void* prop, int joint) {
@@ -195,6 +204,9 @@ void NoteBroken(void* prop, int joint) {
 
 void StampRow(void* prop, uint8_t& physFlags, uint8_t& pryMask) {
     if (g_rec.empty()) return;  // a snapshot's rows are many and a pried prop is rare: no key read for each
+    // The pried drill's join red arm: the row carries no pry. Resolved once.
+    static const bool s_rowOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_row_off);
+    if (s_rowOff) return;
     auto* s = LaneSession();
     if (!s || s->role() != coop::net::Role::Host) return;
     const auto it = g_rec.find(KeyOf(prop));

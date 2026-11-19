@@ -1,18 +1,19 @@
-// coop/dev/pried_drill.h -- [dev] a crowbar's pry of a prop with no wall-attach component, on both peers.
+// coop/dev/pried_drill.h -- [dev] a crowbar's pry of a plank, a radiator and a security TV, judged from the host
+// (ini pried_drill=off|host|tv|client|far|twice|join|midjoin / env VOTVCOOP_PRIED_DRILL; BOTH peers).
 //
-// The pry lane (coop/props/prop_pry_sync) carries two bodies: a plank that clears its flags and a
-// radiator that starts its breaking sequence. Arms (`pried_drill`): plank_host, plank_client,
-// radiator_host, radiator_client -- the watching peer names the first stuck prop of the class in the
-// lobby chat, the acting peer runs that prop's own crowbarOpen with no crowbar and says where its copy
-// came to rest, and the watching peer judges its own copy: freed by the lane's replay, moved, and
-// resting near the acting peer's. Every verdict is one line, `[PRIED-DRILL]` with the peer's tag and
-// `PASS` or `FAIL`.
-//
-// Arms measure_plank and measure_radiator measure the same pry instead of judging it (pried_measure.h).
+// The host spawns the fixture, static as the game places it, ahead of the client's puppet; the client finds its copy by the
+// key the host says in the lobby chat. Every wait ends on an event a peer printed; a bound says INVALID, never a verdict.
+//   host, tv   the host pries a radiator, a security TV: the client's broken joints (BreakConstraint's native post hook is
+//              the witness: IsBroken reads 0 after a break) equal the host's, and the copies rest within 1 cm and 1 deg.
+//   client     the client pries a plank by activatePrying and End: its crowbarOpen is asked, not run, the host grants it.
+//   far        a raw ask for a plank 3000 uu away: refused as out of reach, the plank stays stuck.
+//   twice      the host pries a plank twice: the second crowbarOpen is cancelled, its body ran once.
+//   join       the client's life 1 prints `pried-drill: REJOIN-NOW`; life 2 (--rejoin-env VOTVCOOP_PRIED_LIFE=2) takes
+//              its joints from the host's prop row. midjoin: the host pries as the joiner's snapshot rows drain.
+//   rig: VERDICT pry-<arm>  PASS | FAIL | INVALID. Reds (each a [dev] row): pry_judge_off (far), pry_ask_off (client),
+//   pry_coast_off (host, tv), pry_row_off (join), pry_again_off (twice).
 
 #pragma once
-
-#include <string>
 
 namespace coop::net {
 class Session;
@@ -22,17 +23,10 @@ namespace coop::dev::pried_drill {
 
 bool IsEnabled();
 
-// This peer's join is over: a client's own, or on the host one client's with its window closed.
-bool JoinOver(coop::net::Session& s);
-
-// The first key, in order, among the live props of `clsName` or below, the stuck ones first; empty when none stands.
-// One walk of the object array. Shared with pried_measure.
-std::wstring PickByClass(const wchar_t* clsName);
-
 // The drill's pass on either peer. A single read when off. Game thread.
 void Tick(coop::net::Session* session);
 
-// Back to the first step. Net disconnect.
+// Back to the first step. Net disconnect (the host keeps its fixture across the client's departure in the join arms).
 void OnDisconnect();
 
 }  // namespace coop::dev::pried_drill

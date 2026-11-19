@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_pry_host.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"  // pry_judge_off, pry_coast_off
 #include "coop/element/intent_authority.h"
 #include "coop/net/intent_bucket.h"
 #include "coop/net/intent_queue.h"
@@ -68,11 +70,6 @@ struct Slot {
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
-struct Counts {
-    uint64_t granted;     // asks the host ran
-    uint64_t refused;     // asks the judge turned down, for any reason
-    uint64_t farRefused;  // of those, out of the sender's reach
-};
 Counts g_counts{};
 
 // A refusal: counted, and said once per slot per kRefusalSayMs.
@@ -122,7 +119,9 @@ void OnBreakPost(void* context, void*, void*) {
     // The loop's random spin follows this call on the host's body, and the radiator hangs between breaks long enough for
     // a row to end (kRestMs, 500, against 1.5 to 3 s), so each break opens or re-times a row of its own, whatever the body
     // is doing at this instant: CoastLetGo would refuse a body at rest. Every copy parks on the row's first pose again.
-    if (!coop::prop_drive_host::CoastCapReached(owner, "pry-break")) coop::prop_drive_host::Coast(owner, "pry-break");
+    static const bool s_coastOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_coast_off);  // the drill's red
+    if (!s_coastOff && !coop::prop_drive_host::CoastCapReached(owner, "pry-break"))
+        coop::prop_drive_host::Coast(owner, "pry-break");
 }
 
 // False keeps the ask at its sender's queue head: the host has no body for the sender yet (its first pose has not
@@ -144,7 +143,9 @@ bool Execute(coop::net::Session& s, const coop::net::PryAskPayload& p, uint8_t s
         }
         return false;
     }
-    if (!subject) {
+    // The pried drill's far red arm: the reach is not checked, so an out-of-reach ask runs. Resolved once.
+    static const bool s_judgeOff = coop::config::ResolveFlag(coop::config_registry::rows::pry_judge_off);
+    if (!subject && !s_judgeOff) {
         Refuse(slot, key, Why::OutOfReach);
         return true;
     }
@@ -205,6 +206,8 @@ void Tick(coop::net::Session& session) {
         });
     }
 }
+
+Counts GetCounts() { return g_counts; }
 
 void OnDisconnect() {
     if (g_counts.granted || g_counts.refused)

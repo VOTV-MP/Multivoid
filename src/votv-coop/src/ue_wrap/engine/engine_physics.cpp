@@ -195,18 +195,4 @@ int StopActorSimulating(void* actor) {
     return stopped;
 }
 
-int ForEachMemberComponent(void* actor, ComponentVisitor visit, void* ctx) {
-    void* cls = actor ? R::ClassOf(actor) : nullptr;
-    if (!cls || !visit) return 0;
-    int visited = 0;
-    for (int32_t off : ComponentMembers(cls)) {
-        void* comp = *reinterpret_cast<void* const*>(static_cast<const char*>(actor) + off);
-        // Only the actor's own: a variable can hold another actor's component.
-        if (!comp || !R::IsLive(comp) || R::OuterOf(comp) != actor) continue;
-        visit(ctx, comp);
-        ++visited;
-    }
-    return visited;
-}
-
 }  // namespace ue_wrap::engine

@@ -50,12 +50,4 @@ bool GetComponentCenterOfMass(void* component, FVector& out);
 // Null-safe.
 int StopActorSimulating(void* actor);
 
-// A visitor for ForEachMemberComponent: `ctx` is the caller's, `component` a live component of the actor.
-using ComponentVisitor = void (*)(void* ctx, void* component);
-
-// Every component the actor's Blueprint chain declares as a member (a component variable) and owns, in declaration
-// order, each handed to `visit`: its scene parts, its constraints, its child-actor slots. Found once per class name,
-// as StopActorSimulating finds them. Returns how many were visited; 0 for no actor. Game thread.
-int ForEachMemberComponent(void* actor, ComponentVisitor visit, void* ctx);
-
 }  // namespace ue_wrap::engine

@@ -27,6 +27,14 @@ void OnAsk(coop::net::Session& session, const coop::net::PryAskPayload& payload,
 // joints. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
+// Counters for the session-end line and the pried drill.
+struct Counts {
+    uint64_t granted;     // asks the host ran
+    uint64_t refused;     // asks the judge turned down, for any reason
+    uint64_t farRefused;  // of those, out of the sender's reach
+};
+Counts GetCounts();
+
 // Session end: the counters are said and cleared. A sender's queue and its latches live in its slot's state.
 void OnDisconnect();
 
