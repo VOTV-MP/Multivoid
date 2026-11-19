@@ -1,17 +1,20 @@
 // coop/config/config_registry_rows_dev_fixtures.inc -- the [dev] rows of the drills for a fixture a player works
 // on. Included by config_registry_rows_dev.inc, so its rows join every expansion of the list. The entry forms are config_registry_rows.inc's.
-CFG_ENUM(oven_progress_drill, "oven_progress_drill", "dev", "off", "off|host|client|join|repair|reach|order|fixearly",
+CFG_ENUM(oven_progress_drill, "oven_progress_drill", "dev", "off", "off|host|client|join|repair|reach|order|fixearly|again|burst",
     "VOTVCOOP_OVEN_PROGRESS_DRILL",
     "Drill (BOTH peers): the oven's screws and lid. host and client: the acting peer sets a screw's "
     "bool on its own repair screen, then the other three, then the lid's; the watching peer says its "
     "screen's mask whenever it changes and each step must stand there before the next; the client is "
     "walked to the oven's switch box first. join: the host's screen takes all five before anyone joins "
     "and the joiner judges its own screen when the host's mask reaches it. repair: the walked client "
-    "takes the screws and the lid on its screen, then runs the oven's fix(); the host's judge grants it "
+    "writes the screws and the lid on its screen (not its click handlers), then calls the oven's fix(); the host's judge grants it "
     "and every peer must read the oven fixed, the client's own fix() never having run. reach, order and "
     "fixearly: the host's judge refuses a raw screw bit from out of reach (run with 2 clients: the other "
     "client must never see the refused bit), a raw lid bit with no screws, and a raw repair with no lid; "
-    "each is decided on the host at its own refusal counter. One `[OVEN-DRILL] [H|C] PASS` or `FAIL` "
+    "each is decided on the host at the event that settles it (its own refusal counter moving, or the refused "
+    "bit reaching the host's record or fixing its oven, a FAIL). again: the repair is asked twice and the second "
+    "is answered as already fixed. burst: twelve raw screw messages at once, more than the host's queue holds. "
+    "One `[OVEN-DRILL] [H|C] PASS` or `FAIL` "
     "line per judge, each decided at the event that settles it; a wait that never ends says "
     "`INVALID`. An oven the save holds repaired ends INVALID by name.")
 CFG_FLAG(oven_judge_off, "oven_judge_off", "dev", false, "VOTVCOOP_OVEN_JUDGE_OFF",

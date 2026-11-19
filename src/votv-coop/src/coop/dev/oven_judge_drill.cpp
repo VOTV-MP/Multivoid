@@ -41,13 +41,13 @@ namespace J  = coop::oven_repair_judge;
 namespace PS = coop::oven_progress_sync;
 namespace IS = coop::interactable_sync;
 
-enum class Arm { Off, Repair, Reach, Order, FixEarly };
+enum class Arm { Off, Repair, Reach, Order, FixEarly, Again, Burst };
 
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::oven_progress_drill);
         return v == "repair" ? Arm::Repair : v == "reach" ? Arm::Reach : v == "order" ? Arm::Order
-             : v == "fixearly" ? Arm::FixEarly : Arm::Off;
+             : v == "fixearly" ? Arm::FixEarly : v == "again" ? Arm::Again : v == "burst" ? Arm::Burst : Arm::Off;
     }();
     return a;
 }
@@ -74,6 +74,11 @@ const char* const kSayWalked    = "oven walked";
 const char* const kSayWalkFail  = "oven walk failed";
 const char* const kSayRawSent   = "oven raw sent";
 const char* const kSayC2Ready   = "oven c2 ready";
+const char* const kSayAsked2    = "oven asked twice";
+// A FAIL of either peer, told to the other so neither idles to its bound.
+const char* const kSayFail      = "oven judge FAIL";
+// The burst arm: raw messages sent at once, more than the host's queue of eight holds.
+constexpr int kBurstCount = 12;
 
 ue_wrap::CachedObjRef g_oven;
 std::shared_ptr<DR::BackgroundWalk> g_walk;
@@ -85,6 +90,7 @@ bool     g_fixCalled = false;
 bool     g_rawSent = false;
 bool     g_c2Said = false;
 bool     g_ovenSeen = false;   // the oven and its key are indexed
+bool     g_secondSeen = false;  // the again arm: the second ask is said sent
 uint64_t g_waitMs = 0;
 
 void* Oven() {
@@ -103,7 +109,10 @@ void Verdict(bool pass, const char* fmt, ...) {
     std::vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     if (pass) UE_LOGI("[OVEN-DRILL] [%c] PASS %s", Who(), msg);
-    else      UE_LOGW("[OVEN-DRILL] [%c] FAIL %s", Who(), msg);
+    else {
+        UE_LOGW("[OVEN-DRILL] [%c] FAIL %s", Who(), msg);
+        DC::Say(kSayFail);
+    }
     g_done = true;
 }
 
@@ -163,8 +172,8 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
         if (!Fixture(oven, key)) return;
         g_started = true;
     }
-    // The reach arm stays where the client spawned; the others walk to the box first.
-    if (arm != Arm::Reach && !g_walkSaid) {
+    // The reach and burst arms stay where the client spawned; the others walk to the box first.
+    if (arm != Arm::Reach && arm != Arm::Burst && !g_walkSaid) {
         switch (WalkToBox(oven)) {
         case Walk::Going: return;
         case Walk::Failed:
@@ -189,6 +198,16 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
         g_done = true;
         return;
     }
+    if (arm == Arm::Burst) {
+        // Out of reach on purpose: whatever the host's queue holds is refused, and what it cannot hold is counted.
+        int sent = 0;
+        for (int i = 0; i < kBurstCount; ++i)
+            if (SendRawSteps(s, key, kRawScrew)) ++sent;
+        DC::Say(kSayRawSent);
+        UE_LOGI("[OVEN-DRILL] [C] sent %d raw screw messages at once from where it stands", sent);
+        g_done = true;
+        return;
+    }
     if (arm == Arm::Order) {
         const bool ok = SendRawSteps(s, key, OS::kLid);
         DC::Say(kSayRawSent);
@@ -203,7 +222,8 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
         g_done = true;
         return;
     }
-    // repair: the screws and the lid on this screen as the game's own steps leave them, then the wiring's end, fix().
+    // repair and again: the screen's step bools written through RaiseProgress (not its click handlers), then the wiring's end,
+    // the oven's fix() called directly.
     if (g_step < kStepCount) {
         const bool ok = OS::RaiseProgress(oven, kSteps[g_step]);
         UE_LOGI("[OVEN-DRILL] [C] step %d: raised 0x%02X on this screen (%d)", g_step, kSteps[g_step], ok ? 1 : 0);
@@ -220,16 +240,23 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
                 static_cast<unsigned long long>(st.held),
                 static_cast<unsigned long long>(st.ranHere), fixed ? 1 : 0);
         if (st.ranHere != 0 || fixed)
-            return Verdict(false, "repair: this client's own fix() ran here before the host's grant (fixed here=%d)",
+            return Verdict(false, "%s: this client's own fix() ran here before the host's grant (fixed here=%d)", ArmOf() == Arm::Again ? "again" : "repair",
                            fixed ? 1 : 0);
         if (st.held == 0)
-            return Invalid("repair: the client's fix() was neither held nor run -- the repair gate did not see it");
+            return Invalid("%s: the client's fix() was neither held nor run -- the repair gate did not see it", ArmOf() == Arm::Again ? "again" : "repair");
         Progress();
         return;
     }
     bool fixed = false;
     if (A::TryReadOvenFixed(oven, fixed) && fixed) {
         const J::Stats st = J::GetStats();
+        if (arm == Arm::Again) {
+            // The oven is fixed everywhere: ask again. The host answers an ask on a fixed oven to the asker alone.
+            const bool ok = SendRawRepair(s, key);
+            DC::Say(kSayAsked2);
+            return Verdict(true, "again: the oven reads fixed on this client from the host's grant (its own fix() held "
+                           "%llu times); the second ask is sent (%d)", static_cast<unsigned long long>(st.held), ok ? 1 : 0);
+        }
         return Verdict(true, "repair: the oven reads fixed on this client from the host's grant; its own fix() was held "
                        "(%llu) and never ran here", static_cast<unsigned long long>(st.held));
     }
@@ -250,18 +277,41 @@ void TickHost(void* oven, const std::wstring& key) {
     bool fixed = false;
     A::TryReadOvenFixed(oven, fixed);
     const uint8_t record = PS::KnownMask(key);
-    if (arm == Arm::Repair) {
+    if (arm == Arm::Repair || arm == Arm::Again) {
+        const char* name = arm == Arm::Again ? "again" : "repair";
         if (!DC::SeenHas(kSayWalked)) return;
         if (!fixed) return Wait("the repair's grant");
         if (st.grantedRepairs == 0)
-            return Verdict(false, "repair: the host's oven reads fixed with no grant by the judge");
-        return Verdict(true, "repair: the judge granted %llu step message(s) and the repair; the record holds 0x%02X and the "
-                       "host reads fixed", static_cast<unsigned long long>(st.grantedSteps), record);
+            return Verdict(false, "%s: the host's oven reads fixed with no grant by the judge", name);
+        if (arm == Arm::Repair)
+            return Verdict(true, "repair: the judge granted %llu step message(s) and the repair; the record holds 0x%02X and "
+                           "the host reads fixed", static_cast<unsigned long long>(st.grantedSteps), record);
+        // again: the second ask on the fixed oven is answered Already, and the repair is not granted twice.
+        if (st.grantedRepairs > 1)
+            return Verdict(false, "again: the judge granted the repair %llu times", static_cast<unsigned long long>(st.grantedRepairs));
+        if (st.already)
+            return Verdict(true, "again: the second ask was answered Already (%llu), the repair was granted once and the host "
+                           "reads fixed", static_cast<unsigned long long>(st.already));
+        if (!g_secondSeen) { g_secondSeen = true; Progress(); }  // the waits below start at the first grant
+        if (!DC::SeenHas(kSayAsked2)) return Wait("the client's second ask");
+        return Wait("the judge's answer to the second ask");
     }
     if (!DC::SeenHas(kSayRawSent)) return;
     const uint64_t dReach = st.refusedReach, dOrder = st.refusedOrder;
     const uint64_t dOther = (st.refusedNooven) + (st.refusedNobody) +
                             (st.refusedBucket) + (st.refusedAction);
+    if (arm == Arm::Burst) {
+        // The queue holds eight: the rest of a burst of twelve is refused unrun, and counted.
+        if (record & kRawScrew)
+            return Verdict(false, "burst: a far client's raw screw bit reached the host's record 0x%02X", record);
+        if (st.refusedBucket)
+            return Verdict(true, "burst: refused_bucket moved by %llu and the record lacks the bit (0x%02X)",
+                           static_cast<unsigned long long>(st.refusedBucket), record);
+        if (dReach >= 8)
+            return Invalid("burst: eight messages were judged and none was refused for a full queue -- the burst never "
+                           "overflowed it");
+        return Wait("the host's refusal of the burst");
+    }
     if (arm == Arm::Reach) {
         if (record & kRawScrew) return Verdict(false, "reach: the far client's raw screw bit reached the host's record 0x%02X", record);
         if (dReach) {
@@ -330,6 +380,11 @@ void Tick(coop::net::Session* session) {
     if (!IsJudgeArm() || !session || g_done || !session->connected()) return;
     DC::SeenHas(kSayWalked);  // the chat history records from its first read on
     if (!coop::dev::oven_progress_drill::PeersJoined(*session)) return;
+    if (DC::SeenHas(kSayFail)) {
+        g_done = true;
+        UE_LOGW("[OVEN-DRILL] [%c] the other peer judged FAIL; this arm ends", Who());
+        return;
+    }
     void* oven = Oven();
     const std::wstring key = oven ? IS::OvenKey(oven) : std::wstring();
     if (!oven || key.empty()) return Wait("the oven in the lane's index");
@@ -353,6 +408,7 @@ void OnDisconnect() {
     g_rawSent = false;
     g_c2Said = false;
     g_ovenSeen = false;
+    g_secondSeen = false;
     g_waitMs = 0;
 }
 

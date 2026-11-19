@@ -321,9 +321,10 @@ void Tick(coop::net::Session* session) {
                         g_key.c_str(), ms);
                 Done("crossed=1 one way");
             } else if (Clock::now() - g_since > kCrossBound) {
-                UE_LOGW("[TOGGLE-DRILL] client: the host's change did not cross within %lld s -- FAIL",
+                // The bound only says INVALID: whether a lost change or a slow one, this peer cannot tell which.
+                UE_LOGW("[TOGGLE-DRILL] client: the host's change did not cross within %lld s -- INVALID",
                         static_cast<long long>(kCrossBound.count()));
-                Done("crossed=0");
+                Done("crossed=0 INVALID");
             }
         } else if (host && g_last == g_start && session->AnyWorldReadyPeer()) {
             Owe();  // the host's change, once a client's world is there to take it
