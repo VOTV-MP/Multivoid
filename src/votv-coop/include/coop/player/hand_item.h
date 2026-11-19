@@ -103,6 +103,12 @@ void* MirrorActorForSlot(uint8_t slot);
 // only.
 bool HeldClassIs(uint8_t slot, const wchar_t* cls);
 
+// Whether `slot`'s hand holds an item of the class named `base` or of a class that descends from it: a gas can's big,
+// mini and funny cans are prop_gascan_C to the game's own fuelling casts, and to a host that judges a pour by them. The
+// held class is found loaded by its name (its hand mirror loads it on the host) and its parent chain walked; one not
+// loaded here is only its own name. Game thread only.
+bool HeldClassIsA(uint8_t slot, const wchar_t* base);
+
 // Whether this peer's own announce of a hand item of the class named `cls` has been queued, and the
 // hand has not emptied or changed class since: true from the TickOwner statement that announces it. A
 // client's launcher shot waits for it, so the host has the hand first on the one ordered lane. Game

@@ -79,6 +79,11 @@ bool IsActorDrivenByOtherThan(void* actor, int slot);
 // excludes none). Game thread.
 int DrivingSlotOf(void* actor, int except = -1);
 
+// Whether `slot` carries, by its grab's drive here, a prop of the class named `base` or of one that descends from it: a
+// heavy prop (a big gas can) goes no hotbar hand and is carried by the grab alone, so a host judging what a client pours
+// with asks this beside hand_item::HeldClassIsA. Game thread only.
+bool CarriesClassA(int slot, const wchar_t* base);
+
 // The host refused hold `holdGen` of the peer in `slot` (coop/props/prop_hold_claim): the hold
 // closes, its release moves nothing, and its drive ends if one started. A copy that no other drive
 // moves goes back to physics where that drive left it, whether or not this peer's player holds it (a

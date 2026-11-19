@@ -7,6 +7,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/props/remote_prop.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_key_index.h"
 #include "coop/world/spawn_authority.h"
@@ -202,7 +203,7 @@ void Judge(N::Session& s, uint8_t slot, const Payload& p) {
     bool active = false;
     if (!Read(g, fuel, active)) return;
     if (p.op == N::kGeneratorOpPour) {
-        if (!coop::hand_item::HeldClassIs(slot, kCanClass)) return Refused(s, slot, g, key, "no gas can in the hand");
+        if (!(coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass))) return Refused(s, slot, g, key, "no gas can in the hand");
         if (!(p.fuel > 0.f) || p.fuel > kMaxFuel) return Refused(s, slot, g, key, "a malformed gain");
         if (!(fuel < kMaxFuel)) return Refused(s, slot, g, key, "the tank is full");
         ++g_applying;

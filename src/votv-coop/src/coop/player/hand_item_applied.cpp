@@ -10,6 +10,8 @@
 #include "coop/net/net_clock.h"
 #include "coop/player/hand_history.h"
 #include "coop/player/roster_ledger.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <cstring>
 #include <cwchar>
@@ -123,6 +125,17 @@ bool HeldClassIs(uint8_t slot, const wchar_t* cls) {
     if (slot >= coop::players::kMaxPeers || !cls) return false;
     const SlotHand& h = g_hands[slot];
     return h.has && ::_wcsicmp(h.cls.c_str(), cls) == 0;
+}
+
+bool HeldClassIsA(uint8_t slot, const wchar_t* base) {
+    if (HeldClassIs(slot, base)) return true;
+    if (slot >= coop::players::kMaxPeers || !base) return false;
+    const SlotHand& h = g_hands[slot];
+    if (!h.has) return false;
+    void* cls = ue_wrap::object_index::ClassByName(h.cls.c_str());
+    for (int hops = 0; cls && hops < 16; ++hops, cls = ue_wrap::reflection::SuperStructOf(cls))
+        if (::_wcsicmp(ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls)).c_str(), base) == 0) return true;
+    return false;
 }
 
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls) {

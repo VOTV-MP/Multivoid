@@ -18,3 +18,9 @@ host reads its generators twice a second and sends one that changed, a running o
 to its sender and every one to a joiner (`GeneratorState`); a client writes it, with `activateOutlets` on an on/off change.
 `[V]` `coop/dev/genp_probe` (`VOTVCOOP_GENP_PROBE=client`): the client's pour of 50 and its start ran on the host, whose burn the
 client's copy then followed; before it the host's copy stayed empty and off.
+
+A gas can is any class of the can's line (`prop_gascan_C` and its big, full, mini and funny cans, which the game's own
+fuelling casts take), in the hotbar hand or carried by the grab, as a big can is: the generator's, the woodchipper's and
+the ATV's judges ask both (`hand_item::HeldClassIsA`, `remote_prop::CarriesClassA`) `[V]` (`VOTVCOOP_GENP_GRAB=
+prop_gascan_big_full_C`: a client's pour from a carried big can was refused as "no gas can in the hand"; now the host
+added its 100 and the generator ran on both).
