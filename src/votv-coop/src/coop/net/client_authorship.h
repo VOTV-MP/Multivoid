@@ -206,6 +206,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::PrintCheck:
     case ReliableKind::PrintNotice:
     case ReliableKind::PrintedState:
+    case ReliableKind::PrinterState:
     case ReliableKind::AtvHostState:
     case ReliableKind::SkySignalState:
     case ReliableKind::EmailAppend:

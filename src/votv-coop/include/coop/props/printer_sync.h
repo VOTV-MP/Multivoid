@@ -1,4 +1,4 @@
-// coop/props/printer_sync.h -- a 3D print and its printed object, the host's (docs/kitchen-and-media.md).
+// coop/props/printer_sync.h -- a 3D print and its printed object, the host's (docs/props.md).
 //
 // VOTV-MP/Multivoid#49. A printedObject_C is no prop_C; it builds its mesh from the player's own model file
 // (coop/props/printer_models).
@@ -9,6 +9,7 @@
 //   light, bites and rest pose (PrintedState). A client spawns it, or adopts its save-loaded copy by key, and builds it
 //   from its own file when the hash matches; otherwise it keeps a hidden placeholder and tells the host, which puts the
 //   chat line on the host and that player. A client's light toggle is asked of the host; its bite is told to the host.
+//   RUN. The host's start and end of a print (PrinterState); a client's printer copy runs its own animation between.
 // Game thread.
 #pragma once
 
@@ -22,6 +23,7 @@ struct PrintCheckReplyPayload;
 struct PrintNoticePayload;
 struct PrintedStatePayload;
 struct PrintedIntentPayload;
+struct PrinterStatePayload;
 }  // namespace coop::net
 
 namespace coop::printer_sync {
@@ -37,6 +39,8 @@ void OnCheckReply(int senderSlot, const coop::net::PrintCheckReplyPayload& p);  
 void OnNotice(const coop::net::PrintNoticePayload& p);                           // client
 void OnState(const coop::net::PrintedStatePayload& p);                           // client
 void OnIntent(int senderSlot, const coop::net::PrintedIntentPayload& p);         // host
+// A printer's run, the host's start and end: a client's copy runs the game's own print between them.
+void OnPrinterState(const coop::net::PrinterStatePayload& p);                      // client
 
 // HOST: every printed object, to a joiner at its world-ready.
 void SendJoin(int slot);

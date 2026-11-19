@@ -58,6 +58,7 @@ std::atomic<N::Session*> g_session{nullptr};
 UE_FACT_FN(kRowPrint, "printer_sync", L"3dPrinterAnim_C", L"print", Declared);
 UE_FACT_FN(kRowAction, "printer_sync", L"printedObject_C", L"actionOptionIndex", Declared);
 UE_FACT_FN(kRowLoad, "printer_sync", L"printedObject_C", L"load", Declared);
+UE_FACT_FN(kRowFromPrinter, "printer_sync", L"printedObject_C", L"loadFromPrinter", Declared);
 constexpr int kTag = 0x50520001;  // 'PR' 1
 
 constexpr uint64_t kCheckMs = 5000;    // a client that has not answered by then is taken as lacking the model
@@ -562,29 +563,108 @@ void OnActionPost(const sg::Call& c) {
     if (N::Session* s = Live()) s->SendReliable(N::ReliableKind::PrintedIntent, &p, sizeof(p));
 }
 
+// ---- the printer's run on every peer ------------------------------------------------------------
+//
+// A print's run is the printer's own tick, so a client's copy runs it from the host's start and the host's end stops it:
+// two messages, no stream. A client's copy at its run's end spawns an object of its own, which is refused (the host's
+// arrives as PrintedState).
+
+struct Run {
+    void* printer = nullptr;
+    int32_t idx = -1;
+    std::wstring name;
+};
+std::unordered_map<uint32_t, Run> g_runs;  // host: the printers printing, by element id
+std::vector<void*> g_ownBirths;              // client: objects its copy of a printer made, destroyed at the next tick
+uint64_t g_runsMirrored = 0, g_ownBirthsRefused = 0;
+
+void SendRun(int slot, uint32_t eid, uint8_t op, const std::wstring& name) {
+    N::Session* s = Live();
+    if (!s) return;
+    N::PrinterStatePayload p{};
+    p.printerEid = eid;
+    p.op = op;
+    p.nameLen = PutText(p.name, PM::ToUtf8(name));
+    if (slot < 0) s->SendReliable(N::ReliableKind::PrinterState, &p, sizeof(p));
+    else s->SendReliableToSlot(slot, N::ReliableKind::PrinterState, &p, sizeof(p));
+}
+
+// The host's print that ran: its printer is printing now.
+void OnPrintPost(const sg::Call& c) {
+    if (!IsHost() || !c.object || !Get<uint8_t>(c.object, L"active", 0)) return;
+    const ElementId eid = EidOf(c.object);
+    if (eid == coop::element::kInvalidId) return;
+    Run& r = g_runs[static_cast<uint32_t>(eid)];
+    r.printer = c.object;
+    r.idx = R::InternalIndexOf(c.object);
+    r.name = Str(c.object, L"meshName");
+    SendRun(-1, static_cast<uint32_t>(eid), N::kPrinterRunStart, r.name);
+    UE_LOGI("printer_sync: printer eid=%u prints '%ls' -- its run sent to every peer", static_cast<unsigned>(eid),
+            r.name.c_str());
+}
+
+void HostTickRuns() {
+    for (auto it = g_runs.begin(); it != g_runs.end();) {
+        const bool live = R::IsLiveByIndex(it->second.printer, it->second.idx);
+        if (live && Get<uint8_t>(it->second.printer, L"active", 0)) { ++it; continue; }
+        SendRun(-1, it->first, N::kPrinterRunEnd, it->second.name);
+        UE_LOGI("printer_sync: printer eid=%u's run ended on the host", it->first);
+        it = g_runs.erase(it);
+    }
+}
+
+// A client's copy at the host's end: the run's own end, without the object its tick would spawn.
+void EndRunHere(void* printer) {
+    if (!Get<uint8_t>(printer, L"active", 0)) return;
+    Put<uint8_t>(printer, L"active", 0);
+    Put<uint8_t>(printer, L"canPrint", 0);
+    if (void* const loop = Get<void*>(printer, L"loop", nullptr)) CallNoArgs(loop, L"Deactivate");
+    if (void* const mesh = Get<void*>(printer, L"mesh", nullptr)) CallNoArgs(mesh, L"ClearAllMeshSections");
+}
+
+// A client's printer copy handing its print to the object it spawned: refused, and that object goes.
+sg::Verdict OnFromPrinterPre(const sg::Call& c) {
+    if (!IsClient() || !c.object || g_ours) return sg::Verdict::Run;
+    void* const printerCls = OI::ClassByName(L"3dPrinterAnim_C");
+    if (!c.callerObject || !printerCls || R::ClassOf(c.callerObject) != printerCls) return sg::Verdict::Run;
+    g_ownBirths.push_back(c.object);
+    ++g_ownBirthsRefused;
+    return sg::Verdict::Cancel;
+}
+
+void ClientTickRuns() {
+    for (void* a : g_ownBirths)
+        if (R::IsLive(a)) E::DestroyActor(a);
+    if (!g_ownBirths.empty())
+        UE_LOGI("printer_sync: %zu object(s) this client's printer copy made were destroyed (the host's comes)",
+                g_ownBirths.size());
+    g_ownBirths.clear();
+}
+
 bool g_watchesRegistered = false, g_watchesSettled = false;
 void SettleWatches() {
     if (g_watchesSettled) return;
     if (!g_watchesRegistered) {
         g_watchesRegistered = true;
-        const bool a = sg::WatchName(kRowPrint, kTag, &OnPrintPre, nullptr);
+        const bool a = sg::WatchName(kRowPrint, kTag, &OnPrintPre, &OnPrintPost);
         const bool b = sg::WatchName(kRowAction, kTag, &OnActionPre, &OnActionPost);
         const bool c = sg::WatchName(kRowLoad, kTag, &OnLoadPre, nullptr);
-        if (!a || !b || !c) {
+        const bool d = sg::WatchName(kRowFromPrinter, kTag, &OnFromPrinterPre, nullptr);
+        if (!a || !b || !c || !d) {
             g_watchesSettled = true;
-            UE_LOGE("printer_sync: the gate took no watch (print %d, action %d, load %d) -- a print stays its machine's",
-                    a, b, c);
+            UE_LOGE("printer_sync: the gate took no watch (print %d, action %d, load %d, from printer %d) -- a print "
+                    "stays its machine's", a, b, c, d);
             return;
         }
     }
     sg::ResolvePendingNames();
     if (!sg::NameWatchSettled(kRowPrint, kTag) || !sg::NameWatchSettled(kRowAction, kTag) ||
-        !sg::NameWatchSettled(kRowLoad, kTag))
+        !sg::NameWatchSettled(kRowLoad, kTag) || !sg::NameWatchSettled(kRowFromPrinter, kTag))
         return;
     g_watchesSettled = true;
-    UE_LOGI("printer_sync: watches settled (print live=%d, action live=%d, load live=%d)",
+    UE_LOGI("printer_sync: watches settled (print live=%d, action live=%d, load live=%d, from printer live=%d)",
             sg::NameWatchLive(kRowPrint, kTag) ? 1 : 0, sg::NameWatchLive(kRowAction, kTag) ? 1 : 0,
-            sg::NameWatchLive(kRowLoad, kTag) ? 1 : 0);
+            sg::NameWatchLive(kRowLoad, kTag) ? 1 : 0, sg::NameWatchLive(kRowFromPrinter, kTag) ? 1 : 0);
 }
 
 }  // namespace
@@ -598,7 +678,39 @@ void Tick() {
     if (s->role() == N::Role::Host) {
         TickChecks();
         HostTick();
+        HostTickRuns();
+    } else {
+        ClientTickRuns();
     }
+}
+
+void OnPrinterState(const N::PrinterStatePayload& p) {
+    if (!IsClient()) return;
+    void* const printer = ActorOf(p.printerEid);
+    void* const cls = OI::ClassByName(L"3dPrinterAnim_C");
+    if (!printer || !cls || R::ClassOf(printer) != cls) return;
+    if (p.op == N::kPrinterRunEnd) {
+        EndRunHere(printer);
+        UE_LOGI("printer_sync: printer eid=%u's run ended by the host", p.printerEid);
+        return;
+    }
+    if (Get<uint8_t>(printer, L"active", 0)) return;
+    // The host's model on this copy, from this player's own file, and its own run: the game's selectMesh and print.
+    const std::wstring name = TextOf(p.name, p.nameLen, N::kPrintNameMax);
+    bool sel = false, ran = false;
+    {
+        Ours ours;
+        if (void* const fn = R::FindDispatchFunctionCached(R::ClassOf(printer), L"selectMesh")) {
+            ue_wrap::ParamFrame f(fn);
+            uint8_t buf[16] = {};
+            sel = f.valid() && ue_wrap::fstring_utils::MintFString(name, buf) &&
+                  f.SetRaw(L"meshName", buf, sizeof(buf)) && ue_wrap::Call(printer, f);
+        }
+        ran = CallNoArgs(printer, L"print");
+    }
+    ++g_runsMirrored;
+    UE_LOGI("printer_sync: printer eid=%u runs '%ls' as the host's (selected %d, print ran %d, active %d)",
+            p.printerEid, name.c_str(), sel ? 1 : 0, ran ? 1 : 0, Get<uint8_t>(printer, L"active", 0));
 }
 
 void OnAsk(int senderSlot, const N::PrintAskPayload& p) {
@@ -700,6 +812,8 @@ void SendJoin(int slot) {
         SendState(slot, eid, t);
         ++sent;
     }
+    for (auto& [eid, r] : g_runs)
+        if (R::IsLiveByIndex(r.printer, r.idx)) SendRun(slot, eid, N::kPrinterRunStart, r.name);
     if (sent) UE_LOGI("printer_sync: %d printed object(s) sent to joiner slot %d", sent, slot);
 }
 
@@ -713,6 +827,11 @@ void OnDisconnect() {
     g_told.clear();
     g_reported.clear();
     g_bitesBefore.clear();
+    g_runs.clear();
+    g_ownBirths.clear();
+    UE_LOGI("printer_sync: runs mirrored %llu, own births refused %llu", static_cast<unsigned long long>(g_runsMirrored),
+            static_cast<unsigned long long>(g_ownBirthsRefused));
+    g_runsMirrored = g_ownBirthsRefused = 0;
     g_printsRun = g_printsRefused = g_spawned = g_adopted = g_placeholders = 0;
 }
 

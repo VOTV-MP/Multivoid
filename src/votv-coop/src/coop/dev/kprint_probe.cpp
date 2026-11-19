@@ -1,11 +1,12 @@
 // coop/dev/kprint_probe.cpp -- [dev] a 3D print on every peer (VOTVCOOP_KPRINT_PROBE=host|client on every peer: who
 // prints). The printer (3dPrinterAnim_C) spawns a printedObject_C with its `name` the model's folder and hands it the
-// mesh it loaded (loadFromPrinter); coop/props/printer_sync carries the print and the object. Times are from the
+// mesh it loaded (loadFromPrinter); coop/props/printer_sync carries the print, its run, the object. Times run from the
 // probe's arm. THE HOST at 100 s spawns a printer 2 m before its player when its world holds none. THE ACTOR (the host,
 // or client slot 1) at 110 s selects the model VOTVCOOP_KPRINT_MODEL (mvtest by default) on its copy and prints; the
-// host calls its printer's Finish at 125 s so the print ends at its next steps, lifts each printed object 80 cm at 150 s
-// (it falls and rests) and toggles its light at 165 s. EVERY PEER, every 3 s from 95 s to 200 s: each printer and each
-// printed object (element id, name, loaded, sections, physics, light, bites, where).
+// host calls its printer's Finish at 125 s so the print ends at its next steps (VOTVCOOP_KPRINT_FINISH=0: it runs its
+// own length), lifts each printed object 80 cm at 150 s (it falls and rests) and toggles its light at 165 s. EVERY
+// PEER, every 3 s from 95 s: each printer (active, height, model) and each printed object (element id, name, loaded,
+// sections, physics, light, bites, where).
 
 #include "coop/dev/kprint_probe.h"
 
@@ -80,9 +81,9 @@ int Sections(void* obj) {
 
 void Report() {
     for (void* p : All(L"3dPrinterAnim_C")) {
-        UE_LOGI("[KPRINT] printer eid=%u active=%d canPrint=%d meshName='%ls'",
+        UE_LOGI("[KPRINT] printer eid=%u active=%d canPrint=%d height=%.1f meshName='%ls'",
                 static_cast<unsigned>(coop::element::Registry::Get().EidForActor(p)), Field<uint8_t>(p, L"active", 0),
-                Field<uint8_t>(p, L"canPrint", 0), Str(p, L"meshName").c_str());
+                Field<uint8_t>(p, L"canPrint", 0), Field<float>(p, L"height", -1.f), Str(p, L"meshName").c_str());
     }
     for (void* o : All(L"printedObject_C")) {
         FVector at{};
@@ -159,8 +160,11 @@ void Tick(coop::net::Session* session) {
     }
     if (host && g_step == 1 && t >= 125000) {
         g_step = 2;
-        UE_LOGI("[KPRINT] host: Finish (active=%d, ran=%d)", Field<uint8_t>(printer, L"active", 0),
-                CallNoArgs(printer, L"Finish") ? 1 : 0);
+        if (coop::config::ReadEnv("VOTVCOOP_KPRINT_FINISH") == "0")
+            UE_LOGI("[KPRINT] host: the print runs its own length (active=%d)", Field<uint8_t>(printer, L"active", 0));
+        else
+            UE_LOGI("[KPRINT] host: Finish (active=%d, ran=%d)", Field<uint8_t>(printer, L"active", 0),
+                    CallNoArgs(printer, L"Finish") ? 1 : 0);
     } else if (host && g_step == 2 && t >= 150000) {
         g_step = 3;
         for (void* o : All(L"printedObject_C")) {

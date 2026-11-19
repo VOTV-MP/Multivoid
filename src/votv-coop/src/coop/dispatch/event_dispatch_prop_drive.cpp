@@ -318,7 +318,8 @@ bool HandlePropDriveEvent(net::Session& session,
     case net::ReliableKind::PrintCheckReply:
     case net::ReliableKind::PrintNotice:
     case net::ReliableKind::PrintedState:
-    case net::ReliableKind::PrintedIntent: {
+    case net::ReliableKind::PrintedIntent:
+    case net::ReliableKind::PrinterState: {
         // The 3D printer's lane (coop/props/printer_sync): each kind its exact length, the right way, and its text
         // lengths inside their fields.
         const auto k = msg.kind;
@@ -329,6 +330,7 @@ bool HandlePropDriveEvent(net::Session& session,
                             : k == net::ReliableKind::PrintCheckReply ? sizeof(net::PrintCheckReplyPayload)
                             : k == net::ReliableKind::PrintNotice     ? sizeof(net::PrintNoticePayload)
                             : k == net::ReliableKind::PrintedState    ? sizeof(net::PrintedStatePayload)
+                            : k == net::ReliableKind::PrinterState    ? sizeof(net::PrinterStatePayload)
                                                                       : sizeof(net::PrintedIntentPayload);
         if (toHost != (session.role() == net::Role::Host) || msg.payloadLen != want) {
             UE_LOGW("event_feed: a printer message the wrong way or the wrong length from slot %d -- dropping",
@@ -364,6 +366,13 @@ bool HandlePropDriveEvent(net::Session& session,
                  !std::isfinite(p.rot[0]) || !std::isfinite(p.rot[1]) || !std::isfinite(p.rot[2])))
                 break;
             ::coop::printer_sync::OnState(p);
+        } else if (k == net::ReliableKind::PrinterState) {
+            net::PrinterStatePayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            if (!p.printerEid || p.op > net::kPrinterRunEnd || p.nameLen > net::kPrintNameMax ||
+                (p.op == net::kPrinterRunStart && !p.nameLen))
+                break;
+            ::coop::printer_sync::OnPrinterState(p);
         } else {
             net::PrintedIntentPayload p{};
             std::memcpy(&p, msg.payload, sizeof(p));
