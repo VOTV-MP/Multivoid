@@ -278,6 +278,16 @@ not yielded, and goes out at that point. A rejoin into the same slot is a depart
 and the leaver's seat and syncerships were cleared at its departure. `[V]` the ATV spawn drill's
 run, join, park and divergence arms, each red arm failing as designed (`coop/dev/atv_spawn_drill`).
 
+The wheel and spare lane (`AtvPartIntent`) holds no state of its own, so a joiner needs two things
+the other lanes already carry. Which tyres are on and whether the spare is on the ATV come in the
+host's condition block of that ATV, whose presence a joiner takes from the host's own copy, a
+connect snapshot's block included (`[V]` `coop/interactables/atv_condition_sync`, the presence
+rule). The wheel props an unbolt left, or the spare a client took, lie in the world as host births,
+carried to the joiner by the prop lane's connect snapshot like any other prop (`[?]` not run for a
+wheel prop). An ask is an act, not a state: a client asks nothing before its world is announced, and
+the host drops one that arrives before the sender's world is ready, so an unbolt or a fit made in the
+join window is not queued.
+
 ## Known limits
 
 | Limit | Evidence |
@@ -287,6 +297,7 @@ run, join, park and divergence arms, each red arm failing as designed (`coop/dev
 | At a hand-back to the host the old syncer's last blocks may still be in flight; the host drops and counts them, and the stamp moves every client to the host's copy | `[?]` `coop/interactables/atv_authority`, `coop/interactables/atv_sync` |
 | A wheel knocked off by damage on a client syncer's copy is not consumed, so the host keeps the wheel and the peers disagree | `[V]` `coop/interactables/atv_condition_sync`, by design |
 | A client's wheel or spare work is refused while a client syncs the ATV (it is driven or carried, or not yet handed back): presence reaches the clients only from the host's own copy while the host syncs. The refused ask shows the client nothing but its wheel given back | `[?]` `coop/interactables/atv_part_intent` |
+| An unbolt the host runs for a client is the game's own `unscrewPanel`, which ends with `resetUnscrew`; if the host's own player is mid-hold on that ATV's unscrew bar, the bar ends. A wrench or power tool also has no hold time here, so a client's unbolts of four wheels are limited by the lane's budget (a burst of 6, 2 a second) and not by the game's hold | `[?]` `coop/interactables/atv_part_intent`, `ue_wrap/devices/atv_parts` (the body's reset is read from the lens report, not re-derived) |
 | The spare a client takes is born as a prop beside it, not into its hotbar; an unbolt the host runs for a client plays the game's 2D sounds on the host | `[?]` `coop/interactables/atv_part_intent` |
 | The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
 | Not synced: the radio | `[V]` nothing under `coop/interactables/atv_*` carries them |

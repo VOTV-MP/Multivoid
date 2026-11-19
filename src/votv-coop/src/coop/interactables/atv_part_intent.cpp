@@ -53,7 +53,9 @@ constexpr int kTagPart = 0x41545650;  // 'ATVP'
 
 constexpr int      kWheels = 4;
 constexpr uint8_t  kActionTakeSpare = 7;   // the radial option that hands out the spare
-constexpr float    kReachUU = 400.0f;      // the seat's and a pry's reach; the authority adds the ATV's bounds
+// Twice mainPlayer.armLength, the same reach the ATV's seat and grab asks use (atv_authority.cpp, kReachUU); the
+// authority adds the ATV's bounds.
+constexpr float    kReachUU = 400.0f;
 constexpr float    kBesideCm = 70.0f;      // a part given to a sender is born this far ahead of its puppet
 constexpr float    kBesideUpCm = 20.0f;
 // The repair countdown's domain, the one the condition read measured (atv_condition.h, Read); a client's claim is
