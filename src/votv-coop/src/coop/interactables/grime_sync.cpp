@@ -118,7 +118,7 @@ struct WorldRegister {
 };
 
 // The floor: per key, the lowest process every peer knows the key's decals at in this world -- a fall
-// that was sent, by this peer or another, a destroy (zero, sent as a wipe), or the host's snapshot as
+// that was sent, by this peer or another, a destroy (kGrimeGone, sent as a wipe), or the host's snapshot as
 // adopted. It is the lane's shared register: a decal the index takes (a stream-back, one the join
 // brought, one that was not here when its value arrived) is lowered to it, every decal of the key's cell
 // alike, and the host's snapshot sends it for every key its index does not hold. A value only this peer
@@ -199,6 +199,14 @@ bool Lower(const std::wstring& key, float value) {
 // it already reads that or less: a fall lowers a decal and never raises one this peer cleaned further.
 // The apply runs no verb, so it is never heard back as a fall.
 void ApplyResolved(void* actor, const std::wstring& key, float target, const char* why, bool lowerOnly) {
+    // A decal that ended on another peer ends here too, as the game's clean ends it below zero. It leaves the index
+    // first, so its own end of play here is no wipe of this peer's and is not sent again.
+    if (target <= coop::net::kGrimeGone + kProcessEps) {
+        coop::grime_sync::ForgetDecal(actor);
+        const bool ok = E::DestroyActor(actor);
+        UE_LOGI("grime: a decal another peer ended is destroyed here (%s) ok=%d key='%ls'", why, ok ? 1 : 0, key.c_str());
+        return;
+    }
     float cur = 0.f;
     if (!G::ReadProcess(actor, cur) || std::fabs(target - cur) < kProcessEps) return;
     if (lowerOnly && cur < target) return;
@@ -444,7 +452,7 @@ void OnLowerPost(const sg::Call& call) {
 
 // A decal's end of play. A stream-out leaves the index and parks its process under its exact place,
 // for its stream-back; a destroy -- a clean or a repair past zero, leaves raked or expired, fuel burnt
-// out -- ends the decal on this peer, sent as a wipe to zero and kept as the floor for a joiner's
+// out -- ends the decal on this peer, sent as a wipe (kGrimeGone, which ends it on every peer) and kept as the floor for a joiner's
 // snapshot.
 void OnGrimeEnd(const DS::ActorEnd& end) {
     const CachedKey* ck = CachedOf(end.actor, end.actorIndex, end.actorSerial);
@@ -466,8 +474,8 @@ void OnGrimeEnd(const DS::ActorEnd& end) {
         if (read) g_parked.Get().insert_or_assign(exact, Parked{key, at});
         return;
     }
-    Lower(key, 0.f);
-    Send(key, 0.f);
+    Lower(key, coop::net::kGrimeGone);
+    Send(key, coop::net::kGrimeGone);
 }
 
 }  // namespace

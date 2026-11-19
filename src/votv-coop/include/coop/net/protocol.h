@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 310;
+inline constexpr uint16_t kProtocolVersion = 311;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -3365,12 +3365,15 @@ static_assert(sizeof(ServerSettingPayload) == 227 && sizeof(ServerSettingPayload
 // 0 only) writes the value as is.
 struct KeyedScalarPayload {
     WireKey  key;        // 32 -- instance identity string (FName for windows; quantized position for grime)
-    float    value;      // 4  -- the dirt scalar (>= 0; 0 = fully clean)
+    float    value;      // 4  -- the dirt scalar (>= 0; 0 = fully clean); for grime, kGrimeGone: the decal ended
     uint8_t  adopt;      // 1  -- 1 = connect-snapshot, adopt the host's value as is;
                          // 0 = live wipe, apply the minimum
     uint8_t  _pad[3];    // 3  -- 8-byte alignment / reserved
 };
 static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 bytes");
+// GrimeState's value for a decal that ended (cleaned or repaired past zero, raked, burnt out): every peer destroys its
+// own, as the game's clean does at a process below zero, where a 0 would leave it standing at no dirt.
+inline constexpr float kGrimeGone = -1.f;
 static_assert(sizeof(KeyedScalarPayload) <= 256 - 20 - 8,
               "KeyedScalarPayload must fit in one reliable datagram");
 
