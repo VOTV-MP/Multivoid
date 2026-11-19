@@ -11,8 +11,12 @@
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
+#include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/engine/engine_physics.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <unordered_map>
 
@@ -99,10 +103,46 @@ void StillPawn(void* k) {
             "movement %s", k, st.held ? "held" : "stopped already by its owner");
 }
 
+// The wheel is an actor of its own (UK::ReadWheel), held to the body by a physics constraint the host's tick drives. On a
+// client the body is moved by the host's drive stream with its physics off, and the constraint does not drag a sleeping
+// wheel after a body that is set into place: the rig's clients kept the wheel where the Kerfus was spawned while the
+// body drove 18 to 43 m away (Ghezra/Multivoid issue 20). So a client stops the wheel's own physics and seats the wheel
+// actor on its child-actor slot, where the Kerfus's Blueprint placed it, attached: it moves with the body the host
+// streams, and the host's tick, refused here, would be its only other mover. One map lookup per tick once seated; the
+// session's end gives the wheel back its physics.
+struct Seated {
+    ue_wrap::CachedObjRef kerfus;
+    ue_wrap::CachedObjRef wheel;
+    ue_wrap::CachedObjRef body;
+};
+std::unordered_map<void*, Seated> g_seated;
+
+void SeatWheel(void* k) {
+    auto it = g_seated.find(k);
+    if (it != g_seated.end() && it->second.kerfus.Get() == k && it->second.wheel.Alive()) return;
+    UK::Wheel w;
+    if (!UK::ReadWheel(k, w)) return;   // not spawned yet: the next tick asks again
+    ue_wrap::FVector was{}, slot{};
+    E::TryGetActorLocation(w.actor, was);
+    E::TryGetComponentLocation(w.slot, slot);
+    E::SetComponentSimulatePhysics(w.body, false);
+    const bool attached = E::AttachActorToComponentSocket(w.actor, w.slot, nullptr);
+    Seated& s = g_seated[k];
+    s.kerfus.Set(k);
+    s.wheel.Set(w.actor);
+    s.body.Set(w.body);
+    const float dx = was.X - slot.X, dy = was.Y - slot.Y, dz = was.Z - slot.Z;
+    UE_LOGI("kerfus_brain: seated the Kerfus %p's wheel on its slot on this client -- physics off, attached=%d, it was "
+            "%.0f cm off", k, attached ? 1 : 0, std::sqrt(dx * dx + dy * dy + dz * dz));
+}
+
 sg::Verdict OnBrainPre(const sg::Call& c) {
     if (!OnClient()) return sg::Verdict::Run;
     const size_t row = static_cast<size_t>(c.tag - kTagBrainBase);
-    if (row == 0 && c.object) StillPawn(c.object);  // the tick
+    if (row == 0 && c.object) {  // the tick
+        StillPawn(c.object);
+        SeatWheel(c.object);
+    }
     if (row < kBrainCount) {
         ++g_refused[row];
         if (!g_said[row]) {
@@ -149,6 +189,13 @@ void OnDisconnect() {
     for (const auto& entry : g_stilled)
         if (entry.second.held) coop::rider_hold::Give(entry.second.movement.Raw());
     g_stilled.clear();
+    for (const auto& entry : g_seated) {
+        void* const wheel = entry.second.wheel.Get();
+        void* const body = entry.second.body.Get();
+        if (wheel) E::DetachActorFromParent(wheel);
+        if (body) E::SetComponentSimulatePhysics(body, true);
+    }
+    g_seated.clear();
 }
 
 }  // namespace coop::kerfus_brain

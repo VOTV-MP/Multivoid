@@ -134,6 +134,17 @@ brain runs on the host alone, a client shows the host's state and drive, its ver
 host, and one a client turns on follows that client (`coop/creatures/kerfus_lanes`). The upgraded
 one, the kerfur Omega, is a character with ten actions and is what follows.
 
+The kerfus rolls on a wheel that is an actor of its own (`prop_kerfurWheel_C`, spawned by its `wheel` child-actor slot),
+held to the body's `wheelAttach` by a physics constraint the host's tick torques. A client's body is set into place by
+the host's drive stream with its physics off, and the constraint did not drag a sleeping wheel after it: on the rig the
+clients' wheels stayed where the kerfus was spawned while the body drove 18 to 43 m away (Ghezra/Multivoid issue 20),
+and on another run they followed, up to 46 cm off. A client now stops the wheel's own physics and attaches it to its
+slot, so it moves with the streamed body (`coop/creatures/kerfus_brain`) `[V]` (`coop/dev/kwheel_probe`, three peers: the
+kerfus following the host at its own speed and at three times its `wheelSpeed`, through a table and boxes, following a
+client, and run off from by the host: the wheel 0 cm off its slot on both clients in every phase, its place within the
+body's own lag of the host's wheel, median 4 to 18 cm). A prop a kerfus or an Omega knocks is the host's to stream, as one
+near a player is ([prop-coasting.md](prop-coasting.md)).
+
 It has two forms of two classes: the active robot, `kerfurOmega_C`, a character; and the
 powered-off object, `prop_kerfurOmega_C`, a prop. Turning it off spawns the prop at the robot's
 transform and destroys the character; turning it on does the reverse. Both run inside the
@@ -233,4 +244,4 @@ wisp in flight is transient and owes nothing.
 | roaches | `coop/creatures/roach_sync` |
 | the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_command_seat`, `coop/creatures/kerfur_command_answer`, `coop/creatures/kerfur_command_wire`, `coop/creatures/kerfur_disc_carry`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile`, `coop/creatures/served_player` |
 | the kerfus | `coop/creatures/kerfus_lanes` with `kerfus_brain`, `kerfus_state`, `kerfus_intent` and `kerfus_follow`; `ue_wrap/actors/kerfus` |
-| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it) |
+| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own), `coop/dev/kerfur_serve_drill` (a client's commands to the Omega run for that client), `coop/dev/kerfus_drill` (a kerfus a client turns on follows it), `coop/dev/kwheel_probe` (a kerfus's wheel and the props it hits, fast and far) |

@@ -24,8 +24,10 @@ namespace coop::props::body_push {
 // The nearby list and the pose compare, from the driven-prop pump, on both roles. The HOST's list also takes the props
 // near every other player's puppet, for the settle watch: a move there, or a fall anywhere in the list, with no hand, row
 // or host body on the prop (its support taken away, something knocked it) is a Settle coast, so every copy follows the
-// host's. A move a client's own body makes near its puppet is left to that client's push claim. A CLIENT's copy that moves
-// with its body away, unparked, is a prop_rest_sync::NoteLocalMove.
+// host's. A move a client's own body makes near its puppet is left to that client's push claim. The robots the host's
+// brain drives (a Kerfus that is on, every Omega) are listed round as the puppets are, and a robot nearer than a puppet
+// makes a move the host's settle. A CLIENT's copy that moves with its body away, or a robot nearer, unparked, is a
+// prop_rest_sync::NoteLocalMove.
 void Tick(coop::net::Session& s, bool isHost);
 
 // This peer's own write has just put `actor` in a new place (an End, a correction snap): the next read takes that pose as

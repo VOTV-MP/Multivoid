@@ -68,7 +68,12 @@ its own physics: the plate came to rest 55 cm and 110 degrees from the host's, a
 cm from it, on both clients. The host's body-push list takes the props near every player's puppet as well as its own (64
 per body), and a move there over 3 cm, or a fall anywhere in it, that no hand, row or host body explains is a Settle coast
 (`prop_drive_host::CoastCause::Settle`), which opens a row only where none stands, as a push does, under the same cap; a
-move a client's own body makes near its puppet is left to that client's push claim. The prop accuracy drill
+move a client's own body makes near its puppet is left to that client's push claim. The robots the host's brain drives,
+a kerfus that is on and every Omega, are bodies of the list too: a prop one knocks with no player in reach was streamed by
+no one, and each copy rested where its own physics left it -- with the watch off for them (`VOTVCOOP_ROBOT_SETTLE_OFF=1`),
+the six boxes a kerfus hit with every player 11 to 40 m away ended 32 cm to 7.3 m off on both clients; with it, the six
+such hits of two runs ended within 0.2 cm, and every box the kerfus hit within 2 cm `[V]` (`coop/dev/kwheel_probe`). A robot nearer a moved prop than a puppet makes it the host's settle, not that
+client's claim, and a client does not claim a push its copy of a robot made. The prop accuracy drill
 (`VOTVCOOP_PROP_ACC`, with the drift census `VOTVCOOP_PROP_DRIFT`; `VOTVCOOP_SETTLE_OFF=1` is its red arm) drags that
 table from a client: with the watch every item ends within 1 cm of the host's on both clients `[V]`.
 

@@ -33,6 +33,13 @@ struct PawnField {
 };
 PawnField g_pawn;
 
+// The wheel: the actor (`wheelObject`), its body (`wheelComponent`) and the child-actor slot that spawned it (`wheel`).
+struct WheelFields {
+    State   s;
+    int32_t objectOff = -1, compOff = -1, slotOff = -1;
+};
+WheelFields g_wheel;
+
 // Latches `s` on the result and names a missing field once.
 bool Settle(State& s, bool ok, const char* missing, const char* group) {
     s.latch = ok ? 1 : -1;
@@ -61,6 +68,17 @@ bool ResolvePawn(void* k) {
     if (!k || !IsKerfus(k)) return false;  // not tried: a Kerfus names the layout
     g_pawn.pawnOff = R::FindPropertyOffset(R::ClassOf(k), L"pawn");
     return Settle(g_pawn.s, g_pawn.pawnOff >= 0, "pawn", "navigation pawn");
+}
+
+bool ResolveWheel(void* k) {
+    if (g_wheel.s.latch != 0) return g_wheel.s.latch > 0;
+    if (!k || !IsKerfus(k)) return false;  // not tried: a Kerfus names the layout
+    void* const cls = R::ClassOf(k);
+    const char* missing = nullptr;
+    if ((g_wheel.objectOff = R::FindPropertyOffset(cls, L"wheelObject")) < 0) missing = "wheelObject";
+    else if ((g_wheel.compOff = R::FindPropertyOffset(cls, L"wheelComponent")) < 0) missing = "wheelComponent";
+    else if ((g_wheel.slotOff = R::FindPropertyOffset(cls, L"wheel")) < 0) missing = "wheel";
+    return Settle(g_wheel.s, missing == nullptr, missing, "wheel parts");
 }
 
 uint8_t* At(void* k, int32_t off) { return static_cast<uint8_t*>(k) + off; }
@@ -134,6 +152,16 @@ void* NavPawn(void* k) {
     if (!ResolvePawn(k)) return nullptr;
     void* pawn = *reinterpret_cast<void* const*>(At(k, g_pawn.pawnOff));
     return (pawn && R::IsLive(pawn)) ? pawn : nullptr;
+}
+
+bool ReadWheel(void* k, Wheel& out) {
+    out = Wheel{};
+    if (!ResolveWheel(k)) return false;
+    auto live = [](void* p) { return (p && R::IsLive(p)) ? p : nullptr; };
+    out.actor = live(*reinterpret_cast<void* const*>(At(k, g_wheel.objectOff)));
+    out.body = live(*reinterpret_cast<void* const*>(At(k, g_wheel.compOff)));
+    out.slot = live(*reinterpret_cast<void* const*>(At(k, g_wheel.slotOff)));
+    return out.actor && out.body && out.slot;
 }
 
 bool RunUpd(void* k, bool skipFace) {

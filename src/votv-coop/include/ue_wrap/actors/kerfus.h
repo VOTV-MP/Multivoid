@@ -38,6 +38,16 @@ bool WriteEnergy(void* k, float energy);
 // resolve.
 void* NavPawn(void* k);
 
+// Its wheel, an actor of its own (prop_kerfurWheel_C) that the `wheel` child-actor slot spawns at BeginPlay: the
+// tick torques the wheel's body, and `physicsConstraint` holds it to the Kerfus's `wheelAttach`. False, with what
+// was read, while any part is unset or dead, or the fields did not resolve.
+struct Wheel {
+    void* actor = nullptr;  // wheelObject
+    void* body = nullptr;   // wheelComponent, the wheel actor's simulated mesh
+    void* slot = nullptr;   // wheel, the ChildActorComponent on the Kerfus
+};
+bool ReadWheel(void* k, Wheel& out);
+
 // The game's own refresh after `active` changes: upd(skipFace) -- the face, the sounds, the camera.
 bool RunUpd(void* k, bool skipFace);
 

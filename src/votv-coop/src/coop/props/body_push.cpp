@@ -16,6 +16,8 @@
 #include "coop/props/prop_rest_sync.h"
 #include "coop/props/prop_syncer.h"
 
+#include "ue_wrap/actors/kerfur.h"
+#include "ue_wrap/actors/kerfus.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -91,18 +93,63 @@ void NoteSkip(Skip why, void* actor) {
 // claimed, so the wrong peer never syncs the prop.
 // On the HOST the other players' puppets are read too, for the settle watch only: a prop near any player that moves
 // with no hand, row or host body on it is a settle the host streams (Settle below). Never a push of theirs.
+// The robots on every peer: a Kerfus that is on and every kerfur Omega, the bodies the host's own brain drives into
+// props. On the host they are watched round as the puppets are, for the settle watch, since a prop one knocks with no
+// player near was streamed by no one and every copy rested where its own physics left it (the rig's Kerfus probe: a box
+// rolled 5.7 m on the host and stayed on both clients). On a client a robot nearer a moved prop than this player's body
+// made the move, so it is no push of this player's.
+constexpr int kMaxRobots = 8;
 struct Body {
     FVector at{};
     bool have = false;
     FVector others[coop::net::kMaxPeers]{};
     int nOthers = 0;
+    FVector robots[kMaxRobots]{};
+    int nRobots = 0;
+    bool robotsListed = false;   // the host's list takes the props round them too
 };
+
+// The robots, found again at each list refresh (ue_wrap::kerfus::FindLive's walk, ue_wrap::kerfur::AllKerfurs), and read
+// where they stand at each read.
+std::vector<ue_wrap::CachedObjRef> g_robots;
+
+// The robots left out (VOTVCOOP_ROBOT_SETTLE_OFF=1): a prop a robot knocks with no player near rests where each copy's
+// physics leaves it again -- the red arm of the Kerfus probe's far phase (coop/dev/kwheel_probe). Resolved once.
+bool RobotsOff() {
+    static const bool off = coop::config::ReadEnv("VOTVCOOP_ROBOT_SETTLE_OFF") == "1";
+    return off;
+}
+
+void FindRobots() {
+    g_robots.clear();
+    if (RobotsOff()) return;
+    ue_wrap::kerfus::FindLive(
+        [](void* k, const void*) {
+            bool on = false;
+            if (g_robots.size() < static_cast<size_t>(kMaxRobots) && ue_wrap::kerfus::ReadActive(k, on) && on)
+                g_robots.emplace_back().Set(k);
+            return false;   // every one: none is taken
+        },
+        nullptr);
+    for (void* k : ue_wrap::kerfur::AllKerfurs())
+        if (g_robots.size() < static_cast<size_t>(kMaxRobots)) g_robots.emplace_back().Set(k);
+}
+
+void ReadRobots(Body& b) {
+    b.nRobots = 0;
+    for (const ue_wrap::CachedObjRef& r : g_robots) {
+        void* const a = r.Get();
+        if (a && b.nRobots < kMaxRobots && E::TryGetRootLocationRaw(a, b.robots[b.nRobots])) ++b.nRobots;
+    }
+}
 
 void ReadBody(Body& b, bool isHost) {
     void* me = coop::players::Registry::Get().Local();
     b.have = me && E::TryGetRootLocationRaw(me, b.at);
     b.nOthers = 0;
+    ReadRobots(b);
     if (!isHost) return;
+    b.robotsListed = true;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
         void* actor = rp && rp->valid() ? rp->actor() : nullptr;
@@ -125,8 +172,19 @@ float OthersCm2(const Body& b, const FVector& at) {
     return best;
 }
 
-// The squared distance from `at` to the nearest body this peer watches round: its own, and on the host every puppet's.
-float NearestCm2(const Body& b, const FVector& at) { return std::fmin(BodyCm2(b, at), OthersCm2(b, at)); }
+// The squared distance from `at` to the nearest robot (a Kerfus that is on, an Omega); large when none is read.
+float RobotsCm2(const Body& b, const FVector& at) {
+    float best = 1.0e18f;
+    for (int i = 0; i < b.nRobots; ++i) best = std::fmin(best, Dist2(at, b.robots[i]));
+    return best;
+}
+
+// The squared distance from `at` to the nearest body this peer watches round: its own, and on the host every puppet's
+// and every robot's.
+float NearestCm2(const Body& b, const FVector& at) {
+    float best = std::fmin(BodyCm2(b, at), OthersCm2(b, at));
+    return b.robotsListed ? std::fmin(best, RobotsCm2(b, at)) : best;
+}
 
 struct ListCtx {
     const Body* body;
@@ -231,7 +289,9 @@ void KeepNearest(std::vector<Watched>& fresh, size_t bodies) {
 // until it rests (a Settle coast), and every other copy is parked and follows it, its End the resting pose. A move a
 // client's own body makes near its puppet is left to that client's claim (a push, not a fall).
 void Settle(void* actor, const FVector& at, const Body& body, bool fell) {
-    if (!fell && OthersCm2(body, at) <= kTouchCm * kTouchCm) return;
+    // A puppet's touch is its client's claim, unless a robot stands nearer: the host's brain drove that one.
+    const float others = OthersCm2(body, at);
+    if (!fell && others <= kTouchCm * kTouchCm && RobotsCm2(body, at) >= others) return;
     if (coop::prop_drive_host::IsDriven(actor)) return;   // a row streams it already: a let-go's, a verb's, a client's
     if (!Pushable(actor, at)) return;
     if (SettleOff()) return;
@@ -262,10 +322,12 @@ void Tick(coop::net::Session& s, bool isHost) {
             ReadBody(body, isHost);
             read = true;
             RefreshClasses();
+            FindRobots();
+            ReadRobots(body);
             std::vector<Watched> fresh;
             ListCtx ctx{&body, &fresh, world};
             for (void* cls : g_classes) ue_wrap::object_index::ForEachInstance(cls, &EachProp, &ctx);
-            KeepNearest(fresh, 1 + static_cast<size_t>(body.nOthers));
+            KeepNearest(fresh, 1 + static_cast<size_t>(body.nOthers) + (body.robotsListed ? body.nRobots : 0));
             // Keep the last read of a prop already watched, so a move across the refresh is not lost.
             for (Watched& f : fresh)
                 for (const Watched& old : g_list)
@@ -340,6 +402,13 @@ void Tick(coop::net::Session& s, bool isHost) {
             // This client's own player walked into it: the player who bumps an unsynced prop syncs it (MTA's push, the
             // server's CUnoccupiedVehicleSync.cpp:476-509); the host judges the claim.
             if (BodyCm2(body, loc) > kTouchCm * kTouchCm) continue;
+            // A robot nearer than this player's body: the host's brain drove it into the prop, and the host's settle
+            // watch streams it. This copy moved alone until that stream parks it, or the host's rest is asked for.
+            if (RobotsCm2(body, loc) < BodyCm2(body, loc)) {
+                if (!coop::prop_drive_stream::IsParked(actor) && Pushable(actor, loc))
+                    coop::prop_rest_sync::NoteLocalMove(actor);
+                continue;
+            }
             if (!Pushable(actor, loc)) { NoteSkip(Skip::NotPushable, actor); continue; }
             if (coop::prop_drive_stream::IsParked(actor)) { NoteSkip(Skip::Parked, actor); continue; }
             if (ClaimOff()) continue;
