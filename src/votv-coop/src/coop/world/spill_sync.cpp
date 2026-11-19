@@ -79,6 +79,7 @@ float g_pourSize = -1.f;    // grimeProjectile_C's default size: a break leaves 
 struct Landed {
     ue_wrap::CachedObjRef decal;
     bool held = false;
+    bool leaves = false;     // a fallen-leaves decal (autumnLeafSpawner_C): no splash, and a client's own goes
     int foreignSlot = 0;     // HOST: > 0 when the projectile was a foreign flight: the slot whose hold drove its prop
     std::wstring foreignCls;
 };
@@ -203,6 +204,16 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
         g_flights.push_back(f);
         return;
     }
+    // Fallen leaves: the wind's timer (directionalWind_C::timer_spawnLeaves) has every autumnLeafSpawner_C trace a random
+    // spot and spawn a grime_fallenLeaves_C there, on each machine, so each peer grew its own leaves. The host's go out as
+    // its spills do; a client's own are removed and the host's made here.
+    if (source && GS::IsDecal(spawned) && g_landed.size() < kCap && R::ClassNameOf(source) == L"autumnLeafSpawner_C") {
+        Landed l;
+        l.decal.Set(spawned);
+        l.leaves = true;
+        g_landed.push_back(l);
+        return;
+    }
     if (!source || !GS::IsProjectile(source) || !GS::IsDecal(spawned) || g_landed.size() >= kCap) return;
     Landed l;
     l.decal.Set(spawned);
@@ -290,7 +301,7 @@ void HostTick(coop::net::Session& s) {
         GS::Spill sp;
         if (void* d = l.decal.Get(); d && GS::ReadSpill(d, sp)) {
             Payload p = ToWire(sp);
-            p.splash = 1;
+            p.splash = l.leaves ? 0 : 1;
             p.origin = 0;   // the host's own flight: it heard its splash
             Broadcast(s, d, p);
         }
