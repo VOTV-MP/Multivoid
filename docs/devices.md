@@ -324,7 +324,7 @@ transform, so the grime lane's position key names it on both and a partial wipe 
 removes a decal its own projectile leaves; when the liquid was in its player's hand it sends the decal first
 (`SpillIntent`), and the host checks its class and that it lies within 15 m of the sender, makes it and sends it back.
 A spill wiped away is said by whoever wiped it, the host's to everyone and a client's to the host, which wipes its own
-within reach. A spill that just landed carries its splash: every peer whose own flight did not land it plays the
+within reach. Fallen leaves ride the same lane: the wind's timer has every `autumnLeafSpawner_C` trace a random spot and spawn a `grime_fallenLeaves_C` there on each machine, so each peer grew its own; the host's go out as its spills, without a splash, and a client's own are removed `[V]` (`coop/dev/clean_drill`, three peers: before the change four leaf decals stood on the host alone and one on a client alone; after, the host's every leaf was made on both clients and no other stood). A spill that just landed carries its splash: every peer whose own flight did not land it plays the
 game's `water_splash_Cue` there, as the projectile does at its hit, and a replay plays none. A copy lies at the host's
 own floats, so a peer keeps one spill per message and checks only a replay against a decal already there; a bottle's
 pours land a millimetre apart and stack. A world cup or bottle does not spill on a client, whose copy of a food is
