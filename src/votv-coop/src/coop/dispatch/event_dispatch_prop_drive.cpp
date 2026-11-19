@@ -2,7 +2,8 @@
 // close of a prop's stream, the host's to all or a syncing client's to the host) and the prop
 // syncer's pair, PropSyncClaim (client to host) and PropSyncAnswer (host to one client), the host's refusal of
 // a second hold of one prop (PropHoldRefused, host to every client), a garbage container's state (GarbageBinState, host
-// to all) and a container's break or a saw's cut asked of the host (ContainerBreakRequest), and the developer
+// to all), a container's break or a saw's cut asked of the host (ContainerBreakRequest), a plank's, radiator's or
+// security TV's pry asked of the host (PryAsk) and its state back to every client (PryState), and the developer
 // filler DevLoadFiller (host to one client), DevParityReport (a joiner's pose report to the host) and
 // DevContainerParity (a joiner's container content report to the host). Each case
 // validates at the trust boundary and hands off to its module. The switch below is the family's
@@ -28,6 +29,8 @@
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
+#include "coop/props/prop_pry_host.h"      // a client's pry ask, judged by the host
+#include "coop/props/prop_pry_sync.h"      // the host's pried-prop state, applied by a client
 #include "coop/player/hand_record_sync.h"  // a held item's own record on its hand mirrors
 #include "coop/world/cover_sync.h"  // the desk's back plates and the stations' doors
 #include "coop/props/prop_syncer.h"        // the client's answer receiver
@@ -565,6 +568,50 @@ bool HandlePropDriveEvent(net::Session& session,
         // CLIENT->HOST op 1, HOST->the requester op 2 or 3. The payload's exact size, the direction, the op and every
         // field are the module's to judge, counted there.
         ::coop::props::container_break::OnMessage(session, msg.senderPeerSlot, msg.payload, msg.payloadLen);
+        break;
+    }
+    case net::ReliableKind::PryAsk: {
+        // CLIENT->HOST: a client's crowbar pry of a plank, a radiator or a security TV, asked instead of run. Never
+        // relayed. The host's judge (reach, the crowbar last held, class, still stuck) is coop::prop_pry_host.
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: PryAsk dropped (role or sender slot %d)", msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen != sizeof(net::PryAskPayload)) {
+            UE_LOGW("event_feed: PryAsk from slot %d dropped (length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::PryAskPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || !std::isfinite(p.kickX) || !std::isfinite(p.kickY) ||
+            !std::isfinite(p.kickZ)) {
+            UE_LOGW("event_feed: PryAsk from slot %d dropped (key length %u or a kick that is not a number)",
+                    msg.senderPeerSlot, static_cast<unsigned>(p.key.len));
+            break;
+        }
+        coop::prop_pry_host::OnAsk(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::PryState: {
+        // HOST->CLIENT: a pried prop's state. Never relayed; a host has no one to take it from. The receiver is
+        // coop::prop_pry_sync::OnState, which counts a key that resolves to no prop here.
+        if (session.role() != net::Role::Client) {
+            UE_LOGW("event_feed: PryState received on the host -- dropping");
+            break;
+        }
+        if (msg.payloadLen != sizeof(net::PryStatePayload)) {
+            UE_LOGW("event_feed: PryState dropped (length %zu)", static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::PryStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.key.len == 0 || p.key.len > sizeof(p.key.data) || (p.brokenMask & ~0x0Fu) != 0) {
+            UE_LOGW("event_feed: PryState dropped (key length %u or a joint mask %02x past four joints)",
+                    static_cast<unsigned>(p.key.len), static_cast<unsigned>(p.brokenMask));
+            break;
+        }
+        coop::prop_pry_sync::OnState(p);
         break;
     }
     default:

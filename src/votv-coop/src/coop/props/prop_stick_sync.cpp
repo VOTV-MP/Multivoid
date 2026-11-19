@@ -11,7 +11,6 @@
 #include "coop/props/prop_drive_host.h"  // OverrideClientSyncer: a replay that writes the copy ends a client's row on it
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_key_index.h"  // a key on the wire to a live actor
-#include "coop/props/prop_pry_sync.h"  // a pried prop's state rides this lane's message
 #include "coop/props/prop_wire_parity.h"  // NoteCorrection: how far a let-go moves the copy
 #include "coop/props/remote_prop.h"
 #include "ue_wrap/engine/engine.h"
@@ -376,7 +375,18 @@ void BroadcastStick(coop::net::Session* s, void* prop, bool frozen, bool statiq)
 void BroadcastUnstick(coop::net::Session* s, void* prop) {
     coop::net::PropStickStatePayload p{};
     std::wstring keyW;
-    if (!FillFreedProp(p, prop, keyW)) return;
+    if (const Fill f = FillIdentityAndPose(p, prop, keyW); f != Fill::Ok) {
+        UE_LOGW("prop_stick_sync: unstuck prop %p %s -- not broadcast", prop,
+                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location or rotation");
+        return;
+    }
+    p.flags = 0;
+    p.holdGen = 0;  // an unstick ends no hold; a grab's starts one, which its poses carry
+    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(prop);
+    if (v.ok) {
+        p.linVelX = v.linearCmS.X;   p.linVelY = v.linearCmS.Y;   p.linVelZ = v.linearCmS.Z;
+        p.angVelX = v.angularDegS.X; p.angVelY = v.angularDegS.Y; p.angVelZ = v.angularDegS.Z;
+    }
     s->SendReliable(coop::net::ReliableKind::PropStickState, &p, sizeof(p));
     UE_LOGI("prop_stick_sync: broadcast UNSTICK key='%ls' eid=%u pose=(%.0f,%.0f,%.0f) angVel=(%.0f,%.0f,%.0f) deg/s",
             keyW.c_str(), p.elementId, p.locX, p.locY, p.locZ, p.angVelX, p.angVelY, p.angVelZ);
@@ -395,41 +405,22 @@ void ApplyUnstick(void* prop, const coop::net::PropStickStatePayload& p, const s
                 "stays as it is", keyW.c_str(), p.elementId);
         return;
     }
-    const bool owned = !LetGoFrom(prop, p);
+    const bool owned = coop::remote_prop::IsOwnedHere(prop);
+    if (!owned) {
+        coop::prop_wire_parity::NoteCorrection(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ}, "unstick-let-go");
+        E::SetActorLocation(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ});
+        E::SetActorRotation(prop, ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
+        if (void* mesh = ue_wrap::prop::GetStaticMesh(prop)) {
+            E::SetComponentLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
+            E::SetComponentAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
+        }
+    }
     UE_LOGI("prop_stick_sync: UNSTICK applied key='%ls' eid=%u (was %s here; %s; slot %u)", keyW.c_str(),
             p.elementId, wasStuck ? "stuck" : "already free",
             owned ? "another hold moves it" : "let go from the sender's pose", senderPeerSlot);
 }
 
 }  // namespace
-
-bool FillFreedProp(coop::net::PropStickStatePayload& p, void* prop, std::wstring& keyW) {
-    if (const Fill f = FillIdentityAndPose(p, prop, keyW); f != Fill::Ok) {
-        UE_LOGW("prop_stick_sync: freed prop %p %s -- not broadcast", prop,
-                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location or rotation");
-        return false;
-    }
-    p.flags = 0;
-    p.holdGen = 0;  // freeing a prop ends no hold; a grab's starts one, which its poses carry
-    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(prop);
-    if (v.ok) {
-        p.linVelX = v.linearCmS.X;   p.linVelY = v.linearCmS.Y;   p.linVelZ = v.linearCmS.Z;
-        p.angVelX = v.angularDegS.X; p.angVelY = v.angularDegS.Y; p.angVelZ = v.angularDegS.Z;
-    }
-    return true;
-}
-
-bool LetGoFrom(void* prop, const coop::net::PropStickStatePayload& p) {
-    if (coop::remote_prop::IsOwnedHere(prop)) return false;
-    coop::prop_wire_parity::NoteCorrection(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ}, "unstick-let-go");
-    E::SetActorLocation(prop, ue_wrap::FVector{p.locX, p.locY, p.locZ});
-    E::SetActorRotation(prop, ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
-    if (void* mesh = ue_wrap::prop::GetStaticMesh(prop)) {
-        E::SetComponentLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
-        E::SetComponentAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
-    }
-    return true;
-}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
@@ -481,7 +472,6 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
     // nothing.
     UE_ASSERT_GAME_THREAD("prop_stick_sync::OnStickState");
     coop::remote_prop::CloseHold(senderPeerSlot, payload.holdGen);
-    const bool pried = (payload.flags & coop::net::kPropStickPried) != 0;
     const bool unstick = payload.flags == 0;
     const std::wstring keyW = coop::remote_prop::KeyToWString(payload.key);
     void* prop = nullptr;
@@ -503,12 +493,7 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
         return;
     if (!prop) {
         UE_LOGW("prop_stick_sync: %s for key='%ls' eid=%u -- no local match (slot %u)",
-                pried ? "PRY" : unstick ? "UNSTICK" : "STICK", keyW.c_str(), payload.elementId, senderPeerSlot);
-        return;
-    }
-    // A pry of a prop with no wall-attach component: the prop's own verb, which the pry lane replays.
-    if (pried) {
-        coop::prop_pry_sync::ApplyPried(prop, payload, keyW, senderPeerSlot);
+                unstick ? "UNSTICK" : "STICK", keyW.c_str(), payload.elementId, senderPeerSlot);
         return;
     }
     void* comp = WallAttachCompOf(prop);  // the component, checked against the index's class

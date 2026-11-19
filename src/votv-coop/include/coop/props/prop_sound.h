@@ -50,6 +50,11 @@ void PlayThrowWhoosh(void* propActor);
 // clump->pile edge only and never an idempotent echo.
 void PlayLandSound(void* propActor);
 
+// The cue a pried plank plays (prop_pryablePlank_C::crowbarOpen's own: the `damaged` row of its material's physSound,
+// vol 1.0 / pitch 1.0, att_default) at the prop. Silent when the material has no such row. For a pry this peer takes
+// from the host's state, or runs for a client's ask.
+void PlayDamagedSound(void* propActor);
+
 // The inventory-collect BLIP (inventory_Cue -- natively PlaySound2D, 2D and
 // collector-only) spatialized at a REMOTE collector's broadcast position
 // (vol 1.0 / pitch 1.1, the native @659 values; att_default). Receiver side

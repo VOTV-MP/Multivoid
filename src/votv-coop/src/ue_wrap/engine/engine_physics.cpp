@@ -132,6 +132,17 @@ bool SetComponentAngularVelocity(void* component, float wx, float wy, float wz) 
     return SetVelocity(g_setAngVel, component, wx, wy, wz);
 }
 
+bool AddComponentAngularVelocity(void* component, float wx, float wy, float wz) {
+    if (!IsPrimitiveComponent(component) || !Resolve(g_setAngVel)) return false;
+    const int32_t addOff = R::FindParamOffset(g_setAngVel.fn, L"bAddToCurrent");
+    if (addOff < 0) return false;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<FVector*>(frame + g_setAngVel.off0) = FVector{wx, wy, wz};
+    *reinterpret_cast<bool*>(frame + addOff) = true;
+    *reinterpret_cast<R::FName*>(frame + g_setAngVel.off1) = R::FName{0, 0};  // None: the whole body
+    return R::CallFunction(component, g_setAngVel.fn, frame);
+}
+
 bool PutComponentToSleep(void* component) {
     if (!IsPrimitiveComponent(component) || !Resolve(g_putToSleep)) return false;
     unsigned char frame[kFrameBytes] = {};

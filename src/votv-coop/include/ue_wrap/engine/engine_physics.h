@@ -24,6 +24,9 @@ bool SetComponentSimulatePhysics(void* component, bool simulate);
 bool SetComponentLinearVelocity(void* component, float vx, float vy, float vz);
 bool SetComponentAngularVelocity(void* component, float wx, float wy, float wz);
 
+// SetPhysicsAngularVelocityInDegrees with bAddToCurrent true: deg/s added to the body's own. True when the call ran.
+bool AddComponentAngularVelocity(void* component, float wx, float wy, float wz);
+
 // UPrimitiveComponent::PutRigidBodyToSleep on the whole body (bone None): a simulating body stays where it is, asleep,
 // until something touches it. True when the call ran. Not for a body that is mid-depenetration: PhysX faults there.
 bool PutComponentToSleep(void* component);

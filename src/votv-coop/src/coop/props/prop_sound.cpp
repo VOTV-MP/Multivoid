@@ -39,13 +39,13 @@ void* ResolveAttenuation() {
 }
 
 // Which row of the material's Fstruct_physSound to pull.
-enum class PhysCue { kSoft, kImpact };
+enum class PhysCue { kSoft, kImpact, kDamaged };
 
 // The FRESH DataTable lookup the local grab itself does (mainPlayer uber
 // @100003: lib_C::physSound(hit.PhysMat)). The lookup's `return` bool is the
 // @100067 row-miss gate: false -> NO sound, same as the local grabber hears
 // for unmapped materials. Null physmat / unresolved lib -> null. `which`
-// selects the row: kSoft = the grab pickup cue; kImpact = the land/impact thud.
+// selects the row: kSoft = the grab pickup cue; kImpact = the land/impact thud; kDamaged = the prop breaking.
 void* CueFromPhysMat(void* physmat, void* worldCtx, PhysCue which) {
     if (!physmat || !R::IsLive(physmat)) return nullptr;
     static void* sLibCdo = nullptr;
@@ -63,9 +63,9 @@ void* CueFromPhysMat(void* physmat, void* worldCtx, PhysCue which) {
     if (!ue_wrap::Call(sLibCdo, f) || !f.Get<bool>(L"return")) return nullptr;
     // The head of the Fstruct_physSound out-param, in field order: three cue rows,
     // of which we read the impact one and the soft one (soft_30).
-    struct PhysSoundHead { void* step; void* impact; void* soft; };
+    struct PhysSoundHead { void* step; void* impact; void* soft; void* damaged; };
     const PhysSoundHead head = f.Get<PhysSoundHead>(L"Data");
-    void* cue = (which == PhysCue::kImpact) ? head.impact : head.soft;
+    void* cue = which == PhysCue::kImpact ? head.impact : which == PhysCue::kDamaged ? head.damaged : head.soft;
     return (cue && R::IsLive(cue)) ? cue : nullptr;
 }
 
@@ -209,6 +209,22 @@ void PlayThrowWhoosh(void* propActor) {
     // improvement -- natively NOBODY else hears a throw).
     ue_wrap::engine::PlaySoundAtLocation(propActor, sSwing, loc, att, 0.8f, 1.05f);
     UE_LOGI("prop_sound: swing whoosh at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
+}
+
+void PlayDamagedSound(void* propActor) {
+    if (!propActor || !R::IsLive(propActor)) return;
+    // prop_pryablePlank_C::crowbarOpen's last step: lib_C::physSound of the body's material, and when the row
+    // exists its `damaged` cue at the body's bounds, vol 1.0 / pitch 1.0 / att_default.
+    void* damaged = CueFromPhysMat(
+        ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor, PhysCue::kDamaged);
+    if (!damaged || !R::IsLive(damaged)) {
+        UE_LOGI("prop_sound: damaged cue SKIP -- no damaged cue (root-mat miss; prop=%p)", propActor);
+        return;
+    }
+    void* att = ResolveAttenuation();
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(propActor, loc)) return;
+    ue_wrap::engine::PlaySoundAtLocation(propActor, damaged, loc, att, 1.0f, 1.0f);
 }
 
 void PlayLandSound(void* propActor) {

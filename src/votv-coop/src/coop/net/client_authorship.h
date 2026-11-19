@@ -172,6 +172,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::WalkerSeen:
     case ReliableKind::CheatRequest:
     case ReliableKind::AtvPartIntent:
+    case ReliableKind::PryAsk:
     case ReliableKind::OvenProgressState:
         return ClientAuthorship::Client;
     // The Host row matches MTA's protected element data, which a client may not write: opt-in there
@@ -281,6 +282,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::OrbEvent:
     case ReliableKind::UfoEvent:
     case ReliableKind::CheatResult:
+    case ReliableKind::PryState:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a value that names no kind: refused like Host

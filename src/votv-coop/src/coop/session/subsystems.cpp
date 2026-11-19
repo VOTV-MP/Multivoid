@@ -111,6 +111,7 @@
 #include "coop/world/plant_sync.h"
 #include "coop/props/prop_tool_flags.h"
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
+#include "coop/props/prop_pry_host.h"  // the host's judge of a client's pry
 #include "coop/props/prop_pry_sync.h"  // a crowbar's pry of a prop with no wall-attach component
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
@@ -521,7 +522,8 @@ DisconnectStats DisconnectAll() {
     coop::props::container_break::OnDisconnect();
     coop::props::hacksaw_cut::OnDisconnect();
     coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
-    coop::prop_pry_sync::OnDisconnect();  // the session's pry counters
+    coop::prop_pry_sync::OnDisconnect();  // the session's pry counters and its pried-keys record
+    coop::prop_pry_host::OnDisconnect();  // the host's pry counters (a sender's queue goes with its slot)
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();
@@ -693,6 +695,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:garbage_bin"}; coop::garbage_bin_sync::Tick(); }  // the garbage containers: the host flushes the marks its watch made and replays to a joiner, a client applies the host's lists
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:container_break"}; coop::props::container_break::Tick(); }  // a client's break and cut requests, and the host's judgments
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hacksaw_cut"}; coop::props::hacksaw_cut::Tick(); }  // a saw's cut is forgotten at a world change
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_pry"}; coop::prop_pry_host::Tick(session); }  // HOST: judges one queued pry ask a tick a client (an empty queue costs one size check)
     coop::vent_crawler_sync::Tick();  // a client's crawl sounds as their times come
     coop::props::prop_can_state::Tick();  // the init watch's names resolve until it is live
     coop::props::prop_food_sync::Tick();  // the host's poll, the client's wait list

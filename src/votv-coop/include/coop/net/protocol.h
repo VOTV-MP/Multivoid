@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 305;
+inline constexpr uint16_t kProtocolVersion = 306;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1516,6 +1516,18 @@ enum class ReliableKind : uint16_t {
     // Host to one client: what the host did with its CheatRequest (CheatReason). Never relayed. Late join: none. Trust:
     // from the host alone. CheatResultPayload.
     CheatResult = 277,
+
+    // Client to host: this client's crowbar pry of a plank, a radiator or a security TV, asked instead of run (its own
+    // crowbarOpen is cancelled). The host judges the sender (reach, a crowbar last held, the prop's class and whether it
+    // is still stuck), runs the pry on its copy and tells everyone with PryState; a refused ask is counted and said on
+    // the host and gets no answer, since the asker's copy never moved. Never relayed; not pre-world. Late join: none, a
+    // request carries no state. PryAskPayload.
+    PryAsk = 278,
+
+    // Host to all clients: a pried prop's state, the whole of it each time -- whether it is pried and which of a hanging
+    // prop's four joints the host has broken. A receiver applies the difference to its own copy. Never relayed; from
+    // the host alone. PryStatePayload.
+    PryState = 279,
 };
 
 #pragma pack(push, 1)
@@ -1900,14 +1912,11 @@ static_assert(sizeof(VoiceStatePayload) == 4, "VoiceStatePayload must be 4 bytes
 // and which field the Blueprint set (bit 0 frozen, bit 1 static), or 0 for an unstick. A stick
 // carries the commit-time transform the receiver pre-poses to before replaying the component's own
 // forceStick; an unstick carries the prop's transform and velocity once the unsticking peer's body
-// freed it, which a pry's kick is part of, and the receiver lets its copy go from there. kPropStickPried
-// alone is a crowbar's pry of a prop with no wall-attach component (a plank, a radiator): the receiver
-// runs the prop's own crowbarOpen and lets its copy go from the transform and velocity the same way.
-inline constexpr uint8_t kPropStickPried = 4;
+// freed it, which a pry's kick is part of, and the receiver lets its copy go from there.
 struct PropStickStatePayload {
     WireKey  key;
     uint32_t elementId;
-    uint8_t  flags;      // bit0 = frozen, bit1 = static; 0 = unstuck; kPropStickPried = pried
+    uint8_t  flags;      // bit0 = frozen, bit1 = static; 0 = unstuck
     uint8_t  _pad;       // zeroed
     uint16_t holdGen;    // the sticking peer's hold, which the stick closes; 0 on an unstick
     float locX, locY, locZ;
@@ -1916,6 +1925,30 @@ struct PropStickStatePayload {
     float angVelX, angVelY, angVelZ;  // deg/s, an unstick's; zero on a stick
 };
 static_assert(sizeof(PropStickStatePayload) == 88, "PropStickStatePayload must be 88 bytes");
+
+// A client's pry of a prop (PryAsk): the prop by key, and the prying crowbar's right vector as the client read it, which
+// a plank's pry turns into its angular kick (x150, the game's own formula). The host renormalises it: a client's kick
+// is a direction, never a magnitude.
+struct PryAskPayload {
+    WireKey key;                   // 32 -- the pried prop's key
+    float   kickX, kickY, kickZ;   // 12 -- the crowbar's right vector, finite
+};
+static_assert(sizeof(PryAskPayload) == 44, "PryAskPayload must be 44 bytes");
+static_assert(sizeof(PryAskPayload) <= 256 - 20 - 8, "PryAskPayload must fit in one reliable datagram");
+
+// A pried prop's state (PryState). `flags` bit 0 is pried; `brokenMask` bit N-1 is set once PhysicsConstraintN of a
+// radiator or a security TV is broken (a plank has none). A nonzero mask implies pried.
+namespace pry_flags {
+inline constexpr uint8_t kPried = 0x01;
+}  // namespace pry_flags
+struct PryStatePayload {
+    WireKey key;           // 32
+    uint8_t flags;         // 1  -- pry_flags
+    uint8_t brokenMask;    // 1  -- bits 0..3
+    uint8_t _pad[2];       // 2  -- zero
+};
+static_assert(sizeof(PryStatePayload) == 36, "PryStatePayload must be 36 bytes");
+static_assert(sizeof(PryStatePayload) <= 256 - 20 - 8, "PryStatePayload must fit in one reliable datagram");
 
 // A kerfur conversion request (KerfurConvertRequest): the element id of the form whose verb the
 // client's gate refused (a character when toProp is 1, a prop when 0). The host resolves it,

@@ -64,6 +64,7 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/glowstick_sync.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_pry_sync.cpp
+    src/coop/props/prop_pry_host.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp
     src/coop/props/prop_wire_parity.cpp
