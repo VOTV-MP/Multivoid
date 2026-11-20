@@ -105,7 +105,38 @@ CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|j
     "running away before the client is launched (the rig's client-after), and the joiner must show both once its join is "
     "done and show the spray's end: rig: VERDICT fireext-spray-join PASS, FAIL or INVALID. Both peers print every "
     "extinguisher they have and every move of one.")
+CFG_ENUM(miner_drill, "miner_drill", "dev", "off", "off|use|claim|record|join", "VOTVCOOP_MINER_DRILL",
+    "Drill (BOTH peers): a GPU mining rig, each arm ending on rig: VERDICT miner-<arm> PASS, FAIL or INVALID, said by the host. "
+    "use: a client uses a GPU on a rig and the host grants it; a forged use with an empty hand is refused and the client's "
+    "copy reads the host's count again; a use on a full rig is refused and its GPU is given back beside the client; "
+    "a flood of asks, each with a hold behind it, is granted the host's burst of 4. "
+    "claim: a client's claim of a rig's points is asked of the host, whose balance is paid. record: a client's forged record "
+    "of a rig it did not drop is refused, and the record of a rig it throws lands. join: a rig built before the client joins "
+    "shows the host's counts and power on the joiner (the rig's client-after is the host's \"join rig built\" line).")
 CFG_FLAG(cleanup_trace, "cleanup_trace", "dev", false, "VOTVCOOP_CLEANUP_TRACE",
     "Developer trace (both peers, default off): each props clean-up call the session runs for a peer that left and for "
     "the session's end is logged as \"cleanup-trace: <phase> <the call>\" before it runs, so two builds that move those "
     "calls between files can be compared by their two lists of lines, which must be equal. It changes no behaviour.")
+CFG_FLAG(miner_hold_judge_off, "miner_hold_judge_off", "dev", false, "VOTVCOOP_MINER_HOLD_JUDGE_OFF",
+    "Developer red arm of the mining rig drill (host): never set. The host does not ask the hand lane whether the sender holds "
+    "the item (no hold read, no use spent), so a use sent with an empty hand is granted and the drill must say FAIL at the "
+    "forged use.")
+CFG_FLAG(miner_bucket_off, "miner_bucket_off", "dev", false, "VOTVCOOP_MINER_BUCKET_OFF",
+    "Developer red arm of the mining rig drill (host): never set. A client's uses and claims have no budget, so a flood of asks "
+    "is all granted and the drill must say FAIL at the flood's count.")
+CFG_FLAG(miner_refusal_state_off, "miner_refusal_state_off", "dev", false, "VOTVCOOP_MINER_REFUSAL_STATE_OFF",
+    "Developer red arm of the mining rig drill (host): never set. A refused ask is answered but the host's state of the rig is "
+    "not sent to the asker, so the asker's copy keeps what its own use or edit did and the drill must say FAIL at that copy.")
+CFG_FLAG(miner_claim_ask_off, "miner_claim_ask_off", "dev", false, "VOTVCOOP_MINER_CLAIM_ASK_OFF",
+    "Developer red arm of the mining rig drill (client): never set. A client's claim is cancelled and not asked of the host "
+    "(it says \"claim: not asked\"), so the host's balance is not paid and the drill must say FAIL there.")
+CFG_FLAG(miner_record_gate_off, "miner_record_gate_off", "dev", false, "VOTVCOOP_MINER_RECORD_GATE_OFF",
+    "Developer red arm of the mining rig drill (host): never set. The class gate on a client's rig record is not registered, "
+    "so a client's forged record lands on the host's rig and the drill must say FAIL at the host's count.")
+CFG_FLAG(miner_refund_off, "miner_refund_off", "dev", false, "VOTVCOOP_MINER_REFUND_OFF",
+    "Developer red arm of the mining rig drill (host): never set. A use the host refuses is not given back (it says \"is "
+    "not refunded (miner_refund_off)\"), so the client's GPU is lost and the drill must say FAIL when the client finds no "
+    "new GPU beside it.")
+CFG_FLAG(miner_snapshot_off, "miner_snapshot_off", "dev", false, "VOTVCOOP_MINER_SNAPSHOT_OFF",
+    "Developer red arm of the mining rig drill (host): never set. The host sends a joiner no rig's state at its ready edge "
+    "(it says \"snapshot withheld\"), so the joiner's copy keeps what its record carried and the drill must say FAIL at it.")

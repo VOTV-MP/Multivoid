@@ -125,15 +125,22 @@ on it runs its `upgrade`, which counts one more and repaints it, and the item go
 powered and cools its heat, and its claim (action 4) pays the points into the balance. Each ran on the one machine, so a
 rig one player filled stood empty for the other, and each copy mined its own points (VOTV-MP/Multivoid issue 43). The
 rig is the host's: a client refuses its tick and its fire (`fireDamage`, which spawns its debris and loose GPUs, so
-the host's burning rig is the one that throws them), and its use of an item and its claim are refused and asked of the host
-(`MinerIntent`), which judges the reach (6 m) and pace and runs its own rig's `upgrade` or claim, the rig's hints going
-to the asker. A granted use spends the item in the asker's hand. The host sends each rig's counts, points and heat when
-they change, the points at most once a second, and to a joiner at its ready edge (`MinerState`); a client writes them and
-repaints through the rig's own `upd` (`coop/props/miner_sync`) `[V]` (`coop/dev/miner_probe`, `VOTVCOOP_MINER_PROBE=1`:
-before, the host's rig held 2 GPUs, 2 slots and a cooler and the client's copy none, and a client's added slot stayed on
-the client; after, the client's copy took the host's counts in the same second, a client's scrap metal added a slot on
-the host and on both copies, and its claim ran on the host, the host's hint shown on the client). The probe's use names
-the item without one in the hand, so the spend of a real held item, and a powered rig's points, are not measured `[?]`.
+the host's burning rig is the one that throws them). A client's use runs on its own copy, which spends the item from its
+hand, and is asked of the host (`MinerIntent` op 2); its claim is cancelled and asked (op 3), since a claim run on a copy
+pays only that copy's view of the balance. The host judges each ask as it arrives: the sender's budget (4 uses at once and
+2 a second, 2 claims at once and 1 a second), its hand (the hand lane's last announce and the one use a hold has), its
+world, its body and the rig within its reach (6 m); it runs its own rig's `upgrade` or claim, the rig's hints going to the
+asker, and answers with the reason (`MinerState` op 1; an ask past the budget is not answered). A claim of a rig that is
+unpowered or holds no points pays nothing and is answered as the game's refusal. A use it refuses after the item was paid
+gives the item back beside the sender (above the rig when the sender's body does not read), at most 2 at once and 1 a minute
+per sender, and any refusal sends the host's state of that rig to the asker, which overwrites what the asker's copy did.
+The host sends each rig's counts, powered flag, points and heat when they change (the points and heat alone at most once
+a second) and to a joiner at its ready edge (`MinerState` op 0); a client writes them and repaints through the rig's own
+`upd` and `plugged`, and a state for a copy that is not there yet waits, the latest per rig, until the copy binds. The store
+sells the rig, so it travels through a hand and the record lane carries its counts at a drop: the host takes a client's
+record for a rig only when the sender's own drop awaits it and every number is in range (the points at 512 at most),
+and sends its own state back to the sender otherwise (`coop/props/miner_sync`) `[?]` until the rig proof. A client's own fire on its copy is cancelled, and fire
+itself stays on every peer separately.
 
 ### The floppy slot
 
@@ -206,7 +213,7 @@ disc under another peer's hold on every peer; the holder's own insert is the one
 | State | Owner | Shape |
 |---|---|---|
 | the balance | the host | one-way, absolute, on change |
-| a GPU mining rig's slots, GPUs, coolers, points and heat | the host | on change, the points at most once a second; a client's use of an item and its claim are intents |
+| a GPU mining rig's slots, GPUs, coolers, powered flag, points and heat | the host | on change, the points and heat alone at most once a second; a client's use of an item and its claim are intents the host judges |
 | the upgrade levels | the host | the struct whole, on change; a purchase is an intent |
 | an order | the client names the row; the host performs and prices | an intent |
 | a coin gun sale | the client names the prop; the host prices, mints and destroys | an intent ahead of the destroy |
@@ -218,7 +225,7 @@ disc under another peer's hold on every peer; the holder's own insert is the one
 |---|---|---|
 | `LaptopTabReport`, `LaptopTabState` | the claim holder to the host; the host to the other clients | the switcher's index |
 | `BalanceSync` | the host to all | the absolute balance |
-| `MinerState`, `MinerIntent` | the host to all, an answer to its asker alone; a client to the host | a rig's GPUs, slots, coolers, points and heat; a client's use of an item or its claim |
+| `MinerState`, `MinerIntent` | the host to all, an answer to its asker alone; a client to the host | a rig's GPUs, slots, coolers, powered flag, points and heat, or the host's answer to an ask; a client's use of an item or its claim |
 | `UpgradeLevels` | the host to all | the eighteen levels, whole |
 | `UpgradeIntent` | a client to the host | the panel row's index, whether it is a level row or a module row, and whether it is a buy or a sell |
 | `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
@@ -261,7 +268,7 @@ an error line.
 | Concept | Files |
 |---|---|
 | the laptop's tab | `coop/interactables/laptop_tab` |
-| the GPU mining rig | `coop/props/miner_sync`; `coop/dev/miner_probe` |
+| the GPU mining rig | `coop/props/miner_sync`, `ue_wrap/actors/miner`; `coop/dev/miner_drill` |
 | the floppy slot | `coop/interactables/floppy_slot_sync`, `coop/interactables/laptop_buffer_sync`, `ue_wrap/devices/floppy_slot`, `ue_wrap/devices/serverbox`, `ue_wrap/devices/laptop` |
 | the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |
 | the economy | `coop/world/balance_sync`, `coop/items/order_sync`, `coop/items/order_queue_sync`, `coop/items/coingun_sync`, `coop/interactables/upgrade_sync`, `ue_wrap/world/economy`, `ue_wrap/world/order_economy`, `ue_wrap/world/store_catalog`, `ue_wrap/world/upgrades` |

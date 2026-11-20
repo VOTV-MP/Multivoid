@@ -28,6 +28,7 @@
 #include "coop/props/pile_look.h"
 #include "coop/creatures/walker_state_client.h"  // OnBound: a walker copy bound after the host sent its state takes the state here
 #include "coop/props/roomba_sync.h"  // OnBound: a cleaner copy bound after the host sent its state takes the state here
+#include "coop/props/miner_sync.h"  // OnBound: a mining rig copy bound after the host sent its state takes the state here
 #include "coop/props/prop_drive_host.h"    // OverrideClientSyncer: a release that writes the copy ends a client's row on it
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
 #include "coop/props/prop_syncer_host.h"   // ElectSyncer: a thrown prop is its thrower's to sync
@@ -467,6 +468,7 @@ void RegisterPropMirror(coop::element::ElementId eid,
         coop::drive_payload_sync::OnBound(static_cast<uint32_t>(eid), actor, senderSlot);  // a data drive's row, by its author
         coop::walker_state_client::OnBound(actor, key);  // a walker copy takes the host's held pose and hunt
         coop::roomba_sync::OnBound(static_cast<uint32_t>(eid), actor, cls.c_str());  // a cleaner copy joins the brush list and takes its held state
+        coop::miner_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a mining rig copy takes the state the host sent before it was here
         coop::element::bind_wait::OnBound(static_cast<uint32_t>(eid));  // messages held for this eid replay at the next Pump
         coop::props::container_act_host::overlap::OnBound(actor);  // an overlap put that waited for this prop's id is judged at the next tick
         coop::atv_drill_events::NoteMirrorBound(cls, actor);  // [dev] the ATV drill's arrival of a host-spawned battery; one compare with the row off

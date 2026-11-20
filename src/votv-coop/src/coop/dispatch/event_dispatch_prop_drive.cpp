@@ -28,6 +28,7 @@
 #include "coop/interactables/atv_host_sync.h"
 #include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/props/prop_hold_claim.h"    // the client's receiver of a refused hold
+#include "coop/props/miner_bounds.h"  // what a mining rig can hold
 #include "coop/props/miner_sync.h"   // a GPU mining rig's counts and points, the host's
 #include "coop/props/prop_food_sync.h"     // a world food's condition and a client's bite
 #include "coop/props/prop_pry_host.h"      // a client's pry ask, judged by the host
@@ -59,6 +60,35 @@ bool FireExtWellFormed(bool intent, const net::FireExtPayload& p) {
     if (!intent) return p.op <= net::kFireExtOpSpray && p.on <= 1 && p.charged <= 1 && p.slot < net::kMaxPeers;
     if (p.op == net::kFireExtOpSprayAsk) return p.on <= 1;
     return p.op == net::kFireExtOpRunawayAsk && p.slot == 0 && p.on == 0 && p.charged == 0 && p.life == 0.f;
+}
+
+// A mining rig message's fields, checked before any lane sees them. A State is op 0 (a rig's numbers, `pad` its powered flag) or
+// op 1 (the answer to an ask: `pad` the reason, `granted` equal to it being 0, the numbers unset, the item 0..3). An Intent is
+// op 2 (a use: the item 0..2) or op 3 (a claim: no item); an intent carries nothing else.
+bool MinerWellFormed(bool intent, const net::MinerPayload& p) {
+    if (intent) {
+        const bool numbersUnset = p.gpus == 0 && p.slots == 0 && p.fans == 0 && p.points == 0 && p.overheat == 0.f;
+        if (!numbersUnset || p.granted != 0 || p.pad != 0) return false;
+        if (p.op == net::kMinerOpAdd) return p.item <= net::kMinerItemFan;
+        return p.op == net::kMinerOpClaim && p.item == 0;
+    }
+    if (p.op == net::kMinerOpState)
+        return p.item == 0 && p.granted == 0 && p.pad <= 1 &&
+               ::coop::miner_sync::InBounds(p.gpus, p.slots, p.fans, p.points, p.overheat);
+    if (p.op != net::kMinerOpAnswer) return false;
+    const bool numbersUnset = p.gpus == 0 && p.slots == 0 && p.fans == 0 && p.points == 0 && p.overheat == 0.f;
+    return numbersUnset && p.item <= net::kMinerItemClaim && p.pad < net::kMinerReasonBudget &&
+           p.granted == (p.pad == net::kMinerReasonGranted ? 1 : 0);
+}
+
+// Every mining rig message the dispatcher drops (the wrong way, the wrong length or out of range) is counted on one counter,
+// logged at the first and each power of two.
+void DropMiner(const net::Session::ReliableMessage& msg) {
+    static uint64_t s_dropped = 0;
+    const uint64_t n = ++s_dropped;
+    if ((n & (n - 1)) == 0)
+        UE_LOGW("event_feed: a mining rig message dropped (the wrong way, of %zu bytes or out of range), from slot %d: %llu so far",
+                static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot, static_cast<unsigned long long>(n));
 }
 
 // Every extinguisher message the dispatcher drops (the wrong way, the wrong length or out of range) is counted on one
@@ -320,15 +350,13 @@ bool HandlePropDriveEvent(net::Session& session,
         // MinerState HOST->ALL (op 1 to one asker), MinerIntent CLIENT->HOST (coop/props/miner_sync). Exact length.
         const bool intent = msg.kind == net::ReliableKind::MinerIntent;
         if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::MinerPayload)) {
-            UE_LOGW("event_feed: a mining rig message the wrong way or of %zu bytes from slot %d -- dropping",
-                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            DropMiner(msg);
             break;
         }
         net::MinerPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (!std::isfinite(p.overheat) || p.gpus < 0 || p.gpus > 16 || p.slots < 0 || p.slots > 16 || p.fans < 0 ||
-            p.fans > 6 || p.points < 0) {
-            UE_LOGW("event_feed: a mining rig message malformed -- dropping");
+        if (!MinerWellFormed(intent, p)) {
+            DropMiner(msg);
             break;
         }
         if (intent) ::coop::miner_sync::OnIntent(msg.senderPeerSlot, p);

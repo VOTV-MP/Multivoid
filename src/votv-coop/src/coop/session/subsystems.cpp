@@ -667,7 +667,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hand_record"}; coop::hand_record_sync::Tick(); }  // the owner's hand read and sent, the host's parked records judged, the mirrors written
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cover"}; coop::cover_sync::Tick(); }  // the host's asks and fresh plate prop, the client's put-back touch
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:fireext"}; coop::fireext_sync::Tick(); }  // the host's sprays' counts, every peer's rays and display of the other players' sprays
-    coop::miner_sync::Tick();  // the host's poll and its asks, the client's states
+    coop::miner_sync::Tick();  // the host's owed states, the client's waiting ones
     coop::plant_sync::Tick();  // the plants' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)

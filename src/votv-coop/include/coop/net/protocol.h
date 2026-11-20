@@ -1550,14 +1550,18 @@ enum class ReliableKind : uint16_t {
     // and pryMask), and PryState follows for what breaks after. PryStatePayload.
     PryState = 279,
 
-    // HOST->ALL: a GPU mining rig's (prop_miner_C) GPUs, slots, coolers, points and heat (coop/props/miner_sync), when one
-    // changes (the points at most once a second) and to a joiner at its ready edge; a client's copy writes them and
-    // repaints through the rig's own `upd`. Op 1, HOST->that client: its ask was granted or refused. Never relayed; not
-    // pre-world. MinerPayload.
+    // HOST->ALL: a GPU mining rig's (prop_miner_C) GPUs, slots, coolers, points, heat and whether it is powered
+    // (coop/props/miner_sync), when one changes (the points and heat alone at most once a second) and to a joiner at its
+    // ready edge; a client's copy writes them and repaints through the rig's own `upd` and `plugged`. Op 1, HOST->the
+    // asking client: the host's answer to its ask, with the reason in `pad` (kMinerReason*; an ask dropped for its budget
+    // gets none); a refused ask is followed by the host's op 0 for that rig, which overwrites what the client's copy did.
+    // Never relayed; not pre-world.
+    // MinerPayload.
     MinerState = 247,
-    // CLIENT->HOST: this client's player used a GPU, a cooler or scrap metal on a rig (op 2) or claimed its points
-    // (op 3). The host judges the sender's reach and pace and runs its own rig's `upgrade` or claim, whose hints go to
-    // the asker. Never relayed. MinerPayload.
+    // CLIENT->HOST: this client's player used a GPU, a cooler or scrap metal on a rig (op 2, spent on the client's copy
+    // first) or claimed its points (op 3). The host judges the sender's hand, budget, body and reach and runs its own
+    // rig's `upgrade` or claim, whose hints go to the asker; a use it refuses gives the item back beside the sender. A
+    // rig's record from a client is judged by the record lane's own gate (miner_sync). Never relayed. MinerPayload.
     MinerIntent = 248,
 };
 
@@ -2682,12 +2686,21 @@ static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
 // A GPU mining rig (MinerState, MinerIntent).
 inline constexpr uint8_t kMinerOpState = 0, kMinerOpAnswer = 1, kMinerOpAdd = 2, kMinerOpClaim = 3;
 inline constexpr uint8_t kMinerItemSlot = 0, kMinerItemGpu = 1, kMinerItemFan = 2;  // scrap_metal, miner_gpu, miner_fan
+inline constexpr uint8_t kMinerItemClaim = 3;  // op 1 only: the answer is to a claim
+// Op 1's reason, in `pad`: why the host did or did not run an ask. 0 is granted; 3 is no rig (no row, a stale or dead
+// element, not a prop_miner_C); 6 is the game's own refusal (`upgrade` said no, or the claim paid nothing: the rig is
+// unpowered or holds no points). 7 is the host's own count of a budget drop, which is never sent: a 7 on the wire is
+// malformed.
+inline constexpr uint8_t kMinerReasonGranted = 0, kMinerReasonNoHold = 1, kMinerReasonNotReady = 2, kMinerReasonNoRig = 3,
+                         kMinerReasonNoBody = 4, kMinerReasonOutOfReach = 5, kMinerReasonGameRefused = 6,
+                         kMinerReasonBudget = 7;
+inline constexpr uint8_t kMinerReasons = 8;
 struct MinerPayload {
     uint32_t eid;       // the rig's prop element id
     uint8_t  op;        // kMinerOp*
-    uint8_t  item;      // ops 1, 2: kMinerItem*
-    uint8_t  granted;   // op 1: 1 the host's rig took it
-    uint8_t  pad;       // zero
+    uint8_t  item;      // ops 1, 2: kMinerItem* (op 1 answers a claim with kMinerItemClaim)
+    uint8_t  granted;   // op 1: 1 the host's rig took it (equal to pad == 0); zero otherwise
+    uint8_t  pad;       // op 0: the rig is powered (0 or 1). Op 1: the reason, kMinerReason*. Zero in an intent
     int32_t  gpus;      // op 0: upg_gpu
     int32_t  slots;     // op 0: upg_slots
     int32_t  fans;      // op 0: upg_fans

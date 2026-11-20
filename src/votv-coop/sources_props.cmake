@@ -43,6 +43,9 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/body_push.cpp
     src/coop/props/prop_food_sync.cpp
     src/coop/props/miner_sync.cpp
+    src/coop/props/miner_state.cpp
+    src/coop/props/miner_judge.cpp
+    src/coop/props/miner_record.cpp
     src/coop/props/food_tick_gate.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_record_wire.cpp

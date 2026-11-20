@@ -138,7 +138,7 @@
 #include "coop/dev/vent_probe.h"   // [dev] a crouched player's steps counted on the other peer
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
 #include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
-#include "coop/dev/miner_probe.h"  // [dev] a mining rig built by the host, claimed by a client, listed on both
+#include "coop/dev/miner_drill.h"  // [dev] the mining rig drill: use, claim, record and join, judged by the host
 #include "coop/dev/order_probe.h"  // who writes the order queue, and what the drone delivers, per peer
 #include "coop/dev/bind_wait_selftest.h"  // [dev] the bind wait's rules on stated inputs
 #include "coop/dev/pile_late_load.h"   // [dev] the late-load seam: one save-loaded clump kept aside until its row defers
@@ -327,6 +327,7 @@ void EndSession() {
     coop::dev::grime_drill::OnDisconnect();  // [dev] the decals and the phase belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
+    coop::dev::miner_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::body_push_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::vent_probe::OnDisconnect();  // [dev] a rejoin runs the drill again
@@ -488,7 +489,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::deskaudio_probe::Tick(&session);  // [dev] the desk's sound components (a latched read when off)
     coop::dev::sleep_speedup_drill::Tick(&session);  // [dev] whose sleep speeds the world up (a latched read when off)
     coop::dev::vent_probe::Tick(&session);  // [dev] the vent crawl drill (a latched read when off)
-    coop::dev::miner_probe::Tick(&session);  // [dev] the mining rigs on both peers (a latched read when off)
+    coop::dev::miner_drill::Tick(&session);  // [dev] the mining rig drill (a latched enum read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)

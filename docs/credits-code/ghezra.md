@@ -328,3 +328,10 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
 - **A crouched player's steps** ([#168](https://github.com/VOTV-MP/Multivoid/pull/168), [#169](https://github.com/VOTV-MP/Multivoid/pull/169)):
   a crawling player stepped at the standing stride on every other screen. Kept as written: the pose carries a crouch bit and both
   strides follow it; the ground read on each step. On top: the ground line is a dev read, and the crawl is a drill with a red.
+
+- **A GPU mining rig** ([#133](https://github.com/VOTV-MP/Multivoid/pull/133)): a rig's slots, GPUs, coolers, mined points and its claim ran on one machine each.
+  Now the host's rig is the one rig: a client's use of an item on it and its claim are asked of the host, and every peer shows the
+  host's counts, points, heat and power, a joiner included. Kept as written: the two kinds, the host running its own rig, the client
+  refusing its own tick and fire debris. On top: the host checks the client's hand before a use and gives back an item it refused,
+  budgets uses, claims and refunds, refuses a rig record a client did not just drop, sends state on the rig's own events instead of a
+  scan, and drills with a red for each judge.
