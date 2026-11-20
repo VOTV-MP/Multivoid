@@ -31,6 +31,7 @@ std::vector<Entry> g_entries;
 std::unordered_map<std::wstring, uint16_t> g_index;
 uint32_t g_digest = 0;
 bool g_built = false;
+bool g_mismatch = false;   // the table's layout or data is not what the reader expects: not tried again
 uint64_t g_lastTryMs = 0;
 std::string g_lastWhy;
 
@@ -57,18 +58,25 @@ bool IndexCheckOff() {
 }  // namespace
 
 bool Ready() {
-    if (g_built) return true;
+    if (g_built || g_mismatch) return g_built;
     const uint64_t now = NowMs();
     if (g_lastTryMs && now - g_lastTryMs < kRetryMs) return false;
     g_lastTryMs = now;
 
     std::vector<std::wstring> cues;
     std::string why;
-    if (!ue_wrap::physsound_table::ReadImpactSounds(cues, why) || cues.empty()) {
-        if (why.empty()) why = "the table names no impact sound";
+    const ue_wrap::physsound_table::Read read = ue_wrap::physsound_table::ReadImpactSounds(cues, why);
+    if (read == ue_wrap::physsound_table::Read::Mismatch || (read == ue_wrap::physsound_table::Read::Ok && cues.empty())) {
+        // A verdict about the table's layout or data: no retry changes it, so this peer sends and plays nothing, said once.
+        g_mismatch = true;
+        UE_LOGE("sound_catalog: the game's table does not read as expected -- %s; no sound is relayed by this peer",
+                why.empty() ? "it names no impact sound" : why.c_str());
+        return false;
+    }
+    if (read == ue_wrap::physsound_table::Read::NotYet) {
         if (why != g_lastWhy) {
             g_lastWhy = why;
-            UE_LOGW("sound_catalog: not built -- %s (tried again when a sound needs it)", why.c_str());
+            UE_LOGW("sound_catalog: not built yet -- %s (tried again when a sound needs it)", why.c_str());
         }
         return false;
     }
@@ -81,11 +89,8 @@ bool Ready() {
     // A path named twice would give one sound two indexes: not a table to speak by.
     if (std::adjacent_find(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.path == b.path; }) !=
         entries.end()) {
-        why = "a sound is named twice";
-        if (why != g_lastWhy) {
-            g_lastWhy = why;
-            UE_LOGW("sound_catalog: not built -- %s", why.c_str());
-        }
+        g_mismatch = true;
+        UE_LOGE("sound_catalog: a sound is named twice in the game's table; no sound is relayed by this peer");
         return false;
     }
     g_entries = std::move(entries);

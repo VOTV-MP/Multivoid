@@ -5,14 +5,19 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace ue_wrap::physsound_table {
 
+// How a read ended. NotYet: the table or its reflection is not resolvable yet, and a later read may succeed. Mismatch: a
+// verdict about the layout or the data (a member missing, the walk and the engine's own column disagreeing), which no
+// retry changes. The same split weapon_catalog makes.
+enum class Read : uint8_t { Ok, NotYet, Mismatch };
+
 // The distinct impact sounds of the table, each as ue_wrap::object_path::Of writes it, in no stated order; a row with no
-// impact sound adds none. False, `out` empty and `why` naming the failure, when the table is not loaded yet, its layout
-// does not resolve, or the walk and the engine's own column read disagree: the caller may try again later.
-bool ReadImpactSounds(std::vector<std::wstring>& out, std::string& why);
+// impact sound adds none. On a failure `out` is empty and `why` names it.
+Read ReadImpactSounds(std::vector<std::wstring>& out, std::string& why);
 
 }  // namespace ue_wrap::physsound_table

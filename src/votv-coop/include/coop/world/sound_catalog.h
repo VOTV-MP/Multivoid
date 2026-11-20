@@ -35,8 +35,10 @@ struct Entry {
 };
 
 // Builds the table when it is not built, and says whether it is. A table that cannot be read yet (the game's own is not
-// loaded, or a read of it disagrees with the engine's) is tried again by the next call, at most every 3 s: the walk of the
-// engine's objects is dear. The failure is said once per cause. Never a latched failure.
+// loaded, or its reflection does not resolve) is tried again by the next call, at most every 3 s: the walk of the engine's
+// objects is dear, and the cause is said once. A table whose layout or data is not what the reader expects (a member
+// missing, the walk and the engine's own column disagreeing, a sound named twice) is said once and not read again: no
+// retry changes it, and this peer relays no sound.
 bool Ready();
 
 // The table's digest and size; 0 while it is not built.
