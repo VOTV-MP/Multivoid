@@ -3,6 +3,7 @@
 #include "coop/props/constraint_ties.h"
 
 #include "coop/net/net_clock.h"
+#include "coop/player/roster.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_drive_join.h"
 #include "coop/props/prop_element_tracker.h"
@@ -49,6 +50,8 @@ bool g_preOn = false;
 bool g_postOn = false;
 bool g_preRefused = false;
 bool g_liveSaid = false;
+bool g_notLiveSaid = false;
+bool g_slotsFullSaid = false;
 uint64_t g_tryMs = 0;
 int32_t g_offComp1 = -1;
 int32_t g_offComp2 = -1;
@@ -171,6 +174,13 @@ void SeedIfWorldChanged() {
 }  // namespace
 
 void Install() {
+    // A host session that starts with a patch missing has lost the ties its save restored (the walk of a join then finds
+    // none): said once, with the three facts a missing patch rests on.
+    if (!g_notLiveSaid && !(g_postOn && g_preOn) && coop::roster::LocalIsHost()) {
+        g_notLiveSaid = true;
+        UE_LOGW("constraint_ties: seams not live at the session start (pre=%d post=%d, exec handlers=%d)", g_preOn ? 1 : 0,
+                g_postOn ? 1 : 0, sg::ExecHandlers() ? 1 : 0);
+    }
     if (g_postOn && (g_preOn || g_preRefused)) return;
     const uint64_t now = coop::net::NowMs();
     if (now < g_tryMs) return;
@@ -240,6 +250,10 @@ bool AddBreakListener(BreakFn fn) {
             f = fn;
             return true;
         }
+    if (!g_slotsFullSaid) {
+        g_slotsFullSaid = true;
+        UE_LOGW("constraint_ties: break listener slots full");
+    }
     return false;
 }
 
