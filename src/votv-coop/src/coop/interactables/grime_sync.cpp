@@ -256,6 +256,7 @@ struct CachedKey {
     ExactKey     exact;  // KeysOf's own name for the one decal
     int32_t      idx;
     int32_t      serial;
+    bool         provisional = false;   // made at the decal's spawn (IndexNow): the next pass makes it again
 };
 std::unordered_map<void*, CachedKey> g_posKeyByActor;   // actor -> cached keys (GT-only)
 std::unordered_map<void*, CachedKey> g_scanNextCache;   // pass scratch: full-pass cache rebuild
@@ -311,7 +312,7 @@ void HubMatch(void*, void* obj) {
     const int32_t idx = R::InternalIndexOf(obj);
     auto cit = g_posKeyByActor.find(obj);
     CachedKey ck;
-    if (cit != g_posKeyByActor.end() && cit->second.idx == idx &&
+    if (cit != g_posKeyByActor.end() && !cit->second.provisional && cit->second.idx == idx &&
         R::SlotSerial(idx) == cit->second.serial) {
         ck = cit->second;
     } else {
@@ -661,6 +662,22 @@ void Tick() {
     if (!g_endSubscribed && DS::Install()) g_endSubscribed = DS::SubscribeClass(L"grime_C", &OnGrimeEnd);
     if (!g_replayWatched) g_replayWatched = sg::WatchName(kRowLoadObjects, kTagGrimeReplay, &OnLoadObjectsPre, nullptr);
     sg::ResolvePendingNames();
+}
+
+void IndexNow(void* decal) {
+    // The spawn seam's hand-over: the decal is named and indexed as it is born, so its end is sent however soon it comes.
+    if (!decal || !G::IsGrime(decal) || !IndexCurrent()) return;
+    CachedKey ck;
+    if (!KeysOf(decal, ck.key, ck.exact)) return;
+    ck.idx = R::InternalIndexOf(decal);
+    ck.serial = R::AllocateSlotSerial(ck.idx);
+    ck.provisional = true;
+    {
+        std::lock_guard<std::mutex> lk(g_indexMutex);
+        g_byKey[ck.key] = Ref{decal, ck.idx, ck.serial};
+    }
+    if (g_scanIsFull) g_scanNextCache.insert_or_assign(decal, ck);   // a full pass in flight keeps it through its swap
+    g_posKeyByActor.insert_or_assign(decal, std::move(ck));
 }
 
 void ForgetDecal(void* actor) {

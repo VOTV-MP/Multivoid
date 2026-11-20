@@ -53,6 +53,10 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // take. Call every net-pump tick on the game thread.
 void Tick();
 
+// A grime decal that has just spawned (the spill lane's fallen-leaves seam hands it over): it is named and indexed now,
+// not at the next pass, so its end is sent however soon it comes. The next pass names it again. Game thread.
+void IndexNow(void* decal);
+
 // A decal this peer removes as not its own (coop/world/spill_sync refuses a client's own spill): it leaves the index,
 // so its end of play is no wipe. Call before the destroy. Game thread.
 void ForgetDecal(void* actor);

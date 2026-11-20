@@ -236,6 +236,7 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
         leaf.Set(spawned);
         g_leafLanded.push_back(leaf);
         if (g_leafLanded.size() > g_leafPeak) g_leafPeak = g_leafLanded.size();
+        coop::grime_sync::IndexNow(spawned);   // a leaf raked at once still has its end sent: the lane has it as it is born
         return;
     }
     if (!source || !GS::IsProjectile(source) || !GS::IsDecal(spawned) || g_landed.size() >= kCap) return;
