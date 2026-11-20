@@ -66,6 +66,8 @@ constexpr float kNearCm       = 100.f;
 constexpr int   kQuietTicks   = 60;
 // A wait for the other peer or a state ends on its event; this bound only says INVALID.
 constexpr uint64_t kBoundMs   = 120000;
+// The client waits out the host's whole walk: the walk's own deadline and a minute (INVALID only).
+constexpr uint64_t kWalkBoundMs = (kWalkDeadlineS + 60) * 1000ull;
 
 const std::string kCrouchedLine = "vent crouched";
 const std::string kArmedLine    = "vent armed";
@@ -96,7 +98,7 @@ void Next(Step s) {
     g_stepMs = ::GetTickCount64();
     g_quiet = 0;
 }
-bool Expired() { return ::GetTickCount64() - g_stepMs > kBoundMs; }
+bool Expired(uint64_t boundMs = kBoundMs) { return ::GetTickCount64() - g_stepMs > boundMs; }
 
 void Wait(const char* what) {
     char* last = g_lastWait[IsHost() ? 0 : 1];
@@ -287,7 +289,7 @@ void ClientTick() {
         std::string rest;
         if (!DC::SeenRestOf(kDonePrefix, &rest)) {
             Wait("the host's done line");
-            if (Expired()) InvalidWaiting("the host's done line");
+            if (Expired(kWalkBoundMs)) InvalidWaiting("the host's done line");
             return;
         }
         float x = 0.f, y = 0.f, z = 0.f;
