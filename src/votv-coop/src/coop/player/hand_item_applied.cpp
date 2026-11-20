@@ -127,21 +127,30 @@ bool HeldClassIs(uint8_t slot, const wchar_t* cls) {
     return h.has && ::_wcsicmp(h.cls.c_str(), cls) == 0;
 }
 
-bool HeldClassIsA(uint8_t slot, const wchar_t* base) {
-    if (HeldClassIs(slot, base)) return true;
-    if (slot >= coop::players::kMaxPeers || !base) return false;
-    const SlotHand& h = g_hands[slot];
-    if (!h.has) return false;
-    void* cls = ue_wrap::object_index::ClassByName(h.cls.c_str());
+bool ClassNameIsA(const std::wstring& name, const wchar_t* base) {
+    if (!base || name.empty()) return false;
+    if (::_wcsicmp(name.c_str(), base) == 0) return true;
+    void* cls = ue_wrap::object_index::ClassByName(name.c_str());
     for (int hops = 0; cls && hops < 16; ++hops, cls = ue_wrap::reflection::SuperStructOf(cls))
         if (::_wcsicmp(ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls)).c_str(), base) == 0) return true;
     return false;
+}
+
+bool HeldClassIsA(uint8_t slot, const wchar_t* base) {
+    if (slot >= coop::players::kMaxPeers || !base) return false;
+    const SlotHand& h = g_hands[slot];
+    return h.has && ClassNameIsA(h.cls, base);
 }
 
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls) {
     if (slot >= coop::players::kMaxPeers || !cls) return false;
     const SlotHand& h = g_hands[slot];
     return !h.lastCls.empty() && ::_wcsicmp(h.lastCls.c_str(), cls) == 0;
+}
+
+bool LastHeldClassIsA(uint8_t slot, const wchar_t* base) {
+    if (slot >= coop::players::kMaxPeers || !base) return false;
+    return ClassNameIsA(g_hands[slot].lastCls, base);
 }
 
 void PayOwed(coop::net::Session& session) {

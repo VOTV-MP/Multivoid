@@ -44,15 +44,19 @@ void Note(uint8_t slot, bool has, const std::wstring& cls, uint64_t nowMs) {
     r.entry[r.newest] = Held{cls, nowMs, 0};
 }
 
-bool HeldWithin(uint8_t slot, const wchar_t* cls, uint64_t windowMs, uint64_t nowMs) {
-    if (slot >= coop::players::kMaxPeers || !cls) return false;
+bool HeldWithinMatching(uint8_t slot, ClassMatch match, const wchar_t* want, uint64_t windowMs, uint64_t nowMs) {
+    if (slot >= coop::players::kMaxPeers || !match || !want) return false;
     const Ring& r = g_rings[slot];
     for (int i = 0; i < r.count; ++i) {
         const Held& h = r.entry[i];
-        if (!SameClass(h.cls, cls)) continue;
+        if (!match(h.cls, want)) continue;
         if (h.toMs == 0 || h.toMs + windowMs >= nowMs) return true;
     }
     return false;
+}
+
+bool HeldWithin(uint8_t slot, const wchar_t* cls, uint64_t windowMs, uint64_t nowMs) {
+    return HeldWithinMatching(slot, &SameClass, cls, windowMs, nowMs);
 }
 
 std::string Describe(uint8_t slot) {

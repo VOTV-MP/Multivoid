@@ -109,11 +109,19 @@ bool HeldClassIs(uint8_t slot, const wchar_t* cls);
 // loaded here is only its own name. Game thread only.
 bool HeldClassIsA(uint8_t slot, const wchar_t* base);
 
+// Whether the class named `name` is `base` or descends from it, by the same walk as HeldClassIsA: a class not loaded
+// here is only its own name. Case-insensitive. Game thread only.
+bool ClassNameIsA(const std::wstring& name, const wchar_t* base);
+
 // Whether this peer's own announce of a hand item of the class named `cls` has been queued, and the
 // hand has not emptied or changed class since: true from the TickOwner statement that announces it. A
 // client's launcher shot waits for it, so the host has the hand first on the one ordered lane. Game
 // thread only.
 bool OwnAnnounced(const wchar_t* cls);
+
+// OwnAnnounced for the class named `base` or any class descending from it (ClassNameIsA): the rapid RPG fires through
+// the plain RPG's body. Game thread only.
+bool OwnAnnouncedA(const wchar_t* base);
 
 // How many owner ticks have read this peer's hand: after each, OwnAnnounced says what the hand held at it. A held
 // launcher shot that sees this move without its launcher announced will never see it. Game thread only.
@@ -124,6 +132,9 @@ uint32_t OwnHandLookSeq();
 // starts: a crowbar's pry, whose prying crowbar destroys the held one when it goes into the door, so
 // the pry ends with an empty hand. Game thread only.
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
+
+// LastHeldClassIs for the class named `base` or any class descending from it (ClassNameIsA). Game thread only.
+bool LastHeldClassIsA(uint8_t slot, const wchar_t* base);
 
 // Host: how many hold announces (a state with an item in the hand) have been applied for `slot`'s occupant, and the holds
 // an owed empty merged away (the same item taken up again); it moves on every identity change the owner announces, never

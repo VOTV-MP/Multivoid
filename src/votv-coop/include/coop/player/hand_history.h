@@ -28,6 +28,11 @@ void Note(uint8_t slot, bool has, const std::wstring& cls, uint64_t nowMs);
 // hand lane applied the take.
 bool HeldWithin(uint8_t slot, const wchar_t* cls, uint64_t windowMs, uint64_t nowMs);
 
+// HeldWithin with the caller deciding which held class names count: `match(held, want)`. A caller that takes a
+// class's subclasses passes a walk of the game's class chain, which this engine-free ring does not do itself.
+using ClassMatch = bool (*)(const std::wstring& held, const wchar_t* want);
+bool HeldWithinMatching(uint8_t slot, ClassMatch match, const wchar_t* want, uint64_t windowMs, uint64_t nowMs);
+
 // Forgets `slot`'s entries (its leave, a session reset).
 void Clear(uint8_t slot);
 

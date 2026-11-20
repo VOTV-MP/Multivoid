@@ -251,7 +251,7 @@ void SendShot(coop::net::Session& s, const Pending& e) {
     p.origin[1] = loc.Y;
     p.origin[2] = loc.Z;
     const bool held = e.launcher != static_cast<int>(RC::Launcher::WitchCar) &&
-                      !coop::hand_item::OwnAnnounced(RC::LauncherClassName(p.launcher));
+                      !coop::hand_item::OwnAnnouncedA(RC::LauncherClassName(p.launcher));
     if (!held && !TransmitShot(s, p)) return;
     ++g_nextShotId;
     AddShot(SentShot{e.actor, e.index, R::AllocateSlotSerial(e.index), p.shotId, e.projClass});
@@ -403,7 +403,7 @@ void TickClient() {
         // The launcher's announce sends it. A look at the hand since the shot that left it unannounced (another item,
         // the empty hand, the launcher gone) means it never will be: dropped. No look yet -- the hand lane may not
         // have started, a client's streams wait for its load tail -- the shot waits. A look announces what it sees.
-        if (!coop::hand_item::OwnAnnounced(cls)) {
+        if (!coop::hand_item::OwnAnnouncedA(cls)) {
             if (coop::hand_item::OwnHandLookSeq() == head.lookSeq) return;
             DropNotAnnounced(head.fired.shotId);
             continue;

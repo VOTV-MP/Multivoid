@@ -26,4 +26,8 @@ namespace coop::hand_spend {
 // whatever the verdict after it.
 bool Spend(uint8_t slot, const wchar_t* cls, uint32_t uses);
 
+// Spend for the class named `base` or any class descending from it (hand_item::ClassNameIsA): the duct tape is a
+// toolbox. Game thread, host.
+bool SpendA(uint8_t slot, const wchar_t* base, uint32_t uses);
+
 }  // namespace coop::hand_spend

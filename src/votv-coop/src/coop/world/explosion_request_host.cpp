@@ -188,7 +188,8 @@ Served JudgeShot(uint8_t slot, Slot& s, const FiredItem& it) {
             return Served::Done;
         }
     } else {
-        if (!coop::hand_history::HeldWithin(slot, RC::LauncherClassName(p.launcher), kLauncherWindowMs, it.recvMs)) {
+        if (!coop::hand_history::HeldWithinMatching(slot, &coop::hand_item::ClassNameIsA, RC::LauncherClassName(p.launcher),
+                                                   kLauncherWindowMs, it.recvMs)) {
             if (coop::hand_item::HandStateOwed(slot)) return Wait();
             static bool s_said = false;   // the first refusal names what the host knew of the hand
             if (!s_said) {

@@ -31,14 +31,23 @@ Spent& Current(uint8_t slot) {
     return sp;
 }
 
-}  // namespace
-
-bool Spend(uint8_t slot, const wchar_t* cls, uint32_t uses) {
-    if (!Unchecked() && !coop::hand_item::LastHeldClassIs(slot, cls)) return false;
+bool Count(uint8_t slot, uint32_t uses) {
     Spent& sp = Current(slot);
     if (!NoLatch() && sp.uses >= uses) return false;
     ++sp.uses;
     return true;
+}
+
+}  // namespace
+
+bool Spend(uint8_t slot, const wchar_t* cls, uint32_t uses) {
+    if (!Unchecked() && !coop::hand_item::LastHeldClassIs(slot, cls)) return false;
+    return Count(slot, uses);
+}
+
+bool SpendA(uint8_t slot, const wchar_t* base, uint32_t uses) {
+    if (!Unchecked() && !coop::hand_item::LastHeldClassIsA(slot, base)) return false;
+    return Count(slot, uses);
 }
 
 }  // namespace coop::hand_spend

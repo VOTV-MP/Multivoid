@@ -652,6 +652,8 @@ bool OwnAnnounced(const wchar_t* cls) {
     return cls && g_ownHas && ::_wcsicmp(g_ownCls.c_str(), cls) == 0;
 }
 
+bool OwnAnnouncedA(const wchar_t* base) { return base && g_ownHas && ClassNameIsA(g_ownCls, base); }
+
 uint32_t OwnHandLookSeq() { return g_ownLookSeq; }
 
 void OnSlotDisconnected(uint8_t slot) {

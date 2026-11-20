@@ -194,8 +194,9 @@ uint8_t Refuel(N::Session& s, uint8_t slot, const Payload& p, const std::wstring
 
 // Repairing: toolboxFix's own body is health := 100 and the broken mark cleared, then the game's updHealth.
 uint8_t Repair(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    // The toolbox spends itself in the verb, so the hand may be empty again by now: the last class held counts, once.
-    if (!JudgeOff() && !coop::hand_spend::Spend(slot, kToolboxClass, kToolboxUses)) return why::kNoItem;
+    // The toolbox spends itself in the verb, so the hand may be empty again by now: the last class held counts, once. The
+    // duct tape (prop_ducttape_C) is a toolbox with no body of its own.
+    if (!JudgeOff() && !coop::hand_spend::SpendA(slot, kToolboxClass, kToolboxUses)) return why::kNoItem;
     if (!(std::floor(v.health) < kMax)) return why::kFull;
     {
         H::ApplyScope applying;
