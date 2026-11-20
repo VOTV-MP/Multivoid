@@ -1,5 +1,5 @@
 // coop/dev/nail_act.h -- [dev] the nailgun projectile's act, for a probe or a drill: two props stand in a line, a nail spawns
-// before the first one's face with a length that reaches past the second, and its own nailNail ties them. The held nail's two
+// before the first one's outer face, aimed at the second, with a length that reaches past it, and its own nailNail ties them. The held nail's two
 // pieces (a deferred spawn with a length, a verb call) are here too. What a caller wants said as the act goes, and what it
 // wants a spawned nail labelled, it gives through a Voice. Game thread.
 
@@ -39,9 +39,9 @@ bool CallVerb(void* nail, const wchar_t* name, bool& fail);
 // The nail's own n(): where its segment runs, said as an Info line.
 void SaySegment(Voice& v, void* nail);
 
-// A nail the two-prop way, as the projectile puts one in: a spawn with a length that reaches the second prop, read from the
-// bounds of `a` and `b` as they stand now (two props side by side along the world X axis, `a` first), then nailNail. Says its
-// own Unmeasured line under `act` when it cannot.
+// A nail the two-prop way, as the projectile puts one in: aimed along the flat line from `a`'s centre to `b`'s, its tip a
+// centimetre before `a`'s outer face on that line (the face away from `b`), a length that reaches past `b`, read from the
+// bounds of both as they stand now, then nailNail. Says its own Unmeasured line under `act` when it cannot.
 bool NailThePair(Voice& v, const char* act, const char* label, void* nailCls, void* a, void* b, void*& nail);
 
 }  // namespace coop::dev::nail_act

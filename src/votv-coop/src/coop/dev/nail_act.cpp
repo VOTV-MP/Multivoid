@@ -7,6 +7,8 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +22,7 @@ namespace SR = ue_wrap::save_record;
 
 constexpr float kTipGapCm = 1.f;    // a nail's tip starts this far before the first prop's face, as the held verb's does
 constexpr float kTailCm = 10.f;     // the projectile verb's length reaches this far past the second prop
+constexpr float kRadToDeg = 57.29577951f;
 
 void* FnOf(void* obj, const wchar_t* name) {
     return obj && SR::PlausibleObjPtr(obj) && R::IsLive(obj) ? R::FindDispatchFunctionCached(R::ClassOf(obj), name) : nullptr;
@@ -92,8 +95,21 @@ bool NailThePair(Voice& v, const char* act, const char* label, void* nailCls, vo
         unmeasured("the two props are not there to nail (a=%d b=%d)", a ? 1 : 0, b ? 1 : 0);
         return false;
     }
-    const float length = kTipGapCm + (cb.X - ca.X) + 2.f * ea.X + kTailCm;
-    nail = SpawnNail(v, nailCls, label, {ca.X - ea.X - kTipGapCm, ca.Y, ca.Z}, length);
+    // The line runs from a's centre to b's, flat. The tip starts kTipGapCm before a's outer face on it (the face away from b,
+    // where the ray from the centre backwards leaves a's bounds), and the length reaches past b as the projectile's does.
+    const float dx = cb.X - ca.X, dy = cb.Y - ca.Y;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (!(dist > 1.f)) {
+        unmeasured("the two props stand on one spot (%.2f cm apart flat)", static_cast<double>(dist));
+        return false;
+    }
+    const float ux = dx / dist, uy = dy / dist;
+    const float faceX = std::fabs(ux) > 1e-4f ? ea.X / std::fabs(ux) : 1e9f;
+    const float faceY = std::fabs(uy) > 1e-4f ? ea.Y / std::fabs(uy) : 1e9f;
+    const float face = (std::min)(faceX, faceY);
+    const float length = kTipGapCm + dist + 2.f * face + kTailCm;
+    const ue_wrap::FRotator rot{0.f, std::atan2(uy, ux) * kRadToDeg, 0.f};
+    nail = SpawnNail(v, nailCls, label, {ca.X - ux * (face + kTipGapCm), ca.Y - uy * (face + kTipGapCm), ca.Z}, length, rot);
     if (!nail) {
         unmeasured("the nail did not spawn");
         return false;
