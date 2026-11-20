@@ -31,6 +31,7 @@
 #include "ue_wrap/engine/world_identity.h"     // gen-stamped index (dead-world guard)
 #include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -65,6 +66,11 @@ constexpr float kProcessEps = 0.0005f;
 // lowers its twins at the next full pass. The key carries a tag of the decal's class, so twins of two
 // classes are two keys; the census line of a world's first full pass counts what still shares one.
 constexpr double kPosGrid = 2.0;
+// The wire key holds this many characters and WireKeyFromString cuts a longer one; a longer key is refused, not cut.
+constexpr size_t kWireKeyChars = sizeof(coop::net::WireKey::data);
+size_t g_longestKey = 0;       // the longest key KeysOf ever made (GT-only)
+uint32_t g_keysRefused = 0;    // keys refused for their length (GT-only)
+uint32_t g_indexNowTwins = 0;  // spawn-time decals not indexed because a live twin holds their key (GT-only)
 bool ProbeLog() {
     static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_log);
     return s_enabled;
@@ -181,6 +187,17 @@ bool KeysOf(void* grime, std::wstring& key, ExactKey& exact) {
     key += std::to_wstring(type); key += L'_';
     static const wchar_t kHex[] = L"0123456789abcdef";
     for (int shift = 12; shift >= 0; shift -= 4) key += kHex[(cls >> shift) & 0xF];
+    g_longestKey = std::max(g_longestKey, key.size());
+    if (key.size() > kWireKeyChars) {   // the wire would cut it, and no peer's floor would match: the decal stays local
+        static bool s_warned = false;
+        ++g_keysRefused;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("grime: a decal's key is %zu characters, past the wire's %zu: it is not synced (the longest so far %zu)",
+                    key.size(), kWireKeyChars, g_longestKey);
+        }
+        return false;
+    }
     std::memcpy(&exact.x, &loc.X, sizeof(exact.x));
     std::memcpy(&exact.y, &loc.Y, sizeof(exact.y));
     std::memcpy(&exact.z, &loc.Z, sizeof(exact.z));
@@ -289,9 +306,13 @@ void KeyCensus(uint32_t worldGen) {
     size_t cellsShared = 0, cellExtra = 0, keysShared = 0, keyExtra = 0;
     for (const auto& kv : byCell) if (kv.second > 1) { ++cellsShared; cellExtra += static_cast<size_t>(kv.second - 1); }
     for (const auto& kv : byKey) if (kv.second > 1) { ++keysShared; keyExtra += static_cast<size_t>(kv.second - 1); }
+    size_t longest = 0;
+    for (const auto& f : g_scanFound) longest = std::max(longest, f.key.size());
     UE_LOGI("grime: key census -- %zu decal(s): %zu position-and-type cell(s) hold more than one (%zu extra decal(s)); "
-            "%zu key(s) with the class tag still do (%zu extra)", g_scanFound.size(), cellsShared, cellExtra, keysShared,
-            keyExtra);
+            "%zu key(s) with the class tag still do (%zu extra); the longest key is %zu of the wire's %zu characters "
+            "(the longest ever made: %zu; %u refused as too long, %u spawn-time twin(s) kept out)", g_scanFound.size(),
+            cellsShared, cellExtra, keysShared, keyExtra, longest, kWireKeyChars, g_longestKey, g_keysRefused,
+            g_indexNowTwins);
     if (keyExtra > 0 && !s_warned) {
         s_warned = true;
         UE_LOGW("grime: %zu decal(s) share a key with a twin of their own class and position: the index holds one of "
@@ -337,8 +358,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         g_passGen.store(worldGen, std::memory_order_relaxed);
         g_passes.store(0, std::memory_order_relaxed);
     }
-    if (g_passes.fetch_add(1, std::memory_order_relaxed) + 1 >= kReplayWindowPasses)
-        g_replayWindow.store(false, std::memory_order_relaxed);
+    g_passes.fetch_add(1, std::memory_order_relaxed);
     if (isFull) KeyCensus(worldGen);
     const size_t added = g_scanFound.size();
     if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
@@ -395,6 +415,9 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     if (ProbeLog())
         for (auto& f : g_scanFound)
             UE_LOGI("grime[probe]: key='%ls' idx=%d actor=%p", f.key.c_str(), f.ref.idx, f.ref.actor);
+    // The replay's window closes with its kReplayWindowPasses-th pass, after that pass's own lowerings were counted.
+    if (g_passes.load(std::memory_order_relaxed) >= kReplayWindowPasses)
+        g_replayWindow.store(false, std::memory_order_relaxed);
     g_scanFound.clear();
     g_scanNextCache.clear();
     return total;
@@ -674,6 +697,11 @@ void IndexNow(void* decal) {
     ck.provisional = true;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
+        const auto twin = g_byKey.find(ck.key);
+        if (twin != g_byKey.end() && twin->second.actor != decal && Holds(twin->second)) {
+            ++g_indexNowTwins;   // a live twin holds the key: the first stays, as a pass keeps the last it finds
+            return;
+        }
         g_byKey[ck.key] = Ref{decal, ck.idx, ck.serial};
     }
     if (g_scanIsFull) g_scanNextCache.insert_or_assign(decal, ck);   // a full pass in flight keeps it through its swap
