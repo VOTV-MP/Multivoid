@@ -14,7 +14,6 @@
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
-#include "coop/element/death_seam.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/session/rig_verdict.h"
 #include "coop/session/session_manager.h"
@@ -24,7 +23,6 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
@@ -331,50 +329,26 @@ bool TransitionToMenuGT() {
 void* WorldPtrGT() { return ue_wrap::world_identity::CurrentWorld(); }
 
 // The host arm (VOTVCOOP_RELOAD_HOST=1 with VOTVCOOP_SAVE: the save hosted again each cycle, as the Host button does it)
-// measures the grime lane. After each rehost's world has been indexed past its save replay, the decals the lane lowered
+// measures the grime lane. After each rehost's world has been indexed, the decals the lane lowered
 // are counted: `rig: VERDICT reload-churn PASS` when no rehost lowered one, FAIL with the count when one did, INVALID when
 // a step never came. It waits on the lane's own tally, not on a dwell.
 constexpr const char* kVerdictTag = "reload-churn";
-// Index passes after a replay: the first can run before the replay's deletes are drained, and the one after it lowers what
+// Index passes in a world: the first can run before the end events of its replay are drained, and the one after lowers what
 // they floored, so a third is the margin.
 constexpr uint32_t kSettlePasses = 3;
 constexpr int kSettleBoundS = 180;
 
-// Waits for the grime lane to have indexed the world it is in: kSettlePasses completed passes in this world, and (when
-// `needReplay`) a save replay seen since `replaysBefore`. False past the bound, which the caller says as INVALID, never as
-// a verdict.
-bool WaitGrimeSettled(uint32_t replaysBefore, bool needReplay) {
+// Waits for the grime lane to have indexed the world it is in: kSettlePasses completed passes in this world. The lane runs
+// only in a session, so a new world is indexed after the session of its host starts. False past the bound, which the
+// caller says as INVALID, never as a verdict.
+bool WaitGrimeSettled() {
     for (int i = 0; i < kSettleBoundS * 10; ++i) {
         const coop::grime_sync::Tally t = coop::grime_sync::Tallies();
-        if ((!needReplay || t.replays > replaysBefore) && t.passGen == ue_wrap::world_identity::Generation() &&
-            t.passes >= kSettlePasses)
-            return true;
+        if (t.passGen == ue_wrap::world_identity::Generation() && t.passes >= kSettlePasses) return true;
         ::Sleep(100);
     }
     return false;
 }
-
-// The host arm's hold on the script gate and the death seam for its whole run. Both are the coop session's while it runs
-// and let go at its end, and between two sessions (the menu, the rehost's world load) nothing watches the save replay or
-// records the decals it deletes: a probe that must see outside a session holds them itself, as the gate's own comment
-// allows a dev probe to.
-class SeamHold {
-public:
-    SeamHold() {
-        ue_wrap::script_gate::Acquire(kWho);
-        auto done = std::make_shared<std::atomic<int>>(0);
-        GT::Post([done] { coop::element::death_seam::Acquire(kWho); done->store(1); });
-        WaitDone(done, 20000);
-    }
-    ~SeamHold() {
-        ue_wrap::script_gate::Release(kWho);
-        GT::Post([] { coop::element::death_seam::Release(kWho); });
-    }
-    SeamHold(const SeamHold&) = delete;
-    SeamHold& operator=(const SeamHold&) = delete;
-private:
-    static constexpr const char* kWho = "the reload churn's host arm";
-};
 
 void RunProbe() {
     const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", 3);
@@ -415,8 +389,6 @@ void RunProbe() {
         ue_wrap::log::Flush();
         return;
     }
-    std::unique_ptr<SeamHold> seams;
-    if (judged) seams = std::make_unique<SeamHold>();
 
     const std::string arm = rejoin ? ("REJOIN -> " + ue_wrap::log::Addr(addr))
                                    : (slot.empty() ? std::string("SOLO <fresh new game>")
@@ -465,7 +437,7 @@ void RunProbe() {
     // The first world's own decals are the baseline: what a rehost lowers is counted from here.
     uint32_t loweredBase = 0;
     if (judged) {
-        if (!WaitGrimeSettled(0, false)) {
+        if (!WaitGrimeSettled()) {
             invalid("the grime lane never indexed the first world");
             UE_LOGI("reloadchurn: DONE");
             ue_wrap::log::Flush();
@@ -527,7 +499,6 @@ void RunProbe() {
         }
 
         const void* menuWorld = WorldPtrGT();
-        const uint32_t replaysBefore = coop::grime_sync::Tallies().replays;
         UE_LOGI("reloadchurn: cycle %d RE-LOADING the world (%s) -- menu world @%p",
                 c, rejoin ? "by REJOINING the host" : "from the save", menuWorld);
         ue_wrap::log::Flush();   // survive a hard fault: the next line may never be written
@@ -606,17 +577,20 @@ void RunProbe() {
         PostCensus("reloaded", c, offs);
         ue_wrap::log::Flush();
         if (!judged) continue;
-        // The rehost's grime: once the lane has indexed the new world past its replay, a decal it lowered is one the
-        // replay's deletes had floored. Said at the first rehost that shows one.
-        if (!WaitGrimeSettled(replaysBefore, true)) {
+        // The rehost's grime: once the lane has indexed the new world, a decal it lowered is one a delete of the replay had
+        // floored. Said at the first rehost that shows one. The lane's watch of the replay fires only while the session
+        // holds the script gate, so the line says how many replays it saw: none is the real rehost's order.
+        if (!WaitGrimeSettled()) {
             char why[112];
-            snprintf(why, sizeof(why), "cycle %d: the grime lane saw no save replay and settle within %d s", c,
+            snprintf(why, sizeof(why), "cycle %d: the grime lane did not settle in the new world within %d s", c,
                      kSettleBoundS);
             invalid(why);
             break;
         }
-        const uint32_t lowered = coop::grime_sync::Tallies().lowered - loweredBase;
-        UE_LOGI("reloadchurn: cycle %d grime lowered %u decal(s) in the rehosted worlds so far", c, lowered);
+        const coop::grime_sync::Tally tally = coop::grime_sync::Tallies();
+        const uint32_t lowered = tally.lowered - loweredBase;
+        UE_LOGI("reloadchurn: cycle %d grime lowered %u decal(s) in the rehosted worlds so far (the lane saw %u save replay(s) "
+                "in all)", c, lowered, tally.replays);
         if (lowered > 0) {
             said = true;
             coop::rig_verdict::Say(kVerdictTag, coop::rig_verdict::Outcome::Fail,
