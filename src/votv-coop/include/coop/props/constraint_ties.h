@@ -10,8 +10,8 @@
 //
 // The index is world state, never session state: no session clears it. A tie whose constraint or owner no longer lives is
 // dropped when read. The prop drive's join (coop/props/prop_drive_join) asks it which props a driven prop drags.
-// MTA ties a trailer by a link between two synced elements (reference/mtasa-blue/Server/mods/deathmatch/logic/
-// CVehicle.cpp:713, SetTowedVehicle); here the engine's own constraint call is the event that makes the link.
+// MTA's client reads a trailer link off the game each sync pulse (reference/mtasa-blue/Client/mods/deathmatch/logic/
+// CUnoccupiedVehicleSync.cpp:289-291, 359-363); here the engine's own constraint call is the event that makes the link.
 // Game thread, all of it.
 
 #pragma once

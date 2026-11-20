@@ -8,15 +8,19 @@
 // in no hand. The walk passes through any actor whose root body simulates physics (props, cord and wire segments, a hook)
 // and stops at one whose root does not (a frozen prop, a wall, a device, the world); only a keyed prop with an element id
 // gets a row. A member already driven is kept and walked through; one past the join cap is owed, and opened when a slot
-// frees or when its body sleeps (its row then ends on the next rest probe, so its pose still travels the row End).
-//
-// MTA tows a trailer as a link between two synced elements, each with its own sync row, and the tractor's driver is the
-// trailer's syncer (reference/mtasa-blue/Server/mods/deathmatch/logic/CVehicle.cpp:597-615); here the link is a constraint
-// and the host is the syncer of both ends. Game thread.
+// frees or when its body sleeps (its row then ends on the next rest probe, so its pose travels the row End). Game thread.
 
 #pragma once
 
 namespace coop::prop_drive_join {
+
+// AUTHORITY: one author per element, as MTA syncs each unoccupied element by its own syncer (reference/mtasa-blue/Server/
+// mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:476-509). The host streams every joined member while a carrying client
+// streams the leader by its hand. That holds because the constraint lives on the host alone: P2.3b, which gives a client a
+// copy of the nail, must decide it again, since the client-hand Owe would then put two simulators on a member.
+// Divergences from MTA's trailer link: the link is learned from an event (the engine's constraint call), not re-read each
+// sync pulse (Client/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:289-291, 359-363); and no link travels on the wire
+// (Server/mods/deathmatch/logic/CMapManager.cpp:308-312 sends a joiner each link; a joiner here is sent the rows).
 
 // HOST: `leader` is driven or held; its tied props join its drive. Queued only, so no walk and no row opens inside the
 // caller. A no-op off the host, for a null actor and for one already queued. `why` names the cause for the log.
