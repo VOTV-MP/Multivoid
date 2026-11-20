@@ -74,6 +74,10 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 // What the lane has done, for Tallies. Written on the game thread, read on any.
 std::atomic<uint32_t> g_replays{0}, g_passes{0}, g_lowered{0}, g_endsSent{0}, g_passGen{0};
+// A save replay's window: open from its begin until kReplayWindowPasses index passes have completed after it. The decals the
+// lane lowers inside it are the ones the replay's deletes can have floored (Tallies counts only those).
+std::atomic<bool> g_replayWindow{false};
+constexpr uint32_t kReplayWindowPasses = 3;
 
 // An indexed decal: the actor, its slot and the serial the slot held when a pass took it (the key cache's
 // own), so a new object the allocator put at the address in the same slot is never read as the decal.
@@ -223,7 +227,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
     if (target <= coop::net::kGrimeGone + kProcessEps) {
         coop::grime_sync::ForgetDecal(actor);
         const bool ok = E::DestroyActor(actor);
-        g_lowered.fetch_add(1, std::memory_order_relaxed);
+        if (g_replayWindow.load(std::memory_order_relaxed)) g_lowered.fetch_add(1, std::memory_order_relaxed);
         UE_LOGI("grime: a decal another peer ended is destroyed here (%s) ok=%d key='%ls'", why, ok ? 1 : 0, key.c_str());
         return;
     }
@@ -231,7 +235,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
     if (!G::ReadProcess(actor, cur) || std::fabs(target - cur) < kProcessEps) return;
     if (lowerOnly && cur < target) return;
     const bool ok = G::WriteProcessAndApply(actor, target);
-    g_lowered.fetch_add(1, std::memory_order_relaxed);
+    if (g_replayWindow.load(std::memory_order_relaxed)) g_lowered.fetch_add(1, std::memory_order_relaxed);
     if (ProbeLog() || !ok)
         UE_LOGI("grime: applied process=%.3f (was %.3f, %s) ok=%d key='%ls'", target, cur, why, ok ? 1 : 0,
                 key.c_str());
@@ -332,7 +336,8 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         g_passGen.store(worldGen, std::memory_order_relaxed);
         g_passes.store(0, std::memory_order_relaxed);
     }
-    g_passes.fetch_add(1, std::memory_order_relaxed);
+    if (g_passes.fetch_add(1, std::memory_order_relaxed) + 1 >= kReplayWindowPasses)
+        g_replayWindow.store(false, std::memory_order_relaxed);
     if (isFull) KeyCensus(worldGen);
     const size_t added = g_scanFound.size();
     if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
@@ -428,6 +433,7 @@ bool ReplayWatchOff() {
 
 sg::Verdict OnLoadObjectsPre(const sg::Call&) {
     g_replays.fetch_add(1, std::memory_order_relaxed);
+    g_replayWindow.store(true, std::memory_order_relaxed);
     g_passes.store(0, std::memory_order_relaxed);
     if (ReplayWatchOff()) return sg::Verdict::Run;
     ++g_replayEpoch;
