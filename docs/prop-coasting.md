@@ -63,5 +63,6 @@ somebody grabs leaves the set and rides the held-prop stream, and a receiver yie
 which no stream from the host knows of yet, handing back the physics its park took. A client whose first pose of a let-go row
 finds a remote hand still holding the copy (the pose stream beat that hand's reliable release) keeps the yield pending on that
 release and lifts it there, so the row parks the copy and its End applies where the host's did; an End that comes before the
-release is the host's "taken by a hand" End and is dropped (`coop/props/prop_drive_stream`) `[?]` until the coast drill's
-let-go arm reads it with a delayed release.
+release is the host's "taken by a hand" End and is dropped (`coop/props/prop_drive_stream`) `[V]` (the coast drill's let-go
+arm with `letgo_release_delay_ms` 250: the yield was kept and lifted at the release and the copies rest within 1 cm; with
+`letgo_unyield_off` too, the same arm fails with the copies 2.4 cm apart).

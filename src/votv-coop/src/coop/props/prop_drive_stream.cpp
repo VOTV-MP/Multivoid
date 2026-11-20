@@ -64,7 +64,8 @@ std::unordered_map<uint32_t, uint8_t> g_endedGen;  // eid -> the generation its 
 struct EndOnActor { uint8_t gen = 0; ue_wrap::CachedObjRef actor; };
 std::unordered_map<uint32_t, EndOnActor> g_endOnActor;
 // eid -> a generation a hand took over before its end edge landed. Its end pose is older than
-// whatever the hand did since, so a late end of it closes the generation and writes nothing.
+// whatever the hand did since, so a late end of it closes the generation and writes nothing -- except the client's
+// first-pose yield to a remote hand, which waits for that hand's release (PendYield).
 std::unordered_map<uint32_t, uint8_t> g_yieldedGen;
 
 // A pose whose prop has not arrived here is retried on a throttle, never per tick: the host
@@ -104,7 +105,8 @@ void GiveBackPhysics(Drive& dr, void* actor) {
 // The one way a stream gives a prop up to a hand, from the tick, the first pose and the end edge
 // alike: this player's own hand gets back the physics the park took, which no peer's release will
 // restore, and the generation is closed as superseded, so neither a pose nor the end of it can
-// write its stale pose once the hand lets go.
+// write its stale pose once the hand lets go -- except the client's first-pose yield to a remote
+// hand, which waits for that hand's release (PendYield).
 bool IsOwnHand(void* actor) {
     return actor == coop::local_streams::LastHeldActor() || coop::hand_item::IsHandAxisActor(actor);
 }

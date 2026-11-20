@@ -6,22 +6,19 @@
 // to rest; the client says its rest pose and whether the host's drive End reached its copy, and the host compares them
 // (coop/dev/rest_compare). letgo: the host acts. unelected: the client acts, and the host, which elects no syncer for a release
 // with no throw, flies it. join: the host holds the crate until a joiner is loading, lets go, and the crate rests before the
-// joiner's world is up; the joiner's snapshot carries the rest. The client's life 1 prints `[COAST-DRILL] [C] REJOIN-NOW`
-// (run with the rig's rejoin and VOTVCOOP_COAST_LIFE=2 for the second life).
+// joiner's world is up; the joiner's snapshot carries the rest. Life 1 prints `[COAST-DRILL] [C] REJOIN-NOW` (VOTVCOOP_COAST_LIFE=2: life 2).
 //   rig: VERDICT coast-letgo | coast-unelected | coast-join  PASS | FAIL | INVALID
 // FAIL: a gap past 1 cm and 1 degree; within it, no let-go coast having flown the crate, or no End at the client's copy.
-// Red: coast_letgo_off with body_push_off (letgo, unelected) FAILs at the gap. The join arm has no red: its snapshot reads the
-// host's pose when it is expressed, whatever flew the crate, so no lever of the let-go's can fail it.
+// Red: coast_letgo_off with body_push_off (letgo, unelected) FAILs at the gap; the join arm has no red (its snapshot reads the
+// host's pose, whatever flew the crate). letgo with letgo_release_delay_ms (coop/dev/letgo_release_delay.h): the client holds
+// the host's release so the let-go row's first pose meets the hand; INVALID when no yield was kept pending on that release,
+// PASS at the host's End pose, and with letgo_unyield_off too FAIL at the same gap.
 
 #pragma once
 
 namespace coop::net { class Session; }
 
 namespace coop::dev::coast_drill {
-
-// The letgo arm with letgo_release_delay_ms set (coop/dev/letgo_release_delay.h): the client holds the host's release so the
-// let-go row's first pose meets the hand. The arm says INVALID when the client kept no yield pending on that release, PASS when
-// the copy ends at the host's End pose, and with letgo_unyield_off too FAILs at the same gap.
 
 // True unless the row is `off`.
 bool IsEnabled();

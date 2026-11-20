@@ -41,8 +41,9 @@ void FeedAdmitted(const coop::net::PropDriveRow& e);
 
 // HOST, game thread: the end of a client-authored drive on the host's copy of `end.eid`: unparks it,
 // places it at the End's pose, restores its physics from the End's flags and gives it the velocity.
-// A copy a hand holds is yielded to the hand; a prop never parked takes the End as a receiver that never
-// saw the generation.
+// A copy a hand holds is yielded to the hand (on a client, a first pose that finds a remote hand waits for
+// that hand's release instead: OnRemoteHandEnded); a prop never parked takes the End as a receiver that
+// never saw the generation.
 void ReleaseHost(const coop::net::PropDriveEndPayload& end);
 
 // CLIENT, game thread: the host closed a prop's stream. Validated at the router.
