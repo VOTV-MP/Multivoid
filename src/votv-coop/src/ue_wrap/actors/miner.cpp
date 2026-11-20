@@ -2,10 +2,10 @@
 
 #include "ue_wrap/actors/miner.h"
 
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -210,12 +210,8 @@ bool ReadRecord(const save_record::SaveRecord& rec, Fields& out) {
 
 void* SpawnItem(uint8_t item, const FVector& at) {
     if (item >= kItemCount) return nullptr;
-    // The game loads a Blueprint class when something first needs it, and a host that never held this item has not: the
-    // resolver loads it. The name comes from this file's own table, so that table is the bound; the caller spawns at once.
-    const class_resolve::Resolved r =
-        class_resolve::ResolveClass(kItems[item].cls, class_resolve::AnyFamily(), class_resolve::Load::Immediate);
-    if (r.state != class_resolve::ClassState::Found || !r.cls) return nullptr;
-    return engine::SpawnActor(r.cls, at, false, item == kItemSlot ? &NameScrap : nullptr, nullptr);
+    // The class name is this file's own table, so the table is the bound item_spawn's open family relies on.
+    return item_spawn::Spawn(kItems[item].cls, at, item == kItemSlot ? &NameScrap : nullptr);
 }
 
 }  // namespace ue_wrap::miner
