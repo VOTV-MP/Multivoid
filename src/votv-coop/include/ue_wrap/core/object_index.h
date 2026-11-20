@@ -52,6 +52,11 @@ size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx);
 // Every class with at least one such instance, with one of them. Same contract.
 size_t ForEachClass(ClassFn fn, void* ctx);
 
+// Every live instance of `base` or of any class descending from it (16 hops at most): ForEachInstance over each listed
+// class whose parent chain reaches `base`, so a Blueprint subclass with no body of its own is met with its parent's.
+// Same contract; a walk of the listed classes per call.
+size_t ForEachInstanceOfKind(void* base, InstanceFn fn, void* ctx);
+
 // A number that moves whenever a class gains its first listed instance or loses its last. ClassByName
 // answers null while a class loads, and the class finishing moves no number, so a list derived from
 // the class set and keyed on a looked-up class is rebuilt when the number moves or when the lookup's
