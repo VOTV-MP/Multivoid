@@ -13,8 +13,8 @@ CFG_FLAG(grime_replay_watch_off, "grime_replay_watch_off", "dev", false, "VOTVCO
     "Developer red arm of the rehost churn (VOTVCOOP_RUN_RELOAD_CHURN=1 VOTVCOOP_RELOAD_HOST=1 VOTVCOOP_RELOAD_CYCLES=2): "
     "never set; the host. The grime lane does not forget its index as the save replay begins, so the replay's deletes of "
     "the level's own decals read as wipes to zero and the save's decals at those places are lowered. That needs the session "
-    "live across the replay: a rehost through the menu replays with the session down, where the arm counts none and the "
-    "red does not change its verdict; the replay count in its 'grime lowered' line says which it was.")
+    "live as the replay runs, which a rehost through the menu does by timing alone: the arm counts only the cycles "
+    "whose replay the lane saw, so the red says FAIL on a run that had one, and INVALID when none did.")
 CFG_ENUM(clean_drill, "clean_drill", "dev", "off", "off|clean|leaves", "VOTVCOOP_CLEAN_DRILL",
     "Drill, the grime lane on THREE peers (the host and two clients, mp.py --clients 2); set on ALL, with VOTVCOOP_CAN_DIR "
     "on all, on the rig's save (it holds the bucket the targets are picked around). clean -- the first client (VOTVCOOP_CLEAN_ACTOR=host: the host) cleans away, in the "

@@ -329,9 +329,10 @@ bool TransitionToMenuGT() {
 void* WorldPtrGT() { return ue_wrap::world_identity::CurrentWorld(); }
 
 // The host arm (VOTVCOOP_RELOAD_HOST=1 with VOTVCOOP_SAVE: the save hosted again each cycle, as the Host button does it)
-// measures the grime lane. After each rehost's world has been indexed, the decals the lane lowered
-// are counted: `rig: VERDICT reload-churn PASS` when no rehost lowered one, FAIL with the count when one did, INVALID when
-// a step never came. It waits on the lane's own tally, not on a dwell.
+// measures the grime lane. After each rehost's world has been indexed, the decals the lane lowered are counted for the
+// cycles whose save replay ran with the session live (the lane saw it): `rig: VERDICT reload-churn PASS` when none of
+// those lowered one, FAIL with the count when one did, INVALID when a step never came or no cycle was counted. It waits
+// on the lane's own tally, not on a dwell.
 constexpr const char* kVerdictTag = "reload-churn";
 // Index passes in a world: the first can run before the end events of its replay are drained, and the one after lowers what
 // they floored, so a third is the margin.
@@ -351,7 +352,7 @@ bool WaitGrimeSettled() {
 }
 
 void RunProbe() {
-    const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", 3);
+    const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", 4);
     const int dwellS = EnvInt("VOTVCOOP_RELOAD_DWELL_S", 15);
     const int menuS  = EnvInt("VOTVCOOP_RELOAD_MENU_S", 12);
     // Which save to re-load: the host's slot from VOTVCOOP_SAVE; a fresh peer has none and starts
@@ -434,8 +435,6 @@ void RunProbe() {
         ue_wrap::log::Flush();
         return;
     }
-    // The first world's own decals are the baseline: what a rehost lowers is counted from here.
-    uint32_t loweredBase = 0;
     if (judged) {
         if (!WaitGrimeSettled()) {
             invalid("the grime lane never indexed the first world");
@@ -443,9 +442,9 @@ void RunProbe() {
             ue_wrap::log::Flush();
             return;
         }
-        loweredBase = coop::grime_sync::Tallies().lowered;
     }
 
+    int counted = 0;   // the cycles whose replay ran with the session live: the only ones the verdict rests on
     for (int c = 1; c <= cycles; ++c) {
         UE_LOGI("reloadchurn: ---- cycle %d/%d: in gameplay (world @%p) ----",
                 c, cycles, ue_wrap::world_identity::CurrentWorld());
@@ -499,6 +498,7 @@ void RunProbe() {
         }
 
         const void* menuWorld = WorldPtrGT();
+        const coop::grime_sync::Tally before = coop::grime_sync::Tallies();
         UE_LOGI("reloadchurn: cycle %d RE-LOADING the world (%s) -- menu world @%p",
                 c, rejoin ? "by REJOINING the host" : "from the save", menuWorld);
         ue_wrap::log::Flush();   // survive a hard fault: the next line may never be written
@@ -578,8 +578,9 @@ void RunProbe() {
         ue_wrap::log::Flush();
         if (!judged) continue;
         // The rehost's grime: once the lane has indexed the new world, a decal it lowered is one a delete of the replay had
-        // floored. Said at the first rehost that shows one. The lane's watch of the replay fires only while the session
-        // holds the script gate, so the line says how many replays it saw: none is the real rehost's order.
+        // floored. That needs the session live as the replay runs, which the lane's watch of it sees (it fires only
+        // while the session holds the script gate) and a rehost through the menu does by timing alone. A cycle whose
+        // replay the lane did not see is not counted; the first counted cycle that lowered a decal is the verdict.
         if (!WaitGrimeSettled()) {
             char why[112];
             snprintf(why, sizeof(why), "cycle %d: the grime lane did not settle in the new world within %d s", c,
@@ -587,21 +588,31 @@ void RunProbe() {
             invalid(why);
             break;
         }
-        const coop::grime_sync::Tally tally = coop::grime_sync::Tallies();
-        const uint32_t lowered = tally.lowered - loweredBase;
-        UE_LOGI("reloadchurn: cycle %d grime lowered %u decal(s) in the rehosted worlds so far (the lane saw %u save replay(s) "
-                "in all)", c, lowered, tally.replays);
+        const coop::grime_sync::Tally after = coop::grime_sync::Tallies();
+        const uint32_t lowered = after.lowered - before.lowered;
+        const bool live = after.replays > before.replays;
+        UE_LOGI("reloadchurn: cycle %d the lane saw %u save replay(s) with the session live and lowered %u decal(s)%s", c,
+                after.replays - before.replays, lowered, live ? "" : " -- not counted");
+        if (!live) continue;
+        ++counted;
         if (lowered > 0) {
             said = true;
             coop::rig_verdict::Say(kVerdictTag, coop::rig_verdict::Outcome::Fail,
-                                   "the rehost in cycle %d of %d lowered %u decal(s) of the save", c, cycles, lowered);
+                                   "the rehost in cycle %d of %d replayed with the session live and lowered %u decal(s) of "
+                                   "the save", c, cycles, lowered);
             break;
         }
     }
     if (judged && !said) {
         said = true;
-        coop::rig_verdict::Say(kVerdictTag, coop::rig_verdict::Outcome::Pass,
-                               "%d rehost(s) of the save lowered no decal", cycles);
+        if (counted == 0)
+            coop::rig_verdict::Say(kVerdictTag, coop::rig_verdict::Outcome::Invalid,
+                                   "no cycle replayed with the session live: the order this defect needs did not occur "
+                                   "(%d cycle(s))", cycles);
+        else
+            coop::rig_verdict::Say(kVerdictTag, coop::rig_verdict::Outcome::Pass,
+                                   "%d of %d rehost cycle(s) replayed with the session live and lowered no decal", counted,
+                                   cycles);
     }
 
     UE_LOGI("reloadchurn: DONE");
