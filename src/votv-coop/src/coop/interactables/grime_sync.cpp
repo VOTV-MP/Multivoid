@@ -659,13 +659,12 @@ void Tick() {
 
 void ForgetDecal(void* actor) {
     if (!actor) return;
-    {
+    // The index holds a decal under the key its cache entry names: no walk of the index.
+    const auto cached = g_posKeyByActor.find(actor);
+    if (cached != g_posKeyByActor.end()) {
         std::lock_guard<std::mutex> lk(g_indexMutex);
-        for (auto it = g_byKey.begin(); it != g_byKey.end(); ++it)
-            if (it->second.actor == actor) {
-                g_byKey.erase(it);
-                break;
-            }
+        const auto it = g_byKey.find(cached->second.key);
+        if (it != g_byKey.end() && it->second.actor == actor) g_byKey.erase(it);
     }
     g_posKeyByActor.erase(actor);
     g_scanNextCache.erase(actor);
