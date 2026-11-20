@@ -72,9 +72,10 @@ void StartJoinCheck() {
     HGo(HS::WaitJoinOk);
 }
 
-// The client has read the burst: the arm goes on by its own event.
+// The client has read the burst: the arm goes on by its own event. The counts the arm compares against stand from the
+// burst (StartBurst), not from this line: a client acts the moment it has said it, and its ask can be judged before the
+// chat line that confirms the burst is read here.
 void AfterState1() {
-    g_c0 = FS::Read();
     if (ArmOf() == Arm::Mend || ArmOf() == Arm::Far) {
         HGo(HS::WaitJudge);
         return;
@@ -168,7 +169,8 @@ void HostStep(coop::net::Session& s) {
     case HS::WaitJudge: {
         const FS::Counts c = FS::Read();
         if (c.judged == g_c0.judged) {
-            Late("the client's repair never reached the host's judge", kWalkBoundMs);
+            // The mend waits out the client's walk; the far ask is sent the moment the client has read the burst.
+            Late("the client's repair never reached the host's judge", ArmOf() == Arm::Mend ? kWalkBoundMs : kBoundMs);
             return;
         }
         if (ArmOf() == Arm::Mend) JudgedMend(c);
