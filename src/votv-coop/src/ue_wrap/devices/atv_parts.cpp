@@ -3,6 +3,7 @@
 #include "ue_wrap/devices/atv_parts.h"
 
 #include "ue_wrap/actors/item_spawn.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -23,9 +24,17 @@ void* g_fnUnscrewPanel = nullptr;
 void* g_fnGetUnscrewSpawn = nullptr;
 void* g_fnResetUnscrew = nullptr;
 
-// prop_atvWheel_C, an import of ATV_C.
-void* g_wheelCls = nullptr;
+// prop_atvWheel_C, an import of ATV_C: held through a CachedObjRef, which a world's end empties, so the next read finds
+// the class again.
+constexpr wchar_t kWheelClass[] = L"prop_atvWheel_C";
+CachedObjRef g_wheelCls;
 int32_t g_offWheelDur = -1, g_offWheelDirt = -1, g_offWheelFixes = -1;
+
+// The wheel's class for an identity test: the object index only, never a load.
+void* WheelClass() {
+    if (!g_wheelCls.Alive()) g_wheelCls.Set(ue_wrap::object_index::ClassByName(kWheelClass));
+    return g_wheelCls.Raw();
+}
 
 template <class T>
 T& Field(void* obj, int32_t off) {
@@ -52,8 +61,10 @@ bool Resolve() {
     // A class not loaded yet is asked for again; a loaded one that lacks a member will not grow it.
     void* atv = ue_wrap::object_index::ClassByName(L"ATV_C");
     if (!atv) return false;
-    if (!g_wheelCls) g_wheelCls = ue_wrap::object_index::ClassByName(L"prop_atvWheel_C");
-    if (!g_wheelCls) return false;
+    // The wheel's class is loaded when this process has not: a refund spawns a wheel that the host never held.
+    if (!g_wheelCls.Alive()) g_wheelCls.Set(ue_wrap::item_spawn::LoadedClass(kWheelClass));
+    void* const wheelCls = g_wheelCls.Raw();
+    if (!wheelCls) return false;
     g_tried = true;
     g_offLookTire      = R::FindPropertyOffset(atv, L"lookAtTire");
     g_offLookSocket    = R::FindPropertyOffset(atv, L"lookAtTireSocket");
@@ -62,9 +73,9 @@ bool Resolve() {
     g_fnUnscrewPanel    = R::FindFunction(atv, L"unscrewPanel");
     g_fnGetUnscrewSpawn = R::FindFunction(atv, L"getUnscrewSpawn");
     g_fnResetUnscrew    = R::FindFunction(atv, L"resetUnscrew");
-    g_offWheelDur      = R::FindPropertyOffset(g_wheelCls, L"durability");
-    g_offWheelDirt     = R::FindPropertyOffset(g_wheelCls, L"dirt");
-    g_offWheelFixes    = R::FindPropertyOffset(g_wheelCls, L"fixes");
+    g_offWheelDur      = R::FindPropertyOffset(wheelCls, L"durability");
+    g_offWheelDirt     = R::FindPropertyOffset(wheelCls, L"dirt");
+    g_offWheelFixes    = R::FindPropertyOffset(wheelCls, L"fixes");
     const bool atvOk = g_offLookTire >= 0 && g_offLookSocket >= 0 && g_offLookSpare >= 0 &&
                        g_offLookContainer >= 0 && g_fnUnscrewPanel && g_fnGetUnscrewSpawn && g_fnResetUnscrew;
     const bool partsOk = g_offWheelDur >= 0 && g_offWheelDirt >= 0 && g_offWheelFixes >= 0;
@@ -84,7 +95,7 @@ bool ReadLook(void* atv, Look& out) {
     return true;
 }
 
-bool IsWheel(void* actor) { return g_resolved && IsOfClass(actor, g_wheelCls); }
+bool IsWheel(void* actor) { return g_resolved && IsOfClass(actor, WheelClass()); }
 
 bool ReadWheel(void* wheel, Wheel& out) {
     if (!IsWheel(wheel)) return false;
@@ -121,7 +132,7 @@ bool ResetUnscrew(void* atv) {
 void* SpawnWheel(const FVector& at, const Wheel& w) {
     if (!g_resolved) return nullptr;
     Wheel copy = w;
-    return ue_wrap::item_spawn::Spawn(L"prop_atvWheel_C", at, &StampWheel, &copy);
+    return ue_wrap::item_spawn::Spawn(kWheelClass, at, &StampWheel, &copy);
 }
 
 }  // namespace ue_wrap::atv_parts

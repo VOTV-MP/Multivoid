@@ -33,7 +33,8 @@ struct Wheel {
 };
 
 // Resolve the look fields and the three verbs on ATV_C and the wheel class with its scalars.
-// One attempt once ATV_C is loaded; true only when everything resolved.
+// One attempt once ATV_C is loaded; the wheel's class is loaded when this process has not (actors/item_spawn). True only
+// when everything resolved.
 bool Resolve();
 
 // The look fields of `atv`. False when unresolved or null.

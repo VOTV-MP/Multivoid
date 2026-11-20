@@ -23,7 +23,7 @@ using Clock = std::chrono::steady_clock;
 
 // ---- class-level resolves (persist across level reloads) ----
 void*   g_slotCls = nullptr;      // driveSlot_C
-void*   g_driveCls = nullptr;     // prop_drive_C
+CachedObjRef g_driveCls;         // prop_drive_C, found again after a world reload (DriveCls)
 
 int32_t g_offSlotDrive = -1;        // driveSlot_C::drive
 int32_t g_offSlotDetached = -1;     // driveSlot_C::isRecentlyDetached (plain EX_Let bool)
@@ -48,6 +48,12 @@ R::InstanceOffset g_rackHas{L"has"};               // prop_driveRack_C (TArray<b
 // ---- instance caches (slot, serial and world, validated per access) ----
 CachedObjRef g_slots[kRoleCount];   // resolved slot ACTORS per role
 
+// The drive prop's class: the held one while it lives, else one hash probe of the object index.
+void* DriveCls() {
+    if (!g_driveCls.Alive()) g_driveCls.Set(object_index::ClassByName(L"prop_drive_C"));
+    return g_driveCls.Raw();
+}
+
 // UE TArray view {data @0, Num @8}.
 uint8_t* ArrayAt(void* obj, int32_t off, int32_t& num) {
     auto* base = reinterpret_cast<uint8_t*>(obj) + off;
@@ -64,13 +70,14 @@ bool EnsureResolved() {
     g_nextTry = now + std::chrono::seconds(1);
 
     if (!g_slotCls)     g_slotCls = R::FindClass(L"driveSlot_C");
-    if (!g_driveCls)    g_driveCls = R::FindClass(L"prop_drive_C");
-    if (!g_slotCls || !g_driveCls) return false;
+    if (!DriveCls()) g_driveCls.Set(R::FindClass(L"prop_drive_C"));  // the index can trail a class just loaded
+    void* const driveCls = g_driveCls.Raw();
+    if (!g_slotCls || !driveCls) return false;
 
     if (g_offSlotDrive < 0)    g_offSlotDrive = R::FindPropertyOffset(g_slotCls, L"drive");
     if (g_offSlotDetached < 0) g_offSlotDetached = R::FindPropertyOffset(g_slotCls, L"isRecentlyDetached");
     if (g_offSlotPort < 0)     g_offSlotPort = R::FindPropertyOffset(g_slotCls, L"drivePort");
-    if (g_offDriveData < 0)    g_offDriveData = R::FindPropertyOffset(g_driveCls, L"data_0");
+    if (g_offDriveData < 0)    g_offDriveData = R::FindPropertyOffset(driveCls, L"data_0");
 
     if (void* deskCls = R::FindClass(L"analogDScreenTest_C")) {
         if (g_offDeskSlotPlay < 0) g_offDeskSlotPlay = R::FindPropertyOffset(deskCls, L"obj_driveSlot_play");
@@ -79,7 +86,7 @@ bool EnsureResolved() {
 
     if (!g_putDriveInFn) g_putDriveInFn = R::FindFunction(g_slotCls, L"putDriveIn");
     if (!g_pulledOutFn)  g_pulledOutFn = R::FindFunction(g_slotCls, L"drivePulledOut");
-    if (!g_driveUpdFn)   g_driveUpdFn = R::FindFunction(g_driveCls, L"upd");
+    if (!g_driveUpdFn)   g_driveUpdFn = R::FindFunction(driveCls, L"upd");
 
     const bool core = g_offSlotDrive >= 0 && g_offSlotDetached >= 0 && g_offSlotPort >= 0 &&
                       g_offDriveData >= 0 && g_offDeskSlotPlay >= 0 && g_offDeskSlotComp >= 0 &&
@@ -105,13 +112,14 @@ bool EnsureResolved() {
 }
 
 bool IsDriveClass(void* cls) {
-    if (!cls || !g_driveCls) return false;
-    if (cls == g_driveCls) return true;
-    void* base[1] = { g_driveCls };
+    void* const drive = DriveCls();
+    if (!cls || !drive) return false;
+    if (cls == drive) return true;
+    void* base[1] = { drive };
     return R::IsDescendantOfAny(cls, base, 1);
 }
 bool IsRackClass(void* cls) { return cls && cls == object_index::ClassByName(L"prop_driveRack_C"); }
-void* DriveClass() { return g_driveCls; }
+void* DriveClass() { return DriveCls(); }
 
 void* SlotActor(int role) {
     if (!g_resolved || role < 0 || role >= kRoleCount) return nullptr;
