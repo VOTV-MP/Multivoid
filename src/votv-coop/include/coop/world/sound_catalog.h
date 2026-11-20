@@ -39,14 +39,18 @@ struct Entry {
 // engine's objects is dear. The failure is said once per cause. Never a latched failure.
 bool Ready();
 
-// The table's digest; 0 while it is not built.
+// The table's digest and size; 0 while it is not built.
 uint32_t Digest();
+size_t   Size();
 
 // The 1-based index of the sound at `path`, or 0 when the table holds none (or is not built).
 uint16_t IndexOf(const std::wstring& path);
 
 // The entry at the 1-based `index`; nullptr for 0, past the table, or while it is not built.
 const Entry* Find(uint16_t index);
+
+// The first index whose entry allows `caller`, in table order; 0 when none (or not built).
+uint16_t FirstFor(uint8_t caller);
 
 // What a peer's SoundAt names, checked against this table.
 enum class Resolve : uint8_t {

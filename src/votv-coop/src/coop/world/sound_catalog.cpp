@@ -99,6 +99,7 @@ bool Ready() {
 }
 
 uint32_t Digest() { return g_built ? g_digest : 0; }
+size_t Size() { return g_built ? g_entries.size() : 0; }
 
 uint16_t IndexOf(const std::wstring& path) {
     if (!g_built) return 0;
@@ -109,6 +110,13 @@ uint16_t IndexOf(const std::wstring& path) {
 const Entry* Find(uint16_t index) {
     if (!g_built || index == 0 || index > g_entries.size()) return nullptr;
     return &g_entries[index - 1];
+}
+
+uint16_t FirstFor(uint8_t caller) {
+    if (!g_built) return 0;
+    for (size_t i = 0; i < g_entries.size(); ++i)
+        if (g_entries[i].callers & caller) return static_cast<uint16_t>(i + 1);
+    return 0;
 }
 
 Resolve Lookup(uint32_t senderDigest, uint16_t index, const Entry*& entry) {

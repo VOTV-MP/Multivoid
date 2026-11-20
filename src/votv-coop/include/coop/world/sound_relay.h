@@ -34,6 +34,18 @@ enum class Refusal : uint8_t {
 };
 const char* RefusalName(Refusal r);
 
+// What this peer has done with sounds, since the process began: for the drill, which decides on these.
+struct Counts {
+    uint32_t playedHere = 0;      // a catalogued sound the game played here for a listed caller
+    uint32_t sent = 0;            // of those, sent
+    uint32_t notCatalogued = 0;   // a listed caller's sound the table does not hold for that caller
+    uint32_t played = 0;          // a peer's sound played here
+    uint16_t lastPlayedHere = 0;  // the index of the last of the first
+    uint16_t lastPlayed = 0;      // the index of the last of the fourth
+    uint32_t refused[static_cast<int>(Refusal::kCount)] = {};
+};
+Counts GetCounts();
+
 // Store the session, put the hook on once and arm it while a session is connected. Called every load tick. Game thread.
 void Install(coop::net::Session* session);
 

@@ -69,14 +69,6 @@ bool g_armed = false;
 int32_t g_offSound = -1, g_offLoc = -1, g_offVol = -1, g_offPitch = -1;
 void* g_callerFn[kCallerCount] = {};
 bool g_cancelSaid[kCallerCount] = {};
-// What this peer has done with sounds, since the process began.
-struct Counts {
-    uint32_t playedHere = 0;     // a catalogued sound the game played here for a listed caller
-    uint32_t sent = 0;           // of those, sent
-    uint32_t notCatalogued = 0;  // a listed caller's sound the table does not hold for that caller
-    uint32_t played = 0;         // a peer's sound played here
-    uint32_t refused[static_cast<int>(Refusal::kCount)] = {};
-};
 Counts g_counts;
 uint64_t g_nextRefusalSayMs[static_cast<int>(Refusal::kCount)] = {};
 std::unordered_set<std::wstring> g_uncataloguedSaid;
@@ -163,6 +155,7 @@ Verdict OnPlaySoundAtPre(void* /*context*/, void* source, const uint8_t* parms) 
         return Verdict::Run;
     }
     ++g_counts.playedHere;
+    g_counts.lastPlayedHere = index;
     UE_LOGI("sound_relay: played here index %u '%ls'", static_cast<unsigned>(index), path.c_str());
     if (SendOff()) {
         UE_LOGI("sound_relay: sound_send_off: index %u is not sent", static_cast<unsigned>(index));
@@ -212,6 +205,8 @@ const char* RefusalName(Refusal r) {
     }
 }
 
+Counts GetCounts() { return g_counts; }
+
 void Install(N::Session* session) {
     g_session.store(session, std::memory_order_release);
     InstallHook();
@@ -250,6 +245,7 @@ void OnSoundAt(int senderSlot, const N::SoundAtPayload& p) {
     C::Clamp(*entry, out.volume, out.pitch);
     ue_wrap::engine::PlaySoundAtLocation(local, sound, {out.loc[0], out.loc[1], out.loc[2]}, att, out.volume, out.pitch);
     ++g_counts.played;
+    g_counts.lastPlayed = p.sound;
     UE_LOGI("sound_relay: slot %d's index %u played '%ls' at (%.0f,%.0f,%.0f)", senderSlot, static_cast<unsigned>(p.sound),
             entry->path.c_str(), p.loc[0], p.loc[1], p.loc[2]);
     // The host sends a client's judged sound to every other client, with the digest and the values it played.
