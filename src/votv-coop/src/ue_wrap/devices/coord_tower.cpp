@@ -3,6 +3,7 @@
 
 #include "ue_wrap/devices/coord_tower.h"
 
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/actors/prop.h"  // GetPropNameString
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
@@ -333,8 +334,7 @@ bool IsFuse(void* actor) {
 }
 
 void* SpawnFuse(const FVector& at) {
-    void* cls = object_index::ClassByName(L"prop_fuse_C");
-    return cls ? engine::SpawnActor(cls, at) : nullptr;
+    return item_spawn::Spawn(L"prop_fuse_C", at);
 }
 
 bool IsPulledFuse(void* actor) {

@@ -6,6 +6,7 @@
 
 #include "ue_wrap/devices/atv.h"
 
+#include "ue_wrap/actors/item_spawn.h"  // LoadedClass -- the battery prop's class, loaded when this process has not
 #include "ue_wrap/actors/kerfur.h"   // the kerfur's own ATV functions (InviteKerfurs, ReleaseKerfurs)
 #include "ue_wrap/actors/save_record.h"  // ReadArr / ReplaceArray -- the Modules and allKerfuros arrays
 #include "ue_wrap/core/cached_obj_ref.h"  // the battery prop class, found again after a world reload
@@ -306,7 +307,7 @@ void* SpawnBattery(const FVector& loc, const FRotator& rot, const FVector& scale
     static CachedObjRef s_batteryCls;
     static int32_t s_batteryPropOff = -1;
     if (!s_batteryCls.Alive()) {
-        void* const found = object_index::ClassByName(L"prop_atvcarbattery_C");
+        void* const found = item_spawn::LoadedClass(L"prop_atvcarbattery_C");
         s_batteryCls.Set(found);
         s_batteryPropOff = found ? R::FindPropertyOffset(found, L"battery") : -1;
     }

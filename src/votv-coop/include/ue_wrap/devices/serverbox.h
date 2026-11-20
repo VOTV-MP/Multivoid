@@ -147,7 +147,7 @@ void ForEachUpgrade(UpgradeFn fn, void* ctx);
 
 // An upgrade as the box's take-out spawns one: the class its serverUpg_1 row names (prop_serverUpg_1_C, whose
 // defaults carry the row's name), at `at`. The row reads no name, so nothing is written after the spawn.
-// Null while the class is not loaded or the spawn fails.
+// The class is loaded first when this process has not (actors/item_spawn). Null when it does not load or the spawn fails.
 void* SpawnUpgradeProp(const FVector& at);
 
 // The box's take-out component (takeUpgrade), and whether the box reads the player's look on it

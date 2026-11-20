@@ -2,6 +2,7 @@
 
 #include "ue_wrap/devices/atv_parts.h"
 
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -120,7 +121,7 @@ bool ResetUnscrew(void* atv) {
 void* SpawnWheel(const FVector& at, const Wheel& w) {
     if (!g_resolved) return nullptr;
     Wheel copy = w;
-    return ue_wrap::engine::SpawnActor(g_wheelCls, at, false, &StampWheel, &copy);
+    return ue_wrap::item_spawn::Spawn(L"prop_atvWheel_C", at, &StampWheel, &copy);
 }
 
 }  // namespace ue_wrap::atv_parts

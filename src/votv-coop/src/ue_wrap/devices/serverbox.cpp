@@ -2,6 +2,7 @@
 
 #include "ue_wrap/devices/serverbox.h"
 
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
@@ -440,8 +441,7 @@ void ForEachUpgrade(UpgradeFn fn, void* ctx) {
 }
 
 void* SpawnUpgradeProp(const FVector& at) {
-    void* cls = object_index::ClassByName(L"prop_serverUpg_1_C");
-    return cls ? engine::SpawnActor(cls, at) : nullptr;
+    return item_spawn::Spawn(L"prop_serverUpg_1_C", at);
 }
 
 void* TakeOutComponent(void* box) {
