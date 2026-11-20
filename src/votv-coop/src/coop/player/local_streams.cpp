@@ -11,6 +11,7 @@
 #include "coop/element/registry.h"          // EidForActor: the keyed eid of the released prop
 #include "coop/interactables/interactable_sync.h"  // ContainerKey: a dragged swinger's portable key
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the held kerfur prop's eid
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -117,7 +118,9 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
         out.stateBits |= coop::net::kStateBitInAir;
     }
     // The crouch bit: a crouched player's own steps come at twice the rate (its graph's x2.0), so a puppet's do too.
-    if (ue_wrap::puppet::ReadCharacterIsCrouched(local)) out.stateBits |= coop::net::kStateBitCrouched;
+    // [dev red] crouch_bit_off: the bit is never set, so the puppet steps at the standing stride.
+    static const bool crouchBitOff = coop::config::ResolveFlag(coop::config_registry::rows::crouch_bit_off);
+    if (!crouchBitOff && ue_wrap::puppet::ReadCharacterIsCrouched(local)) out.stateBits |= coop::net::kStateBitCrouched;
     // The ragdoll bit: isRagdoll is the AnimBP gate every ragdoll cause flips (the C key, an
     // exhaustion faint, a KO), synced as a display flag so the puppet flops on the other screens; a
     // death is excluded by `dead`. One wrapper read.

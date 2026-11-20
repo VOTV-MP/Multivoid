@@ -135,6 +135,9 @@ public:
 
     void* actor() const { return actor_; }
 
+    // The stride's lib_C::step calls so far, for a drill that counts a player's steps (coop/dev/vent_probe).
+    uint32_t StepsPlayed() const { return stepsPlayed_; }
+
     // The body's seat on an ATV ended (coop/player/puppet_seat): the presentation yaw is re-based on the wire's and the
     // stream places the body again at the next apply. Game thread.
     void OnSeatReleased();

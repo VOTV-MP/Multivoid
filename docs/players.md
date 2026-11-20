@@ -42,8 +42,10 @@ function, which does the ground trace, the per-material cue and the world reacti
 crouch bit (`kStateBitCrouched`) doubles the stride as the game's own does for a crouch, so a player
 crawling a vent steps every 75 cm on every peer; the body itself stays standing, since the game has
 no crouched pose for it.
-`[V]` (`coop/dev/vent_probe`: a crouched host crawling the vent knocker's duct stepped 26 times in
-17 s on the client, every step on its ground.)
+`[?]` (the drill `coop/dev/vent_probe`, row `vent_crawl_drill`: the client counts the host puppet's steps over the
+distance a crouched host walks and says `rig: VERDICT vent-crawl`; its red is `crouch_bit_off`. The earlier probe
+measured 26 steps in 17 s on the client for a crouched host crawling the vent knocker's duct; the row `step_ground_log`
+makes the puppet say whether each step found ground.)
 
 A relayed packet names its sender's occupancy of the slot: the host numbers each occupancy and
 stamps the number into everything it relays, and a client refuses an older occupancy's packets and
