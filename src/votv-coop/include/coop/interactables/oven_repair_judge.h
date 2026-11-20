@@ -53,7 +53,7 @@ void Tick(coop::net::Session& session);
 // HOST: OvenRepairState from a client, the dispatcher's case, before the oven channel sees it.
 void OnAsk(coop::net::Session& session, const coop::net::KeyedTogglePayload& payload, uint8_t senderSlot);
 
-// HOST: OvenProgressState from a client, from oven_progress_sync::OnProgress.
+// HOST: OvenProgressState from a client, routed here by the dispatcher (event_dispatch_signal) on its session.
 void OnSteps(coop::net::Session& session, const coop::net::OvenProgressStatePayload& payload, uint8_t senderSlot);
 
 Stats GetStats();

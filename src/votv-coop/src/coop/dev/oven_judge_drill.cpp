@@ -311,7 +311,7 @@ void TickHost(void* oven, const std::wstring& key) {
         if (record & kRawScrew)
             return Verdict(false, "burst: a far client's raw screw bit reached the host's record 0x%02X", record);
         if (st.refusedBucket)
-            return Verdict(true, "burst: refused_bucket moved by %llu and the record lacks the bit (0x%02X)",
+            return Verdict(true, "burst: the full queue refused %llu message(s) as they arrived (refused_bucket); the record holds 0x%02X",
                            static_cast<unsigned long long>(st.refusedBucket), record);
         if (dReach >= 8)
             return Invalid("burst: eight messages were judged and none was refused for a full queue -- the burst never "
