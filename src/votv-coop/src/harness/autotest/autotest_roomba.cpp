@@ -1,13 +1,13 @@
 // harness/autotest/autotest_roomba.cpp -- TEST-ONLY: the robot cleaner is the host's. A verdict is decided by an event; a
-// bound passing with none is INVALID. Armed by the row roomba_drill on both peers (VOTVCOOP_CAN_DIR). The host drops two
-// cleaners, A and B, in front of itself; B stays off.
-//   1     The client walks to the host with the director, then presses A's switch the way the use key does. Its press is
-//         asked of the host, which presses its own cleaner. The fence: the client then sends intents for B (off, which B
-//         already is) until the host answers with B's state; the host judged them in order, so A's state, if the host
-//         switched A, reached the client before B's answer. At B's answer the client's A must have flipped (FAIL there,
-//         else). Then A runs and the host's copy drives: once it has moved 200 cm the host switches it off, and at that
-//         state (the fence again) the client's copy must have followed at least 100 cm. `rig: VERDICT roomba
-//         PASS|FAIL|INVALID`. Reds: roomba_intent_off (client), roomba_drive_claim_off (host).
+// bound passing with none is INVALID. Armed by roomba_drill on both peers (VOTVCOOP_CAN_DIR); the host drops two cleaners,
+// A and B, in front of itself, and B stays off.
+//   1     The client walks to the host with the director, then presses A's switch the way the use key does, which is asked
+//         of the host. The fence: the client sends intents for B (off, which B already is) until the host answers with B's
+//         state; the host judged them in order, so A's state, if A was switched, came first. At B's answer the client's A
+//         must have flipped (FAIL there, else). Then A runs and drives: at 200 cm the host switches it off, and at that
+//         state (the fence again) the client's copy must have followed 100 cm. `rig: VERDICT roomba PASS|FAIL|INVALID`.
+//         Reds: roomba_intent_off (client), roomba_drive_claim_off (host). roomba_class=prop_roomba_mx_C on the host makes
+//         A the MX cleaner (B, the fence, stays plain): the same verdict, and roomba_exact_class on both is its red.
 //   join  With the rig's --rejoin. The host runs A, the client leaves and comes back; at the ready edge the host must
 //         have sent the joiner a state, and the rejoined client (VOTVCOOP_ROOMBA_DRILL_REJOIN=1) must read A running on its
 //         copy once the state arrived and none is held: `rig: VERDICT roomba-join ...`.
@@ -29,6 +29,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/roomba_sync.h"
 #include "coop/session/rig_verdict.h"
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -62,6 +63,10 @@ constexpr float kCopyMoveCm = 100.f;   // and the client's copy must have follow
 
 std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::roomba_drill); }
 
+// Cleaner A's class, from the roomba_class row (a closed list, so the name is the caller's own table's).
+std::string ClassA() { return coop::config::ResolveEnum(coop::config_registry::rows::roomba_class); }
+const wchar_t* ClassAWide() { return ClassA() == "prop_roomba_mx_C" ? L"prop_roomba_mx_C" : L"prop_roomba_C"; }
+
 void* CleanerOf(uint32_t eid) { return EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::Prop); }
 
 bool Active(void* roomba) {
@@ -72,8 +77,9 @@ bool Active(void* roomba) {
 }
 
 // The switch as the use key presses it (action 5): on the host the lane lets it run, on a client it is refused and asked.
+// The dispatch lookup climbs to the plain cleaner's function: the MX cleaner declares none of its own.
 bool PressSwitch(void* roomba) {
-    ue_wrap::ParamFrame f(R::FindFunction(R::ClassOf(roomba), L"actionOptionIndex"));
+    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(roomba), L"actionOptionIndex"));
     if (!f.valid()) return false;
     f.Set<uint8_t>(L"action", 5);
     return ue_wrap::Call(roomba, f);
@@ -93,13 +99,13 @@ bool Where(uint32_t eid, ue_wrap::FVector& at) {
     return ok;
 }
 
-// HOST: a cleaner (not the one of element id `except`) dropped on the floor `ahead` cm in front of the host's player and
-// `side` cm to the right of that line.
-bool Drop(float ahead, float side, uint32_t except, uint32_t& eid) {
+// HOST: a cleaner of the class named `className` (not the one of element id `except`) dropped on the floor `ahead` cm in
+// front of the host's player and `side` cm to the right of that line. The class is loaded when this process has not.
+bool Drop(float ahead, float side, uint32_t except, uint32_t& eid, const wchar_t* className) {
     bool ok = false;
     OnGameThread([&] {
         void* const me = coop::players::Registry::Get().Local();
-        void* const cls = ue_wrap::object_index::ClassByName(L"prop_roomba_C");
+        void* const cls = ue_wrap::item_spawn::LoadedClass(className);
         ue_wrap::FVector at{};
         if (!me || !cls || !E::TryGetActorLocation(me, at)) return;
         const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
@@ -112,7 +118,7 @@ bool Drop(float ahead, float side, uint32_t except, uint32_t& eid) {
     // Enrolled: the drain that mints the element id has run (the host's lane has announced it).
     return WaitGT("the dropped cleaner enrolled", 30, [&] {
         struct Ctx { uint32_t except; uint32_t eid = EL::kInvalidId; } ctx{except};
-        if (void* cls = ue_wrap::object_index::ClassByName(L"prop_roomba_C"))
+        if (void* cls = ue_wrap::object_index::ClassByName(className))
             ue_wrap::object_index::ForEachInstance(cls, [](void* p, void* obj, int32_t) {
                 auto& x = *static_cast<Ctx*>(p);
                 if (x.eid != EL::kInvalidId || !obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
@@ -139,16 +145,17 @@ void RunHost() {
         }))
         return;
     uint32_t a = 0, b = 0;
-    if (!Drop(250.f, 0.f, EL::kInvalidId, a)) return;
-    // B is the second one dropped: the first found enrolled cleaner is A, so B is dropped off the line and found by exclusion.
-    if (!Drop(250.f, 120.f, a, b)) return;
+    if (!Drop(250.f, 0.f, EL::kInvalidId, a, ClassAWide())) return;
+    // B, the fence, is a plain cleaner whatever A is: the plain class answers the fence intent even where A's class is
+    // refused (the red), so a missing switch-on is decided at B's answer, never at a bound.
+    if (!Drop(250.f, 120.f, a, b, L"prop_roomba_C")) return;
     if (a == b) {
         RV::Say(kTag, RV::Outcome::Invalid, "the second cleaner could not be told from the first");
         return;
     }
     ue_wrap::FVector start{};
     if (!Where(a, start)) return;
-    UE_LOGI("roomba-drill: HOST cleaners A eid %u, B eid %u", a, b);
+    UE_LOGI("roomba-drill: HOST cleaners A eid %u (%hs), B eid %u (plain)", a, ClassA().c_str(), b);
     PS::Mark("placed", std::to_string(a) + " " + std::to_string(b));
     if (!PS::Await("copies", kStepSec)) return;
 
@@ -182,8 +189,8 @@ void RunHost() {
     if (done[0] != 'P') return;   // the client said its FAIL where it was decided
     RS::Counters c;
     OnGameThread([&] { c = RS::Read(); });
-    RV::Say(kTag, RV::Outcome::Pass, "the client's press switched the host's cleaner, and its copy followed the drive (%u state(s) sent, %u press(es) switched)",
-            c.statesSent, c.intentsSwitched);
+    RV::Say(kTag, RV::Outcome::Pass, "the client's press switched the host's %s cleaner, and its copy followed the drive (%u state(s) sent, %u press(es) switched)",
+            ClassA().c_str(), c.statesSent, c.intentsSwitched);
     UE_LOGI("roomba-drill: DONE on host");
 }
 
@@ -273,7 +280,7 @@ void RunJoinHost() {
     if (!disc_drill::HostWorldUp()) return;
     if (!PS::Await("client_ready", 480)) return;
     uint32_t a = 0;
-    if (!Drop(250.f, 0.f, EL::kInvalidId, a)) return;
+    if (!Drop(250.f, 0.f, EL::kInvalidId, a, L"prop_roomba_C")) return;
     bool on = false;
     OnGameThread([&] {
         void* r = CleanerOf(a);

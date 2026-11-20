@@ -17,5 +17,15 @@ CFG_ENUM(roomba_drill, "roomba_drill", "dev", "off", "off|1|join", "VOTVCOOP_ROO
     "PASS|FAIL|INVALID' and 'roomba-drill: DONE on host'. join -- with the rig's --rejoin: the host runs a cleaner, "
     "the client leaves, and at the rejoined client's ready edge (second life: VOTVCOOP_ROOMBA_DRILL_REJOIN=1) the host "
     "must have sent a state and the copy must run: 'rig: VERDICT roomba-join PASS|FAIL|INVALID'. Red arms: "
-    "roomba_intent_off on the client and roomba_drive_claim_off on the host (1). It MUTATES the world (cleaners are "
+    "roomba_intent_off on the client and roomba_drive_claim_off on the host (1); roomba_class=prop_roomba_mx_C on the "
+    "host runs arm 1 with the MX cleaner, and roomba_exact_class on both is its red. It MUTATES the world (cleaners are "
     "dropped). Run it on a fresh host world.")
+CFG_FLAG(roomba_exact_class, "roomba_exact_class", "dev", false, "VOTVCOOP_ROOMBA_EXACT_CLASS",
+    "Developer red arm of the robot cleaner drill's MX class (roomba_class): never set; both peers. A cleaner is the "
+    "plain class prop_roomba_C alone, as before subclasses were taken in, so the MX cleaner is never enrolled, sent or "
+    "bound and the host refuses a press of it: with roomba_class=prop_roomba_mx_C the drill must FAIL at the client's "
+    "fence, the press never switching the host's cleaner.")
+CFG_ENUM(roomba_class, "roomba_class", "dev", "prop_roomba_C", "prop_roomba_C|prop_roomba_mx_C", "VOTVCOOP_ROOMBA_CLASS",
+    "Drill, the robot cleaner (roomba_drill=1); the host. The class of cleaner A, the one the client presses and the "
+    "host runs: the plain cleaner, or the MX cleaner (a subclass with no body of its own). Cleaner B, the fence, is "
+    "always the plain one. The verdict form is the plain arm's.")

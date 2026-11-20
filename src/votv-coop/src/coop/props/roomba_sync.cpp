@@ -77,6 +77,16 @@ bool DriveClaimOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::roomba_drive_claim_off);
     return off;
 }
+// [dev red] roomba_exact_class (both peers): a cleaner is the plain class alone, as the lane took it before the MX cleaner
+// was added, so the MX cleaner is enrolled, sent and bound by nobody and a press of it is refused. Read once, at Install,
+// on the game thread: the enrol seam asks it from any thread.
+std::atomic<bool> g_exactClass{false};
+
+// Is `cls` the cleaner class `base` or, outside the red, a subclass of it.
+bool IsCleanerOf(void* cls, void* base) {
+    if (!base) return false;
+    return g_exactClass.load(std::memory_order_relaxed) ? cls == base : R::IsDescendantOfAny(cls, &base, 1, 16);
+}
 
 std::atomic<uint32_t> g_statesSent{0}, g_intentsSwitched{0}, g_statesReceived{0}, g_statesApplied{0}, g_intentsSent{0};
 std::atomic<uint32_t> g_heldCount{0}, g_lastStateEid{0};
@@ -110,12 +120,9 @@ uint32_t EidOf(void* roomba) {
 bool IsLiveRoomba(void* obj) { return obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"); }
 
 // A cleaner is a prop_roomba_C or a subclass of it: prop_roomba_mx_C, the MX cleaner, has no body of its own and runs
-// the cleaner's graph, and an exact match left it on each peer alone. A walk of
-// raw class pointers, safe off the game thread.
-bool IsCleanerClass(void* cls) {
-    void* const base = OI::ClassByName(L"prop_roomba_C");
-    return base && R::IsDescendantOfAny(cls, &base, 1, 16);
-}
+// the cleaner's graph, and an exact match left it on each peer alone. A walk of raw class pointers, safe off the game
+// thread.
+bool IsCleanerClass(void* cls) { return IsCleanerOf(cls, OI::ClassByName(L"prop_roomba_C")); }
 
 // A joiner's snapshot is the one scan: nothing announces what a joiner missed. The object index lists each class's own
 // instances, so every loaded cleaner class is walked.
@@ -270,7 +277,7 @@ void RefreshClass() {
 // MarkPropElement's callback, any thread: a cleaner is recognised by its class pointer and queued.
 void OnExpressed(void* actor, EL::ElementId eid) {
     void* const cls = g_roombaClass.load(std::memory_order_acquire);
-    if (!cls || !actor || !R::IsDescendantOfAny(R::ClassOf(actor), &cls, 1, 16)) return;
+    if (!actor || !IsCleanerOf(R::ClassOf(actor), cls)) return;
     bool full = false;
     {
         std::lock_guard<std::mutex> lk(g_bornMutex);
@@ -406,6 +413,10 @@ void Install(coop::net::Session* session) {
     g_session = session;
     if (g_watched) return;
     g_watched = true;
+    if (coop::config::ResolveFlag(coop::config_registry::rows::roomba_exact_class)) {
+        g_exactClass.store(true, std::memory_order_relaxed);
+        UE_LOGW("roomba_sync: [dev red] roomba_exact_class -- only the plain cleaner class is a cleaner here");
+    }
     const bool t = sg::WatchName(kRowTick, kTagTick, &OnClientRefused, nullptr);
     const bool a = sg::WatchName(kRowAction, kTagAction, &OnActionPre, nullptr);
     const bool p = sg::WatchName(kRowPickup, kTagPickup, &OnClientRefused, nullptr);
