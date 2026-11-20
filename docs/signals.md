@@ -216,7 +216,9 @@ which takes that one row from that client and answers any other client row with 
 the eraser's delete, pressed on a client, runs on the host, and every press and wipe of the host's
 eraser shows on each client's own eraser (`coop/interactables/eraser_press_intent`); the
 rack is presser index-operations the host terminates, a full canonical array back, and a deny
-ring for races (`coop/interactables/drive_rack_sync`). A box that goes holding drives (a pocket destroys it) leaves its
+ring for races (`coop/interactables/drive_rack_sync`): a take that lost a race is reaped by the host, by the row its
+drive sends, whichever comes first, through the host's own destroy, so no copy of the loser's drive stands
+(VOTV-MP/Multivoid#210). A box that goes holding drives (a pocket destroys it) leaves its
 rows with the host under its save key, and the box the host spawns from a client's placement of it (the client took it
 out of its inventory; the drop intent names the key the pocket parked) gets them back at the lane's first sight of it,
 before its canonical goes, where the host's empty rows had emptied it on every peer (VOTV-MP/Multivoid#192): a new box that

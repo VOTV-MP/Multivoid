@@ -9,7 +9,6 @@
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
-#include "coop/props/prop_lifecycle.h"           // DestroyLocalProp (the deny-ghost teardown)
 #include "coop/props/prop_save_data.h"           // DeclareClassOwnedElsewhere
 
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -17,6 +16,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/drive_chain.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -92,6 +92,20 @@ Clock::time_point g_nextStats{};
 Clock::time_point g_nextRefusalSay[coop::net::kMaxPeers] = {};
 std::set<uint32_t> g_wrongClassSaid;  // eids a row named that are no drive here (said once a session)
 Counts g_counts;
+
+// HOST: the rows taken lately from the drives clients brought, by slot and row hash. A client's own drive sends its row
+// as it is born, before that client's rack sweep sends the take that drive came from, so a deny of that take arrives
+// after the row was taken: ReapTakenRow finds the drive here. Ten seconds, the rack lane's deny window.
+struct TakenRow {
+    uint8_t slot = 0xFF;
+    uint32_t eid = 0;
+    ue_wrap::CachedObjRef ref;
+    uint64_t hash = 0;
+    Clock::time_point at{};
+};
+TakenRow g_takenRows[16];
+size_t g_takenNext = 0;
+constexpr auto kTakenTtl = std::chrono::seconds(10);
 
 enum class Reg : uint8_t { Pending, Registered, Refused };
 Reg  g_reg = Reg::Pending;
@@ -273,7 +287,9 @@ void SayRefusal(uint8_t slot, uint32_t eid, const char* why) {
 bool HostTakeClientRow(coop::net::Session* s, uint32_t eid, void* actor, const SD::Row& row, uint8_t senderSlot) {
     // A denied rack take's ghost names itself by its row: the one the winning take removed.
     if (coop::drive_rack_sync::TryConsumeDenyReap(senderSlot, Hash(row))) {
-        coop::prop_lifecycle::DestroyLocalProp(actor, /*deferred*/true);
+        // The host's destroy, which the destroy seam sends to every peer: the drive the host spawned for that client
+        // reached the others too.
+        ue_wrap::engine::DestroyActor(actor);
         UE_LOGW("drive_payload_sync: reaped the denied rack-take ghost eid=%u from slot %u", eid, senderSlot);
         return false;
     }
@@ -305,6 +321,15 @@ bool HostTakeClientRow(coop::net::Session* s, uint32_t eid, void* actor, const S
         DC::CallDriveUpd(actor);
     }
     g_brought.erase(eid);   // the permission is spent by a row that landed, and only by one
+    {
+        TakenRow& t = g_takenRows[g_takenNext];
+        g_takenNext = (g_takenNext + 1) % (sizeof(g_takenRows) / sizeof(g_takenRows[0]));
+        t.slot = senderSlot;
+        t.eid = eid;
+        t.ref.Set(actor);
+        t.hash = Hash(row);
+        t.at = Clock::now();
+    }
     // Every other client gets it; its author holds it already (MTA sends an accepted change to all but its source,
     // CGame.cpp:2761-2768).
     HostSendIfChanged(s, eid, actor, /*exceptSlot*/ senderSlot);
@@ -539,7 +564,25 @@ void OnPeerLeft(uint8_t slot) {
     g_nextRefusalSay[slot] = {};
 }
 
+bool ReapTakenRow(uint8_t slot, uint64_t rowHash) {
+    if (!rowHash) return false;
+    const auto now = Clock::now();
+    for (TakenRow& t : g_takenRows) {
+        if (t.slot != slot || t.hash != rowHash || now - t.at > kTakenTtl) continue;
+        void* const actor = t.ref.Get();
+        const uint32_t eid = t.eid;
+        t = TakenRow{};
+        if (!actor) return false;
+        ue_wrap::engine::DestroyActor(actor);   // the host's destroy: the seam sends it to every peer
+        UE_LOGW("drive_payload_sync: reaped the denied rack-take ghost eid=%u from slot %u (its row came before the deny)",
+                eid, slot);
+        return true;
+    }
+    return false;
+}
+
 void OnDisconnect() {
+    for (TakenRow& t : g_takenRows) t = TakenRow{};
     g_lastSent.clear();
     g_held.clear();
     g_noted.clear();
