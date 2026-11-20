@@ -61,7 +61,8 @@ constexpr uint32_t kMinSteps  = 8;
 constexpr float kCrouchedCm   = coop::puppet_footsteps::Stride::kStrideCm / coop::puppet_footsteps::Stride::kCrouchFactor;
 constexpr float kStandingCm   = coop::puppet_footsteps::Stride::kStrideCm;
 constexpr float kBandFrac     = 0.20f;
-// The puppet is at the host's end point within this, and its step count has stood this many ticks.
+// The puppet is at the host's end point within this, and its step count has stood this many ticks: a count of ticks that
+// the steps are all in (a settle), not a clock that decides a verdict.
 constexpr float kNearCm       = 100.f;
 constexpr int   kQuietTicks   = 60;
 // A wait for the other peer or a state ends on its event; this bound only says INVALID.
@@ -337,13 +338,9 @@ void ClientTick() {
 
 }  // namespace
 
-bool IsEnabled() {
-    static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::vent_crawl_drill);
-    return on;
-}
-
 void Tick(coop::net::Session* session) {
-    if (!IsEnabled() || !session || !session->connected() || g_over || g_step == Step::Done) return;
+    static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::vent_crawl_drill);
+    if (!on || !session || !session->connected() || g_over || g_step == Step::Done) return;
     if (!g_armed) {
         g_armed = true;
         g_stepMs = ::GetTickCount64();

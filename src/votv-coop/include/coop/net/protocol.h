@@ -1621,7 +1621,8 @@ inline uint32_t NowStateTimeMs24() {
 //   stateBits    -- bit 0 in air (the source's movement mode is falling; clears the puppet's foot
 //                   IK), bit 1 ragdolled and not dead (every ragdoll cause; the receiver toggles
 //                   ragdollMode and forceGetUp on the edges), bit 2 burning (the source's burningTime
-//                   runs; the receiver shows the flame and nothing else), bits 3..7 reserved.
+//                   runs; the receiver shows the flame and nothing else), bit 3 crouched (ACharacter::bIsCrouched; the
+//                   puppet's stride doubles), bits 4..7 reserved.
 struct PoseSnapshot {
     float   x, y, z;
     float   yaw;

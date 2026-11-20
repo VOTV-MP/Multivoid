@@ -18,9 +18,6 @@ namespace coop::net { class Session; }
 
 namespace coop::dev::vent_probe {
 
-// True when the row is on.
-bool IsEnabled();
-
 // Advance this peer's steps. Every pump tick in a world. Game thread.
 void Tick(coop::net::Session* session);
 
