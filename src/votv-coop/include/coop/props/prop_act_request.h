@@ -43,7 +43,8 @@ const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" 
 }  // namespace internal
 
 // The row of the verb a record replays. kUnpack is an open whose contents the host rolls: an MRE, a first aid kit.
-enum Row : uint8_t { kPocket = 1, kHold, kFood, kUnpack, kPills, kSoap, kSnack };
+// kConvert is a cooking food's own action 4 that turns it into another (prop_act_host's kConverts), run on the host.
+enum Row : uint8_t { kPocket = 1, kHold, kFood, kUnpack, kPills, kSoap, kSnack, kConvert };
 
 // The pending record: the target's element id and the call's arguments, as the replay needs them.
 struct Pending {

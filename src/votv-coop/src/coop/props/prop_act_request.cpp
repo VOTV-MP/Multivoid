@@ -198,6 +198,7 @@ bool RunVerb(void* target, void* local) {
         return E::CallMainPlayerHoldObject(local, target, collected);
     }
     case kUnpack:
+    case kConvert:   // the host converts its own copy, and what it makes reaches this peer as its spawns
         return UnpackOnHost(target);
     case kFood:
     case kPills:
@@ -295,6 +296,13 @@ UE_FACT_FN(kRowSoap,   "prop_act", L"prop_food_soap_C",  L"playerUsedOn",       
 UE_FACT_FN(kRowSnack,  "prop_act", L"prop_snack_C",      L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowBeer,   "prop_act", L"prop_snack_beer_C", L"actionOptionIndex",   Declared);
 UE_FACT_FN(kRowKit,    "prop_act", L"prop_medkit_pack_C", L"actionOptionIndex",  Declared);
+// The cooking foods that declare their own actionOptionIndex, whose action 4 makes another food and destroys this one
+// without the food body's eat: a raw patty and sausage (each into the other), the burger and hotdog dough (into buns).
+UE_FACT_FN(kRowPatty,   "prop_act", L"prop_cookingFood_rawPatty_C",    L"actionOptionIndex", Declared);
+UE_FACT_FN(kRowSausage, "prop_act", L"prop_cookingFood_rawSausage_C",  L"actionOptionIndex", Declared);
+UE_FACT_FN(kRowBurger,  "prop_act", L"prop_cookingFood_doughBurger_C", L"actionOptionIndex", Declared);
+UE_FACT_FN(kRowHotdog,  "prop_act", L"prop_cookingFood_doughHotdog_C", L"actionOptionIndex", Declared);
+constexpr int kTagConvert = 0x50414341;   // "PACA".."PACD", one per conversion row
 constexpr int kTagPocket = 0x50414331, kTagHold = 0x50414332, kTagFood = 0x50414333,
               kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336,
               kTagSnack = 0x50414337, kTagBeer = 0x50414338, kTagKit = 0x50414339;   // "PAC1".."PAC9"
@@ -327,6 +335,7 @@ struct ActionParams {
     R::ParamOffset lookAt{L"lookAtComponent"};
 };
 ActionParams g_foodParams, g_mreParams, g_pillsParams, g_snackParams, g_beerParams, g_kitParams;
+ActionParams g_convertParams[4];
 
 struct SoapParams {
     R::ParamOffset holdObject{L"holdObject"};
@@ -358,6 +367,8 @@ bool FoodDestroys(const sg::Call& c) {
     return !notEdible && uses <= 1;
 }
 bool MreDestroys(const sg::Call& c) { return IsEat(g_mreParams, c); }
+template <int I>
+bool ConvertDestroys(const sg::Call& c) { return IsEat(g_convertParams[I], c); }
 bool KitDestroys(const sg::Call& c) { return IsEat(g_kitParams, c); }
 bool PillsDestroys(const sg::Call& c) { return IsEat(g_pillsParams, c); }
 // A snack is asked on every eat: a sip, an open and the last use all change the shared copy, whatever the client's copy
@@ -419,6 +430,7 @@ struct HitParam {
     int32_t size = -1;
 };
 HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit, g_snackHit, g_beerHit, g_kitHit;
+HitParam g_convertHit[4];
 
 // The hit of a use, as the replay writes it back: only its component and place matter.
 void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
@@ -530,6 +542,10 @@ sg::Verdict PreAction(const sg::Call& c, uint8_t row, ActionParams& params, HitP
 sg::Verdict PreFood(const sg::Call& c) { return PreAction(c, kFood, g_foodParams, g_foodHit, &FoodDestroys); }
 sg::Verdict PreMre(const sg::Call& c) { return PreAction(c, kUnpack, g_mreParams, g_mreHit, &MreDestroys); }
 sg::Verdict PreKit(const sg::Call& c) { return PreAction(c, kUnpack, g_kitParams, g_kitHit, &KitDestroys); }
+template <int I>
+sg::Verdict PreConvert(const sg::Call& c) {
+    return PreAction(c, kConvert, g_convertParams[I], g_convertHit[I], &ConvertDestroys<I>);
+}
 sg::Verdict PrePills(const sg::Call& c) { return PreAction(c, kPills, g_pillsParams, g_pillsHit, &PillsDestroys); }
 // What a dead snack watch costs: the use runs on the client's copy alone, asked of nobody, and the copies diverge.
 constexpr const char* kSnackDead = "a client's use of a world snack runs on its own copy only, unasked, and the copies diverge";
@@ -599,6 +615,10 @@ Watch g_watches[] = {
     {kRowSnack,  kTagSnack,  &PreSnack,  "use",  WatchState::Pending, &PostSnack, kSnackDead},
     {kRowBeer,   kTagBeer,   &PreBeer,   "use",  WatchState::Pending, &PostBeer,  kSnackDead},
     {kRowKit,    kTagKit,    &PreKit,    "use",  WatchState::Pending},
+    {kRowPatty,   kTagConvert,     &PreConvert<0>, "use", WatchState::Pending},
+    {kRowSausage, kTagConvert + 1, &PreConvert<1>, "use", WatchState::Pending},
+    {kRowBurger,  kTagConvert + 2, &PreConvert<2>, "use", WatchState::Pending},
+    {kRowHotdog,  kTagConvert + 3, &PreConvert<3>, "use", WatchState::Pending},
 };
 bool g_watchesSettled = false;
 

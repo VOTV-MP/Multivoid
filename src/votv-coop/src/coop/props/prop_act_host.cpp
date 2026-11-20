@@ -162,6 +162,41 @@ bool RollUnpack(void* actor, uint8_t slot, uint32_t eid) {
     return true;
 }
 
+// The cooking foods whose own actionOptionIndex turns them into another food on action 4 (a raw patty into a raw
+// sausage and back, the burger and hotdog dough into buns) and destroys them, never reaching the food's eat: on a
+// client's granted use the host runs that conversion on its copy, so what it makes is host-born and reaches every peer,
+// and the client only removes its copy (prop_act_request's kConvert).
+constexpr const wchar_t* kConverts[] = {L"prop_cookingFood_rawPatty_C", L"prop_cookingFood_rawSausage_C",
+                                        L"prop_cookingFood_doughBurger_C", L"prop_cookingFood_doughHotdog_C"};
+ue_wrap::CachedObjRef g_convertCls[std::size(kConverts)];
+uint32_t g_conversionsRun = 0;
+
+bool IsConvertible(void* actor) {
+    void* const cls = actor ? R::ClassOf(actor) : nullptr;
+    for (size_t i = 0; i < std::size(kConverts); ++i) {
+        void* const c = ResolveClass(g_convertCls[i], kConverts[i]);
+        if (c && ue_wrap::prop::WalksToBase(cls, c)) return true;
+    }
+    return false;
+}
+
+// The conversion, on the host's copy, for `slot`'s granted use. True when the copy ended in it.
+bool Convert(void* actor, uint8_t slot, uint32_t eid) {
+    ue_wrap::CachedObjRef before;
+    before.Set(actor);
+    constexpr uint8_t kConvertAction = 4;   // the action the four bodies switch on; it reads no player
+    const bool ran = ue_wrap::prop_use::CallActionOptionIndex(actor, coop::players::Registry::Get().Local(), nullptr, {},
+                                                             kConvertAction, nullptr);
+    if (!before.Is(actor)) {
+        ++g_conversionsRun;
+        return true;
+    }
+    UE_LOGW("prop_act: the %ls eid %u converted for slot %u did not end its copy (ran %d) -- destroyed instead",
+            R::ToString(R::NameOf(R::ClassOf(actor))).c_str(), static_cast<unsigned>(eid), static_cast<unsigned>(slot),
+            ran ? 1 : 0);
+    return false;
+}
+
 // Food-body classes that are not offered the use: the plush offers no option (its getActionOptions is empty), and
 // the others own their action 4, whose destroy is carried by another request.
 constexpr const wchar_t* kUseDenied[] = {L"prop_eriePlush_C", L"prop_food_shrimp_C", L"prop_dingus_C",
@@ -214,6 +249,13 @@ std::optional<Tally> UseTraits(void* actor, internal::ActTraits& t) {
     for (size_t i = 0; i < std::size(kUseDenied); ++i) {
         void* const c = ResolveClass(g_useDenied[i], kUseDenied[i]);
         if (c && ue_wrap::prop::WalksToBase(cls, c)) return Tally::FitDenied;
+    }
+    // A conversion is offered whatever the food's own edibility: its body never reaches the eat.
+    if (IsConvertible(actor)) {
+        t.offered = true;
+        t.foodBody = false;
+        t.read = true;
+        return std::nullopt;
     }
     const UseClass* row = nullptr;
     for (UseClass& u : g_useClasses) {
@@ -577,6 +619,16 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         return;
     case internal::CommitStep::Destroy:
         break;
+    }
+    // A conversion ends the host's copy itself, and the destroy seam sends that end to every peer; one that did not end
+    // it is destroyed below, as the client's copy already is. The reservation goes first: the host's own watch on the
+    // four bodies refuses a call on a prop another slot holds.
+    if (g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) && IsConvertible(actor)) {
+        ReleaseFor(senderSlot);
+        if (Convert(actor, senderSlot, p.eid)) {
+            LogCommit(senderSlot, p, "converted");
+            return;
+        }
     }
     // The act drill's red arm: the open is skipped, so the drill's unpack steps must fail.
     static const bool unpackOff = coop::config::ResolveFlag(coop::config_registry::rows::prop_act_mre_open_off);
