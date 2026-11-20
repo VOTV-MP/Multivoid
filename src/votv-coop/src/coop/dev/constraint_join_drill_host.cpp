@@ -20,6 +20,9 @@
 #include "coop/props/remote_prop.h"
 #include "coop/save/join_window_baseline.h"
 
+#include "coop/text/utf8_codec.h"
+
+#include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -28,6 +31,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace coop::dev::constraint_join_drill::detail::host {
 namespace {
@@ -39,11 +44,16 @@ namespace NA = coop::dev::nail_act;
 namespace PD = coop::prop_drive_host;
 namespace E  = ue_wrap::engine;
 namespace R  = ue_wrap::reflection;
+namespace SR = ue_wrap::save_record;
 using ue_wrap::FVector;
 
 constexpr const char* kLog = "[CONSTRAINT-JOIN-DRILL] [H]";
 
 char Letter(size_t i) { return static_cast<char>('A' + i); }
+
+// What a drill line calls an actor, and what a nail's own fields say its two ends are; both defined with the set's state.
+std::string BoxName(void* actor);
+std::string NailEnds(void* nail);
 
 // The nail act's voice for this drill: plain log lines under the drill's tag, no labels; a step that cannot run ends INVALID.
 class DrillVoice final : public NA::Voice {
@@ -61,17 +71,19 @@ public:
                           static_cast<double>(at.Z));
         return b;
     }
-    std::string LabelOf(void*) override { return "box"; }
-    std::string NailState(void*) override { return "nailed"; }
+    std::string LabelOf(void* actor) override { return BoxName(actor); }
+    std::string NailState(void* nail) override { return NailEnds(nail); }
 };
 
-enum class Step : uint8_t { WaitPeer, Bind, Nail, NailWait, Drain, Park, Announce, Run, Settle, WaitLeave, WaitJoiner, Done };
+enum class Step : uint8_t { WaitPeer, Bind, Place, Nail, NailWait, Drain, Park, Announce, Run, Settle, WaitLeave, WaitJoiner, Done };
 
 DrillVoice g_voice;
 Step       g_step = Step::WaitPeer;
 uint64_t   g_stepMs = 0;
 int        g_slot = 0;
 size_t     g_n = 0;
+size_t     g_placed = 0;                 // the boxes standing now: a chain grows by one box, nailed before the next stands
+float      g_ax = 0.f, g_stepCm = 0.f;   // box A's X and the centre-to-centre step of the chain
 void*      g_boxCls = nullptr;
 void*      g_nailCls = nullptr;
 FVector    g_spot{};
@@ -115,7 +127,7 @@ int FirstReadySlot(coop::net::Session& s) {
 
 // Every box is alive and its element id is read. False says INVALID: a box that dies ends the drill.
 bool Refresh() {
-    for (size_t i = 0; i < g_n; ++i) {
+    for (size_t i = 0; i < g_placed; ++i) {
         void* b = g_box[i].Get();
         if (!b) {
             Invalid('H', "box %c died", Letter(i));
@@ -128,13 +140,13 @@ bool Refresh() {
 }
 
 bool AllBound() {
-    for (size_t i = 0; i < g_n; ++i)
+    for (size_t i = 0; i < g_placed; ++i)
         if (g_eid[i] == 0u) return false;
     return true;
 }
 
 bool AllClosed() {
-    for (size_t i = 0; i < g_n; ++i)
+    for (size_t i = 0; i < g_placed; ++i)
         if (PD::ContextOf(g_box[i].Get(), g_eid[i]).open) return false;
     return true;
 }
@@ -142,7 +154,7 @@ bool AllClosed() {
 // Every box has stood still for `ticks` ticks (each box's own count advances every call).
 bool AllStable(int ticks) {
     bool all = true;
-    for (size_t i = 0; i < g_n; ++i) {
+    for (size_t i = 0; i < g_placed; ++i) {
         FVector at{};
         void* b = g_box[i].Get();
         const bool stable = E::TryGetActorLocation(b, at) && DG::Stable(g_rest[i], at, DG::Quiet(b), ticks);
@@ -152,7 +164,7 @@ bool AllStable(int ticks) {
 }
 
 void RestartRest() {
-    for (size_t i = 0; i < g_n; ++i) DG::Restart(g_rest[i]);
+    for (size_t i = 0; i < g_placed; ++i) DG::Restart(g_rest[i]);
 }
 
 float NearestBoxCm(const FVector& from) {
@@ -171,6 +183,64 @@ bool TiedPair(size_t k) {
     for (size_t j = 0; j < m; ++j)
         if (tied[j] == g_box[k + 1].Get()) return true;
     return false;
+}
+
+// A live object read from an object field of `obj` by reflection; null when the field or the object is not there.
+void* ObjectField(void* obj, const wchar_t* name) {
+    if (!obj || !SR::PlausibleObjPtr(obj) || !R::IsLive(obj)) return nullptr;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(obj), name);
+    if (off < 0) return nullptr;
+    void* p = nullptr;
+    std::memcpy(&p, static_cast<const uint8_t*>(obj) + off, sizeof(p));
+    return p && SR::PlausibleObjPtr(p) && R::IsLive(p) ? p : nullptr;
+}
+
+std::string NameField(void* obj, const wchar_t* name) {
+    if (!obj || !SR::PlausibleObjPtr(obj) || !R::IsLive(obj)) return "gone";
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(obj), name);
+    if (off < 0) return "no field";
+    const std::wstring w = SR::ReadFNameAt(obj, off);
+    return w.empty() ? std::string("None") : coop::text::ToUtf8Exact(w);
+}
+
+std::string BoxName(void* actor) {
+    if (!actor) return "none";
+    for (size_t i = 0; i < g_placed; ++i)
+        if (g_box[i].Get() == actor) return std::string("box ") + Letter(i);
+    return "other " + coop::text::ToUtf8Exact(R::ClassNameOf(actor));
+}
+
+// The nail's real ends as its own fields hold them: each end's actor (which box, its class) and the key the nail recorded.
+std::string NailEnds(void* nail) {
+    void* a = ObjectField(nail, L"actor_A");
+    void* b = ObjectField(nail, L"actor_B");
+    char buf[400];
+    std::snprintf(buf, sizeof(buf), "real ends actor_A=%s (%s, key %s) actor_B=%s (%s, key %s)", BoxName(a).c_str(),
+                  a ? coop::text::ToUtf8Exact(R::ClassNameOf(a)).c_str() : "null", NameField(nail, L"actor_A_key").c_str(),
+                  BoxName(b).c_str(), b ? coop::text::ToUtf8Exact(R::ClassNameOf(b)).c_str() : "null",
+                  NameField(nail, L"actor_B_key").c_str());
+    return buf;
+}
+
+// The partners the tie index holds for box `k` now, by name.
+void SayTies(size_t k, const char* when) {
+    void* tied[32];
+    const size_t m = coop::constraint_ties::TiesOf(g_box[k].Get(), tied, 32);
+    std::string list;
+    for (size_t j = 0; j < m; ++j) list += (j ? ", " : "") + BoxName(tied[j]);
+    UE_LOGI("%s ties of box %c %s: %zu partner(s): %s", kLog, Letter(k), when, m, m ? list.c_str() : "none");
+}
+
+// Box `g_placed` stands next, one step along from box A, over the floor and lifted so it falls to rest. False says INVALID.
+bool PlaceNext() {
+    const size_t k = g_placed;
+    void* b = E::SpawnActor(g_boxCls, FVector{g_ax + static_cast<float>(k) * g_stepCm, g_spot.Y, g_spot.Z + kLiftCm});
+    if (!b) { Invalid('H', "box %c did not spawn", Letter(k)); return false; }
+    g_box[k].Set(b);
+    g_placed = k + 1;
+    UE_LOGI("%s box %c placed %.1f cm centre to centre from box %c (%.0f cm between faces)", kLog, Letter(k),
+            static_cast<double>(g_stepCm), Letter(k - 1), static_cast<double>(kPropGapCm));
+    return true;
 }
 
 void StepWaitPeer(coop::net::Session& s) {
@@ -198,30 +268,32 @@ void StepWaitPeer(coop::net::Session& s) {
     g_nailCls = ue_wrap::asset_load::LoadObjectByPath(kNailPath);
     if (!g_boxCls || !g_nailCls) { Invalid('H', "a class did not load (box=%d nail=%d)", g_boxCls ? 1 : 0, g_nailCls ? 1 : 0); return; }
     // The footprint is cleared for the step's bound; the boxes stand kPropGapCm apart as a nailed pair's do (MakePair of the
-    // building probe), so each nail reaches its two neighbours. Box A fixes the step by its own width.
-    const float ax = g_spot.X - static_cast<float>(g_n - 1) * kStepCm * 0.5f;
-    void* first = E::SpawnActor(g_boxCls, FVector{ax, g_spot.Y, g_spot.Z + kLiftCm});
+    // building probe). Box A fixes the step by its own width. A chain stands one box at a time (StepPlace), each nailed from
+    // its outer side before the next stands; c2's pair stands whole and is nailed from A's outer side.
+    g_ax = g_spot.X - static_cast<float>(g_n - 1) * kStepCm * 0.5f;
+    void* first = E::SpawnActor(g_boxCls, FVector{g_ax, g_spot.Y, g_spot.Z + kLiftCm});
     if (!first) { Invalid('H', "box %c did not spawn", Letter(0)); return; }
     g_box[0].Set(first);
+    g_placed = 1;
     FVector origin{}, ext{};
     if (!E::GetActorBounds(first, true, origin, ext) || !(ext.X > 1.f) || 2.f * ext.X + kPropGapCm > kStepCm) {
         Invalid('H', "a box's width (half extent %.1f cm) does not fit the %.0f cm footprint step", static_cast<double>(ext.X),
                 static_cast<double>(kStepCm));
         return;
     }
-    const float step = 2.f * ext.X + kPropGapCm;
-    for (size_t i = 1; i < g_n; ++i) {
-        void* b = E::SpawnActor(g_boxCls, FVector{ax + static_cast<float>(i) * step, g_spot.Y, g_spot.Z + kLiftCm});
-        if (!b) { Invalid('H', "box %c did not spawn", Letter(i)); return; }
-        g_box[i].Set(b);
-    }
-    UE_LOGI("%s spawned %zu boxes %.1f cm centre to centre (%.0f cm between faces) over the floor (%.0f, %.0f, %.0f), %.0f cm from slot "
-            "%d's puppet", kLog, g_n, static_cast<double>(step), static_cast<double>(kPropGapCm), static_cast<double>(g_spot.X),
-            static_cast<double>(g_spot.Y), static_cast<double>(g_spot.Z), static_cast<double>(DG::Dist(g_spot, at)), slot);
+    g_stepCm = 2.f * ext.X + kPropGapCm;
+    g_nailed = 0;
+    if (ArmOf() == Arm::C2 && !PlaceNext()) return;
+    UE_LOGI("%s box A stands; the chain's %zu boxes are %.1f cm centre to centre (%.0f cm between faces) over the floor "
+            "(%.0f, %.0f, %.0f), %.0f cm from slot %d's puppet", kLog, g_n, static_cast<double>(g_stepCm),
+            static_cast<double>(kPropGapCm), static_cast<double>(g_spot.X), static_cast<double>(g_spot.Y),
+            static_cast<double>(g_spot.Z), static_cast<double>(DG::Dist(g_spot, at)), slot);
     RestartRest();
     To(Step::Bind);
 }
 
+// The boxes standing are bound and at rest with their drives closed: the next box of a chain stands, or the newest box is
+// nailed to the one before it.
 void StepBind() {
     if (!Refresh()) return;
     const bool stable = AllStable(kQuietTicks);
@@ -230,15 +302,26 @@ void StepBind() {
         if (Expired()) InvalidWaiting("every box's element id and rest");
         return;
     }
-    g_nailed = 0;
-    To(Step::Nail);
+    To(g_nailed + 1 < g_placed ? Step::Nail : Step::Place);
 }
 
+void StepPlace() {
+    if (!PlaceNext()) return;
+    RestartRest();
+    To(Step::Bind);
+}
+
+// The nail goes in from the outer side of the box that stands last, where no box stands yet, through it and into the box
+// before it. c2's pair is nailed from A's outer side through A into B.
 void StepNail() {
     char label[8];
     std::snprintf(label, sizeof(label), "J%zu", g_nailed);
+    const size_t first = ArmOf() == Arm::C2 ? 0 : g_placed - 1;
+    const size_t second = ArmOf() == Arm::C2 ? 1 : g_placed - 2;
     void* nail = nullptr;
-    if (!NA::NailThePair(g_voice, "cj", label, g_nailCls, g_box[g_nailed].Get(), g_box[g_nailed + 1].Get(), nail)) return;
+    if (!NA::NailThePair(g_voice, "cj", label, g_nailCls, g_box[first].Get(), g_box[second].Get(), nail)) return;
+    SayTies(first, "after nailNail");
+    SayTies(second, "after nailNail");
     RestartRest();
     To(Step::NailWait);
 }
@@ -251,9 +334,10 @@ void StepNailWait() {
         if (Expired()) InvalidWaiting("the set's rest after the nail");
         return;
     }
+    SayTies(g_nailed + 1, "once the set rests");
     RestartRest();
     g_driveFree = 0;
-    To(++g_nailed < g_n - 1 ? Step::Nail : Step::Drain);
+    To(++g_nailed < g_n - 1 ? Step::Place : Step::Drain);
 }
 
 // The nails' own settling is over: no drive open on any box for kDriveFreeTicks in a row, all still. The tie index must hold
@@ -492,6 +576,7 @@ void Tick(coop::net::Session& s) {
     switch (g_step) {
     case Step::WaitPeer:   StepWaitPeer(s); return;
     case Step::Bind:       StepBind(); return;
+    case Step::Place:      StepPlace(); return;
     case Step::Nail:       StepNail(); return;
     case Step::NailWait:   StepNailWait(); return;
     case Step::Drain:      StepDrain(); return;
@@ -512,6 +597,8 @@ void Reset() {
     g_stepMs = 0;
     g_slot = 0;
     g_n = 0;
+    g_placed = 0;
+    g_ax = g_stepCm = 0.f;
     g_boxCls = g_nailCls = nullptr;
     g_spot = {};
     for (size_t i = 0; i < kMaxBoxes; ++i) {
