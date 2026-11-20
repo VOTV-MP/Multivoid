@@ -155,7 +155,7 @@ bool ProgressAchievement(const wchar_t* name, bool autosave) {
     void* p = Profile();
     if (!p || g_progressMissing) return false;
     if (!g_progressFn) {
-        g_progressFn = R::FindFunction(R::ClassOf(p), L"progressAchievement");
+        g_progressFn = R::FindDispatchFunction(R::ClassOf(p), L"progressAchievement", nullptr);
         if (!g_progressFn) {
             g_progressMissing = true;
             UE_LOGW("profile: save_main_C has no progressAchievement -- an achievement cannot progress");

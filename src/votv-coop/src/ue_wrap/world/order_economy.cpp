@@ -457,7 +457,7 @@ int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames) {
     void* laptop = ReadPtr(gm, g_offLaptop);
     if (!laptop) return 0;
 
-    void* fn = R::FindFunction(R::ClassOf(laptop), L"addStoreCart");
+    void* fn = R::FindDispatchFunction(R::ClassOf(laptop), L"addStoreCart", nullptr);
     if (!fn) { UE_LOGW("order_economy: RestoreCartItems -- addStoreCart not found"); return 0; }
 
     // The native takes the struct BY VALUE, and its declared size is the STRUCT size (0x4D), not the

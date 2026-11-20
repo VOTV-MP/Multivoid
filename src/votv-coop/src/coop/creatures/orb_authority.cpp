@@ -90,7 +90,7 @@ bool BeganAlready(void* orb) {
 }
 
 bool CallBegin(void* orb) {
-    void* fn = R::FindFunction(R::ClassOf(orb), L"begin");
+    void* fn = R::FindDispatchFunction(R::ClassOf(orb), L"begin", nullptr);
     return fn && R::CallFunction(orb, fn, nullptr);
 }
 

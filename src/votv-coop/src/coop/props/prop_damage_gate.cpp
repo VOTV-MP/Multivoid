@@ -216,7 +216,7 @@ void ReplayAtGrant(void* actor) {
     coop::prop_throw::DeferredBreak b;
     if (!coop::prop_throw::TakeBreak(actor, &b)) return;
     void* const comp = b.comp.Alive() ? b.comp.Get() : nullptr;
-    void* const fn = comp ? R::FindFunction(R::ClassOf(comp), L"impactDamage") : nullptr;
+    void* const fn = comp ? R::FindDispatchFunction(R::ClassOf(comp), L"impactDamage", nullptr) : nullptr;
     ue_wrap::ParamFrame f(fn);
     if (!fn || !f.valid()) {
         UE_LOGW("prop_damage_gate: the held impactDamage cannot replay -- its component is gone or has no such function");

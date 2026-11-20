@@ -231,7 +231,7 @@ bool EnsureGrabStateResolved(void* localPlayer) {
     if (lagOff >= 0 && (!lagComp || !R::IsLive(lagComp))) return false;
     int32_t heldByte = -1, ctrlYawByte = -1, pawnCtrlByte = -1;
     uint8_t heldMask = 0, ctrlYawMask = 0, pawnCtrlMask = 0;
-    void* setMoveMode = R::FindFunction(R::ClassOf(cmc), L"SetMovementMode");
+    void* setMoveMode = R::FindDispatchFunction(R::ClassOf(cmc), L"SetMovementMode", nullptr);
     if (lagOff < 0 ||
         !R::FindBoolProperty(cls, L"held", heldByte, heldMask) ||
         !R::FindBoolProperty(cls, L"bUseControllerRotationYaw", ctrlYawByte, ctrlYawMask) ||

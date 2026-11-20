@@ -24,7 +24,7 @@ void* ResolveVerb(void*& outGm) {
     outGm = world_singleton::Gamemode();
     if (!outGm) return nullptr;
     if (!g_fn) {
-        g_fn = R::FindFunction(R::ClassOf(outGm), L"getObjectFromKey");
+        g_fn = R::FindDispatchFunction(R::ClassOf(outGm), L"getObjectFromKey", nullptr);
         if (!g_fn) {
             static bool sSaid = false;
             if (!sSaid) {

@@ -142,7 +142,7 @@ int32_t GiOffset(const wchar_t* name) {
 }
 
 void Teleport(void* player, const ue_wrap::FVector& at) {
-    void* f = player ? R::FindFunction(R::ClassOf(player), L"teleportWObackrooms") : nullptr;
+    void* f = player ? R::FindDispatchFunction(R::ClassOf(player), L"teleportWObackrooms", nullptr) : nullptr;
     ue_wrap::ParamFrame pf(f);
     ue_wrap::FTransform t{};
     t.TX = at.X; t.TY = at.Y; t.TZ = at.Z;

@@ -314,7 +314,7 @@ void RunMidas() {
         UE_LOGW("ufo_sync: CLIENT the Midas run found no UFO keyed midasufo");
         return;
     }
-    ue_wrap::ParamFrame f(R::FindFunction(R::ClassOf(midas), L"runTrigger"));
+    ue_wrap::ParamFrame f(R::FindDispatchFunction(R::ClassOf(midas), L"runTrigger", nullptr));
     bool ran = false;
     if (f.valid()) {
         f.Set<int32_t>(L"index", 0);

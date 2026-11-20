@@ -548,7 +548,7 @@ bool ReturnToMainMenu() {
         UE_LOGW("engine: ReturnToMainMenu -- no live mainGamemode_C");
         return false;
     }
-    void* fn = R::FindFunction(R::ClassOf(gm), P::name::MainGamemodeTransitionFn);
+    void* fn = R::FindDispatchFunction(R::ClassOf(gm), P::name::MainGamemodeTransitionFn, nullptr);
     if (!fn) {
         UE_LOGW("engine: ReturnToMainMenu -- mainGamemode_C::transition UFunction not resolved");
         return false;

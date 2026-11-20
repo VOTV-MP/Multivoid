@@ -357,7 +357,7 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
                 senderSlot, p.elementId, R::ClassNameOf(coin).c_str());
         return;
     }
-    if (!g_actionOptFn) g_actionOptFn = R::FindFunction(R::ClassOf(coin), kVerbNameCollect);
+    if (!g_actionOptFn) g_actionOptFn = R::FindDispatchFunction(R::ClassOf(coin), kVerbNameCollect, nullptr);
     if (!g_actionOptFn) {
         UE_LOGE("coingun[host collect]: slot=%u eid=%u -- baocoin_C::actionOptionIndex unresolved, "
                 "cannot perform the collect", senderSlot, p.elementId);

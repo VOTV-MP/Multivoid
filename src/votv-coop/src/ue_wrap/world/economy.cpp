@@ -66,7 +66,7 @@ bool WritePoints(int32_t value) {
 bool AddPoints(int32_t amount) {
     void* gm = world_singleton::Gamemode();
     if (!gm) return false;
-    void* fn = R::FindFunction(R::ClassOf(gm), L"AddPoints");
+    void* fn = R::FindDispatchFunction(R::ClassOf(gm), L"AddPoints", nullptr);
     if (!fn) {
         UE_LOGW("economy: AddPoints UFunction not found on mainGamemode");
         return false;
