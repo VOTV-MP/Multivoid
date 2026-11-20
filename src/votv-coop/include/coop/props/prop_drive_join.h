@@ -14,13 +14,14 @@
 
 namespace coop::prop_drive_join {
 
-// AUTHORITY: one author per element, as MTA syncs each unoccupied element by its own syncer (reference/mtasa-blue/Server/
-// mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:476-509). The host streams every joined member while a carrying client
-// streams the leader by its hand. That holds because the constraint lives on the host alone: P2.3b, which gives a client a
-// copy of the nail, must decide it again, since the client-hand Owe would then put two simulators on a member.
-// Divergences from MTA's trailer link: the link is learned from an event (the engine's constraint call), not re-read each
-// sync pulse (Client/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:289-291, 359-363); and no link travels on the wire
-// (Server/mods/deathmatch/logic/CMapManager.cpp:308-312 sends a joiner each link; a joiner here is sent the rows).
+// AUTHORITY: one author per element, as MTA syncs each unoccupied element by its own syncer
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:476-509). The host streams every joined
+// member while a carrying client streams the leader by its hand. That holds because the constraint lives on the host alone:
+// P2.3b, which gives a client a copy of the nail, must decide it again, since the client-hand Owe would then put two
+// simulators on a member. Divergences from MTA's trailer link: it is learned from an event (the engine's constraint call),
+// not re-read each sync pulse (reference/mtasa-blue/Client/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:289-291,
+// 359-363); and no link travels on the wire (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:308-312
+// sends a joiner each link; a joiner here is sent the rows).
 
 // HOST: `leader` is driven or held; its tied props join its drive. Queued only, so no walk and no row opens inside the
 // caller. A no-op off the host, for a null actor and for one already queued. `why` names the cause for the log.
