@@ -633,14 +633,15 @@ void RemotePlayer::ApplyToEngine() {
         // lib step still runs its trace, water and friction side effects.
         const bool crouched = (curStateBits_ & coop::net::kStateBitCrouched) != 0;
         if (footsteps_.StepDue(curPos_, curSpeed_, !inAir, crouched)) {
+            // A step whose ground trace finds nothing is silent. The trace's hit is read back and said only under
+            // step_ground_log: the first step, every 25th and every 25th miss, a line no normal run carries.
+            static const bool sayGround = coop::config::ResolveFlag(coop::config_registry::rows::step_ground_log);
             bool ground = false;
             ue_wrap::votv_lib::CharacterStep(
                 actor_, coop::skin_effects::DefaultStepVolume(
-                            actor_, coop::puppet_footsteps::Stride::kStepVolume), &ground);
-            // A step whose trace found no ground is silent. The first step, every 25th and every 25th miss are said.
-            const bool sayMiss = !ground && (stepMisses_++ % 25) == 0;
+                            actor_, coop::puppet_footsteps::Stride::kStepVolume), sayGround ? &ground : nullptr);
             const bool sayStep = (stepsPlayed_++ % 25) == 0;
-            if (sayMiss || sayStep)
+            if (sayGround && ((!ground && (stepMisses_++ % 25) == 0) || sayStep))
                 UE_LOGI("puppet_footsteps: slot %u stepped at (%.0f,%.0f,%.0f), ground %s (%u steps, %u silent)",
                         static_cast<unsigned>(slot_), curPos_.X, curPos_.Y, curPos_.Z, ground ? "hit" : "missed",
                         stepsPlayed_, stepMisses_);
