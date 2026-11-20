@@ -86,7 +86,9 @@ bool IsDriven(void* actor);
 using EndListener = void (*)(uint32_t eid, uint32_t gen);
 void SetEndListener(EndListener fn);
 
-// The sites that send such an End say so here, once per close: the listener, when set, is called. Game thread.
+// The sites that send such an End say so here, once per close: first the join serves the owed members of that row
+// (prop_drive_join::OnRowEnded, which may open rows: the table keeps references, prop_drive_rows.h), then the listener, when
+// set, is called. Game thread.
 void NoteEndSent(uint32_t eid, uint32_t gen);
 
 // The cause of the HOST-authored coast row open on element `eid` right now; false when no such row is open (none, or a

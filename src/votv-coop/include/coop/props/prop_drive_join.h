@@ -36,7 +36,7 @@ void Tick();
 
 // HOST: a row's End has just gone to the clients (prop_drive_host's NoteEndSent, before the dev End listener). Each member
 // owed to that element as its leader is read for sleep now and, asleep, given its row at once (past the cap, ended by the
-// rest rule at its next probe); an awake one stays owed. No-op off the host and with nothing owed. Game thread.
+// rest rule once it rests); an awake one stays owed. No-op off the host and with nothing owed. Game thread.
 void OnRowEnded(uint32_t eid);
 
 // Session end: the owed lists and counters.

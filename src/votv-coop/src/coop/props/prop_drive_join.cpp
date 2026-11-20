@@ -129,7 +129,7 @@ void Walk(const Leader& l) {
 }
 
 // The owed members: dropped when they died, got a row or were taken by a hand; the oldest opened while a slot is free; and
-// any whose body reads asleep opened past the cap, which the drive's rest rule ends on its next probe.
+// any whose body reads asleep opened past the cap, which the drive's rest rule ends once it rests.
 void ServeOwed() {
     for (size_t i = 0; i < g_owed.size();) {
         void* a = g_owed[i].ref.Get();
@@ -192,14 +192,20 @@ void Owe(void* leader, const char* why) {
     g_leaders.push_back(l);
 }
 
-// The leader's End is the island's announced rest, so its owed members are read there, not on their own phase.
+// The leader's End is the island's announced rest, so its owed members are read there, not on their own phase. The opens
+// are not spaced like ServeOwed's: a member left owed past its leader's End is what this exists to prevent. Their number is
+// bounded by the walk that owed them (kWalkCap), once per take.
 void OnRowEnded(uint32_t eid) {
     if (g_owed.empty() || eid == 0u || !coop::roster::LocalIsHost()) return;
     UE_ASSERT_GAME_THREAD("prop_drive_join::OnRowEnded");
     for (size_t i = 0; i < g_owed.size();) {
+        if (g_owed[i].leaderEid != eid || g_owed[i].tick == g_tick) {
+            ++i;   // not this leader's, or owed in this very tick (a body that never woke reads asleep: ServeOwed decides it)
+            continue;
+        }
         void* a = g_owed[i].ref.Get();
-        if (g_owed[i].leaderEid != eid || !a || PD::IsDriven(a) || PD::InAHand(a) || !PD::BodyAsleepForEnd(a)) {
-            ++i;   // not this leader's, or gone, driven or held (ServeOwed drops it), or awake (ServeOwed serves it)
+        if (!a || PD::IsDriven(a) || PD::InAHand(a) || !PD::BodyAsleepForEnd(a)) {
+            ++i;   // gone, driven or held (ServeOwed drops it), or awake (ServeOwed serves it)
             continue;
         }
         const Owed o = g_owed[i];
