@@ -47,7 +47,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::DeskShortRequest:
     case ReliableKind::ContainerBreakRequest:
     case ReliableKind::MinerIntent:
-    case ReliableKind::DingusFound:       // op 0 a client's report; op 1 is the host's, its handler checks the slot
+    case ReliableKind::DingusReport:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
     case ReliableKind::LightState:
@@ -288,6 +288,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::UfoEvent:
     case ReliableKind::CheatResult:
     case ReliableKind::PryState:
+    case ReliableKind::DingusFound:
         return ClientAuthorship::Host;
     }
     return ClientAuthorship::NotAKind;  // a value that names no kind: refused like Host

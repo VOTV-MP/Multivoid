@@ -81,7 +81,7 @@ void OnDisconnect() {
     COOP_CLEANUP_STEP("disconnect", coop::prop_pry_host::OnDisconnect());  // the host's pry counters (a sender's queue goes with its slot)
     COOP_CLEANUP_STEP("disconnect", coop::roomba_sync::OnDisconnect());  // the cleaners known, the presses and states queued
     COOP_CLEANUP_STEP("disconnect", coop::fireext_thrust_sync::OnDisconnect());  // the thrusting extinguishers it held
-    COOP_CLEANUP_STEP("disconnect", coop::dingus_sync::OnDisconnect());  // the found set
+    COOP_CLEANUP_STEP("disconnect", coop::dingus_sync::OnDisconnect());  // the found set, the births queued, the judge's budgets and tallies
     COOP_CLEANUP_STEP("disconnect", coop::glowstick_sync::OnDisconnect());
     COOP_CLEANUP_STEP("disconnect", coop::prop_save_data::OnDisconnect());
     COOP_CLEANUP_STEP("disconnect", coop::props::container_contents_sync::OnDisconnect());  // dirty set + retry + parked + assembler

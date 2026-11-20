@@ -1564,10 +1564,17 @@ enum class ReliableKind : uint16_t {
     // rig's record from a client is judged by the record lane's own gate (miner_sync). Never relayed. MinerPayload.
     MinerIntent = 248,
 
-    // The dingus found (coop/props/dingus_sync): a client's report of one it found, to the host (op 0), and the host's
-    // word that one is found, to every client and to a joiner (op 1); each peer marks its copies under the key found and
-    // turns their music off. Not pre-world. DingusFoundPayload.
+    // HOST->ALL: a dingus is found (coop/props/dingus_sync): its save key, to every world-ready client, the finder
+    // included (the finder's own set is written only by this message), and to a joiner inside its snapshot. A receiver adds
+    // the key to its found set and marks its live copy under it found; a copy bound later is marked at its bind. Never
+    // relayed; not pre-world. Late join: the host sends every key of its set. DingusFoundPayload.
     DingusFound = 280,
+
+    // CLIENT->HOST: a dingus this client found on its own copy (its `touch` ran), by save key. The host judges the
+    // sender (world-ready, alive, a budget, in reach of a live dingus copy under that key); an accepted report becomes
+    // the host's own DingusFound, a refused one is counted and said on the host and gets no answer. Never relayed; not
+    // pre-world. Late join: none, a report carries no state. DingusReportPayload.
+    DingusReport = 281,
 };
 
 #pragma pack(push, 1)
@@ -3077,15 +3084,17 @@ struct CheatResultPayload {
 };
 static_assert(sizeof(CheatResultPayload) == 8, "CheatResultPayload must be 8 bytes");
 
-// DingusFound. A dingus is named by its save key, which it keeps through the inventory.
-inline constexpr uint8_t kDingusFoundReport = 0;   // CLIENT->HOST: this peer's copy of it was found
-inline constexpr uint8_t kDingusFoundHost   = 1;   // HOST->ALL: it is found
+// DingusFound and DingusReport. A dingus is named by its save key, which it keeps through the inventory. A key on the wire is
+// 1..31 printable ASCII characters (0x21..0x7E); a receiver refuses any other.
 struct DingusFoundPayload {
-    WireKey key;     // 32 -- the dingus's save key
-    uint8_t op;      // 1 -- kDingusFound*
-    uint8_t pad[3];  // 3 -- zero
+    WireKey key;     // 32 -- the found dingus's save key
 };
-static_assert(sizeof(DingusFoundPayload) == 36, "DingusFoundPayload must be 36 bytes");
+static_assert(sizeof(DingusFoundPayload) == 32, "DingusFoundPayload must be 32 bytes");
+
+struct DingusReportPayload {
+    WireKey key;     // 32 -- the save key of the dingus this client's touch found
+};
+static_assert(sizeof(DingusReportPayload) == 32, "DingusReportPayload must be 32 bytes");
 
 // A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
 // closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element

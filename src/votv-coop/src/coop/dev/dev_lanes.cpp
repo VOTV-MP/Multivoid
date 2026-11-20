@@ -137,7 +137,7 @@
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/deskaudio_probe.h"   // [dev] the signal desk's sound components: spatial or not
 #include "coop/dev/vent_probe.h"   // [dev] a crouched player's steps counted on the other peer
-#include "coop/dev/dingus_probe.h"   // [dev] the dingus found, pocketed and dropped, its music logged on every peer
+#include "coop/dev/dingus_drill.h"   // [dev] the dingus drill: a dingus found on one peer is found on every peer
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
 #include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
 #include "coop/dev/miner_drill.h"  // [dev] the mining rig drill: use, claim, record and join, judged by the host
@@ -330,6 +330,7 @@ void EndSession() {
     coop::dev::grime_drill::OnDisconnect();  // [dev] the decals and the phase belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
+    coop::dev::dingus_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::miner_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::body_push_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
@@ -493,7 +494,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::pi2_selftest::Tick(&session);  // [dev] the puppet-identity substrate's selftest, once (latched read when off)
     coop::dev::pi3_drill::Tick(&session);  // [dev] the puppet-identity verb drill (a latched read when off)
     coop::dev::deskaudio_probe::Tick(&session);  // [dev] the desk's sound components (a latched read when off)
-    coop::dev::dingus_probe::Tick(&session);  // [dev] the dingus (a latched read when off)
+    coop::dev::dingus_drill::Tick(&session);  // [dev] the dingus drill (a latched enum read when off)
     coop::dev::sleep_speedup_drill::Tick(&session);  // [dev] whose sleep speeds the world up (a latched read when off)
     coop::dev::vent_probe::Tick(&session);  // [dev] the vent crawl drill (a latched read when off)
     coop::dev::miner_drill::Tick(&session);  // [dev] the mining rig drill (a latched enum read when off)

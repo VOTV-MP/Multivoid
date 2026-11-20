@@ -37,7 +37,8 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "ignite_not_ready|ignite_flood|"
     "atv_state_forge|atv_seat_forge|atv_takeover_forge|atv_explode_forge|"
     "cord_malformed|cord_bad_op|cord_reach|cord_flood|cord_dead_sender|"
-    "coffee_malformed|coffee_wrong_class|coffee_reach|coffee_flood|coffee_forged_record|coffee_dead_sender",
+    "coffee_malformed|coffee_wrong_class|coffee_reach|coffee_flood|coffee_forged_record|coffee_dead_sender|"
+    "dingus_report",
     "VOTVCOOP_HOSTILE_DRILL",
     "Receive-boundary drill (BOTH peers). signal_park: a client floods refused saved-signal rows "
     "(size 0, so the game's own gate rejects each) and the host must keep them from filling the apply "
@@ -112,6 +113,10 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "coffee_forged_record (the client's record of the host's maker with hasCup set: refused, nothing published) and "
     "coffee_dead_sender (a well-formed press sent while the client's own player is dead: refused as dead); the "
     "host judges by the coffee lane's counters, every message one outcome. "
+    "dingus_report: the host's judge of a client's found report refuses a key that is empty or longer than the wire, a "
+    "payload of the wrong length, a plain prop's key and a dingus out of reach, counts each under its own reason and "
+    "keeps the found set as it was; a client sends all of them in one tick, 13 messages, and the host judges by the "
+    "dingus lane's counters, every message one outcome. "
     "Drill only.")
 
 // The act drill: an honest client takes and uses shared props through the real verbs, and the host judges what it

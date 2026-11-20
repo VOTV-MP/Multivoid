@@ -71,6 +71,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/hostile_drill_coffee.cpp
     src/coop/dev/hostile_drill_coffee_client.cpp
     src/coop/dev/hostile_drill_coffee_host.cpp
+    src/coop/dev/hostile_drill_dingus.cpp
+    src/coop/dev/hostile_drill_dingus_client.cpp
+    src/coop/dev/hostile_drill_dingus_host.cpp
     src/coop/dev/hostile_drill_atv.cpp
     src/coop/dev/hostile_drill_atv_client.cpp
     src/coop/dev/hostile_drill_atv_host.cpp
@@ -419,7 +422,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/native_spawn_probe.cpp
     src/coop/dev/deskaudio_probe.cpp
     src/coop/dev/drive_box_drill.cpp
-    src/coop/dev/dingus_probe.cpp
+    src/coop/dev/dingus_drill.cpp
+    src/coop/dev/dingus_drill_host.cpp
+    src/coop/dev/dingus_drill_client.cpp
     src/coop/dev/hand_record_drill.cpp
     src/coop/dev/hand_record_drill_can.cpp
     src/coop/dev/hand_record_drill_display.cpp

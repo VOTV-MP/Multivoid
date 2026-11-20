@@ -422,6 +422,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"prop_cookingfood_c", L"receivetick", L"prop_cookingfood_c.receivetick", 0x6082ffdfa2cda429ull, 0x183bc8011f0a52b2ull},
     {L"prop_crematorfireball_c", L"receivebeginplay", L"prop_crematorfireball_c.receivebeginplay", 0x6a2d5d90ab51fa2dull, 0xd57628cf825413fdull},
     {L"prop_dingus_c", L"receivetick", L"prop_dingus_c.receivetick", 0x6082ffdfa2cda429ull, 0xa93acfb0de953f1aull},
+    {L"prop_dingus_c", L"touch", L"prop_dingus_c.touch", 0x6a2d5d90ab51fa2dull, 0x5b1df84134d153eeull},
     {L"prop_drive_c", L"upd", L"prop_drive_c.upd", 0x6a2d5d90ab51fa2dull, 0x9e2f304a0a94ae72ull},
     {L"prop_driverack_c", L"receiveactorbeginoverlap", L"prop_driverack_c.receiveactorbeginoverlap", 0x21b3fbf6adea9c01ull, 0x1cd7c6591b6ae3dcull},
     {L"prop_fireext_c", L"fire", L"prop_fireext_c.fire", 0x3055fa9b5b48a959ull, 0x3dc203adbbae28e3ull},

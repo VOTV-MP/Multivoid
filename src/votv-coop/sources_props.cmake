@@ -24,6 +24,7 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/fireext_sync.cpp
     src/coop/props/fireext_runaway_ask.cpp
     src/coop/props/dingus_sync.cpp
+    src/coop/props/dingus_judge.cpp
     src/coop/props/grab_observer.cpp
     src/coop/props/prop_sound.cpp
     src/coop/props/prop_echo_suppress.cpp

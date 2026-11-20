@@ -119,6 +119,10 @@ DriveView ViewOf(uint32_t eid);
 void NoteMerged(uint32_t eid);
 // Rows of `eid` that reached the receive store this session: against the view's rows it tells coalescing from loss.
 uint32_t MergedOf(uint32_t eid);
+// True while this peer holds a closed generation of `eid` (an End applied, yielded or closed here), with it in `gen`. A newer
+// generation's first pose erases it and its End writes it again, so a drill that read (closed, gen) at an edge and sees the
+// pair change to a closed one of another generation knows a drive began after that edge and ended. Writes nothing. Game thread.
+bool ClosedGen(uint32_t eid, uint8_t& gen);
 }  // namespace dev
 
 }  // namespace coop::prop_drive_stream

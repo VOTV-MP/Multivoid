@@ -233,6 +233,7 @@ void InstallLoadWatchers(coop::net::Session& session) {
     coop::trash_native_hold::Install(&session);  // the join load's clumps held still at their spawn: a catch installed with the world would arm after the load
     coop::sus_hole_intent::Install(&session);  // the sus hole spawner's holes stamped at their birth, a client's roll sent to the host, from the load window on
     coop::walker_lanes::Install(session);  // the walking mannequin: a client's copy never thinks, the host claims it and answers its gaze, a client's gaze goes to the host
+    coop::dingus_sync::Install(&session);  // the dingus found: the watch on its touch, and the host's birth subscription ahead of the census seed
     coop::atv_gate::Install(&session);  // an ATV's acts at their own functions, from the load window on
 }
 
@@ -378,7 +379,6 @@ void Install(coop::net::Session& session) {
     coop::save_block::Install(&session);
     // Grey out the client pause menu's Save button; a no-op on the host.
     coop::save_button_disable::Install(&session);
-    coop::dingus_sync::Install(&session);  // the dingus found: the host's set, every copy under it quiet
     coop::save_notice::Install(&session);  // the host's world saves: a chat line on every peer, the save animation on a client
     // The shutdown install and the window title are called from the boot timeline directly, not
     // here: they must work before the local player is possessed, since a player may close the
@@ -650,7 +650,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // the server boxes: the watches settled, then the HOST's 1 Hz poll -> broadcast on change
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server_upgrade"}; coop::server_upgrade_sync::Tick(); }  // a parked canonical, applied once the servers resolve
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); coop::mirror_slot_entry::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim; the mirror entry's watches settle
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); coop::dingus_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
@@ -670,6 +670,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:cover"}; coop::cover_sync::Tick(); }  // the host's asks and fresh plate prop, the client's put-back touch
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:fireext"}; coop::fireext_sync::Tick(); }  // the host's sprays' counts, every peer's rays and display of the other players' sprays
     coop::miner_sync::Tick();  // the host's owed states, the client's waiting ones
+    coop::dingus_sync::Tick();  // the class table and the watch's settle; the host's dingus births read (a read of one atomic while none is queued)
     coop::plant_sync::Tick();  // the plants' poll
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)

@@ -353,3 +353,9 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
 - **A drive box across a pocket** ([#198](https://github.com/VOTV-MP/Multivoid/pull/198)): a client's pocketed box came back empty on the
   host. Kept as written: the host remembers a gone box's rows by its key and writes them back. On top: only a box a client placed
   gets them (a new box reusing the key keeps its own), the tables end with their world, the record holds 16 rows, and drills with reds.
+
+- **A dingus found by anyone is quiet for everyone** ([#181](https://github.com/VOTV-MP/Multivoid/pull/181)): a dingus found by one player kept playing its music on the
+  other screens, and a found one carried and dropped played again. Kept as written: his two commits, renumbered to this tree's
+  build. On top: the find is caught as the game makes it instead of scanned twice a second; a client's report is judged by the host
+  (its reach, a budget, a live dingus) and told to everyone; a copy born later, or loaded found from a save, is marked as it appears;
+  drills with reds, and a hostile arm that forges reports.

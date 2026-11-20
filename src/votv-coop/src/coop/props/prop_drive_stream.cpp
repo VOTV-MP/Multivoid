@@ -655,6 +655,14 @@ uint32_t MergedOf(uint32_t eid) {
     return it == g_merged.end() ? 0u : it->second;
 }
 
+bool ClosedGen(uint32_t eid, uint8_t& gen) {
+    UE_ASSERT_GAME_THREAD("prop_drive_stream::dev::ClosedGen");
+    const auto it = g_endedGen.find(eid);
+    if (it == g_endedGen.end()) return false;
+    gen = it->second;
+    return true;
+}
+
 }  // namespace dev
 
 }  // namespace coop::prop_drive_stream

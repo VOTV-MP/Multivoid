@@ -150,3 +150,18 @@ CFG_FLAG(miner_refund_off, "miner_refund_off", "dev", false, "VOTVCOOP_MINER_REF
 CFG_FLAG(miner_snapshot_off, "miner_snapshot_off", "dev", false, "VOTVCOOP_MINER_SNAPSHOT_OFF",
     "Developer red arm of the mining rig drill (host): never set. The host sends a joiner no rig's state at its ready edge "
     "(it says \"snapshot withheld\"), so the joiner's copy keeps what its record carried and the drill must say FAIL at it.")
+CFG_ENUM(dingus_drill, "dingus_drill", "dev", "off", "off|find|pocket|loaded|join", "VOTVCOOP_DINGUS_DRILL",
+    "Drill (BOTH peers): a dingus (Maxwell) found on one peer is found on every peer, each arm ending on rig: VERDICT dingus "
+    "PASS, FAIL or INVALID, said by the host. find: the client grabs a dingus and the host's copy is found, then the host grabs "
+    "one and the client's copy is found. pocket: the client grabs a dingus, lets go, holds it and drops it, and the host's copy "
+    "born from the drop is found; the host then holds that copy and drops it, and the client's mirror of the host's drop is "
+    "found at its bind, its set holding the key only from the host's word; the host does the same with a dingus of its own and "
+    "the client's mirror of its drop is found. loaded: a dingus the host's world loads found, held and dropped by the client with no grab, is "
+    "found on the host's copy born from the drop. join: a dingus the host found before the client joined, held and dropped by "
+    "the host after the join, is found on the joiner's mirror at its bind (the rig's client-after is the host's \"join dingus "
+    "found\" line).")
+CFG_ENUM(dingus_red, "dingus_red", "dev", "off", "off|report|broadcast|birth_mark|bind_mark|birth_seed|snapshot", "VOTVCOOP_DINGUS_RED",
+    "Developer red arm of the dingus drill (both peers): never set. Each value withholds one effect of the lane, so the arm that "
+    "judges it must say FAIL. report: a client sends no report of its find. broadcast: the host sends no DingusFound for a find "
+    "made now. birth_mark: the host does not mark a copy born under a found key. bind_mark: a client does not mark a copy it binds "
+    "under a found key. birth_seed: the host's birth drain ignores a copy born found. snapshot: the host sends a joiner no key.")
