@@ -219,6 +219,10 @@ void HitActor() {
     const SR::Counts after = SR::GetCounts();
     UE_LOGI("%sclient 1: swing %d (ran=%d, hit=%d)", kHead, g_tries, ran ? 1 : 0, hit ? 1 : 0);
     // The sound plays inside the swing, so what the hook did with it is decided when the swing returns.
+    if (after.notReadyHere > before.notReadyHere) {
+        Decide(RV::Outcome::Invalid, "client 1's sound table was not built when its hit played: nothing could be sent");
+        return;
+    }
     if (after.notCatalogued > before.notCatalogued) {
         Decide(RV::Outcome::Fail, "client 1's hit played a sound the table does not hold for a melee hit");
         return;
@@ -242,7 +246,11 @@ void HitHost() {
     const SR::Counts c = SR::GetCounts();
     for (int i = 0; i < static_cast<int>(SR::Refusal::kCount); ++i)
         if (c.refused[i]) {
-            Decide(RV::Outcome::Fail, "the host refused an honest melee hit as '%s'", SR::RefusalName(static_cast<SR::Refusal>(i)));
+            const SR::Refusal why = static_cast<SR::Refusal>(i);
+            if (why == SR::Refusal::NotReady || why == SR::Refusal::NoBody)
+                Decide(RV::Outcome::Invalid, "the host could not judge the hit: '%s'", SR::RefusalName(why));
+            else
+                Decide(RV::Outcome::Fail, "the host refused an honest melee hit as '%s'", SR::RefusalName(why));
             return;
         }
     std::string heard;
@@ -277,6 +285,10 @@ void KnockHost() {
         const bool ran = f.valid() && ue_wrap::Call(kocker, f);
         const SR::Counts after = SR::GetCounts();
         UE_LOGI("%sthe host: the knocker's knock %d (ran=%d)", kHead, g_tries, ran ? 1 : 0);
+        if (after.notReadyHere > before.notReadyHere) {
+            Decide(RV::Outcome::Invalid, "the host's sound table was not built when the knock played: nothing could be sent");
+            return;
+        }
         if (after.notCatalogued > before.notCatalogued) {
             Decide(RV::Outcome::Fail, "the knock played a sound the table does not hold for the knocker");
             return;

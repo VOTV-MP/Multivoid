@@ -39,6 +39,7 @@ struct Counts {
     uint32_t playedHere = 0;      // a catalogued sound the game played here for a listed caller
     uint32_t sent = 0;            // of those, sent
     uint32_t notCatalogued = 0;   // a listed caller's sound the table does not hold for that caller
+    uint32_t notReadyHere = 0;    // a listed caller's sound this peer's table was not built for: nothing sent
     uint32_t played = 0;          // a peer's sound played here
     uint16_t lastPlayedHere = 0;  // the index of the last of the first
     uint16_t lastPlayed = 0;      // the index of the last of the fourth

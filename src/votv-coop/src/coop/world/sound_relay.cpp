@@ -68,7 +68,9 @@ bool g_installFailed = false;
 bool g_armed = false;
 int32_t g_offSound = -1, g_offLoc = -1, g_offVol = -1, g_offPitch = -1;
 void* g_callerFn[kCallerCount] = {};
+std::unordered_set<void*> g_notCaller;   // functions judged not to be a listed caller
 bool g_cancelSaid[kCallerCount] = {};
+bool g_notReadySaid = false;
 Counts g_counts;
 uint64_t g_nextRefusalSayMs[static_cast<int>(Refusal::kCount)] = {};
 std::unordered_set<std::wstring> g_uncataloguedSaid;
@@ -91,20 +93,23 @@ void* Asset(const wchar_t* path) {
 }
 
 // The listed caller's index, or -1.
+// Every Blueprint's PlaySoundAtLocation reaches the hook, so a function judged not to be a listed caller is remembered: a
+// later call from it costs a hash lookup, not the name renders.
 int CallerIndex(void* caller) {
     if (!caller) return -1;
+    for (int i = 0; i < kCallerCount; ++i)
+        if (g_callerFn[i] == caller) return i;
+    if (g_notCaller.count(caller)) return -1;
+    void* const owner = R::OuterOf(caller);
     for (int i = 0; i < kCallerCount; ++i) {
-        if (g_callerFn[i]) {
-            if (g_callerFn[i] == caller) return i;
-            continue;
-        }
-        void* const owner = R::OuterOf(caller);
+        if (g_callerFn[i]) continue;
         if (owner && R::NameEquals(R::NameOf(caller), kCallers[i].fn) && R::NameEquals(R::NameOf(owner), kCallers[i].cls)) {
             g_callerFn[i] = caller;
             UE_LOGI("sound_relay: %ls::%ls's sounds are relayed", kCallers[i].cls, kCallers[i].fn);
             return i;
         }
     }
+    g_notCaller.insert(caller);
     return -1;
 }
 
@@ -141,7 +146,11 @@ Verdict OnPlaySoundAtPre(void* /*context*/, void* source, const uint8_t* parms) 
     if (!sound) return Verdict::Run;
     // Until this peer's table is built it sends nothing (the next sound tries again), and says so once.
     if (!C::Ready()) {
-        Refuse(0, Refusal::NotReady, 0);
+        ++g_counts.notReadyHere;
+        if (!g_notReadySaid) {
+            g_notReadySaid = true;
+            UE_LOGI("sound_relay: catalogue not ready -- this peer sends no sound until its table builds (said once)");
+        }
         return Verdict::Run;
     }
     const std::wstring path = ue_wrap::object_path::Of(sound);
