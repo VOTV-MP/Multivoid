@@ -157,8 +157,9 @@ void* ClassForByte(uint8_t byte) {
     ue_wrap::ParamFrame f(g_physModToActorFn);
     if (!f.valid()) return nullptr;  // transient -- do NOT negative-cache
     f.Set<uint8_t>(L"physmod", byte);
-    // The returned class is taken as loaded, since the game's own function names it; the item-spawn drill's last leg lists it per byte. A null
-    // answer is cached as unmapped, and the refunds that spawn this class (physmods, the ATV fit) would lose the module.
+    // The returned class is taken as loaded, since the game's own function names it; the item-spawn drill's last leg
+    // lists it per byte. A null answer is cached as unmapped, and the refunds that spawn this class (physmods, the
+    // ATV fit) would lose the module.
     // __WorldContext: the lib CDO itself suffices for a pure class-map call
     // (the function only reads a static mapping -- bytecode-verified no world use
     // beyond the K2 boilerplate; passing the CDO matches the votv_lib pattern).

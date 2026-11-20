@@ -271,7 +271,8 @@ AP::Wheel WheelOf(const coop::net::AtvPartIntentPayload& p) {
 // The wheel a refused fit or stow took out of the sender's hand, born again beside the sender.
 bool Refund(uint8_t slot, const coop::net::AtvPartIntentPayload& p) {
     ue_wrap::FVector at{};
-    if (!AP::Resolve() || !SpotBesideSender(slot, at)) return false;
+    // No Resolve here: SpawnWheel loads the wheel's class and resolves, which a host that never held a wheel needs.
+    if (!SpotBesideSender(slot, at)) return false;
     void* part = AP::SpawnWheel(at, WheelOf(p));
     if (part) ++g_stats.refunded;
     return part != nullptr;

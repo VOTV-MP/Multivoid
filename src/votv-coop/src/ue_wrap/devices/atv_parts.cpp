@@ -24,8 +24,7 @@ void* g_fnUnscrewPanel = nullptr;
 void* g_fnGetUnscrewSpawn = nullptr;
 void* g_fnResetUnscrew = nullptr;
 
-// prop_atvWheel_C, an import of ATV_C: held through a CachedObjRef, which a world's end empties, so the next read finds
-// the class again.
+// prop_atvWheel_C, an import of ATV_C: held through a CachedObjRef, which finds the class again once its slot dies.
 constexpr wchar_t kWheelClass[] = L"prop_atvWheel_C";
 CachedObjRef g_wheelCls;
 int32_t g_offWheelDur = -1, g_offWheelDirt = -1, g_offWheelFixes = -1;
@@ -55,15 +54,18 @@ void StampWheel(void* ctx, void* actor) {
 
 }  // namespace
 
-bool Resolve() {
+namespace {
+
+// `loadWheel` loads the wheel's class when this process has not (only the host's refund needs that); otherwise the
+// class is the object index's answer and a missing one is asked for again.
+bool ResolveImpl(bool loadWheel) {
     if (g_resolved) return true;
     if (g_tried) return false;
     // A class not loaded yet is asked for again; a loaded one that lacks a member will not grow it.
     void* atv = ue_wrap::object_index::ClassByName(L"ATV_C");
     if (!atv) return false;
-    // The wheel's class is loaded when this process has not: a refund spawns a wheel that the host never held.
-    if (!g_wheelCls.Alive()) g_wheelCls.Set(ue_wrap::item_spawn::LoadedClass(kWheelClass));
-    void* const wheelCls = g_wheelCls.Raw();
+    if (loadWheel && !g_wheelCls.Alive()) g_wheelCls.Set(ue_wrap::item_spawn::LoadedClass(kWheelClass));
+    void* const wheelCls = WheelClass();
     if (!wheelCls) return false;
     g_tried = true;
     g_offLookTire      = R::FindPropertyOffset(atv, L"lookAtTire");
@@ -85,6 +87,10 @@ bool Resolve() {
                 "work stays local this session", atvOk ? 1 : 0, partsOk ? 1 : 0);
     return g_resolved;
 }
+
+}  // namespace
+
+bool Resolve() { return ResolveImpl(false); }
 
 bool ReadLook(void* atv, Look& out) {
     if (!g_resolved || !atv) return false;
@@ -130,7 +136,9 @@ bool ResetUnscrew(void* atv) {
 }
 
 void* SpawnWheel(const FVector& at, const Wheel& w) {
-    if (!g_resolved) return nullptr;
+    // The refund spawns a wheel the host may never have held, so its class is loaded here, and Resolve is finished
+    // with it; a client's hooks only look the class up.
+    if (!g_resolved && !ResolveImpl(true)) return nullptr;
     Wheel copy = w;
     return ue_wrap::item_spawn::Spawn(kWheelClass, at, &StampWheel, &copy);
 }

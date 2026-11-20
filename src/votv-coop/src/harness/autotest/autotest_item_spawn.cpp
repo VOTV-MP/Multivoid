@@ -6,7 +6,7 @@
 // upgrade, the mining rig's GPU and cooler, the ATV's battery and wheel) and, for each one whose class is NOT in this
 // world yet (read from the object index and the whole-array lookup right before the spawn), spawns it in front of the
 // host's player. The item must stand, a live actor of that class, and is destroyed at once. The first one lost is
-// `rig: VERDICT item-spawn FAIL`, said at once with no later site run. PASS when at least one class was absent and every
+// `rig: VERDICT item-spawn FAIL`, said at once with no later site run. PASS when at least one class was absent and each
 // absent one stood; INVALID when the host has no body, or every class the sites name is loaded already.
 // The pack's bag and the cover plate's prop are read in the code only (their spawns need a pile and a desk). A last leg
 // lists the module bytes the game maps to a class and FAILs on a byte the desk takes that maps to none. Fresh world.
@@ -70,10 +70,8 @@ void* SpawnBattery(const ue_wrap::FVector& at) {
     return ue_wrap::atv::SpawnBattery(at, {}, {1.f, 1.f, 1.f}, 1, kBatteryCharge);
 }
 
-// The wheel is made by the ATV part verb, whose Resolve loads the class; it needs an ATV in the world.
-void* SpawnWheel(const ue_wrap::FVector& at) {
-    return ue_wrap::atv_parts::Resolve() ? ue_wrap::atv_parts::SpawnWheel(at, ue_wrap::atv_parts::Wheel{}) : nullptr;
-}
+// The wheel is made by the ATV part verb, which loads the class and resolves; it needs an ATV in the world.
+void* SpawnWheel(const ue_wrap::FVector& at) { return ue_wrap::atv_parts::SpawnWheel(at, ue_wrap::atv_parts::Wheel{}); }
 
 // One spawn site: what it is, the class its verb names, the class it needs in the world to be reachable (null: none),
 // and the verb itself.
@@ -191,7 +189,7 @@ void RunHost() {
     if (r.noBody) {
         RV::Say(kTag, RV::Outcome::Invalid, "the host has no body to spawn in front of");
     } else if (r.lost) {
-        RV::Say(kTag, RV::Outcome::Fail, "%s (%ls) was lost: its class was not loaded here and the spawn did not load it",
+        RV::Say(kTag, RV::Outcome::Fail, "%s (%ls) was lost: its class was not loaded and the spawn did not load it",
                 r.lost->what, r.lost->cls);
     } else if (r.moduleLostByte >= 0) {
         RV::Say(kTag, RV::Outcome::Fail, "module byte %d is one the desk takes and the game maps it to no class",

@@ -21,9 +21,9 @@ namespace R  = ue_wrap::reflection;
 namespace SD = ue_wrap::signal_dynamic;
 using Clock = std::chrono::steady_clock;
 
-// ---- class-level resolves (persist across level reloads) ----
+// ---- class-level resolves (persist across level reloads; g_slotCls and the verbs below stay static pointers) ----
 void*   g_slotCls = nullptr;      // driveSlot_C
-CachedObjRef g_driveCls;         // prop_drive_C, found again after a world reload (DriveCls)
+CachedObjRef g_driveCls;         // prop_drive_C, found again by DriveCls once its slot dies
 
 int32_t g_offSlotDrive = -1;        // driveSlot_C::drive
 int32_t g_offSlotDetached = -1;     // driveSlot_C::isRecentlyDetached (plain EX_Let bool)

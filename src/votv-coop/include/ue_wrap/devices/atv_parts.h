@@ -33,8 +33,8 @@ struct Wheel {
 };
 
 // Resolve the look fields and the three verbs on ATV_C and the wheel class with its scalars.
-// One attempt once ATV_C is loaded; the wheel's class is loaded when this process has not (actors/item_spawn). True only
-// when everything resolved.
+// One attempt once ATV_C and the wheel class are both loaded (a lookup only, so a client's hook never blocks on a
+// load); true only when everything resolved.
 bool Resolve();
 
 // The look fields of `atv`. False when unresolved or null.
@@ -54,7 +54,8 @@ bool RunUnscrew(void* atv, int tire);
 // The ATV's own resetUnscrew: its progress widget, its timer and its held player let go.
 bool ResetUnscrew(void* atv);
 
-// A wheel prop spawned at `at` with its scalars written before its init pass. Null when unresolved or
+// A wheel prop spawned at `at` with its scalars written before its init pass. The wheel class is loaded here when this
+// process has not (the host's refund), and Resolve is finished with it. Null when it does not resolve or
 // the spawn failed.
 void* SpawnWheel(const FVector& at, const Wheel& w);
 
