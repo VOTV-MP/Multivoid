@@ -33,6 +33,7 @@ struct Driven {
     bool                  unreadSaid = false;  // the unreadable-location line went out for this row
     bool                  dead     = false;  // closed this tick; erased after the pass
     CoastCause            cause    = CoastCause::Verb;   // who asked for this coast (a host row opened by Coast)
+    uint32_t              leaderEid = 0;     // a Joined row: the element id of the prop whose drive it joined
     ue_wrap::FVector      sentLoc{};
     ue_wrap::FRotator     sentRot{};
     uint64_t              openMs      = 0;   // when the row opened: the host's rows count their sendTimeMs from here

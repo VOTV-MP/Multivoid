@@ -114,6 +114,13 @@ size_t PublishAdmitted(coop::net::Session& s, Driven& d) {
     return turn == coop::net::PoseTurn::Join ? 1 : 0;
 }
 
+// A joined row's leader, by the element id the row stored, is in a hand now (this host's, or a client's by its hold).
+bool LeaderInAHand(const Driven& d) {
+    if (d.leaderEid == 0u) return false;
+    void* leader = coop::remote_prop::ResolveLiveActorByEid(d.leaderEid);
+    return leader && InAHand(leader);
+}
+
 // How a coast's cause reads in the open row's log line. A joined row's own reason already names it (`joined eid=<leader>`).
 const char* CauseSuffix(CoastCause cause) {
     switch (cause) {
@@ -313,7 +320,9 @@ bool CoastJoined(void* actor, uint32_t leaderEid, bool overCap, const char* why)
     if (!overCap && !JoinSlotFree()) return false;
     char reason[96];
     std::snprintf(reason, sizeof(reason), "joined eid=%u, %s", static_cast<unsigned>(leaderEid), why ? why : "");
-    return Open(actor, /*claimed=*/false, reason, /*syncer=*/0, CoastCause::Joined) != nullptr;
+    Driven* d = Open(actor, /*claimed=*/false, reason, /*syncer=*/0, CoastCause::Joined);
+    if (d) d->leaderEid = leaderEid;
+    return d != nullptr;
 }
 
 bool JoinSlotFree() {
@@ -549,6 +558,12 @@ static void Tick(coop::net::Session& s) {
             continue;
         }
         if (now - d.lastMoveMs >= kRestMs) {
+            // A joined row outlives a still moment while its leader is in a hand: the constraint drags it again the moment
+            // the hand moves. When the leader is let go its own row and join take over, and this row rests by the rule below.
+            if (!d.claimed && d.cause == CoastCause::Joined && LeaderInAHand(d)) {
+                d.nextProbeMs = now + kRestProbeMs;
+                continue;
+            }
             // A coast ends when the body has stood still AND is asleep, as a client author's does (prop_syncer_client
             // StepSyncing): a body that keeps creeping keeps streaming. An unread pose still ends at the last pose sent.
             if (!d.claimed && poseRead && !BodyAsleepForEnd(actor)) {
