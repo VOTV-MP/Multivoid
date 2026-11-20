@@ -295,7 +295,8 @@ save object, addressed by an index the container holds, and every mutating verb 
 two dispatch seams a hook can intercept. The script-body gate does see it -- that is how this lane learns a container
 changed -- but it runs on the presser's own machine, and no local body can wait for an answer from across the network. So
 the host publishes the contents (`coop/props/container_contents_sync`): one slice of its array per live container is
-sent at a joiner's ready edge and on change, and a client's mirror is display only. A client's only slice is a thrown
+sent at a joiner's ready edge and on change, and a client's mirror is display only. A slice past the chunk ceiling
+(about 56 KB: a storage holding a full box) crosses deflated (`coop/net/blob_chunks`). A client's only slice is a thrown
 container's birth, bounded by its arrival rate; the host refuses every other client slice and answers the author with
 its own truth (`coop/props/container_truth`). A change a client makes to a shared container is an act the host judges,
 and an extraction on a client is a container-extract birth through the intent door above. The game arms a container's
