@@ -69,6 +69,8 @@ bool Moved(const Driven& d, const ue_wrap::FVector& loc, const ue_wrap::FRotator
     return coop::prop_drive_rules::MovedPastEps(loc, rot, d.sentLoc, d.sentRot);
 }
 
+EndListener g_endListener = nullptr;   // [dev] a drill's, told at each End sent
+
 void SendEnd(coop::net::Session& s, const Driven& d, void* actor, const ue_wrap::FVector& loc,
              const ue_wrap::FRotator& rot, const char* why) {
     float lin = 0.f;
@@ -77,6 +79,7 @@ void SendEnd(coop::net::Session& s, const Driven& d, void* actor, const ue_wrap:
     UE_LOGI("[PROP-DRIVE] HOST END eid=%u gen=%u %s -> (%.1f,%.1f,%.1f) |v|=%.1f cm/s flags=0x%02x",
             d.eid, static_cast<unsigned>(d.gen), why, loc.X, loc.Y, loc.Z, lin,
             static_cast<unsigned>(p.physFlags));
+    if (g_endListener) g_endListener(d.eid, d.gen);
 }
 
 // A client row's turn: the last pose admitted from its syncer goes out at the row's generation when it is new
@@ -354,6 +357,11 @@ bool BodyAsleepForEnd(void* actor) {
 bool IsDriven(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drive_host::IsDriven");
     return actor && Find(actor) != nullptr;
+}
+
+void SetEndListener(EndListener fn) {
+    UE_ASSERT_GAME_THREAD("prop_drive_host::SetEndListener");
+    g_endListener = fn;
 }
 
 bool OpenCoastCause(uint32_t eid, CoastCause& out) {

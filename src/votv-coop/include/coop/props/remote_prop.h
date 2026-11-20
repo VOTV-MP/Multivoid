@@ -41,6 +41,12 @@ void Tick(coop::net::Session& session);
 // when it arrived.
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer, bool replayed = false);
 
+// [dev] A function told, on the host, when a client's release has been matched to its prop and before the host's copy is
+// written: the prop's element id and the sender's slot. A drill judges in it where it polled a hand. One pointer, null by
+// default; a null clears it. Game thread.
+using ReleaseListener = void (*)(uint32_t eid, uint8_t slot);
+void SetReleaseListener(ReleaseListener fn);
+
 // Close hold `holdGen` of the peer in `slot` (PropPoseSnapshot::holdGen): a pose of it that
 // arrives later is the tail of an ended stream and starts no drive. The release closes its own
 // hold, the stick lane the hold its stick ended, a slot's insert the hold on the drive it took,

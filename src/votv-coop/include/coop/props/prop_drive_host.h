@@ -79,6 +79,12 @@ bool JoinSlotFree();
 // A row of any author is open on `actor` right now. Game thread.
 bool IsDriven(void* actor);
 
+// [dev] A function told at each End this host sends for a row of its own (the reliable PropDriveEnd that closes the row's
+// stream), with the row's element id and generation: a drill judges in it where it polled the table. One pointer, null by
+// default; a null clears it. Game thread.
+using EndListener = void (*)(uint32_t eid, uint32_t gen);
+void SetEndListener(EndListener fn);
+
 // The cause of the HOST-authored coast row open on element `eid` right now; false when no such row is open (none, or a
 // client's). For a drill that asks who flew a prop. Game thread.
 bool OpenCoastCause(uint32_t eid, CoastCause& out);

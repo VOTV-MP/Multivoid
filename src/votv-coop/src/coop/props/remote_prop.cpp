@@ -73,6 +73,7 @@ namespace R = ue_wrap::reflection;
 uint32_t g_throwReleases = 0, g_whooshes = 0;
 uint32_t g_releaseLaunches = 0;   // throw releases whose velocity was applied to a simulating copy
 float    g_lastReleaseLaunch = 0.f;
+ReleaseListener g_releaseListener = nullptr;   // [dev] a drill's, told at a client's release on the host
 namespace E = ue_wrap::engine;
 
 // ActiveDrive, BeginLerpToPose, AdvanceLerp, ResetDriveState, LerpAngle, NowMs and the lerp
@@ -198,6 +199,11 @@ void Tick(coop::net::Session& session) {
     }
 }
 
+void SetReleaseListener(ReleaseListener fn) {
+    UE_ASSERT_GAME_THREAD("remote_prop::SetReleaseListener");
+    g_releaseListener = fn;
+}
+
 void CloseHold(int slot, uint16_t holdGen) {
     UE_ASSERT_GAME_THREAD("g_holds (remote_prop::CloseHold)");
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || holdGen == 0) return;
@@ -292,6 +298,13 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // started on THIS prop. The hold gate outlives the drive's reset and records the prop beside the generation, so a
     // hold of one prop does not vouch for a release of another. A release with no pose at all passes neither test.
     const bool lastHolder = releasedSlot >= 0 || HoldDroveProp(senderSlot, payload.holdGen, payload.key, payload.elementId);
+    // [dev] A drill's witness of a client's release reaching the host, before the copy is written (and before the let-go's
+    // own coast opens a row).
+    if (g_releaseListener && propActor && senderSlot >= 1 && coop::prop_element_tracker::SessionIsHost()) {
+        const coop::element::ElementId heldEid = coop::element::Registry::Get().EidForActor(propActor);
+        if (heldEid != coop::element::kInvalidId && heldEid != 0u)
+            g_releaseListener(static_cast<uint32_t>(heldEid), static_cast<uint8_t>(senderSlot));
+    }
     void* thrownActor = nullptr;   // set where the release simulates the copy: the one branch an election follows
     // Someone else moves the prop -- this peer's own player, another slot's drive, the host's
     // driven-prop channel parking it: that owner has its physics and its flags, and this release

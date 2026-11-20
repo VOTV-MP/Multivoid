@@ -17,6 +17,7 @@
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/remote_prop.h"
 #include "coop/save/join_window_baseline.h"
 
 #include "ue_wrap/core/asset_load.h"
@@ -86,10 +87,9 @@ CarryAct   g_carry;
 bool       g_carryDone = false;
 SetInfo    g_set;
 
-// What the host reads of the carry, tick by tick (Observe).
-bool       g_taken = false, g_letGo = false, g_leaderOpened = false, g_judged = false, g_capHit = false;
-bool       g_prevOpen[kMaxBoxes] = {};
-uint8_t    g_heldGen[kMaxBoxes] = {};      // each box's generation at the last tick the leader was still in a hand
+// What the host learns of the carry, by event: each box's row End (OnEnd), a client's release of box A (OnRelease), and the
+// end of the host's own carry.
+bool       g_letGo = false, g_judged = false, g_capHit = false;
 uint64_t   g_endMs[kMaxBoxes] = {};        // when each box's row last closed
 uint64_t   g_phaseMs = 0;
 
@@ -313,13 +313,37 @@ void SayFinals() {
     }
 }
 
+void ClearListeners() {
+    PD::SetEndListener(nullptr);
+    coop::remote_prop::SetReleaseListener(nullptr);
+}
+
+// A box's row ended on the host: its End time is kept, and the leader's End after the let-go decides the members.
+void OnEnd(uint32_t eid, uint32_t gen);
+// A client's release of box A reached the host (c2): the let-go leg's verdict.
+void OnRelease(uint32_t eid, uint8_t slot);
+
 void StepAnnounce() {
     g_set = SetInfo{};
     g_set.n = g_n;
     for (size_t i = 0; i < g_n; ++i) g_set.eid[i] = g_eid[i];
     E::TryGetActorLocation(g_box[0].Get(), g_set.a);
+    // c2: the host's body must stand more than kAwayCm from every box when the client takes box A, or a body's push of its
+    // own would give B a row. The host stands still from here to the client's release.
+    if (ArmOf() == Arm::C2) {
+        void* host = coop::players::Registry::Get().Local();
+        FVector me{};
+        if (!host || !E::TryGetActorLocation(host, me)) { Wait('H', "the host's pawn"); return; }
+        const float away = NearestBoxCm(me);
+        if (away <= kAwayCm) {
+            Invalid('H', "the host's body stood %.0f cm from the set when the client was told to take box A, within %.0f cm",
+                    static_cast<double>(away), static_cast<double>(kAwayCm));
+            return;
+        }
+    }
     DC::Say(ReadyLine(g_set));
-    for (size_t i = 0; i < g_n; ++i) g_prevOpen[i] = PD::ContextOf(g_box[i].Get(), g_eid[i]).open;
+    PD::SetEndListener(&OnEnd);
+    if (ArmOf() == Arm::C2) coop::remote_prop::SetReleaseListener(&OnRelease);
     if (ArmOf() != Arm::C2) g_carry.Begin(g_box[0].Get(), FVector{-1.f, 0.f, 0.f}, 'H');
     else g_carryDone = true;
     g_phaseMs = coop::net::NowMs();
@@ -338,82 +362,74 @@ bool Judge(const char* leg, const char* since, const uint8_t* gens) {
     return true;
 }
 
-// The host's reads of the drive table, every tick from the ready line: the leader's hand (the take, the let-go), each box's
-// row closing (an End), and the join cap.
-void Observe() {
-    const uint64_t now = coop::net::NowMs();
-    void* a = g_box[0].Get();
-    bool open[kMaxBoxes];
-    uint8_t gen[kMaxBoxes];
+// Each box's drive generation now: a read made at an event, never per tick.
+void ReadGens(uint8_t* gens) {
+    for (size_t i = 0; i < g_n; ++i) gens[i] = PD::ContextOf(g_box[i].Get(), g_eid[i]).gen;
+}
+
+// prop_drive_host's End listener: a row of the host closed. The leader's End after the let-go is the event that decides the
+// members, since the island sleeps as one and every member has ended or is about to.
+void OnEnd(uint32_t eid, uint32_t gen) {
+    if (Over() || (g_step != Step::Run && g_step != Step::Settle)) return;
     for (size_t i = 0; i < g_n; ++i) {
-        const PD::DriveContext c = PD::ContextOf(g_box[i].Get(), g_eid[i]);
-        open[i] = c.open;
-        gen[i] = c.gen;
-        if (g_prevOpen[i] && !c.open && g_taken) {
-            g_endMs[i] = now;
-            UE_LOGI("%s box %c's row closed (an End), generation %u", kLog, Letter(i), static_cast<unsigned>(c.gen));
-        }
-    }
-    const bool held = PD::InAHand(a);
-    if (!g_taken && held) {
-        g_taken = true;
-        g_phaseMs = now;
-        if (ArmOf() == Arm::C2) {
-            void* host = coop::players::Registry::Get().Local();
-            FVector me{};
-            if (!host || !E::TryGetActorLocation(host, me)) { Invalid('H', "the host's pawn could not be read at the client's take"); return; }
-            const float away = NearestBoxCm(me);
-            if (away <= kAwayCm) {
-                Invalid('H', "the host's body stood %.0f cm from the set at the client's take, within %.0f cm", static_cast<double>(away),
-                        static_cast<double>(kAwayCm));
-                return;
-            }
-        }
-        UE_LOGI("%s box A is taken (a hand holds it)", kLog);
-    }
-    if (g_taken && !g_judged) {
-        if (held) std::copy(gen, gen + g_n, g_heldGen);
-        // The cap was reached when a member stands with no row while no join slot is free (c3's precondition).
-        for (size_t i = 1; i < g_n && !g_capHit; ++i) {
-            void* b = g_box[i].Get();
-            if (!PD::IsDriven(b) && !PD::InAHand(b) && !PD::JoinSlotFree()) {
-                g_capHit = true;
-                UE_LOGI("%s the join cap is reached: box %c waits with no row and no join slot is free", kLog, Letter(i));
-            }
-        }
-    }
-    if (g_taken && !held && !g_letGo) {
-        g_letGo = true;
-        g_phaseMs = now;
-        UE_LOGI("%s box A is let go (the hand released it)", kLog);
-        // The leader's let-go row (and the join its own Owe owes) must not count: the check reads the last tick of the hold.
-        if (ArmOf() == Arm::C2 && !Judge("let-go", "the client's take", g_heldGen)) return;
-    }
-    if (g_letGo && open[0]) g_leaderOpened = true;
-    if (g_letGo && !g_judged && g_leaderOpened && g_prevOpen[0] && !open[0]) {
+        if (g_eid[i] != eid) continue;
+        g_endMs[i] = coop::net::NowMs();
+        UE_LOGI("%s box %c's row closed (an End), generation %u", kLog, Letter(i), static_cast<unsigned>(gen));
+        if (i != 0 || !g_letGo || g_judged) return;
         g_judged = true;
         UE_LOGI("%s the leader's row closed (its End): the members are judged", kLog);
         if (ArmOf() == Arm::C3 && !g_capHit) {
             Invalid('H', "the join cap was never reached: no member waited without a row while no join slot was free");
             return;
         }
-        Judge("leader-end", "the carry began", gen);
+        uint8_t gens[kMaxBoxes];
+        ReadGens(gens);
+        Judge("leader-end", "the carry began", gens);
+        return;
     }
-    for (size_t i = 0; i < g_n; ++i) g_prevOpen[i] = open[i];
+}
+
+// remote_prop's release listener (c2): the client let go of box A. Read before the host's own let-go row opens, so the
+// generations are those of the hold: a member without a row since the take is the missing hand edge.
+void OnRelease(uint32_t eid, uint8_t slot) {
+    if (Over() || g_step != Step::Run || g_letGo || eid != g_eid[0] || static_cast<int>(slot) != g_slot) return;
+    g_letGo = true;
+    g_phaseMs = coop::net::NowMs();
+    UE_LOGI("%s box A is let go (slot %u's release reached the host)", kLog, static_cast<unsigned>(slot));
+    uint8_t gens[kMaxBoxes];
+    ReadGens(gens);
+    Judge("let-go", "the client's take", gens);
+}
+
+// c3's precondition, said INVALID only (never a verdict): a member stands with no row while no join slot is free, which no
+// event announces; read each tick of the run in c3 alone.
+void NoteCapHit() {
+    for (size_t i = 1; i < g_n && !g_capHit; ++i) {
+        void* b = g_box[i].Get();
+        if (!PD::IsDriven(b) && !PD::InAHand(b) && !PD::JoinSlotFree()) {
+            g_capHit = true;
+            UE_LOGI("%s the join cap is reached: box %c waits with no row and no join slot is free", kLog, Letter(i));
+        }
+    }
 }
 
 void StepRun() {
     if (!Refresh()) return;
-    Observe();
     if (Over()) return;
-    if (!g_carryDone && g_carry.Tick() == CarryAct::Status::Done) g_carryDone = true;
+    if (!g_carryDone && g_carry.Tick() == CarryAct::Status::Done) {
+        g_carryDone = true;
+        g_letGo = true;   // the carry's own end is the host's let-go (c1, c3); c2's carry is the client's, told by its release
+        g_phaseMs = coop::net::NowMs();
+        UE_LOGI("%s box A is let go (the carry ended)", kLog);
+    }
     if (Over()) return;
+    if (ArmOf() == Arm::C3 && !g_capHit && !g_judged) NoteCapHit();
     if (g_judged) {
         RestartRest();
         To(Step::Settle);
         return;
     }
-    const char* what = g_letGo ? "the leader's End" : g_taken ? "the leader's let-go" : "the leader's take";
+    const char* what = g_letGo ? "the leader's End" : "the leader's let-go";
     Wait('H', "%s", what);
     if (PhaseExpired()) InvalidWaiting(what);
 }
@@ -437,6 +453,7 @@ void StepSettle() {
                 static_cast<unsigned long long>(hi - lo), static_cast<unsigned long long>(kSpreadBoundMs),
                 hi - lo <= kSpreadBoundMs ? "within it" : "beyond it");
     SayFinals();
+    ClearListeners();
     UE_LOGI("%s DONE: every member had a row; the final places are told to the client", kLog);
     To(ArmOf() == Arm::C2 ? Step::WaitLeave : Step::Done);
 }
@@ -494,8 +511,7 @@ void Reset() {
     for (size_t i = 0; i < kMaxBoxes; ++i) {
         g_box[i].Reset();
         g_eid[i] = 0;
-        g_gen0[i] = g_heldGen[i] = 0;
-        g_prevOpen[i] = false;
+        g_gen0[i] = 0;
         g_endMs[i] = 0;
         DG::Restart(g_rest[i]);
     }
@@ -507,7 +523,8 @@ void Reset() {
     g_carry.Reset();
     g_carryDone = false;
     g_set = SetInfo{};
-    g_taken = g_letGo = g_leaderOpened = g_judged = g_capHit = false;
+    g_letGo = g_judged = g_capHit = false;
+    ClearListeners();
     g_phaseMs = 0;
 }
 
