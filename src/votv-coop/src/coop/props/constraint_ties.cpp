@@ -5,9 +5,12 @@
 #include "coop/net/net_clock.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
@@ -19,6 +22,7 @@ namespace coop::constraint_ties {
 namespace {
 
 namespace R  = ue_wrap::reflection;
+namespace OI = ue_wrap::object_index;
 namespace UH = ue_wrap::ufunction_hook;
 namespace sg = ue_wrap::script_gate;
 
@@ -35,6 +39,7 @@ struct Tie {
 };
 std::unordered_map<void*, Tie> g_ties;   // by the constraint component's address
 size_t   g_sweepAt = 256;                // the size at which a new entry first drops the stale ones
+uint32_t g_seenGen = 0;                  // the world generation the by-name seed last ran for
 
 bool g_preOn = false;
 bool g_postOn = false;
@@ -94,6 +99,50 @@ void OnBreakPost(void* context, void* /*sourceObject*/, void* /*result*/) {
         if (fn) fn(context);
 }
 
+struct SeedCtx {
+    int32_t off1;
+    int32_t off2;
+    size_t  total;
+    size_t  seeded;
+};
+
+void SeedInstance(void* ctx, void* obj, int32_t) {
+    auto* s = static_cast<SeedCtx*>(ctx);
+    if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+    ++s->total;
+    if (g_ties.find(obj) != g_ties.end()) return;   // a call the seam saw wins over the level's names
+    void* a = nullptr;
+    void* b = nullptr;
+    std::memcpy(&a, static_cast<const uint8_t*>(obj) + s->off1, sizeof(a));
+    std::memcpy(&b, static_cast<const uint8_t*>(obj) + s->off2, sizeof(b));
+    if (!a || !b || a == b || !R::IsLive(a) || !R::IsLive(b)) return;
+    Tie& t = g_ties[obj];
+    t.constraint.Set(obj);
+    t.a.Set(a);
+    t.b.Set(b);
+    ++s->seeded;
+}
+
+// The first question after the world changed: the old world's entries go, and the constraints the level configures by name
+// (ConstraintActor1/2, no SetConstrainedComponents call) are read once. A walk of the live components at a join edge,
+// never per tick.
+void SeedIfWorldChanged() {
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen == g_seenGen) return;
+    g_seenGen = gen;
+    SweepStale();
+    void* cls = OI::ClassByName(L"PhysicsConstraintComponent");
+    SeedCtx s{cls ? R::FindPropertyOffset(cls, L"ConstraintActor1") : -1,
+              cls ? R::FindPropertyOffset(cls, L"ConstraintActor2") : -1, 0, 0};
+    if (!cls || s.off1 < 0 || s.off2 < 0) {
+        UE_LOGW("constraint_ties: world %u: the by-name constraints cannot be read (class %p, offsets %d/%d)", gen, cls,
+                s.off1, s.off2);
+        return;
+    }
+    OI::ForEachInstance(cls, &SeedInstance, &s);
+    UE_LOGI("constraint_ties: world %u: seeded %zu by name of %zu", gen, s.seeded, s.total);
+}
+
 }  // namespace
 
 void Install() {
@@ -125,6 +174,31 @@ void Install() {
         UE_LOGI("constraint_ties: seams live (SetConstrainedComponents pre, BreakConstraint post)");
     }
 }
+
+size_t TiesOf(void* actor, void** out, size_t cap) {
+    if (!actor || !out || cap == 0) return 0;
+    SeedIfWorldChanged();
+    size_t n = 0;
+    for (auto it = g_ties.begin(); it != g_ties.end();) {
+        Tie& t = it->second;
+        // Only an entry naming `actor` is read: a stale pointer that matches is validated by its own reference.
+        if (t.a.Raw() != actor && t.b.Raw() != actor) {
+            ++it;
+            continue;
+        }
+        void* a = t.a.Get();
+        void* b = t.b.Get();
+        if (!t.constraint.Get() || !a || !b) {
+            it = g_ties.erase(it);
+            continue;
+        }
+        if (n < cap) out[n++] = (a == actor) ? b : a;
+        ++it;
+    }
+    return n;
+}
+
+size_t Count() { return g_ties.size(); }
 
 bool AddBreakListener(BreakFn fn) {
     if (!fn) return false;

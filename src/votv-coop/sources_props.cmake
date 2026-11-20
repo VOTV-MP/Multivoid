@@ -27,6 +27,7 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/dingus_judge.cpp
     src/coop/props/grab_observer.cpp
     src/coop/props/constraint_ties.cpp
+    src/coop/props/prop_drive_join.cpp
     src/coop/props/prop_sound.cpp
     src/coop/props/prop_echo_suppress.cpp
     src/coop/props/pile_look.cpp

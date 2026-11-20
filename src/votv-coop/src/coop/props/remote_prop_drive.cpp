@@ -17,6 +17,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
+#include "coop/props/prop_drive_join.h"  // Owe: what a constraint ties to a prop a client takes joins the host's drive
 #include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_hold_claim.h"  // AdmitRemoteHold: one hold per keyed prop
@@ -310,6 +311,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         }
         if (pose.holdGen == 0 || hold.preludeGen != pose.holdGen) {
             hold.preludeGen = pose.holdGen;
+            coop::prop_drive_join::Owe(prop, "client hand");   // host only; once per take, the latch the prelude rides
             coop::glowstick_sync::OnHoldBegin(prop);   // a stuck glowstick's own grab frees it: its game runs releaseGlowstick
             const char* state = ue_wrap::prop::IsStatic(prop)   ? "static"
                                 : ue_wrap::prop::IsFrozen(prop) ? "frozen"

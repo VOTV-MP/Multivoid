@@ -21,6 +21,7 @@
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_drive_host.h"    // Coast: the host's own throw streams to rest
+#include "coop/props/prop_drive_join.h"    // Owe: what a constraint ties to a prop the host takes joins its drive
 #include "coop/props/prop_hold_claim.h"    // AdmitLocalGrab, IsOwnHoldRefused: one hold per keyed prop
 #include "coop/props/prop_syncer.h"        // Claim: a dragged swinger's parent prop
 #include "coop/props/prop_throw.h"        // ThrowSeqFor: a release of a prop the game's throw launched
@@ -531,6 +532,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
         // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
+            coop::prop_drive_join::Owe(heldActor, "host hand");  // host only; once per take
             // A swinger let go and still coasting (or held) when another item is taken: its release goes
             // out now, with its own hold's generation, key and eid, before this edge replaces them.
             if (g_heldSwinger && g_lastHeldProp.Raw()) SendHeldRelease(session);

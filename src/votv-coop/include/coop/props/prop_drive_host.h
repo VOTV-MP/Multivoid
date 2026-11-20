@@ -56,8 +56,9 @@ void Release(void* actor);
 // it (the row becomes the host's). A BodyPush is a body that walked into the prop: it opens a row only where none stands,
 // since a row already streaming the prop (a let-go's, a verb's, a client's) is its source and re-times itself by its own
 // moves. A LetGo is a hand's plain release (CoastLetGo): it takes a client's row as a Verb does, and is its own cause so a
-// drill can tell it from a body's push.
-enum class CoastCause : uint8_t { Verb, LetGo, BodyPush };
+// drill can tell it from a body's push. A Joined row is a prop a constraint ties to a driven one (coop/props/prop_drive_join),
+// opened by CoastJoined and by no caller of Coast.
+enum class CoastCause : uint8_t { Verb, LetGo, BodyPush, Joined };
 
 // An instant push moved `actor`: stream it, coasting, until it rests. A prop a verb has claimed
 // stays claimed, and one already coasting starts its rest clock again; the refusals are Claim's.
@@ -65,6 +66,15 @@ enum class CoastCause : uint8_t { Verb, LetGo, BodyPush };
 // a host row; false for a refusal, for a BodyPush on a prop any row already streams, and for a row a client syncs that a
 // BodyPush leaves alone. Game thread.
 bool Coast(void* actor, const char* reason, CoastCause cause = CoastCause::Verb);
+
+// A prop a constraint ties to the driven prop with element id `leaderEid` gets a coasting row (CoastCause::Joined), logged
+// `joined eid=<leaderEid>, <why>`. Refused as Coast's opening is (no element id, in a hand, a class no peer holds) and
+// when JoinSlotFree says no, unless `overCap`: an owed member whose body sleeps, whose row the rest rule ends on its next
+// probe. True when a row was opened; false for a prop that already has a row, which it leaves as it is. Game thread.
+bool CoastJoined(void* actor, uint32_t leaderEid, bool overCap, const char* why = "");
+
+// A joined row may open now: the coasting rows stand below kMaxCoasting less the let-go's and push's reserve. Game thread.
+bool JoinSlotFree();
 
 // A row of any author is open on `actor` right now. Game thread.
 bool IsDriven(void* actor);
