@@ -134,7 +134,7 @@ state and are re-sent to a joiner from the components' ground truth. Each plays 
 heard from the desk with the component's falloff, the game's `att_default` (full within 5 m, fading over 150 m). The
 cursor's loop (`corrds_loop`) is the one the game gives none: it plays only under the player at the desk in single
 player, but another player's replay of it played at full volume across the whole map, so each peer gives it the
-ping loop's falloff once per desk `[V]` (`coop/dev/deskaudio_probe`, `VOTVCOOP_DESKAUDIO_PROBE=1`: every component
+ping loop's falloff once per desk `[V]` (`coop/dev/deskaudio_probe`, row `deskaudio_probe`: every component
 read `att_default` but that loop, which read none; after the change it reads `att_default` too). The probe now
 says `rig: VERDICT deskaudio PASS` when the loop holds the ping loop's settings and `FAIL` when it holds none, once
 the lane has decided the loop's falloff for the desk; its red is `deskaudio_att_off` `[?]`. That the fade is heard

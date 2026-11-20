@@ -1,5 +1,5 @@
 // coop/dev/deskaudio_probe.cpp -- [dev] whether the signal desk's sound components are heard in space
-// (VOTVCOOP_DESKAUDIO_PROBE=1), for Ghezra/Multivoid issue 29. Once the desk exists and the desk_snd lane has decided
+// (row deskaudio_probe), for Ghezra/Multivoid issue 29. Once the desk exists and the desk_snd lane has decided
 // the cursor loop's falloff for it: for each of the desk's audio components the desk_snd lane replays, and its signal
 // sound, the component's bAllowSpatialization, bOverrideAttenuation and AttenuationSettings, and its sound's own
 // AttenuationSettings (`[DESKAUDIO]`), then the verdict `rig: VERDICT deskaudio PASS|FAIL|INVALID`: PASS when the cursor
@@ -9,6 +9,7 @@
 #include "coop/dev/deskaudio_probe.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/net/session.h"
 #include "coop/session/rig_verdict.h"
@@ -70,7 +71,7 @@ void Judge(void* desk) {
 }  // namespace
 
 void Tick(coop::net::Session* session) {
-    static const bool on = coop::config::ReadEnv("VOTVCOOP_DESKAUDIO_PROBE") == "1";
+    static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::deskaudio_probe);
     if (!on || g_done || !session || !session->running()) return;
     if (!g_startAt) g_startAt = ::GetTickCount64();
     // The event: the desk stands and the desk_snd lane has decided its cursor loop's falloff (given, or left without).

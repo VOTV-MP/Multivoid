@@ -173,6 +173,12 @@ CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "V
     "whose desk holds no Auto Processing module is INVALID. Red arms: cap_label_repaint_off (every repaint, both "
     "peers), cap_label_install_repaint_off (the host, saved arm).")
 CFG_FLAG(deskaudio_att_off, "deskaudio_att_off", "dev", false, "VOTVCOOP_DESKAUDIO_ATT_OFF",
-    "Developer red arm of the desk audio probe (VOTVCOOP_DESKAUDIO_PROBE=1): never set. The desk_snd lane does not give "
+    "Developer red arm of the desk audio probe (row deskaudio_probe): never set. The desk_snd lane does not give "
     "the cursor loop (corrds_loop) the ping loop's attenuation settings, as before the lane did, so the loop holds none "
     "and the probe must say FAIL.")
+CFG_FLAG(deskaudio_probe, "deskaudio_probe", "dev", false, "VOTVCOOP_DESKAUDIO_PROBE",
+    "Probe (either peer, one is enough): once the signal desk stands and the desk_snd lane has decided its cursor loop's "
+    "falloff, logs each desk sound component's spatialization and attenuation ([DESKAUDIO]) and says 'rig: VERDICT "
+    "deskaudio PASS|FAIL|INVALID': PASS when the cursor loop (corrds_loop) holds the ping loop's attenuation settings, "
+    "FAIL when it holds none or others, INVALID when the ping loop has none or the desk never came. Red arm: "
+    "deskaudio_att_off.")
