@@ -2,6 +2,8 @@
 
 #include "coop/world/flood_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -20,6 +22,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -128,9 +131,35 @@ std::unordered_map<std::wstring, bool> g_sentPipe;   // a pipe's bit as the clie
 std::unordered_map<void*, float> g_sentLevel;        // a volume's level as the clients last had it from a send to all
 uint64_t g_nextRead = 0;
 
+// The drill's red arms (dev rows, never set in play): the host's changes are not sent / a client's repair is not judged /
+// a joiner is sent nothing.
+bool StateOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::flood_state_off);
+    return off;
+}
+bool JudgeOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::flood_judge_off);
+    return off;
+}
+bool JoinOff() {
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::flood_join_off);
+    return off;
+}
+
+dev::Counts g_counts;
+
 void Send(N::Session& s, const Payload& p, int slot) {
-    if (slot >= 0) s.SendReliableToSlot(slot, N::ReliableKind::FloodState, &p, sizeof(p));
-    else s.SendReliable(N::ReliableKind::FloodState, &p, sizeof(p));
+    if (slot >= 0) {
+        s.SendReliableToSlot(slot, N::ReliableKind::FloodState, &p, sizeof(p));
+        return;
+    }
+    if (StateOff()) return;
+    s.SendReliable(N::ReliableKind::FloodState, &p, sizeof(p));
+    if (p.op == N::kFloodOpPipe) ++g_counts.pipesSent;
+    else {
+        ++g_counts.levelsSent;
+        g_counts.lastLevelSent = p.level;
+    }
 }
 
 void SendPipe(N::Session& s, void* pipe, const std::wstring& name, int slot) {
@@ -202,28 +231,44 @@ void Judge(N::Session& s, uint8_t slot, const Payload& p) {
     void* const pipe = ByName(kPipeClass, name);
     if (!pipe) {
         UE_LOGI("flood_sync: slot %u's repair names no pipe ('%ls')", static_cast<unsigned>(slot), name.c_str());
+        ++g_counts.judged;
+        ++g_counts.refusedOther;
+        g_counts.lastWhy = "no such pipe";
         return;
     }
     const char* why = nullptr;
+    bool target = false;   // the refusal is the target check's: the sender's reach of the pipe
     bool damaged = false;
     if (coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) why = "dead";
     if (!why) {
         const coop::element::IntentSubject subject = coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU).Authorize(pipe);
-        if (!subject) why = coop::element::OutcomeName(subject.outcome);
+        if (!subject) {
+            why = coop::element::OutcomeName(subject.outcome);
+            target = true;
+        }
     }
     if (!why && !coop::hand_item::HeldClassIs(slot, kToolboxClass)) why = "no toolbox in the hand";
     if (!why && (!Damaged(pipe, damaged) || !damaged)) why = "the pipe is whole";
+    if (why && JudgeOff()) why = nullptr;   // the drill's red: every check passes
     if (why) {
         UE_LOGI("flood_sync: slot %u's repair of '%ls' refused: %s", static_cast<unsigned>(slot), name.c_str(), why);
+        ++g_counts.judged;
+        ++(target ? g_counts.refusedTarget : g_counts.refusedOther);
+        g_counts.lastWhy = why;
         SendPipe(s, pipe, name, slot);
         return;
     }
     // The State call is the event the clients are told on (OnStateRan): the pipe's send is not made here.
     if (!SetPipe(pipe, false)) {
         UE_LOGW("flood_sync: slot %u's repair of '%ls': the pipe's State did not run", static_cast<unsigned>(slot), name.c_str());
+        ++g_counts.judged;
+        ++g_counts.refusedOther;
+        g_counts.lastWhy = "State did not run";
         SendPipe(s, pipe, name, slot);
         return;
     }
+    ++g_counts.judged;
+    ++g_counts.mended;
     UE_LOGI("flood_sync: slot %u mended pipe '%ls' on the host", static_cast<unsigned>(slot), name.c_str());
 }
 
@@ -313,7 +358,7 @@ void OnIntent(int senderSlot, const Payload& p) {
 
 void SendJoin(int slot) {
     N::Session* s = Live();
-    if (!s || s->role() != N::Role::Host) return;
+    if (!s || s->role() != N::Role::Host || JoinOff()) return;
     for (void* pipe : All(kPipeClass)) {
         const std::wstring name = NameOf(pipe);
         if (!name.empty()) SendPipe(*s, pipe, name, slot);
@@ -330,5 +375,46 @@ void OnDisconnect() {
     for (Rate& r : g_rate) r = Rate{};
     g_fixPipe = nullptr;
 }
+
+namespace dev {
+
+Counts Read() { return g_counts; }
+
+float LevelEpsilon() { return kLevelEps; }
+
+void* FirstPipe() {
+    void* best = nullptr;
+    std::wstring bestName;
+    for (void* p : All(kPipeClass)) {
+        const std::wstring n = R::ToString(R::NameOf(p));
+        if (!best || n < bestName) {
+            best = p;
+            bestName = n;
+        }
+    }
+    return best;
+}
+
+bool PipeBits(std::string& out) {
+    std::vector<std::pair<std::wstring, char>> pipes;
+    for (void* p : All(kPipeClass)) {
+        bool damaged = false;
+        if (!Damaged(p, damaged)) return false;
+        pipes.emplace_back(R::ToString(R::NameOf(p)), damaged ? '1' : '0');
+    }
+    if (pipes.empty()) return false;
+    std::sort(pipes.begin(), pipes.end());
+    out.clear();
+    for (const auto& p : pipes) out.push_back(p.second);
+    return true;
+}
+
+bool LevelNow(float& out) {
+    for (void* v : All(kVolumeClass))
+        if (Level(v, out)) return true;
+    return false;
+}
+
+}  // namespace dev
 
 }  // namespace coop::flood_sync

@@ -139,7 +139,7 @@
 #include "coop/dev/deskaudio_probe.h"   // [dev] the signal desk's sound components: spatial or not
 #include "coop/dev/vent_probe.h"   // [dev] a crouched player's steps counted on the other peer
 #include "coop/dev/dingus_drill.h"   // [dev] the dingus drill: a dingus found on one peer is found on every peer
-#include "coop/dev/flood_probe.h"   // [dev] the host bursts a basement pipe, a client mends it, logged on both
+#include "coop/dev/flood_drill.h"   // [dev] the basement flood is the host's on every peer: burst, mend, far, join
 #include "coop/dev/native_spawn_probe.h"  // [dev] every allowlisted creature a Blueprint graph spawns here
 #include "coop/dev/hand_record_drill.h"  // [dev] a held item's record on the other players' mirrors of that hand, judged by the host
 #include "coop/dev/miner_drill.h"  // [dev] the mining rig drill: use, claim, record and join, judged by the host
@@ -333,6 +333,7 @@ void EndSession() {
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::dingus_drill::OnDisconnect();  // [dev] back to the first step
+    coop::dev::flood_drill::OnDisconnect();  // [dev] back to the first step (the join arm's burst stands)
     coop::dev::miner_drill::OnDisconnect();  // [dev] back to the first step
     coop::dev::body_push_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
@@ -502,7 +503,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::sleep_speedup_drill::Tick(&session);  // [dev] whose sleep speeds the world up (a latched read when off)
     coop::dev::vent_probe::Tick(&session);  // [dev] the vent crawl drill (a latched read when off)
     coop::dev::miner_drill::Tick(&session);  // [dev] the mining rig drill (a latched enum read when off)
-    coop::dev::flood_probe::Tick(&session);  // [dev] the basement flood (a latched read when off)
+    coop::dev::flood_drill::Tick(&session);  // [dev] the basement flood drill (a latched enum read when off)
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)

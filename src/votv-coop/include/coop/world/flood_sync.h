@@ -15,6 +15,9 @@
 
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 namespace coop::net {
 class Session;
 struct FloodPayload;
@@ -39,5 +42,34 @@ void SendJoin(int slot);
 
 // The session ended: everything is forgotten.
 void OnDisconnect();
+
+// The flood drill's reads of the lane (coop/dev/flood_drill): what it counted and how the pipes and the flood read.
+namespace dev {
+
+struct Counts {
+    uint32_t pipesSent = 0;      // HOST: a pipe's state sent to every client
+    uint32_t levelsSent = 0;     // HOST: a level sent to every client
+    float    lastLevelSent = 0;  // HOST: that level
+    uint32_t judged = 0;         // HOST: a client's repair judged (mended or refused)
+    uint32_t mended = 0;         // HOST: of those, the pipe mended
+    uint32_t refusedTarget = 0;  // HOST: of those, refused by the target check (the sender's reach of the pipe)
+    uint32_t refusedOther = 0;   // HOST: of those, refused for another reason
+    const char* lastWhy = "";    // HOST: the last refusal's reason
+};
+Counts Read();
+
+// The lane's smallest level step, in the level's own units (the volume is 500 high): a flood that moves less is not sent.
+float LevelEpsilon();
+
+// The first pipe by object name, the same on every peer; null when the world has none.
+void* FirstPipe();
+
+// Every pipe's bit in object-name order, '1' a burst one; false when the world has none.
+bool PipeBits(std::string& out);
+
+// The flood volume's level; false when the world has none.
+bool LevelNow(float& out);
+
+}  // namespace dev
 
 }  // namespace coop::flood_sync
