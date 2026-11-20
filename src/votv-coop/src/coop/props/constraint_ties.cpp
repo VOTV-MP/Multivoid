@@ -3,6 +3,8 @@
 #include "coop/props/constraint_ties.h"
 
 #include "coop/net/net_clock.h"
+#include "coop/props/prop_drive_host.h"
+#include "coop/props/prop_drive_join.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -25,6 +27,7 @@ namespace R  = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
 namespace UH = ue_wrap::ufunction_hook;
 namespace sg = ue_wrap::script_gate;
+namespace PD = coop::prop_drive_host;
 
 UE_FACT_FN(kRowSetConstrainedComponents, "constraint_ties", L"PhysicsConstraintComponent", L"SetConstrainedComponents",
            Declared);
@@ -63,6 +66,12 @@ void SweepStale() {
     }
 }
 
+// A tie made while one of its ends is driven or in a hand: that end is owed a join, so the other end gets a row too. Owe
+// only appends to its list (no walk, no hooked native), which is all a native patch may do.
+void OweIfDriven(void* owner) {
+    if (PD::IsDriven(owner) || PD::InAHand(owner)) coop::prop_drive_join::Owe(owner, "tie made");
+}
+
 // Two different owner actors make a tie; one actor (a laptop's no-collide pair, a hook's own parts), the world or nothing
 // makes none, and a constraint re-tied to such an end is untied.
 void Record(void* constraint, void* a, void* b) {
@@ -79,6 +88,8 @@ void Record(void* constraint, void* a, void* b) {
     t.constraint.Set(constraint);
     t.a.Set(a);
     t.b.Set(b);
+    OweIfDriven(a);
+    OweIfDriven(b);
 }
 
 // The call always runs: the index only reads it.
