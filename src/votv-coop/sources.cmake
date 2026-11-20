@@ -313,6 +313,7 @@ set(VOTVCOOP_SOURCES
     src/coop/session/subsystems.cpp
     src/coop/session/desk_subsystems.cpp
     src/coop/session/power_subsystems.cpp
+    src/coop/session/props_subsystems.cpp
     src/coop/session/world_ready_answer.cpp
     src/coop/player/local_streams.cpp
     src/coop/interactables/device_occupancy.cpp
