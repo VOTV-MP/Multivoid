@@ -20,7 +20,6 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/player/players_registry.h"
-#include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/actors/item_spawn.h"
@@ -55,7 +54,7 @@ namespace PS = peer_signal;
 namespace RV = coop::rig_verdict;
 
 constexpr const char* kTag = "item-spawn";
-constexpr int kJoinSec = 480;
+constexpr int kBodySec = 120;
 constexpr float kAheadCm = 250.f;
 constexpr float kApartCm = 90.f;
 constexpr float kBatteryCharge = 50.f;
@@ -171,10 +170,17 @@ Result RunSites() {
 
 void RunHost() {
     const bool red = coop::config::ResolveFlag(coop::config_registry::rows::item_spawn_no_load);
-    if (!PS::WaitFor("the announced world", kJoinSec, [] {
-            bool ready = false;
-            OnGameThread([&] { ready = coop::net_pump::HasAnnouncedWorldReady(); });
-            return ready;
+    // The host's own body: HasAnnouncedWorldReady is a CLIENT's announcement to the host and is never set on a host,
+    // so a wait on it ran to the rig's cap with no line. The wait says what it is for, and ends INVALID at its bound.
+    UE_LOGI("item-spawn: waiting for the host's body, at most %d s", kBodySec);
+    if (!PS::WaitFor("the host's body", kBodySec, [] {
+            bool up = false;
+            OnGameThread([&] {
+                ue_wrap::FVector at{};
+                void* const me = coop::players::Registry::Get().Local();
+                up = me && E::TryGetActorLocation(me, at);
+            });
+            return up;
         }))
         return;
     if (red) {
