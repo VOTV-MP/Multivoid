@@ -3,6 +3,7 @@
 
 #include "clean_drill_detail.h"
 
+#include "coop/cheats/item_catalog.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/session.h"
@@ -18,9 +19,11 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <windows.h>
 
+#include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -110,6 +113,22 @@ std::string Narrow(const std::wstring& w) {
     std::string s;
     for (const wchar_t c : w) s.push_back(c < 128 ? static_cast<char>(c) : '?');
     return s;
+}
+
+std::wstring CatalogRow(const char* part) {
+    const auto names = coop::cheats::item_catalog::Names();
+    if (!names) return L"";
+    for (const std::string& n : *names) {
+        std::string low = n;
+        for (char& c : low) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        if (low == part) return std::wstring(n.begin(), n.end());
+    }
+    return L"";
+}
+
+void* InHand(void* me) {
+    E::MainPlayerGrabState gs{};
+    return (me && E::ReadMainPlayerGrabState(me, gs)) ? gs.holdingActor : nullptr;
 }
 
 std::vector<std::string> Split(const std::string& text, char sep) {

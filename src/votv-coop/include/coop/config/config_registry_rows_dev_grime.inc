@@ -20,8 +20,7 @@ CFG_ENUM(clean_drill, "clean_drill", "dev", "off", "off|clean|leaves", "VOTVCOOP
     "bucket with the director (VOTVCOOP_CLEAN_BUCKET names its key), takes a mop and cleans away one decal of each grime "
     "kind near it; every peer says whether its copy ended, the actor's last clean (a sentinel decal's fall, behind its "
     "ends on the ordered wire) being the moment each peer decides: 'rig: VERDICT grime-clean PASS|FAIL|INVALID', FAIL "
-    "naming the decals that stood and the peer. Then the actor's log-only legs (blood, the mop's dip, a bucket of water "
-    "thrown) and every peer's '[CLN] all' dumps. leaves -- every peer runs the autumn leaf spawn the wind's timer runs; "
+    "naming the decals that stood and the peer; every peer dumps the grime it holds before and after ('[CLN] all'). leaves -- every peer runs the autumn leaf spawn the wind's timer runs; "
     "every peer must hold the host's fallen leaves at the host's places and none of its own: 'rig: VERDICT grime-leaves "
     "PASS|FAIL|INVALID'. Red arms: grime_gone_off (clean) and leaves_lane_off (leaves). It MUTATES the world.")
 CFG_FLAG(grime_gone_off, "grime_gone_off", "dev", false, "VOTVCOOP_GRIME_GONE_OFF",

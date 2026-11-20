@@ -1,6 +1,6 @@
 // coop/dev/clean_drill.cpp -- see coop/dev/clean_drill.h. The tick, and the `clean` arm: a client cleans away one decal of each
 // grime kind and every peer says whether its copy ended. The `leaves` arm is clean_drill_leaves.cpp, the shared reads, marks and
-// verdict clean_drill_common.cpp, the actor's log-only legs clean_drill_legs.cpp.
+// verdict clean_drill_common.cpp.
 //
 // The `clean` arm, in the order the peers do it, three peers (host, first client, second client), each step on an event:
 //   every peer: once its world is up and the grime lane has indexed it, it marks itself up and waits for the others' marks.
@@ -11,7 +11,7 @@
 //   sent each end, then cleans the sentinel a little: the lane's wire is ordered, so a peer that sees the sentinel fall has
 //   applied every end the actor sent before it. Each other peer judges at that event: a target that ended on the actor and
 //   stands on this copy fails the run, named. The host says PASS once every peer's copy has ended them all.
-// After the verdict the actor runs its log-only legs and every peer dumps the grime decals it holds, before and after.
+// Every peer dumps the grime decals it holds, before and after, for a set compare.
 
 #include "coop/dev/clean_drill.h"
 
@@ -73,7 +73,7 @@ struct Target {
 };
 
 enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Walk, Mop, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
-                AwaitEnd, Legs, Done };
+                AwaitEnd, Done };
 Ph g_ph = Ph::Arrive;
 FVector g_anchor{};
 std::vector<Target> g_targets;
@@ -207,7 +207,7 @@ bool LaneReady() { return coop::grime_sync::Tallies().passes >= kLanePasses; }
 void TickClean(coop::net::Session& s) {
     if (g_ph == Ph::Done) return;
     if (g_ph != Ph::Arrive && Over() && g_ph < Ph::AwaitEnd) g_ph = Ph::AwaitEnd;   // another peer decided: stop the steps
-    if (g_ph > Ph::Arrive && g_ph != Ph::Legs && Overdue()) return;
+    if (g_ph > Ph::Arrive && Overdue()) return;
     void* const me = coop::players::Registry::Get().Local();
     const bool host = IsHost();
     const bool acts = IsActor();
@@ -375,18 +375,8 @@ void TickClean(coop::net::Session& s) {
             g_dumpedAfter = true;
             DumpAll("after");
         }
-        if (acts && EndKind() == 'P' && me) {
-            g_ph = Ph::Legs;
-            return;
-        }
         g_ph = Ph::Done;
         UE_LOGI("[CLN] DONE on the %s", SlotName(MySlot()));
-        return;
-    case Ph::Legs:
-        if (RunLegs(me, g_anchor)) {
-            g_ph = Ph::Done;
-            UE_LOGI("[CLN] DONE on the %s", SlotName(MySlot()));
-        }
         return;
     case Ph::Done:
         return;

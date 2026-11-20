@@ -72,11 +72,8 @@ char EndKind();
 void Enter(const char* phase);
 bool Overdue();
 
-// ---- the arms and the legs ------------------------------------------------------------------------------------------
+// ---- the arms ---------------------------------------------------------------------------------------------------------
 void TickLeaves(coop::net::Session& s);
-// The actor's log-only legs after the verdict (blood, the bucket's dip and its thrown water), one step a call; true when
-// they are all done.
-bool RunLegs(void* me, const FVector& anchor);
 std::wstring CatalogRow(const char* part);
 void* InHand(void* me);
 
