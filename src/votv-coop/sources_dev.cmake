@@ -23,6 +23,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/build_probe_damage.cpp
     src/coop/dev/build_probe_place.cpp
     src/coop/dev/build_probe_watch.cpp
+    src/coop/dev/nail_act.cpp
     src/coop/dev/build_identity_census.cpp
     src/coop/dev/build_identity_drill.cpp
     src/coop/dev/feedback_probe.cpp
