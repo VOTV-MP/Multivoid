@@ -59,10 +59,11 @@ using coop::net::FnvKey;
 constexpr float kProcessEps = 0.0005f;
 // The position quantisation grid (cm). A decal's saved position is bit-identical across peers
 // (the same save, a static actor), so any deterministic quantisation yields the same key on
-// both; the grid has to be fine enough that distinct decals rarely share a cell. The rig's save puts
-// 1117 decals on 1087 keys: 30 stand in a cell another of their type holds, and the lane treats a
-// cell's decals as one -- the floor is kept per key, so a fall on one lowers its twins at the next full
-// pass.
+// both; the grid has to be fine enough that distinct decals rarely share a cell. The rig's save put
+// 1116 decals on 1086 position-and-type cells (the key without its class tag): 30 stood in a cell another
+// decal held, and the lane treats a key's decals as one -- the floor is kept per key, so a fall on one
+// lowers its twins at the next full pass. The key carries a tag of the decal's class, so twins of two
+// classes are two keys; the census line of a world's first full pass counts what still shares one.
 constexpr double kPosGrid = 2.0;
 bool ProbeLog() {
     static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_log);
@@ -81,17 +82,20 @@ bool Holds(const Ref& r) { return R::IsLiveByIndex(r.actor, r.idx) && R::SlotSer
 std::mutex g_indexMutex;
 std::unordered_map<std::wstring, Ref> g_byKey;
 
-// This peer's own name for one decal: its location's float bits and its type. It tells a cell's twins
-// apart and never travels, so a value is enough, with no string.
+// This peer's own name for one decal: its location's float bits, its type and its class's tag. It tells a
+// cell's twins apart and never travels, so a value is enough, with no string.
 struct ExactKey {
     uint32_t x = 0, y = 0, z = 0;
     int32_t type = 0;
-    bool operator==(const ExactKey& o) const { return x == o.x && y == o.y && z == o.z && type == o.type; }
+    uint32_t cls = 0;
+    bool operator==(const ExactKey& o) const {
+        return x == o.x && y == o.y && z == o.z && type == o.type && cls == o.cls;
+    }
 };
 struct ExactKeyHash {
     size_t operator()(const ExactKey& k) const {
-        uint64_t h = 1469598103934665603ull;  // FNV-1a over the four words
-        for (uint32_t w : {k.x, k.y, k.z, static_cast<uint32_t>(k.type)}) h = (h ^ w) * 1099511628211ull;
+        uint64_t h = 1469598103934665603ull;  // FNV-1a over the five words
+        for (uint32_t w : {k.x, k.y, k.z, static_cast<uint32_t>(k.type), k.cls}) h = (h ^ w) * 1099511628211ull;
         // A word-wise multiply leaves the low bits a function of the words' low bits alone, and a round
         // coordinate's float has them all zero; the table picks its bucket from the low bits. murmur3's
         // 64-bit finalizer spreads every bit into them.
@@ -148,7 +152,14 @@ WorldRegister<ExactKey, Parked, ExactKeyHash> g_parked;
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
 
-// The cross-peer identity of a static grime decal: its quantised world position and type.
+// The tag of a decal's class: 16 bits of an FNV-1a over its name, the same on every peer.
+uint32_t ClassTag(void* grime) {
+    uint32_t h = 2166136261u;
+    for (const wchar_t c : R::ClassNameOf(grime)) h = (h ^ static_cast<uint32_t>(c & 0xFF)) * 16777619u;
+    return (h ^ (h >> 16)) & 0xFFFFu;
+}
+
+// The cross-peer identity of a static grime decal: its quantised world position, type and class tag.
 // The same save gives the identical saved transform, so the identical key on both peers.
 // Fits the wire key for any in-base coordinate. `exact` is this peer's own name for the one decal
 // (ExactKey). False when the location read fails: a key is never made from the origin a failed read
@@ -157,16 +168,20 @@ bool KeysOf(void* grime, std::wstring& key, ExactKey& exact) {
     ue_wrap::FVector loc{};
     if (!E::TryGetActorLocation(grime, loc)) return false;
     int32_t type = 0; G::ReadType(grime, type);
+    const uint32_t cls = ClassTag(grime);
     auto q = [](float v) -> long { return std::lround(static_cast<double>(v) / kPosGrid); };
     key = L"g_";
     key += std::to_wstring(q(loc.X)); key += L'_';
     key += std::to_wstring(q(loc.Y)); key += L'_';
     key += std::to_wstring(q(loc.Z)); key += L'_';
-    key += std::to_wstring(type);
+    key += std::to_wstring(type); key += L'_';
+    static const wchar_t kHex[] = L"0123456789abcdef";
+    for (int shift = 12; shift >= 0; shift -= 4) key += kHex[(cls >> shift) & 0xF];
     std::memcpy(&exact.x, &loc.X, sizeof(exact.x));
     std::memcpy(&exact.y, &loc.Y, sizeof(exact.y));
     std::memcpy(&exact.z, &loc.Z, sizeof(exact.z));
     exact.type = type;
+    exact.cls = cls;
     return true;
 }
 
@@ -251,6 +266,34 @@ bool g_scanIsFull = false;                                  // pass context
 uint32_t g_replayEpoch = 0;
 uint32_t g_passEpoch = 0;
 
+// What the full pass found, by key: once per world, the decals that share a key with another, counted by position and
+// type alone (the key without its class tag) and by the whole key. The first is what a key without the tag would have
+// merged; the second is what still merges, and a decal of it is indexed under a twin's name (the index keeps one per
+// key), which a run says once as a warning.
+void KeyCensus(uint32_t worldGen) {
+    static uint32_t s_gen = 0;
+    static bool s_warned = false;
+    if (s_gen == worldGen || g_scanFound.empty()) return;
+    s_gen = worldGen;
+    constexpr size_t kTag = 5;   // "_" and the four hex digits of the class tag
+    std::unordered_map<std::wstring, int> byKey, byCell;
+    for (const auto& f : g_scanFound) {
+        ++byKey[f.key];
+        if (f.key.size() > kTag) ++byCell[f.key.substr(0, f.key.size() - kTag)];
+    }
+    size_t cellsShared = 0, cellExtra = 0, keysShared = 0, keyExtra = 0;
+    for (const auto& kv : byCell) if (kv.second > 1) { ++cellsShared; cellExtra += static_cast<size_t>(kv.second - 1); }
+    for (const auto& kv : byKey) if (kv.second > 1) { ++keysShared; keyExtra += static_cast<size_t>(kv.second - 1); }
+    UE_LOGI("grime: key census -- %zu decal(s): %zu position-and-type cell(s) hold more than one (%zu extra decal(s)); "
+            "%zu key(s) with the class tag still do (%zu extra)", g_scanFound.size(), cellsShared, cellExtra, keysShared,
+            keyExtra);
+    if (keyExtra > 0 && !s_warned) {
+        s_warned = true;
+        UE_LOGW("grime: %zu decal(s) share a key with a twin of their own class and position: the index holds one of "
+                "each pair", keyExtra);
+    }
+}
+
 void HubPassBegin(void*, bool isFull) {
     g_scanFound.clear();
     g_scanNextCache.clear();
@@ -290,6 +333,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         g_passes.store(0, std::memory_order_relaxed);
     }
     g_passes.fetch_add(1, std::memory_order_relaxed);
+    if (isFull) KeyCensus(worldGen);
     const size_t added = g_scanFound.size();
     if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
     uint64_t posHash = 0;
