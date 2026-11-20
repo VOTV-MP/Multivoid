@@ -58,6 +58,8 @@ void HostOnDisconnect();
 bool ClientPre(void* ctx, bool active);
 void ClientOnReliable(const coop::net::CreatureEventActivePayload& payload);
 void ClientOnMirrorBound(coop::element::ElementId eid, void* actor);
+// The killer wisp mirrors' per-viewer check, every 3 s (the Blueprint's loop a parked mirror never runs).
+void ClientTickWisps(uint64_t nowMs);
 void ClientOnNpcEnd(const coop::element::death_seam::Death& death);
 void ClientOnDisconnect();
 int  ClientTargetFor(coop::element::ElementId eid);
