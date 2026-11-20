@@ -71,6 +71,9 @@ bool ProbeLog() {
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
+// What the lane has done, for Tallies. Written on the game thread, read on any.
+std::atomic<uint32_t> g_replays{0}, g_passes{0}, g_lowered{0};
+
 // An indexed decal: the actor, its slot and the serial the slot held when a pass took it (the key cache's
 // own), so a new object the allocator put at the address in the same slot is never read as the decal.
 struct Ref { void* actor; int32_t idx; int32_t serial; };
@@ -205,6 +208,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
     if (target <= coop::net::kGrimeGone + kProcessEps) {
         coop::grime_sync::ForgetDecal(actor);
         const bool ok = E::DestroyActor(actor);
+        g_lowered.fetch_add(1, std::memory_order_relaxed);
         UE_LOGI("grime: a decal another peer ended is destroyed here (%s) ok=%d key='%ls'", why, ok ? 1 : 0, key.c_str());
         return;
     }
@@ -212,6 +216,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
     if (!G::ReadProcess(actor, cur) || std::fabs(target - cur) < kProcessEps) return;
     if (lowerOnly && cur < target) return;
     const bool ok = G::WriteProcessAndApply(actor, target);
+    g_lowered.fetch_add(1, std::memory_order_relaxed);
     if (ProbeLog() || !ok)
         UE_LOGI("grime: applied process=%.3f (was %.3f, %s) ok=%d key='%ls'", target, cur, why, ok ? 1 : 0,
                 key.c_str());
@@ -280,6 +285,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         std::lock_guard<std::mutex> lk(g_indexMutex);
         return g_byKey.size();
     }
+    g_passes.fetch_add(1, std::memory_order_relaxed);
     const size_t added = g_scanFound.size();
     if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
     uint64_t posHash = 0;
@@ -366,7 +372,16 @@ UE_FACT_FN(kRowLoadObjects, "grime_sync", L"mainGamemode_C", L"loadObjects", Dec
 constexpr int kTagGrimeReplay = 0x47524C4F;  // 'GRLO'
 bool g_replayWatched = false;
 
+// The rehost churn's red arm: the replay is counted but the lane forgets nothing, as before the watch.
+bool ReplayWatchOff() {
+    static const bool off = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_replay_watch_off);
+    return off;
+}
+
 sg::Verdict OnLoadObjectsPre(const sg::Call&) {
+    g_replays.fetch_add(1, std::memory_order_relaxed);
+    g_passes.store(0, std::memory_order_relaxed);
+    if (ReplayWatchOff()) return sg::Verdict::Run;
     ++g_replayEpoch;
     size_t indexed = 0;
     {
@@ -597,6 +612,11 @@ void ForgetDecal(void* actor) {
     }
     g_posKeyByActor.erase(actor);
     g_scanNextCache.erase(actor);
+}
+
+Tally Tallies() {
+    return Tally{g_replays.load(std::memory_order_relaxed), g_passes.load(std::memory_order_relaxed),
+                 g_lowered.load(std::memory_order_relaxed)};
 }
 
 std::wstring DebugPosKeyForActor(void* actor) {

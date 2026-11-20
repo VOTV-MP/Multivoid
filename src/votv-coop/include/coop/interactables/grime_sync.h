@@ -57,6 +57,17 @@ void Tick();
 // so its end of play is no wipe. Call before the destroy. Game thread.
 void ForgetDecal(void* actor);
 
+// DEV-DRILL ONLY: what the lane has done in this process, read by the drills that judge it. `replays` counts the save
+// replays it saw begin (the gamemode's loadObjects), `passes` the index passes completed since the last one (since the
+// start before any), and `lowered` the decals it wrote or destroyed here from a floor, a parked value or a peer's value.
+// Any thread.
+struct Tally {
+    uint32_t replays;
+    uint32_t passes;
+    uint32_t lowered;
+};
+Tally Tallies();
+
 // DEV-DRILL ONLY: the quantised position key this module would index `actor` under. The
 // scan-parity drill uses it so its independent walk counts DISTINCT CELLS the way the index
 // does. An instance count over-reads, because the grid is not collision-free: the rig's save puts

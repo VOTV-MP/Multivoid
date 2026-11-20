@@ -798,3 +798,4 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_roomba.inc"
 // The remote player's footsteps: the ground line, the crouch drill and its red arm: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_footsteps.inc"
+#include "coop/config/config_registry_rows_dev_grime.inc"
