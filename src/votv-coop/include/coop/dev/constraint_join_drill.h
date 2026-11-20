@@ -2,11 +2,12 @@
 // own and converges on every peer (ini constraint_join_drill=off|c1|c2|c3 / env VOTVCOOP_CONSTRAINT_JOIN_DRILL; BOTH peers,
 // one client; default off).
 //
-// The host builds a nailed set of prop boxes in a line on measured open ground (coop/dev/nail_act puts each nail through two
-// neighbours as the nailgun's projectile does) and waits until every drive on it is closed; the client is told the set in
-// chat lines. The bot director walks and grabs (coop/dev/director), never a teleport.
-//   c1  a chain of three, A-B and B-C nailed, C 250 cm from A (past a body's push): the host carries A 300 cm away from C
-//       and lets go.
+// The host builds a nailed set of prop boxes in a line on measured open ground, the boxes 1 cm apart as a nailed pair's are
+// (coop/dev/nail_act puts each nail through two neighbours as the nailgun's projectile does), and waits until every drive on
+// it is closed; the client is told the set in chat lines. The bot director walks and grabs (coop/dev/director), never a
+// teleport.
+//   c1  a chain of five nailed in line: the host carries the end box A 300 cm away from the chain and lets go, so the far
+//       members stand more than 150 cm from the host's body (past a body's push).
 //   c2  a nailed pair: the host walks more than 5 m off, the CLIENT carries A 300 cm and lets go; then the client leaves and
 //       rejoins (the rig's --rejoin; its second life is told by VOTVCOOP_CONSTRAINT_JOIN_LIFE=2).
 //   c3  a chain of six with constraint_join_drill_cap=2: the host carries A; members past the cap are owed a row.

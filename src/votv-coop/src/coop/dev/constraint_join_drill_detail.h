@@ -23,13 +23,15 @@ constexpr const char* kTag = "constraint-join";   // the drill's name on its `ri
 enum class Arm : uint8_t { Off, C1, C2, C3 };
 Arm ArmOf();
 constexpr size_t kMaxBoxes = 6;
-inline size_t BoxCount(Arm a) { return a == Arm::C1 ? 3 : a == Arm::C2 ? 2 : kMaxBoxes; }
+// c1 is a chain of five nailed in line, c2 a pair, c3 a chain of six.
+inline size_t BoxCount(Arm a) { return a == Arm::C1 ? 5 : a == Arm::C2 ? 2 : kMaxBoxes; }
 
 constexpr const wchar_t* kBoxClass = L"prop_box_C";
 constexpr const wchar_t* kBoxPath  = L"/Game/objects/prop_box.prop_box_C";
 constexpr const wchar_t* kNailPath = L"/Game/objects/nail.nail_C";
 
-constexpr float kStepCm       = 125.f;   // centre to centre of neighbours along +X: c1's C stands 250 cm from A
+constexpr float kStepCm       = 125.f;   // the footprint's step bound: the real step is a box's width plus kPropGapCm
+constexpr float kPropGapCm    = 1.f;     // between neighbours' faces, as a nailed pair's (MakePair of the building probe)
 constexpr float kLiftCm       = 60.f;    // a spawn's lift above the measured floor, so each box falls to rest
 constexpr float kFootCm       = 75.f;    // the footprint kept clear round the set, beyond its ends
 constexpr float kCrowdCm      = 400.f;   // another box within this of the spot ends the search for it

@@ -197,21 +197,27 @@ void StepWaitPeer(coop::net::Session& s) {
     g_boxCls = ue_wrap::asset_load::LoadObjectByPath(kBoxPath);
     g_nailCls = ue_wrap::asset_load::LoadObjectByPath(kNailPath);
     if (!g_boxCls || !g_nailCls) { Invalid('H', "a class did not load (box=%d nail=%d)", g_boxCls ? 1 : 0, g_nailCls ? 1 : 0); return; }
+    // The footprint is cleared for the step's bound; the boxes stand kPropGapCm apart as a nailed pair's do (MakePair of the
+    // building probe), so each nail reaches its two neighbours. Box A fixes the step by its own width.
     const float ax = g_spot.X - static_cast<float>(g_n - 1) * kStepCm * 0.5f;
-    for (size_t i = 0; i < g_n; ++i) {
-        void* b = E::SpawnActor(g_boxCls, FVector{ax + static_cast<float>(i) * kStepCm, g_spot.Y, g_spot.Z + kLiftCm});
-        if (!b) { Invalid('H', "box %c did not spawn", Letter(i)); return; }
-        g_box[i].Set(b);
-    }
+    void* first = E::SpawnActor(g_boxCls, FVector{ax, g_spot.Y, g_spot.Z + kLiftCm});
+    if (!first) { Invalid('H', "box %c did not spawn", Letter(0)); return; }
+    g_box[0].Set(first);
     FVector origin{}, ext{};
-    if (!E::GetActorBounds(g_box[0].Get(), true, origin, ext) || 2.f * ext.X + 10.f > kStepCm) {
-        Invalid('H', "a box's width (half extent %.1f cm) does not fit the %.0f cm step", static_cast<double>(ext.X),
+    if (!E::GetActorBounds(first, true, origin, ext) || !(ext.X > 1.f) || 2.f * ext.X + kPropGapCm > kStepCm) {
+        Invalid('H', "a box's width (half extent %.1f cm) does not fit the %.0f cm footprint step", static_cast<double>(ext.X),
                 static_cast<double>(kStepCm));
         return;
     }
-    UE_LOGI("%s spawned %zu boxes %.0f cm apart over the floor (%.0f, %.0f, %.0f), %.0f cm from slot %d's puppet", kLog, g_n,
-            static_cast<double>(kStepCm), static_cast<double>(g_spot.X), static_cast<double>(g_spot.Y),
-            static_cast<double>(g_spot.Z), static_cast<double>(DG::Dist(g_spot, at)), slot);
+    const float step = 2.f * ext.X + kPropGapCm;
+    for (size_t i = 1; i < g_n; ++i) {
+        void* b = E::SpawnActor(g_boxCls, FVector{ax + static_cast<float>(i) * step, g_spot.Y, g_spot.Z + kLiftCm});
+        if (!b) { Invalid('H', "box %c did not spawn", Letter(i)); return; }
+        g_box[i].Set(b);
+    }
+    UE_LOGI("%s spawned %zu boxes %.1f cm centre to centre (%.0f cm between faces) over the floor (%.0f, %.0f, %.0f), %.0f cm from slot "
+            "%d's puppet", kLog, g_n, static_cast<double>(step), static_cast<double>(kPropGapCm), static_cast<double>(g_spot.X),
+            static_cast<double>(g_spot.Y), static_cast<double>(g_spot.Z), static_cast<double>(DG::Dist(g_spot, at)), slot);
     RestartRest();
     To(Step::Bind);
 }
