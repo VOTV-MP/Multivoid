@@ -719,7 +719,6 @@ void Tick() {
                 start.X, start.Y, start.Z);
         return;
     }
-    coop::level_visit_sky::Hold();
     ue_wrap::FVector at{};
     if (me && E::TryGetActorLocation(me, at) && at.Z > kVisitFloorZ) {
         const float dx = at.X - kOrigin.X, dy = at.Y - kOrigin.Y, dz = at.Z - kOrigin.Z;

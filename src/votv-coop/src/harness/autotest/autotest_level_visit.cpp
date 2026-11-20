@@ -3,8 +3,9 @@
 // shape the visit; the red arms are level_visit_hide_off, backrooms_close_off and visit_sky_all.
 // client / host: the visitor takes the trip, stays until the watcher has judged its copy of the visitor hidden by the
 // poses it applies, ends the visit and comes back; the watcher judges the copy hidden at the first pose below the visit
-// floor and shown at the first pose back above it. The visitor reads each sky component's visibility before the trip and
-// again once back (`ARM sky`): none that was hidden before may be shown after. close: the host closes the backrooms, the client's clip check is answered no, and after
+// floor and shown at the first pose back above it. The visitor reads each held sky component back once it is home,
+// against the value the world meant for it (`ARM sky`); the day-night cycle's own writes in the visit are held and meant.
+// close: the host closes the backrooms, the client's clip check is answered no, and after
 // the host opens them again it takes a trip. join: the host takes the trip and stays; a client that joins later must
 // find the host's copy hidden at the first pose it applies.
 // Every step ends on the other peer's signal (peer_signal) or on the state it waits for, never a clock. A check's
@@ -571,39 +572,34 @@ bool Return(const Plan& p, const Now& before) {
 }
 
 // ---- the world's sky across the visit ---------------------------------------------------------------------------------
-// Each sky component's visibility is read before the trip and again at the visit's end (the visitor back in the world): none
-// that read hidden before may read shown after, since only what the visit hid is shown again. The day-night cycle keeps some
-// hidden itself, so a run in which none read hidden has nothing to judge (Invalid).
-std::vector<LVS::SkyReading> ReadSky() {
-    std::vector<LVS::SkyReading> sky;
-    OnGameThread([&sky] { LVS::ReadWorldSky(sky); });
-    return sky;
-}
-
-bool SkyBack(const std::vector<LVS::SkyReading>& before) {
-    int hiddenBefore = 0, hiddenLive = 0, shownNow = 0, dimmed = 0;
+// The visit holds every world sky component against the day-night cycle's own writes and, at its end, gives each the value
+// the cycle last asked for, or the one it had before the visit (coop/player/level_visit_sky). Back in the world, each held
+// component must read as that intended value. A component that cannot be read is Invalid, not hidden, and a run in which
+// none was meant to be hidden has nothing a wrongly shown sky could show in (Invalid).
+bool SkyBack() {
+    int held = 0, intendedHidden = 0, wrong = 0, unreadable = 0, cycleMoved = 0;
     OnGameThread([&] {
-        for (const LVS::SkyReading& r : before) {
-            const bool live = R::IsLive(r.comp);
-            if (!r.shown) {
-                ++hiddenBefore;
-                if (live) ++hiddenLive;
-                if (live && LVS::SkyShown(r.comp)) ++shownNow;
-            } else if (live && !LVS::SkyShown(r.comp)) {
-                ++dimmed;
-            }
+        unreadable = LVS::LastVisitUnreadable();
+        for (const LVS::SkyEnd& e : LVS::LastVisitEnd()) {
+            bool shown = false;
+            if (!R::IsLive(e.comp)) continue;
+            ++held;
+            if (e.intended != e.before) ++cycleMoved;
+            if (!LVS::ReadShown(e.comp, &shown)) { ++unreadable; continue; }
+            if (!e.intended) ++intendedHidden;
+            if (shown != e.intended) ++wrong;
         }
     });
-    char why[200];
-    std::snprintf(why, sizeof(why), "%zu sky components read, %d hidden before the visit, %d of those shown after it, %d "
-                  "shown before and hidden after", before.size(), hiddenBefore, shownNow, dimmed);
+    char why[220];
+    std::snprintf(why, sizeof(why), "%d sky components held, %d meant hidden, %d changed by the day-night cycle during the "
+                  "visit, %d read other than meant, %d unreadable", held, intendedHidden, cycleMoved, wrong, unreadable);
     UE_LOGI("level-visit: %hs sky %hs", Who(), why);
-    if (hiddenBefore == 0)
-        return Emit("sky", Res::Invalid, std::string("no sky component was hidden before the visit: ") + why);
-    if (shownNow > 0) return Emit("sky", Res::Fail, std::string("the visit showed what was hidden before it: ") + why);
-    if (hiddenLive == 0)
-        return Emit("sky", Res::Invalid, std::string("every component hidden before the visit is gone: ") + why);
-    return Emit("sky", Res::Pass, std::string("the sky is put back as it was: ") + why);
+    if (unreadable > 0) return Emit("sky", Res::Invalid, std::string("a sky component's visibility did not read: ") + why);
+    if (held == 0) return Emit("sky", Res::Invalid, std::string("the visit held no sky component: ") + why);
+    if (wrong > 0) return Emit("sky", Res::Fail, std::string("the visit left a sky component other than meant: ") + why);
+    if (intendedHidden == 0)
+        return Emit("sky", Res::Invalid, std::string("no sky component was meant to be hidden: ") + why);
+    return Emit("sky", Res::Pass, std::string("the sky is put back as the world meant it: ") + why);
 }
 
 // The visitor's half of a pair: the trip, the stay until the watcher has judged its copy hidden, the end, the return, the sky.
@@ -612,7 +608,6 @@ bool Visit(const Plan& p) {
     const Now before = Read();
     Log("before", before);
     if (p.start == "none") return Control(before);
-    const std::vector<LVS::SkyReading> sky = ReadSky();
     if (!Arrive(p)) return false;
     if (!p.dump.empty()) DumpLevelClasses(p.dump);
     harness::screenshot::Capture(L"visit-in");
@@ -620,7 +615,7 @@ bool Visit(const Plan& p) {
     if (!Heard("hid")) return false;
     EndVisit(p.end);
     if (!Return(p, before)) return false;
-    return SkyBack(sky);
+    return SkyBack();
 }
 
 // ---- the watcher ---------------------------------------------------------------------------------------------------

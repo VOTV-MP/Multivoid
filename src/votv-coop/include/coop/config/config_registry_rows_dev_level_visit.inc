@@ -40,7 +40,6 @@ CFG_FLAG(backrooms_close_off, "backrooms_close_off", "dev", false, "VOTVCOOP_BAC
     "Developer red arm of the level-visit drill: never set. The game's own clip check is not answered by the mod on "
     "this machine, so a clip is taken while the host has the backrooms closed, and during a visit.")
 CFG_FLAG(visit_sky_all, "visit_sky_all", "dev", false, "VOTVCOOP_VISIT_SKY_ALL",
-    "Developer red arm of the level-visit drill's sky check: never set. A visit hides and remembers every sun, sky light "
-    "and fog of the world, as it did before it kept only what was shown, so the end shows again those the day-night "
-    "cycle had off, and the drill's check must say FAIL (it needs one such component: INVALID when none was hidden "
-    "before the visit).")
+    "Developer red arm of the level-visit drill's sky check: never set. A visit shows every held sky component again at its "
+    "end, as it did before it kept the value the world meant, so those the day-night cycle had off read shown, and the "
+    "drill's check must say FAIL (it needs one component meant hidden: INVALID when none was).")
