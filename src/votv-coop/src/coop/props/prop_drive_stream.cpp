@@ -15,6 +15,7 @@
 #include "coop/props/prop_park.h"             // Park / Unpark: the parked prop, and a Character welded on it
 #include "coop/props/prop_syncer.h"           // SkipsHostPose: the prop this peer authors
 #include "coop/props/prop_wire_parity.h"      // the join converge's own physics restore
+#include "remote_prop_drive.h"                // RemoteHandHolderOf (impl-private, src-local, NOT under include/)
 #include "coop/player/local_streams.h"
 #include "coop/player/hand_item.h"
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive
@@ -25,6 +26,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"      // IsActorRootBodyAtRest: whether the sleep took
+#include "ue_wrap/engine/world_identity.h"     // AddWorldChangeListener: a pending yield belongs to one world
 
 #include <windows.h>
 
@@ -123,6 +125,73 @@ bool YieldedAtOrAfter(uint32_t eid, uint8_t gen) {
     return y != g_yieldedGen.end() && !GenAfter(gen, y->second);
 }
 
+// A first pose that finds the copy in a REMOTE hand yields the generation to that hand, and the row's let-go End is dropped
+// with it. The hand's release and the drive row travel on two lanes (the pose stream, the reliable lane), so the pose can
+// beat the release of the very hold it follows: the yield is then parked here with the marks it overwrote, and lifted when
+// that hand's drive ends by a release (OnRemoteHandEnded), so the row parks the copy and its End applies. MTA applies a
+// detach at once and gates an element's sync by its time context (CClientEntity.cpp:630-663, :179;
+// CUnoccupiedVehicleSync.cpp:178-190) and needs no pending state, since its detach and the element's sync arrive in order
+// on one channel; ours arrive on two, so the yield waits for its own release.
+struct PendingYield {
+    uint8_t  slot = 0;           // the remote hand that held the copy at the first pose
+    uint16_t holdGen = 0;        // ... and its hold
+    uint8_t  gen = 0;            // the drive generation that was yielded
+    bool     hadEnded = false;   // g_endedGen / g_yieldedGen as the yield found them
+    uint8_t  priorEnded = 0;
+    bool     hadYielded = false;
+    uint8_t  priorYielded = 0;
+    ue_wrap::CachedObjRef actor;
+};
+using PendingMap = std::unordered_map<uint32_t, PendingYield>;
+PendingMap g_pending;            // eid -> the one yield waiting on its hand's release
+
+enum class Drop : uint8_t { End, Newer, NewHold, Closed, Stale, World, HandGone, Superseded, kCount };
+constexpr const char* kDropName[] = {"its End came first", "a newer generation", "a new hold took the copy",
+                                     "the generation was closed here", "the actor died", "world change",
+                                     "the hand's drive ended without a release", "the marks moved on"};
+uint32_t g_pendingN = 0;         // yields kept pending, this session
+uint32_t g_unyieldedN = 0;       // ... and lifted at their hand's release
+uint32_t g_dropped[static_cast<size_t>(Drop::kCount)] = {};
+bool SaidAt(uint32_t n) { return n <= 3 || (n & (n - 1)) == 0; }
+
+PendingMap::iterator DropPending(PendingMap::iterator it, Drop why) {
+    const uint32_t n = ++g_dropped[static_cast<size_t>(why)];
+    if (SaidAt(n))
+        UE_LOGI("[PROP-DRIVE] pending yield of eid=%u gen=%u dropped: %s (#%u of this reason)", it->first,
+                static_cast<unsigned>(it->second.gen), kDropName[static_cast<size_t>(why)], n);
+    return g_pending.erase(it);
+}
+void ErasePending(uint32_t eid, Drop why) {
+    if (auto it = g_pending.find(eid); it != g_pending.end()) DropPending(it, why);
+}
+void OnWorldChange() noexcept {
+    while (!g_pending.empty()) DropPending(g_pending.begin(), Drop::World);
+}
+
+// Called before YieldToHand, which overwrites the marks read here.
+void PendYield(uint32_t eid, uint8_t gen, void* actor) {
+    uint8_t slot = 0;
+    uint16_t holdGen = 0;
+    if (!coop::remote_prop::RemoteHandHolderOf(actor, slot, holdGen)) return;
+    ErasePending(eid, Drop::Newer);
+    PendingYield& p = g_pending[eid];
+    p.slot = slot;
+    p.holdGen = holdGen;
+    p.gen = gen;
+    if (auto e = g_endedGen.find(eid); e != g_endedGen.end()) { p.hadEnded = true; p.priorEnded = e->second; }
+    if (auto y = g_yieldedGen.find(eid); y != g_yieldedGen.end()) { p.hadYielded = true; p.priorYielded = y->second; }
+    p.actor.Set(actor);
+    static bool s_listening = false;
+    if (!s_listening) {
+        s_listening = true;
+        if (!ue_wrap::world_identity::AddWorldChangeListener(&OnWorldChange))
+            UE_LOGE("[PROP-DRIVE] the world-change list is full -- a pending yield is dropped at the session's end only");
+    }
+    if (SaidAt(++g_pendingN))
+        UE_LOGI("[PROP-DRIVE] eid=%u gen=%u yield kept pending on slot %u hold %u's release (#%u)", eid,
+                static_cast<unsigned>(gen), static_cast<unsigned>(slot), static_cast<unsigned>(holdGen), g_pendingN);
+}
+
 // What the prop syncer drill's judge reads (prop_drive_stream.h, dev::ViewOf): per eid, the rows of the last
 // generation, where the copy stood before its park, and whether that generation's End applied. Null (and nothing
 // kept) unless the drill row is on.
@@ -198,8 +267,8 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
 
 // One pose of a driven prop: parks the copy on a new generation's first, a lerp target after. The client's
 // apply of the host's batch, and the host's of a pose it admitted from a prop's syncer (FeedAdmitted); `who`
-// names the role in the log.
-void ApplyPose(const coop::net::PropDriveRow& e, uint64_t nowMs, const char* who) {
+// names the role in the log; `client` is the client's apply, the only one whose hand-yield can wait on a release.
+void ApplyPose(const coop::net::PropDriveRow& e, uint64_t nowMs, const char* who, bool client) {
     const uint32_t eid = e.elementId;
     if (eid == 0) return;
     // The generation gate: a pose of a closed generation, or older than the live drive's,
@@ -242,7 +311,9 @@ void ApplyPose(const coop::net::PropDriveRow& e, uint64_t nowMs, const char* who
     // A hand's stream on the same prop wins: the holder is its syncer for as long as it
     // holds it, and the host closes this stream the moment it sees the hand.
     if (coop::prop_drive_host::InAHand(actor)) {
-        // The first pose found the prop already in a hand: the generation is the hand's.
+        // The first pose found the prop already in a hand: the generation is the hand's. The Tick's yield and the End
+        // row's mean the local hand or a newer grab, which no remote release lifts: they keep nothing pending.
+        if (client) PendYield(eid, e.ctx, actor);
         YieldToHand(eid, e.ctx, nullptr, actor);
         UE_LOGI("[PROP-DRIVE] %s eid=%u gen=%u -- a hand holds it at the first pose; "
                 "generation yielded", who, eid, static_cast<unsigned>(e.ctx));
@@ -270,6 +341,7 @@ void ApplyPose(const coop::net::PropDriveRow& e, uint64_t nowMs, const char* who
     }
     if (ended != g_endedGen.end()) g_endedGen.erase(ended);
     g_yieldedGen.erase(eid);
+    ErasePending(eid, Drop::Newer);
     // The parked newer generation supersedes the END pose a correction was judged against.
     g_endOnActor.erase(eid);
     // A pose of a closed generation never reaches here, so an end held for this prop (bind_wait) is of
@@ -292,7 +364,7 @@ size_t RecentEnds(AppliedEnd* out, size_t max) {
 
 void FeedAdmitted(const coop::net::PropDriveRow& e) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::FeedAdmitted");
-    ApplyPose(e, AD::NowMs(), "HOST");
+    ApplyPose(e, AD::NowMs(), "HOST", /*client=*/false);
 }
 
 void ReleaseHost(const coop::net::PropDriveEndPayload& end) {
@@ -330,7 +402,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
             // physics, and the host's poses for it are its own rows relayed, or a coast it parks onto once a
             // claim is refused. Skipping closes no generation, and an End is never skipped (OnEnd).
             if (coop::prop_syncer::SkipsHostPose(e.elementId)) continue;
-            ApplyPose(e, nowMs, "CLIENT");
+            ApplyPose(e, nowMs, "CLIENT", /*client=*/true);
         }
     }
     for (auto it = g_drives.begin(); it != g_drives.end();) {
@@ -371,6 +443,8 @@ void TickApplyAndDrive(coop::net::Session& s) {
         AD::AdvanceLerp(dr.d, nowMs);
         ++it;
     }
+    for (auto it = g_pending.begin(); it != g_pending.end();)   // empty in the steady state
+        it = it->second.actor.Alive() ? std::next(it) : DropPending(it, Drop::Stale);
     coop::prop_child_release::Tick(nowMs);   // a waiting door's liveness and its failure bound
     coop::prop_wire_parity::FlushCorrectionSummary(nowMs);   // the 30 s tally of every path that moved a copy
 }
@@ -390,6 +464,11 @@ void ReplayEnd(const uint8_t* bytes, size_t n, int /*senderSlot*/) {
 
 void OnEnd(const coop::net::PropDriveEndPayload& p) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::OnEnd");
+    // An End of the pending generation, or a newer one, that comes before its hand's release is the host's "taken by a
+    // hand" End (prop_drive_host): applying it at the release would write a pose older than the hand's. The entry goes
+    // and the yield stands; the let-go row's own End comes after the release.
+    if (auto pe = g_pending.find(p.eid); pe != g_pending.end() && !GenAfter(pe->second.gen, p.gen))
+        DropPending(pe, p.gen == pe->second.gen ? Drop::End : Drop::Newer);
     auto it = g_drives.find(p.eid);
     if (it == g_drives.end()) {
         // Never parked here. The generation still closes, so a pose of it in flight cannot park
@@ -449,6 +528,57 @@ void CloseGen(uint32_t eid, uint8_t gen) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::CloseGen");
     AdvanceGen(g_endedGen, eid, gen);
     AdvanceGen(g_yieldedGen, eid, gen);
+    ErasePending(eid, Drop::Closed);
+}
+
+void OnRemoteHandStarted(uint8_t slot, void* actor, uint16_t holdGen) {
+    UE_ASSERT_GAME_THREAD("prop_drive_stream::OnRemoteHandStarted");
+    if (g_pending.empty()) return;
+    auto it = g_pending.find(static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(actor)));
+    // The same hold's drive restarting (a local door drag ended) is not a new hold: its release is still the one awaited.
+    if (it != g_pending.end() && !(it->second.slot == slot && it->second.holdGen == holdGen))
+        DropPending(it, Drop::NewHold);
+}
+
+void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool released) {
+    UE_ASSERT_GAME_THREAD("prop_drive_stream::OnRemoteHandEnded");
+    if (g_pending.empty()) return;
+    if (!actor) {   // the slot left: a hand of it releases nothing from here on
+        for (auto it = g_pending.begin(); it != g_pending.end();)
+            it = it->second.slot == slot ? DropPending(it, Drop::HandGone) : std::next(it);
+        return;
+    }
+    // By the eid the registry knows the copy under: the payload's is 0 for a keyed prop's release.
+    auto it = g_pending.find(static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(actor)));
+    if (it == g_pending.end() || it->second.slot != slot || it->second.holdGen != holdGen) return;
+    if (!released) {   // a refusal or a take-from-hand: the hand did not let go of a copy the stream may park
+        DropPending(it, Drop::HandGone);
+        return;
+    }
+    // Lifted only where the yield's own marks still stand: a newer generation's, or one this peer closed itself
+    // (CloseGen erases the entry), are never lowered.
+    const uint32_t eid = it->first;
+    const PendingYield p = it->second;
+    bool lifted = false;
+    if (auto e = g_endedGen.find(eid); e != g_endedGen.end() && e->second == p.gen) {
+        if (p.hadEnded) e->second = p.priorEnded;
+        else g_endedGen.erase(e);
+        lifted = true;
+    }
+    if (auto y = g_yieldedGen.find(eid); y != g_yieldedGen.end() && y->second == p.gen) {
+        if (p.hadYielded) y->second = p.priorYielded;
+        else g_yieldedGen.erase(y);
+        lifted = true;
+    }
+    if (!lifted) {
+        DropPending(it, Drop::Superseded);
+        return;
+    }
+    g_pending.erase(it);
+    UE_LOGI("prop_drive_stream: eid=%u gen=%u un-yielded at slot %u's release", eid, static_cast<unsigned>(p.gen),
+            static_cast<unsigned>(slot));
+    if (SaidAt(++g_unyieldedN))
+        UE_LOGI("[PROP-DRIVE] pending yields lifted at their hand's release: %u of %u kept", g_unyieldedN, g_pendingN);
 }
 
 bool IsParked(void* actor) {
@@ -482,6 +612,9 @@ void OnDisconnect() {
     g_endedGen.clear();
     g_endOnActor.clear();
     g_yieldedGen.clear();
+    g_pending.clear();
+    g_pendingN = g_unyieldedN = 0;
+    std::memset(g_dropped, 0, sizeof g_dropped);
     g_miss.clear();
     g_devView.clear();
     {

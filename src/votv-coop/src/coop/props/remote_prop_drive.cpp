@@ -108,7 +108,29 @@ void RefuseHold(int slot, uint16_t holdGen) {
         coop::prop_park::Unpark(live, d.mesh, !StickHoldsPhysicsOff(live) && !HostAuthorsTrashBody(live));
     UE_LOGI("remote_prop: slot %d hold %u refused by the host -- its drive ends%s", slot,
             static_cast<unsigned>(holdGen), otherDrive ? ", the kept hold's drive stays" : "");
+    NoteHandDriveEnd(slot, /*released=*/false);
     ResetDriveState(d);
+}
+
+bool RemoteHandHolderOf(void* actor, uint8_t& slot, uint16_t& holdGen) {
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::RemoteHandHolderOf)");
+    if (!actor) return false;
+    int found = -1;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
+        if (g_drives[s].actor != actor) continue;
+        if (found >= 0) return false;   // two slots' drives name it: no one release is the one
+        found = s;
+    }
+    if (found < 0 || g_holds[found].driveGen == 0) return false;
+    slot = static_cast<uint8_t>(found);
+    holdGen = g_holds[found].driveGen;
+    return true;
+}
+
+void NoteHandDriveEnd(int slot, bool released) {
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || !g_drives[slot].actor) return;
+    coop::prop_drive_stream::OnRemoteHandEnded(static_cast<uint8_t>(slot), g_drives[slot].actor,
+                                               g_holds[slot].driveGen, released);
 }
 
 // True when some slot's drive targets `actor`; the spawn receiver skips the transform converge
@@ -327,6 +349,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     hold.driveKey = pose.key;
     hold.driveEid = pose.elementId;
     hold.relatches = 0;
+    coop::prop_drive_stream::OnRemoteHandStarted(static_cast<uint8_t>(slot), prop, pose.holdGen);
     // A host-authoritative trash mirror freezes on a stream gap instead of timing out; it releases
     // only on the explicit reliable edge, and it interpolates rather than snapping. The test is
     // whether the host authors this body (HostAuthorsTrashBody), not what class it is: a client's

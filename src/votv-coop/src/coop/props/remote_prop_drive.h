@@ -55,6 +55,14 @@ bool IsHoldClosed(const HoldGate& h, uint16_t gen);
 // a hold of one prop from vouching for a release of another.
 bool HoldDroveProp(int slot, uint16_t holdGen, const coop::net::WireKey& key, uint32_t eid);
 
+// The ONE remote slot whose hand drive holds `actor`: its slot and hold generation. False for no drive, for two slots'
+// drives on it, and for an unversioned hold (generation 0), which names no release to wait for.
+bool RemoteHandHolderOf(void* actor, uint8_t& slot, uint16_t& holdGen);
+
+// `slot`'s hand drive is about to end (the caller resets it next): tells the driven-prop stream, which keeps a yield pending
+// on this hold's release. `released`: the end is a release, explicit or by the stream's silence. A no-op for no drive.
+void NoteHandDriveEnd(int slot, bool released);
+
 // A drive whose copy the game switches back to simulating this many times is being fought every
 // tick, not nudged once (a welded body, a Blueprint that sets it each frame): said loudly, once.
 constexpr uint32_t kRelatchLoud = 60;

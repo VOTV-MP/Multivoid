@@ -172,6 +172,7 @@ void Tick(coop::net::Session& session) {
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
             void* liveA = drive.LiveActor();
             coop::prop_park::Unpark(liveA, drive.mesh, !StickHoldsPhysicsOff(liveA));
+            NoteHandDriveEnd(slot, /*released=*/true);
             ResetDriveState(drive);
         }
         // The physics receiver's re-latch (docs/coop-sync-doctrine.md, parking): a driven copy stays
@@ -414,6 +415,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     }
     // Only the released slot clears.
     if (releasedSlot >= 0) {
+        NoteHandDriveEnd(releasedSlot, /*released=*/true);   // before the clear: a drive row's yield waits on this edge
         ResetDriveState(g_drives[releasedSlot]);
     }
     // The election, after the drive is cleared (a prop under a slot's drive opens no row) and only where the release
@@ -543,6 +545,7 @@ void EndAnyHoldOn(void* actor) {
         CloseHold(s, g_holds[s].driveGen);
         UE_LOGI("remote_prop: slot %d hold %u ends where the prop was taken from the hand (%p)", s,
                 static_cast<unsigned>(g_holds[s].driveGen), actor);
+        NoteHandDriveEnd(s, /*released=*/false);
         ResetDriveState(d);
     }
 }
@@ -619,6 +622,8 @@ void OnDisconnectForSlot(int peerSlot) {
     // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    // A leaver's hand never releases what a drive row's yield waits on, whatever its drive held.
+    coop::prop_drive_stream::OnRemoteHandEnded(static_cast<uint8_t>(peerSlot), nullptr, 0, /*released=*/false);
     // The leaver's generations must not gate the slot's next occupant, whose counter need not start
     // above them.
     g_holds[peerSlot] = {};

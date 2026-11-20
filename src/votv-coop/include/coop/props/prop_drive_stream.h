@@ -54,6 +54,16 @@ void OnEnd(const coop::net::PropDriveEndPayload& p);
 // generation are dropped here.
 void CloseGen(uint32_t eid, uint8_t gen);
 
+// CLIENT, game thread: a peer slot's hand drive on `actor` (its hold `holdGen`) began. A yield kept pending on another
+// hold's release is dropped; the same hold's drive restarting keeps it.
+void OnRemoteHandStarted(uint8_t slot, void* actor, uint16_t holdGen);
+
+// CLIENT, game thread: a peer slot's hand drive on `actor` (its hold `holdGen`) ended. `released`: by that hand's release,
+// explicit or implicit (the stream's silence); the yield this stream kept pending on that release (a drive row's first pose
+// found the hand holding the copy) is lifted, so the row parks the copy and its End applies. Not released (a refused hold, a
+// take-from-hand, the slot leaving with `actor` null): the entry is dropped and the yield stands.
+void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool released);
+
 // True while this stream has `actor` parked: its pose is the host's stream's, so a converge that
 // would move it or re-run its init() leaves it alone, as it leaves a held prop. Game thread.
 bool IsParked(void* actor);
