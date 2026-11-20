@@ -8,6 +8,7 @@
 #include "harness/autotest/meet.h"
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
+#include "woodchipper_drill_arms.h"  // co-located private header
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -25,7 +26,6 @@
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 
-#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/woodchipper.h"
 #include "ue_wrap/core/asset_load.h"
@@ -69,6 +69,8 @@
 namespace harness::autotest {
 namespace {
 
+using namespace woodchipper_drill;   // the readings' bounds and the mini arm (woodchipper_drill_arms.h)
+
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace W  = ue_wrap::woodchipper;
@@ -78,17 +80,12 @@ namespace RV = coop::rig_verdict;
 constexpr const char* kTag = "woodchipper";
 constexpr const char* kTagRejoin = "woodchipper-rejoin";
 constexpr const char* kTagFeed = "woodchipper-feed";
-constexpr const char* kTagMini = "woodchipper-mini";
 constexpr const wchar_t* kChipperPath = L"/Game/objects/woodchipper.woodchipper_C";
 constexpr const wchar_t* kPropPath = L"/Game/objects/prop_paper.prop_paper_C";   // wood, bag, paper...: canChip's list
 constexpr const wchar_t* kCanClass = L"prop_gascan_C";
-constexpr const wchar_t* kMiniClass = L"prop_gascan_mini_C";   // a subclass of the plain can
 constexpr int kJoinSec = 480;
-constexpr int kSignalSec = 240;
-constexpr int kCopySec = 40;    // a state reaches a copy: the send, the round trip, the apply
 constexpr int kBurnSec = 90;    // the spin-up, then fuel falling by a measurable amount
 constexpr int kEatSec = 60;     // the drop, the chip animation, the clump (and a census scan to show it to the client)
-constexpr float kFuelTol = 0.6f;
 constexpr float kBurnDrop = 0.2f;
 constexpr float kChipperRouteCm = 400.f;   // a world chipper this near the host by route is the drill's; else one is spawned
 constexpr float kChipperStandCm = 150.f;   // a route's end this near the chipper is a place its use reaches
@@ -434,59 +431,6 @@ void ClientFeed() {
     PS::Mark("g3_client", text);
 }
 
-// The mini arm's host: a mini can in the world before any hand takes one, as a real mini can in a hand always came from a world
-// the host holds. The judge asks the hand's class by a class this host has loaded, and a host never loads a client's class
-// name (class_resolve LookupOnly); the forced hold loads it on the client alone. The object index lists the class at its next
-// drain, not in the spawning tick: the wait is on that listing.
-bool SpawnMiniCan() {
-    bool spawned = false;
-    OnGameThread([&] {
-        void* me = coop::players::Registry::Get().Local();
-        ue_wrap::FVector at{};
-        if (!me || !E::TryGetActorLocation(me, at)) return;
-        const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
-        spawned = ue_wrap::item_spawn::Spawn(kMiniClass, {at.X - fwd.X * 150.f, at.Y - fwd.Y * 150.f, at.Z + 60.f}) != nullptr;
-    });
-    return spawned && PS::WaitFor("the host lists the mini can's class", 10, [] {
-               bool listed = false;
-               OnGameThread([&] { listed = ue_wrap::object_index::ClassByName(kMiniClass) != nullptr; });
-               return listed;
-           });
-}
-
-// The mini arm, verdict 'woodchipper-mini': one pour from a mini can in the client's hand, a subclass of the plain can, judged on
-// the host's own events. PASS: the host's fuel rose by what the client's copy gained. FAIL: the host refused the pour for the can
-// (its refusal count rose), or took another amount. INVALID: the client's copy gained nothing, or neither came in kCopySec.
-void HostMini(const std::wstring& key) {
-    const Reading before = Now(key);
-    const View w = ViewNow();
-    PS::Mark("gm_go", Text(before));
-    std::string poured;
-    if (!PS::AwaitText("gm_poured", poured, kSignalSec)) return;
-    const float gained = static_cast<float>(FieldOf(poured, "gained="));
-    if (!(gained > 1.f)) {
-        RV::Say(kTagMini, RV::Outcome::Invalid, "the client's copy gained %.2f from the mini can: nothing for the host to judge",
-                static_cast<double>(gained));
-        return;
-    }
-    PS::WaitFor("the host judges the mini can's pour", kCopySec,
-                [&] { return Now(key).fuel > before.fuel + kFuelTol || ViewNow().refusedCan > w.refusedCan; }, false);
-    const Reading after = Now(key);
-    const View v = ViewNow();
-    char what[200];
-    std::snprintf(what, sizeof(what), "the client's copy gained %.2f; the host's fuel %.2f -> %.2f, refused for the can %llu times",
-                  static_cast<double>(gained), static_cast<double>(before.fuel), static_cast<double>(after.fuel),
-                  v.refusedCan - w.refusedCan);
-    const bool refused = v.refusedCan > w.refusedCan;
-    const bool took = std::fabs(after.fuel - (before.fuel + gained)) <= kFuelTol;
-    const bool moved = after.fuel > before.fuel + kFuelTol;
-    UE_LOGI("woodchipper: ARM gm %s -- %s", refused ? "FAIL" : took ? "PASS" : moved ? "FAIL" : "INVALID", what);
-    if (refused) RV::Say(kTagMini, RV::Outcome::Fail, "the host refused a pour from a mini can in the hand: %s", what);
-    else if (took) RV::Say(kTagMini, RV::Outcome::Pass, "%s", what);
-    else if (moved) RV::Say(kTagMini, RV::Outcome::Fail, "the host took another amount: %s", what);
-    else RV::Say(kTagMini, RV::Outcome::Invalid, "the host judged nothing in %d s: %s", kCopySec, what);
-}
-
 // Everything the host judges is signalled by the client in a line of readings; the host's own reading is taken when the
 // client's arrives.
 void RunHost() {
@@ -686,15 +630,6 @@ void ReportCopy(const std::wstring& key, int active, const char* signal) {
     PS::Mark(signal, text);
 }
 
-// The mini arm's client half: the pour of the mini can in the hand, once the host says it has taken its baseline.
-void ClientMini(const std::wstring& key) {
-    std::string go;
-    if (!PS::AwaitText("gm_go", go, kSignalSec)) return;
-    const float gained = Pour(key);
-    UE_LOGI("woodchipper: CLIENT poured the mini can: the copy gained %.2f", static_cast<double>(gained));
-    PS::Mark("gm_poured", "gained=" + std::to_string(gained));
-}
-
 void RunClient() {
     const bool feed = FeedArm();
     if (!HostPuppetUp()) return;
@@ -788,6 +723,13 @@ void RunRejoin() {
 }
 
 }  // namespace
+
+namespace woodchipper_drill {
+float FuelNow(const std::wstring& key) { return Now(key).fuel; }
+std::string CopyText(const std::wstring& key) { return Text(Now(key)); }
+unsigned long long RefusedForCan() { return ViewNow().refusedCan; }
+float PourHeldCan(const std::wstring& key) { return Pour(key); }
+}  // namespace woodchipper_drill
 
 DWORD WINAPI WoodchipperThread(LPVOID /*arg*/) {
     if (!PS::Begin(kTag)) return 0;
