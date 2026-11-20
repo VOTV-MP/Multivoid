@@ -71,6 +71,22 @@ bool Moved(const Driven& d, const ue_wrap::FVector& loc, const ue_wrap::FRotator
 
 EndListener g_endListener = nullptr;   // [dev] a drill's, told at each close that sends the clients a final pose
 
+// [dev] The last cause each prop's row was opened with, kept after the row closes: a ring of the newest props, the oldest
+// overwritten, so its size is the coasting rows' own count. A prop that opens again takes its entry over.
+struct OpenedBy {
+    uint32_t   eid   = 0;   // 0 is no prop (Open refuses element id 0)
+    CoastCause cause = CoastCause::Verb;
+};
+OpenedBy g_openedBy[coop::prop_drive_rules::kMaxCoasting];
+size_t   g_openedNext = 0;   // the entry the next new prop takes
+
+void NoteOpenedBy(uint32_t eid, CoastCause cause) {
+    for (OpenedBy& o : g_openedBy)
+        if (o.eid == eid) { o.cause = cause; return; }
+    g_openedBy[g_openedNext] = OpenedBy{eid, cause};
+    g_openedNext = (g_openedNext + 1) % coop::prop_drive_rules::kMaxCoasting;
+}
+
 void SendEnd(coop::net::Session& s, const Driven& d, void* actor, const ue_wrap::FVector& loc,
              const ue_wrap::FRotator& rot, const char* why) {
     float lin = 0.f;
@@ -167,6 +183,7 @@ Driven* Open(void* actor, bool claimed, const char* why, uint8_t syncer = 0, Coa
         d.key.data[d.key.len++] = static_cast<char>(keyW[i]);
     d.gen = BumpGen(d.eid);
     d.openMs = d.lastMoveMs = coop::active_drive::NowMs();
+    NoteOpenedBy(d.eid, cause);
     g_driven.push_back(std::move(d));
     UE_LOGI("[PROP-DRIVE] HOST %s eid=%u gen=%u key='%ls' (%s%s) -- %zu driven",
             syncer ? "GRANT" : (claimed ? "CLAIM" : "COAST"), g_driven.back().eid,
@@ -373,6 +390,16 @@ bool OpenCoastCause(uint32_t eid, CoastCause& out) {
     if (!d || d->syncer != 0 || d->claimed) return false;
     out = d->cause;
     return true;
+}
+
+bool LastOpenCause(uint32_t eid, CoastCause& out) {
+    if (eid == 0u) return false;
+    for (const OpenedBy& o : g_openedBy) {
+        if (o.eid != eid) continue;
+        out = o.cause;
+        return true;
+    }
+    return false;
 }
 
 bool CoastCapReached(void* actor, const char* reason, bool birth) {
@@ -616,6 +643,8 @@ void OnDisconnect() {
     g_turn = 0;
     g_coastRefused = 0;
     g_genByEid.clear();
+    for (OpenedBy& o : g_openedBy) o = OpenedBy{};
+    g_openedNext = 0;
     coop::prop_syncer_host::OnDisconnect();   // its buckets, hand-back records and counters go with the rows
     coop::prop_syncer::OnDisconnect();        // a client's table, backoffs and counters (a link that drops ends the session)
 }

@@ -93,6 +93,11 @@ void NoteEndSent(uint32_t eid, uint32_t gen);
 // client's). For a drill that asks who flew a prop. Game thread.
 bool OpenCoastCause(uint32_t eid, CoastCause& out);
 
+// The cause of the LAST row opened for element `eid` this session, whoever authored it and whether it stands or has closed;
+// false when none is held. The table holds the newest kMaxCoasting props' last cause (the oldest is overwritten) and clears
+// at the session's end. For a drill that asks, after a row closed, why a prop had one. Game thread.
+bool LastOpenCause(uint32_t eid, CoastCause& out);
+
 // True when prop_drive_rules::kMaxCoasting props already coast: the caller opens no further one (a prop that already has a
 // row is no further one). A `birth` stops short of it by kCoastPushReserve, so a pile of births cannot take the rows a
 // let-go or a body's push needs. The first three refusals and each doubling after print a counter line naming `actor`'s
