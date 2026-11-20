@@ -61,8 +61,7 @@
 //   g5  an over-pour: the host takes only what fits. INVALID when the tank holds 20 or less before it.
 //   g6  a pour from a client whose hand holds no gas can: the host refuses it.
 //   g4  with the rig's --rejoin: the chipper is on; the client leaves and comes back, and its copy must read it on.
-//   gm  its own arm, woodchipper_drill=mini: g1 with a mini can (a subclass of the plain can) in the hand; tag `woodchipper-mini`.
-//       Its red is the host's gascan_exact_class, which makes the host's judge refuse that can.
+//   gm  its own arm, woodchipper_drill=mini: g1 with a mini can in the hand, tag `woodchipper-mini`; red: the host's gascan_exact_class.
 // Red arms: g2 woodchipper_gate_off and woodchipper_intent_off; g5, g6 woodchipper_pour_check_off; g4
 // woodchipper_replay_off. Tags, said by the host: `woodchipper` (g1, g2, g5, g6; the arm `1`), `woodchipper-rejoin` (g4)
 // and `woodchipper-feed` (g3); the lines are tagged `woodchipper:`. The second life carries VOTVCOOP_WOODCHIPPER_DRILL_REJOIN=1.
