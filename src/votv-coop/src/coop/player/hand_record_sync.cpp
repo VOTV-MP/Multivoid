@@ -131,12 +131,13 @@ coop::roster_ledger::PerSlotState<uint32_t> g_written;    // records written int
 coop::roster_ledger::PerSlotState<uint32_t> g_cleared;    // this slot's record cleared (the host) or taken as cleared (a peer)
 uint32_t g_indicesNeutered = 0;                           // a container record that carried a GObjStack index
 
-void Refuse(uint8_t sender, Refusal why, const wchar_t* cls) {
+// `detail`, when given, says which bound; it is logged with the refusal, which a power-of-two count throttles.
+void Refuse(uint8_t sender, Refusal why, const wchar_t* cls, const char* detail = "") {
     const uint32_t n = ++g_refused[sender][static_cast<int>(why)];
     // %.64ls: the class name is the sender's, up to the wire's 256 K chars.
     if ((n & (n - 1)) == 0)
-        UE_LOGW("hand_record: refused (%s) slot=%u class='%.64ls' (#%u from this sender)",
-                kRefusalName[static_cast<int>(why)], static_cast<unsigned>(sender), cls ? cls : L"", n);
+        UE_LOGW("hand_record: refused (%s) slot=%u class='%.64ls' (#%u from this sender) %s",
+                kRefusalName[static_cast<int>(why)], static_cast<unsigned>(sender), cls ? cls : L"", n, detail);
 }
 
 // Every number a record carries, finite: a non-finite one is refused whole, never clamped (hook_anchor's shape).
@@ -312,9 +313,7 @@ bool DecodeAndCheck(uint8_t sender, Parked& p) {
     if (p.rec.key.empty() || p.rec.key == L"None") { Refuse(sender, Refusal::Keyless, cls); return false; }
     if (!RecordFinite(p.rec)) { Refuse(sender, Refusal::NonFinite, cls); return false; }
     if (const std::string why = BoundsFault(p.rec); !why.empty()) {
-        Refuse(sender, Refusal::Bounds, cls);
-        UE_LOGW("hand_record: slot %u's %.64ls record is past a bound: %s", static_cast<unsigned>(sender), cls ? cls : L"",
-                why.c_str());
+        Refuse(sender, Refusal::Bounds, cls, why.c_str());
         return false;
     }
     return true;
