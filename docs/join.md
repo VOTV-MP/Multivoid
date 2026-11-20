@@ -130,7 +130,11 @@ are the client's own rebuild churn, and broadcasting them would destroy the host
 (a bare client join would strip the host of most of its keyed props), so the destroy seam runs
 inside a world-load episode that suppresses the broadcast
 (`coop/session/world_load_episode`). The loader's last step is the gamemode's `loadObjects`, the
-world's save replay; `coop/session/save_replay_watch` watches it by name on a client, and the quiescence probe opens
+world's save replay. It deletes the map's own grime decals and spawns the save's at the same keys; those deletes are
+no wipe, so the grime lane's index forgets everything as the replay begins (`coop/interactables/grime_sync`). A rehost
+in one game process had read them as wipes to zero and lowered 889 of the save's decals with them
+(Ghezra/Multivoid#36) `[V]` (the reload-churn autotest's host arm, `VOTVCOOP_RUN_RELOAD_CHURN=1 VOTVCOOP_RELOAD_HOST=1`:
+two rehosts lowered none). `coop/session/save_replay_watch` watches the replay by name on a client, and the quiescence probe opens
 only once it has returned in the world the client stands in. From then on the probe runs: five times a
 second it counts the load-tail population, and the load is settled when the count holds across
 consecutive scans. One absolute deadline bounds a pathological load; past it the client announces

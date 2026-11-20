@@ -315,11 +315,8 @@ position, since both peers place them from the same save (`coop/interactables/wi
 `coop/interactables/grime_sync`). A decal that ends (cleaned or repaired past zero, raked) goes out as `kGrimeGone`,
 below every dirt, and every peer destroys its own, as the game's clean does below zero; a zero had left it standing,
 unseen, on the others `[V]` (`coop/dev/clean_drill`: the six decals a client cleaned away ended on the host and the
-other client, and no decal stood on one peer alone after). The save replay (the gamemode's `loadObjects`) deletes the
-map's own decals and spawns the save's at the same keys; those deletes are no wipe, so the index forgets everything as
-the replay begins. A rehost in one game process had read them as wipes to zero and lowered 889 of the save's decals with
-them (Ghezra/Multivoid#36) `[V]` (the reload-churn autotest's host arm, `VOTVCOOP_RUN_RELOAD_CHURN=1
-VOTVCOOP_RELOAD_HOST=1`: two rehosts lowered none).
+other client, and no decal stood on one peer alone after). The save replay's deletes are no wipe of the grime lane's
+(`docs/join.md`, world load).
 
 A spilled liquid is the host's (`coop/world/spill_sync`). A coffee cup tipped or flung fast, beer, wine and a gas
 bottle spill through a `grimeProjectile_C` that flies and leaves its grime decal (`grime_coffee_C` and the rest)
