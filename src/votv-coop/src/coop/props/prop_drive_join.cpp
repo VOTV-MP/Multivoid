@@ -8,10 +8,10 @@
 #include "coop/props/constraint_ties.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_element_tracker.h"
-#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/engine_attach.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -23,7 +23,7 @@ namespace coop::prop_drive_join {
 namespace {
 
 namespace PD = coop::prop_drive_host;
-namespace PR = ue_wrap::prop;
+namespace E  = ue_wrap::engine;
 
 constexpr size_t kTieCap = 32;     // the ties read of one prop at a time
 constexpr size_t kWhyLen = 40;     // a cause's name, copied: a caller's string does not outlive its call
@@ -97,8 +97,10 @@ void Member(void* actor, uint32_t leaderEid, const char* why) {
                 static_cast<unsigned long long>(g_owedCount), EidOf(actor), leaderEid);
 }
 
-// Breadth first over the ties of `leader`: every prop reached is walked through, a member or not, and each is visited once.
-// Only a prop is walked through: a wall or a device two cords meet at would otherwise join props that share nothing.
+// Breadth first over the ties of `leader`, each actor visited once. The walk passes THROUGH any actor whose root body
+// simulates physics (a prop, a cord or wire segment, a hook) and STOPS at one whose root does not (a frozen prop, a wall, a
+// device, the world): a constraint to a fixed body drags nothing, and what hangs on that body moves with no one's carry.
+// Only a member that is a keyed prop with an element id is given a row (Member).
 void Walk(const Leader& l) {
     void* leader = l.ref.Get();
     if (!leader) return;
@@ -110,7 +112,7 @@ void Walk(const Leader& l) {
         const size_t n = coop::constraint_ties::TiesOf(g_walk[i], tied, kTieCap);
         for (size_t k = 0; k < n; ++k) {
             void* t = tied[k];
-            if (std::find(g_walk.begin(), g_walk.end(), t) != g_walk.end() || !PR::IsDescendantOfProp(t)) continue;
+            if (std::find(g_walk.begin(), g_walk.end(), t) != g_walk.end() || !E::IsActorRootSimulatingPhysics(t)) continue;
             if (g_walk.size() >= kWalkCap) {
                 if (Say(++g_walkStopped))
                     UE_LOGI("prop_drive_join: a walk from eid=%u stopped at %zu", leaderEid, kWalkCap);

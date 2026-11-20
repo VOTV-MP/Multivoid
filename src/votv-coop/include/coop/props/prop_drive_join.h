@@ -4,9 +4,11 @@
 // cause of its own moves it, so no row streamed it and its copies stood still. When a prop gets a row (any cause but this
 // one's), or a hand takes it (the host's own, or a client's), the prop is owed a join: at the next drive tick a walk over
 // coop/props/constraint_ties reaches every keyed prop tied to it, transitively, and each one that has no row and is in no
-// hand gets a coasting row (CoastCause::Joined), which the drive's own rest rule ends when the body sleeps. A member already
-// driven is left as it is and walked through; a member past the join cap is owed, and opened when a slot frees or when its
-// body sleeps (the rest rule then ends that row on its next probe, so its pose still travels the row End).
+// hand gets a coasting row (CoastCause::Joined), which the drive's own rest rule ends when the body sleeps and its leader is
+// in no hand. The walk passes through any actor whose root body simulates physics (props, cord and wire segments, a hook)
+// and stops at one whose root does not (a frozen prop, a wall, a device, the world); only a keyed prop with an element id
+// gets a row. A member already driven is kept and walked through; one past the join cap is owed, and opened when a slot
+// frees or when its body sleeps (its row then ends on the next rest probe, so its pose still travels the row End).
 //
 // MTA tows a trailer as a link between two synced elements, each with its own sync row, and the tractor's driver is the
 // trailer's syncer (reference/mtasa-blue/Server/mods/deathmatch/logic/CVehicle.cpp:597-615); here the link is a constraint
