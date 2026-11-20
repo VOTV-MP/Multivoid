@@ -1,21 +1,15 @@
 // coop/world/flood_sync.h -- the basement flood is the host's: its burst pipes and its water level, on every peer.
 //
-// A burst pipe (burstWaterPipe_C) keeps one bit, `damaged`: its State turns its spray, sound and tick on or off, its
-// tick raises its flood volume (waterVolume_basementFlooder_C, whose level is getLevel/setLevel) through addWater, and
-// a toolbox's toolboxFix mends it. Each copy ran it alone, so a flood never reached a client and a client's repair
-// never reached the host (Ghezra/Multivoid#40).
-//
-// CLIENT: three calls are refused on its copies outside the lane's own apply: a pipe's addDamage (a client's hit on a pipe
-// is dropped, not forwarded: a burst is the host's), and the volume's addWater and setLevel (so its level is only ever the
-// host's). Everything else still runs: a burst pipe's State, spray, sound and tick (the tick's one act is addWater), the
-// drain's tick and the volume's updateWaterData. Its player's repair runs on its copy and is asked of the host
-// (FloodIntent), which mends its pipe with State for a living sender in reach with a toolbox, the pipe damaged. A judged
-// and refused repair is answered with the pipe's state; an ask from a slot not world-ready, past four a second, or naming
-// no pipe or another op is dropped with no answer. HOST: a pipe's bit is sent from the pipe's own State, the call every
-// route to a burst or a mend runs (the hit's addDamage, the repair's toolboxFix, a save's loadData), so the send is the
-// event and not a read. The flood's level is sent the same way, from the volume's own addWater and setLevel, once it has
-// moved a whole unit (FloodState). A joiner gets every pipe and level. A client applies them through State and setLevel
-// with updateWaterData. Both are level-placed, named by object name. Game thread.
+// A burst pipe (burstWaterPipe_C) keeps one bit, `damaged`: its State turns its spray, sound and tick on or off, its tick
+// raises its flood volume (waterVolume_basementFlooder_C, getLevel/setLevel) through addWater, and a toolbox's toolboxFix
+// mends it (Ghezra/Multivoid#40). HOST: a pipe's bit is sent from the pipe's own State, the call every route runs (the
+// hit's addDamage, toolboxFix, a save's loadData), and the level from the volume's own addWater and setLevel once it has
+// moved a whole unit (FloodState); a joiner gets every pipe and level. CLIENT: outside the lane's own apply it refuses a
+// pipe's addDamage (a client's hit is dropped, not forwarded) and the volume's addWater and setLevel, so its level is the
+// host's; a burst pipe's State, spray, sound and tick, the drain's tick and updateWaterData still run. Its player's
+// repair runs on its copy and is asked of the host (FloodIntent), which mends its pipe for a living sender in reach with a
+// toolbox, the pipe damaged. A judged and refused ask is answered with the pipe's state; one from a slot not world-ready,
+// past four a second, or naming no pipe or another op is dropped unanswered. Level-placed, named by object name. Game thread.
 
 #pragma once
 
