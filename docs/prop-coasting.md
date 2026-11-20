@@ -60,4 +60,8 @@ the body sleeps. The body-push drill has the pusher step back 150 cm after each 
 not held awake by the pawn it was measured against; a dev row (`open_row_trace`, default off) says each open row's awake flag
 and pose delta once a second. A hand always wins: a claimed prop
 somebody grabs leaves the set and rides the held-prop stream, and a receiver yields at once to its own player's grab,
-which no stream from the host knows of yet, handing back the physics its park took.
+which no stream from the host knows of yet, handing back the physics its park took. A client whose first pose of a let-go row
+finds a remote hand still holding the copy (the pose stream beat that hand's reliable release) keeps the yield pending on that
+release and lifts it there, so the row parks the copy and its End applies where the host's did; an End that comes before the
+release is the host's "taken by a hand" End and is dropped (`coop/props/prop_drive_stream`) `[?]` until the coast drill's
+let-go arm reads it with a delayed release.
