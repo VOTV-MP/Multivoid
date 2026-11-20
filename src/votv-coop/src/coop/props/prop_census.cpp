@@ -453,7 +453,10 @@ void DrainReseedQueue() {
                     coop::element::Element* el = coop::element::Registry::Get().Get(beid);
                     if (!(el && R::IsLiveByIndex(it.obj, el->GetInternalIdx()))) isNew = true;
                 } else {
-                    isNew = true;
+                    // A mirror reads no local eid but is bound: a client-born prop whose birth every peer
+                    // already has. Expressed again it went out with eid 0, which every client drops
+                    // (Ghezra/Multivoid issue 42: 25 in one session, each a prop a client brought into the world).
+                    isNew = coop::element::Registry::Get().EidForActor(it.obj) == coop::element::kInvalidId;
                 }
             }
         }
