@@ -44,7 +44,7 @@ struct Tie {
     ue_wrap::CachedObjRef b;
 };
 std::unordered_map<void*, Tie> g_ties;   // by the constraint component's address
-size_t   g_sweepAt = 256;                // the size at which a new entry first drops the stale ones
+size_t   g_sweepAt = 256;                // the size at which Install drops the stale entries; then twice the live count
 uint32_t g_seenGen = 0;                  // the world generation the by-name seed last ran for
 
 bool g_preOn = false;
@@ -78,16 +78,12 @@ void OweIfDriven(void* owner) {
 }
 
 // Two different owner actors make a tie; one actor (a laptop's no-collide pair, a hook's own parts), the world or nothing
-// makes none, and a constraint re-tied to such an end is untied.
+// makes none, and a constraint re-tied to such an end is untied. It only appends and erases by key: a sweep reads liveness,
+// which can run the world-change listeners, and no listener may run inside a native patch (Install sweeps).
 void Record(void* constraint, void* a, void* b) {
     if (!a || !b || a == b) {
         g_ties.erase(constraint);
         return;
-    }
-    const bool fresh = g_ties.find(constraint) == g_ties.end();
-    if (fresh && g_ties.size() >= g_sweepAt) {
-        SweepStale();
-        g_sweepAt = std::max<size_t>(256, g_ties.size() * 2);
     }
     Tie& t = g_ties[constraint];
     t.constraint.Set(constraint);
@@ -175,6 +171,11 @@ void SeedIfWorldChanged() {
 }  // namespace
 
 void Install() {
+    // The stale entries go from here, the frame call, never inside a patch (see Record).
+    if (g_ties.size() >= g_sweepAt) {
+        SweepStale();
+        g_sweepAt = std::max<size_t>(256, g_ties.size() * 2);
+    }
     // A host session that starts with a patch missing has lost the ties its save restored (the walk of a join then finds
     // none): said once, with the three facts a missing patch rests on.
     if (!g_notLiveSaid && !(g_postOn && g_preOn) && coop::roster::LocalIsHost()) {
