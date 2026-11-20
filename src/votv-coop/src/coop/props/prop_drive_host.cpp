@@ -318,7 +318,11 @@ bool CoastJoined(void* actor, uint32_t leaderEid, bool overCap, const char* why)
 
 bool JoinSlotFree() {
     UE_ASSERT_GAME_THREAD("prop_drive_host::JoinSlotFree");
-    return CoastingCount() < coop::prop_drive_rules::kMaxCoasting - coop::prop_drive_rules::kCoastPushReserve;
+    // The constraint-join drill's knob (constraint_join_drill_cap): above 0 it is the join's cap, so a short chain reaches it.
+    static const long s_drillCap = coop::config::ResolveInt(coop::config_registry::rows::constraint_join_drill_cap);
+    const size_t cap = s_drillCap > 0 ? static_cast<size_t>(s_drillCap)
+                                      : coop::prop_drive_rules::kMaxCoasting - coop::prop_drive_rules::kCoastPushReserve;
+    return CoastingCount() < cap;
 }
 
 bool BodyAsleepForEnd(void* actor) {

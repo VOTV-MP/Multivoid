@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_drive_join.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/player/roster.h"
 #include "coop/props/constraint_ties.h"
 #include "coop/props/prop_drive_host.h"
@@ -80,7 +82,10 @@ void Member(void* actor, uint32_t leaderEid, const char* why) {
     o.ref.Set(actor);
     o.leaderEid = leaderEid;
     CopyWhy(o.why, why);
-    g_owed.push_back(o);
+    // Developer red arm of the constraint-join drill (constraint_join_off=owed): the member is counted and dropped, never
+    // owed. Resolved once, as prop_drive_host's other drill red arms are.
+    static const bool s_owedOff = coop::config::ResolveEnum(coop::config_registry::rows::constraint_join_off) == "owed";
+    if (!s_owedOff) g_owed.push_back(o);
     if (Say(++g_owedCount))
         UE_LOGI("prop_drive_join: owed %llu -- eid=%u waits past the cap of the leader eid=%u",
                 static_cast<unsigned long long>(g_owedCount), EidOf(actor), leaderEid);
@@ -140,6 +145,9 @@ void ServeOwed() {
 
 void Owe(void* leader, const char* why) {
     if (!leader || !coop::roster::LocalIsHost()) return;
+    // Developer red arm of the constraint-join drill (constraint_join_off=join): nothing is ever owed.
+    static const bool s_joinOff = coop::config::ResolveEnum(coop::config_registry::rows::constraint_join_off) == "join";
+    if (s_joinOff) return;
     UE_ASSERT_GAME_THREAD("prop_drive_join::Owe");
     for (const Leader& l : g_leaders)
         if (l.ref.Raw() == leader) return;

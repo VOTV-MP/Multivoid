@@ -14,6 +14,8 @@
 #include "coop/props/trash_mirror.h"   // WeMade
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
@@ -311,7 +313,9 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         }
         if (pose.holdGen == 0 || hold.preludeGen != pose.holdGen) {
             hold.preludeGen = pose.holdGen;
-            coop::prop_drive_join::Owe(prop, "client hand");   // host only; once per take, the latch the prelude rides
+            // host only; once per take, the latch the prelude rides; red arm: constraint_join_off=hand
+            static const bool s_handOff = coop::config::ResolveEnum(coop::config_registry::rows::constraint_join_off) == "hand";
+            if (!s_handOff) coop::prop_drive_join::Owe(prop, "client hand");
             coop::glowstick_sync::OnHoldBegin(prop);   // a stuck glowstick's own grab frees it: its game runs releaseGlowstick
             const char* state = ue_wrap::prop::IsStatic(prop)   ? "static"
                                 : ue_wrap::prop::IsFrozen(prop) ? "frozen"

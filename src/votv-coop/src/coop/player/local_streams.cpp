@@ -532,7 +532,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
         // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
-            coop::prop_drive_join::Owe(heldActor, "host hand");  // host only; once per take
+            static const bool s_handOff = coop::config::ResolveEnum(coop::config_registry::rows::constraint_join_off) == "hand";
+            if (!s_handOff) coop::prop_drive_join::Owe(heldActor, "host hand");  // host only; once per take; red arm: constraint_join_off
             // A swinger let go and still coasting (or held) when another item is taken: its release goes
             // out now, with its own hold's generation, key and eid, before this edge replaces them.
             if (g_heldSwinger && g_lastHeldProp.Raw()) SendHeldRelease(session);

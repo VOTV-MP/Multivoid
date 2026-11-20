@@ -165,3 +165,12 @@ CFG_ENUM(dingus_red, "dingus_red", "dev", "off", "off|report|broadcast|birth_mar
     "judges it must say FAIL. report: a client sends no report of its find. broadcast: the host sends no DingusFound for a find "
     "made now. birth_mark: the host does not mark a copy born under a found key. bind_mark: a client does not mark a copy it binds "
     "under a found key. birth_seed: the host's birth drain ignores a copy born found. snapshot: the host sends a joiner no key.")
+CFG_ENUM(constraint_join_off, "constraint_join_off", "dev", "off", "off|join|hand|owed", "VOTVCOOP_CONSTRAINT_JOIN_OFF",
+    "Developer red arm of the constraint-join drill (host): never set. join: a prop that gets a row owes the props tied to it "
+    "nothing, so c1 must say FAIL at the leader's End. hand: the host's own take of a prop and a client's take owe nothing "
+    "(a row's own birth still does), so c2 must say FAIL at the client's let-go. owed: a member past the join cap is dropped, "
+    "never owed, so c3 must say FAIL at the leader's End.")
+CFG_INT(constraint_join_drill_cap, "constraint_join_drill_cap", "dev", 0, 0, 32, "VOTVCOOP_CONSTRAINT_JOIN_DRILL_CAP",
+    "Drill knob of the constraint-join drill (host): never set outside it. Above 0, a joined row opens only while fewer props "
+    "than this coast (the join's own cap, in place of the drive's maximum less the let-go reserve), so a short chain reaches "
+    "the cap. 0 leaves the cap as built.")
