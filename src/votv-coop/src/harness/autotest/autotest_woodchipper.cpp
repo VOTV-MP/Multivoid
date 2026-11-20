@@ -434,6 +434,22 @@ void ClientFeed() {
     PS::Mark("g3_client", text);
 }
 
+// The mini arm's host: a mini can in the world before any hand takes one, as a real mini can in a hand always came from a world
+// the host holds. The judge asks the hand's class by a class this host has loaded, and a host never loads a client's class
+// name (class_resolve LookupOnly); the drill's forced hold loads it on the client alone, so the host's lookup found none.
+bool SpawnMiniCan() {
+    bool ok = false;
+    OnGameThread([&] {
+        void* me = coop::players::Registry::Get().Local();
+        void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_gascan_mini.prop_gascan_mini_C");
+        ue_wrap::FVector at{};
+        if (!me || !cls || !E::TryGetActorLocation(me, at)) return;
+        const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
+        ok = E::SpawnActor(cls, {at.X - fwd.X * 150.f, at.Y - fwd.Y * 150.f, at.Z + 60.f}) && ue_wrap::object_index::ClassByName(kMiniClass);
+    });
+    return ok;
+}
+
 // The mini arm, verdict 'woodchipper-mini': one pour from a mini can in the client's hand, a subclass of the plain can, judged on
 // the host's own events. PASS: the host's fuel rose by what the client's copy gained. FAIL: the host refused the pour for the can
 // (its refusal count rose), or took another amount. INVALID: the client's copy gained nothing, or neither came in kCopySec.
@@ -476,6 +492,10 @@ void RunHost() {
     const std::wstring key = ChipperKey();
     if (key.empty()) {
         UE_LOGW("woodchipper: VERDICT ABORT -- no woodchipper in the world and none spawned");
+        return;
+    }
+    if (MiniArm() && !SpawnMiniCan()) {
+        RV::Say(kTagMini, RV::Outcome::Invalid, "no mini can could be spawned on the host");
         return;
     }
     PS::Mark("chipper_key", Narrow(key));
