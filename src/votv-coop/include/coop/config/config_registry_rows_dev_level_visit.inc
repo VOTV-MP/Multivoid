@@ -13,7 +13,7 @@ CFG_ENUM(level_visit_drill, "level_visit_drill", "dev", "off", "off|client|host|
     "the host takes the trip and stays; the client, launched to join later, must find the host's copy hidden at the "
     "first pose it applies (INVALID when the host was not yet in the map). The host prints 'rig: VERDICT level-visit "
     "PASS|FAIL|INVALID' and 'level-visit: DONE <role>'; each peer prints 'level-visit: ARM <step> <role> "
-    "PASS|FAIL|INVALID'. Red arms: level_visit_hide_off and backrooms_close_off. It "
+    "PASS|FAIL|INVALID'. Red arms: level_visit_hide_off, backrooms_close_off and visit_sky_all (the visitor's sky check). It "
     "MUTATES the world (the visit loads a map, the host's setting changes).")
 CFG_ENUM(level_visit_start, "level_visit_start", "dev", "clip", "clip|call|none", "VOTVCOOP_LEVEL_VISIT_START",
     "How the level-visit drill's visitor takes the trip: clip -- the game's own clip (lastLoc under the floor, no camera "
@@ -39,3 +39,8 @@ CFG_FLAG(level_visit_hide_off, "level_visit_hide_off", "dev", false, "VOTVCOOP_L
 CFG_FLAG(backrooms_close_off, "backrooms_close_off", "dev", false, "VOTVCOOP_BACKROOMS_CLOSE_OFF",
     "Developer red arm of the level-visit drill: never set. The game's own clip check is not answered by the mod on "
     "this machine, so a clip is taken while the host has the backrooms closed, and during a visit.")
+CFG_FLAG(visit_sky_all, "visit_sky_all", "dev", false, "VOTVCOOP_VISIT_SKY_ALL",
+    "Developer red arm of the level-visit drill's sky check: never set. A visit hides and remembers every sun, sky light "
+    "and fog of the world, as it did before it kept only what was shown, so the end shows again those the day-night "
+    "cycle had off, and the drill's check must say FAIL (it needs one such component: INVALID when none was hidden "
+    "before the visit).")

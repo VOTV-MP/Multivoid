@@ -2,6 +2,8 @@
 
 #include "coop/player/level_visit_sky.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -87,9 +89,11 @@ void Hide(void* mapLevel) {
         InstancesOf(name, true, mapLevel, world, inMap);
         int hidden = 0;
         // Only what is shown is hidden and remembered: the day-night cycle keeps some of these hidden itself (the sun
-        // at night), and Show must not turn those on.
+        // at night), and Show must not turn those on. [dev red] visit_sky_all: every one is, as before, so Show turns on
+        // those the cycle had off.
+        static const bool all = coop::config::ResolveFlag(coop::config_registry::rows::visit_sky_all);
         for (void* c : world)
-            if (IsVisible(c) && SetComponentVisible(c, false)) { g_hiddenSky.push_back(c); ++hidden; }
+            if ((all || IsVisible(c)) && SetComponentVisible(c, false)) { g_hiddenSky.push_back(c); ++hidden; }
         if (!world.empty()) said += L" " + std::wstring(name) + L"=" + std::to_wstring(hidden);
     }
     std::vector<void*> volumes, mapVolumes;
@@ -117,6 +121,17 @@ void Hold() {
         if (R::IsLive(c)) SetComponentVisible(c, false);
     for (void* v : g_offVolumes)
         if (R::IsLive(v) && VolumeBit(v, L"bEnabled")) VolumeBit(v, L"bEnabled", 0);
+}
+
+bool SkyShown(void* comp) { return IsVisible(comp); }
+
+void ReadWorldSky(std::vector<SkyReading>& out) {
+    out.clear();
+    for (const wchar_t* name : kWorldSkyClasses) {
+        std::vector<void*> world, inMap;
+        InstancesOf(name, true, nullptr, world, inMap);   // no map is loaded: every instance is the world's
+        for (void* c : world) out.push_back({c, IsVisible(c)});
+    }
 }
 
 void Show() {
