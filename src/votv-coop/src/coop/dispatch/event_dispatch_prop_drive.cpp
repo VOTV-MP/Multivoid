@@ -467,12 +467,18 @@ bool HandlePropDriveEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::SoundAt: {
-        if (msg.payloadLen < sizeof(net::SoundAtPayload)) {
-            UE_LOGW("event_feed: a SoundAt too short from slot %d -- dropping", msg.senderPeerSlot);
+        // Exact length, and the layout's zero pad. The direction is OnSoundAt's: the host hears clients, a client the host.
+        if (msg.payloadLen != sizeof(net::SoundAtPayload)) {
+            UE_LOGW("event_feed: a SoundAt of %zu bytes from slot %d -- dropping", static_cast<size_t>(msg.payloadLen),
+                    msg.senderPeerSlot);
             break;
         }
         net::SoundAtPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.pad != 0) {
+            UE_LOGW("event_feed: a SoundAt with a nonzero pad from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
         ::coop::sound_relay::OnSoundAt(msg.senderPeerSlot, p);
         break;
     }
