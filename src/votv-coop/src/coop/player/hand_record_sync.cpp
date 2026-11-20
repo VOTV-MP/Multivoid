@@ -55,9 +55,12 @@ constexpr int kTag = 0x48524355;  // 'HRCU'
 constexpr N::IntentBudget kBudget{4.0f, 2.0f};
 
 // A held item's record is its leaf state. Every honest held-can record measured 232-234 B on the rig (the can, hand,
-// joiner and forge arms), so the lane's own ceiling is 4 KB, a wide margin for an item that carries a list (an order box
-// names its items' classes), and a record past it is refused whole before anything of it is decoded or relayed.
-constexpr size_t kMaxRecordBytes = 4096;
+// joiner and forge arms); a record past the ceiling is refused whole before anything of it is decoded or relayed. A drive
+// box holds 16 signal rows, and a row's bytes are signal_wire's 48 of head, 2 per char of its four texts (capped at 96,
+// 48, 64 and 64 chars: 544 B) and a 4-byte length: 596 B at the caps, 9536 B for 16 rows, which a 4 KB ceiling refused
+// (the sender cleared the hand and the box was lost). 12 KB holds the 16 capped rows and leaves 2.7 KB for the rest of
+// a box's record, which carries no list.
+constexpr size_t kMaxRecordBytes = 12288;
 // The bounds on what a decoded record may carry, set from that measured shape plus margin (the stored line prints every
 // group's count so the next run can tighten them): a held item writes a handful of short groups.
 constexpr size_t kMaxGroups = 16;      // groups of one kind
@@ -517,6 +520,14 @@ void SendSnapshot(int slot, uint16_t sources) {
 }
 
 }  // namespace
+
+size_t EncodedBytes(const SR::SaveRecord& r) {
+    SR::SaveRecord copy = r;
+    copy.xform = {};   // as the sender sends it: where the hand holds it is no part of the record
+    return Encode(0, copy).size();
+}
+
+size_t RecordCeilingBytes() { return kMaxRecordBytes; }
 
 void Install(coop::net::Session* session) {
     g_session = session;

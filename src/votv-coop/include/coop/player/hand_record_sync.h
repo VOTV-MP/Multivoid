@@ -33,6 +33,11 @@ void Install(coop::net::Session* session);
 // Which count or length of `r` is past this lane's bounds, said for a line; empty when the record is within them. Pure.
 std::string BoundsFault(const ue_wrap::save_record::SaveRecord& r);
 
+// What the record weighs encoded as the sender sends it, and the lane's ceiling on that (a record past it is not sent,
+// and a client's is refused at the host). The bytes are the check on a record's size: BoundsFault counts rows, not bytes.
+size_t EncodedBytes(const ue_wrap::save_record::SaveRecord& r);
+size_t RecordCeilingBytes();
+
 // The local hand item `actor` changed under the same hold (a can's init: opened, eaten from): its record is read and
 // sent at the next Tick. Nothing for an actor that is not this player's hand. Game thread.
 void NoteHeldItemChanged(void* actor);
