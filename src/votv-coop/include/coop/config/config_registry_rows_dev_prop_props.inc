@@ -165,6 +165,15 @@ CFG_ENUM(dingus_red, "dingus_red", "dev", "off", "off|report|broadcast|birth_mar
     "judges it must say FAIL. report: a client sends no report of its find. broadcast: the host sends no DingusFound for a find "
     "made now. birth_mark: the host does not mark a copy born under a found key. bind_mark: a client does not mark a copy it binds "
     "under a found key. birth_seed: the host's birth drain ignores a copy born found. snapshot: the host sends a joiner no key.")
+CFG_ENUM(constraint_join_drill, "constraint_join_drill", "dev", "off", "off|c1|c2|c3", "VOTVCOOP_CONSTRAINT_JOIN_DRILL",
+    "Drill (BOTH peers, default off; run with mp.py smoke on a fresh host): every prop a physics constraint ties to a driven "
+    "prop gets a drive row of its own. The host builds a nailed set on measured open ground and waits until every drive on it "
+    "is closed. c1: a chain of three boxes nailed A-B and B-C, C 250 cm from A (past a body's push); the host carries A 300 cm "
+    "away from C and lets go. c2: a pair nailed A-B; the host walks more than 5 m away, the client carries A 300 cm and lets go "
+    "(the host judges B's row at the client's let-go), then the client leaves and rejoins and its copies must stand where the "
+    "host's rest. c3: a chain of six boxes with constraint_join_drill_cap=2; the host carries A, and the members past the cap "
+    "are owed a row. The host says FAIL at the leader's End when a member never had a row; the client says PASS when every "
+    "member's copy stood at its End pose. rig: VERDICT constraint-join PASS, FAIL or INVALID.")
 CFG_ENUM(constraint_join_off, "constraint_join_off", "dev", "off", "off|join|hand|owed", "VOTVCOOP_CONSTRAINT_JOIN_OFF",
     "Developer red arm of the constraint-join drill (host): never set. join: a prop that gets a row owes the props tied to it "
     "nothing, so c1 must say FAIL at the leader's End. hand: the host's own take of a prop and a client's take owe nothing "

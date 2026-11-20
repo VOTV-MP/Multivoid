@@ -100,6 +100,7 @@
 #include "coop/dev/body_push_drill.h"  // [dev] a client walks into a crate: the copies must rest alike
 #include "coop/dev/coast_drill.h"  // [dev] a crate a hand lets go of rests alike on both peers
 #include "coop/dev/letgo_release_delay.h"  // [dev] the coast drill's held release
+#include "coop/dev/constraint_join_drill.h"  // [dev] what a constraint ties to a driven prop gets a row and converges
 #include "coop/dev/collision_probe.h"  // [dev] what collides with what on a pawn, as the engine reports it
 #include "coop/dev/end_trace.h"  // [dev] what a copy does just after a drive End put it to sleep
 #include "coop/dev/feedback_probe.h"  // [dev] every hint and 2D sound this peer makes, logged by role
@@ -335,6 +336,7 @@ void EndSession() {
     coop::dev::body_push_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::letgo_release_delay::OnDisconnect();  // [dev] a held release dies with its session
+    coop::dev::constraint_join_drill::OnDisconnect();  // [dev] a rejoin runs the drill again (a c2 host keeps its set)
     coop::dev::vent_probe::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::deskaudio_probe::OnDisconnect();  // [dev] a rejoin judges the desk again
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
@@ -404,6 +406,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::body_push_drill::Tick(&session);  // [dev] the body-push drill (a latched bool read when off)
     coop::dev::coast_drill::Tick(&session);  // [dev] the coast drill (a latched enum read when off)
     coop::dev::letgo_release_delay::Tick();  // [dev] the client's held releases (an empty-queue check when off)
+    coop::dev::constraint_join_drill::Tick(&session);  // [dev] the constraint-join drill (a latched enum read when off)
     coop::dev::collision_probe::Tick();  // [dev] the pawns' collision, logged (a latched bool read when off)
     coop::dev::end_trace::Tick();  // [dev] the copies an End slept, traced (a latched bool read when off)
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)

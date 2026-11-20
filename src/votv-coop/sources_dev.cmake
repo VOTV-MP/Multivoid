@@ -325,6 +325,10 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/end_trace.cpp
     src/coop/dev/coast_drill.cpp
     src/coop/dev/letgo_release_delay.cpp
+    src/coop/dev/constraint_join_drill.cpp
+    src/coop/dev/constraint_join_drill_carry.cpp
+    src/coop/dev/constraint_join_drill_client.cpp
+    src/coop/dev/constraint_join_drill_host.cpp
     src/coop/dev/rest_compare.cpp
     src/coop/dev/drill_ground.cpp
     src/coop/dev/oven_progress_drill.cpp
