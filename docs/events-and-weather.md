@@ -212,8 +212,9 @@ A burst pipe (`burstWaterPipe_C`, placed in the basement) keeps one bit, `damage
 tick on, its tick raises the basement's flood volume (`waterVolume_basementFlooder_C`, whose height between its two ends
 is the level its `getLevel`/`setLevel` read and write), and a toolbox's `toolboxFix` mends it. Each copy ran it alone, so
 a flood never reached a client and a client's repair never reached the host (Ghezra/Multivoid#40). The host owns both: a
-client's pipes run no tick and take no damage of their own, the host sends a pipe whose bit changed and the level as it
-moves (four reads a second, and every pipe and level to a joiner), and a client applies them through the pipe's `State`
+client's pipes run no tick and take no damage of their own, the host sends a pipe whose bit changed from the pipe's own
+`State` call and the level as it moves (a read four times a second: its writers run every frame), and every pipe and
+level to a joiner, and a client applies them through the pipe's `State`
 and the volume's `setLevel` and `updateWaterData`. A client's repair runs on its copy and is asked of the host, which
 mends its pipe only for a living sender in reach with a toolbox in the hand (`coop/world/flood_sync`) `[V]`
 (`coop/dev/flood_probe`: the host's burst reached the client in the same second, the level rose on both, and the
