@@ -5,6 +5,7 @@
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <algorithm>
@@ -45,18 +46,17 @@ void Say(void (Voice::*say)(const char*), Voice& v, const char* fmt, ...) {
     (v.*say)(buf);
 }
 
-}  // namespace
-
+// A deferred spawn of the nail class at `loc`, a `length` written before the finish when positive. Null when it did not spawn.
 void* SpawnNail(Voice& v, void* nailCls, const char* label, const ue_wrap::FVector& loc, float length,
                 const ue_wrap::FRotator& rot) {
     void* nail = E::BeginDeferredSpawn(nailCls, loc, rot);
     if (!nail) return nullptr;
-    v.Label(nail, label);
     if (length > 0.f && !WriteFloatField(nail, L"length", length)) Say(&Voice::Warn, v, "nail %s: no `length` field to write", label);
     if (!E::FinishDeferredSpawn(nail, loc, rot)) return nullptr;
     return nail;
 }
 
+// nailNail takes `a` and answers `fail`. False when the verb did not run.
 bool CallVerb(void* nail, const wchar_t* name, bool& fail) {
     void* fn = FnOf(nail, name);
     if (!fn) return false;
@@ -68,6 +68,7 @@ bool CallVerb(void* nail, const wchar_t* name, bool& fail) {
     return true;
 }
 
+// The nail's own n(): where its segment runs, said as an Info line.
 void SaySegment(Voice& v, void* nail) {
     void* fn = FnOf(nail, L"n");
     ue_wrap::ParamFrame f(fn);
@@ -80,6 +81,8 @@ void SaySegment(Voice& v, void* nail) {
         static_cast<double>(a.X), static_cast<double>(a.Y), static_cast<double>(a.Z), static_cast<double>(b.X),
         static_cast<double>(b.Y), static_cast<double>(b.Z));
 }
+
+}  // namespace
 
 bool NailThePair(Voice& v, const char* act, const char* label, void* nailCls, void* a, void* b, void*& nail) {
     auto unmeasured = [&](const char* fmt, ...) {

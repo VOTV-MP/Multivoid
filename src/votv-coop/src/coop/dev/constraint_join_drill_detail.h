@@ -31,7 +31,7 @@ constexpr const wchar_t* kBoxPath  = L"/Game/objects/prop_box.prop_box_C";
 constexpr const wchar_t* kNailPath = L"/Game/objects/nail.nail_C";
 
 constexpr float kStepCm       = 125.f;   // the footprint's step bound: the real step is a box's width plus kPropGapCm
-constexpr float kPropGapCm    = 1.f;     // between neighbours' faces, as a nailed pair's (MakePair of the building probe)
+constexpr float kPropGapCm    = 1.f;     // between neighbours' faces
 constexpr float kLiftCm       = 60.f;    // a spawn's lift above the measured floor, so each box falls to rest
 constexpr float kFootCm       = 75.f;    // the footprint kept clear round the set, beyond its ends
 constexpr float kCrowdCm      = 400.f;   // another box within this of the spot ends the search for it

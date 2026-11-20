@@ -2,7 +2,7 @@
 // own and converges on every peer (ini constraint_join_drill=off|c1|c2|c3 / env VOTVCOOP_CONSTRAINT_JOIN_DRILL; BOTH peers,
 // one client; default off).
 //
-// The host builds a nailed set of prop boxes in a line on measured open ground, the boxes 1 cm apart as a nailed pair's are
+// The host builds a nailed set of prop boxes in a line on measured open ground, the boxes 1 cm apart
 // (coop/dev/nail_act puts each nail through two neighbours as the nailgun's projectile does; a chain stands one box at a
 // time, each nailed from its outer side into the box before it, before the next stands), and waits until every drive on
 // it is closed; the client is told the set in chat lines. The bot director walks and grabs (coop/dev/director), never a

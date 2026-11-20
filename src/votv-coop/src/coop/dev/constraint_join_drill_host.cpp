@@ -55,10 +55,9 @@ char Letter(size_t i) { return static_cast<char>('A' + i); }
 std::string BoxName(void* actor);
 std::string NailEnds(void* nail);
 
-// The nail act's voice for this drill: plain log lines under the drill's tag, no labels; a step that cannot run ends INVALID.
+// The nail act's voice for this drill: plain log lines under the drill's tag; a step that cannot run ends INVALID.
 class DrillVoice final : public NA::Voice {
 public:
-    void Label(void*, const char*) override {}
     void Info(const char* line) override { UE_LOGI("%s %s", kLog, line); }
     void Warn(const char* line) override { UE_LOGW("%s %s", kLog, line); }
     void Event(const char* line) override { UE_LOGI("%s %s", kLog, line); }
@@ -274,8 +273,8 @@ void StepWaitPeer(coop::net::Session& s) {
     g_boxCls = ue_wrap::asset_load::LoadObjectByPath(kBoxPath);
     g_nailCls = ue_wrap::asset_load::LoadObjectByPath(kNailPath);
     if (!g_boxCls || !g_nailCls) { Invalid('H', "a class did not load (box=%d nail=%d)", g_boxCls ? 1 : 0, g_nailCls ? 1 : 0); return; }
-    // The footprint is cleared for the step's bound; the boxes stand kPropGapCm apart as a nailed pair's do (MakePair of the
-    // building probe). Box A fixes the step by its own width. A chain stands one box at a time (StepPlace), each nailed from
+    // The footprint is cleared for the step's bound; the boxes stand kPropGapCm apart between faces.
+    // Box A fixes the step by its own width. A chain stands one box at a time (StepPlace), each nailed from
     // its outer side before the next stands; c2's pair stands whole and is nailed from A's outer side.
     g_ax = g_spot.X - static_cast<float>(g_n - 1) * kStepCm * 0.5f;
     void* first = E::SpawnActor(g_boxCls, FVector{g_ax, g_spot.Y, g_spot.Z + kLiftCm});
