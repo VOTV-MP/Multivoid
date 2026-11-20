@@ -19,6 +19,7 @@
 #include "coop/net/protocol.h"
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net { class Session; }
 
@@ -54,6 +55,15 @@ bool TryConsumeDenyReap(uint8_t senderSlot, uint64_t rowHash);
 // reads a delta).
 bool HostSeesRack(uint32_t rackEid);
 uint64_t HostCanonicalsSent();
+
+// Game thread, CLIENT, read by a drill: the host's canonicals this lane has applied since the process began (never
+// reset; a drill reads a delta).
+uint64_t CanonicalsApplied();
+
+// HOST (coop/props/prop_drop_intent): the host spawned `actor` from a client's drop intent naming `key`. A rack of the
+// key that goes empty at its first sight here gets the rows a box of that key went holding (the client took it out of
+// its inventory); any other box of the key keeps its own. Nothing for an actor that is no rack.
+void NoteClientPlaced(void* actor, const std::wstring& key);
 
 // Full teardown (the OnDisconnect fanout) -- baselines, shadow, dirty mark,
 // deny + taken rings, assembler.

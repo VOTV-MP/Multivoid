@@ -7,6 +7,7 @@
 #include "coop/interactables/drive_rack_sync.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_snd_fx.h"   // ScopedWireApply (the shared desk wire guard)
@@ -57,7 +58,9 @@ std::map<uint32_t, ue_wrap::CachedObjRef> g_rackActor;  // rack eid -> the actor
 // its take back out spawns a new one under the same key, born empty here: the drives are in no record this lane takes
 // (the class is this lane's, and a client's record of it is not trusted), so the host's empty rows went out as the
 // canonical and the box came back empty on every peer (VOTV-MP/Multivoid#192). The host keeps the rows it last held
-// and puts them back on the first sight of an empty box of that key. Never a client's rows: the host's own last copy.
+// and puts them back on the first sight of an empty box of that key that a client PLACED (the host spawned it from the
+// client's drop intent: a client's take out of its inventory, which parked the key at the pocket). A box that reuses the
+// key and no client placed is a new box and keeps its own rows. Never a client's rows: the host's own last copy.
 std::map<uint32_t, std::wstring> g_rackKey;  // rack eid -> its save key, read at its sight
 struct GoneRack {
     std::vector<uint8_t> blob;   // its last canonical blob
@@ -65,6 +68,17 @@ struct GoneRack {
 };
 std::map<std::wstring, GoneRack> g_goneRacks;
 constexpr size_t kMaxGoneRacks = 64;
+// The keys of boxes the host spawned from a client's drop intent, until the box's first sight here (NoteClientPlaced).
+std::map<std::wstring, Clock::time_point> g_clientPlaced;
+constexpr size_t kMaxClientPlaced = 64;
+
+// True, once, for a key a client placed since the last first sight of a box of it.
+bool TakeClientPlaced(const std::wstring& key) {
+    const auto it = g_clientPlaced.find(key);
+    if (it == g_clientPlaced.end()) return false;
+    g_clientPlaced.erase(it);
+    return true;
+}
 std::set<uint32_t> g_wrongClassSaid;  // eids a canonical named that are no rack here (said once a session)
 
 bool g_primed = false;
@@ -236,8 +250,8 @@ void NoteGoneRacks(const std::vector<std::pair<uint32_t, void*>>& live) {
 // HOST: a box first seen here empty whose key went holding drives gets those rows back, through the rack's own rows and
 // gen(), before its canonical goes out. True when it put them back.
 bool RestoreReturnedRack(uint32_t eid, void* rack, const std::wstring& key, DC::RackRow rows[DC::kRackSlots]) {
-    // VOTVCOOP_RACK_RESTORE_OFF=1: the box comes back as the host spawned it, the item trip probe's red arm.
-    static const bool off = coop::config::ReadEnv("VOTVCOOP_RACK_RESTORE_OFF") == "1";
+    // drive_box_restore_off: the box comes back as the host spawned it, the drive box drill's red arm.
+    static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::drive_box_restore_off);
     const auto g = g_goneRacks.find(key);
     if (off || key.empty() || g == g_goneRacks.end()) return false;
     for (int i = 0; i < DC::kRackSlots; ++i)
@@ -280,7 +294,9 @@ void SweepRacks(bool announce) {
             if (host) {
                 const std::wstring key = ue_wrap::prop::GetInteractableKeyString(rack);
                 g_rackKey[eid] = key;
-                if (announce && RestoreReturnedRack(eid, rack, key, rows)) {
+                // The place is consumed at the box's first sight whether or not a gone box waits for its key.
+                const bool placed = announce && TakeClientPlaced(key);
+                if (placed && RestoreReturnedRack(eid, rack, key, rows)) {
                     blob = RackCanonicalBlob(eid, rows);
                     g_rackBase[eid] = coop::blob_chunks::Fnv64(blob);
                     g_rackShadow[eid] = std::move(blob);
@@ -641,9 +657,25 @@ uint64_t HostCanonicalsSent() {
     return g_cRackCanon;
 }
 
+uint64_t CanonicalsApplied() {
+    return g_cCanonApplied;
+}
+
+void NoteClientPlaced(void* actor, const std::wstring& key) {
+    if (!IsHost() || !actor || key.empty() || !DC::EnsureResolved() || !DC::IsRackClass(R::ClassOf(actor))) return;
+    if (g_clientPlaced.size() >= kMaxClientPlaced && !g_clientPlaced.count(key)) {
+        auto oldest = g_clientPlaced.begin();
+        for (auto p = g_clientPlaced.begin(); p != g_clientPlaced.end(); ++p)
+            if (p->second < oldest->second) oldest = p;
+        g_clientPlaced.erase(oldest);
+    }
+    g_clientPlaced[key] = Clock::now();
+}
+
 void OnDisconnect() {
     g_rackKey.clear();
     g_goneRacks.clear();
+    g_clientPlaced.clear();
     g_wrongClassSaid.clear();
     g_rackDirty.store(false, std::memory_order_relaxed);
     g_rackBase.clear();

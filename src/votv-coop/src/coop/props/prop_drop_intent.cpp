@@ -44,6 +44,7 @@
 #include "coop/interactables/physmods_sync.h"   // the denied-birth reap
 #include "coop/interactables/server_upgrade_sync.h"  // the refused take-out's reap
 #include "coop/interactables/drive_payload_sync.h"  // NoteOwnDrive, NoteClientBrought: a drive a player brings into the world
+#include "coop/interactables/drive_rack_sync.h"  // NoteClientPlaced: a drive box a client placed
 #include "ue_wrap/desk/drive_chain.h"           // IsDriveClass whitelist
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
@@ -628,6 +629,8 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
     void* actor = HostSpawnPlacedProp(p, cls, key, senderSlot);
     // A data drive the client brought in: its row, which only that client has, is the one the host takes for it.
     if (actor) coop::drive_payload_sync::NoteClientBrought(actor, senderSlot);
+    // A drive box the client placed (taken out of its inventory, its key parked at the pocket): the rack lane's restore.
+    if (actor) coop::drive_rack_sync::NoteClientPlaced(actor, key);
     if (actor) {
         UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) throw seq %u "
                 "-- FinishSpawn watcher broadcasts it this tick",

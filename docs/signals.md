@@ -217,11 +217,11 @@ the eraser's delete, pressed on a client, runs on the host, and every press and 
 eraser shows on each client's own eraser (`coop/interactables/eraser_press_intent`); the
 rack is presser index-operations the host terminates, a full canonical array back, and a deny
 ring for races (`coop/interactables/drive_rack_sync`). A box that goes holding drives (a pocket destroys it) leaves its
-rows with the host under its save key, and the box a take out of the inventory spawns under that key, empty, gets them
-back before its canonical goes, where the host's empty rows had emptied it on every peer (VOTV-MP/Multivoid#192) `[V]`
-(the fork's item trip probe, a drive box through the inventory, red arm
-`VOTVCOOP_RACK_RESTORE_OFF=1`: a client's box of 12 came back out with 12 on its copy and 0 on both after the host's
-canonical; now 12 on both). A box's record carries its 16 rows as signals, past the hand lane's old bound of 8, so a held
+rows with the host under its save key, and the box the host spawns from a client's placement of it (the client took it
+out of its inventory; the drop intent names the key the pocket parked) gets them back at the lane's first sight of it,
+before its canonical goes, where the host's empty rows had emptied it on every peer (VOTV-MP/Multivoid#192): a new box that
+merely reuses the key keeps its own rows `[?]` (`coop/dev/drive_box_drill`, a drive box through the inventory; the red,
+`drive_box_restore_off`, leaves the box empty). A box's record carries its 16 rows as signals, past the hand lane's old bound of 8, so a held
 box's record was refused; the bound is 16. A slot freezes the drive it takes, and only a
 grab takes one out -- the drive ejects itself, and the grab unfreezes it -- so a peer applying
 another's eject leaves the unfreeze to that grab's own hold, which reaches the drive through the prop

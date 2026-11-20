@@ -13,6 +13,7 @@
 #include "coop/dev/atv_gate_drill.h"
 #include "coop/dev/atv_riders_drill.h"
 #include "coop/dev/cremator_drill.h"
+#include "coop/dev/drive_box_drill.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/mannequin_walker_drill.h"
 #include "ue_wrap/core/log.h"
@@ -283,6 +284,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The cremator drill: the host pulls its lever and the client's copy must show the run, then show it again after a
     // rejoin (1); a client sent into the running machine must die by it (g3).
     SpawnIfEnum(coop::config_registry::rows::cremator_drill, "cremator drill", &coop::dev::cremator_drill::Thread, role);
+    // A drive box pocketed and taken out of the inventory keeps its drives, on both peers.
+    SpawnIfRow(coop::config_registry::rows::drive_box_drill, "drive box drill", &coop::dev::drive_box_drill::Thread, role);
     // The class-resolve drill: the host spawns prop classes the client has not loaded, and the client must load and
     // mirror each.
     SpawnIfRow(coop::config_registry::rows::class_resolve_drill, "class-resolve drill", &ClassResolveDrillThread, role);
