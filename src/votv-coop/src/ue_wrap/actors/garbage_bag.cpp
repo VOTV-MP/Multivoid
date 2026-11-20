@@ -2,6 +2,7 @@
 
 #include "ue_wrap/actors/garbage_bag.h"
 
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -42,7 +43,10 @@ bool IsFold(void* obj) { return IsOfClass(obj, FoldClass()); }
 
 bool IsRoll(void* obj) { return IsOfClass(obj, RollClass()); }
 
-void* FilledClass() { return Cached(g_filledCls, L"prop_garbageBag_C"); }
+void* FilledClass() {
+    if (!g_filledCls.Alive()) g_filledCls.Set(item_spawn::LoadedClass(L"prop_garbageBag_C"));
+    return g_filledCls.Raw();
+}
 
 bool ReadRollCount(void* roll, int32_t& bags) {
     if (!IsRoll(roll)) return false;

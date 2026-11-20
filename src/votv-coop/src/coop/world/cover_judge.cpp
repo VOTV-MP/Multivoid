@@ -19,6 +19,7 @@
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_hold.h"
 #include "coop/world/cover_shared.h"
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
@@ -193,9 +194,11 @@ void PayOwed() {
 // has it. The asker picks it up by hand, as any prop; no hold is handed to it.
 void* TakeOff(void* desk, uint8_t plate, uint8_t bits) {
     void* const mesh = AD::PlateMesh(desk, plate);
-    void* const cls = R::FindClass(AD::PlatePropClass(plate));
+    // The plate's prop class is loaded when this host has not: a plate no one has taken off is not a prop yet.
+    void* const cls = ue_wrap::item_spawn::LoadedClass(AD::PlatePropClass(plate));
     if (!mesh || !cls) {
-        UE_LOGW("cover_sync: HOST plate %u's mesh or prop class (%ls) is not here", plate, AD::PlatePropClass(plate));
+        UE_LOGW("cover_sync: HOST plate %u's mesh is not here or its prop class (%ls) did not load", plate,
+                AD::PlatePropClass(plate));
         return nullptr;
     }
     const ue_wrap::FVector at = E::GetComponentLocation(mesh);

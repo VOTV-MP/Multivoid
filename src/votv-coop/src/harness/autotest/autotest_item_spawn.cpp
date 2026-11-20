@@ -3,12 +3,12 @@
 //
 // The host spawns the items its refunds and hand-overs make through ue_wrap/actors/item_spawn, which loads the item's
 // class first. The drill takes each site's own spawn verb (the power upgrade, the coordination tower's fuse, the server
-// upgrade, the mining rig's GPU and cooler, the ATV's battery) and, for every one whose class is NOT in this world yet
-// (read from the object index and the whole-array lookup right before the spawn), spawns it in front of the host's
-// player. The item must stand: a live actor of that class. The first one lost is `rig: VERDICT item-spawn FAIL`, said at
-// once with no later site run. PASS when at least one class was absent and every absent one stood; INVALID when the
-// host has no body, or every class the sites name is loaded already (nothing to prove). It MUTATES the world (a few
-// props in front of the host). Run it on a fresh world: residency varies by run.
+// upgrade, the mining rig's GPU and cooler, the ATV's battery, the pack's bag, a cover plate's prop) and, for each
+// one whose class is NOT in this world yet (read from the object index and the whole-array lookup right before the
+// spawn), spawns it in front of the host's player. The item must stand: a live actor of that class. The first one lost
+// is `rig: VERDICT item-spawn FAIL`, said at once with no later site run. PASS when at least one class was absent and
+// every absent one stood; INVALID when the host has no body, or every class the sites name is loaded already (nothing
+// to prove). It MUTATES the world (a few props in front of the host). Run it on a fresh world: residency varies by run.
 //
 // Red arm: item_spawn_no_load=1 turns the class resolver's registry step off, so a class the host has not loaded is not
 // loaded and the spawn answers null, as a lookup in the object index alone did before item_spawn; the verdict is FAIL.
@@ -23,12 +23,15 @@
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 
+#include "ue_wrap/actors/garbage_bag.h"
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/actors/miner.h"
 #include "ue_wrap/core/class_resolve.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/desk/analog_desk.h"
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/devices/coord_tower.h"
 #include "ue_wrap/devices/generator.h"
@@ -66,6 +69,16 @@ void* SpawnBattery(const ue_wrap::FVector& at) {
     return ue_wrap::atv::SpawnBattery(at, {}, {1.f, 1.f, 1.f}, 1, kBatteryCharge);
 }
 
+// The garbage bag's class by the accessor the pack spawns from; the cover plate's by the table the take-off names its
+// prop in. Each is spawned bare: the sites' own staging (a deferred begin, a desk write) needs a pile or a desk.
+void* SpawnBag(const ue_wrap::FVector& at) {
+    void* const cls = ue_wrap::garbage_bag::FilledClass();
+    return cls ? E::SpawnActor(cls, at) : nullptr;
+}
+void* SpawnPlate(const ue_wrap::FVector& at) {
+    return ue_wrap::item_spawn::Spawn(ue_wrap::analog_desk::PlatePropClass(0), at);
+}
+
 // One spawn site: what it is, the class its verb names, and the verb itself.
 struct Site {
     const char* what;
@@ -79,6 +92,8 @@ constexpr Site kSites[] = {
     {"mining rig GPU", L"prop_gpu_C", &SpawnGpu},
     {"mining rig cooler", L"prop_cooler_C", &SpawnCooler},
     {"ATV battery", L"prop_atvcarbattery_C", &SpawnBattery},
+    {"filled garbage bag (pack)", L"prop_garbageBag_C", &SpawnBag},
+    {"cover plate prop (take-off)", L"prop_computerBackPanel_tl_C", &SpawnPlate},
 };
 
 struct Result {

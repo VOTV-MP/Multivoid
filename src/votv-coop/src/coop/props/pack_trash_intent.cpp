@@ -111,7 +111,7 @@ void RemedyOnce(void* actor, coop::element::ElementId eid) {
 bool PerformPack(void* target, uint8_t slot, coop::element::ElementId eid) {
     void* bagCls = ue_wrap::garbage_bag::FilledClass();
     if (!bagCls) {
-        UE_LOGW("[PACK-TRASH] prop_garbageBag_C not loaded -- cannot pack eid=%u", eid);
+        UE_LOGW("[PACK-TRASH] prop_garbageBag_C did not load -- cannot pack eid=%u", eid);
         return false;
     }
     const uint8_t chipType = ue_wrap::prop::GetChipType(target);

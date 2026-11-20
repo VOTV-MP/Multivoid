@@ -27,7 +27,8 @@ void* RollClass();
 bool IsFold(void* obj);
 bool IsRoll(void* obj);
 
-// The filled bag's class, for a spawn; null until it loads. Game thread.
+// The filled bag's class, for a spawn, loaded first when this process has not (actors/item_spawn); null when it does not
+// load. Game thread.
 void* FilledClass();
 
 // The roll's remaining count, the number its own hint prints. A peer that spends a bag writes this
