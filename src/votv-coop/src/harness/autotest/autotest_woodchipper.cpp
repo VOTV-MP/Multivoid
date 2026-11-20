@@ -25,6 +25,7 @@
 #include "coop/session/net_pump.h"
 #include "coop/session/rig_verdict.h"
 
+#include "ue_wrap/actors/item_spawn.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/woodchipper.h"
 #include "ue_wrap/core/asset_load.h"
@@ -436,18 +437,22 @@ void ClientFeed() {
 
 // The mini arm's host: a mini can in the world before any hand takes one, as a real mini can in a hand always came from a world
 // the host holds. The judge asks the hand's class by a class this host has loaded, and a host never loads a client's class
-// name (class_resolve LookupOnly); the drill's forced hold loads it on the client alone, so the host's lookup found none.
+// name (class_resolve LookupOnly); the forced hold loads it on the client alone. The object index lists the class at its next
+// drain, not in the spawning tick: the wait is on that listing.
 bool SpawnMiniCan() {
-    bool ok = false;
+    bool spawned = false;
     OnGameThread([&] {
         void* me = coop::players::Registry::Get().Local();
-        void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_gascan_mini.prop_gascan_mini_C");
         ue_wrap::FVector at{};
-        if (!me || !cls || !E::TryGetActorLocation(me, at)) return;
+        if (!me || !E::TryGetActorLocation(me, at)) return;
         const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
-        ok = E::SpawnActor(cls, {at.X - fwd.X * 150.f, at.Y - fwd.Y * 150.f, at.Z + 60.f}) && ue_wrap::object_index::ClassByName(kMiniClass);
+        spawned = ue_wrap::item_spawn::Spawn(kMiniClass, {at.X - fwd.X * 150.f, at.Y - fwd.Y * 150.f, at.Z + 60.f}) != nullptr;
     });
-    return ok;
+    return spawned && PS::WaitFor("the host lists the mini can's class", 10, [] {
+               bool listed = false;
+               OnGameThread([&] { listed = ue_wrap::object_index::ClassByName(kMiniClass) != nullptr; });
+               return listed;
+           });
 }
 
 // The mini arm, verdict 'woodchipper-mini': one pour from a mini can in the client's hand, a subclass of the plain can, judged on
