@@ -10,6 +10,7 @@
 #include "coop/net/net_clock.h"
 #include "coop/player/hand_history.h"
 #include "coop/player/roster_ledger.h"
+#include "ue_wrap/core/class_cache.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -132,10 +133,9 @@ bool HeldClassIsA(uint8_t slot, const wchar_t* base) {
     if (slot >= coop::players::kMaxPeers || !base) return false;
     const SlotHand& h = g_hands[slot];
     if (!h.has) return false;
-    void* cls = ue_wrap::object_index::ClassByName(h.cls.c_str());
-    for (int hops = 0; cls && hops < 16; ++hops, cls = ue_wrap::reflection::SuperStructOf(cls))
-        if (::_wcsicmp(ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(cls)).c_str(), base) == 0) return true;
-    return false;
+    void* const cls = ue_wrap::object_index::ClassByName(h.cls.c_str());
+    void* const baseCls = cls ? ue_wrap::class_cache::ByName(base) : nullptr;
+    return baseCls && ue_wrap::reflection::IsDescendantOfAny(cls, &baseCls, 1);
 }
 
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls) {
