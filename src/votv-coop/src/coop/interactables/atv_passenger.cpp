@@ -100,7 +100,7 @@ std::vector<void*> KerfursAtSeat(void* box) {
     struct Ctx { ue_wrap::FVector at; std::vector<void*> out; } c{};
     if (!E::TryGetActorLocation(box, c.at)) return {};
     if (void* cls = ue_wrap::object_index::ClassByName(L"kerfurOmega_C"))
-        ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
+        ue_wrap::object_index::ForEachInstanceOfKind(cls, [](void* ctx, void* o, int32_t) {   // the skins are subclasses
             auto* k = static_cast<Ctx*>(ctx);
             ue_wrap::FVector at{};
             if (!R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__") || !E::TryGetActorLocation(o, at))

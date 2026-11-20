@@ -441,6 +441,17 @@ size_t ForEachClass(ClassFn fn, void* ctx) {
     return n;
 }
 
+size_t ForEachInstanceOfKind(void* base, InstanceFn fn, void* ctx) {
+    if (!base || !fn) return 0;
+    std::vector<void*> classes;
+    for (const auto& kv : g_classes)
+        if (ReadableInstance(kv.first, kv.second) && R::IsDescendantOfAny(kv.first, &base, 1, 16))
+            classes.push_back(kv.first);
+    size_t n = 0;
+    for (void* cls : classes) n += ForEachInstance(cls, fn, ctx);
+    return n;
+}
+
 void SetObserver(const Observer& o) { g_observer = o; }
 
 uint64_t ClassSetVersion() { return g_classSetVersion; }
