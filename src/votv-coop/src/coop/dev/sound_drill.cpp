@@ -1,6 +1,6 @@
-// coop/dev/hit_probe.cpp -- see coop/dev/hit_probe.h.
+// coop/dev/sound_drill.cpp -- see coop/dev/sound_drill.h.
 
-#include "coop/dev/hit_probe.h"
+#include "coop/dev/sound_drill.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -31,7 +31,7 @@
 #include <cstring>
 #include <string>
 
-namespace coop::dev::hit_probe {
+namespace coop::dev::sound_drill {
 namespace {
 
 namespace R  = ue_wrap::reflection;
@@ -404,4 +404,4 @@ void Tick(coop::net::Session* session) {
     }
 }
 
-}  // namespace coop::dev::hit_probe
+}  // namespace coop::dev::sound_drill
