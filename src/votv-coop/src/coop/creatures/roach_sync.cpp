@@ -13,6 +13,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
@@ -43,6 +44,8 @@ void*   g_gmCls        = nullptr;  // mainGamemode_C
 int32_t g_offMaster    = -1;       // AcockroachMaster_C* cockroachMaster (0x910 in the dump)
 void*   g_masterCls    = nullptr;  // cockroachMaster_C
 int32_t g_offRoaches   = -1;       // TArray<UStaticMeshComponent*> roaches (0x238)
+int32_t g_offCount     = -1;       // int32 Count, what addRoach checks against maxAmount (optional)
+int32_t g_offMaxAmount = -1;       // int32 maxAmount, this peer's own roach setting (optional)
 void*   g_addRoachFn   = nullptr;  // addRoach(FVector Location, FVector Size, bool bypassCheck)
 void*   g_delRoachFn   = nullptr;  // deleteRoach(int32 IndexToRemove, bool crush)
 void*   g_getLocFn     = nullptr;  // USceneComponent::K2_GetComponentLocation
@@ -71,6 +74,8 @@ void ResolvePass() {
     if (!g_gmCls || !g_masterCls) return;  // world not loaded yet
     if (g_offMaster  < 0) g_offMaster  = R::FindPropertyOffset(g_gmCls, L"cockroachMaster");
     if (g_offRoaches < 0) g_offRoaches = R::FindPropertyOffset(g_masterCls, L"roaches");
+    if (g_offCount < 0) g_offCount = R::FindPropertyOffset(g_masterCls, L"Count");
+    if (g_offMaxAmount < 0) g_offMaxAmount = R::FindPropertyOffset(g_masterCls, L"maxAmount");
     if (!g_addRoachFn) g_addRoachFn = R::FindFunction(g_masterCls, L"addRoach");
     if (!g_delRoachFn) g_delRoachFn = R::FindFunction(g_masterCls, L"deleteRoach");
     if (void* sceneCls = R::FindClass(L"SceneComponent")) {
@@ -81,8 +86,9 @@ void ResolvePass() {
     }
     if (Resolved()) {
         g_resolveLatched = true;
-        UE_LOGI("roach_sync: resolved (master@0x%X roaches@0x%X addRoach=%p deleteRoach=%p "
-                "loc/scale get+set=ok)", g_offMaster, g_offRoaches, g_addRoachFn, g_delRoachFn);
+        UE_LOGI("roach_sync: resolved (master@0x%X roaches@0x%X count@%d maxAmount@%d addRoach=%p deleteRoach=%p "
+                "loc/scale get+set=ok)", g_offMaster, g_offRoaches, g_offCount, g_offMaxAmount, g_addRoachFn,
+                g_delRoachFn);
         return;
     }
     if (++g_postClassAttempts >= kMaxPostClassAttempts) {
@@ -257,11 +263,34 @@ void RebuildTracked(void* master) {
     }
 }
 
-void ApplySnapshot(const SnapEntry* entries, int total) {
+// The host's roaches this peer's addRoach takes. It adds none farther than 100 m from player 0's camera
+// manager, nor past `maxAmount` (this peer's own setting), and returns silently: given every host roach, a
+// client away from them rebuilt every second for a count it never reached (Ghezra/Multivoid issue 42: 12,628
+// rebuilds in 4.5 h, each a delete and re-add of every roach). kNearCm is inside that 100 m, so a roach at
+// the edge is not added and refused in turn.
+constexpr float kNearCm = 9500.f;
+void TakeableHere(void* master, const SnapEntry* entries, int total, std::vector<SnapEntry>& out) {
+    out.clear();
+    const ue_wrap::FVector cam = ue_wrap::engine::GetCameraLocation();
+    const bool haveCam = cam.X != 0.f || cam.Y != 0.f || cam.Z != 0.f;   // zero: unread, and none is left out
+    const Vec3 c{cam.X, cam.Y, cam.Z};
+    int cap = total;
+    if (g_offMaxAmount >= 0) cap = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(master) + g_offMaxAmount);
+    for (int i = 0; i < total && static_cast<int>(out.size()) < cap; ++i) {
+        const Vec3 at{entries[i].loc.x, entries[i].loc.y, entries[i].loc.z};
+        if (!haveCam || Dist2(at, c) <= kNearCm * kNearCm) out.push_back(entries[i]);
+    }
+}
+
+void ApplySnapshot(const SnapEntry* hostEntries, int hostTotal) {
     void* master = Master();
     if (!master) return;  // no world/master yet; the next snapshot re-delivers
     std::vector<RoachSlot> slots;
     ReadRoaches(master, slots);
+    std::vector<SnapEntry> near;
+    TakeableHere(master, hostEntries, hostTotal, near);
+    const SnapEntry* entries = near.data();
+    const int total = static_cast<int>(near.size());
 
     if (static_cast<int>(slots.size()) == total) {
         // Ordinal drive: k-th local valid slot <- k-th snapshot entry.
@@ -289,6 +318,9 @@ void ApplySnapshot(const SnapEntry* entries, int total) {
             del.Set<bool>(L"crush", false);
             ue_wrap::Call(master, del);
         }
+        // Every roach is gone, so the count addRoach checks is 0: a count that drifted above the array
+        // (a component destroyed past deleteRoach) would refuse the adds below.
+        if (g_offCount >= 0) *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(master) + g_offCount) = 0;
         for (int i = 0; i < total; ++i) {
             ue_wrap::ParamFrame add(g_addRoachFn);
             if (!add.valid()) break;
@@ -299,8 +331,8 @@ void ApplySnapshot(const SnapEntry* entries, int total) {
             add.Set<bool>(L"bypassCheck", true);
             ue_wrap::Call(master, add);
         }
-        UE_LOGI("roach_sync: client REBUILT population (%zu local -> %d host roaches)",
-                slots.size(), total);
+        UE_LOGI("roach_sync: client REBUILT population (%zu local -> %d of the host's %d roaches, the rest "
+                "past this player's 95 m or its cap)", slots.size(), total, hostTotal);
     }
     RebuildTracked(master);
     g_haveApplied = true;
