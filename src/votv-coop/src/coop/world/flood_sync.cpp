@@ -39,6 +39,7 @@ using Payload = N::FloodPayload;
 constexpr const wchar_t* kPipeClass = L"burstWaterPipe_C";
 constexpr const wchar_t* kVolumeClass = L"waterVolume_basementFlooder_C";
 constexpr const wchar_t* kToolboxClass = L"prop_toolbox_C";
+constexpr const wchar_t* kDuctTapeClass = L"prop_ducttape_C";   // a prop_toolbox_C subclass
 constexpr float kReachUU = 400.f;
 constexpr float kLevelEps = 1.f;         // a level moved less than this is not sent
 constexpr uint64_t kReadMs = 250;        // the host reads its pipes and volumes four times a second
@@ -195,7 +196,9 @@ void Judge(N::Session& s, uint8_t slot, const Payload& p) {
         const coop::element::IntentSubject subject = coop::element::IntentTarget::ForClientIntent(s, slot, kReachUU).Authorize(pipe);
         if (!subject) why = coop::element::OutcomeName(subject.outcome);
     }
-    if (!why && !coop::hand_item::HeldClassIs(slot, kToolboxClass)) why = "no toolbox in the hand";
+    // The duct tape is a toolbox with no body of its own: the game runs the toolbox's repair for it.
+    if (!why && !coop::hand_item::HeldClassIs(slot, kToolboxClass) && !coop::hand_item::HeldClassIs(slot, kDuctTapeClass))
+        why = "no toolbox in the hand";
     if (!why && (!Damaged(pipe, damaged) || !damaged)) why = "the pipe is whole";
     if (why) {
         UE_LOGI("flood_sync: slot %u's repair of '%ls' refused: %s", static_cast<unsigned>(slot), name.c_str(), why);
