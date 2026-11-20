@@ -26,7 +26,7 @@ namespace coop::desk_snd_fx {
 
 void Install(coop::net::Session* session);
 
-// The desk whose cursor loop's falloff Tick has decided (given, or not: its log line says which), null before any. For the
+// The desk whose cursor loop's falloff Tick has settled (given, or left without by the red row), null before any. For the
 // desk audio probe, which reads the loop once this is the desk it reads. Game thread.
 void* CursorLoopDesk();
 

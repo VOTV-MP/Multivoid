@@ -21,6 +21,7 @@ namespace {
 namespace DA = ue_wrap::desk_audio;
 
 void* g_attenuatedDesk = nullptr;   // the desk whose cursor loop was given the falloff
+void* g_failedDesk = nullptr;       // the desk whose failed attempt was said
 
 UE_FACT_FN(kRowPlay, "desk_snd_fx", L"AudioComponent", L"Play", Declared);
 UE_FACT_FN(kRowSetActive, "desk_snd_fx", L"ActorComponent", L"SetActive", Declared);
@@ -226,9 +227,15 @@ void Tick() {
         static const bool attOff = coop::config::ResolveFlag(::coop::config_registry::rows::deskaudio_att_off);
         const bool lent = !attOff && DA::LendAttenuation(static_cast<int>(coop::net::DeskSndComp::PingLoop),
                                                          static_cast<int>(coop::net::DeskSndComp::CorrdsLoop));
-        g_attenuatedDesk = desk;
-        UE_LOGI("desk_snd: the cursor loop %s the desk's falloff",
-                lent ? "holds" : attOff ? "is left without" : "could NOT be given");
+        // Latched once it took (or was left without on purpose); a failed attempt is tried again on this desk's next
+        // pass, and said once per desk.
+        if (lent || attOff) {
+            g_attenuatedDesk = desk;
+            UE_LOGI("desk_snd: the cursor loop %s the desk's falloff", lent ? "holds" : "is left without");
+        } else if (desk != g_failedDesk) {
+            g_failedDesk = desk;
+            UE_LOGW("desk_snd: the cursor loop could NOT be given the desk's falloff yet; tried again each pass");
+        }
     }
 
     // Dev self-test arming (per-session: OnDisconnect clears the latch).
