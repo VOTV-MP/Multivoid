@@ -285,7 +285,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // rejoin (1); a client sent into the running machine must die by it (g3).
     SpawnIfEnum(coop::config_registry::rows::cremator_drill, "cremator drill", &coop::dev::cremator_drill::Thread, role);
     // A drive box pocketed and taken out of the inventory keeps its drives, on both peers.
-    SpawnIfRow(coop::config_registry::rows::drive_box_drill, "drive box drill", &coop::dev::drive_box_drill::Thread, role);
+    SpawnIfEnum(coop::config_registry::rows::drive_box_drill, "drive box drill", &coop::dev::drive_box_drill::Thread, role);
     // The class-resolve drill: the host spawns prop classes the client has not loaded, and the client must load and
     // mirror each.
     SpawnIfRow(coop::config_registry::rows::class_resolve_drill, "class-resolve drill", &ClassResolveDrillThread, role);

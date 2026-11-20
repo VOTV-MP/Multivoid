@@ -9,15 +9,19 @@
 #include "harness/autotest/peer_signal.h"
 #include "harness/session_runtime.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/dev/drill_props.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/drive_rack_sync.h"
+#include "coop/interactables/signal_wire.h"  // the row texts' caps
 #include "coop/net/session.h"
 #include "coop/player/hand_record_sync.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/prop_act_request.h"
 #include "coop/props/prop_key_index.h"
+#include "coop/props/prop_synth_key.h"  // ResolveSetKeyFn: the reuse arm gives a new box the pocketed key
 #include "coop/session/host_world_settle.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
@@ -28,6 +32,8 @@
 #include "ue_wrap/actors/prop_gather.h"
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -35,6 +41,7 @@
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
+#include "ue_wrap/engine/engine_pawn.h"  // DestroyActor
 
 #include <atomic>
 #include <cstdint>
@@ -57,8 +64,11 @@ namespace DPR = coop::dev::drill_props;
 namespace DRS = coop::drive_rack_sync;
 
 constexpr const char* kTag = "drive-box";
+constexpr const char* kTagReuse = "drive-box-reuse";
 constexpr int kStepSec = 120;                     // a bound on the other peer's step or a copy's arrival: INVALID only
-constexpr int kRows = 12;                         // of the box's 16 rows, filled by the host
+constexpr int kRows = DC::kRackSlots;             // every row of the box: its record is then as heavy as the lane must carry
+
+std::string Arm() { return coop::config::ResolveEnum(coop::config_registry::rows::drive_box_drill); }
 constexpr const wchar_t* kBoxCls = L"prop_driveRack_C";
 
 template <class Fn>
@@ -94,13 +104,21 @@ bool ClientJoined() {
     });
 }
 
+// `text` repeated to `chars` characters, so a row's four texts sit at signal_wire's caps (96, 48, 64, 64): the heaviest
+// row the lane carries, and 16 of them are what the hand lane's byte ceiling has to hold.
+std::wstring Padded(const std::wstring& text, size_t chars) {
+    std::wstring out = text;
+    while (out.size() < chars) out += L'x';
+    return out.substr(0, chars);
+}
+
 DC::RackRow MakeRow(int k) {
     DC::RackRow r;
     r.has = true;
-    r.row.name = L"DRIVE-BOX-" + std::to_wstring(k);
-    r.row.id = L"DB-" + std::to_wstring(k);
-    r.row.object = L"drivebox";
-    r.row.signal = L"drivebox";
+    r.row.name = Padded(L"DRIVE-BOX-" + std::to_wstring(k) + L"-", coop::signal_wire::kNameCap);
+    r.row.id = Padded(L"DB-" + std::to_wstring(k) + L"-", coop::signal_wire::kIdCap);
+    r.row.object = Padded(L"drivebox", coop::signal_wire::kObjectCap);
+    r.row.signal = Padded(L"drivebox", coop::signal_wire::kSignalCap);
     r.row.size = 10.f;
     r.row.decoded = 10.f;
     r.row.date = 638000000000000000LL;   // non-zero: no receiver stamps one
@@ -117,8 +135,8 @@ bool RowsOf(void* rack, std::vector<std::string>& out) {
     if (!rack || !DC::ReadRack(rack, rows, n)) return false;
     for (int i = 0; i < DC::kRackSlots; ++i) {
         if (!rows[i].has) continue;
-        char b[192];
-        std::snprintf(b, sizeof b, "%d|%ls|%ls|%.1f", i, rows[i].row.name.c_str(), rows[i].row.id.c_str(), rows[i].row.size);
+        char b[256];
+        std::snprintf(b, sizeof b, "%d|%.96ls|%.48ls|%.1f", i, rows[i].row.name.c_str(), rows[i].row.id.c_str(), rows[i].row.size);
         out.push_back(b);
     }
     return true;
@@ -130,18 +148,9 @@ bool IsBox(void* actor) { return actor && R::IsLive(actor) && DC::EnsureResolved
 
 // ---- the host ----
 
-void RunHost() {
-    if (!HostWorldUp()) return;
-    if (!PS::Await("client_ready", 480)) return;
-    if (!WaitGT("the client's slot world-ready", 120, [] { return harness::session_runtime::Session().IsSlotWorldReady(1); }))
-        return;
-    if (!PS::Await("client_near", kStepSec)) return;
-
-    // The box: dropped on the floor ahead of the host (the client stands beside it), simulating so a pocket can gather it,
-    // with its rows written before the lane's first sight of it.
-    ue_wrap::CachedObjRef box;
-    std::vector<std::string> want;
-    std::wstring key;
+// HOST: a box dropped on the floor ahead of the host (the client stands beside it), simulating so a pocket can gather it,
+// with all its rows written before the lane's first sight of it. False, said INVALID, when it could not be made.
+bool DropFilledBox(const char* tag, ue_wrap::CachedObjRef& box, std::vector<std::string>& want, std::wstring& key) {
     bool spawned = false;
     OnGT([&] {
         void* const me = coop::players::Registry::Get().Local();
@@ -161,17 +170,32 @@ void RunHost() {
         key = ue_wrap::prop::GetInteractableKeyString(rack);
         spawned = RowsOf(rack, want) && static_cast<int>(want.size()) == kRows && !key.empty() && key != L"None";
     });
-    if (!spawned) {
-        RV::Say(kTag, RV::Outcome::Invalid, "the host could not drop and fill a drive box");
+    if (!spawned) RV::Say(tag, RV::Outcome::Invalid, "the host could not drop and fill a drive box");
+    return spawned;
+}
+
+// HOST: the box's element id, once it is enrolled and the rack lane has met it.
+bool WaitMet(const char* what, ue_wrap::CachedObjRef& box, uint32_t& eid) {
+    return WaitGT(what, 60, [&] {
+        const EL::ElementId e = EL::Registry::Get().EidForActor(box.Get());
+        eid = e == EL::kInvalidId ? 0u : static_cast<uint32_t>(e);
+        return eid != 0 && DRS::HostSeesRack(eid);
+    });
+}
+
+void RunHost() {
+    if (!HostWorldUp()) return;
+    if (!PS::Await("client_ready", 480)) return;
+    if (!WaitGT("the client's slot world-ready", 120, [] { return harness::session_runtime::Session().IsSlotWorldReady(1); }))
         return;
-    }
+    if (!PS::Await("client_near", kStepSec)) return;
+
+    ue_wrap::CachedObjRef box;
+    std::vector<std::string> want;
+    std::wstring key;
+    if (!DropFilledBox(kTag, box, want, key)) return;
     uint32_t eid = 0;
-    if (!WaitGT("the dropped box enrolled and met by the rack lane", 60, [&] {
-            const EL::ElementId e = EL::Registry::Get().EidForActor(box.Get());
-            eid = e == EL::kInvalidId ? 0u : static_cast<uint32_t>(e);
-            return eid != 0 && DRS::HostSeesRack(eid);
-        }))
-        return;
+    if (!WaitMet("the dropped box enrolled and met by the rack lane", box, eid)) return;
     UE_LOGI("drive-box: HOST box eid %u key '%ls' holds %d row(s)", eid, key.c_str(), kRows);
     PS::Mark("box", std::to_string(eid) + " " + Narrow(key));
 
@@ -196,15 +220,66 @@ void RunHost() {
     UE_LOGI("drive-box: HOST the placed box eid %u holds %zu row(s) at the lane's first sight (pocketed with %zu)", newEid,
             got.size(), want.size());
     if (got != want) {
-        PS::Mark("host_judged", "F");
+        PS::Mark("host_judged", "F " + std::to_string(newEid));
         RV::Say(kTag, RV::Outcome::Fail, "the box a client took out of its inventory came back with %zu of the %zu row(s) it was pocketed with, on the host",
                 got.size(), want.size());
         return;
     }
-    PS::Mark("host_judged", "P");
+    PS::Mark("host_judged", "P " + std::to_string(newEid));
     std::string done;
     if (!PS::AwaitText("client_done", done, kStepSec) || done[0] != 'P') return;
     RV::Say(kTag, RV::Outcome::Pass, "a drive box pocketed with %zu row(s) and taken out again holds them on the host and on the client", want.size());
+}
+
+// The reuse arm, host alone: a box that goes holding drives leaves its rows with the lane under its key; a NEW box that
+// merely reuses the key (no client placed it) is a new box and keeps its own rows, here none. Decided at that box's first
+// sight, where the rows are given back or never.
+void RunHostReuse() {
+    if (!HostWorldUp()) return;
+    if (!PS::Await("client_ready", 480)) return;
+    if (!WaitGT("the client's slot world-ready", 120, [] { return harness::session_runtime::Session().IsSlotWorldReady(1); }))
+        return;
+    ue_wrap::CachedObjRef box;
+    std::vector<std::string> want;
+    std::wstring key;
+    if (!DropFilledBox(kTagReuse, box, want, key)) return;
+    uint32_t eid = 0;
+    if (!WaitMet("the dropped box enrolled and met by the rack lane", box, eid)) return;
+    // The box goes (as a sale or a level's reset takes one, no client placing anything), and the lane notes it gone.
+    OnGT([&] { E::DestroyActor(box.Get()); });
+    if (!WaitGT("the lane keeping the rows of the destroyed box", kStepSec, [&] { return DRS::HostKeepsRowsOf(key); })) return;
+
+    ue_wrap::CachedObjRef fresh;
+    bool made = false;
+    OnGT([&] {
+        void* const me = coop::players::Registry::Get().Local();
+        void* const cls = ue_wrap::item_spawn::LoadedClass(kBoxCls);
+        ue_wrap::FVector at{};
+        if (!me || !cls || !E::TryGetActorLocation(me, at)) return;
+        const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
+        void* rack = E::SpawnActor(cls, {at.X + fwd.X * 250.f, at.Y + fwd.Y * 250.f, at.Z + 60.f});
+        void* const setKey = rack ? coop::prop_synth_key::ResolveSetKeyFn(R::ClassOf(rack)) : nullptr;
+        const R::FName kf = ue_wrap::fname_utils::StringToFName(key);
+        ue_wrap::ParamFrame f(setKey);
+        if (!setKey || kf.ComparisonIndex == 0 || !f.valid() || !f.SetRaw(L"Key", &kf, sizeof(kf)) || !ue_wrap::Call(rack, f)) return;
+        fresh.Set(rack);
+        made = ue_wrap::prop::GetInteractableKeyString(rack) == key;
+    });
+    if (!made) {
+        RV::Say(kTagReuse, RV::Outcome::Invalid, "the host could not spawn a new box under the pocketed key");
+        return;
+    }
+    uint32_t freshEid = 0;
+    if (!WaitMet("the new box enrolled and met by the rack lane", fresh, freshEid)) return;
+    std::vector<std::string> got;
+    OnGT([&] { RowsOf(fresh.Get(), got); });
+    UE_LOGI("drive-box: HOST the new box eid %u under the key of a box that went with %zu row(s) holds %zu row(s)", freshEid,
+            want.size(), got.size());
+    if (!got.empty()) {
+        RV::Say(kTagReuse, RV::Outcome::Fail, "a new box that reuses a gone box's key was given its %zu row(s), no client having placed it", got.size());
+        return;
+    }
+    RV::Say(kTagReuse, RV::Outcome::Pass, "a new box that reuses the key of a box that went holding %zu row(s) kept its own (none)", want.size());
 }
 
 // ---- the client ----
@@ -243,16 +318,26 @@ void RunClient() {
         }))
         return;
 
-    // The box's record against the hand lane's bounds: a held box's record past them is refused, and a placed box then
-    // carries nothing.
+    // The box's record against the hand lane's bounds and its byte ceiling: a held box's record past either is refused
+    // or never sent, and a placed box then carries nothing. The 16 rows are at the wire's caps, the heaviest the lane
+    // carries, so the measured size is the one the ceiling has to hold.
     std::string fault;
+    size_t bytes = 0;
     OnGT([&] {
         ue_wrap::save_record::SaveRecord rec;
-        if (ue_wrap::save_record::CaptureRecord(copy, rec)) fault = coop::hand_record_sync::BoundsFault(rec);
+        if (!ue_wrap::save_record::CaptureRecord(copy, rec)) return;
+        fault = coop::hand_record_sync::BoundsFault(rec);
+        bytes = coop::hand_record_sync::EncodedBytes(rec);
     });
+    UE_LOGI("drive-box: CLIENT the box's record is %zu B of the lane's %zu B ceiling", bytes,
+            coop::hand_record_sync::RecordCeilingBytes());
+    if (fault.empty() && bytes > coop::hand_record_sync::RecordCeilingBytes())
+        fault = "its encoded record is " + std::to_string(bytes) + " B, over the lane's " +
+                std::to_string(coop::hand_record_sync::RecordCeilingBytes()) + " B ceiling";
+    if (bytes == 0) fault = "the box's record could not be read";
     if (!fault.empty()) {
         PS::Mark("placed", "F");
-        RV::Say(kTag, RV::Outcome::Fail, "the box's record is past the hand lane's bounds: %s", fault.c_str());
+        RV::Say(kTag, RV::Outcome::Fail, "the box's record is past the hand lane's limits: %s", fault.c_str());
         return;
     }
 
@@ -274,7 +359,6 @@ void RunClient() {
 
     // The take-out: the inventory screen's own, which spawns the box at the player and loads its record. The spawn is the
     // placement: its key was parked at the pocket, so it goes to the host as a drop intent.
-    const uint64_t applied0 = DRS::CanonicalsApplied();
     void* out = nullptr;
     std::vector<std::string> own;
     OnGT([&] {
@@ -291,16 +375,23 @@ void RunClient() {
     // The host judged the box at its first sight; a FAIL there is said by the host.
     std::string judged;
     if (!PS::AwaitText("host_judged", judged, kStepSec) || judged[0] != 'P') return;
+    unsigned newEid = 0;
+    if (sscanf_s(judged.c_str() + 1, "%u", &newEid) != 1 || newEid == 0) {
+        RV::Say(kTag, RV::Outcome::Invalid, "the host's judged text '%s' names no box", judged.c_str());
+        return;
+    }
 
-    // The host's canonical of the new box is applied here, then this copy's rows are the pocketed rows.
-    if (!WaitGT("the host's canonical of the placed box applied here", kStepSec, [&] { return DRS::CanonicalsApplied() > applied0; }))
+    // The host's canonical of THIS box (its eid) is applied here, then this box's rows are the pocketed rows. The client's
+    // own take-out already holds them, so only the canonical's arrival makes the reading the host's.
+    if (!WaitGT("the host's canonical of the placed box applied here", kStepSec,
+                [&] { return DRS::CanonicalsAppliedFor(newEid) > 0; }))
         return;
     std::vector<std::string> got;
     OnGT([&] {
         void* const box = coop::prop_key_index::Find(key);
         if (IsBox(box)) RowsOf(box, got);
     });
-    UE_LOGI("drive-box: CLIENT after the host's canonical the box holds %zu row(s)", got.size());
+    UE_LOGI("drive-box: CLIENT after the host's canonical of eid %u the box holds %zu row(s)", newEid, got.size());
     if (got != want) {
         PS::Mark("client_done", "F");
         RV::Say(kTag, RV::Outcome::Fail, "the box holds %zu of the %zu row(s) it was pocketed with, on the client, after the host's canonical",
@@ -310,12 +401,25 @@ void RunClient() {
     PS::Mark("client_done", "P");
 }
 
+// The reuse arm asks nothing of the client but a join: the host's world has a peer and its lane sweeps as in a session.
+void RunClientReuse() {
+    if (!ClientJoined()) return;
+    PS::Mark("client_ready");
+}
+
 }  // namespace
 
 DWORD WINAPI Thread(LPVOID /*arg*/) {
-    if (!PS::Begin(kTag)) return 0;
-    if (harness::autotest::IsClientRole()) RunClient();
-    else RunHost();
+    const bool reuse = Arm() == "reuse";
+    if (!PS::Begin(reuse ? kTagReuse : kTag)) return 0;
+    if (harness::autotest::IsClientRole()) {
+        if (reuse) RunClientReuse();
+        else RunClient();
+    } else if (reuse) {
+        RunHostReuse();
+    } else {
+        RunHost();
+    }
     return 0;
 }
 

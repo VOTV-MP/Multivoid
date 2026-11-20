@@ -220,9 +220,10 @@ ring for races (`coop/interactables/drive_rack_sync`). A box that goes holding d
 rows with the host under its save key, and the box the host spawns from a client's placement of it (the client took it
 out of its inventory; the drop intent names the key the pocket parked) gets them back at the lane's first sight of it,
 before its canonical goes, where the host's empty rows had emptied it on every peer (VOTV-MP/Multivoid#192): a new box that
-merely reuses the key keeps its own rows `[?]` (`coop/dev/drive_box_drill`, a drive box through the inventory; the red,
-`drive_box_restore_off`, leaves the box empty). A box's record carries its 16 rows as signals, past the hand lane's old bound of 8, so a held
-box's record was refused; the bound is 16. A slot freezes the drive it takes, and only a
+merely reuses the key keeps its own rows `[?]` (`coop/dev/drive_box_drill`, a drive box through the inventory and its
+`reuse` arm; the reds, `drive_box_restore_off` and `drive_box_placed_gate_off`, leave the placed box empty and fill the
+new one). A box's record carries its 16 rows as signals, past the hand lane's old bound of 8, so a held
+box's record was refused; the bound is 16 rows and 12 KB (16 rows at the wire's caps weigh 9.5 KB). A slot freezes the drive it takes, and only a
 grab takes one out -- the drive ejects itself, and the grab unfreezes it -- so a peer applying
 another's eject leaves the unfreeze to that grab's own hold, which reaches the drive through the prop
 lane: its first pose unfreezes the copy, and its release leaves the holder's flags
