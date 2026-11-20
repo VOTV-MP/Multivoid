@@ -25,9 +25,9 @@ namespace coop::constraint_ties {
 // and the script gate's exec-handler table may not be ready at the first try. Says `constraint_ties: seams live` once.
 void Install();
 
-// The actors a live constraint ties `actor` to, written to `out` (at most `cap`, each once per constraint, so an actor
-// tied by two constraints appears twice). The first call after the world changed reads the by-name constraints of the new
-// world and drops the old world's entries. Returns how many were written.
+// The actors a live constraint ties `actor` to, written to `out` (at most `cap`, each partner once, however many
+// constraints join the two). A prop with more partners than `cap` says so in the log. The first call after the world
+// changed reads the by-name constraints of the new world and drops the old world's entries. Returns how many were written.
 size_t TiesOf(void* actor, void** out, size_t cap);
 
 // How many constraint entries the index holds now (stale ones included until a read drops them).

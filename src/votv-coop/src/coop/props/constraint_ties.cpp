@@ -5,6 +5,7 @@
 #include "coop/net/net_clock.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_drive_join.h"
+#include "coop/props/prop_element_tracker.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -90,6 +91,19 @@ void Record(void* constraint, void* a, void* b) {
     t.b.Set(b);
     OweIfDriven(a);
     OweIfDriven(b);
+}
+
+// A prop tied to more partners than a read holds: said for the first three and at each doubling after, by element id when it
+// has one.
+void SayOverflow(void* actor, size_t cap) {
+    static uint64_t sSaid = 0;
+    const uint64_t n = ++sSaid;
+    if (n > 3 && (n & (n - 1)) != 0) return;
+    const coop::element::ElementId eid = coop::prop_element_tracker::GetPropElementIdForActor(actor);
+    if (eid != coop::element::kInvalidId && eid != 0u)
+        UE_LOGW("constraint_ties: eid=%u has more than %zu partners", static_cast<unsigned>(eid), cap);
+    else
+        UE_LOGW("constraint_ties: actor %p has more than %zu partners", actor, cap);
 }
 
 // The call always runs: the index only reads it.
@@ -190,6 +204,7 @@ size_t TiesOf(void* actor, void** out, size_t cap) {
     if (!actor || !out || cap == 0) return 0;
     SeedIfWorldChanged();
     size_t n = 0;
+    bool overflowed = false;
     for (auto it = g_ties.begin(); it != g_ties.end();) {
         Tie& t = it->second;
         // Only an entry naming `actor` is read: a stale pointer that matches is validated by its own reference.
@@ -203,9 +218,14 @@ size_t TiesOf(void* actor, void** out, size_t cap) {
             it = g_ties.erase(it);
             continue;
         }
-        if (n < cap) out[n++] = (a == actor) ? b : a;
         ++it;
+        // A partner is one tie however many constraints join the two (three nails between two boards).
+        void* partner = (a == actor) ? b : a;
+        if (std::find(out, out + n, partner) != out + n) continue;
+        if (n < cap) out[n++] = partner;
+        else overflowed = true;
     }
+    if (overflowed) SayOverflow(actor, cap);
     return n;
 }
 
