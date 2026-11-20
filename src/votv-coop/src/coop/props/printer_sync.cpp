@@ -93,6 +93,12 @@ void* PrintedClass() {
 }
 bool IsPrinted(void* a) { return a && PrintedClass() && R::ClassOf(a) == g_printedClass; }
 
+// The printer and its subclasses: 3dPrinter_desktop_C declares nothing of its own and runs this graph.
+bool IsPrinter(void* a) {
+    void* const base = a ? OI::ClassByName(L"3dPrinterAnim_C") : nullptr;
+    return base && R::IsDescendantOfAny(R::ClassOf(a), &base, 1, 8);
+}
+
 std::vector<void*> AllPrinted() {
     std::vector<void*> out;
     if (void* const c = PrintedClass())
@@ -625,8 +631,7 @@ void EndRunHere(void* printer) {
 // A client's printer copy handing its print to the object it spawned: refused, and that object goes.
 sg::Verdict OnFromPrinterPre(const sg::Call& c) {
     if (!IsClient() || !c.object || g_ours) return sg::Verdict::Run;
-    void* const printerCls = OI::ClassByName(L"3dPrinterAnim_C");
-    if (!c.callerObject || !printerCls || R::ClassOf(c.callerObject) != printerCls) return sg::Verdict::Run;
+    if (!IsPrinter(c.callerObject)) return sg::Verdict::Run;
     g_ownBirths.push_back(c.object);
     ++g_ownBirthsRefused;
     return sg::Verdict::Cancel;
@@ -687,8 +692,7 @@ void Tick() {
 void OnPrinterState(const N::PrinterStatePayload& p) {
     if (!IsClient()) return;
     void* const printer = ActorOf(p.printerEid);
-    void* const cls = OI::ClassByName(L"3dPrinterAnim_C");
-    if (!printer || !cls || R::ClassOf(printer) != cls) return;
+    if (!IsPrinter(printer)) return;
     if (p.op == N::kPrinterRunEnd) {
         EndRunHere(printer);
         UE_LOGI("printer_sync: printer eid=%u's run ended by the host", p.printerEid);
@@ -717,8 +721,7 @@ void OnAsk(int senderSlot, const N::PrintAskPayload& p) {
     if (!IsHost()) return;
     const std::wstring name = TextOf(p.name, p.nameLen, N::kPrintNameMax);
     void* const printer = coop::element::LivePropActor(static_cast<ElementId>(p.printerEid));
-    void* const cls = OI::ClassByName(L"3dPrinterAnim_C");
-    if (!printer || !cls || R::ClassOf(printer) != cls || !PM::IsPlainName(name)) {
+    if (!IsPrinter(printer) || !PM::IsPlainName(name)) {
         UE_LOGI("printer_sync: slot %d's print on eid=%u refused: no such printer or model", senderSlot, p.printerEid);
         return;
     }

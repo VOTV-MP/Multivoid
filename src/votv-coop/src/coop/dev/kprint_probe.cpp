@@ -6,7 +6,8 @@
 // host calls its printer's Finish at 125 s so the print ends at its next steps (VOTVCOOP_KPRINT_FINISH=0: it runs its
 // own length), lifts each printed object 80 cm at 150 s (it falls and rests) and toggles its light at 165 s. EVERY
 // PEER, every 3 s from 95 s: each printer (active, height, model) and each printed object (element id, name, loaded,
-// sections, physics, light, bites, where).
+// sections, physics, light, bites, where). VOTVCOOP_KPRINT_CLASS names the printer class (3dPrinter_desktop_C, its
+// subclass).
 
 #include "coop/dev/kprint_probe.h"
 
@@ -14,6 +15,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/fstring_utils.h"
@@ -50,6 +52,22 @@ std::wstring Model() {
 
 uint64_t Now() { return ::GetTickCount64(); }
 
+// The printer's class (VOTVCOOP_KPRINT_CLASS, 3dPrinterAnim_C by default; 3dPrinter_desktop_C is its subclass), loaded
+// by its asset path when nothing has loaded it.
+const wchar_t* PrinterClass() {
+    static const std::wstring c = [] {
+        const std::string v = coop::config::ReadEnv("VOTVCOOP_KPRINT_CLASS");
+        return v.empty() ? std::wstring(L"3dPrinterAnim_C") : std::wstring(v.begin(), v.end());
+    }();
+    return c.c_str();
+}
+void* LoadPrinterClass() {
+    if (void* c = OI::ClassByName(PrinterClass())) return c;
+    std::wstring leaf = PrinterClass();
+    if (leaf.size() > 2) leaf.resize(leaf.size() - 2);
+    return ue_wrap::asset_load::LoadObjectByPath((L"/Game/objects/" + leaf + L"." + PrinterClass()).c_str());
+}
+
 std::vector<void*> All(const wchar_t* cls) {
     std::vector<void*> out;
     void* const c = OI::ClassByName(cls);
@@ -80,7 +98,7 @@ int Sections(void* obj) {
 }
 
 void Report() {
-    for (void* p : All(L"3dPrinterAnim_C")) {
+    for (void* p : All(PrinterClass())) {
         UE_LOGI("[KPRINT] printer eid=%u active=%d canPrint=%d height=%.1f meshName='%ls'",
                 static_cast<unsigned>(coop::element::Registry::Get().EidForActor(p)), Field<uint8_t>(p, L"active", 0),
                 Field<uint8_t>(p, L"canPrint", 0), Field<float>(p, L"height", -1.f), Str(p, L"meshName").c_str());
@@ -128,13 +146,13 @@ void Tick(coop::net::Session* session) {
     }
     const uint64_t t = Now() - g_armedAt;
     const bool actor = (Role() == "host") == host && (host || coop::players::Registry::Get().LocalPeerId() == 1);
-    std::vector<void*> printers = All(L"3dPrinterAnim_C");
+    std::vector<void*> printers = All(PrinterClass());
     void* const printer = printers.empty() ? nullptr : printers.front();
     if (host && g_step == 0 && t >= 100000) {
         g_step = 1;
         if (!printer) {
             void* const me = coop::players::Registry::Get().Local();
-            void* const cls = OI::ClassByName(L"3dPrinterAnim_C");
+            void* const cls = LoadPrinterClass();
             FVector at{};
             bool ran = false;
             if (cls && me && E::TryGetActorLocation(me, at)) {
