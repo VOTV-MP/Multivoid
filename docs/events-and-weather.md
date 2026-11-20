@@ -213,12 +213,15 @@ tick on, its tick raises the basement's flood volume (`waterVolume_basementFlood
 is the level its `getLevel`/`setLevel` read and write), and a toolbox's `toolboxFix` mends it. Each copy ran it alone, so
 a flood never reached a client and a client's repair never reached the host (Ghezra/Multivoid#40). The host owns both: a
 client's pipes run no tick and take no damage of their own, the host sends a pipe whose bit changed from the pipe's own
-`State` call and the level as it moves (a read four times a second: its writers run every frame), and every pipe and
-level to a joiner, and a client applies them through the pipe's `State`
-and the volume's `setLevel` and `updateWaterData`. A client's repair runs on its copy and is asked of the host, which
-mends its pipe only for a living sender in reach with a toolbox in the hand (`coop/world/flood_sync`) `[V]`
-(`coop/dev/flood_probe`: the host's burst reached the client in the same second, the level rose on both, and the
-client's repair mended the host's pipe and both levels fell together).
+`State` call and the level as it moves (a read four times a second: its writers run every frame), and a client applies
+them through the pipe's `State` and the volume's `setLevel` and `updateWaterData` (`coop/world/flood_sync`).
+
+A client's repair runs on its copy and is asked of the host (`FloodIntent`), which trusts nothing in the ask but the
+pipe's name: it mends its pipe only for a sender that is alive, within 400 units of the pipe by the host's own copy of
+the sender, holds a toolbox by the hand the sender announced, and finds the pipe burst, at most four asks a second per
+sender; any other ask is refused and answered with the pipe's state. A refusal at the target check leaves the pipe burst.
+The flood drill (`coop/dev/flood_drill`: `rig: VERDICT flood-burst`, `-mend`, `-far`, `-join`) reads each of these on the
+peers' own copies, and its red arms withhold the send, the judge and the joiner's replay `[?]`.
 
 ### Emails and the daily task
 
@@ -294,7 +297,9 @@ run is re-sent while it flies; the pyramid's gather in flight
 is re-sent after its mirrors exist; the alarm's current flag is sent unconditionally, and the
 joiner runs the native trigger, which is idempotent against a save that already carried it.
 Emails are seeded as a delta against the blob instant; the task state is sent at the ready
-edge. A one-shot cue a joiner was not present for is missed, by definition.
+edge. A one-shot cue a joiner was not present for is missed, by definition. The basement's flood is not one: every pipe's
+bit and the flood's level are sent to the joiner at its ready edge, and the host's changes follow `[?]`
+(`coop/dev/flood_drill`, arm `join`: a client that leaves a rising flood and comes back reads the host's pipes and level).
 
 ## Known limits
 
@@ -327,5 +332,5 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
-| the basement flood | `coop/world/flood_sync`; `coop/dev/flood_probe` |
+| the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
