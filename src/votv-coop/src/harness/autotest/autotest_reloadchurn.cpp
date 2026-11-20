@@ -352,7 +352,6 @@ bool WaitGrimeSettled() {
 }
 
 void RunProbe() {
-    const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", 4);
     const int dwellS = EnvInt("VOTVCOOP_RELOAD_DWELL_S", 15);
     const int menuS  = EnvInt("VOTVCOOP_RELOAD_MENU_S", 12);
     // Which save to re-load: the host's slot from VOTVCOOP_SAVE; a fresh peer has none and starts
@@ -365,6 +364,8 @@ void RunProbe() {
     // teardown) through the same LoadMap. The two arms differ in exactly that.
     const bool  rejoin = coop::config::ReadEnv("VOTVCOOP_RELOAD_REJOIN") == "1";
     const bool  rehost = coop::config::ReadEnv("VOTVCOOP_RELOAD_HOST") == "1";
+    // The host arm decides on the cycles whose replay the session saw, which timing alone gives, so it runs more of them.
+    const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", rehost ? 4 : 3);
     const std::string peer = coop::config::ReadEnv("VOTVCOOP_NET_PEER");
     const std::string port = coop::config::ReadEnv("VOTVCOOP_NET_PORT");
     const std::string addr = peer.empty() ? std::string() : (peer + ":" + (port.empty() ? "47621" : port));
