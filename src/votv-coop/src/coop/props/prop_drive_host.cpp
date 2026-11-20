@@ -383,6 +383,9 @@ void SetEndListener(EndListener fn) {
 }
 
 void NoteEndSent(uint32_t eid, uint32_t gen) {
+    // First: a row's End is the island's announced rest, so the members its leader still owes are served before any
+    // listener reads the table. It may open rows; the table keeps every row where it stands (Rows).
+    coop::prop_drive_join::OnRowEnded(eid);
     if (g_endListener) g_endListener(eid, gen);
 }
 

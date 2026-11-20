@@ -8,9 +8,12 @@
 // in no hand. The walk passes through any actor whose root body simulates physics (props, cord and wire segments, a hook)
 // and stops at one whose root does not (a frozen prop, a wall, a device, the world); only a keyed prop with an element id
 // gets a row. A member already driven is kept and walked through; one past the join cap is owed, and opened when a slot
-// frees or when its body sleeps (its row then ends on the next rest probe, so its pose travels the row End). Game thread.
+// frees, when its body sleeps or when its leader's row Ends (its row then ends on the next rest probe, so its pose
+// travels the row End). Game thread.
 
 #pragma once
+
+#include <cstdint>
 
 namespace coop::prop_drive_join {
 
@@ -30,6 +33,11 @@ void Owe(void* leader, const char* why);
 // The owed joins, walked, and the owed members served. Called at the top of prop_drive_host's tick, before its empty-table
 // early return, since a join is what fills the table.
 void Tick();
+
+// HOST: a row's End has just gone to the clients (prop_drive_host's NoteEndSent, before the dev End listener). Each member
+// owed to that element as its leader is read for sleep now and, asleep, given its row at once (past the cap, ended by the
+// rest rule at its next probe); an awake one stays owed. No-op off the host and with nothing owed. Game thread.
+void OnRowEnded(uint32_t eid);
 
 // Session end: the owed lists and counters.
 void Clear();

@@ -192,6 +192,25 @@ void Owe(void* leader, const char* why) {
     g_leaders.push_back(l);
 }
 
+// The leader's End is the island's announced rest, so its owed members are read there, not on their own phase.
+void OnRowEnded(uint32_t eid) {
+    if (g_owed.empty() || eid == 0u || !coop::roster::LocalIsHost()) return;
+    UE_ASSERT_GAME_THREAD("prop_drive_join::OnRowEnded");
+    for (size_t i = 0; i < g_owed.size();) {
+        void* a = g_owed[i].ref.Get();
+        if (g_owed[i].leaderEid != eid || !a || PD::IsDriven(a) || PD::InAHand(a) || !PD::BodyAsleepForEnd(a)) {
+            ++i;   // not this leader's, or gone, driven or held (ServeOwed drops it), or awake (ServeOwed serves it)
+            continue;
+        }
+        const Owed o = g_owed[i];
+        g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
+        if (!PD::CoastJoined(a, o.leaderEid, /*overCap=*/true, o.why)) continue;
+        if (Say(++g_owedOver))
+            UE_LOGI("prop_drive_join: owed-overcap %llu -- eid=%u asleep at its leader eid=%u's End, its row ends at its rest pose",
+                    static_cast<unsigned long long>(g_owedOver), EidOf(a), eid);
+    }
+}
+
 void Tick() {
     ++g_tick;
     coop::constraint_ties::DrainTied(&OweIfDriven);
