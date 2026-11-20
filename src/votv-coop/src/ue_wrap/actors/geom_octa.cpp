@@ -67,7 +67,7 @@ void* GraphFunction(void* octa) {
 }
 
 bool CallMinSphereBeginOverlap(void* octa, void* otherActor) {
-    void* fn = octa ? R::FindFunction(R::ClassOf(octa), kMinSphereOverlap) : nullptr;
+    void* fn = octa ? R::FindDispatchFunction(R::ClassOf(octa), kMinSphereOverlap, nullptr) : nullptr;
     ParamFrame f(fn);
     if (!fn || !f.valid()) return false;
     f.Set<void*>(L"OverlappedComponent", MinSphere(octa));
@@ -76,7 +76,7 @@ bool CallMinSphereBeginOverlap(void* octa, void* otherActor) {
 }
 
 bool CallFireFinishNotify(void* octa) {
-    void* fn = octa ? R::FindFunction(R::ClassOf(octa), kFireFinish) : nullptr;
+    void* fn = octa ? R::FindDispatchFunction(R::ClassOf(octa), kFireFinish, nullptr) : nullptr;
     ParamFrame f(fn);
     if (!fn || !f.valid()) return false;
     // The name `finish`, resolved once.

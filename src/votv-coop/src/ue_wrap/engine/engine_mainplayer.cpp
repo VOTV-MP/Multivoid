@@ -177,7 +177,7 @@ void* ReadPhysicsHandleGrabbedComponent(void* phc) {
 
 bool CallMainPlayerUpdateHold(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
-    void* fn = R::FindFunction(R::ClassOf(mainPlayer), L"updateHold");
+    void* fn = R::FindDispatchFunction(R::ClassOf(mainPlayer), L"updateHold", nullptr);
     if (!fn) return false;
     ParamFrame f(fn);
     return f.valid() && Call(mainPlayer, f);

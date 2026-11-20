@@ -295,7 +295,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     void* meshComp = (g_offPropMesh >= 0)
         ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(prop) + g_offPropMesh)
         : nullptr;
-    if (!g_sellFn) g_sellFn = R::FindFunction(R::ClassOf(gun), L"sell");   // cached
+    if (!g_sellFn) g_sellFn = R::FindDispatchFunction(R::ClassOf(gun), L"sell", nullptr);   // cached
     void* sellFn = g_sellFn;
     if (!sellFn) {
         const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);

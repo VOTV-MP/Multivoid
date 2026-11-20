@@ -113,7 +113,7 @@ void* ImpactOf(void* prop) {
 // The host's own copy breaks by the same lethal call: its `broken` spills, its component destroys it.
 bool Break(void* container, bool fire) {
     void* comp = ImpactOf(container);
-    void* fn = comp ? R::FindFunction(R::ClassOf(comp), fire ? L"fireDamage" : L"impactDamage") : nullptr;
+    void* fn = comp ? R::FindDispatchFunction(R::ClassOf(comp), fire ? L"fireDamage" : L"impactDamage", nullptr) : nullptr;
     ue_wrap::ParamFrame f(fn);
     if (!fn || !f.valid()) return false;
     f.Set<float>(L"damage", kLethal);
