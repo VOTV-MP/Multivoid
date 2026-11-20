@@ -74,6 +74,8 @@ const char* const kSayWalked    = "oven walked";
 const char* const kSayWalkFail  = "oven walk failed";
 const char* const kSayRawSent   = "oven raw sent";
 const char* const kSayC2Ready   = "oven c2 ready";
+// The host's fixture check passed: the oven is unrepaired, every screw in, the record empty. The raw arms' client waits for it.
+const char* const kSayFixture   = "oven fixture stands";
 const char* const kSayAsked2    = "oven asked twice";
 // A FAIL of either peer, told to the other so neither idles to its bound.
 const char* const kSayFail      = "oven judge FAIL";
@@ -186,6 +188,9 @@ void TickActing(coop::net::Session& s, void* oven, const std::wstring& key) {
             return;
         }
     }
+    // The raw arms send only after the host's fixture stands: with the judge off a raw bit merges at once, and one that
+    // landed before the host's check would read as a dirty fixture. The bound only says INVALID.
+    if (arm != Arm::Repair && arm != Arm::Again && !DC::SeenHas(kSayFixture)) return Wait("the host's fixture check");
     if (arm == Arm::Reach) {
         if (!DC::SeenHas(kSayC2Ready)) return;  // the sentinel's reader is in the world: run with --clients 2
         if (!g_rawSent) {
@@ -269,6 +274,7 @@ void TickHost(void* oven, const std::wstring& key) {
     if (!g_started) {
         if (!Fixture(oven, key)) return;
         g_started = true;
+        DC::Say(kSayFixture);  // the client sends its raw messages only after this: its bits must not land before the check
     }
     if (DC::SeenHas(kSayWalkFail)) return Invalid("the client's walk to the oven's switch box failed");
     // The judge's counters are this session's, from zero: the fixture holds the record empty, so every move is the client's own
