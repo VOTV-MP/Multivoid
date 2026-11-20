@@ -319,3 +319,12 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   told to the host and every peer, the host's count of the charge. On top: every peer casts the game's ray from its copy of the
   sprayer's hand, so each player's own fire still goes out; a client's damage to its copy asks the host, which judges it and
   sets its own copy off; a hand change ends a spray at once; and drills with a red for each half.
+- **The sky after a backrooms visit** ([#171](https://github.com/VOTV-MP/Multivoid/pull/171)): a visit hid every sun, sky light and
+  fog and showed them all at its end, the night's sun included. Kept as written: only what was shown is hidden. On top: during a
+  visit the day cycle's own sky writes are held and applied at its end (the once-a-second re-hide went), and a drill with a red.
+- **The desk's cursor beep** ([#182](https://github.com/VOTV-MP/Multivoid/pull/182)): the coordinate cursor's loop had no falloff, so
+  every peer heard it at full volume map-wide. Kept as written: the loop takes the desk's own attenuation. On top: it is marked
+  done only once the attenuation took, and the probe says PASS or FAIL with a red.
+- **A crouched player's steps** ([#168](https://github.com/VOTV-MP/Multivoid/pull/168), [#169](https://github.com/VOTV-MP/Multivoid/pull/169)):
+  a crawling player stepped at the standing stride on every other screen. Kept as written: the pose carries a crouch bit and both
+  strides follow it; the ground read on each step. On top: the ground line is a dev read, and the crawl is a drill with a red.
