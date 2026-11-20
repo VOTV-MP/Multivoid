@@ -13,6 +13,7 @@ namespace coop::dev::flood_drill::detail {
 inline constexpr const char* kPrefix = "fld ";
 inline constexpr uint64_t kBoundMs = 180000;       // a step that waits this long for its event says INVALID and stops
 inline constexpr uint64_t kWalkBoundMs = 480000;   // the client's walk to the pipe, the director's own deadline included
+inline constexpr uint64_t kJoinBoundMs = 420000;   // a peer's boot, join and world load, or a rejoin's
 // How far a client's level may sit from the host's at a chat line: the lane's step (flood_sync::dev::LevelEpsilon, 1 unit), which
 // the host has not yet sent, plus half a unit for the host's read to the client's across the chat. The green runs' seven reads
 // of the two levels differed by 0 to 0.4 unit (the rise is about half a unit a second); the margin over that is 1.1.

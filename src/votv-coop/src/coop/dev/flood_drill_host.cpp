@@ -171,12 +171,18 @@ void HostStep(coop::net::Session& s) {
             if (!g_windowBurst) {
                 if (coop::save_transfer::WorldTakenFor(1) && !s.IsSlotWorldReady(1)) BurstInWindow();
                 else if (HostMayStart(s)) Invalid("the rejoined client's world was ready before the host saw its window");
+                else Late("the rejoined client's world was never captured", kJoinBoundMs);
             } else if (HostMayStart(s)) {
                 StartJoinCheck();
+            } else {
+                Late("the rejoined client never became world-ready", kJoinBoundMs);
             }
             return;
         }
-        if (!HostMayStart(s)) return;
+        if (!HostMayStart(s)) {
+            Late("the client never became world-ready", kJoinBoundMs);
+            return;
+        }
         StartBurst();
         return;
     case HS::WaitState1Ok:
@@ -215,6 +221,7 @@ void HostStep(coop::net::Session& s) {
         return;
     case HS::WaitGone:
         if (!s.IsSlotWorldReady(1)) HGo(HS::Start);
+        else Late("the client never left", kBoundMs);
         return;
     case HS::WaitJudge: {
         const FS::Counts c = FS::Read();

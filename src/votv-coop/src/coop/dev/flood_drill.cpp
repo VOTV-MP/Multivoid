@@ -198,6 +198,7 @@ bool RejoinedLife() {
 void ArmFirstTick() {
     if (g_armed) return;
     g_armed = true;
+    Go();
     DC::SeenHas(kPrefix);   // the first read starts the chat history
 }
 

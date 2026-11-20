@@ -130,7 +130,10 @@ void ClientStep(coop::net::Session& s) {
     const Arm arm = ArmOf();
     switch (g_c) {
     case CS::WaitReady:
-        if (!ClientMayStart()) return;
+        if (!ClientMayStart()) {
+            Late("the client's world never became ready", kJoinBoundMs);
+            return;
+        }
         Fact("in the host's world%s", RejoinedLife() ? " (the rejoined life)" : "");
         CGo(arm == Arm::Join && RejoinedLife() ? CS::WaitJoinState : CS::WaitState1);
         return;
