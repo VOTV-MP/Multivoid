@@ -46,8 +46,11 @@ constexpr float kSpawnOutCm = 100.f;   // the can is set this far from the host,
 constexpr float kRestCm = 2.f;         // a can that moved less than this between two readings is still
 constexpr int kRestReadings = 6;       // this many still readings in a row, 100 ms apart, are a can at rest
 constexpr float kCopyCm = 30.f;        // the client's copy of the can stands within this of the host's
-constexpr float kRingCm = 60.f;        // the grab's stand: the use key reaches 170 cm from the camera, the can is bigger than a paper
-constexpr float kRingTolCm = 20.f;
+// The grab's stand: 70 cm round the can, taken within 30 cm. The player's capsule and the can touch at about 60 cm, so the
+// walker that arrives in contact still counts (a target tight on the contact ring was never reached: the walker pushed the can
+// across it), and 100 cm is inside the use key's horizontal reach of about 113 cm.
+constexpr float kRingCm = 70.f;
+constexpr float kRingTolCm = 30.f;
 constexpr int kGrabTries = 6;
 constexpr int kGrabWaitS = 600;        // the host's wait for the client's walk and grab
 
