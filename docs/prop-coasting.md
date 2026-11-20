@@ -44,7 +44,16 @@ native `[V]` (the body-push drill's HITS lines, on both peers). A coast that res
 resend: the joiner's snapshot is cut after the rest and carries it `[V]` (the coast drill's join arm: the joiner's copy
 rests within 1 cm of the host's with no End sent to it). A push or a runaway thrust in flight when a peer joins is the
 same stream, which every drive row of the prop joins the peer to, so nothing more is owed `[?]` until a join arm reads
-it. A prop that a pushed prop knocks has no verb of its own and is not streamed. A prop a physics constraint ties to a driven one is the sixth feeder: a nailed, corded or wired partner that the constraint drags. When a prop gets a row, or a hand (the host's, or a client's at its first pose) takes it, every keyed prop a constraint ties to it, transitively, gets a coasting row of its own (`CoastCause::Joined`, `coop/props/prop_drive_join`), which the rest rule ends when its body sleeps. The ties are the engine's own `SetConstrainedComponents` calls, caught at the native seam from boot (`coop/props/constraint_ties`). A member past the join cap (the cap less the let-go and push reserve) waits, and is opened when a slot frees or when its body sleeps, so its rest pose still travels the row End; a tied pair moved with no cause at all is not covered `[?]` until the constraint-join drill reads it. Every later correction of a copy's resting place is logged with its distance as
+it. A prop that a pushed prop knocks has no verb of its own and is not streamed. A prop a physics constraint ties to a
+driven one is the sixth feeder: a partner that the constraint drags. When a prop gets a row, or a hand (the host's, or a
+client's at its first pose) takes it, every keyed prop a constraint ties to it, transitively, through bodies that
+simulate physics (props, cord and wire segments, a hook), gets a coasting row of its own (`CoastCause::Joined`,
+`coop/props/prop_drive_join`); a tie to a body that does not simulate (a frozen prop, a wall, a device) ends the walk.
+The row ends by the rest rule when its body sleeps and its leader is in no hand. The ties are the engine's own
+`SetConstrainedComponents` calls, caught at the native seam from boot (`coop/props/constraint_ties`). A member past the
+join cap (the cap less the let-go and push reserve) waits, and is opened when a slot frees or when its body sleeps, so
+its rest pose still travels the row End; a tied pair moved with no cause at all is not covered `[?]` until the
+constraint-join drill reads it. Every later correction of a copy's resting place is logged with its distance as
 `[PROP-CORRECT]`, each one and a 30 s summary (`coop/props/prop_wire_parity`). A receiver parks the prop on the first
 pose and follows the stream the way a carried trash clump is followed -- the fixed-delay interpolation, frozen at the
 last pose across a gap -- where a held prop snaps to each pose; a reliable end edge carries the final pose, the host's
