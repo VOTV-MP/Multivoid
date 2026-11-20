@@ -188,6 +188,8 @@ bool ApplyFx(uint8_t op, uint8_t comp, const char* cue) {
 
 }  // namespace
 
+void* CursorLoopDesk() { return g_attenuatedDesk; }
+
 bool InWireApply() { return g_wireApplyDepth > 0; }
 ScopedWireApply::ScopedWireApply()  { ++g_wireApplyDepth; }
 ScopedWireApply::~ScopedWireApply() { --g_wireApplyDepth; }
@@ -220,10 +222,13 @@ void Tick() {
     // player's cursor played it at full volume across the whole map. It takes the ping loop's falloff (att_default,
     // the falloff of every other desk sound), once per desk (Ghezra/Multivoid#29).
     if (void* const desk = ue_wrap::console_desk::Instance(); desk && desk != g_attenuatedDesk && DA::EnsureResolved()) {
-        const bool lent = DA::LendAttenuation(static_cast<int>(coop::net::DeskSndComp::PingLoop),
-                                              static_cast<int>(coop::net::DeskSndComp::CorrdsLoop));
+        // [dev red] deskaudio_att_off: the loop is left without it, as before the lane.
+        static const bool attOff = coop::config::ResolveFlag(::coop::config_registry::rows::deskaudio_att_off);
+        const bool lent = !attOff && DA::LendAttenuation(static_cast<int>(coop::net::DeskSndComp::PingLoop),
+                                                         static_cast<int>(coop::net::DeskSndComp::CorrdsLoop));
         g_attenuatedDesk = desk;
-        UE_LOGI("desk_snd: the cursor loop %s the desk's falloff", lent ? "holds" : "could NOT be given");
+        UE_LOGI("desk_snd: the cursor loop %s the desk's falloff",
+                lent ? "holds" : attOff ? "is left without" : "could NOT be given");
     }
 
     // Dev self-test arming (per-session: OnDisconnect clears the latch).

@@ -172,3 +172,7 @@ CFG_ENUM(cap_label_drill, "cap_label_drill", "dev", "off", "off|fresh|saved", "V
     "host's label must be its loaded desk's level and module's, and the client's the same after the join; a save "
     "whose desk holds no Auto Processing module is INVALID. Red arms: cap_label_repaint_off (every repaint, both "
     "peers), cap_label_install_repaint_off (the host, saved arm).")
+CFG_FLAG(deskaudio_att_off, "deskaudio_att_off", "dev", false, "VOTVCOOP_DESKAUDIO_ATT_OFF",
+    "Developer red arm of the desk audio probe (VOTVCOOP_DESKAUDIO_PROBE=1): never set. The desk_snd lane does not give "
+    "the cursor loop (corrds_loop) the ping loop's attenuation settings, as before the lane did, so the loop holds none "
+    "and the probe must say FAIL.")
