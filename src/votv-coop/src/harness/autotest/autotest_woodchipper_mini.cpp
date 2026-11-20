@@ -40,7 +40,7 @@ void OnGameThread(Fn&& fn) {
 // judge asks the hand's class by a class this host has loaded, and a host never loads a client's class name (class_resolve
 // LookupOnly); the forced hold loads it on the client alone. The object index lists the class at its next drain, not in the
 // spawning tick: the wait is on that listing.
-bool SpawnMiniCan() {
+const char* SpawnMiniCan() {
     bool spawned = false;
     OnGameThread([&] {
         void* me = coop::players::Registry::Get().Local();
@@ -49,11 +49,13 @@ bool SpawnMiniCan() {
         const ue_wrap::FVector fwd = E::GetActorForwardVector(me);
         spawned = ue_wrap::item_spawn::Spawn(kMiniClass, {at.X - fwd.X * 150.f, at.Y - fwd.Y * 150.f, at.Z + 60.f}) != nullptr;
     });
-    return spawned && PS::WaitFor("the host lists the mini can's class", 10, [] {
-               bool listed = false;
-               OnGameThread([&] { listed = ue_wrap::object_index::ClassByName(kMiniClass) != nullptr; });
-               return listed;
-           });
+    if (!spawned) return "the spawn failed: no local player, or the mini can's class did not load";
+    const bool listed = PS::WaitFor("the host lists the mini can's class", 10, [] {
+        bool in = false;
+        OnGameThread([&] { in = ue_wrap::object_index::ClassByName(kMiniClass) != nullptr; });
+        return in;
+    }, false);
+    return listed ? nullptr : "the can was spawned, and the object index did not list its class within 10 s";
 }
 
 // PASS: the host's fuel rose by what the client's copy gained. FAIL: the host refused the pour for the can (its refusal count

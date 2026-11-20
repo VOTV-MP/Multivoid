@@ -442,9 +442,11 @@ void RunHost() {
         UE_LOGW("woodchipper: VERDICT ABORT -- no woodchipper in the world and none spawned");
         return;
     }
-    if (MiniArm() && !SpawnMiniCan()) {
-        RV::Say(kTagMini, RV::Outcome::Invalid, "no mini can could be spawned on the host");
-        return;
+    if (MiniArm()) {
+        if (const char* why = SpawnMiniCan()) {
+            RV::Say(kTagMini, RV::Outcome::Invalid, "no mini can for the host's class list: %s", why);
+            return;
+        }
     }
     PS::Mark("chipper_key", Narrow(key));
     if (!PS::Await("can_in_hand", kSignalSec)) return;

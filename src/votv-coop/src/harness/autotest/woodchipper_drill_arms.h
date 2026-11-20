@@ -20,7 +20,7 @@ unsigned long long RefusedForCan();                  // the host's count of pour
 float PourHeldCan(const std::wstring& key);          // the client pours the can in its hand: the fuel its copy gained
 
 // The mini arm (autotest_woodchipper_mini.cpp).
-bool SpawnMiniCan();                                 // HOST: a mini can in the world, its class listed here
+const char* SpawnMiniCan();                          // HOST: a mini can in the world, its class listed here; else the cause it failed
 void HostMini(const std::wstring& key);             // HOST: the arm's verdict, 'woodchipper-mini'
 void ClientMini(const std::wstring& key);           // CLIENT: the pour of the mini can in the hand
 
