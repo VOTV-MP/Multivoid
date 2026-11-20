@@ -457,14 +457,16 @@ void ReadGens(uint8_t* gens) {
     for (size_t i = 0; i < g_n; ++i) gens[i] = PD::ContextOf(g_box[i].Get(), g_eid[i]).gen;
 }
 
-// prop_drive_host's End listener: a row of the host closed. The leader's End after the let-go is the event that decides the
-// members, since the island sleeps as one and every member has ended or is about to.
+// prop_drive_host's End listener: a row closed with a final pose told to the clients, the host's rest End or the release of a
+// row a client syncs (box A granted to the client after its let-go closes so, at a generation the host's coast never had). The
+// leader's close after the let-go is the event that decides the members, since the island sleeps as one and every member has
+// ended or is about to. Each close is told once, so a generation is never counted twice.
 void OnEnd(uint32_t eid, uint32_t gen) {
     if (Over() || (g_step != Step::Run && g_step != Step::Settle)) return;
     for (size_t i = 0; i < g_n; ++i) {
         if (g_eid[i] != eid) continue;
         g_endMs[i] = coop::net::NowMs();
-        UE_LOGI("%s box %c's row closed (an End), generation %u", kLog, Letter(i), static_cast<unsigned>(gen));
+        UE_LOGI("%s box %c's row closed (its End reached the clients), generation %u", kLog, Letter(i), static_cast<unsigned>(gen));
         if (i != 0 || !g_letGo || g_judged) return;
         g_judged = true;
         UE_LOGI("%s the leader's row closed (its End): the members are judged", kLog);

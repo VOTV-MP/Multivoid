@@ -498,6 +498,7 @@ void OnClientEnd(coop::net::Session& s, const coop::net::PropDriveEndPayload& se
     s.SendReliable(coop::net::ReliableKind::PropDriveEnd, &p, sizeof(p), slot);
     RecordHandBack(p.eid, slot, nowMs);
     coop::prop_drive_host::EraseRow(*row);
+    coop::prop_drive_host::NoteEndSent(p.eid, p.gen);
     Tally(g_endsAdmitted, "End admitted (rest)", p.eid, slot);
     if (row->elected)
         UE_LOGI("[PROP-SYNC] HOST thrown eid=%u gen=%u slot %u rested: release-to-End %llu ms, rows admitted %u, jitter (sender dt - arrival dt) max %lld ms over %u rows, maxgap=%u ms",
@@ -554,6 +555,7 @@ void EndClientRow(Driven& d, Ending why) {
         if (!toHost && g_session) {
             end.physFlags = coop::prop_wire_parity::PhysFlagsOf(actor);
             g_session->SendReliable(coop::net::ReliableKind::PropDriveEnd, &end, sizeof(end));
+            coop::prop_drive_host::NoteEndSent(d.eid, gen);
         }
     }
     // (3) the syncer is told, with the generation it ends (before any bump) and the seq of its claim or the sequence of
