@@ -1,384 +1,405 @@
-// coop/dev/clean_drill.cpp -- [dev] grime cleaned by one player and the sounds of it, logged on every peer
-// (VOTVCOOP_CLEAN_DRILL=1 on every peer).
+// coop/dev/clean_drill.cpp -- see coop/dev/clean_drill.h. The tick, and the `clean` arm: a client cleans away one decal of each
+// grime kind and every peer says whether its copy ended. The `leaves` arm is clean_drill_leaves.cpp, the shared reads, marks and
+// verdict clean_drill_common.cpp, the actor's log-only legs clean_drill_legs.cpp.
 //
-// The anchor is the save's prop_bucket_C under VOTVCOOP_CLEAN_BUCKET; the targets, the same on every peer, are the decal
-// of each of seven grime classes nearest it within 30 m. The ACTOR (VOTVCOOP_CLEAN_ACTOR, `client` = slot 1, or `host`)
-// stands beside the bucket with a mop in hand 5 s before VOTVCOOP_CLEAN_DELAY, then cleans as the mop's notify does
-// (grime_C::clean, the mop the sponge): t+2 s the first target away; from t+6 s each other target three times, 4 s
-// apart; t+34 s three drops of its blood let fall through the blood master; t+42 s the marks within 3 m of it away;
-// t+48 s the bucket filled and the view turned onto it, t+49 s the mop's left click on it (its own trace decides the
-// dip); t+52 s a bucket of water taken into the hand and its left click, the water thrown out; t+60 s DONE. EVERY PEER:
-// each target's process and every grime_blood decal within 8 m of the anchor each second, and every grime decal it
-// holds 8 s before t and at t+70 s (`[CLN]`); the sound relay's own lines say which sounds crossed.
+// The `clean` arm, in the order the peers do it, three peers (host, first client, second client), each step on an event:
+//   every peer: once its world is up and the grime lane has indexed it, it marks itself up and waits for the others' marks.
+//   the ACTOR (the first client; VOTVCOOP_CLEAN_ACTOR=host: the host) picks, around the save's bucket, the decal of each grime
+//   kind that stands nearest it and one more cleanable, rain-proof decal (the SENTINEL), and marks them. Every other peer finds
+//   each of them standing on its own copy and says so.
+//   the actor walks to the bucket with the director, takes a mop, cleans every target until it ends, waits until the lane has
+//   sent each end, then cleans the sentinel a little: the lane's wire is ordered, so a peer that sees the sentinel fall has
+//   applied every end the actor sent before it. Each other peer judges at that event: a target that ended on the actor and
+//   stands on this copy fails the run, named. The host says PASS once every peer's copy has ended them all.
+// After the verdict the actor runs its log-only legs and every peer dumps the grime decals it holds, before and after.
 
 #include "coop/dev/clean_drill.h"
 
+#include "clean_drill_detail.h"   // co-located private header (src tree, not include/)
+
 #include "coop/cheats/item_catalog.h"
-#include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_hand.h"
+#include "coop/interactables/grime_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/session/teleport_client.h"
-#include "ue_wrap/actors/prop.h"
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/engine/engine_mainplayer.h"
-#include "ue_wrap/engine/engine_nav.h"
 
-#include <windows.h>
-
-#include <cctype>
 #include <cstdint>
-#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace coop::dev::clean_drill {
 namespace {
 
-namespace R  = ue_wrap::reflection;
-namespace E  = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
-using ue_wrap::FVector;
+using namespace detail;
+namespace R   = ue_wrap::reflection;
+namespace E   = ue_wrap::engine;
+namespace DIR = coop::director;
+using coop::rig_verdict::Outcome;
 
-bool On() {
-    static const bool on = coop::config::ReadEnv("VOTVCOOP_CLEAN_DRILL") == "1";
-    return on;
-}
-
-uint64_t EnvMs(const char* name, uint64_t dflt) {
-    const std::string v = coop::config::ReadEnv(name);
-    return v.empty() ? dflt : std::strtoull(v.c_str(), nullptr, 10);
-}
-
-uint64_t Now() { return ::GetTickCount64(); }
-unsigned long long WallMs() {
-    FILETIME ft{};
-    ::GetSystemTimePreciseAsFileTime(&ft);
-    return (((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) / 10000ull);
-}
-
-std::vector<void*> All(const wchar_t* cls) {
-    std::vector<void*> out;
-    void* const c = OI::ClassByName(cls);
-    if (c)
-        OI::ForEachInstance(c, [](void* ctx, void* obj, int32_t) {
-            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
-                static_cast<std::vector<void*>*>(ctx)->push_back(obj);
-        }, &out);
-    return out;
-}
-
-template <class T>
-T Get(void* obj, const wchar_t* name, T dflt) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    return off >= 0 ? *reinterpret_cast<const T*>(static_cast<const char*>(obj) + off) : dflt;
-}
-template <class T>
-void Put(void* obj, const wchar_t* name, T v) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    if (off >= 0) *reinterpret_cast<T*>(static_cast<char*>(obj) + off) = v;
-}
-
-bool CallNoArgs(void* obj, const wchar_t* fn) {
-    void* const f = obj ? R::FindDispatchFunctionCached(R::ClassOf(obj), fn) : nullptr;
-    ue_wrap::ParamFrame frame(f);
-    return f && frame.valid() && ue_wrap::Call(obj, frame);
-}
-
-float Dist2(const FVector& a, const FVector& b) {
-    const float x = a.X - b.X, y = a.Y - b.Y, z = a.Z - b.Z;
-    return x * x + y * y + z * z;
-}
+constexpr const char* kTag = "grime-clean";
+constexpr float    kRadiusCm = 3000.f;   // the targets stand within this of the bucket
+constexpr int      kMaxStrokes = 40;     // a decal that does not end in this many is no target
+constexpr float    kStrokeSub = 50.f;
+constexpr float    kMinProcess = 20.f;   // the sentinel's partial of 10 must leave it standing
+constexpr float    kSentinelSub = 10.f;
+constexpr float    kFallEps = 0.5f;
+constexpr float    kWalkReachCm = 250.f;
+constexpr int      kWalkDeadlineS = 150;
+constexpr uint32_t kLanePasses = 3;      // the lane's index has settled: each target has its cached key
 
 constexpr const wchar_t* kTargetClasses[] = {L"grime_dyn_C",      L"grime_dusty_C", L"grime_leaky_C",
                                              L"grime_blood2_drip_C", L"grime_coffee_C", L"grime_fallenLeaves_C",
                                              L"grime_grainy_C"};
-constexpr int kTargets = static_cast<int>(sizeof(kTargetClasses) / sizeof(kTargetClasses[0]));
+constexpr int kMaxTargets = static_cast<int>(sizeof(kTargetClasses) / sizeof(kTargetClasses[0]));
 
-struct Target {
-    std::wstring cls;
-    FVector at{};
-    void* actor = nullptr;   // found again at its place each time (a decal that ended is gone)
-};
-Target g_targets[kTargets];
-FVector g_anchor{};
-bool g_anchored = false;
-
-// The live decal of `cls` standing at `at` (within 1 cm), or null.
-void* DecalAt(const std::wstring& cls, const FVector& at) {
-    for (void* d : All(cls.c_str())) {
-        FVector p{};
-        if (E::TryGetActorLocation(d, p) && Dist2(p, at) < 1.f) return d;
-    }
-    return nullptr;
-}
-
-bool Anchor() {
-    const std::string want = coop::config::ReadEnv("VOTVCOOP_CLEAN_BUCKET").empty()
-                                 ? std::string("upAbhZM6weqmeddpJE6vHg")
-                                 : coop::config::ReadEnv("VOTVCOOP_CLEAN_BUCKET");
-    for (void* b : All(L"prop_bucket_C")) {
-        const std::wstring k = ue_wrap::prop::GetInteractableKeyString(b);
-        if (std::string(k.begin(), k.end()) == want && E::TryGetActorLocation(b, g_anchor)) return true;
-    }
-    return false;
-}
-
-void ChooseTargets() {
-    for (int i = 0; i < kTargets; ++i) {
-        Target& t = g_targets[i];
-        t.cls = kTargetClasses[i];
-        float best = 3000.f * 3000.f;
-        for (void* d : All(kTargetClasses[i])) {
-            FVector p{};
-            if (!E::TryGetActorLocation(d, p)) continue;
-            const float d2 = Dist2(p, g_anchor);
-            if (d2 < best) {
-                best = d2;
-                t.at = p;
-                t.actor = d;
-            }
-        }
-        UE_LOGI("[CLN] target %d %ls at (%.1f,%.1f,%.1f) process=%.1f", i, kTargetClasses[i], t.at.X, t.at.Y, t.at.Z,
-                t.actor ? Get<float>(t.actor, L"process", -1.f) : -1.f);
-    }
-}
-
-void* Bucket() {
-    void* best = nullptr;
-    float bd = 300.f * 300.f;
-    for (void* b : All(L"prop_bucket_C")) {
-        FVector p{};
-        if (E::TryGetActorLocation(b, p) && Dist2(p, g_anchor) < bd) {
-            bd = Dist2(p, g_anchor);
-            best = b;
-        }
-    }
-    return best;
-}
-
-void* InHand(void* me) {
-    E::MainPlayerGrabState gs{};
-    return (me && E::ReadMainPlayerGrabState(me, gs)) ? gs.holdingActor : nullptr;
-}
-
-// grime_C::clean(sponge, sub, nosound), as the mop's clean notify calls it. True when it ran.
-bool Clean(void* decal, void* sponge, float sub) {
-    void* const fn = decal ? R::FindDispatchFunctionCached(R::ClassOf(decal), L"clean") : nullptr;
-    ue_wrap::ParamFrame f(fn);
-    return fn && f.valid() && f.Set<void*>(L"sponge", sponge) && f.Set<float>(L"sub", sub) &&
-           f.Set<bool>(L"nosound", false) && ue_wrap::Call(decal, f);
-}
-
-std::wstring CatalogRow(const char* part) {
-    const auto names = coop::cheats::item_catalog::Names();
-    if (!names) return L"";
-    for (const std::string& n : *names) {
-        std::string low = n;
-        for (char& c : low) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        if (low == part) return std::wstring(n.begin(), n.end());
-    }
-    return L"";
-}
-
-void Report() {
-    const unsigned long long w = WallMs();
-    for (int i = 0; i < kTargets; ++i) {
-        const Target& t = g_targets[i];
-        void* const d = DecalAt(t.cls, t.at);
-        if (d) UE_LOGI("[CLN] wall=%llu target %d %ls process=%.2f", w, i, t.cls.c_str(), Get<float>(d, L"process", -1.f));
-        else UE_LOGI("[CLN] wall=%llu target %d %ls gone", w, i, t.cls.c_str());
-    }
-    for (const wchar_t* cls : {L"grime_blood_C", L"grime_blood2_C", L"grime_blood2_drip_C"})
-        for (void* d : All(cls)) {
-            FVector p{};
-            if (!E::TryGetActorLocation(d, p) || Dist2(p, g_anchor) > 800.f * 800.f) continue;
-            UE_LOGI("[CLN] wall=%llu blood %ls at (%.0f,%.0f,%.0f) process=%.2f", w, cls, p.X, p.Y, p.Z,
-                    Get<float>(d, L"process", -1.f));
-        }
-}
-
-// Every grime decal this peer holds, by class and place, once (`[CLN] all`), for a set compare across peers.
+// The classes a sentinel is picked from, and the classes the dumps list.
 constexpr const wchar_t* kAllClasses[] = {
     L"grime_asoLogoShadow_C", L"grime_beer_C",  L"grime_blood_C",        L"grime_blood2_C",         L"grime_blood2_drip_C",
     L"grime_coffee_C",        L"grime_crack_C", L"grime_dusty_C",        L"grime_dyn_C",            L"grime_explosionScorch_C",
     L"grime_fallenLeaves_C",  L"grime_grainy_C", L"grime_leaky_C",       L"grime_leaky_rusty_C",    L"grime_leaky_wet_C",
     L"grime_light_C",         L"grime_oil_C",   L"grime_poo_C",          L"grime_C"};
+
+struct Target {
+    std::wstring cls;
+    FVector at{};
+    float start = 0.f;
+};
+
+enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Walk, Mop, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
+                AwaitEnd, Legs, Done };
+Ph g_ph = Ph::Arrive;
+FVector g_anchor{};
+std::vector<Target> g_targets;
+Target g_sentinel;
+std::shared_ptr<DIR::BackgroundWalk> g_walk;
+void* g_mop = nullptr;
+uint32_t g_ends0 = 0;
+size_t g_ended = 0;
+bool g_dumpedAfter = false;
+
+void Go(Ph p, const char* name) {
+    g_ph = p;
+    Enter(name);
+}
+
+// ---- the targets on the wire -------------------------------------------------------------------------------------------
+// "S,<cls>,x,y,z,process;T,<cls>,x,y,z,process;..." : the sentinel first, then each target.
+std::string Pack() {
+    std::string s;
+    char buf[160];
+    auto one = [&](char kind, const Target& t) {
+        std::snprintf(buf, sizeof(buf), "%c,%s,%.3f,%.3f,%.3f,%.2f;", kind, Narrow(t.cls).c_str(), t.at.X, t.at.Y, t.at.Z,
+                      t.start);
+        s += buf;
+    };
+    one('S', g_sentinel);
+    for (const Target& t : g_targets) one('T', t);
+    return s;
+}
+
+bool Unpack(const std::string& text) {
+    g_targets.clear();
+    bool sentinel = false;
+    for (const std::string& item : Split(text, ';')) {
+        if (item.empty()) continue;
+        const std::vector<std::string> f = Split(item, ',');
+        float x = 0.f, y = 0.f, z = 0.f, p = 0.f;
+        if (f.size() != 6 || f[0].size() != 1 || !ToFloat(f[2], x) || !ToFloat(f[3], y) || !ToFloat(f[4], z) ||
+            !ToFloat(f[5], p))
+            return false;
+        Target t;
+        t.cls.assign(f[1].begin(), f[1].end());
+        t.at = {x, y, z};
+        t.start = p;
+        if (f[0][0] == 'S') {
+            g_sentinel = t;
+            sentinel = true;
+        } else {
+            g_targets.push_back(t);
+        }
+    }
+    return sentinel && !g_targets.empty();
+}
+
+// ---- the actor's picks ---------------------------------------------------------------------------------------------------
+// The nearest cleanable decal of `cls` to the bucket within kRadiusCm that has dirt and is none of `skip`'s places.
+bool NearestOf(const wchar_t* cls, bool needRainProof, const std::vector<Target>& skip, Target& out) {
+    float best = kRadiusCm * kRadiusCm;
+    bool found = false;
+    for (void* d : All(cls)) {
+        FVector p{};
+        if (!E::TryGetActorLocation(d, p) || !BoolOf(d, L"isCleanable")) continue;
+        if (needRainProof && !BoolOf(d, L"resistRain")) continue;
+        const float process = ProcessOf(d);
+        if (process <= (needRainProof ? kMinProcess : 0.f)) continue;
+        bool taken = false;
+        for (const Target& s : skip) taken = taken || (s.cls == cls && Dist2(s.at, p) < 1.f);
+        const float d2 = Dist2(p, g_anchor);
+        if (taken || d2 >= best) continue;
+        best = d2;
+        out = Target{cls, p, process};
+        found = true;
+    }
+    return found;
+}
+
+bool ChooseTargets() {
+    g_targets.clear();
+    for (const wchar_t* cls : kTargetClasses) {
+        Target t;
+        if (NearestOf(cls, false, g_targets, t)) g_targets.push_back(t);
+        else UE_LOGI("[CLN] no %ls decal with dirt within %.0f cm of the bucket", cls, kRadiusCm);
+    }
+    bool sentinel = false;
+    for (const wchar_t* cls : kAllClasses) {
+        Target t;
+        if (NearestOf(cls, true, g_targets, t) && (!sentinel || Dist2(t.at, g_anchor) < Dist2(g_sentinel.at, g_anchor))) {
+            g_sentinel = t;
+            sentinel = true;
+        }
+    }
+    for (size_t i = 0; i < g_targets.size(); ++i)
+        UE_LOGI("[CLN] target %zu %ls at (%.1f,%.1f,%.1f) process=%.1f", i, g_targets[i].cls.c_str(), g_targets[i].at.X,
+                g_targets[i].at.Y, g_targets[i].at.Z, g_targets[i].start);
+    return sentinel && !g_targets.empty();
+}
+
+// ---- reads on this peer's copy ---------------------------------------------------------------------------------------
+// The targets that stand on this copy, as a text for a verdict; empty when none does.
+std::string StandingTargets(int& count) {
+    std::string s;
+    count = 0;
+    for (size_t i = 0; i < g_targets.size(); ++i) {
+        void* const d = DecalAt(g_targets[i].cls, g_targets[i].at);
+        if (!d) continue;
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "%s#%zu at (%.0f,%.0f,%.0f) process=%.2f; ", Narrow(g_targets[i].cls).c_str(), i,
+                      g_targets[i].at.X, g_targets[i].at.Y, g_targets[i].at.Z, ProcessOf(d));
+        s += buf;
+        ++count;
+    }
+    return s;
+}
+
 void DumpAll(const char* when) {
     size_t n = 0;
     for (const wchar_t* cls : kAllClasses)
         for (void* dec : All(cls)) {
             FVector p{};
             if (!E::TryGetActorLocation(dec, p)) continue;
-            UE_LOGI("[CLN] all %s %ls %.0f %.0f %.0f %.1f", when, cls, p.X, p.Y, p.Z, Get<float>(dec, L"process", -1.f));
+            UE_LOGI("[CLN] all %s %ls %.0f %.0f %.0f %.1f", when, cls, p.X, p.Y, p.Z, ProcessOf(dec));
             ++n;
         }
     UE_LOGI("[CLN] all %s: %zu decals", when, n);
 }
-bool g_dumpedBefore = false, g_dumpedAfter = false;
 
-uint64_t g_armedAt = 0, g_reportAt = 0;
-int g_step = 0, g_cleanRound = 0;
-uint64_t g_nextAt = 0;
+// The lane is ready on this peer: its index has settled, so a target's end finds its cached key and is sent.
+bool LaneReady() { return coop::grime_sync::Tallies().passes >= kLanePasses; }
 
-void Step(const char* what, bool ok) {
-    UE_LOGI("[CLN] step %s ok=%d wall=%llu", what, ok ? 1 : 0, WallMs());
+// ---- one tick ----------------------------------------------------------------------------------------------------------
+void TickClean(coop::net::Session& s) {
+    if (g_ph == Ph::Done) return;
+    if (g_ph != Ph::Arrive && Over() && g_ph < Ph::AwaitEnd) g_ph = Ph::AwaitEnd;   // another peer decided: stop the steps
+    if (g_ph > Ph::Arrive && g_ph != Ph::Legs && Overdue()) return;
+    void* const me = coop::players::Registry::Get().Local();
+    const bool host = IsHost();
+    const bool acts = IsActor();
+    std::string text;
+
+    switch (g_ph) {
+    case Ph::Arrive: {
+        const bool ready = LaneReady() && FindAnchor(g_anchor);
+        const int a = Arrive(s, kTag, "cl_up", ready);
+        if (a < 0) { g_ph = Ph::Done; return; }
+        if (a == 0) return;
+        Go(acts ? Ph::Choose : Ph::AwaitTargets, acts ? "the actor's picks" : "the actor's targets");
+        return;
+    }
+    case Ph::Choose:
+        if (!ChooseTargets()) {
+            Decide(Outcome::Invalid, "the world has no cleanable decal to clean near the bucket and no rain-proof one to end on");
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        MarkShared("cl_targets", Pack());
+        DumpAll("before");
+        UE_LOGI("[CLN] the actor marked %zu target(s) and the sentinel %ls at (%.1f,%.1f,%.1f)", g_targets.size(),
+                g_sentinel.cls.c_str(), g_sentinel.at.X, g_sentinel.at.Y, g_sentinel.at.Z);
+        Go(Ph::AwaitSeen, "every peer finding the targets");
+        return;
+    case Ph::AwaitTargets: {
+        if (!PeekShared("cl_targets", text)) return;
+        if (!Unpack(text)) {
+            Decide(Outcome::Invalid, "the actor's targets could not be read: '%s'", text.c_str());
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        // Each decal of the actor's picks must stand on this copy: one that does not is a difference of the saves.
+        std::string missing;
+        for (size_t i = 0; i < g_targets.size(); ++i)
+            if (!DecalAt(g_targets[i].cls, g_targets[i].at)) missing += std::to_string(i) + " ";
+        if (!DecalAt(g_sentinel.cls, g_sentinel.at)) missing += "sentinel";
+        DumpAll("before");
+        if (!missing.empty()) {
+            Decide(Outcome::Invalid, "the %s does not hold the actor's decal(s) %s at their places", SlotName(MySlot()),
+                   missing.c_str());
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        MarkMine("cl_seen", "ok");
+        Go(Ph::AwaitDone, "the actor's cleaning");
+        return;
+    }
+    case Ph::AwaitSeen: {
+        for (int slot = 0; slot < kPeers; ++slot)
+            if (slot != MySlot() && !PeekOf("cl_seen", slot, text)) return;
+        Go(Ph::Walk, "the actor's walk to the bucket");
+        g_walk = DIR::StartBackgroundWalk(g_anchor, kWalkReachCm, kWalkDeadlineS);
+        return;
+    }
+    case Ph::Walk: {
+        const int st = g_walk ? g_walk->state.load() : 2;
+        if (st == 0) return;
+        if (st != 1) {
+            Decide(Outcome::Invalid, "the actor found no walk to the bucket");
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        coop::cheats::item_catalog::RequestRefresh();
+        Go(Ph::Mop, "the item catalog's mop row");
+        return;
+    }
+    case Ph::Mop: {
+        const std::wstring mop = CatalogRow("mop");
+        if (mop.empty() || !me) return;
+        if (!coop::dev::drill_hand::TakeIntoHandNow(mop.c_str(), L"prop_mop_C")) {
+            Decide(Outcome::Invalid, "the mop '%ls' did not come into the actor's hand", mop.c_str());
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        g_mop = InHand(me);
+        UE_LOGI("[CLN] the actor stands by the bucket with the mop '%ls' in hand", mop.c_str());
+        Go(Ph::Clean, "the cleaning");
+        return;
+    }
+    case Ph::Clean: {
+        g_ends0 = coop::grime_sync::Tallies().endsSent;
+        g_ended = 0;
+        for (size_t i = 0; i < g_targets.size(); ++i) {
+            void* const d = DecalAt(g_targets[i].cls, g_targets[i].at);
+            int strokes = 0;
+            while (d && strokes < kMaxStrokes && R::IsLive(d) && Clean(d, g_mop, kStrokeSub)) ++strokes;
+            const bool ended = !d || !R::IsLive(d);
+            UE_LOGI("[CLN] target %zu %ls cleaned in %d stroke(s): ended=%d", i, g_targets[i].cls.c_str(), strokes,
+                    ended ? 1 : 0);
+            if (!ended) {
+                Decide(Outcome::Invalid, "target %zu (%s) did not end in %d strokes", i, Narrow(g_targets[i].cls).c_str(),
+                       kMaxStrokes);
+                g_ph = Ph::AwaitEnd;
+                return;
+            }
+            ++g_ended;
+        }
+        Go(Ph::Ends, "the lane sending each end");
+        return;
+    }
+    case Ph::Ends:
+        // The decals' ends are sent when the engine's end of play is drained, after the clean calls: the sentinel waits for
+        // them, so that its fall is the last word of the actor on the wire.
+        if (coop::grime_sync::Tallies().endsSent - g_ends0 < g_ended) return;
+        Go(Ph::Sentinel, "the sentinel");
+        return;
+    case Ph::Sentinel: {
+        void* const d = DecalAt(g_sentinel.cls, g_sentinel.at);
+        const float before = ProcessOf(d);
+        if (!d || !Clean(d, g_mop, kSentinelSub) || ProcessOf(d) >= before - kFallEps) {
+            Decide(Outcome::Invalid, "the sentinel %s did not fall by a clean of %.0f", Narrow(g_sentinel.cls).c_str(),
+                   kSentinelSub);
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        UE_LOGI("[CLN] the sentinel fell %.2f -> %.2f after the %zu end(s)", before, ProcessOf(d), g_ended);
+        MarkShared("cl_done", "ok");
+        g_ph = Ph::Judge;   // the actor's own copy ended them all by its own strokes
+        return;
+    }
+    case Ph::AwaitDone: {
+        if (!PeekShared("cl_done", text)) return;
+        void* const sd = DecalAt(g_sentinel.cls, g_sentinel.at);
+        if (sd && ProcessOf(sd) > g_sentinel.start - kFallEps) return;   // the sentinel's fall has not come yet
+        g_ph = Ph::Judge;
+        return;
+    }
+    case Ph::Judge: {
+        int stood = 0;
+        const std::string names = StandingTargets(stood);
+        char res[300];
+        if (stood > 0) {
+            std::snprintf(res, sizeof(res), "F %d of the actor's %zu cleaned decal(s) stand on the %s: %s", stood,
+                          g_targets.size(), SlotName(MySlot()), names.c_str());
+            MarkMine("cl_res", res);
+            Decide(Outcome::Fail, "%d of the %zu decal(s) the actor cleaned away stand on the %s: %s", stood,
+                   g_targets.size(), SlotName(MySlot()), names.c_str());
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        MarkMine("cl_res", "P");
+        UE_LOGI("[CLN] every one of the %zu cleaned decal(s) has ended on the %s", g_targets.size(), SlotName(MySlot()));
+        Go(host ? Ph::AwaitResults : Ph::AwaitEnd, host ? "the peers' results" : "the verdict");
+        return;
+    }
+    case Ph::AwaitResults: {
+        for (int slot = 1; slot < kPeers; ++slot) {
+            if (!PeekOf("cl_res", slot, text)) return;
+            if (text[0] == 'F') {
+                Decide(Outcome::Fail, "the %s: %s", SlotName(slot), text.c_str() + 2);
+                g_ph = Ph::AwaitEnd;
+                return;
+            }
+        }
+        Decide(Outcome::Pass, "the %zu decal(s) the %s cleaned away ended on every peer, and none stands on one alone",
+               g_targets.size(), acts ? "host" : "first client");
+        g_ph = Ph::AwaitEnd;
+        return;
+    }
+    case Ph::AwaitEnd:
+        if (!Over()) return;
+        if (!g_dumpedAfter) {
+            g_dumpedAfter = true;
+            DumpAll("after");
+        }
+        if (acts && EndKind() == 'P' && me) {
+            g_ph = Ph::Legs;
+            return;
+        }
+        g_ph = Ph::Done;
+        UE_LOGI("[CLN] DONE on the %s", SlotName(MySlot()));
+        return;
+    case Ph::Legs:
+        if (RunLegs(me, g_anchor)) {
+            g_ph = Ph::Done;
+            UE_LOGI("[CLN] DONE on the %s", SlotName(MySlot()));
+        }
+        return;
+    case Ph::Done:
+        return;
+    }
 }
 
 }  // namespace
 
 void Tick(coop::net::Session* session) {
-    if (!On() || !session || !session->running() || !session->connected()) return;
-    const bool host = session->role() == coop::net::Role::Host;
-    if (!g_armedAt) {
-        g_armedAt = Now();
-        UE_LOGI("[CLN] drill armed role=%s", host ? "host" : "client");
-        coop::cheats::item_catalog::RequestRefresh();
-    }
-    if (!g_anchored) {
-        if (!Anchor()) return;
-        g_anchored = true;
-        ChooseTargets();
-    }
-    const uint64_t t = Now() - g_armedAt;
-    const uint64_t d = EnvMs("VOTVCOOP_CLEAN_DELAY", 140000);
-    void* const me = coop::players::Registry::Get().Local();
-    const std::string who = coop::config::ReadEnv("VOTVCOOP_CLEAN_ACTOR");
-    const bool acts = (who == "host") ? host : (!host && coop::players::Registry::Get().LocalPeerId() == 1);
-
-    if (acts && me && g_step == 0 && t + 5000 >= d) {   // beside the bucket, the mop in hand
-        g_step = 1;
-        FVector floor{};
-        const float half = E::GetActorCharacterHalfHeight(me);
-        coop::teleport_client::ApplyArgs args{};
-        const bool nav = E::ProjectToNav(me, {g_anchor.X + 150.f, g_anchor.Y, g_anchor.Z}, {150.f, 150.f, 400.f}, &floor);
-        args.locX = floor.X;
-        args.locY = floor.Y;
-        args.locZ = floor.Z + half;
-        const bool moved = nav && half > 0.f && coop::teleport_client::ApplyLocally(args);
-        const std::wstring mop = CatalogRow("mop");
-        const bool inHand = !mop.empty() && coop::dev::drill_hand::TakeIntoHandNow(mop.c_str(), L"prop_mop_C");
-        UE_LOGI("[CLN] the actor stands beside the bucket (moved=%d) with the mop '%ls' in hand (ok=%d)", moved ? 1 : 0,
-                mop.c_str(), inHand ? 1 : 0);
-        g_nextAt = d + 2000;
-    }
-    if (acts && me && g_step >= 1 && g_step < 100 && t >= g_nextAt) {
-        void* const mop = InHand(me);
-        if (g_step == 1) {   // the first target cleaned away
-            void* const dec = DecalAt(g_targets[0].cls, g_targets[0].at);
-            int n = 0;
-            while (dec && n < 12 && Clean(dec, mop, 50.f) && R::IsLive(dec) && Get<float>(dec, L"process", -1.f) >= 0.f) ++n;
-            Step("target 0 cleaned away", dec != nullptr);
-            g_step = 2;
-            g_cleanRound = 0;
-            g_nextAt = d + 6000;
-        } else if (g_step >= 2 && g_step < 1 + kTargets) {   // each other target: three cleans, 400 ms apart
-            const int i = g_step - 1;
-            void* const dec = DecalAt(g_targets[i].cls, g_targets[i].at);
-            const bool ok = dec && Clean(dec, mop, 10.f);
-            if (++g_cleanRound >= 3) {
-                Step((std::string("target ") + std::to_string(i) + " cleaned three times").c_str(), ok);
-                g_cleanRound = 0;
-                ++g_step;
-                g_nextAt = d + 6000 + 4000ull * static_cast<uint64_t>(g_step - 2);
-            } else {
-                g_nextAt = t + 400;
-            }
-        } else if (g_step == 1 + kTargets) {   // bleed
-            g_step = 50;
-            void* master = nullptr;
-            for (void* o : All(L"bloodDecalMaster_C")) master = o;
-            void* const fn = master ? R::FindDispatchFunctionCached(R::ClassOf(master), L"addParticle") : nullptr;
-            FVector at{};
-            int ran = 0;
-            if (fn && E::TryGetActorLocation(me, at))
-                for (int k = 0; k < 3; ++k) {
-                    ue_wrap::ParamFrame f(fn);
-                    const FVector loc{at.X + 60.f + 40.f * static_cast<float>(k), at.Y + 60.f, at.Z + 60.f};
-                    if (f.valid() && f.Set<FVector>(L"location", loc) && f.Set<FVector>(L"velocity", {0.f, 0.f, -200.f}) &&
-                        f.Set<float>(L"size", 1.f) && f.Set<int32_t>(L"type", 0) && ue_wrap::Call(master, f))
-                        ++ran;
-                }
-            Step((std::string("bled ") + std::to_string(ran) + " drops").c_str(), ran == 3);
-            g_nextAt = d + 42000;
-        } else if (g_step == 50) {   // its blood cleaned away
-            g_step = 51;
-            FVector at{};
-            E::TryGetActorLocation(me, at);
-            int cleaned = 0;
-            for (const wchar_t* cls : {L"grime_blood_C", L"grime_blood2_C", L"grime_blood2_drip_C"})
-                for (void* dec : All(cls)) {
-                    FVector p{};
-                    if (!E::TryGetActorLocation(dec, p) || Dist2(p, at) > 300.f * 300.f) continue;
-                    int n = 0;
-                    while (n < 12 && R::IsLive(dec) && Clean(dec, mop, 50.f) && Get<float>(dec, L"process", -1.f) >= 0.f) ++n;
-                    ++cleaned;
-                }
-            Step((std::string("its blood cleaned: ") + std::to_string(cleaned) + " marks").c_str(), cleaned > 0);
-            g_nextAt = d + 48000;
-        } else if (g_step == 51) {   // the bucket filled and the view turned onto its water
-            g_step = 54;
-            void* const b = Bucket();
-            Put<float>(b, L"Height", 35.f);
-            CallNoArgs(b, L"upd");
-            FVector at{};
-            // The mop's click traces from the player's arm along its view, so the view looks at the bucket first.
-            if (b && E::TryGetActorLocation(b, at))
-                if (void* ctrl = E::GetController(me))
-                    E::SetControlRotation(ctrl, coop::director::LookAt(E::GetCameraLocation(), {at.X, at.Y, at.Z + 15.f}));
-            g_nextAt = d + 49000;
-        } else if (g_step == 54) {   // the mop dipped in the filled bucket
-            g_step = 52;
-            void* const b = Bucket();
-            FVector at{};
-            bool ran = false;
-            const float before = Get<float>(b, L"Height", -1.f);
-            if (b && mop && E::TryGetActorLocation(b, at) &&
-                E::WriteMainPlayerHitResult(me, b, ue_wrap::prop::GetStaticMesh(b), at)) {
-                void* const fn = R::FindDispatchFunctionCached(R::ClassOf(mop), L"playerHandUse_LMB");
-                ue_wrap::ParamFrame f(fn);
-                ran = fn && f.valid() && f.Set<void*>(L"player", me) && ue_wrap::Call(mop, f);
-            }
-            UE_LOGI("[CLN] the bucket's water %.1f -> %.1f at the dip", before, Get<float>(b, L"Height", -1.f));
-            Step("the mop dipped in the bucket", ran);
-            g_nextAt = d + 52000;
-        } else if (g_step == 52) {   // a bucket of water thrown out from the hand
-            g_step = 53;
-            const std::wstring row = CatalogRow("bucket");
-            bool ran = !row.empty() && coop::dev::drill_hand::TakeIntoHandNow(row.c_str(), L"prop_bucket_C");
-            void* const hb = InHand(me);
-            if (ran && hb) {
-                Put<float>(hb, L"Height", 35.f);
-                CallNoArgs(hb, L"upd");
-                void* const fn = R::FindDispatchFunctionCached(R::ClassOf(hb), L"playerHandUse_LMB");
-                ue_wrap::ParamFrame f(fn);
-                E::WriteMainPlayerHitResult(me, me, nullptr, {0.f, 0.f, 0.f});
-                ran = fn && f.valid() && f.Set<void*>(L"player", me) && ue_wrap::Call(hb, f);
-            }
-            Step("a bucket of water thrown out from the hand", ran && hb);
-            g_nextAt = d + 60000;
-        } else if (g_step == 53) {
-            g_step = 100;
-            UE_LOGI("[CLN] DONE wall=%llu", WallMs());
-        }
-    }
-    if (!g_dumpedBefore && t + 8000 >= d) {
-        g_dumpedBefore = true;
-        DumpAll("before");
-    }
-    if (!g_dumpedAfter && t >= d + 70000) {
-        g_dumpedAfter = true;
-        DumpAll("after");
-    }
-    if (t + 10000 < d || Now() < g_reportAt) return;
-    g_reportAt = Now() + 1000;
-    Report();
+    const detail::Arm arm = detail::ArmOf();
+    if (arm == detail::Arm::Off || !session || !session->running() || !session->connected()) return;
+    if (arm == detail::Arm::Clean) TickClean(*session);
+    else detail::TickLeaves(*session);
 }
 
 }  // namespace coop::dev::clean_drill

@@ -72,7 +72,7 @@ bool ProbeLog() {
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 // What the lane has done, for Tallies. Written on the game thread, read on any.
-std::atomic<uint32_t> g_replays{0}, g_passes{0}, g_lowered{0};
+std::atomic<uint32_t> g_replays{0}, g_passes{0}, g_lowered{0}, g_endsSent{0};
 
 // An indexed decal: the actor, its slot and the serial the slot held when a pass took it (the key cache's
 // own), so a new object the allocator put at the address in the same slot is never read as the decal.
@@ -466,6 +466,13 @@ void OnLowerPost(const sg::Call& call) {
     Send(key, cur);
 }
 
+// The clean drill's red arm: a decal's end goes out as a fall to zero, the way it did before kGrimeGone, which every other
+// peer's copy takes for a decal at no dirt and leaves standing.
+bool GoneOff() {
+    static const bool off = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_gone_off);
+    return off;
+}
+
 // A decal's end of play. A stream-out leaves the index and parks its process under its exact place,
 // for its stream-back; a destroy -- a clean or a repair past zero, leaves raked or expired, fuel burnt
 // out -- ends the decal on this peer, sent as a wipe (kGrimeGone, which ends it on every peer) and kept as the floor for a joiner's
@@ -490,8 +497,10 @@ void OnGrimeEnd(const DS::ActorEnd& end) {
         if (read) g_parked.Get().insert_or_assign(exact, Parked{key, at});
         return;
     }
-    Lower(key, coop::net::kGrimeGone);
-    Send(key, coop::net::kGrimeGone);
+    const float ended = GoneOff() ? 0.f : coop::net::kGrimeGone;
+    Lower(key, ended);
+    Send(key, ended);
+    g_endsSent.fetch_add(1, std::memory_order_relaxed);
 }
 
 // The values refused at the receive edge: the first after a quiet spell is said at once, the rest of a burst summed.
@@ -616,7 +625,7 @@ void ForgetDecal(void* actor) {
 
 Tally Tallies() {
     return Tally{g_replays.load(std::memory_order_relaxed), g_passes.load(std::memory_order_relaxed),
-                 g_lowered.load(std::memory_order_relaxed)};
+                 g_lowered.load(std::memory_order_relaxed), g_endsSent.load(std::memory_order_relaxed)};
 }
 
 std::wstring DebugPosKeyForActor(void* actor) {

@@ -1,5 +1,5 @@
 // coop/config/config_registry_rows_dev_grime.inc -- the [dev] rows of the grime lane's drills (coop/interactables/grime_sync,
-// coop/world/spill_sync): the rehost churn's red arm. Included by config_registry_rows_dev.inc at its end, so each row keeps its
+// coop/world/spill_sync): the rehost churn's red arm, and the clean drill's arms and reds. Included by config_registry_rows_dev.inc at its end, so each row keeps its
 // place in every expansion of the list. The entry forms are config_registry_rows.inc's.
 
 CFG_FLAG(grime_replay_watch_off, "grime_replay_watch_off", "dev", false, "VOTVCOOP_GRIME_REPLAY_WATCH_OFF",
@@ -7,3 +7,21 @@ CFG_FLAG(grime_replay_watch_off, "grime_replay_watch_off", "dev", false, "VOTVCO
     "never set; the host. The grime lane does not forget its index as the save replay begins, so the replay's deletes of "
     "the level's own decals read as wipes to zero and the save's decals at those places are lowered: the drill must say "
     "'rig: VERDICT reload-churn FAIL' with the count of decals lowered.")
+CFG_ENUM(clean_drill, "clean_drill", "dev", "off", "off|clean|leaves", "VOTVCOOP_CLEAN_DRILL",
+    "Drill, the grime lane on THREE peers (the host and two clients, mp.py --clients 2); set on ALL, with VOTVCOOP_CAN_DIR "
+    "on all, on the rig's save (it holds the bucket the targets are picked around). clean -- the first client (VOTVCOOP_CLEAN_ACTOR=host: the host) walks to the save's "
+    "bucket with the director (VOTVCOOP_CLEAN_BUCKET names its key), takes a mop and cleans away one decal of each grime "
+    "kind near it; every peer says whether its copy ended, the actor's last clean (a sentinel decal's fall, behind its "
+    "ends on the ordered wire) being the moment each peer decides: 'rig: VERDICT grime-clean PASS|FAIL|INVALID', FAIL "
+    "naming the decals that stood and the peer. Then the actor's log-only legs (blood, the mop's dip, a bucket of water "
+    "thrown) and every peer's '[CLN] all' dumps. leaves -- every peer runs the autumn leaf spawn the wind's timer runs; "
+    "every peer must hold the host's fallen leaves at the host's places and none of its own: 'rig: VERDICT grime-leaves "
+    "PASS|FAIL|INVALID'. Red arms: grime_gone_off (clean) and leaves_lane_off (leaves). It MUTATES the world.")
+CFG_FLAG(grime_gone_off, "grime_gone_off", "dev", false, "VOTVCOOP_GRIME_GONE_OFF",
+    "Developer red arm of the clean drill (clean): never set; on every peer. A decal's end goes out as a fall to zero, as "
+    "it did before the ended mark: every other peer's copy reads zero and stays standing, so the drill must say 'rig: "
+    "VERDICT grime-clean FAIL' naming the decals that stood.")
+CFG_FLAG(leaves_lane_off, "leaves_lane_off", "dev", false, "VOTVCOOP_LEAVES_LANE_OFF",
+    "Developer red arm of the clean drill (leaves): never set; on every peer. The spill lane does not take the fallen "
+    "leaves an autumn leaf spawner makes, so the host's are sent to no one and each client keeps its own: the drill must "
+    "say 'rig: VERDICT grime-leaves FAIL'.")

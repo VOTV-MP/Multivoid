@@ -2,6 +2,7 @@
 
 #include "coop/world/spill_sync.h"
 
+#include "coop/config/config.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -102,6 +103,13 @@ std::vector<Payload> g_inbox, g_outbox;
 
 uint32_t g_sent = 0, g_made = 0, g_refused = 0, g_removed = 0;
 std::atomic<uint32_t> g_splashes{0}, g_poursHeard{0}, g_poursSent{0};
+uint32_t g_leavesSent = 0;   // HOST: fallen leaves the lane has taken (Leaves)
+
+// The clean drill's red arm: the lane does not take fallen leaves, so each peer keeps the ones its own spawner made.
+bool LeavesLaneOff() {
+    static const bool off = ::coop::config::ResolveFlag(::coop::config_registry::rows::leaves_lane_off);
+    return off;
+}
 
 // A host is live while its session runs, with or without a client: the spills it records are its world's, and a
 // client that joins later is sent them (measured: a spill made while the only client was away never reached it).
@@ -207,7 +215,8 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
     // Fallen leaves: the wind's timer (directionalWind_C::timer_spawnLeaves) has every autumnLeafSpawner_C trace a random
     // spot and spawn a grime_fallenLeaves_C there, on each machine, so each peer grew its own leaves. The host's go out as
     // its spills do; a client's own are removed and the host's made here.
-    if (source && GS::IsDecal(spawned) && g_landed.size() < kCap && R::ClassNameOf(source) == L"autumnLeafSpawner_C") {
+    if (source && GS::IsDecal(spawned) && g_landed.size() < kCap && !LeavesLaneOff() &&
+        R::ClassNameOf(source) == L"autumnLeafSpawner_C") {
         Landed l;
         l.decal.Set(spawned);
         l.leaves = true;
@@ -304,6 +313,7 @@ void HostTick(coop::net::Session& s) {
             p.splash = l.leaves ? 0 : 1;
             p.origin = 0;   // the host's own flight: it heard its splash
             Broadcast(s, d, p);
+            if (l.leaves) ++g_leavesSent;
         }
     }
     std::vector<Intent> intents;
@@ -499,6 +509,12 @@ void OnDisconnect() {
     Reset();
     g_live.store(false);
     g_session.store(nullptr);
+}
+
+LeafTally Leaves() {
+    uint32_t pending = 0;
+    for (const Landed& l : g_landed) pending += l.leaves ? 1u : 0u;
+    return LeafTally{g_hooked, pending, g_leavesSent};
 }
 
 uint32_t SplashesPlayed() { return g_splashes.load(); }
