@@ -183,6 +183,16 @@ const wchar_t* BucketCls() {
     return c.c_str();
 }
 
+// VOTVCOOP_BUCKET_TROWEL: the trowel's class, prop_wallfixer_C by default. Another (prop_wallfixer_Child_C, the placed
+// trowel, a prop_wallfixer_C with nothing of its own) is spawned by its class at the setup, in place of the row's.
+const wchar_t* TrowelCls() {
+    static const std::wstring c = [] {
+        const std::string v = coop::config::ReadEnv("VOTVCOOP_BUCKET_TROWEL");
+        return v.empty() ? std::wstring(L"prop_wallfixer_C") : std::wstring(v.begin(), v.end());
+    }();
+    return c.c_str();
+}
+
 void Report() {
     const unsigned long long w = WallMs();
     std::vector<void*> buckets = All(L"prop_bucket_C");
@@ -208,7 +218,7 @@ void Report() {
         if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
         UE_LOGI("[BKT] wall=%llu cementbag key=%s eid=%u units=%d", w, Key(a).c_str(), Eid(a), Get<int32_t>(a, L"units", -1));
     }
-    for (void* a : All(L"prop_wallfixer_C")) {
+    for (void* a : All(TrowelCls())) {
         FVector p{};
         if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
         UE_LOGI("[BKT] wall=%llu trowel key=%s eid=%u concrete=%d", w, Key(a).c_str(), Eid(a), Get<int32_t>(a, L"concrete", -1));
@@ -251,8 +261,16 @@ void Tick(coop::net::Session* session) {
         g_setup = true;
         const std::wstring bagRow = CatalogRow("cement"), fixerRow = CatalogRow("fixer");
         const bool bag = !bagRow.empty() && SpawnRow(bagRow.c_str(), {g_anchor.X + 100.f, g_anchor.Y, g_anchor.Z + 30.f});
-        const bool fixer =
-            !fixerRow.empty() && SpawnRow(fixerRow.c_str(), {g_anchor.X - 100.f, g_anchor.Y, g_anchor.Z + 30.f});
+        const FVector fixerAt{g_anchor.X - 100.f, g_anchor.Y, g_anchor.Z + 30.f};
+        bool fixer = false;
+        if (std::wstring(TrowelCls()) == L"prop_wallfixer_C") {
+            fixer = !fixerRow.empty() && SpawnRow(fixerRow.c_str(), fixerAt);
+        } else {
+            std::wstring leaf = TrowelCls();
+            leaf.resize(leaf.size() - 2);
+            void* const cls = ue_wrap::asset_load::LoadObjectByPath((L"/Game/objects/" + leaf + L"." + TrowelCls()).c_str());
+            fixer = cls && E::SpawnActor(cls, fixerAt);
+        }
         UE_LOGI("[BKT] host: spawned a cement bag '%ls' (ran=%d) and a trowel '%ls' (ran=%d)", bagRow.c_str(), bag ? 1 : 0,
                 fixerRow.c_str(), fixer ? 1 : 0);
         if (std::wstring(BucketCls()) != L"prop_bucket_C") {
@@ -311,10 +329,10 @@ void Tick(coop::net::Session* session) {
             Step("concrete", bucket && HandUse(me, Near(L"prop_cementBag_C"), bucket));
             break;
         case 4:
-            Step("take", HandUse(me, Near(L"prop_wallfixer_C"), Near(L"prop_concreteBucket_C")));
+            Step("take", HandUse(me, Near(TrowelCls()), Near(L"prop_concreteBucket_C")));
             break;
         case 5: {
-            void* const fixer = Near(L"prop_wallfixer_C");
+            void* const fixer = Near(TrowelCls());
             Put<int32_t>(fixer, L"concrete", 0);
             Step("take2", HandUse(me, fixer, Near(L"prop_concreteBucket_C")));
             UE_LOGI("[BKT] DONE wall=%llu", static_cast<unsigned long long>(WallMs()));

@@ -124,6 +124,12 @@ int TypeOfClass(void* cls) {
 
 int TypeOf(void* actor) { return actor ? TypeOfClass(R::ClassOf(actor)) : -1; }
 
+// The trowel and its subclasses: prop_wallfixer_Child_C, the placed trowel, declares nothing of its own.
+bool IsFixerClass(void* cls) {
+    void* const base = Cls().fixer;
+    return cls && base && R::IsDescendantOfAny(cls, &base, 1, 8);
+}
+
 // A field's offset on a class, looked up once (the reflection walk is linear) and kept for the world: the key is the
 // class and the name's literal, and the table goes with the world's generation, as the classes do.
 struct OffKey {
@@ -456,13 +462,13 @@ void OnHandPost(const sg::Call& c) {
 sg::Verdict OnHandPre(const sg::Call& c) {
     if (!c.object || !IsClient()) return sg::Verdict::Run;
     void* const cls = R::ClassOf(c.object);
-    const Classes& k = Cls();
-    if (!cls || (cls != k.bag && cls != k.fixer)) return sg::Verdict::Run;
+    const bool bag = TypeOfClass(cls) == N::kBucketBag;
+    if (!cls || (!bag && !IsFixerClass(cls))) return sg::Verdict::Run;
     void* const player = PlayerOf(c);
     if (!player || !coop::players::Registry::Get().IsLocal(player)) return sg::Verdict::Run;
     void* const hit = E::ReadMainPlayerHitActor(player);
     const uint32_t itemEid = EidOf(c.object), hitEid = EidOf(hit);
-    if (cls == k.bag) {
+    if (bag) {
         if (TypeOf(hit) != N::kBucketMop || !Get<uint8_t>(hit, L"canConcrete", 0)) return sg::Verdict::Run;
         if (!itemEid || !hitEid) return sg::Verdict::Run;
         Ask(N::kBucketIntentConcrete, itemEid, Read(hit, hitEid));
@@ -607,7 +613,7 @@ void OnIntent(int slot, const coop::net::BucketIntentPayload& p) {
     }
     case N::kBucketIntentTake: {
         void* fixer = ActorOf(p.itemEid);
-        if (t != N::kBucketConcrete || !fixer || R::ClassOf(fixer) != Cls().fixer)
+        if (t != N::kBucketConcrete || !fixer || !IsFixerClass(R::ClassOf(fixer)))
             return Refuse(slot, "not a concrete bucket and a trowel", p.bucket.eid);
         if (Get<uint8_t>(bucket, L"dry", 0)) return Refuse(slot, "the concrete is dry", p.bucket.eid);
         void* fn = R::FindDispatchFunctionCached(R::ClassOf(bucket), L"takeConcrete");
