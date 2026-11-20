@@ -288,10 +288,11 @@ void Hold(void* actor) {
     Rearm();
 }
 
-// MarkPropElement's callback, any thread: a non-walker is rejected by the class pointer, a walker is queued.
+// MarkPropElement's callback, any thread: a non-walker is rejected by the class pointers (its parent chain, raw: the
+// wAlien subclasses run the walker's graph), a walker is queued.
 void OnExpressed(void* actor, coop::element::ElementId eid) {
     void* const cls = g_walkerClass.load(std::memory_order_acquire);
-    if (!cls || !actor || R::ClassOf(actor) != cls) return;
+    if (!cls || !actor || !R::IsDescendantOfAny(R::ClassOf(actor), &cls, 1, 8)) return;
     bool full = false;
     {
         std::lock_guard<std::mutex> lk(g_queueMutex);

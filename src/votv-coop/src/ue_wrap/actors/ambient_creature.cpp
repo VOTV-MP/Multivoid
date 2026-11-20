@@ -28,7 +28,8 @@ namespace P = ue_wrap::profile;
 void Collect(const wchar_t* className, std::vector<void*>& out) {
     void* cls = OI::ClassByName(className);
     if (!cls) return;
-    OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+    // The class's subclasses too: prop_wAlien_C, prop_wAlien1_C and prop_wAlien2_C are walkers with no body of their own.
+    OI::ForEachInstanceOfKind(cls, [](void* ctx, void* obj, int32_t) {
         if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
     }, &out);
 }
@@ -275,7 +276,7 @@ bool IsWalker(void* actor) {
         s_cls = WalkerClass();
         s_listing = s_cls ? OI::ClassListingId(s_cls) : 0;
     }
-    return s_cls && R::ClassOf(actor) == s_cls;
+    return s_cls && R::IsDescendantOfAny(R::ClassOf(actor), &s_cls, 1, 8);   // the wAlien subclasses too
 }
 
 void ListHoles(std::vector<void*>& out) { Collect(L"susDirtHole_C", out); }

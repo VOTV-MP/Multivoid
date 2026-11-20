@@ -17,6 +17,7 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/engine/engine.h"            // SpawnActor + TryGetActorLocation (set-deny refund)
@@ -378,8 +379,16 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
             }
         }
         int destroyed = 0;
+        // Every drive class: a row taken out comes back as its own class (explosive, ae, unbreakable, the debug ones
+        // are prop_drive_C subclasses).
+        std::vector<void*> drives;
+        if (wantHash)
+            if (void* const base = ue_wrap::object_index::ClassByName(L"prop_drive_C"))
+                ue_wrap::object_index::ForEachInstanceOfKind(base, [](void* ctx, void* o, int32_t) {
+                    static_cast<std::vector<void*>*>(ctx)->push_back(o);
+                }, &drives);
         if (wantHash) {
-            for (void* obj : R::FindObjectsByClass(L"prop_drive_C")) {
+            for (void* obj : drives) {
                 if (!obj || !R::IsLive(obj)) continue;
                 if (coop::element::Registry::Get().EidForActor(obj) !=
                     coop::element::kInvalidId) continue;

@@ -362,8 +362,8 @@ constexpr ULONGLONG kUntitledSequenceMs = 2400000;
 bool HookInMap() {
     void* cls = OI::ClassByName(L"prop_hook_C");
     bool found = false;
-    if (cls)
-        OI::ForEachInstance(cls, [](void* ctx, void* o, int32_t) {
+    if (cls)   // GetActorOfClass takes the subclasses too: the erie and half hooks
+        OI::ForEachInstanceOfKind(cls, [](void* ctx, void* o, int32_t) {
             ue_wrap::FVector at{};
             if (R::IsLive(o) && !R::NameStartsWith(R::NameOf(o), L"Default__") && E::TryGetActorLocation(o, at) &&
                 at.Z < kVisitFloorZ)
