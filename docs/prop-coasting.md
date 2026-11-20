@@ -52,8 +52,8 @@ simulate physics (props, cord and wire segments, a hook), gets a coasting row of
 The row ends by the rest rule when its body sleeps and its leader is in no hand. The ties are the engine's own
 `SetConstrainedComponents` calls, caught at the native seam from boot (`coop/props/constraint_ties`). A member past the
 join cap (the cap less the let-go and push reserve) waits, and is opened when a slot frees or when its body sleeps, so
-its rest pose still travels the row End; a tied pair moved with no cause at all is not covered `[?]` until the
-constraint-join drill reads it. Every later correction of a copy's resting place is logged with its distance as
+its rest pose still travels the row End; a tied pair moved with no cause at all is not covered `[?]`: every arm of the
+constraint-join drill moves its pair by a hand, so none reads that case. Every later correction of a copy's resting place is logged with its distance as
 `[PROP-CORRECT]`, each one and a 30 s summary (`coop/props/prop_wire_parity`). A receiver parks the prop on the first
 pose and follows the stream the way a carried trash clump is followed -- the fixed-delay interpolation, frozen at the
 last pose across a gap -- where a held prop snaps to each pose; a reliable end edge carries the final pose, the host's
