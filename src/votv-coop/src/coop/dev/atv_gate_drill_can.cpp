@@ -92,7 +92,8 @@ bool GrabCan(const std::wstring& key, std::string& why) {
 
 bool ClientGrabs(Ctx& c, std::string& why) {
     std::string t;
-    if (!AwaitFact(c, kHost, t)) {
+    // Not the step's host fact ("<id>_f_host"): the host's decision writes that one, for the observer, with the vitals.
+    if (!AwaitMark(c.id + "_can", t, kEventS)) {
         why = "the host named no can";
         return false;
     }
@@ -196,7 +197,7 @@ bool PreludeCarriedCan(Ctx& c, std::string& why) {
     char text[160];
     std::snprintf(text, sizeof(text), "%s %.1f %.1f %.1f", std::string(key.begin(), key.end()).c_str(), now.X, now.Y, now.Z);
     UE_LOGI("atv-drill: the host spawned a big full gas can '%ls' at rest at %.0f,%.0f,%.0f", key.c_str(), now.X, now.Y, now.Z);
-    Fact(c, text);
+    PS::Mark((c.id + "_can").c_str(), text);
     return true;
 }
 
