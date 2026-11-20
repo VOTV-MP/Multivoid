@@ -34,6 +34,8 @@ using ue_wrap::FVector;
 constexpr int kWalkS = 300;
 constexpr int kBurnS = 30;           // a drive holds the throttle until the driver's own fuel has fallen, within this
 
+}  // namespace
+
 // The director walks the local player to within `reachCm` of `at`; `carry` keeps what the hand holds (the walk set
 // without ClearHand). `what` names the goal in the log and in `why`.
 bool WalkTo(const FVector& at, float reachCm, bool carry, const char* what, std::string& why) {
@@ -48,8 +50,6 @@ bool WalkTo(const FVector& at, float reachCm, bool carry, const char* what, std:
     }
     return true;
 }
-
-}  // namespace
 
 bool ReadFloat(void* o, const wchar_t* name, float& v) {
     const int32_t off = o ? R::FindPropertyOffset(R::ClassOf(o), name) : -1;

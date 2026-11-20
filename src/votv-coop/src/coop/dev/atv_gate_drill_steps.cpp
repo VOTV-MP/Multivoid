@@ -5,7 +5,8 @@
 // unscrew it refuses as not held, b6 a forged battery fit, 5 the seated controls, 6 the horn tapped (6h held, 6r its release), 7a
 // the host's refuel with the client not driving, 7 with the seated client streaming, 8 the client's burn, 5b the dismount with
 // the brake, 9 the host's burn, 11 a forged refuel, 12 a forged duplicate fit, 15 a host state crossing a client's open refuel,
-// then 10 (atv_gate_drill_joiner.cpp) a joiner's mirror adopted after the host's state for it.
+// then 10 (atv_gate_drill_joiner.cpp) a joiner's mirror adopted after the host's state for it. The carried-can arm's 1c, a refuel
+// from a big can carried by the grab, runs alone (atv_gate_drill_can.cpp).
 
 #include "atv_gate_drill_detail.h"
 
@@ -635,5 +636,11 @@ const Step kSteps[] = {
     {"10", kHost, "a joiner's mirror adopted after the host's state for it", &SpawnSecondAtv, nullptr, &ActNone, &D10, nullptr},
 };
 const int kStepCount = static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]));
+
+// The carried-can arm's one step: step 1's refuel, from a can the client carries by the grab (atv_gate_drill_can.cpp).
+const Step kCanSteps[] = {
+    {"1c", kClient, "a client's refuel from a big can it carries", &PreludeCarriedCan, &SetupCarriedCan, &ActPourCarried, &D1, nullptr},
+};
+const int kCanStepCount = static_cast<int>(sizeof(kCanSteps) / sizeof(kCanSteps[0]));
 
 }  // namespace coop::dev::atv_gate_drill::detail

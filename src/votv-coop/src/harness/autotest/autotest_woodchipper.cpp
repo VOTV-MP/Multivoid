@@ -60,6 +60,8 @@
 //   g5  an over-pour: the host takes only what fits. INVALID when the tank holds 20 or less before it.
 //   g6  a pour from a client whose hand holds no gas can: the host refuses it.
 //   g4  with the rig's --rejoin: the chipper is on; the client leaves and comes back, and its copy must read it on.
+//   gm  its own arm, woodchipper_drill=mini: g1 with a mini can (a subclass of the plain can) in the hand; tag `woodchipper-mini`.
+//       Its red is the host's gascan_exact_class, which makes the host's judge refuse that can.
 // Red arms: g2 woodchipper_gate_off and woodchipper_intent_off; g5, g6 woodchipper_pour_check_off; g4
 // woodchipper_replay_off. Tags, said by the host: `woodchipper` (g1, g2, g5, g6; the arm `1`), `woodchipper-rejoin` (g4)
 // and `woodchipper-feed` (g3); the lines are tagged `woodchipper:`. The second life carries VOTVCOOP_WOODCHIPPER_DRILL_REJOIN=1.
@@ -76,9 +78,11 @@ namespace RV = coop::rig_verdict;
 constexpr const char* kTag = "woodchipper";
 constexpr const char* kTagRejoin = "woodchipper-rejoin";
 constexpr const char* kTagFeed = "woodchipper-feed";
+constexpr const char* kTagMini = "woodchipper-mini";
 constexpr const wchar_t* kChipperPath = L"/Game/objects/woodchipper.woodchipper_C";
 constexpr const wchar_t* kPropPath = L"/Game/objects/prop_paper.prop_paper_C";   // wood, bag, paper...: canChip's list
 constexpr const wchar_t* kCanClass = L"prop_gascan_C";
+constexpr const wchar_t* kMiniClass = L"prop_gascan_mini_C";   // a subclass of the plain can
 constexpr int kJoinSec = 480;
 constexpr int kSignalSec = 240;
 constexpr int kCopySec = 40;    // a state reaches a copy: the send, the round trip, the apply
@@ -251,6 +255,9 @@ std::wstring ChipperKey() {
 }
 
 bool FeedArm() { return coop::config::ResolveEnum(coop::config_registry::rows::woodchipper_drill) == "feed"; }
+bool MiniArm() { return coop::config::ResolveEnum(coop::config_registry::rows::woodchipper_drill) == "mini"; }
+// The can the client takes into its hand: the mini one in the mini arm.
+const wchar_t* CanClass() { return MiniArm() ? kMiniClass : kCanClass; }
 
 // ---- the feed arm: identities, never counts ----
 // The pile eid 3136 near the hopper flips between pile and clump about once a second, so a count of clumps moves
@@ -427,6 +434,39 @@ void ClientFeed() {
     PS::Mark("g3_client", text);
 }
 
+// The mini arm, verdict 'woodchipper-mini': one pour from a mini can in the client's hand, a subclass of the plain can, judged on
+// the host's own events. PASS: the host's fuel rose by what the client's copy gained. FAIL: the host refused the pour for the can
+// (its refusal count rose), or took another amount. INVALID: the client's copy gained nothing, or neither came in kCopySec.
+void HostMini(const std::wstring& key) {
+    const Reading before = Now(key);
+    const View w = ViewNow();
+    PS::Mark("gm_go", Text(before));
+    std::string poured;
+    if (!PS::AwaitText("gm_poured", poured, kSignalSec)) return;
+    const float gained = static_cast<float>(FieldOf(poured, "gained="));
+    if (!(gained > 1.f)) {
+        RV::Say(kTagMini, RV::Outcome::Invalid, "the client's copy gained %.2f from the mini can: nothing for the host to judge",
+                static_cast<double>(gained));
+        return;
+    }
+    PS::WaitFor("the host judges the mini can's pour", kCopySec,
+                [&] { return Now(key).fuel > before.fuel + kFuelTol || ViewNow().refusedCan > w.refusedCan; }, false);
+    const Reading after = Now(key);
+    const View v = ViewNow();
+    char what[200];
+    std::snprintf(what, sizeof(what), "the client's copy gained %.2f; the host's fuel %.2f -> %.2f, refused for the can %llu times",
+                  static_cast<double>(gained), static_cast<double>(before.fuel), static_cast<double>(after.fuel),
+                  v.refusedCan - w.refusedCan);
+    const bool refused = v.refusedCan > w.refusedCan;
+    const bool took = std::fabs(after.fuel - (before.fuel + gained)) <= kFuelTol;
+    const bool moved = after.fuel > before.fuel + kFuelTol;
+    UE_LOGI("woodchipper: ARM gm %s -- %s", refused ? "FAIL" : took ? "PASS" : moved ? "FAIL" : "INVALID", what);
+    if (refused) RV::Say(kTagMini, RV::Outcome::Fail, "the host refused a pour from a mini can in the hand: %s", what);
+    else if (took) RV::Say(kTagMini, RV::Outcome::Pass, "%s", what);
+    else if (moved) RV::Say(kTagMini, RV::Outcome::Fail, "the host took another amount: %s", what);
+    else RV::Say(kTagMini, RV::Outcome::Invalid, "the host judged nothing in %d s: %s", kCopySec, what);
+}
+
 // Everything the host judges is signalled by the client in a line of readings; the host's own reading is taken when the
 // client's arrives.
 void RunHost() {
@@ -442,11 +482,16 @@ void RunHost() {
     if (!PS::Await("can_in_hand", kSignalSec)) return;
     if (!PS::WaitFor("the client's gas can in hand here", 30, [&] {
             bool held = false;
-            OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, kCanClass); });
+            OnGameThread([&] { held = coop::hand_item::HeldClassIs(1, CanClass()); });
             return held;
         }))
         return;
-    UE_LOGI("woodchipper: HOST sees the client's hand hold a gas can");
+    UE_LOGI("woodchipper: HOST sees the client's hand hold %ls", CanClass());
+    if (MiniArm()) {
+        HostMini(key);
+        UE_LOGI("woodchipper: MINI DONE on host");
+        return;
+    }
 
     // g1. The client pours.
     const Reading f1 = Now(key);
@@ -562,7 +607,7 @@ bool CanInHand() {
     bool in = false;
     OnGameThread([&] {
         void* h = coop::hand_item::LocalHandActor();
-        in = h && R::ClassNameOf(h) == kCanClass;
+        in = h && R::ClassNameOf(h) == CanClass();
     });
     return in;
 }
@@ -617,6 +662,15 @@ void ReportCopy(const std::wstring& key, int active, const char* signal) {
     PS::Mark(signal, text);
 }
 
+// The mini arm's client half: the pour of the mini can in the hand, once the host says it has taken its baseline.
+void ClientMini(const std::wstring& key) {
+    std::string go;
+    if (!PS::AwaitText("gm_go", go, kSignalSec)) return;
+    const float gained = Pour(key);
+    UE_LOGI("woodchipper: CLIENT poured the mini can: the copy gained %.2f", static_cast<double>(gained));
+    PS::Mark("gm_poured", "gained=" + std::to_string(gained));
+}
+
 void RunClient() {
     const bool feed = FeedArm();
     if (!HostPuppetUp()) return;
@@ -627,12 +681,17 @@ void RunClient() {
     if (!PS::AwaitText("chipper_key", keyText, kSignalSec)) return;
     const std::wstring key = Widen(keyText);
     if (!CopyResolves(key)) return;
-    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"gascan", kCanClass, &kCanFuel); });
+    OnGameThread([] { coop::dev::drill_hand::TakeIntoHandNow(L"gascan", CanClass(), &kCanFuel); });
     if (!PS::WaitFor("the gas can in this hand", 20, [] { return CanInHand(); })) return;
     float canAmount = -1.f;
     OnGameThread([&] { canAmount = CanAmount(coop::hand_item::LocalHandActor()); });
     UE_LOGI("woodchipper: CLIENT the can in hand holds %.2f", static_cast<double>(canAmount));
     PS::Mark("can_in_hand");
+    if (MiniArm()) {
+        ClientMini(key);
+        UE_LOGI("woodchipper: MINI DONE on client");
+        return;
+    }
 
     // g1.
     std::string go;

@@ -73,6 +73,14 @@ constexpr const wchar_t* kUpgradeClass = L"prop_atvUpgrade_C";
 constexpr uint32_t kToolboxUses = 10;   // prop_toolbox_C's `fixes` default; its hold record carries none, so the class's bound
 constexpr uint32_t kModuleUses = 1;     // a module is consumed by its fit
 
+// A gas can in the sender's hand, or carried by its grab (a big can goes no hotbar hand); the drill's red of the can's class
+// (config row gascan_exact_class) asks the plain can in the hand alone.
+bool SenderHasCan(uint8_t slot) {
+    static const bool exact = coop::config::ResolveFlag(::coop::config_registry::rows::gascan_exact_class);
+    if (exact) return coop::hand_item::HeldClassIs(slot, kCanClass);
+    return coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass);
+}
+
 struct Slot {
     N::IntentQueue<Payload> queue;
     // The head waits for an event: the slot's world-ready edge (OnSlotReady), its hand state applied (OnHandApplied), or a
@@ -252,7 +260,7 @@ void Applied(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& 
 
 // Fuelling: fuelUp's own body is fuel += the gain, and the empty mark cleared when the tank rose.
 uint8_t Refuel(N::Session& s, uint8_t slot, const Payload& p, const std::wstring& key, void* atv, const H::Vitals& v) {
-    if (!JudgeOff() && !(coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass))) return why::kNoItem;
+    if (!JudgeOff() && !SenderHasCan(slot)) return why::kNoItem;
     // The client's copy ran the pour as the game wrote it, so the amount is the fuel its own can gave; the host's copy
     // of that can is the hand mirror, which carries no amount, so the bound is the tank's room, as the chipper's.
     const float room = kMax - v.fuel;

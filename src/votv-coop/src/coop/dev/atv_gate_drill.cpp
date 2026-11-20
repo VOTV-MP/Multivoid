@@ -258,6 +258,12 @@ bool Arrive() {
 
 void Run() {
     if (!Arrive()) return;
+    if (CanArm()) {
+        for (int i = 0; i < kCanStepCount; ++i)
+            if (!RunStep(kCanSteps[i])) return;
+        if (g_me == kHost) RV::Say(kTag, RV::Outcome::Pass, "the host took a client's refuel from a carried can");
+        return;
+    }
     for (int i = 0; i < kStepCount; ++i)
         if (!RunStep(kSteps[i])) return;
     if (g_me == kClient) LeaveForRejoin();

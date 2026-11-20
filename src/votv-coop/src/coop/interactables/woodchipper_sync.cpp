@@ -78,6 +78,16 @@ bool PourCheckOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::woodchipper_pour_check_off);
     return off;
 }
+// The drill's red of the can's class: the hand must hold exactly the plain can, and a carried can does not count.
+bool GascanExactClass() {
+    static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::gascan_exact_class);
+    return on;
+}
+// A gas can in the sender's hand, or carried by its grab (a big can goes no hotbar hand).
+bool SenderHasCan(uint8_t slot) {
+    if (GascanExactClass()) return coop::hand_item::HeldClassIs(slot, kCanClass);
+    return coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass);
+}
 bool ReplayOff() {
     static const bool off = coop::config::ResolveFlag(coop::config_registry::rows::woodchipper_replay_off);
     return off;
@@ -262,7 +272,7 @@ bool Pour(const Payload& p, uint8_t slot, void* chipper, const std::wstring& key
     }
     float add = p.fuel;
     if (!PourCheckOff()) {
-        if (!(coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass))) {
+        if (!SenderHasCan(slot)) {
             Refuse(kNoCan, slot, key, nullptr);
             Answer(chipper, slot);
             return true;

@@ -6,7 +6,8 @@
 //     "sit") and the click on a module's button, the function the engine calls when the button's OnClicked fires;
 //   - the seat is atv_seat's, the game's own seat verb; the lights, brake, turbo, horn and dismount keys are the ATV's own
 //     input-action events, called as the engine calls them when the possessed ATV's input fires.
-// No act calls gascanFuel, toolboxFix, playerUsedOn or upgradeTake itself.
+// No act here calls gascanFuel, toolboxFix, playerUsedOn or upgradeTake itself; the carried-can arm's pour, a can no hand holds,
+// calls the ATV's gascanFuel (atv_gate_drill_can.cpp).
 
 #include "atv_gate_drill_detail.h"
 

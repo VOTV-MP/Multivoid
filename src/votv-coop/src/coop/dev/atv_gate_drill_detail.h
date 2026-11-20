@@ -177,4 +177,13 @@ void RunRejoinedClient();          // CLIENT, second life
 extern const Step kSteps[];
 extern const int kStepCount;
 
+// The carried-can arm (atv_gate_drill=carried_can, atv_gate_drill_can.cpp): one step, 1c, run alone with no rejoin. A client pours
+// a big full gas can it carries by the grab, which no hotbar hand holds, and the host's judge must take it.
+bool CanArm();                                   // the arm is the row's value on this peer
+bool PreludeCarriedCan(Ctx& c, std::string& why);   // HOST: the ATV seeded, a big full can spawned beside the host and at rest; its key and place a fact
+bool SetupCarriedCan(Ctx& c, std::string& why);     // CLIENT: the can taken by the director's walk and the game's grab; HOST: its copy driven by that hold
+bool ActPourCarried(Ctx& c, std::string& why);      // CLIENT: the ATV's gascanFuel called with the carried can
+extern const Step kCanSteps[];
+extern const int kCanStepCount;
+
 }  // namespace coop::dev::atv_gate_drill::detail

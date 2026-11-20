@@ -19,7 +19,12 @@ CFG_FLAG(woodchipper_pour_check_off, "woodchipper_pour_check_off", "dev", false,
 CFG_FLAG(woodchipper_replay_off, "woodchipper_replay_off", "dev", false, "VOTVCOOP_WOODCHIPPER_REPLAY_OFF",
     "Developer red arm of the woodchipper drill: never set. The host does not tell a joiner which chippers are on at "
     "its ready edge, so a rejoined client's copy of a running chipper reads it off.")
-CFG_ENUM(woodchipper_drill, "woodchipper_drill", "dev", "off", "off|1|feed", "VOTVCOOP_WOODCHIPPER_DRILL",
+CFG_FLAG(gascan_exact_class, "gascan_exact_class", "dev", false, "VOTVCOOP_GASCAN_EXACT_CLASS",
+    "Developer red arm of the woodchipper drill's mini arm and the ATV drill's carried_can arm: set on the HOST, never in "
+    "play. The woodchipper's and the ATV's judges of a client's pour ask whether the hand holds exactly prop_gascan_C, as "
+    "they did before the can's subclasses and the carried can were taken: a pour from a mini can in the hand, or from a big "
+    "can carried by the grab, is refused as 'no gas can'.")
+CFG_ENUM(woodchipper_drill, "woodchipper_drill", "dev", "off", "off|1|feed|mini", "VOTVCOOP_WOODCHIPPER_DRILL",
     "Drill, the woodchipper lane; set on BOTH peers. 1 -- with the rig's --rejoin for the last arm. The host finds or "
     "spawns a woodchipper beside itself; the client's player is walked to the host by the director, takes a gas can into "
     "its hand and pours it, presses the button, and sends an over-pour and an empty-handed pour. The host prints 'rig: "
@@ -32,4 +37,8 @@ CFG_ENUM(woodchipper_drill, "woodchipper_drill", "dev", "off", "off|1|feed", "VO
     "PASS|FAIL|INVALID' (INVALID when the chipper is not running or never eats the paper) and 'woodchipper: FEED DONE on "
     "host'. Red arms: the client's woodchipper_gate_off and woodchipper_intent_off (g2, and g1 for the second), the "
     "host's woodchipper_pour_check_off (g5, g6) and woodchipper_replay_off (the rejoin). It MUTATES the world. Run it on "
-    "a fresh host world.")
+    "a fresh host world. mini -- one arm after the chipper is chosen: the client takes a MINI gas can "
+    "(prop_gascan_mini_C, a subclass of the plain can) into its hand and pours it into the chipper; the host prints 'rig: "
+    "VERDICT woodchipper-mini PASS|FAIL|INVALID', decided at the host's judgement of the pour (its fuel rising, or the "
+    "refusal for the can; INVALID only when neither comes in time or the client's copy gained nothing) and 'woodchipper: "
+    "MINI DONE on host'. Red: the host's gascan_exact_class, FAIL with the refusal.")

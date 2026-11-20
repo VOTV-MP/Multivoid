@@ -6,6 +6,7 @@
 #pragma once
 
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/types.h"
 
 #include <atomic>
 #include <string>
@@ -39,6 +40,10 @@ bool CallByName(void* obj, const wchar_t* name);
 
 // The float property `name` of `o` read into `v`; false when `o` is null or its class has no such property. Game thread.
 bool ReadFloat(void* o, const wchar_t* name, float& v);
+
+// The director walks the player to within `reachCm` of `at`; `carry` keeps what the hand holds. `what` names the goal in the
+// log and in `why`; false with `why` set when it did not arrive.
+bool WalkTo(const ue_wrap::FVector& at, float reachCm, bool carry, const char* what, std::string& why);
 
 // The director walks the player beside the ATV; false with `why` set when it did not arrive.
 bool WalkToAtv(const std::wstring& key, std::string& why);
