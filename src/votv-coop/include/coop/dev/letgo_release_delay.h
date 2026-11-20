@@ -23,7 +23,8 @@ void Release(int senderSlot, const coop::net::PropReleasePayload& payload, void*
 // Applies the held releases whose time has come, oldest first. Every pump tick. Game thread.
 void Tick();
 
-// The session ended: a held release is dropped with it.
+// The session ended: a held release is dropped with it, as at a world change. At most 64 are held;
+// a full queue sheds its oldest.
 void OnDisconnect();
 
 }  // namespace coop::dev::letgo_release_delay
