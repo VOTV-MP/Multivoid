@@ -351,7 +351,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     hold.driveKey = pose.key;
     hold.driveEid = pose.elementId;
     hold.relatches = 0;
-    coop::prop_drive_stream::OnRemoteHandStarted(static_cast<uint8_t>(slot), prop, pose.holdGen);
+    coop::prop_drive_stream::OnRemoteHandStarted(prop);
     // A host-authoritative trash mirror freezes on a stream gap instead of timing out; it releases
     // only on the explicit reliable edge, and it interpolates rather than snapping. The test is
     // whether the host authors this body (HostAuthorsTrashBody), not what class it is: a client's

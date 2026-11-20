@@ -536,13 +536,13 @@ void CloseGen(uint32_t eid, uint8_t gen) {
     ErasePending(eid, Drop::Closed);
 }
 
-void OnRemoteHandStarted(uint8_t slot, void* actor, uint16_t holdGen) {
+void OnRemoteHandStarted(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::OnRemoteHandStarted");
     if (g_pending.empty()) return;
     auto it = g_pending.find(static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(actor)));
-    // The same hold's drive restarting (a local door drag ended) is not a new hold: its release is still the one awaited.
-    if (it != g_pending.end() && !(it->second.slot == slot && it->second.holdGen == holdGen))
-        DropPending(it, Drop::NewHold);
+    // Any hand drive starting on the copy ends the wait: every end of the awaited hold's drive has already dropped or lifted
+    // its entry (remote_prop_drive::EndSlotDrive), so an entry still here belongs to an older hold.
+    if (it != g_pending.end()) DropPending(it, Drop::NewHold);
 }
 
 void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool released) {

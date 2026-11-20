@@ -55,9 +55,9 @@ void OnEnd(const coop::net::PropDriveEndPayload& p);
 // generation are dropped here.
 void CloseGen(uint32_t eid, uint8_t gen);
 
-// CLIENT, game thread: a peer slot's hand drive on `actor` (its hold `holdGen`) began. A yield kept pending on another
-// hold's release is dropped; the same hold's drive restarting keeps it.
-void OnRemoteHandStarted(uint8_t slot, void* actor, uint16_t holdGen);
+// CLIENT, game thread: a peer slot's hand drive on `actor` began. A yield kept pending on a release is dropped: every end of
+// the awaited hold's drive has already dropped or lifted its entry, so one still here belongs to an older hold.
+void OnRemoteHandStarted(void* actor);
 
 // CLIENT, game thread: a peer slot's hand drive on `actor` (its hold `holdGen`) ended; called by
 // remote_prop_drive::EndSlotDrive alone. `released`: by that hand's release, explicit or implicit (the stream's silence), or
