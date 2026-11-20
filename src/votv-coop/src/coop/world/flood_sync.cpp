@@ -18,6 +18,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/engine_attach.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <windows.h>
@@ -44,16 +45,16 @@ constexpr const wchar_t* kVolumeClass = L"waterVolume_basementFlooder_C";
 constexpr const wchar_t* kToolboxClass = L"prop_toolbox_C";
 constexpr float kReachUU = 400.f;
 constexpr float kLevelEps = 1.f;         // a level moved less than this (the volume is 500 high) is not sent
-constexpr uint64_t kReadMs = 250;        // the host reads its flood volumes four times a second
 constexpr int kMaxIntentsPerSecond = 4;  // a sender's repairs past this in one second are dropped
 
-UE_FACT_FN(kRowPipeTick, "flood_sync", L"burstWaterPipe_C", L"ReceiveTick", Declared);
 UE_FACT_FN(kRowPipeDamage, "flood_sync", L"burstWaterPipe_C", L"addDamage", Declared);
 UE_FACT_FN(kRowPipeFix, "flood_sync", L"burstWaterPipe_C", L"toolboxFix", Declared);
 UE_FACT_FN(kRowPipeState, "flood_sync", L"burstWaterPipe_C", L"state", Declared);
+UE_FACT_FN(kRowVolAddWater, "flood_sync", L"waterVolume_basementFlooder_C", L"addWater", Declared);
+UE_FACT_FN(kRowVolSetLevel, "flood_sync", L"waterVolume_basementFlooder_C", L"setLevel", Declared);
 
-enum Row { kPipeTick, kPipeDamage, kPipeFix, kPipeState, kRowCount };
-const ue_wrap::facts::Function* const kRows[kRowCount] = {&kRowPipeTick, &kRowPipeDamage, &kRowPipeFix, &kRowPipeState};
+enum Row { kPipeDamage, kPipeFix, kPipeState, kVolAddWater, kVolSetLevel, kRowCount };
+const ue_wrap::facts::Function* const kRows[kRowCount] = {&kRowPipeDamage, &kRowPipeFix, &kRowPipeState, &kRowVolAddWater, &kRowVolSetLevel};
 constexpr int kTagBase = 0x464C4400;   // 'FLD', then the row
 
 std::atomic<N::Session*> g_session{nullptr};
@@ -129,7 +130,6 @@ void Fill(Payload& p, const std::wstring& name, uint8_t op, float level, bool da
 
 std::unordered_map<std::wstring, bool> g_sentPipe;   // a pipe's bit as the clients last had it from a send to all
 std::unordered_map<void*, float> g_sentLevel;        // a volume's level as the clients last had it from a send to all
-uint64_t g_nextRead = 0;
 
 // The drill's red arms (dev rows, never set in play): the host's changes are not sent / a client's repair is not judged /
 // a joiner is sent nothing.
@@ -195,26 +195,33 @@ void OnStateRan(const sg::Call& call) {
     UE_LOGI("flood_sync: HOST pipe '%ls' %s -- sent", name.c_str(), damaged ? "burst" : "mended");
 }
 
-// The flood's level is the one state read on a timer. Its writers are addWater (called once a frame by each burst pipe's
-// tick and by the drain's tick) and setLevel, so a watch on them would run twice a frame for a level that moves about a
-// unit a second; a read four times a second is the cheaper exact answer, and it sends only a level that moved a whole
-// kLevelEps since the one the clients have. The volumes come from the object index by class, with no array walk.
-void ReadLevel(void* ctx, void* volume, int32_t) {
-    if (!volume || !R::IsLive(volume) || R::NameStartsWith(R::NameOf(volume), L"Default__")) return;
-    float level = 0.f;
-    if (!Level(volume, level)) return;
-    N::Session& s = *static_cast<N::Session*>(ctx);
-    const auto it = g_sentLevel.find(volume);
-    if (it == g_sentLevel.end() ? level >= kLevelEps : std::fabs(it->second - level) >= kLevelEps) {
-        const std::wstring name = NameOf(volume);
-        if (!name.empty()) SendLevel(s, volume, name, -1);
-    }
+// The volume's level as getLevel reads it (its distance from loc_a), taken from memory: the actor's root location and the
+// loc_a property, no UFunction call. A root with a parent has no world pose in memory, and the exact read goes through
+// getLevel then.
+bool LevelOf(void* volume, float& out) {
+    static int32_t locA = -2;   // loc_a's offset; -1 when the class has none
+    if (locA == -2) locA = R::FindPropertyOffset(R::ClassOf(volume), L"loc_a");
+    ue_wrap::FVector at{};
+    if (locA < 0 || !ue_wrap::engine::TryGetRootLocationRaw(volume, at)) return Level(volume, out);
+    const ue_wrap::FVector a = *reinterpret_cast<const ue_wrap::FVector*>(static_cast<const char*>(volume) + locA);
+    const float dx = at.X - a.X, dy = at.Y - a.Y, dz = at.Z - a.Z;
+    out = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return std::isfinite(out);
 }
 
-void HostReadLevels(N::Session& s) {
-    if (Now() < g_nextRead) return;
-    g_nextRead = Now() + kReadMs;
-    if (void* const c = OI::ClassByName(kVolumeClass)) OI::ForEachInstance(c, &ReadLevel, &s);
+// A volume's level was written by addWater (the burst pipes' ticks and the drain's tick, one call a frame each while they
+// run) or by setLevel (a save's loadLevel): the event the clients are told on. A call that left the level within kLevelEps
+// of what the clients have costs a memory read and a compare, and one that moved it a whole step is sent (about a unit a
+// second).
+void OnLevelRan(const sg::Call& call) {
+    N::Session* const s = Live();
+    if (!s || s->role() != N::Role::Host) return;
+    float level = 0.f;
+    if (!LevelOf(call.object, level)) return;
+    const auto it = g_sentLevel.find(call.object);
+    if (it == g_sentLevel.end() ? level < kLevelEps : std::fabs(it->second - level) < kLevelEps) return;
+    const std::wstring name = NameOf(call.object);
+    if (!name.empty()) SendLevel(*s, call.object, name, -1);
 }
 
 // ---- HOST: a client's repair ----
@@ -281,7 +288,9 @@ sg::Verdict OnPre(const sg::Call& call) {
     const int row = call.tag - kTagBase;
     if (row < 0 || row >= kRowCount || g_applying || !coop::spawn_authority::IsActiveClientSession())
         return sg::Verdict::Run;
-    // The rise and a pipe's burst are the host copy's.
+    // A pipe's burst and every write of the level (addWater from the pipes' and the drain's ticks, setLevel from a save's
+    // loadLevel) are the host copy's: those calls only move the volume, so a client's level is the host's and nothing else.
+    // Our own setLevel and State run with g_applying up and pass above.
     if (row != kPipeFix) return sg::Verdict::Cancel;
     g_fixPipe = call.object;
     g_fixWasDamaged = false;
@@ -303,12 +312,12 @@ void OnPost(const sg::Call& call) {
     UE_LOGI("flood_sync: this player mended pipe '%ls' -- the host mends it", name.c_str());
 }
 
-// A client's tick and damage are cancelled and its repair watched; the host's State is watched for its send.
+// A client's burst and level writes are cancelled and its repair watched; the host's State and level writes are watched for the send.
 void Register() {
     for (int i = 0; i < kRowCount; ++i) {
         if (g_registered & (1u << i)) continue;
         const sg::PreFn pre = i == kPipeState ? nullptr : &OnPre;
-        const sg::PostFn post = i == kPipeFix ? &OnPost : i == kPipeState ? &OnStateRan : nullptr;
+        const sg::PostFn post = i == kPipeFix ? &OnPost : i == kPipeState ? &OnStateRan : i >= kVolAddWater ? &OnLevelRan : nullptr;
         if (sg::WatchName(*kRows[i], kTagBase + i, pre, post)) g_registered |= 1u << i;
     }
 }
@@ -328,7 +337,6 @@ void Tick() {
             if (g_registered == (1u << kRowCount) - 1) UE_LOGI("flood_sync: the burst pipes' watches are live");
         }
     }
-    if (s->role() == N::Role::Host) HostReadLevels(*s);
 }
 
 void OnState(const Payload& p) {

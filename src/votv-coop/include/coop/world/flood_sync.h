@@ -9,9 +9,10 @@
 // the host (FloodIntent), which mends its pipe with State for a living sender in reach with a toolbox, the pipe
 // damaged. HOST: a pipe's bit is sent from the pipe's own State, the call every route to a burst or a mend runs (the
 // hit's addDamage, the repair's toolboxFix, a save's loadData), so the send is the event and not a read. The flood's
-// level is read four times a second (flood_sync.cpp says why that one stays a read) and a level that moved by a whole
-// unit is sent (FloodState); a refused repair is answered with the pipe's state, and a joiner gets them all. A client
-// applies them through State and setLevel with updateWaterData. Both are level-placed, named by object name. Game thread.
+// level is sent the same way, from the volume's own addWater and setLevel, once it has moved a whole unit (FloodState).
+// A client's calls that write the level (addWater, setLevel) are refused, so its level is only ever the host's; a refused
+// repair is answered with the pipe's state, and a joiner gets them all. A client applies them through State and setLevel
+// with updateWaterData. Both are level-placed, named by object name. Game thread.
 
 #pragma once
 
@@ -28,7 +29,7 @@ namespace coop::flood_sync {
 // Store the session. Idempotent; called at each session start.
 void Install(coop::net::Session* session);
 
-// The host's level read; the watches retried until registered. Game thread, once per pump tick.
+// The watches, retried until registered. Game thread, once per pump tick.
 void Tick();
 
 // A client's receiver: a pipe's state or a volume's level, from the host.

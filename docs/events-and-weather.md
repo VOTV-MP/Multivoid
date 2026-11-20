@@ -213,8 +213,9 @@ tick on, its tick raises the basement's flood volume (`waterVolume_basementFlood
 is the level its `getLevel`/`setLevel` read and write), and a toolbox's `toolboxFix` mends it. Each copy ran it alone, so
 a flood never reached a client and a client's repair never reached the host (Ghezra/Multivoid#40). The host owns both: a
 client's pipes run no tick and take no damage of their own, the host sends a pipe whose bit changed from the pipe's own
-`State` call and the level as it moves (a read four times a second: its writers run every frame), and a client applies
-them through the pipe's `State` and the volume's `setLevel` and `updateWaterData` (`coop/world/flood_sync`).
+`State` call and the level from the volume's own `addWater` and `setLevel` once it has moved a whole unit, and a client
+refuses those two calls so its level is only the host's, applying the host's through the pipe's `State` and the volume's
+`setLevel` and `updateWaterData` (`coop/world/flood_sync`).
 
 A client's repair runs on its copy and is asked of the host (`FloodIntent`), which trusts nothing in the ask but the
 pipe's name: it mends its pipe only for a sender that is alive, within 400 units of the pipe by the host's own copy of
