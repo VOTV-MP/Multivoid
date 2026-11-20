@@ -26,8 +26,10 @@
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
 #include "coop/props/bracket_position_wait.h"  // KeepIfWaiting: a pose for a key whose spawn waits
 #include "coop/props/trash_channel.h"  // the per-eid sync-time context; stale carry and release drops
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/core/reflection.h"
@@ -37,6 +39,7 @@
 #include <array>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace coop::remote_prop {
 
@@ -90,14 +93,34 @@ bool IsDrivenBy(void* actor, int slot) {
     return g_drives[slot].actor == actor;
 }
 
+namespace {
+// The base classes CarriesClassA was asked about, each held by slot and serial: a dead read asks the class index again, a
+// live one costs a compare. A class not loaded yet stays unresolved and is asked at the next call.
+struct BaseClass {
+    std::wstring name;
+    ue_wrap::CachedObjRef cls;
+};
+std::vector<BaseClass> g_baseClasses;
+
+void* BaseClassNamed(const wchar_t* name) {
+    for (BaseClass& b : g_baseClasses) {
+        if (::_wcsicmp(b.name.c_str(), name) != 0) continue;
+        if (!b.cls.Alive()) b.cls.Set(ue_wrap::object_index::ClassByName(name));
+        return b.cls.Raw();
+    }
+    g_baseClasses.push_back({name, {}});
+    g_baseClasses.back().cls.Set(ue_wrap::object_index::ClassByName(name));
+    return g_baseClasses.back().cls.Raw();
+}
+}  // namespace
+
 bool CarriesClassA(int slot, const wchar_t* base) {
     UE_ASSERT_GAME_THREAD("remote_prop::CarriesClassA");
     if (!base || slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
     void* const actor = g_drives[slot].actor;
     if (!actor || !R::IsLive(actor)) return false;
-    for (void* c = R::ClassOf(actor); c; c = R::SuperStructOf(c))
-        if (::_wcsicmp(R::ToString(R::NameOf(c)).c_str(), base) == 0) return true;
-    return false;
+    void* const baseCls = BaseClassNamed(base);
+    return baseCls && R::IsDescendantOfAny(R::ClassOf(actor), &baseCls, 1);
 }
 
 void RefuseHold(int slot, uint16_t holdGen) {
