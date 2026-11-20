@@ -359,3 +359,7 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   build. On top: the find is caught as the game makes it instead of scanned twice a second; a client's report is judged by the host
   (its reach, a budget, a live dingus) and told to everyone; a copy born later, or loaded found from a save, is marked as it appears;
   drills with reds, and a hostile arm that forges reports.
+- **Every gas can pours** ([#195](https://github.com/VOTV-MP/Multivoid/pull/195), the woodchipper and ATV half): the host took a client's
+  pour only from the plain can in the hand. Kept as written: a subclass in the hand, or a can carried by the grab, pours. On top:
+  both judges test the class by a cached pointer, and drills pour from a mini can and a carried big can, each with a red. The
+  generator half waits for #141.
