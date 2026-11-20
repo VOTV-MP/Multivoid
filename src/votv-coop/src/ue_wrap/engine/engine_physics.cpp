@@ -200,7 +200,7 @@ bool ConstraintActorsOf(void* constraint, void*& a1, void*& a2) {
     std::memcpy(&a1, base + sActor1, sizeof(a1));
     std::memcpy(&a2, base + sActor2, sizeof(a2));
     // A blank actor field with a component name set means the constraint's own owner (UE4's documented convention for a
-    // level-placed constraint; the engine source is not in this tree) [?].
+    // level-placed constraint; the engine source is not in this tree, so this is unconfirmed here).
     R::FName n1{}, n2{};
     std::memcpy(&n1, base + sName1, sizeof(n1));
     std::memcpy(&n2, base + sName2, sizeof(n2));
