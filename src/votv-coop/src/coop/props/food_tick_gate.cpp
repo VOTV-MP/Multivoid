@@ -20,13 +20,15 @@ namespace {
 namespace SG = ue_wrap::script_gate;
 
 // Every prop_food_C class that declares its own ReceiveTick, from the Blueprint dumps: the base, the cooking food
-// (the egg under it declares none), the fish under it, the dingus and the coffee cup. The other subclasses declare
-// none and run the base's body, which the first row covers.
+// (the egg under it declares none), the fish under it, the dingus, the coffee cup and the blue brain cheese (whose tick
+// rolls a gore slither's spawn by the player). The other subclasses declare none and run the base's body, which the
+// first row covers.
 UE_FACT_FN(kRowFoodTick, "food_tick_gate", L"prop_food_C", L"ReceiveTick", Declared);
 UE_FACT_FN(kRowCookingFoodTick, "food_tick_gate", L"prop_cookingFood_C", L"ReceiveTick", Declared);
 UE_FACT_FN(kRowFishTick, "food_tick_gate", L"prop_fish_C", L"ReceiveTick", Declared);
 UE_FACT_FN(kRowDingusTick, "food_tick_gate", L"prop_dingus_C", L"ReceiveTick", Declared);
 UE_FACT_FN(kRowCoffeeCupTick, "food_tick_gate", L"prop_food_coffeeCup_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowBrainCheeseTick, "food_tick_gate", L"prop_food_blueBrainCheese_C", L"ReceiveTick", Declared);
 
 struct RowDef {
     const ue_wrap::facts::Function* row;
@@ -38,6 +40,7 @@ constexpr RowDef kRows[] = {
     {&kRowFishTick,       "fish.ReceiveTick"},
     {&kRowDingusTick,     "dingus.ReceiveTick"},
     {&kRowCoffeeCupTick,  "coffeeCup.ReceiveTick"},
+    {&kRowBrainCheeseTick, "blueBrainCheese.ReceiveTick"},
 };
 constexpr int kRowCount = static_cast<int>(std::size(kRows));
 constexpr int kTagBase = 0x46540000;   // 'FT', then the row
