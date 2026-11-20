@@ -120,20 +120,22 @@ uint32_t EidOf(void* roomba) {
 bool IsLiveRoomba(void* obj) { return obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"); }
 
 // A cleaner is a prop_roomba_C or a subclass of it: prop_roomba_mx_C, the MX cleaner, has no body of its own and runs
-// the cleaner's graph, and an exact match left it on each peer alone. A walk of raw class pointers, safe off the game
-// thread.
+// the cleaner's graph, and an exact match left it on each peer alone. The base class is looked up by name, so this is
+// the game thread's; the enrol seam, which runs on any thread, tests against the cached base pointer through
+// IsCleanerOf.
 bool IsCleanerClass(void* cls) { return IsCleanerOf(cls, OI::ClassByName(L"prop_roomba_C")); }
 
 // A joiner's snapshot is the one scan: nothing announces what a joiner missed. The object index lists each class's own
 // instances, so every loaded cleaner class is walked.
 template <class F>
 void ForEachRoomba(F&& fn) {
-    std::vector<void*> classes;
+    struct Walk { void* base; std::vector<void*> classes; } walk{OI::ClassByName(L"prop_roomba_C"), {}};
     OI::ForEachClass([](void* ctx, void* cls, void*) {
-        if (IsCleanerClass(cls)) static_cast<std::vector<void*>*>(ctx)->push_back(cls);
-    }, &classes);
+        Walk& w = *static_cast<Walk*>(ctx);
+        if (IsCleanerOf(cls, w.base)) w.classes.push_back(cls);
+    }, &walk);
     std::vector<void*> found;
-    for (void* cls : classes)
+    for (void* cls : walk.classes)
         OI::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
             if (IsLiveRoomba(obj)) static_cast<std::vector<void*>*>(ctx)->push_back(obj);
         }, &found);
