@@ -177,7 +177,7 @@ CFG_FLAG(deskaudio_att_off, "deskaudio_att_off", "dev", false, "VOTVCOOP_DESKAUD
     "the cursor loop (corrds_loop) the ping loop's attenuation settings, as before the lane did, so the loop holds none "
     "and the probe must say FAIL.")
 CFG_FLAG(deskaudio_probe, "deskaudio_probe", "dev", false, "VOTVCOOP_DESKAUDIO_PROBE",
-    "Probe (either peer, one is enough): once the signal desk stands and the desk_snd lane has decided its cursor loop's "
+    "Probe (either peer, one is enough): once the signal desk stands and the desk_snd lane has tried its cursor loop's "
     "falloff, logs each desk sound component's spatialization and attenuation ([DESKAUDIO]) and says 'rig: VERDICT "
     "deskaudio PASS|FAIL|INVALID': PASS when the cursor loop (corrds_loop) holds the ping loop's attenuation settings, "
     "FAIL when it holds none or others, INVALID when the ping loop has none or the desk never came. Red arm: "

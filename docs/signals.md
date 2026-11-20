@@ -137,7 +137,7 @@ player, but another player's replay of it played at full volume across the whole
 ping loop's falloff once per desk `[V]` (`coop/dev/deskaudio_probe`, row `deskaudio_probe`: every component
 read `att_default` but that loop, which read none; after the change it reads `att_default` too). The probe now
 says `rig: VERDICT deskaudio PASS` when the loop holds the ping loop's settings and `FAIL` when it holds none, once
-the lane has decided the loop's falloff for the desk; its red is `deskaudio_att_off` `[?]`. That the fade is heard
+the lane has tried the loop's falloff for the desk; its red is `deskaudio_att_off` `[?]`. That the fade is heard
 with distance stays for a listener's ears `[?]`.
 
 A liquid on the desk shorts it: a thrown liquid's projectile (`grimeProjectile_C`) that strikes it and a sponge

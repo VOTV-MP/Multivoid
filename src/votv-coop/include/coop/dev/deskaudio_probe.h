@@ -11,4 +11,7 @@ namespace coop::dev::deskaudio_probe {
 // Per frame. A latched read when the probe is off.
 void Tick(coop::net::Session* session);
 
+// The session ended: the next one is judged afresh.
+void OnDisconnect();
+
 }  // namespace coop::dev::deskaudio_probe

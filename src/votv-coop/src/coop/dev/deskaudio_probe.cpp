@@ -1,5 +1,5 @@
 // coop/dev/deskaudio_probe.cpp -- [dev] whether the signal desk's sound components are heard in space
-// (row deskaudio_probe), for Ghezra/Multivoid issue 29. Once the desk exists and the desk_snd lane has decided
+// (row deskaudio_probe), for Ghezra/Multivoid issue 29. Once the desk exists and the desk_snd lane has tried
 // the cursor loop's falloff for it: for each of the desk's audio components the desk_snd lane replays, and its signal
 // sound, the component's bAllowSpatialization, bOverrideAttenuation and AttenuationSettings, and its sound's own
 // AttenuationSettings (`[DESKAUDIO]`), then the verdict `rig: VERDICT deskaudio PASS|FAIL|INVALID`: PASS when the cursor
@@ -74,7 +74,7 @@ void Tick(coop::net::Session* session) {
     static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::deskaudio_probe);
     if (!on || g_done || !session || !session->running()) return;
     if (!g_startAt) g_startAt = ::GetTickCount64();
-    // The event: the desk stands and the desk_snd lane has decided its cursor loop's falloff (given, or left without).
+    // The event: the desk stands and the desk_snd lane has tried its cursor loop's falloff (it took, was left without, or failed).
     void* const desk = CD::EnsureResolved() ? CD::Instance() : nullptr;
     if (!desk || coop::desk_snd_fx::CursorLoopDesk() != desk) {
         if (::GetTickCount64() - g_startAt > kBoundMs) {
@@ -119,6 +119,11 @@ void Tick(coop::net::Session* session) {
         }
     }
     Judge(desk);
+}
+
+void OnDisconnect() {
+    g_done = false;
+    g_startAt = 0;
 }
 
 }  // namespace coop::dev::deskaudio_probe

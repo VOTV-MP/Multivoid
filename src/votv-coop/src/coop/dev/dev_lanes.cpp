@@ -329,6 +329,7 @@ void EndSession() {
     coop::dev::body_push_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::coast_drill::OnDisconnect();  // [dev] a rejoin runs the drill again
     coop::dev::vent_probe::OnDisconnect();  // [dev] a rejoin runs the drill again
+    coop::dev::deskaudio_probe::OnDisconnect();  // [dev] a rejoin judges the desk again
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::crowbarpry_drill::OnDisconnect();  // [dev] the host's board is destroyed, both halves start over
     coop::dev::oven_progress_drill::OnDisconnect();  // [dev] back to the first step
