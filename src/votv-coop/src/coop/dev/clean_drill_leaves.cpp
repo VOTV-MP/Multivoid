@@ -11,6 +11,7 @@
 
 #include "clean_drill_detail.h"   // co-located private header (src tree, not include/)
 
+#include "coop/config/config.h"
 #include "coop/net/session.h"
 #include "coop/world/spill_sync.h"
 #include "ue_wrap/core/log.h"
@@ -212,6 +213,102 @@ void TickLeaves(coop::net::Session& s) {
         UE_LOGI("[CLN] DONE on the %s", SlotName(MySlot()));
         return;
     case Lv::Done:
+        return;
+    }
+}
+
+// ---- the `leaves_join` arm --------------------------------------------------------------------------------------------
+// The late-join answer for the fallen leaves: a client that joins after they fell holds the host's at the host's places.
+// Two peers, the host and the first client, in two lives of the client (mp.py --rejoin with --rejoin-marker "life 1 holds",
+// and the second life run with the `leaves_rejoin` row):
+//   life 1: the host grows its leaves as the `leaves` arm does (the lane must take them all) and marks where they stand,
+//   again every so often, for the client to come. The client checks it holds them and says so; the rig then ends it.
+//   life 2: the client joins the same world, which the host's replay fills; it needs no other peer's mark, only the host's
+//   fresh one, and says once a leaf stands at each of the host's places. The host says PASS on that.
+namespace {
+enum class Lj { Arrive, Spawn, Settle, Serve, Match, AwaitEnd, Done };
+Lj g_lj = Lj::Arrive;
+uint32_t g_serveTicks = 0;
+
+void GoJ(Lj p, const char* name) {
+    g_lj = p;
+    Enter(name);
+}
+}  // namespace
+
+void TickLeavesJoin(coop::net::Session& s) {
+    static const bool second = ::coop::config::ResolveFlag(::coop::config_registry::rows::leaves_rejoin);
+    constexpr const char* kJoinTag = "grime-leaves-join";
+    if (g_lj == Lj::Done) return;
+    if (g_lj != Lj::Arrive && Over() && g_lj < Lj::AwaitEnd) g_lj = Lj::AwaitEnd;
+    if (g_lj > Lj::Arrive && Overdue()) return;
+    const bool host = IsHost();
+    std::string text;
+
+    switch (g_lj) {
+    case Lj::Arrive: {
+        SetPeers(2);
+        const bool ready = coop::spill_sync::Leaves().watching && !All(L"autumnLeafSpawner_C").empty();
+        const int a = Arrive(s, kJoinTag, "lj_up", ready, /*barrier=*/!second);
+        if (a < 0) { g_lj = Lj::Done; return; }
+        if (a == 0) return;
+        GoJ(host ? Lj::Spawn : Lj::Match, host ? "the leaf spawn" : "the host's leaves");
+        return;
+    }
+    case Lj::Spawn:
+        SpawnLeaves();
+        if (g_own.empty()) {
+            Decide(Outcome::Invalid, "%d round(s) of spawnLeaves made no fallen leaf on the host", kMaxRounds);
+            g_lj = Lj::AwaitEnd;
+            return;
+        }
+        GoJ(Lj::Settle, "the spill lane taking the leaves");
+        return;
+    case Lj::Settle: {
+        if (coop::spill_sync::Leaves().pending != 0) return;
+        const uint32_t taken = coop::spill_sync::Leaves().sent - g_sent0;
+        if (taken < g_own.size()) {
+            Decide(Outcome::Fail, "the spill lane sent %u of the %zu fallen leaves the host grew", taken, g_own.size());
+            g_lj = Lj::AwaitEnd;
+            return;
+        }
+        UE_LOGI("[CLN] the host grew %zu fallen leaves and the lane sent %u: waiting for a client that joins after", g_own.size(),
+                taken);
+        GoJ(Lj::Serve, "the rejoined client's result");
+        return;
+    }
+    case Lj::Serve:
+        // The mark is written again every so often: a client that joins later reads only a mark written after its start.
+        if (g_serveTicks++ % 30 == 0) MarkShared("lv_host", PackHostLeaves());
+        if (PeekOf("lj_res", 1, text)) {
+            Decide(Outcome::Pass, "the client that joined after the host's %zu fallen leaves fell holds them at the host's "
+                                  "places", g_own.size());
+            g_lj = Lj::AwaitEnd;
+        }
+        return;
+    case Lj::Match: {
+        if (g_hostLeaves.empty()) {
+            if (!PeekShared("lv_host", text)) return;
+            if (!UnpackHostLeaves(text)) {
+                Decide(Outcome::Invalid, "the host's leaves could not be read: '%s'", text.c_str());
+                g_lj = Lj::AwaitEnd;
+                return;
+            }
+        }
+        for (const FVector& at : g_hostLeaves)
+            if (!DecalAt(kLeaf, at)) return;   // the host's replay brings them; the phase's bound says INVALID if it never does
+        UE_LOGI("[CLN] leaves-join: life %d holds the host's %zu fallen leaf(s) at their places", second ? 2 : 1,
+                g_hostLeaves.size());
+        MarkMine(second ? "lj_res" : "lj_life1", "P");
+        GoJ(Lj::AwaitEnd, "the verdict");
+        return;
+    }
+    case Lj::AwaitEnd:
+        if (!Over()) return;
+        g_lj = Lj::Done;
+        UE_LOGI("[CLN] DONE on the %s", SlotName(MySlot()));
+        return;
+    case Lj::Done:
         return;
     }
 }

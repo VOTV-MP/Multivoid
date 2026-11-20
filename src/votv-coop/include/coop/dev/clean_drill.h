@@ -7,6 +7,9 @@
 //             grime it holds before and after (`[CLN] all`). Red: grime_gone_off.
 //   leaves -- every peer runs the autumn leaf spawn the wind's timer runs; every peer must hold the host's fallen leaves at the
 //             host's places and no leaf of its own. Red: leaves_lane_off.
+//   leaves_join -- the late join: the host grows its fallen leaves, the first client holds them, leaves and joins again (its
+//             second life run with leaves_rejoin) and must hold them at the host's places: `rig: VERDICT grime-leaves-join`.
+//             Two peers. Red: leaves_lane_off.
 #pragma once
 
 namespace coop::net { class Session; }

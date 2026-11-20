@@ -41,6 +41,7 @@ bool g_ended = false;
 char g_endKind = 0;
 const char* g_phase = "start";
 uint64_t g_phaseAt = 0;
+int g_peers = kPeers;
 
 uint64_t Now() { return ::GetTickCount64(); }
 
@@ -51,7 +52,7 @@ std::string EndName() { return g_tag + "_end"; }
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::clean_drill);
-        return v == "clean" ? Arm::Clean : v == "leaves" ? Arm::Leaves : Arm::Off;
+        return v == "clean" ? Arm::Clean : v == "leaves" ? Arm::Leaves : v == "leaves_join" ? Arm::LeavesJoin : Arm::Off;
     }();
     return a;
 }
@@ -210,7 +211,9 @@ bool Overdue() {
     return true;
 }
 
-int Arrive(coop::net::Session& s, const char* tag, const char* syncName, bool ready) {
+void SetPeers(int n) { g_peers = n; }
+
+int Arrive(coop::net::Session& s, const char* tag, const char* syncName, bool ready, bool barrier) {
     if (g_ended) return -1;
     if (!g_begun) {
         if (!WorldUp(s)) return 0;
@@ -226,12 +229,13 @@ int Arrive(coop::net::Session& s, const char* tag, const char* syncName, bool re
     }
     if (Over() || Overdue()) return -1;
     if (!ready) return 0;
+    if (!barrier) return 1;
     // Marked on every tick until every other peer's mark is read: a peer that began its drill later reads only a mark
     // written after its own start, so the last one written must postdate it.
     MarkMine(syncName, "up");
     std::string text;
     bool all = true;
-    for (int slot = 0; slot < kPeers; ++slot)
+    for (int slot = 0; slot < g_peers; ++slot)
         if (slot != MySlot() && !PeekOf(syncName, slot, text)) all = false;
     return all ? 1 : 0;
 }

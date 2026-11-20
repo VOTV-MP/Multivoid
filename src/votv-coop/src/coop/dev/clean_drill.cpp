@@ -354,7 +354,8 @@ void Tick(coop::net::Session* session) {
     const detail::Arm arm = detail::ArmOf();
     if (arm == detail::Arm::Off || !session || !session->running() || !session->connected()) return;
     if (arm == detail::Arm::Clean) TickClean(*session);
-    else detail::TickLeaves(*session);
+    else if (arm == detail::Arm::Leaves) detail::TickLeaves(*session);
+    else detail::TickLeavesJoin(*session);
 }
 
 }  // namespace coop::dev::clean_drill

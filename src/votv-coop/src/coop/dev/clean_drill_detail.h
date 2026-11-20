@@ -15,7 +15,7 @@ namespace coop::dev::clean_drill::detail {
 
 using ue_wrap::FVector;
 
-enum class Arm { Off, Clean, Leaves };
+enum class Arm { Off, Clean, Leaves, LeavesJoin };
 Arm ArmOf();
 
 // The peers of the drill, by slot: the host and the first two clients (mp.py --clients 2).
@@ -55,7 +55,9 @@ bool WorldUp(coop::net::Session& s);
 // first phase's clock; then, while `ready` (the arm's own readiness) holds, it marks this peer up on every tick until it has
 // read every other peer's mark, so a peer that began later still reads the last one. 1 = every peer is up, 0 = not yet,
 // -1 = the run is over.
-int Arrive(coop::net::Session& s, const char* tag, const char* syncName, bool ready);
+int Arrive(coop::net::Session& s, const char* tag, const char* syncName, bool ready, bool barrier = true);
+// How many peers an arm waits for in its barrier: the host and the clients up to this count (the default is kPeers).
+void SetPeers(int n);
 // A mark of this peer, `name_<slot>`, and another peer's.
 void MarkMine(const char* name, const std::string& text);
 bool PeekOf(const char* name, int slot, std::string& text);
@@ -74,5 +76,6 @@ bool Overdue();
 
 // ---- the arms ---------------------------------------------------------------------------------------------------------
 void TickLeaves(coop::net::Session& s);
+void TickLeavesJoin(coop::net::Session& s);
 
 }  // namespace coop::dev::clean_drill::detail
