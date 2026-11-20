@@ -108,8 +108,7 @@ void RefuseHold(int slot, uint16_t holdGen) {
         coop::prop_park::Unpark(live, d.mesh, !StickHoldsPhysicsOff(live) && !HostAuthorsTrashBody(live));
     UE_LOGI("remote_prop: slot %d hold %u refused by the host -- its drive ends%s", slot,
             static_cast<unsigned>(holdGen), otherDrive ? ", the kept hold's drive stays" : "");
-    NoteHandDriveEnd(slot, /*released=*/false);
-    ResetDriveState(d);
+    EndSlotDrive(slot, /*released=*/false);
 }
 
 bool RemoteHandHolderOf(void* actor, uint8_t& slot, uint16_t& holdGen) {
@@ -127,10 +126,13 @@ bool RemoteHandHolderOf(void* actor, uint8_t& slot, uint16_t& holdGen) {
     return true;
 }
 
-void NoteHandDriveEnd(int slot, bool released) {
-    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers) || !g_drives[slot].actor) return;
-    coop::prop_drive_stream::OnRemoteHandEnded(static_cast<uint8_t>(slot), g_drives[slot].actor,
-                                               g_holds[slot].driveGen, released);
+void EndSlotDrive(int slot, bool released) {
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::EndSlotDrive)");
+    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    ActiveDrive& d = g_drives[slot];
+    if (d.actor)
+        coop::prop_drive_stream::OnRemoteHandEnded(static_cast<uint8_t>(slot), d.actor, g_holds[slot].driveGen, released);
+    ResetDriveState(d);
 }
 
 // True when some slot's drive targets `actor`; the spawn receiver skips the transform converge

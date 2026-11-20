@@ -546,11 +546,6 @@ void OnRemoteHandStarted(uint8_t slot, void* actor, uint16_t holdGen) {
 void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool released) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::OnRemoteHandEnded");
     if (g_pending.empty()) return;
-    if (!actor) {   // the slot left: a hand of it releases nothing from here on
-        for (auto it = g_pending.begin(); it != g_pending.end();)
-            it = it->second.slot == slot ? DropPending(it, Drop::HandGone) : std::next(it);
-        return;
-    }
     // By the eid the registry knows the copy under: the payload's is 0 for a keyed prop's release.
     auto it = g_pending.find(static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(actor)));
     if (it == g_pending.end() || it->second.slot != slot || it->second.holdGen != holdGen) return;

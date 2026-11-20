@@ -133,12 +133,13 @@ void Tick(coop::net::Session& session) {
                     UE_LOGI("remote_prop: slot %d hold %u takes the prop of hold %u before that hold's release",
                             slot, static_cast<unsigned>(pose.holdGen), static_cast<unsigned>(hold.driveGen));
                 }
-                if (drive.actor) ResetDriveState(drive);
+                // A switch to another prop is the hand letting this one go; a new hold of the same prop is not.
+                if (drive.actor) EndSlotDrive(slot, /*released=*/!sameProp);
                 ResolveAndStartDrive(slot, pose);
             }
             if (drive.actor && LocalDragsDoor(drive.LiveActor(), slot, pose.holdGen)) {   // a drag began mid-stream
                 coop::prop_park::Unpark(drive.LiveActor(), drive.mesh, /*rootSimulates=*/true);
-                ResetDriveState(drive);
+                EndSlotDrive(slot, /*released=*/false);   // the local drag took it; the hand has not let go
             }
             if (drive.LiveActor()) {
                 // The pose is the new lerp target; AdvanceLerp moves the actor toward it each tick.
@@ -158,7 +159,7 @@ void Tick(coop::net::Session& session) {
             } else if (drive.actor) {
                 // The cached actor died (a level unload or GC).
                 UE_LOGW("remote_prop: slot %d cached actor no longer live -- dropping drive", slot);
-                ResetDriveState(drive);
+                EndSlotDrive(slot, /*released=*/false);
             }
         }
         // The interpolation advances every tick, pose or no pose: a smooth follow between sends,
@@ -172,8 +173,7 @@ void Tick(coop::net::Session& session) {
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
             void* liveA = drive.LiveActor();
             coop::prop_park::Unpark(liveA, drive.mesh, !StickHoldsPhysicsOff(liveA));
-            NoteHandDriveEnd(slot, /*released=*/true);
-            ResetDriveState(drive);
+            EndSlotDrive(slot, /*released=*/true);
         }
         // The physics receiver's re-latch (docs/coop-sync-doctrine.md, parking): a driven copy stays
         // kinematic when the game here turns its simulation back on. A flag verb's init() recomputes
@@ -307,7 +307,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             if (localGrab && !otherOwner)
                 coop::prop_park::Unpark(propActor, meshToActOn,
                                         !StickHoldsPhysicsOff(propActor) && !HostAuthorsTrashBody(propActor));
-            ResetDriveState(g_drives[releasedSlot]);
+            EndSlotDrive(releasedSlot, /*released=*/true);   // this hold's hand let go, whoever has the copy now
         }
         return;
     }
@@ -414,10 +414,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         }
     }
     // Only the released slot clears.
-    if (releasedSlot >= 0) {
-        NoteHandDriveEnd(releasedSlot, /*released=*/true);   // before the clear: a drive row's yield waits on this edge
-        ResetDriveState(g_drives[releasedSlot]);
-    }
+    if (releasedSlot >= 0) EndSlotDrive(releasedSlot, /*released=*/true);   // a drive row's yield waits on this edge
     // The election, after the drive is cleared (a prop under a slot's drive opens no row) and only where the release
     // simulated the copy here: the thrower is the prop's syncer from now, and the host's copy follows its rows. Only the
     // prop's last holder is elected; any other slot's release has applied as it always did and elects nothing.
@@ -540,13 +537,11 @@ void EndAnyHoldOn(void* actor) {
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::EndAnyHoldOn)");
     if (!actor) return;
     for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
-        ActiveDrive& d = g_drives[s];
-        if (d.actor != actor) continue;
+        if (g_drives[s].actor != actor) continue;
         CloseHold(s, g_holds[s].driveGen);
         UE_LOGI("remote_prop: slot %d hold %u ends where the prop was taken from the hand (%p)", s,
                 static_cast<unsigned>(g_holds[s].driveGen), actor);
-        NoteHandDriveEnd(s, /*released=*/false);
-        ResetDriveState(d);
+        EndSlotDrive(s, /*released=*/false);
     }
 }
 
@@ -562,7 +557,7 @@ void EndDriveForPut(int slot) {
     if (!d.actor) return;
     if (void* const live = d.LiveActor())
         coop::prop_park::Unpark(live, d.mesh, !StickHoldsPhysicsOff(live));
-    ResetDriveState(d);
+    EndSlotDrive(slot, /*released=*/false);
 }
 
 void ClearAnyDriveFor(void* actor) {
@@ -570,11 +565,10 @@ void ClearAnyDriveFor(void* actor) {
     // adoption sweep destroys through the same contract.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ClearAnyDriveFor)");
     if (!actor) return;
-    for (auto& d : g_drives) {
-        if (d.actor == actor) {
-            UE_LOGI("remote_prop: actor %p was under active kinematic drive (slot %td) -- clearing drive cache",
-                    actor, std::distance(&g_drives[0], &d));
-            ResetDriveState(d);
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
+        if (g_drives[s].actor == actor) {
+            UE_LOGI("remote_prop: actor %p was under active kinematic drive (slot %d) -- clearing drive cache", actor, s);
+            EndSlotDrive(s, /*released=*/false);
         }
     }
 }
@@ -587,7 +581,8 @@ void ForceRelease() {
     g_holds.fill({});
     ResetWireDestroys();
     int released = 0;
-    for (auto& d : g_drives) {
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
+        ActiveDrive& d = g_drives[s];
         if (!d.actor) continue;
         // A trash mirror retires whole (drives evicted, destroyed if we made it, unbound, the pin
         // released after the destroy), never through ConsumeLocalActor, which would leave a rooted
@@ -604,7 +599,7 @@ void ForceRelease() {
             if (d.mesh) coop::prop_park::Unpark(d.actor, d.mesh, /*rootSimulates=*/true);
             else        ConsumeLocalActor(d.actor);
         }
-        ResetDriveState(d);
+        EndSlotDrive(s, /*released=*/true);
         ++released;
     }
     if (released > 0) {
@@ -618,30 +613,9 @@ void ForceRelease() {
     }
 }
 
-void OnDisconnectForSlot(int peerSlot) {
-    // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
-    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
-    if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    // A leaver's hand never releases what a drive row's yield waits on, whatever its drive held.
-    coop::prop_drive_stream::OnRemoteHandEnded(static_cast<uint8_t>(peerSlot), nullptr, 0, /*released=*/false);
-    // The leaver's generations must not gate the slot's next occupant, whose counter need not start
-    // above them.
-    g_holds[peerSlot] = {};
-    coop::prop_hold_claim::OnSlotLeft(peerSlot);
-    // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
-    // reach the next occupant; cleared before the early return, since a slot can have rows without
-    // a drive.
-    if (const size_t droppedRows = coop::unresolved_pose_ledger::ResetSlot(peerSlot)) {
-        UE_LOGI("remote_prop: peer slot %d disconnect -- dropped %zu unresolved-pose row(s)",
-                peerSlot, droppedRows);
-    }
-    // This peer's wire mirrors drain now rather than at full teardown (a rejoin or a recycled eid
-    // would collide); mirror-only and owner-slot filtered, before the early return.
-    const size_t drainedMirrors = PropMirrors().DrainMirrorsForSlot(peerSlot);
-    if (drainedMirrors > 0) {
-        UE_LOGI("remote_prop: peer slot %d disconnect -- drained %zu wire prop mirror(s)",
-                peerSlot, drainedMirrors);
-    }
+namespace {
+// The leaver's drive ends here, never released: a leaver's hand lets go of nothing a drive row's yield waits on.
+void EndLeaversDrive(int peerSlot) {
     ActiveDrive& d = g_drives[peerSlot];
     if (!d.actor) return;
     // A held trash mirror retires whole, as in ForceRelease. Normally
@@ -668,7 +642,33 @@ void OnDisconnectForSlot(int peerSlot) {
         UE_LOGI("remote_prop: peer slot %d disconnected mid-carry -- destroyed held clump mirror %p (no leak)",
                 peerSlot, d.actor);
     }
-    ResetDriveState(d);
+    EndSlotDrive(peerSlot, /*released=*/false);
+}
+}  // namespace
+
+void OnDisconnectForSlot(int peerSlot) {
+    // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
+    if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    coop::prop_hold_claim::OnSlotLeft(peerSlot);
+    // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
+    // reach the next occupant; cleared before the early return, since a slot can have rows without
+    // a drive.
+    if (const size_t droppedRows = coop::unresolved_pose_ledger::ResetSlot(peerSlot)) {
+        UE_LOGI("remote_prop: peer slot %d disconnect -- dropped %zu unresolved-pose row(s)",
+                peerSlot, droppedRows);
+    }
+    // This peer's wire mirrors drain now rather than at full teardown (a rejoin or a recycled eid
+    // would collide); mirror-only and owner-slot filtered, before the early return.
+    const size_t drainedMirrors = PropMirrors().DrainMirrorsForSlot(peerSlot);
+    if (drainedMirrors > 0) {
+        UE_LOGI("remote_prop: peer slot %d disconnect -- drained %zu wire prop mirror(s)",
+                peerSlot, drainedMirrors);
+    }
+    EndLeaversDrive(peerSlot);
+    // The leaver's generations must not gate the slot's next occupant, whose counter need not start
+    // above them; cleared after the drive ends, which names its hold by them.
+    g_holds[peerSlot] = {};
 }
 
 namespace dev {
