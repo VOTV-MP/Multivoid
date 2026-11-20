@@ -71,6 +71,10 @@ bool PipeBits(std::string& out);
 // The flood volume's level; false when the world has none.
 bool LevelNow(float& out);
 
+// Forget which bit each pipe's last send carried, as a pipe burst before this session's first send is: the next State of
+// every pipe is told whatever its value.
+void ForgetSent();
+
 }  // namespace dev
 
 }  // namespace coop::flood_sync

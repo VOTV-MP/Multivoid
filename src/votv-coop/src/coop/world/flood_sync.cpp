@@ -181,8 +181,9 @@ void SendLevel(N::Session& s, void* volume, const std::wstring& name, int slot) 
 }
 
 // A pipe's State has run, by any route (the hit's addDamage, the repair's toolboxFix, a save's loadData, our own
-// apply of a client's repair): the event the clients are told on. addDamage calls State on every hit, so a bit the
-// clients already have is not sent again.
+// apply of a client's repair): the event the clients are told on. addDamage calls State on every hit, so a bit that
+// this pipe's last send already carried is not sent again. A pipe never sent has no such bit: a pipe a save loaded
+// burst, or one burst before this session's first send, is told on its first State whatever the value.
 void OnStateRan(const sg::Call& call) {
     N::Session* const s = Live();
     if (!s || s->role() != N::Role::Host) return;
@@ -190,7 +191,7 @@ void OnStateRan(const sg::Call& call) {
     const std::wstring name = NameOf(call.object);
     if (name.empty() || !Damaged(call.object, damaged)) return;
     const auto it = g_sentPipe.find(name);
-    if (it == g_sentPipe.end() ? !damaged : it->second == damaged) return;
+    if (it != g_sentPipe.end() && it->second == damaged) return;
     SendPipe(*s, call.object, name, -1);
     UE_LOGI("flood_sync: HOST pipe '%ls' %s -- sent", name.c_str(), damaged ? "burst" : "mended");
 }
@@ -417,6 +418,8 @@ bool LevelNow(float& out) {
         if (Level(v, out)) return true;
     return false;
 }
+
+void ForgetSent() { g_sentPipe.clear(); }
 
 }  // namespace dev
 

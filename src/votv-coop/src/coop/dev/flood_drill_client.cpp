@@ -44,6 +44,7 @@ enum class CS {
     WaitState1, WaitState2,                 // burst, mend, far and the join arm's first life
     Walk, WaitHand, WaitMended, WaitFell,   // mend
     WaitHandFar,                            // far
+    WaitOld,                                // mendold
     WaitJoinState                           // the join arm's second life
 };
 CS g_c = CS::WaitReady;
@@ -144,7 +145,13 @@ void ClientStep(coop::net::Session& s) {
         Say("c-ok 1");
         if (arm == Arm::Mend) StartWalk(me);
         else if (arm == Arm::Far) StartFar(me);
+        else if (arm == Arm::MendOld) CGo(CS::WaitOld);
         else CGo(CS::WaitState2);
+        return;
+    case CS::WaitOld:
+        if (!CheckLine("h-old", "the client reads the pipe the host mended")) return;
+        Say("c-ok old");
+        Finish();
         return;
     case CS::WaitState2:
         if (!CheckLine("h-state2", "the client reads the level's rise")) return;

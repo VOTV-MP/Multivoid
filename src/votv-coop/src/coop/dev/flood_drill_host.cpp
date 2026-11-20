@@ -24,7 +24,8 @@ enum class HS {
     Start,
     WaitState1Ok, WaitRise, WaitState2Ok, WaitGone,   // burst, and the join arm's first life
     WaitJudge, WaitFall, WaitFellOk,                  // mend and far
-    WaitJoinOk                                        // the join arm's second life
+    WaitJoinOk,                                       // the join arm's second life
+    WaitOldOk                                         // mendold
 };
 HS g_h = HS::Start;
 bool g_burstDone = false;   // the join arm: the first life's burst and rise were read by the client (outlives a disconnect)
@@ -90,10 +91,33 @@ void StartJoinCheck() {
     HGo(HS::WaitJoinOk);
 }
 
+// The host's own repair of a pipe whose last send it no longer knows (a pipe burst before the session's first send): the
+// pipe's own toolboxFix, which needs no toolbox to run State(false). The client reads the host's pipes at the chat line
+// that follows; the send, if the lane makes one, goes before it on the one ordered channel.
+void MendOnHost() {
+    void* const pipe = FS::PipeByRank(0);
+    if (!pipe) return Invalid("the world holds no burst pipe");
+    FS::ForgetSent();
+    const uint32_t sent = FS::Read().pipesSent;
+    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(pipe), L"toolboxFix"));
+    if (!f.valid() || !ue_wrap::Call(pipe, f) || !f.Get<bool>(L"return")) return Invalid("the host's own toolboxFix did not mend");
+    Reading now;
+    if (!Read(now)) return;
+    if (now.bits != g_before.bits) return Invalid("the host's pipes do not read whole after its own repair");
+    Fact("the host mended its own pipe with no record of its last send: pipes %s, FloodState to all sent %u time(s)",
+         now.bits.c_str(), FS::Read().pipesSent - sent);
+    Say(Line("h-old", now));
+    HGo(HS::WaitOldOk);
+}
+
 // The client has read the burst: the arm goes on by its own event. The counts the arm compares against stand from the
 // burst (StartBurst), not from this line: a client acts the moment it has said it, and its ask can be judged before the
 // chat line that confirms the burst is read here.
 void AfterState1() {
+    if (ArmOf() == Arm::MendOld) {
+        MendOnHost();
+        return;
+    }
     if (ArmOf() == Arm::Mend || ArmOf() == Arm::Far) {
         HGo(HS::WaitJudge);
         return;
@@ -230,6 +254,13 @@ void HostStep(coop::net::Session& s) {
             return;
         }
         Pass("the joiner's pipes and level read the host's at its world-ready");
+        return;
+    case HS::WaitOldOk:
+        if (!Seen("c-ok old")) {
+            Late("the client never confirmed the mended pipe");
+            return;
+        }
+        Pass("a pipe the host's record did not know was mended, and the client read it mended");
         return;
     }
 }

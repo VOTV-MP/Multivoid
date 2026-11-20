@@ -18,7 +18,7 @@ inline constexpr uint64_t kWalkBoundMs = 480000;   // the client's walk to the p
 // two reads; the first rig run measures it.
 inline constexpr float kLevelTolUu = 3.f;
 
-enum class Arm : uint8_t { Off, Burst, Mend, Far, Join };
+enum class Arm : uint8_t { Off, Burst, Mend, Far, Join, MendOld };
 Arm ArmOf();
 const char* ArmName();
 

@@ -65,6 +65,7 @@ Arm ArmOf() {
         if (v == "mend") return Arm::Mend;
         if (v == "far") return Arm::Far;
         if (v == "join") return Arm::Join;
+        if (v == "mendold") return Arm::MendOld;
         return Arm::Off;
     }();
     return a;
@@ -76,6 +77,7 @@ const char* ArmName() {
     case Arm::Mend:  return "mend";
     case Arm::Far:   return "far";
     case Arm::Join:  return "join";
+    case Arm::MendOld: return "mendold";
     default:         return "off";
     }
 }
