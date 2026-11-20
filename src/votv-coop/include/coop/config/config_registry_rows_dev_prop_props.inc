@@ -41,6 +41,16 @@ CFG_FLAG(coast_letgo_off, "coast_letgo_off", "dev", false, "VOTVCOOP_COAST_LETGO
     "peer's own physics and no End reaches the client's copy, so the drill must say FAIL at the copies' gap. Run it with "
     "body_push_off set too, or the host's own body flies the crate in the let-go's place (the drill then says FAIL by "
     "the cause). The coast drill's join arm has no red: its snapshot carries the host's pose whatever flew the crate.")
+CFG_INT(letgo_release_delay_ms, "letgo_release_delay_ms", "dev", 0, 0, 400, "VOTVCOOP_LETGO_RELEASE_DELAY_MS",
+    "Developer knob of the coast drill's letgo arm (a client; 0 = off): the client holds each reliable prop release it "
+    "receives for this many milliseconds before applying it, so the host's let-go row reaches the copy while the hand "
+    "still holds it, the order a hand's release and a drive row sometimes take on their own. Kept under 500, the hand "
+    "lane's stream-silence release, which would end the hand's drive before the held release arrives. The arm says "
+    "INVALID when no yield was kept pending on the client.")
+CFG_FLAG(letgo_unyield_off, "letgo_unyield_off", "dev", false, "VOTVCOOP_LETGO_UNYIELD_OFF",
+    "Developer red arm of the coast drill's letgo arm: never set. The client drops the yield it kept pending on a hand's "
+    "release instead of lifting it, so the let-go row's End is dropped as it was and the copy stays where the hand left "
+    "it: run with letgo_release_delay_ms set, the drill must say FAIL at the copies' gap.")
 CFG_FLAG(fireext_claim_off, "fireext_claim_off", "dev", false, "VOTVCOOP_FIREEXT_CLAIM_OFF",
     "Developer red arm of the fire extinguisher drill's runaway arm (host): never set. The host does not claim an "
     "extinguisher while its runaway thrust flies it, so the flight (started once the let-go's own drive has ended) is not "

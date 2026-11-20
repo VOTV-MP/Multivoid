@@ -320,6 +320,7 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/collision_probe.cpp
     src/coop/dev/end_trace.cpp
     src/coop/dev/coast_drill.cpp
+    src/coop/dev/letgo_release_delay.cpp
     src/coop/dev/rest_compare.cpp
     src/coop/dev/drill_ground.cpp
     src/coop/dev/oven_progress_drill.cpp

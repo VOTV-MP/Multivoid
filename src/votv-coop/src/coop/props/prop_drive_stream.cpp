@@ -2,6 +2,8 @@
 
 #include "coop/props/prop_drive_stream.h"
 
+#include "coop/config/config.h"                // ResolveFlag: the coast drill's red
+#include "coop/config/config_registry.h"
 #include "coop/dev/end_trace.h"                 // OnEndApplied: the measure of what a slept copy does next
 #include "coop/dev/prop_syncer_drill.h"        // IsEnabled: the drill's view is kept only while it is on
 #include "coop/net/protocol.h"
@@ -145,10 +147,11 @@ struct PendingYield {
 using PendingMap = std::unordered_map<uint32_t, PendingYield>;
 PendingMap g_pending;            // eid -> the one yield waiting on its hand's release
 
-enum class Drop : uint8_t { End, Newer, NewHold, Closed, Stale, World, HandGone, Superseded, kCount };
+enum class Drop : uint8_t { End, Newer, NewHold, Closed, Stale, World, HandGone, Superseded, Knob, kCount };
 constexpr const char* kDropName[] = {"its End came first", "a newer generation", "a new hold took the copy",
                                      "the generation was closed here", "the actor died", "world change",
-                                     "the hand's drive ended without a release", "the marks moved on"};
+                                     "the hand's drive ended without a release", "the marks moved on",
+                                     "letgo_unyield_off"};
 uint32_t g_pendingN = 0;         // yields kept pending, this session
 uint32_t g_unyieldedN = 0;       // ... and lifted at their hand's release
 uint32_t g_dropped[static_cast<size_t>(Drop::kCount)] = {};
@@ -553,6 +556,12 @@ void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool release
     if (it == g_pending.end() || it->second.slot != slot || it->second.holdGen != holdGen) return;
     if (!released) {   // a refusal or a take-from-hand: the hand did not let go of a copy the stream may park
         DropPending(it, Drop::HandGone);
+        return;
+    }
+    // The coast drill's red: the entry is written and then dropped at the release, so the yield stands as it did.
+    static const bool s_unyieldOff = coop::config::ResolveFlag(coop::config_registry::rows::letgo_unyield_off);
+    if (s_unyieldOff) {
+        DropPending(it, Drop::Knob);
         return;
     }
     // Lifted only where the yield's own marks still stand: a newer generation's, or one this peer closed itself

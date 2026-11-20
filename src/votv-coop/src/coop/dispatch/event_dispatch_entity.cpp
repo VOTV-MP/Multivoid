@@ -14,6 +14,7 @@
 #include "coop/props/container_break.h"
 #include "coop/session/join_progress.h"
 #include "coop/dev/dronesack_drill.h"  // NoteWirePropDestroy (the drone sack drill's record)
+#include "coop/dev/letgo_release_delay.h"  // Release: remote_prop::OnRelease, held first on a client when the knob is set
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
@@ -135,7 +136,7 @@ bool HandleEntityEvent(net::Session& session,
         // The relay is here, after the clamp and before OnRelease, whatever OnRelease does with the release: one it drops
         // (a stale hold, a prop another owner has) must still close the holder's drive on every mirror.
         coop::prop_throw::JudgeRelease(session, msg.senderPeerSlot, p);
-        remote_prop::OnRelease(msg.senderPeerSlot, p, localPlayer);
+        coop::dev::letgo_release_delay::Release(msg.senderPeerSlot, p, localPlayer);   // remote_prop::OnRelease; a client's dev hold
         break;
     }
     case net::ReliableKind::PropSpawn: {
