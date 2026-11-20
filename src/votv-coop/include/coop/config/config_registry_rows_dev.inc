@@ -273,12 +273,8 @@ CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr,
 CFG_FLAG(world_actor_trace, "world_actor_trace", "dev", false, nullptr,
     "Diagnostic trace: the client-side world-actor mirror drive, once a second per mirror. Costs "
     "two extra location reads per mirror per second while on.")
-CFG_FLAG(grime_log, "grime_log", "dev", false, "VOTVCOOP_GRIME_LOG",
-    "Diagnostic logging for grime/cleaning sync: each fall sent, each value applied, and every decal an index pass finds, one line each.")
-CFG_FLAG(grime_drill, "grime_drill", "dev", false, "VOTVCOOP_GRIME_DRILL",
-    "Drill (BOTH peers): each cleans one of the same two rain-proof decals partway, then below zero, in the "
-    "rain's clean call form, and ends when its copy of the other's decal reads zero and still stands. Lines "
-    "tagged [GRIME-DRILL]; the client's DONE line ends it.")
+// The grime lane's rows (its log, drills and red arms): their own file, one concept.
+#include "coop/config/config_registry_rows_dev_grime.inc"
 CFG_FLAG(interactable_log, "interactable_log", "dev", false, nullptr,
     "Diagnostic logging for the interactable channel.")
 CFG_FLAG(channel_shadow_probe, "channel_shadow_probe", "dev", false, "VOTVCOOP_CHANNEL_SHADOW_PROBE",
@@ -798,4 +794,3 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 #include "coop/config/config_registry_rows_dev_roomba.inc"
 // The remote player's footsteps: the ground line, the crouch drill and its red arm: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_footsteps.inc"
-#include "coop/config/config_registry_rows_dev_grime.inc"
