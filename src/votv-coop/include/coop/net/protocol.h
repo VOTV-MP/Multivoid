@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 317;
+inline constexpr uint16_t kProtocolVersion = 318;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1597,9 +1597,10 @@ enum class ReliableKind : uint16_t {
     // the host's water buckets (the mop bucket among them), concrete buckets and cement bags that changed, and every one to a
     // joiner at its world-ready. A client's verbs on them ride PropActRequest (families 6..11). Not pre-world. BucketStatePayload.
     BucketState = 283,
-    // A sound the game played at a place on one machine alone (coop/world/sound_relay): a melee hit's impact sound. Its
+    // A sound the game played at a place on one machine alone (coop/world/sound_relay), named by its index into the sound
+    // table (coop/world/sound_catalog): a melee hit's impact sound, the vent knocker's knock, the church's bell. Its
     // player's machine sends it; the host plays a client's and relays it to the other clients. Not pre-world.
-    // SoundAtPayload.
+    // Late join: none, a sound is a one-shot. SoundAtPayload.
     SoundAt = 282,
 };
 
@@ -2487,16 +2488,19 @@ struct KerfurDressPatPayload {
 };
 static_assert(sizeof(KerfurDressPatPayload) == 4, "KerfurDressPatPayload must be 4 bytes");
 
-// SoundAt. The Sound and the attenuation as object paths ("/Game/audio/x.x", ASCII, NUL-padded; an empty attenuation
-// plays with none), the place, the volume and the pitch, as the original call passed them.
+// SoundAt. The sound as its 1-based index into the table every peer builds the same way (coop/world/sound_catalog; 0 is
+// none), the place, the volume and the pitch as the original call passed them, and the digest of the sender's table: a
+// receiver whose own differs drops the sound. The attenuation and the callers that may play the sound are the table
+// entry's, never the sender's.
 struct SoundAtPayload {
-    char  sound[96];         // 96
-    char  attenuation[64];   // 64
-    float loc[3];            // 12
-    float volume;            // 4
-    float pitch;             // 4
+    uint16_t sound;       // 2
+    uint16_t pad;         // 2, zero
+    float    loc[3];      // 12
+    float    volume;      // 4
+    float    pitch;       // 4
+    uint32_t catalogue;   // 4
 };
-static_assert(sizeof(SoundAtPayload) == 180, "SoundAtPayload must be 180 bytes");
+static_assert(sizeof(SoundAtPayload) == 28, "SoundAtPayload must be 28 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set

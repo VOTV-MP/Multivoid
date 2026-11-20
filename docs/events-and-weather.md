@@ -304,7 +304,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | `AlarmState` | either role | the alarm's active flag |
 | `EmailAppend`, `EmailDelete`, `TaskNewState` | the host to all; either role; the host to all | an email; a deletion; the task |
 | `FloodState`, `FloodIntent` | the host to all; a client to the host | a pipe's `damaged` or the flood's level; a client's repair |
-| `SoundAt` | either role, relayed by the host | a sound's and attenuation's paths, place, volume and pitch |
+| `SoundAt` | either role, relayed by the host | a sound's index in the sound table, place, volume and pitch, and the sender's table digest |
 
 ## Late join
 

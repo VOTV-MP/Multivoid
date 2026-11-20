@@ -19,6 +19,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_1
     src/ue_wrap/core/reflection_dispatch.cpp
     src/ue_wrap/core/reflection_props.cpp
     src/ue_wrap/core/asset_load.cpp
+    src/ue_wrap/core/object_path.cpp
     src/ue_wrap/core/class_resolve.cpp
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
@@ -181,6 +182,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/world/order_economy.cpp
     src/ue_wrap/world/store_catalog.cpp
     src/ue_wrap/world/weapon_catalog.cpp
+    src/ue_wrap/world/physsound_table.cpp
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/ambient_creature.cpp
     src/ue_wrap/actors/prop_keys.cpp
