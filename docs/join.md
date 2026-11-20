@@ -133,8 +133,9 @@ inside a world-load episode that suppresses the broadcast
 world's save replay. It deletes the map's own grime decals and spawns the save's at the same keys; those deletes are
 no wipe, so the grime lane's index forgets everything as the replay begins (`coop/interactables/grime_sync`). A rehost
 in one game process had read them as wipes to zero and lowered 889 of the save's decals with them
-(Ghezra/Multivoid#36) `[V]` (the reload-churn autotest's host arm, `VOTVCOOP_RUN_RELOAD_CHURN=1 VOTVCOOP_RELOAD_HOST=1`:
-two rehosts lowered none). `coop/session/save_replay_watch` watches the replay by name on a client, and the quiescence probe opens
+(Ghezra/Multivoid#36) `[V]` (the reload-churn autotest's host arm, `VOTVCOOP_RUN_RELOAD_CHURN=1 VOTVCOOP_RELOAD_HOST=1`,
+build 4be79d00: a rehost whose replay ran with the session live lowered none, and with the lane's watch of the replay off
+it lowered 935; a rehost through the menu replays with the session down, which the arm does not count). `coop/session/save_replay_watch` watches the replay by name on a client, and the quiescence probe opens
 only once it has returned in the world the client stands in. From then on the probe runs: five times a
 second it counts the load-tail population, and the load is settled when the count holds across
 consecutive scans. One absolute deadline bounds a pathological load; past it the client announces
@@ -477,6 +478,11 @@ connected". An event actor spawned while the host is alone must still be tracked
 has nothing to send when someone joins. Two residuals are accepted by design: one-shot effects
 (a click, a running ping's stage visuals) are missed, and a lane-owned event on the joiner does
 not raise the game's own active-event counter, whose save and pause blocks the mod holds anyway.
+
+The fallen leaves of an autumn are a **replay**: the host keeps them in a record of their own, apart from the spills, and
+sends it again with the spills to a joiner, who makes each at the host's place; a leaf's end reaches a joiner by the grime
+lane's snapshot of ended keys, and no other message. The `leaves_join` arm of the clean drill proves it (a client rejoins
+after the leaves fell and must hold the host's at the host's places) `[?]`: built, not yet run.
 
 ## Known limits
 
