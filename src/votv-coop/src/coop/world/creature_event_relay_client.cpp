@@ -10,13 +10,17 @@
 
 #include "coop/element/death_seam.h"
 #include "coop/net/protocol.h"
+#include "coop/player/players_registry.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
+#include <initializer_list>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -244,7 +248,86 @@ void ClientOnNpcEnd(const EL::death_seam::Death& death) {
         EndEntry(death.eid);
 }
 
+// ---- the killer wisp's per-viewer check -------------------------------------------------------------------------------
+//
+// killerwisp_C's BeginPlay keeps a loop on a 3 s Delay: `rendered` = player 0 within 5000 and not avoidPlayer, then
+// lib_C::setEvent(rendered, false, self), the per-viewer event its viewer's event music follows. A Delay advances only
+// while the actor ticks, and a client's mirror is parked with its actor tick off (the tick also moves player 0 in a
+// grab and runs the capture), so the loop stopped at its first pass: the host heard the wisp's music and a client never
+// did (VOTV-MP/Multivoid#193). The client runs that one check for each of its bound killer wisp mirrors (the killer lamb
+// is one too), with this player for player 0, and calls setEvent when the answer changes. The mirror's own end runs
+// its setEvent(false) as the game's does.
+namespace {
+
+constexpr uint64_t kWispCheckMs = 3000;   // the Blueprint's Delay
+constexpr float    kWispViewCm  = 5000.f;  // its distance to player 0
+
+struct WispView {
+    void* actor = nullptr;
+    bool  rendered = false;
+};
+std::unordered_map<EL::ElementId, WispView> g_wispViews;
+uint64_t g_nextWispCheck = 0;
+
+bool ReadBit(void* obj, const wchar_t* name, bool& out, int32_t* offOut = nullptr, uint8_t* maskOut = nullptr) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!obj || !R::FindBoolProperty(R::ClassOf(obj), name, off, mask)) return false;
+    out = (static_cast<const uint8_t*>(obj)[off] & mask) != 0;
+    if (offOut) *offOut = off;
+    if (maskOut) *maskOut = mask;
+    return true;
+}
+
+void CheckWisp(void* wisp, void* me, const ue_wrap::FVector& at) {
+    const EL::ElementId eid = NpcEidOf(wisp, /*mirror=*/true);
+    if (eid == EL::kInvalidId) return;
+    bool avoid = false, was = false;
+    int32_t off = -1;
+    uint8_t mask = 0;
+    ReadBit(wisp, L"avoidPlayer", avoid);
+    if (!ReadBit(wisp, L"rendered", was, &off, &mask)) return;
+    ue_wrap::FVector w{};
+    if (!me || !ue_wrap::engine::TryGetActorLocation(wisp, w)) return;
+    const float dx = w.X - at.X, dy = w.Y - at.Y, dz = w.Z - at.Z;
+    const bool rendered = dx * dx + dy * dy + dz * dz <= kWispViewCm * kWispViewCm && !avoid;
+    auto it = g_wispViews.find(eid);
+    if (it == g_wispViews.end() || it->second.actor != wisp) {
+        // First sight: the Blueprint's first pass already ran on this mirror at its BeginPlay and set `rendered`.
+        it = g_wispViews.insert_or_assign(eid, WispView{wisp, was}).first;
+    }
+    if (it->second.rendered == rendered) return;
+    uint8_t* const b = static_cast<uint8_t*>(wisp) + off;
+    *b = rendered ? static_cast<uint8_t>(*b | mask) : static_cast<uint8_t>(*b & ~mask);
+    if (Call(rendered, wisp)) {
+        it->second.rendered = rendered;
+        UE_LOGI("creature_event_relay: killer wisp mirror eid=%u %s this player -- setEvent(%d)", eid,
+                rendered ? "near" : "away from", rendered ? 1 : 0);
+    }
+}
+
+}  // namespace
+
+void ClientTickWisps(uint64_t nowMs) {
+    if (!ActiveSession(coop::net::Role::Client) || nowMs < g_nextWispCheck || !Ready()) return;
+    g_nextWispCheck = nowMs + kWispCheckMs;
+    void* const me = coop::players::Registry::Get().Local();
+    ue_wrap::FVector at{};
+    if (!me || !ue_wrap::engine::TryGetActorLocation(me, at)) return;
+    std::vector<void*> wisps;
+    for (const wchar_t* cls : {L"killerwisp_C", L"killerlamb_C"})
+        if (void* const c = ue_wrap::object_index::ClassByName(cls))
+            ue_wrap::object_index::ForEachInstance(c, [](void* ctx, void* o, int32_t) {
+                if (o && R::IsLive(o)) static_cast<std::vector<void*>*>(ctx)->push_back(o);
+            }, &wisps);
+    for (void* w : wisps) CheckWisp(w, me, at);
+    for (auto it = g_wispViews.begin(); it != g_wispViews.end();)
+        it = R::IsLive(it->second.actor) ? std::next(it) : g_wispViews.erase(it);
+}
+
 void ClientOnDisconnect() {
+    g_wispViews.clear();
+    g_nextWispCheck = 0;
     // The retraction runs only while the entries' world is the running one (EndEntry's own test); on a
     // quit-to-menu the world is going and nothing is called into it. Only the relay's own registrations are retracted:
     // diverges from MTA's wholesale teardown, ~CClientGame (reference/mtasa-blue/Client/mods/deathmatch/logic/

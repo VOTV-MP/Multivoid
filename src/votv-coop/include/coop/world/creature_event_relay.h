@@ -51,6 +51,9 @@ void OnReliable(const coop::net::CreatureEventActivePayload& payload);
 // held one and the retraction ran.
 bool RetractEntryOf(void* actor);
 
+// CLIENT, game thread, every pump tick: the killer wisp mirrors' per-viewer event check, every 3 s.
+void Tick();
+
 // Teardown: retract what a client still has applied, drop both halves' state and the session.
 void OnDisconnect();
 

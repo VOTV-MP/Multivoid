@@ -22,6 +22,8 @@
 #include "ue_wrap/facts/function_row.h"
 #include "ue_wrap/world/active_events.h"
 
+#include <windows.h>
+
 #include <atomic>
 #include <cstdint>
 
@@ -251,6 +253,8 @@ void OnReliable(const coop::net::CreatureEventActivePayload& payload) {
     UE_ASSERT_GAME_THREAD("creature_event_relay::OnReliable");
     detail::ClientOnReliable(payload);
 }
+
+void Tick() { detail::ClientTickWisps(::GetTickCount64()); }
 
 void OnDisconnect() {
     detail::HostOnDisconnect();
