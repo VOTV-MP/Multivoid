@@ -1598,9 +1598,11 @@ enum class ReliableKind : uint16_t {
     // joiner at its world-ready. A client's verbs on them ride PropActRequest (families 6..11). Not pre-world. BucketStatePayload.
     BucketState = 283,
     // A sound the game played at a place on one machine alone (coop/world/sound_relay), named by its index into the sound
-    // table (coop/world/sound_catalog): a melee hit's impact sound, the vent knocker's knock, the church's bell. Its
-    // player's machine sends it; the host plays a client's and relays it to the other clients. Not pre-world.
-    // Late join: none, a sound is a one-shot. SoundAtPayload.
+    // table (coop/world/sound_catalog): a melee hit's impact sound, the vent knocker's knock, the church's bell. BOTH
+    // WAYS, and not relayed: a client's is an ask to the host (a melee hit's impact sound from the sender's own player,
+    // where its body is), which judges it (coop/world/sound_judge) and, when it holds, plays it and sends it to every
+    // other client; the host's own goes to every client, which plays it as it stands. Not pre-world. Late join: none, a
+    // sound is a one-shot. SoundAtPayload.
     SoundAt = 282,
 };
 

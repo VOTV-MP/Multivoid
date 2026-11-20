@@ -167,8 +167,9 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::SavedSignalAppend: // producer-symmetric
     case ReliableKind::SavedSignalDelete: // player-symmetric
     case ReliableKind::VoiceState:        // player-symmetric
-    case ReliableKind::SoundAt:           // a player's own sound, for the other players
-    case ReliableKind::DeskLogLine:       // producer-symmetric
+    // SoundAt is not relayable: a client's sound is an ask the host judges (sound_judge), and the host sends the sound
+    // itself to every client but the asker.
+    case ReliableKind::DeskLogLine:      // producer-symmetric
     case ReliableKind::ReelSlot:          // presser-authored
     case ReliableKind::MeadowAppend:      // presser-symmetric
     case ReliableKind::MeadowDelete:      // player-symmetric

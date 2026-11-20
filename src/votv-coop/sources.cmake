@@ -83,6 +83,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_dress_sync.cpp
     src/coop/world/sound_relay.cpp
     src/coop/world/sound_catalog.cpp
+    src/coop/world/sound_judge.cpp
     src/coop/interactables/woodchipper_gate.cpp
     src/coop/interactables/atv_gate.cpp
     src/coop/interactables/atv_host_judge.cpp

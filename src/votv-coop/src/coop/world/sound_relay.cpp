@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/world/sound_catalog.h"
+#include "coop/world/sound_judge.h"
 
 #include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -40,8 +41,6 @@ using Verdict = ue_wrap::script_gate::Verdict;
 
 UE_FACT_FN(kRowPlaySoundAt, "sound_relay", L"GameplayStatics", L"PlaySoundAtLocation", Dispatch);
 
-constexpr int kMaxSendsPerSecond = 20;   // this machine's relayed sounds past this in one second are dropped
-constexpr int kMaxRecvPerSecond = 30;    // and a sender's received ones
 constexpr uint64_t kRefusalSayMs = 10000;
 
 // The Blueprint functions whose sounds are relayed, with the class that declares each. kOwnPlayer: sent by the machine
@@ -57,8 +56,9 @@ struct Caller {
 constexpr Caller kCallers[] = {
     {L"mainPlayer_C", L"attack", From::kOwnPlayer, C::kAttack},   // a melee hit's impact sound
     {L"kocker_C", L"knock", From::kHostWorld, C::kKnock},         // the vent knocker's knocks (Ghezra/Multivoid#39)
-    {L"church_C", L"bell", From::kHostWorld, C::kBell},           // the wandering church's bells (Ghezra/Multivoid#39)
-    {L"church_C", L"ExecuteUbergraph_church", From::kHostWorld, C::kBell},   // its bell entry rings from the ubergraph too
+    // The wandering church's bells (Ghezra/Multivoid#39): `bell` only calls the ubergraph at its bell entry, and the
+    // ubergraph holds every PlaySoundAtLocation of the chime, so that is the frame the call is seen from.
+    {L"church_C", L"ExecuteUbergraph_church", From::kHostWorld, C::kBell},
 };
 constexpr int kCallerCount = static_cast<int>(sizeof(kCallers) / sizeof(kCallers[0]));
 
@@ -68,13 +68,7 @@ bool g_installFailed = false;
 bool g_armed = false;
 int32_t g_offSound = -1, g_offLoc = -1, g_offVol = -1, g_offPitch = -1;
 void* g_callerFn[kCallerCount] = {};
-uint64_t g_sendSecond = 0;
-int g_sendN = 0;
-struct Rate {
-    uint64_t second = 0;
-    int n = 0;
-};
-Rate g_recv[N::kMaxPeers];
+bool g_cancelSaid[kCallerCount] = {};
 // What this peer has done with sounds, since the process began.
 struct Counts {
     uint32_t playedHere = 0;     // a catalogued sound the game played here for a listed caller
@@ -88,8 +82,6 @@ uint64_t g_nextRefusalSayMs[static_cast<int>(Refusal::kCount)] = {};
 std::unordered_set<std::wstring> g_uncataloguedSaid;
 std::unordered_set<std::wstring> g_loadFailedSaid;
 std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_assets;   // path -> the loaded asset
-
-uint64_t NowSec() { return ::GetTickCount64() / 1000; }
 
 bool SendOff() {
     static const bool s = coop::config::ResolveFlag(coop::config_registry::rows::sound_send_off);
@@ -140,15 +132,19 @@ Verdict OnPlaySoundAtPre(void* /*context*/, void* source, const uint8_t* parms) 
     if (i < 0) return Verdict::Run;
     N::Session* const s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || !source) return Verdict::Run;
+    // The host's world plays its sounds on the host alone, and the host's relayed copy is the one every client hears: a
+    // client's own copy of such an actor (the church is a level actor) plays nothing.
+    if (kCallers[i].from == From::kHostWorld && s->role() == N::Role::Client) {
+        if (!g_cancelSaid[i]) {
+            g_cancelSaid[i] = true;
+            UE_LOGI("sound_relay: this client's %ls::%ls sounds are cancelled -- the host's relayed sound is the one it hears",
+                    kCallers[i].cls, kCallers[i].fn);
+        }
+        return Verdict::Cancel;
+    }
     if (kCallers[i].from == From::kOwnPlayer ? source != coop::players::Registry::Get().Local()
                                              : s->role() != N::Role::Host)
         return Verdict::Run;
-    const uint64_t sec = NowSec();
-    if (sec != g_sendSecond) {
-        g_sendSecond = sec;
-        g_sendN = 0;
-    }
-    if (++g_sendN > kMaxSendsPerSecond) return Verdict::Run;
     void* const sound = *reinterpret_cast<void* const*>(parms + g_offSound);
     if (!sound) return Verdict::Run;
     // Until this peer's table is built it sends nothing (the next sound tries again), and says so once.
@@ -208,6 +204,10 @@ const char* RefusalName(Refusal r) {
     case Refusal::NotReady: return "catalogue not ready";
     case Refusal::Digest:   return "digest";
     case Refusal::Index:    return "index";
+    case Refusal::Caller:   return "caller";
+    case Refusal::NoBody:   return "nobody";
+    case Refusal::Reach:    return "reach";
+    case Refusal::Budget:   return "budget";
     default:                return "?";
     }
 }
@@ -221,12 +221,11 @@ void Install(N::Session* session) {
 }
 
 void OnSoundAt(int senderSlot, const N::SoundAtPayload& p) {
-    if (senderSlot < 0 || senderSlot >= N::kMaxPeers) return;
-    Rate& r = g_recv[senderSlot];
-    const uint64_t sec = NowSec();
-    if (r.second != sec) r = Rate{sec, 0};
-    if (++r.n > kMaxRecvPerSecond) return;
-    if (!std::isfinite(p.loc[0]) || !std::isfinite(p.loc[1]) || !std::isfinite(p.loc[2])) return;
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    if (!s || senderSlot < 0 || senderSlot >= N::kMaxPeers) return;
+    // A client's one link is the host, whose sound is judged already; the host hears clients only, and judges each ask.
+    const bool host = s->role() == N::Role::Host;
+    if (host && senderSlot < 1) return;
     void* const local = coop::players::Registry::Get().Local();
     if (!local) return;
     const C::Entry* entry = nullptr;
@@ -236,20 +235,29 @@ void OnSoundAt(int senderSlot, const N::SoundAtPayload& p) {
     case C::Resolve::Digest:   Refuse(senderSlot, Refusal::Digest, p.sound); return;
     case C::Resolve::Index:    Refuse(senderSlot, Refusal::Index, p.sound); return;
     }
+    if (host) {
+        Refusal why{};
+        if (!coop::sound_judge::Allow(*s, static_cast<uint8_t>(senderSlot), *entry, p, why)) {
+            Refuse(senderSlot, why, p.sound);
+            return;
+        }
+    }
+    if (!std::isfinite(p.loc[0]) || !std::isfinite(p.loc[1]) || !std::isfinite(p.loc[2])) return;
     void* const sound = Asset(entry->path.c_str());
     if (!sound) return;
     void* const att = entry->attenuation ? Asset(entry->attenuation) : nullptr;
-    float volume = p.volume, pitch = p.pitch;
-    C::Clamp(*entry, volume, pitch);
-    ue_wrap::engine::PlaySoundAtLocation(local, sound, {p.loc[0], p.loc[1], p.loc[2]}, att, volume, pitch);
+    N::SoundAtPayload out = p;
+    C::Clamp(*entry, out.volume, out.pitch);
+    ue_wrap::engine::PlaySoundAtLocation(local, sound, {out.loc[0], out.loc[1], out.loc[2]}, att, out.volume, out.pitch);
     ++g_counts.played;
     UE_LOGI("sound_relay: slot %d's index %u played '%ls' at (%.0f,%.0f,%.0f)", senderSlot, static_cast<unsigned>(p.sound),
             entry->path.c_str(), p.loc[0], p.loc[1], p.loc[2]);
+    // The host sends a client's judged sound to every other client, with the digest and the values it played.
+    if (host) s->SendReliable(N::ReliableKind::SoundAt, &out, sizeof(out), senderSlot);
 }
 
 void OnDisconnect() {
     if (g_fn && g_armed && H::SetArmed(g_fn, &OnPlaySoundAtPre, false)) g_armed = false;
-    for (Rate& r : g_recv) r = Rate{};
     g_session.store(nullptr, std::memory_order_release);
 }
 

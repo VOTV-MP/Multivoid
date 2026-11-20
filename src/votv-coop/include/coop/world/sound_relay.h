@@ -5,9 +5,10 @@
 // bells (church_C), the host's world, only by the host (Ghezra/Multivoid#41, #39). A pre hook on that call finds the Sound
 // in the sound table (coop/world/sound_catalog) when the calling Blueprint function is on this lane's list -- a player's
 // own (its object this machine's player, either role) or the host's world (sent by the host) -- and sends its index, its
-// place, volume and pitch (SoundAt): a client to the host, which plays it and relays it to the other clients; the host to
-// all. A receiver plays the table's sound at the same place with the table's attenuation. The relayed play has no
-// Blueprint caller, so it is never sent again. Game thread.
+// place, volume and pitch (SoundAt): a client to the host, which judges it (coop/world/sound_judge), plays it and sends
+// it to the other clients; the host to all. A client's own copy of a host-world actor plays nothing: the host's sound is
+// the one it hears. A receiver plays the table's sound at the same place with the table's attenuation. The relayed play
+// has no Blueprint caller, so it is never sent again. Game thread.
 
 #pragma once
 
@@ -25,6 +26,10 @@ enum class Refusal : uint8_t {
     NotReady,   // this peer's sound table is not built
     Digest,     // the sender's table is not this one
     Index,      // the index names no sound
+    Caller,     // the host: the sound's entry is not one a client's player plays (a knock, a bell)
+    NoBody,     // the host: the sender has no body here that took a pose
+    Reach,      // the host: the place is beyond a melee swing's reach of the sender's body
+    Budget,     // the host: the sender has asked too often
     kCount
 };
 const char* RefusalName(Refusal r);
