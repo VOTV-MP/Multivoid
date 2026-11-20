@@ -110,8 +110,9 @@ bool HeldClassIs(uint8_t slot, const wchar_t* cls);
 
 // Whether `slot`'s hand holds an item of the class named `base` or of a class that descends from it: a gas can's big,
 // mini and funny cans are prop_gascan_C to the game's own fuelling casts, and to a host that judges a pour by them. The
-// held class is found loaded by its name (its hand mirror loads it on the host) and its parent chain walked; one not
-// loaded here is only its own name. Game thread only.
+// held class is found loaded by its name and its parent chain walked. A host never loads a class a client names (the hand
+// class resolves LookupOnly), so a held class this peer has not loaded -- one no world it holds ever had -- is only its own
+// name, and is not a subclass of `base` here. Game thread only.
 bool HeldClassIsA(uint8_t slot, const wchar_t* base);
 
 // Whether this peer's own announce of a hand item of the class named `cls` has been queued, and the

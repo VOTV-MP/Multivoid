@@ -74,7 +74,9 @@ constexpr uint32_t kToolboxUses = 10;   // prop_toolbox_C's `fixes` default; its
 constexpr uint32_t kModuleUses = 1;     // a module is consumed by its fit
 
 // A gas can in the sender's hand, or carried by its grab (a big can goes no hotbar hand); the drill's red of the can's class
-// (config row gascan_exact_class) asks the plain can in the hand alone.
+// (config row gascan_exact_class) asks the plain can in the hand alone. The limit: a hand's class this host has never loaded
+// (a can that exists in no world it holds) is refused, since a host never loads a class a client names; a can of the shared
+// world is loaded here.
 bool SenderHasCan(uint8_t slot) {
     static const bool exact = coop::config::ResolveFlag(::coop::config_registry::rows::gascan_exact_class);
     if (exact) return coop::hand_item::HeldClassIs(slot, kCanClass);

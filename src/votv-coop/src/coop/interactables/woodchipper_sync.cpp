@@ -83,7 +83,9 @@ bool GascanExactClass() {
     static const bool on = coop::config::ResolveFlag(coop::config_registry::rows::gascan_exact_class);
     return on;
 }
-// A gas can in the sender's hand, or carried by its grab (a big can goes no hotbar hand).
+// A gas can in the sender's hand, or carried by its grab (a big can goes no hotbar hand). The limit: a hand's class this host
+// has never loaded (a can that exists in no world it holds) is refused, since a host never loads a class a client names; a
+// can of the shared world is loaded here.
 bool SenderHasCan(uint8_t slot) {
     if (GascanExactClass()) return coop::hand_item::HeldClassIs(slot, kCanClass);
     return coop::hand_item::HeldClassIsA(slot, kCanClass) || coop::remote_prop::CarriesClassA(slot, kCanClass);
