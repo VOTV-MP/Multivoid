@@ -258,8 +258,7 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
         NoteSpawnFailed(slot, want, puppetActor);
         return;
     }
-    E::SetActorSimulatePhysics(actor, false);
-    E::SetActorEnableCollision(actor, false);
+    MakeDisplay(actor);
     Mirror& m = g_mirrors[slot];
     m = Mirror{};
     m.actor = actor;
@@ -273,6 +272,11 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
 }
 
 }  // namespace
+
+void MakeDisplay(void* mirror) {
+    E::SetActorSimulatePhysics(mirror, false);
+    E::SetActorEnableCollision(mirror, false);
+}
 
 // The owner's announce as one tick makes it: a change of the hand, sent on the edge. `look` says the call is the owner tick
 // that read the hand (OwnHandLookSeq counts it); AnnounceHeldNow reads nothing new and counts none.

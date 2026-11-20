@@ -106,8 +106,11 @@ to it); the host clears a
 record when the hand empties or changes class and sends an empty one, so the next item is not shown it. Each peer
 writes it into its mirror through the item's own `loadData`, the leaf state only (a client waits for a class the
 record names to load, inside the per-tick budget), and again when the mirror is made anew (`coop/player/hand_record_sync`) `[?]` (a state changed in the hand of another class, an
-extinguisher's charge, is not announced and shows the record of the hold). The two-peer drill is
-`coop/dev/hand_record_drill` (`hand_record_drill=can|hand|joiner|forge|hostile|keyless|oversize|bounds|nonfinite|box`, the host's one verdict, three red arms).
+extinguisher's charge, is not announced and shows the record of the hold). A prop's own `loadData` turns its physics back on, so
+each write leaves the mirror a display again (`hand_item::MakeDisplay`, the one definition the mirror's spawn uses too) `[V]`.
+The two-peer drill is `coop/dev/hand_record_drill`
+(`hand_record_drill=can|hand|joiner|forge|hostile|keyless|oversize|bounds|nonfinite|box|display`, the host's one verdict, four
+red arms: `display`'s is `hand_display_redo_off`).
 
 A fire extinguisher (`prop_fireExt_C`) sprays from the hand: its `fire`, the hand's LMB press and
 release, turns its spray effect and sound on, and its tick aims the spray along that machine's camera,

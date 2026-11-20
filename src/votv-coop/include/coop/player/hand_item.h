@@ -56,6 +56,11 @@ void AnnounceHeldNow(coop::net::Session& session, void* local, void* holdingProp
 // not tick on a puppet, so the look has to be reproduced rather than inherited.
 void TickMirrors();
 
+// The one definition of a display mirror: physics simulation off and collision off, so the mirror never falls nor
+// collides. The mirror's spawn calls it, and any write into a mirror that can turn physics back on (a record's loadData,
+// which runs the item's init) calls it after the write. Game thread only.
+void MakeDisplay(void* mirror);
+
 // event_feed router entry. Parses (each string within the cap the sender writes to, with no control
 // character), forgery-guards, and on the host applies a changed state (kept and re-sent) at the lane's
 // pace, the newest kept past it (PayOwed); an unchanged state costs the parse and a compare. A hand

@@ -186,12 +186,14 @@ HandScope::HandScope(uint8_t slot, const SR::SaveRecord& record) : slot_(slot) {
         E::DestroyActor(actor);
         return;
     }
-    E::SetActorSimulatePhysics(actor, false);
-    E::SetActorEnableCollision(actor, false);
+    coop::hand_item::MakeDisplay(actor);
     copy_.Set(actor);
     // The record goes onto the finished actor: its own loadData, the leaf half the game keeps (the disc's data and
-    // readWrites), resolved from the classes the host holds (a client's name never makes it load).
-    if (!SR::ApplyRecord(actor, record, SR::ClassLoad::LookupOnly)) {
+    // readWrites), resolved from the classes the host holds (a client's name never makes it load). The prop's loadData
+    // turns its physics back on, so the copy is made a display again after it.
+    const bool applied = SR::ApplyRecord(actor, record, SR::ClassLoad::LookupOnly);
+    coop::hand_item::MakeDisplay(actor);
+    if (!applied) {
         UE_LOGW("kerfur_disc_carry[host]: the record of slot %u's disc %ls did not apply -- not carried",
                 static_cast<unsigned>(slot), record.className.c_str());
         return;   // the destructor destroys the copy

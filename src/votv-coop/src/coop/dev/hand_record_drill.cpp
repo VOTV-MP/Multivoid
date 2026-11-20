@@ -47,14 +47,15 @@ constexpr uint64_t kCheckEveryMs = 100;
 constexpr uint64_t kStepBoundMs  = 240000;   // a step that waits on the other peer or on a record
 constexpr float    kRestCm       = 0.5f;     // a copy that moved less than this since the last check is at rest
 
-enum class Mode : uint8_t { Off, Can, Hand, Joiner, Forge, Hostile, Keyless, Oversize, Bounds, NonFinite, Box };
+enum class Mode : uint8_t { Off, Can, Hand, Joiner, Forge, Hostile, Keyless, Oversize, Bounds, NonFinite, Box, Display };
 Mode TheMode() {
     static const Mode m = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::hand_record_drill);
         constexpr std::pair<const char*, Mode> kNames[] = {
             {"can", Mode::Can}, {"hand", Mode::Hand}, {"joiner", Mode::Joiner}, {"forge", Mode::Forge},
             {"hostile", Mode::Hostile}, {"keyless", Mode::Keyless}, {"oversize", Mode::Oversize},
-            {"bounds", Mode::Bounds}, {"nonfinite", Mode::NonFinite}, {"box", Mode::Box}};
+            {"bounds", Mode::Bounds}, {"nonfinite", Mode::NonFinite}, {"box", Mode::Box},
+            {"display", Mode::Display}};
         for (const auto& n : kNames) if (v == n.first) return n.second;
         return Mode::Off;
     }();
@@ -356,6 +357,7 @@ void ClientTick() {
     case Mode::Bounds:
     case Mode::NonFinite: ClientForge(); break;
     case Mode::Box:     ClientBox(); break;
+    case Mode::Display: ClientDisplay(); break;
     default: break;
     }
 }
@@ -574,6 +576,7 @@ void HostTick() {
     case Mode::Bounds:
     case Mode::NonFinite: HostForge(); break;
     case Mode::Box:     HostBox(); break;
+    case Mode::Display: HostDisplay(); break;
     default: break;
     }
 }

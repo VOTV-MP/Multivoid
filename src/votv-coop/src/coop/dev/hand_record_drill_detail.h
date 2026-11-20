@@ -17,6 +17,8 @@ inline constexpr const wchar_t* kCanClass = L"prop_cannedFood_0_C";
 inline constexpr const wchar_t* kCanRow   = L"fcan_p";   // list_props' row of the can, its name
 inline constexpr const wchar_t* kBoxClass = L"prop_orderBox_C";  // an order box: its getData writes a classes[] group
 inline constexpr const wchar_t* kBoxRow   = L"orderbox";         // the box's own name
+inline constexpr const wchar_t* kDiscClass = L"prop_floppyDisc_R_C";  // a disc: its loadData runs prop's init, physics on
+inline constexpr const wchar_t* kDiscRow   = L"floppy_0";             // list_props' row of the red disc
 
 // A can's two fields as an actor holds them; -1 when it has no such field.
 struct Can {
@@ -74,5 +76,10 @@ bool AtRest(void* actor);   // a copy that moved less than half a centimetre sin
 void ClientCan(void* player);
 void HostCan();
 void ResetCan();            // session end: the can arm's marks
+
+// ---- Defined in hand_record_drill_display.cpp ---------------------------------------------------------------------
+
+void ClientDisplay();
+void HostDisplay();
 
 }  // namespace coop::dev::hand_record_drill::detail

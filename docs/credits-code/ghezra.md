@@ -335,3 +335,8 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   refusing its own tick and fire debris. On top: the host checks the client's hand before a use and gives back an item it refused,
   budgets uses, claims and refunds, refuses a rig record a client did not just drop, sends state on the rig's own events instead of a
   scan, and drills with a red for each judge.
+
+- **A held prop that stays in the hand** ([#174](https://github.com/VOTV-MP/Multivoid/pull/174)): the item a player held, shown on the other screens, sank through the
+  floor or hung in the air once its record was written into it, because the prop's own load turns its physics back on. Kept as
+  written: the display made again after the record's write. On top: one definition of a display the hand's spawn and the kerfur's
+  disc carry use too, and a drill arm with a red.
