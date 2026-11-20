@@ -7,7 +7,7 @@
 //   the ACTOR (the first client; VOTVCOOP_CLEAN_ACTOR=host: the host) picks, around the save's bucket, the decal of each grime
 //   kind that stands nearest it and one more cleanable, rain-proof decal (the SENTINEL), and marks them. Every other peer finds
 //   each of them standing on its own copy and says so.
-//   the actor walks to the bucket with the director, takes a mop, cleans every target until it ends, waits until the lane has
+//   the actor cleans every target until it ends (the rain's call form, no sponge), waits until the lane has
 //   sent each end, then cleans the sentinel a little: the lane's wire is ordered, so a peer that sees the sentinel fall has
 //   applied every end the actor sent before it. Each other peer judges at that event: a target that ended on the actor and
 //   stands on this copy fails the run, named. The host says PASS once every peer's copy has ended them all.
@@ -17,9 +17,6 @@
 
 #include "clean_drill_detail.h"   // co-located private header (src tree, not include/)
 
-#include "coop/cheats/item_catalog.h"
-#include "coop/dev/director/director.h"
-#include "coop/dev/drill_hand.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -40,7 +37,6 @@ namespace {
 using namespace detail;
 namespace R   = ue_wrap::reflection;
 namespace E   = ue_wrap::engine;
-namespace DIR = coop::director;
 using coop::rig_verdict::Outcome;
 
 constexpr const char* kTag = "grime-clean";
@@ -50,8 +46,6 @@ constexpr float    kStrokeSub = 50.f;
 constexpr float    kMinProcess = 20.f;   // the sentinel's partial of 10 must leave it standing
 constexpr float    kSentinelSub = 10.f;
 constexpr float    kFallEps = 0.5f;
-constexpr float    kWalkReachCm = 250.f;
-constexpr int      kWalkDeadlineS = 150;
 constexpr uint32_t kLanePasses = 3;      // the lane's index has settled: each target has its cached key
 
 constexpr const wchar_t* kTargetClasses[] = {L"grime_dyn_C",      L"grime_dusty_C", L"grime_leaky_C",
@@ -72,14 +66,12 @@ struct Target {
     float start = 0.f;
 };
 
-enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Walk, Mop, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
+enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
                 AwaitEnd, Done };
 Ph g_ph = Ph::Arrive;
 FVector g_anchor{};
 std::vector<Target> g_targets;
 Target g_sentinel;
-std::shared_ptr<DIR::BackgroundWalk> g_walk;
-void* g_mop = nullptr;
 uint32_t g_ends0 = 0;
 size_t g_ended = 0;
 bool g_dumpedAfter = false;
@@ -208,7 +200,6 @@ void TickClean(coop::net::Session& s) {
     if (g_ph == Ph::Done) return;
     if (g_ph != Ph::Arrive && Over() && g_ph < Ph::AwaitEnd) g_ph = Ph::AwaitEnd;   // another peer decided: stop the steps
     if (g_ph > Ph::Arrive && Overdue()) return;
-    void* const me = coop::players::Registry::Get().Local();
     const bool host = IsHost();
     const bool acts = IsActor();
     std::string text;
@@ -260,32 +251,6 @@ void TickClean(coop::net::Session& s) {
     case Ph::AwaitSeen: {
         for (int slot = 0; slot < kPeers; ++slot)
             if (slot != MySlot() && !PeekOf("cl_seen", slot, text)) return;
-        Go(Ph::Walk, "the actor's walk to the bucket");
-        g_walk = DIR::StartBackgroundWalk(g_anchor, kWalkReachCm, kWalkDeadlineS);
-        return;
-    }
-    case Ph::Walk: {
-        const int st = g_walk ? g_walk->state.load() : 2;
-        if (st == 0) return;
-        if (st != 1) {
-            Decide(Outcome::Invalid, "the actor found no walk to the bucket");
-            g_ph = Ph::AwaitEnd;
-            return;
-        }
-        coop::cheats::item_catalog::RequestRefresh();
-        Go(Ph::Mop, "the item catalog's mop row");
-        return;
-    }
-    case Ph::Mop: {
-        const std::wstring mop = CatalogRow("mop");
-        if (mop.empty() || !me) return;
-        if (!coop::dev::drill_hand::TakeIntoHandNow(mop.c_str(), L"prop_mop_C")) {
-            Decide(Outcome::Invalid, "the mop '%ls' did not come into the actor's hand", mop.c_str());
-            g_ph = Ph::AwaitEnd;
-            return;
-        }
-        g_mop = InHand(me);
-        UE_LOGI("[CLN] the actor stands by the bucket with the mop '%ls' in hand", mop.c_str());
         Go(Ph::Clean, "the cleaning");
         return;
     }
@@ -295,7 +260,7 @@ void TickClean(coop::net::Session& s) {
         for (size_t i = 0; i < g_targets.size(); ++i) {
             void* const d = DecalAt(g_targets[i].cls, g_targets[i].at);
             int strokes = 0;
-            while (d && strokes < kMaxStrokes && R::IsLive(d) && Clean(d, g_mop, kStrokeSub)) ++strokes;
+            while (d && strokes < kMaxStrokes && R::IsLive(d) && Clean(d, nullptr, kStrokeSub)) ++strokes;
             const bool ended = !d || !R::IsLive(d);
             UE_LOGI("[CLN] target %zu %ls cleaned in %d stroke(s): ended=%d", i, g_targets[i].cls.c_str(), strokes,
                     ended ? 1 : 0);
@@ -319,7 +284,7 @@ void TickClean(coop::net::Session& s) {
     case Ph::Sentinel: {
         void* const d = DecalAt(g_sentinel.cls, g_sentinel.at);
         const float before = ProcessOf(d);
-        if (!d || !Clean(d, g_mop, kSentinelSub) || ProcessOf(d) >= before - kFallEps) {
+        if (!d || !Clean(d, nullptr, kSentinelSub) || ProcessOf(d) >= before - kFallEps) {
             Decide(Outcome::Invalid, "the sentinel %s did not fall by a clean of %.0f", Narrow(g_sentinel.cls).c_str(),
                    kSentinelSub);
             g_ph = Ph::AwaitEnd;

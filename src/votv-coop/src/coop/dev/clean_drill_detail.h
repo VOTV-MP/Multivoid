@@ -32,7 +32,7 @@ void* DecalAt(const std::wstring& cls, const FVector& at);
 bool BoolOf(void* obj, const wchar_t* name);
 float ProcessOf(void* decal);   // -1 when unread
 bool CallNoArgs(void* obj, const wchar_t* fn);
-// grime_C::clean(sponge, Sub, noSound), as the mop's clean notify calls it. True when it ran.
+// grime_C::clean(sponge, Sub, noSound): with no sponge, the rain's call form, and silent. True when it ran.
 bool Clean(void* decal, void* sponge, float sub);
 std::string Narrow(const std::wstring& w);
 // `text` cut at `sep` (an empty piece kept), and a float read whole (false when the piece holds anything else).
@@ -74,7 +74,5 @@ bool Overdue();
 
 // ---- the arms ---------------------------------------------------------------------------------------------------------
 void TickLeaves(coop::net::Session& s);
-std::wstring CatalogRow(const char* part);
-void* InHand(void* me);
 
 }  // namespace coop::dev::clean_drill::detail
