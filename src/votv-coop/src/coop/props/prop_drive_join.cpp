@@ -5,8 +5,10 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/player/roster.h"
+#include "coop/props/active_drive.h"          // NowMs
 #include "coop/props/constraint_ties.h"
 #include "coop/props/prop_drive_host.h"
+#include "coop/props/prop_drive_rules.h"
 #include "coop/props/prop_element_tracker.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -42,6 +44,7 @@ struct Owed {
     ue_wrap::CachedObjRef ref;
     uint32_t leaderEid;
     uint64_t tick;   // the Tick that owed it: the over-cap path waits for a later one
+    uint64_t nextProbeMs;   // its sleep is read no sooner: the drive's own re-probe spacing, not every frame
     char why[kWhyLen];
 };
 std::vector<Owed> g_owed;
@@ -87,6 +90,7 @@ void Member(void* actor, uint32_t leaderEid, const char* why) {
     o.ref.Set(actor);
     o.leaderEid = leaderEid;
     o.tick = g_tick;
+    o.nextProbeMs = coop::active_drive::NowMs() + coop::prop_drive_rules::kRestProbeMs;
     CopyWhy(o.why, why);
     // Developer red arm of the constraint-join drill (constraint_join_off=owed): the member is counted and dropped, never
     // owed. Resolved once, as prop_drive_host's other drill red arms are.
@@ -141,11 +145,19 @@ void ServeOwed() {
                     static_cast<unsigned long long>(g_owedOpened), EidOf(a));
     }
     // At most kOverCapPerTick of these a tick, and none for a member owed in this very tick: a body that reads asleep at the
-    // take has not been reached by the island's wake yet, so it is not yet at rest.
+    // take has not been reached by the island's wake yet, so it is not yet at rest. A member's sleep is read once per
+    // kRestProbeMs, as the drive's rows are: the read is an engine call.
+    const uint64_t now = coop::active_drive::NowMs();
     size_t opened = 0;
     for (size_t i = 0; i < g_owed.size() && opened < kOverCapPerTick;) {
-        void* a = g_owed[i].ref.Get();
-        if (!a || g_owed[i].tick == g_tick || !PD::BodyAsleepForEnd(a)) {
+        Owed& w = g_owed[i];
+        void* a = w.ref.Get();
+        if (!a || w.tick == g_tick || now < w.nextProbeMs) {
+            ++i;
+            continue;
+        }
+        w.nextProbeMs = now + coop::prop_drive_rules::kRestProbeMs;
+        if (!PD::BodyAsleepForEnd(a)) {
             ++i;
             continue;
         }
