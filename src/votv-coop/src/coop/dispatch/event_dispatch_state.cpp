@@ -312,21 +312,18 @@ bool HandleStateEvent(net::Session& session,
         }
         net::KeyedScalarPayload gp{};
         std::memcpy(&gp, msg.payload, sizeof(gp));
-        // The value drives the material's shader parameter; guard NaN and negatives like the
-        // window.
-        if (!std::isfinite(gp.value) || (gp.value < 0.0f && gp.value != net::kGrimeGone)) {
-            UE_LOGW("event_feed: GrimeState value=%.3f invalid -- dropping", gp.value);
-            break;
-        }
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        // The value drives the material's shader parameter, and the host relays a client's byte for byte, so every
+        // receiver bounds it: the ended mark, or a dirt the game can hold (grime_sync::AdmitValue counts a refusal).
+        if (!coop::grime_sync::AdmitValue(gp.value, senderSlot)) break;
         if (gp.adopt != 0 && gp.adopt != 1) {  // consistency with WindowCleanState's guard
             UE_LOGW("event_feed: GrimeState adopt=%u out of range -- dropping",
                     static_cast<unsigned>(gp.adopt));
             break;
         }
-        const uint8_t senderSlot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
         coop::grime_sync::OnReliable(gp, senderSlot);
         break;
     }

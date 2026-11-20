@@ -17,6 +17,7 @@
 #include "coop/config/config.h"
 #include "coop/element/death_seam.h"
 #include "coop/net/protocol.h"
+#include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
@@ -478,7 +479,20 @@ void OnGrimeEnd(const DS::ActorEnd& end) {
     Send(key, coop::net::kGrimeGone);
 }
 
+// The values refused at the receive edge: the first after a quiet spell is said at once, the rest of a burst summed.
+coop::net::RefusalTally g_refusals{"grime_sync"};
+
 }  // namespace
+
+bool AdmitValue(float value, uint8_t senderPeerSlot) {
+    const char* why = nullptr;
+    if (!std::isfinite(value)) why = "a value that is not a number";
+    else if (value < 0.f && value != coop::net::kGrimeGone) why = "a value below the ended mark";
+    else if (value > coop::net::kGrimeDirtMax) why = "a value above the dirt the game holds";
+    if (!why) return true;
+    g_refusals.Note(senderPeerSlot, why, coop::net::RefusalTally::Clock::now());
+    return false;
+}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
@@ -559,6 +573,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 }
 
 void Tick() {
+    g_refusals.Flush(coop::net::RefusalTally::Clock::now());
     if (!G::EnsureResolved()) return;
     RegisterWithScanHub();  // safety net for any order where Tick precedes Install
     // The two lowering verbs' watches and the decals' end of play, each asked again until it takes. A

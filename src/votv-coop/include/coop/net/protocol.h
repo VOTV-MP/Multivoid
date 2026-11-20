@@ -3374,6 +3374,9 @@ static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 b
 // GrimeState's value for a decal that ended (cleaned or repaired past zero, raked, burnt out): every peer destroys its
 // own, as the game's clean does at a process below zero, where a 0 would leave it standing at no dirt.
 inline constexpr float kGrimeGone = -1.f;
+// The most dirt a grime decal holds: the largest `process` any grime class declares (the oil and the blood-test decals
+// start at 300; the base decal at 100). A GrimeState value above it is no state the game can have, and a receiver drops it.
+inline constexpr float kGrimeDirtMax = 300.f;
 static_assert(sizeof(KeyedScalarPayload) <= 256 - 20 - 8,
               "KeyedScalarPayload must fit in one reliable datagram");
 

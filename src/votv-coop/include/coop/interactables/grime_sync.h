@@ -30,6 +30,11 @@ namespace coop::grime_sync {
 // Idempotent. Game thread.
 void Install(coop::net::Session* session);
 
+// The receive edge's bound on a GrimeState value, run by every receiver (the host relays a client's value as it came, so
+// each peer judges it): a number that is the ended mark (kGrimeGone) or a dirt from 0 to kGrimeDirtMax. A value outside
+// is refused and counted by sender slot (coop/net/refusal_tally.h); false then. Game thread.
+bool AdmitValue(float value, uint8_t senderPeerSlot);
+
 // Receiver entry: a GrimeState packet arrived (event_feed has copied and range-checked it). A live
 // fall (adopt 0) lowers the key's floor and is written to a decal reading above it; a value of the
 // host's connect snapshot (adopt 1) sets the floor and is written as is to a decal indexed when it
