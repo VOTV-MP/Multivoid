@@ -62,13 +62,21 @@ float Dist(const FVector& a, const FVector& b) {
 bool GrabCan(const std::wstring& key, std::string& why) {
     std::string last = "no try ran";
     for (int attempt = 0; attempt < kGrabTries && !Aborted(); ++attempt) {
-        FVector at{};
+        FVector at{}, mine{};
+        bool read = false;
         OnGt([&] {
-            if (void* p = coop::prop_key_index::Find(key)) E::TryGetActorLocation(p, at);
+            void* p = coop::prop_key_index::Find(key);
+            read = p && E::TryGetActorLocation(p, at) && E::TryGetActorLocation(Me(), mine);
         });
-        const float a = 3.14159f + 0.6f * static_cast<float>(attempt);
+        if (!read) {
+            why = "the big can's copy, or this player, is gone";
+            return false;
+        }
+        // The stand is on the can's side facing the walker (a different side each try), so the route to it does not pass
+        // through the can; the can is the walk's own prop, which the director's blocker delete leaves standing.
+        const float a = std::atan2(mine.Y - at.Y, mine.X - at.X) + 0.6f * static_cast<float>(attempt);
         if (!coop::dev::atv_drive::WalkTo({at.X + kRingCm * std::cos(a), at.Y + kRingCm * std::sin(a), at.Z}, kRingTolCm,
-                                          /*carry=*/false, "the big can", last))
+                                          /*carry=*/false, "the big can", last, key))
             continue;
         std::shared_ptr<DR::AimedGrab> grab;
         OnGt([&] {
