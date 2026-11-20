@@ -8,6 +8,7 @@
 #include "coop/dev/director/director.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/dev/drill_ground.h"
+#include "coop/dev/letgo_release_delay.h"   // DelayMs: the letgo arm's precondition
 #include "coop/dev/rest_compare.h"
 #include "coop/element/registry.h"
 #include "coop/net/session.h"
@@ -362,14 +363,22 @@ void HostTick(coop::net::Session& s) {
             if (Expired()) InvalidWaiting("the client's rested line");
             return;
         }
-        // "<end seen 0|1> <pose>"
-        if (rest.size() < 3 || (rest[0] != '0' && rest[0] != '1') || rest[1] != ' ') {
+        // "<end seen 0|1> <a yield was kept pending on a hand's release 0|1> <pose>"
+        if (rest.size() < 5 || (rest[0] != '0' && rest[0] != '1') || rest[1] != ' ' || (rest[2] != '0' && rest[2] != '1') ||
+            rest[3] != ' ') {
             Invalid("the client's rested line could not be read");
             return;
         }
         RC::Pose client;
-        if (!RC::Decode(rest.substr(2), client)) { Invalid("the client's rested pose could not be read"); return; }
+        if (!RC::Decode(rest.substr(4), client)) { Invalid("the client's rested pose could not be read"); return; }
         const bool endSeen = rest[0] == '1';
+        // The letgo arm with the client's release held: the let-go row's first pose must have met the host's hand, or the hold
+        // reordered nothing and a pass or a fail says nothing of the pending yield. The red still writes the entry, so it
+        // passes this and fails at the copies' gap below.
+        if (ArmOf() == Arm::LetGo && coop::dev::letgo_release_delay::DelayMs() > 0 && rest[2] != '1') {
+            Invalid("the client's release was held and no yield was kept pending: the let-go row's first pose never met the hand");
+            return;
+        }
         namespace RV = coop::rig_verdict;
         if (ArmOf() == Arm::Join) {
             // A joiner that missed the crate's live End rests with the host's: the snapshot is cut after the crate rested, so it
@@ -494,9 +503,12 @@ void ClientTick(coop::net::Session& /*s*/) {
         RC::Pose pose;
         if (!RC::Read(crate, pose)) { Invalid("this client's copy's pose could not be read"); return; }
         const bool endSeen = EndSeen(crate, g_endMarkMs);
-        UE_LOGI("[COAST-DRILL] [C] this client's copy RESTED at (%.1f, %.1f, %.1f); a drive End reached it: %d", pose.loc.X,
-                pose.loc.Y, pose.loc.Z, endSeen ? 1 : 0);
-        DC::Say(kRestedPrefix + (endSeen ? "1 " : "0 ") + RC::Encode(pose));
+        uint32_t pending = 0, unyielded = 0;
+        coop::prop_drive_stream::PendingYieldCounts(pending, unyielded);
+        UE_LOGI("[COAST-DRILL] [C] this client's copy RESTED at (%.1f, %.1f, %.1f); a drive End reached it: %d; yields kept "
+                "pending on a hand's release %u, lifted %u", pose.loc.X, pose.loc.Y, pose.loc.Z, endSeen ? 1 : 0, pending,
+                unyielded);
+        DC::Say(kRestedPrefix + (endSeen ? "1 " : "0 ") + (pending > 0 ? "1 " : "0 ") + RC::Encode(pose));
         UE_LOGI("[COAST-DRILL] [C] DONE");
         Next(Step::Done);
         return;

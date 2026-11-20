@@ -19,6 +19,10 @@ namespace coop::net { class Session; }
 
 namespace coop::dev::coast_drill {
 
+// The letgo arm with letgo_release_delay_ms set (coop/dev/letgo_release_delay.h): the client holds the host's release so the
+// let-go row's first pose meets the hand. The arm says INVALID when the client kept no yield pending on that release, PASS when
+// the copy ends at the host's End pose, and with letgo_unyield_off too FAILs at the same gap.
+
 // True unless the row is `off`.
 bool IsEnabled();
 

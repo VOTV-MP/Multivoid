@@ -64,6 +64,9 @@ void OnRemoteHandStarted(uint8_t slot, void* actor, uint16_t holdGen);
 // take-from-hand, the slot leaving with `actor` null): the entry is dropped and the yield stands.
 void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool released);
 
+// Yields kept pending on a hand's release, and lifted at it, since the session began: for the drills. Game thread.
+void PendingYieldCounts(uint32_t& pending, uint32_t& unyielded);
+
 // True while this stream has `actor` parked: its pose is the host's stream's, so a converge that
 // would move it or re-run its init() leaves it alone, as it leaves a held prop. Game thread.
 bool IsParked(void* actor);

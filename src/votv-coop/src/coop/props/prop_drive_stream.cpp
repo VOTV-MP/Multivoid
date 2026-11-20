@@ -590,6 +590,11 @@ void OnRemoteHandEnded(uint8_t slot, void* actor, uint16_t holdGen, bool release
         UE_LOGI("[PROP-DRIVE] pending yields lifted at their hand's release: %u of %u kept", g_unyieldedN, g_pendingN);
 }
 
+void PendingYieldCounts(uint32_t& pending, uint32_t& unyielded) {
+    pending = g_pendingN;
+    unyielded = g_unyieldedN;
+}
+
 bool IsParked(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::IsParked");
     if (!actor) return false;
