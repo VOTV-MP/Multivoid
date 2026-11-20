@@ -125,6 +125,8 @@ sg::Verdict OnSetConstrainedPre(void* context, void* /*sourceObject*/, const uin
 }
 
 void OnBreakPost(void* context, void* /*sourceObject*/, void* /*result*/) {
+    // The post thunk forwards from any thread, and the map and the listeners are the game thread's.
+    UE_ASSERT_GAME_THREAD("constraint_ties::OnBreakPost");
     if (!context) return;
     g_ties.erase(context);
     for (BreakFn fn : g_breakFns)
@@ -260,6 +262,8 @@ void DrainTied(TiedFn fn) {
     g_tied.clear();
 }
 
+// Two slots: the pry lane (prop_pry_host) and the pried drill's fixture are the only two registrants. A third is refused,
+// never dropped silently: false comes back and `break listener slots full` is logged once.
 bool AddBreakListener(BreakFn fn) {
     if (!fn) return false;
     for (BreakFn f : g_breakFns)

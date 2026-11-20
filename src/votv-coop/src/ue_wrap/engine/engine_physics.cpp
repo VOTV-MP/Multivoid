@@ -185,7 +185,7 @@ bool ConstraintActorsOf(void* constraint, void*& a1, void*& a2) {
     if (!constraint || !R::IsLive(constraint)) return false;
     if (!sResolved) {
         void* cls = R::FindClass(L"PhysicsConstraintComponent");
-        if (!cls) return false;   // not loaded yet: asked again at the next question
+        if (!cls) return false;   // the class is not found: the caller counts it unreadable (the seed latches once per world)
         sActor1 = R::FindPropertyOffset(cls, L"ConstraintActor1");
         sActor2 = R::FindPropertyOffset(cls, L"ConstraintActor2");
         sName1  = R::FindPropertyOffset(cls, L"ComponentName1");
