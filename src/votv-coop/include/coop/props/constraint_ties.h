@@ -33,6 +33,11 @@ size_t TiesOf(void* actor, void** out, size_t cap);
 // How many constraint entries the index holds now (stale ones included until a read drops them).
 size_t Count();
 
+// HOST: the live owner of each tie made since the last call is handed to `fn`, then the list is emptied. The patch only notes
+// the owners, so what is asked of them (driven? held?) is asked here, on the frame call, never inside the engine's call.
+using TiedFn = void (*)(void* owner);
+void DrainTied(TiedFn fn);
+
 // A function told, from inside BreakConstraint's post patch, which constraint component was broken: the index has dropped
 // its entry already. It runs deep in an engine call, so it must call no hooked native. Two slots; a second add of the same function
 // is a no-op; false when full (the log says so once).

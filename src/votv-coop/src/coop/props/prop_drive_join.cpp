@@ -171,6 +171,11 @@ void ServeOwed() {
     }
 }
 
+// A tie made while one of its ends is driven or in a hand: that end is owed a join, so the other end gets a row too.
+void OweIfDriven(void* owner) {
+    if (PD::IsDriven(owner) || PD::InAHand(owner)) Owe(owner, "tie made");
+}
+
 }  // namespace
 
 void Owe(void* leader, const char* why) {
@@ -189,6 +194,7 @@ void Owe(void* leader, const char* why) {
 
 void Tick() {
     ++g_tick;
+    coop::constraint_ties::DrainTied(&OweIfDriven);
     if (g_leaders.empty() && g_owed.empty()) return;
     UE_ASSERT_GAME_THREAD("prop_drive_join::Tick");
     for (const Leader& l : g_leaders) Walk(l);

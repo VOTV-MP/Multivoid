@@ -4,10 +4,9 @@
 
 #include "coop/net/net_clock.h"
 #include "coop/player/roster.h"
-#include "coop/props/prop_drive_host.h"
-#include "coop/props/prop_drive_join.h"
 #include "coop/props/prop_element_tracker.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
@@ -22,6 +21,7 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::constraint_ties {
 namespace {
@@ -30,7 +30,6 @@ namespace R  = ue_wrap::reflection;
 namespace OI = ue_wrap::object_index;
 namespace UH = ue_wrap::ufunction_hook;
 namespace sg = ue_wrap::script_gate;
-namespace PD = coop::prop_drive_host;
 
 UE_FACT_FN(kRowSetConstrainedComponents, "constraint_ties", L"PhysicsConstraintComponent", L"SetConstrainedComponents",
            Declared);
@@ -46,6 +45,9 @@ struct Tie {
 std::unordered_map<void*, Tie> g_ties;   // by the constraint component's address
 size_t   g_sweepAt = 256;                // the size at which Install drops the stale entries; then twice the live count
 uint32_t g_seenGen = 0;                  // the world generation the by-name seed last ran for
+
+// The owners of the ties made since the last DrainTied, on the host: the join tests them at its tick, never here.
+std::vector<ue_wrap::CachedObjRef> g_tied;
 
 bool g_preOn = false;
 bool g_postOn = false;
@@ -71,10 +73,13 @@ void SweepStale() {
     }
 }
 
-// A tie made while one of its ends is driven or in a hand: that end is owed a join, so the other end gets a row too. Owe
-// only appends to its list (no walk, no hooked native), which is all a native patch may do.
-void OweIfDriven(void* owner) {
-    if (PD::IsDriven(owner) || PD::InAHand(owner)) coop::prop_drive_join::Owe(owner, "tie made");
+// An owner of a tie made on the host, kept once until the next DrainTied. It reads no liveness (a liveness read can run the
+// world-change listeners, and no listener may run inside a native patch): the join asks whether the owner is driven or held.
+void NoteTied(void* owner) {
+    for (const ue_wrap::CachedObjRef& r : g_tied)
+        if (r.Raw() == owner) return;
+    g_tied.emplace_back();
+    g_tied.back().Set(owner);
 }
 
 // Two different owner actors make a tie; one actor (a laptop's no-collide pair, a hook's own parts), the world or nothing
@@ -89,8 +94,10 @@ void Record(void* constraint, void* a, void* b) {
     t.constraint.Set(constraint);
     t.a.Set(a);
     t.b.Set(b);
-    OweIfDriven(a);
-    OweIfDriven(b);
+    if (coop::roster::LocalIsHost()) {
+        NoteTied(a);
+        NoteTied(b);
+    }
 }
 
 // A prop tied to more partners than a read holds: said for the first three and at each doubling after, by element id when it
@@ -242,6 +249,16 @@ size_t TiesOf(void* actor, void** out, size_t cap) {
 }
 
 size_t Count() { return g_ties.size(); }
+
+void DrainTied(TiedFn fn) {
+    if (g_tied.empty()) return;
+    UE_ASSERT_GAME_THREAD("constraint_ties::DrainTied");
+    for (const ue_wrap::CachedObjRef& r : g_tied) {
+        void* owner = r.Get();
+        if (owner && fn) fn(owner);
+    }
+    g_tied.clear();
+}
 
 bool AddBreakListener(BreakFn fn) {
     if (!fn) return false;
