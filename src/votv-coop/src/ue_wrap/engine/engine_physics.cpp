@@ -5,10 +5,12 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <string>
 #include <vector>
@@ -172,6 +174,38 @@ bool GetComponentCenterOfMass(void* component, FVector& out) {
     *reinterpret_cast<R::FName*>(frame + g_getCenterOfMass.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_getCenterOfMass.fn, frame);
     out = *reinterpret_cast<FVector*>(frame + g_getCenterOfMass.off1);
+    return true;
+}
+
+bool ConstraintActorsOf(void* constraint, void*& a1, void*& a2) {
+    a1 = a2 = nullptr;
+    // The fields of a native class, resolved once: the actor and the component name of each end.
+    static int32_t sActor1 = -1, sActor2 = -1, sName1 = -1, sName2 = -1;
+    static bool sResolved = false;
+    if (!constraint || !R::IsLive(constraint)) return false;
+    if (!sResolved) {
+        void* cls = R::FindClass(L"PhysicsConstraintComponent");
+        if (!cls) return false;   // not loaded yet: asked again at the next question
+        sActor1 = R::FindPropertyOffset(cls, L"ConstraintActor1");
+        sActor2 = R::FindPropertyOffset(cls, L"ConstraintActor2");
+        sName1  = R::FindPropertyOffset(cls, L"ComponentName1");
+        sName2  = R::FindPropertyOffset(cls, L"ComponentName2");
+        sResolved = true;
+        if (sActor1 < 0 || sActor2 < 0 || sName1 < 0 || sName2 < 0)
+            UE_LOGW("engine_physics: a constraint's actors cannot be read (offsets %d/%d, names %d/%d)", sActor1, sActor2,
+                    sName1, sName2);
+    }
+    if (sActor1 < 0 || sActor2 < 0 || sName1 < 0 || sName2 < 0) return false;
+    const auto* base = static_cast<const uint8_t*>(constraint);
+    std::memcpy(&a1, base + sActor1, sizeof(a1));
+    std::memcpy(&a2, base + sActor2, sizeof(a2));
+    // A blank actor field with a component name set means the constraint's own owner (UE4's documented convention for a
+    // level-placed constraint; the engine source is not in this tree) [?].
+    R::FName n1{}, n2{};
+    std::memcpy(&n1, base + sName1, sizeof(n1));
+    std::memcpy(&n2, base + sName2, sizeof(n2));
+    if (!a1 && (n1.ComparisonIndex != 0 || n1.Number != 0)) a1 = R::OuterOf(constraint);
+    if (!a2 && (n2.ComparisonIndex != 0 || n2.Number != 0)) a2 = R::OuterOf(constraint);
     return true;
 }
 

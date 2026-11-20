@@ -14,6 +14,7 @@
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/engine_physics.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/facts/function_row.h"
 
@@ -128,10 +129,9 @@ void OnBreakPost(void* context, void* /*sourceObject*/, void* /*result*/) {
 }
 
 struct SeedCtx {
-    int32_t off1;
-    int32_t off2;
-    size_t  total;
-    size_t  seeded;
+    size_t total;
+    size_t seeded;
+    size_t unreadable;
 };
 
 void SeedInstance(void* ctx, void* obj, int32_t) {
@@ -141,8 +141,10 @@ void SeedInstance(void* ctx, void* obj, int32_t) {
     if (g_ties.find(obj) != g_ties.end()) return;   // a call the seam saw wins over the level's names
     void* a = nullptr;
     void* b = nullptr;
-    std::memcpy(&a, static_cast<const uint8_t*>(obj) + s->off1, sizeof(a));
-    std::memcpy(&b, static_cast<const uint8_t*>(obj) + s->off2, sizeof(b));
+    if (!ue_wrap::engine::ConstraintActorsOf(obj, a, b)) {
+        ++s->unreadable;
+        return;
+    }
     if (!a || !b || a == b || !R::IsLive(a) || !R::IsLive(b)) return;
     Tie& t = g_ties[obj];
     t.constraint.Set(obj);
@@ -160,15 +162,14 @@ void SeedIfWorldChanged() {
     g_seenGen = gen;
     SweepStale();
     void* cls = OI::ClassByName(L"PhysicsConstraintComponent");
-    SeedCtx s{cls ? R::FindPropertyOffset(cls, L"ConstraintActor1") : -1,
-              cls ? R::FindPropertyOffset(cls, L"ConstraintActor2") : -1, 0, 0};
-    if (!cls || s.off1 < 0 || s.off2 < 0) {
-        UE_LOGW("constraint_ties: world %u: the by-name constraints cannot be read (class %p, offsets %d/%d)", gen, cls,
-                s.off1, s.off2);
+    if (!cls) {
+        UE_LOGW("constraint_ties: world %u: the by-name constraints cannot be read (no constraint class)", gen);
         return;
     }
+    SeedCtx s{0, 0, 0};
     OI::ForEachInstance(cls, &SeedInstance, &s);
     UE_LOGI("constraint_ties: world %u: seeded %zu by name of %zu", gen, s.seeded, s.total);
+    if (s.unreadable) UE_LOGW("constraint_ties: world %u: %zu constraints' actors could not be read", gen, s.unreadable);
 }
 
 }  // namespace

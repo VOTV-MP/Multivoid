@@ -44,6 +44,12 @@ bool IsComponentSimulatingPhysics(void* component);
 // weld's. False for anything but a live primitive component or when it did not resolve, `out` left as it was.
 bool GetComponentCenterOfMass(void* component, FVector& out);
 
+// The two actors a PhysicsConstraintComponent is configured to tie by name (ConstraintActor1 and 2, the way a level places one:
+// no SetConstrainedComponents call), each as the engine reads it: a blank actor field with a component name set is the
+// constraint's own owner. `a1` and `a2` are left null for an end that names nothing. False when the constraint is not a live
+// one or the fields cannot be read (said once). Plain field reads, no UFunction: safe inside a native patch. Game thread.
+bool ConstraintActorsOf(void* constraint, void*& a1, void*& a2);
+
 // Every primitive component the actor's Blueprint chain declares as a member (a component variable) that
 // simulates is stopped; returns how many were. For an actor driven from elsewhere, which must not also
 // simulate. The members are found once per class name, a Blueprint's layout being the same in every world.
