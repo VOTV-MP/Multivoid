@@ -311,11 +311,13 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
             }
             return;
         }
+        // The join is owed once per take, on a new nonzero hold generation only: a stream with generation 0 latches nothing
+        // and would owe at every pose. Host only; red arm: constraint_join_off=hand.
+        static const bool s_handOff = coop::config::ResolveEnum(coop::config_registry::rows::constraint_join_off) == "hand";
+        if (pose.holdGen != 0 && hold.preludeGen != pose.holdGen && !s_handOff)
+            coop::prop_drive_join::Owe(prop, "client hand");
         if (pose.holdGen == 0 || hold.preludeGen != pose.holdGen) {
             hold.preludeGen = pose.holdGen;
-            // host only; once per take, the latch the prelude rides; red arm: constraint_join_off=hand
-            static const bool s_handOff = coop::config::ResolveEnum(coop::config_registry::rows::constraint_join_off) == "hand";
-            if (!s_handOff) coop::prop_drive_join::Owe(prop, "client hand");
             coop::glowstick_sync::OnHoldBegin(prop);   // a stuck glowstick's own grab frees it: its game runs releaseGlowstick
             const char* state = ue_wrap::prop::IsStatic(prop)   ? "static"
                                 : ue_wrap::prop::IsFrozen(prop) ? "frozen"

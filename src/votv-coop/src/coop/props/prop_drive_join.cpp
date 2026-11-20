@@ -27,6 +27,8 @@ namespace PR = ue_wrap::prop;
 
 constexpr size_t kTieCap = 32;     // the ties read of one prop at a time
 constexpr size_t kWhyLen = 40;     // a cause's name, copied: a caller's string does not outlive its call
+constexpr size_t kWalkCap = 64;    // the actors one owed walk visits; past it the walk stops
+constexpr size_t kOverCapPerTick = 4;   // the over-cap rows ServeOwed opens in one tick
 
 // A prop whose tied partners are owed rows.
 struct Leader {
@@ -39,14 +41,17 @@ std::vector<Leader> g_leaders;
 struct Owed {
     ue_wrap::CachedObjRef ref;
     uint32_t leaderEid;
+    uint64_t tick;   // the Tick that owed it: the over-cap path waits for a later one
     char why[kWhyLen];
 };
 std::vector<Owed> g_owed;
 
+uint64_t g_tick = 0;        // Tick calls this session
 uint64_t g_joined = 0;      // members that got a row at the walk
 uint64_t g_owedCount = 0;   // members put on the owed list
 uint64_t g_owedOpened = 0;  // owed members that got a row when a slot freed
 uint64_t g_owedOver = 0;    // owed members that got a row past the cap, asleep
+uint64_t g_walkStopped = 0; // walks that stopped at kWalkCap
 
 std::vector<void*> g_walk;  // the walk's visited set and queue, kept so a walk allocates nothing in the steady state
 
@@ -81,6 +86,7 @@ void Member(void* actor, uint32_t leaderEid, const char* why) {
     Owed o;
     o.ref.Set(actor);
     o.leaderEid = leaderEid;
+    o.tick = g_tick;
     CopyWhy(o.why, why);
     // Developer red arm of the constraint-join drill (constraint_join_off=owed): the member is counted and dropped, never
     // owed. Resolved once, as prop_drive_host's other drill red arms are.
@@ -105,6 +111,11 @@ void Walk(const Leader& l) {
         for (size_t k = 0; k < n; ++k) {
             void* t = tied[k];
             if (std::find(g_walk.begin(), g_walk.end(), t) != g_walk.end() || !PR::IsDescendantOfProp(t)) continue;
+            if (g_walk.size() >= kWalkCap) {
+                if (Say(++g_walkStopped))
+                    UE_LOGI("prop_drive_join: a walk from eid=%u stopped at %zu", leaderEid, kWalkCap);
+                return;
+            }
             g_walk.push_back(t);
             Member(t, leaderEid, l.why);
         }
@@ -127,15 +138,20 @@ void ServeOwed() {
             UE_LOGI("prop_drive_join: owed-opened %llu -- eid=%u got its row when a slot freed",
                     static_cast<unsigned long long>(g_owedOpened), EidOf(a));
     }
-    for (size_t i = 0; i < g_owed.size();) {
+    // At most kOverCapPerTick of these a tick, and none for a member owed in this very tick: a body that reads asleep at the
+    // take has not been reached by the island's wake yet, so it is not yet at rest.
+    size_t opened = 0;
+    for (size_t i = 0; i < g_owed.size() && opened < kOverCapPerTick;) {
         void* a = g_owed[i].ref.Get();
-        if (!a || !PD::BodyAsleepForEnd(a)) {
+        if (!a || g_owed[i].tick == g_tick || !PD::BodyAsleepForEnd(a)) {
             ++i;
             continue;
         }
         const Owed o = g_owed[i];
         g_owed.erase(g_owed.begin() + static_cast<std::ptrdiff_t>(i));
-        if (PD::CoastJoined(a, o.leaderEid, /*overCap=*/true, o.why) && Say(++g_owedOver))
+        if (!PD::CoastJoined(a, o.leaderEid, /*overCap=*/true, o.why)) continue;
+        ++opened;
+        if (Say(++g_owedOver))
             UE_LOGI("prop_drive_join: owed-overcap %llu -- eid=%u asleep past the cap, its row ends at its rest pose",
                     static_cast<unsigned long long>(g_owedOver), EidOf(a));
     }
@@ -158,6 +174,7 @@ void Owe(void* leader, const char* why) {
 }
 
 void Tick() {
+    ++g_tick;
     if (g_leaders.empty() && g_owed.empty()) return;
     UE_ASSERT_GAME_THREAD("prop_drive_join::Tick");
     for (const Leader& l : g_leaders) Walk(l);
@@ -168,7 +185,7 @@ void Tick() {
 void Clear() {
     g_leaders.clear();
     g_owed.clear();
-    g_joined = g_owedCount = g_owedOpened = g_owedOver = 0;
+    g_tick = g_joined = g_owedCount = g_owedOpened = g_owedOver = g_walkStopped = 0;
 }
 
 }  // namespace coop::prop_drive_join
