@@ -94,6 +94,16 @@ void DropMiner(const net::Session::ReliableMessage& msg) {
                 static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot, static_cast<unsigned long long>(n));
 }
 
+// Every basement flood message the dispatcher drops (the wrong way, the wrong length or malformed) is counted on one
+// counter, logged at the first and each power of two.
+void DropFlood(const net::Session::ReliableMessage& msg) {
+    static uint64_t s_dropped = 0;
+    const uint64_t n = ++s_dropped;
+    if ((n & (n - 1)) == 0)
+        UE_LOGW("event_feed: a flood message dropped (the wrong way, of %zu bytes or malformed), from slot %d: %llu so far",
+                static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot, static_cast<unsigned long long>(n));
+}
+
 // Every extinguisher message the dispatcher drops (the wrong way, the wrong length or out of range) is counted on one
 // counter, logged at the first and each power of two.
 void DropFireExt(const net::Session::ReliableMessage& msg) {
@@ -440,14 +450,14 @@ bool HandlePropDriveEvent(net::Session& session,
     case net::ReliableKind::FloodIntent: {
         // FloodState HOST->ALL, FloodIntent CLIENT->HOST.
         const bool intent = msg.kind == net::ReliableKind::FloodIntent;
-        if (intent != (session.role() == net::Role::Host) || msg.payloadLen < sizeof(net::FloodPayload)) {
-            UE_LOGW("event_feed: a flood message the wrong way or too short from slot %d -- dropping", msg.senderPeerSlot);
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(net::FloodPayload)) {
+            DropFlood(msg);
             break;
         }
         net::FloodPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         if (p.damaged > 1 || p.op > net::kFloodOpFix || !std::isfinite(p.level)) {
-            UE_LOGW("event_feed: flood message malformed -- dropping");
+            DropFlood(msg);
             break;
         }
         if (intent) ::coop::flood_sync::OnIntent(msg.senderPeerSlot, p);

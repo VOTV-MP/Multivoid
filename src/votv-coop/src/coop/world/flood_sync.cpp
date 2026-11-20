@@ -200,8 +200,8 @@ void OnStateRan(const sg::Call& call) {
 // loc_a property, no UFunction call. A root with a parent has no world pose in memory, and the exact read goes through
 // getLevel then.
 bool LevelOf(void* volume, float& out) {
-    static int32_t locA = -2;   // loc_a's offset; -1 when the class has none
-    if (locA == -2) locA = R::FindPropertyOffset(R::ClassOf(volume), L"loc_a");
+    static R::InstanceOffset sLocA{L"loc_a"};
+    const int32_t locA = sLocA.Of(volume);
     ue_wrap::FVector at{};
     if (locA < 0 || !ue_wrap::engine::TryGetRootLocationRaw(volume, at)) return Level(volume, out);
     const ue_wrap::FVector a = *reinterpret_cast<const ue_wrap::FVector*>(static_cast<const char*>(volume) + locA);
@@ -340,9 +340,41 @@ void Tick() {
     }
 }
 
+namespace {
+
+// Our own State and setLevel run inside this scope, and the watches let them pass.
+class ApplyScope {
+public:
+    ApplyScope() { ++g_applying; }
+    ~ApplyScope() { --g_applying; }
+    ApplyScope(const ApplyScope&) = delete;
+    ApplyScope& operator=(const ApplyScope&) = delete;
+};
+
+// The volume's own range: its level is a distance from loc_a up to its `height` (loc_b = loc_a + height up; setLevel lerps
+// by level / height; BP waterVolume_basementFlooder, `height` 500 by default). False when the volume has no such property.
+bool HeightOf(void* volume, float& out) {
+    static R::InstanceOffset sHeight{L"height"};
+    const int32_t off = sHeight.Of(volume);
+    if (off < 0) return false;
+    out = *reinterpret_cast<const float*>(static_cast<const char*>(volume) + off);
+    return std::isfinite(out) && out > 0.f;
+}
+
+// Every refused level is counted on one counter, logged at the first and each power of two.
+void DropLevel(float level) {
+    static uint64_t s_dropped = 0;
+    const uint64_t n = ++s_dropped;
+    if ((n & (n - 1)) == 0)
+        UE_LOGW("flood_sync: a level of %.1f is outside the volume's range (0 to its height) -- dropped: %llu so far", level,
+                static_cast<unsigned long long>(n));
+}
+
+}  // namespace
+
 void OnState(const Payload& p) {
     const std::wstring name = N::StringFromWireKey(p.name);
-    ++g_applying;
+    ApplyScope scope;
     if (p.op == N::kFloodOpPipe) {
         void* const pipe = ByName(kPipeClass, name);
         bool damaged = false;
@@ -350,9 +382,12 @@ void OnState(const Payload& p) {
         if (pipe && Damaged(pipe, damaged) && damaged != want && SetPipe(pipe, want))
             UE_LOGI("flood_sync: CLIENT pipe '%ls' %s, as the host's", name.c_str(), want ? "burst" : "mended");
     } else if (p.op == N::kFloodOpLevel && std::isfinite(p.level)) {
-        if (void* const v = ByName(kVolumeClass, name)) SetLevel(v, p.level);
+        void* const v = ByName(kVolumeClass, name);
+        float height = 0.f;
+        if (!v || !HeightOf(v, height)) return;
+        if (p.level < 0.f || p.level > height + kLevelEps) return DropLevel(p.level);
+        SetLevel(v, p.level);
     }
-    --g_applying;
 }
 
 void OnIntent(int senderSlot, const Payload& p) {
