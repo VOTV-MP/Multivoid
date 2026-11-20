@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/net/protocol.h"
+#include "coop/net/refusal_tally.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
@@ -47,6 +48,9 @@ constexpr float kSameSpotCm = 0.001f;    // a decal of the class this near is th
                                          // own, lie at the host's floats, and a bottle's pours land a millimetre apart
 constexpr size_t kCap = 64;
 constexpr size_t kMaxSpills = 512;       // the host's spills kept for a joiner
+constexpr size_t kMaxLeafPending = 256;  // fallen leaves seen and not yet taken by a tick
+constexpr size_t kMaxLeaves = 512;       // the host's fallen leaves kept for a joiner
+const wchar_t* const kLeafClass = L"grime_fallenLeaves_C";
 constexpr float kGone = -1.f;            // a payload's process: the spill was wiped away (state) or taken (intent)
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -80,11 +84,17 @@ float g_pourSize = -1.f;    // grimeProjectile_C's default size: a break leaves 
 struct Landed {
     ue_wrap::CachedObjRef decal;
     bool held = false;
-    bool leaves = false;     // a fallen-leaves decal (autumnLeafSpawner_C): no splash, and a client's own goes
     int foreignSlot = 0;     // HOST: > 0 when the projectile was a foreign flight: the slot whose hold drove its prop
     std::wstring foreignCls;
 };
 std::vector<Landed> g_landed;
+// The fallen leaves the hook saw (autumnLeafSpawner_C's decals): no splash, and a client's own goes. Their own list and
+// record: a wind burst is many decals at once, and they must neither wait behind a spill's cap nor push a spill out of a
+// joiner's replay.
+std::vector<ue_wrap::CachedObjRef> g_leafLanded;
+size_t g_leafPeak = 0;                              // the most leaves pending at once (Leaves)
+uint32_t g_leavesDropped = 0;                       // leaves past kMaxLeafPending, which no lane takes
+coop::net::RefusalTally g_leafOverflow{"spill"};    // said once per window, with the count
 
 // HOST: every spill it sent, for its end and a joiner. CLIENT: every host spill made here, for this player's wipe.
 struct Sent {
@@ -92,6 +102,7 @@ struct Sent {
     Payload p{};
 };
 std::vector<Sent> g_spills;
+std::vector<Sent> g_leafSpills;   // HOST: the fallen leaves it sent, for a joiner; a leaf's end goes by the grime lane
 std::vector<Sent> g_copies;
 struct Intent {
     int slot = 0;
@@ -215,12 +226,16 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
     // Fallen leaves: the wind's timer (directionalWind_C::timer_spawnLeaves) has every autumnLeafSpawner_C trace a random
     // spot and spawn a grime_fallenLeaves_C there, on each machine, so each peer grew its own leaves. The host's go out as
     // its spills do; a client's own are removed and the host's made here.
-    if (source && GS::IsDecal(spawned) && g_landed.size() < kCap && !LeavesLaneOff() &&
-        R::ClassNameOf(source) == L"autumnLeafSpawner_C") {
-        Landed l;
-        l.decal.Set(spawned);
-        l.leaves = true;
-        g_landed.push_back(l);
+    if (source && GS::IsDecal(spawned) && !LeavesLaneOff() && R::ClassNameOf(source) == L"autumnLeafSpawner_C") {
+        if (g_leafLanded.size() >= kMaxLeafPending) {   // never dropped silently: counted, and said once a window
+            ++g_leavesDropped;
+            g_leafOverflow.Note(0, "a fallen leaf past the pending cap is taken by no lane", coop::net::RefusalTally::Clock::now());
+            return;
+        }
+        ue_wrap::CachedObjRef leaf;
+        leaf.Set(spawned);
+        g_leafLanded.push_back(leaf);
+        if (g_leafLanded.size() > g_leafPeak) g_leafPeak = g_leafLanded.size();
         return;
     }
     if (!source || !GS::IsProjectile(source) || !GS::IsDecal(spawned) || g_landed.size() >= kCap) return;
@@ -249,14 +264,16 @@ void* Body(int slot) {
     return body && R::IsLive(body) ? body : nullptr;
 }
 
-void Broadcast(coop::net::Session& s, void* decal, const Payload& p) {
+void Broadcast(coop::net::Session& s, void* decal, const Payload& p, bool leaf = false) {
     // The record first: it is the host's world, replayed to every joiner; the send is only its delivery to the
-    // clients connected now, and with none connected it fails.
-    if (g_spills.size() >= kMaxSpills) g_spills.erase(g_spills.begin());
+    // clients connected now, and with none connected it fails. A leaf has its own record, so a wind burst never
+    // pushes a spill out of it.
+    std::vector<Sent>& record = leaf ? g_leafSpills : g_spills;
+    if (record.size() >= (leaf ? kMaxLeaves : kMaxSpills)) record.erase(record.begin());
     Sent row;
     row.decal.Set(decal);
     row.p = p;
-    g_spills.push_back(row);
+    record.push_back(row);
     if (s.SendReliable(coop::net::ReliableKind::SpillState, &p, sizeof(p))) ++g_sent;
     UE_LOGI("spill: a %ls landed at (%.0f %.0f %.0f)", coop::net::StringFromWireKey(p.cls).c_str(), p.loc[0], p.loc[1],
             p.loc[2]);
@@ -310,12 +327,25 @@ void HostTick(coop::net::Session& s) {
         GS::Spill sp;
         if (void* d = l.decal.Get(); d && GS::ReadSpill(d, sp)) {
             Payload p = ToWire(sp);
-            p.splash = l.leaves ? 0 : 1;
+            p.splash = 1;
             p.origin = 0;   // the host's own flight: it heard its splash
             Broadcast(s, d, p);
-            if (l.leaves) ++g_leavesSent;
         }
     }
+    std::vector<ue_wrap::CachedObjRef> leaves;
+    leaves.swap(g_leafLanded);
+    for (const ue_wrap::CachedObjRef& leaf : leaves) {
+        GS::Spill sp;
+        if (void* d = leaf.Get(); d && GS::ReadSpill(d, sp)) {
+            Payload p = ToWire(sp);
+            p.splash = 0;   // nothing splashes
+            p.origin = 0;
+            Broadcast(s, d, p, /*leaf=*/true);
+            ++g_leavesSent;
+        }
+    }
+    // A leaf's end is the grime lane's (every peer destroys its own on the ended mark), so it leaves the record unsaid.
+    for (auto it = g_leafSpills.begin(); it != g_leafSpills.end();) it = it->decal.Get() ? std::next(it) : g_leafSpills.erase(it);
     std::vector<Intent> intents;
     intents.swap(g_intents);
     for (const Intent& in : intents) {
@@ -378,6 +408,10 @@ void ClientTick(coop::net::Session& s) {
         }
         RemoveOwn(d);
     }
+    std::vector<ue_wrap::CachedObjRef> leaves;   // a client's own fallen leaves: the host's are the world's
+    leaves.swap(g_leafLanded);
+    for (const ue_wrap::CachedObjRef& leaf : leaves)
+        if (void* d = leaf.Get()) RemoveOwn(d);
     for (auto it = g_flights.begin(); it != g_flights.end();) it = it->projectile.Get() ? std::next(it) : g_flights.erase(it);
     if (!coop::net_pump::HasAnnouncedWorldReady()) return;
     for (auto it = g_copies.begin(); it != g_copies.end();) {
@@ -420,10 +454,12 @@ void ClientTick(coop::net::Session& s) {
         }
         if (here && !p.splash) continue;   // a replay of a spill the save already gave this world
         if (void* d = GS::SpawnSpill(sp)) {
-            Sent copy;
-            copy.decal.Set(d);
-            copy.p = p;
-            g_copies.push_back(copy);
+            if (sp.className != kLeafClass) {   // a leaf's end is the grime lane's, so no wipe of it is asked of the host
+                Sent copy;
+                copy.decal.Set(d);
+                copy.p = p;
+                g_copies.push_back(copy);
+            }
             ++g_made;
             if (p.splash && p.origin != coop::players::Registry::Get().LocalPeerId()) {
                 coop::prop_sound::PlaySpillSplashAt(d, sp.location);
@@ -441,7 +477,9 @@ void Reset() {
     g_flights.clear();
     g_foreign.clear();
     g_landed.clear();
+    g_leafLanded.clear();
     g_spills.clear();
+    g_leafSpills.clear();
     g_copies.clear();
     g_intents.clear();
     g_inbox.clear();
@@ -457,6 +495,7 @@ void Tick() {
     g_live.store(s != nullptr, std::memory_order_relaxed);
     if (!s) return;
     g_host.store(s->role() == coop::net::Role::Host, std::memory_order_relaxed);
+    g_leafOverflow.Flush(coop::net::RefusalTally::Clock::now());
     if (!GS::EnsureResolved()) return;
     if (!g_hooked) {
         static uint32_t sTry = 0;
@@ -488,18 +527,16 @@ void OnIntent(int senderSlot, const coop::net::SpillPayload& p) {
 void QueueConnectBroadcastForSlot(int slot) {
     coop::net::Session* s = Live();
     if (!s || s->role() != coop::net::Role::Host) return;
-    size_t sent = 0;
-    for (auto it = g_spills.begin(); it != g_spills.end();) {
-        if (!it->decal.Get()) {   // wiped away: the next tick says so to everyone
-            ++it;
-            continue;
+    size_t sent = 0, leaves = 0;
+    for (const std::vector<Sent>* record : {&g_spills, &g_leafSpills})
+        for (const Sent& row : *record) {
+            if (!row.decal.Get()) continue;   // wiped away: the next tick says so to everyone (a leaf's, the grime lane)
+            Payload again = row.p;
+            again.splash = 0;   // a replay: it landed long ago
+            if (s->SendReliableToSlot(slot, coop::net::ReliableKind::SpillState, &again, sizeof(again)))
+                (record == &g_leafSpills ? leaves : sent)++;
         }
-        Payload again = it->p;
-        again.splash = 0;   // a replay: it landed long ago
-        if (s->SendReliableToSlot(slot, coop::net::ReliableKind::SpillState, &again, sizeof(again))) ++sent;
-        ++it;
-    }
-    if (sent) UE_LOGI("spill: %zu spills again for slot %d", sent, slot);
+    if (sent || leaves) UE_LOGI("spill: %zu spills and %zu fallen leaves again for slot %d", sent, leaves, slot);
 }
 
 void OnDisconnect() {
@@ -512,9 +549,8 @@ void OnDisconnect() {
 }
 
 LeafTally Leaves() {
-    uint32_t pending = 0;
-    for (const Landed& l : g_landed) pending += l.leaves ? 1u : 0u;
-    return LeafTally{g_hooked, pending, g_leavesSent};
+    return LeafTally{g_hooked, static_cast<uint32_t>(g_leafLanded.size()), g_leavesSent,
+                     static_cast<uint32_t>(g_leafPeak), g_leavesDropped};
 }
 
 uint32_t SplashesPlayed() { return g_splashes.load(); }

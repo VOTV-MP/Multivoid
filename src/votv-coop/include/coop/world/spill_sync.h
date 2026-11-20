@@ -55,12 +55,14 @@ uint32_t PoursSent();
 
 // DEV-DRILL ONLY: the fallen-leaves part of the lane, read by the clean drill's `leaves` arm. `watching` is the
 // FinishSpawningActor watch being installed, `pending` the leaf decals it has seen that the lane's tick has not yet taken
-// (a client removes them, the host sends them), `sent` the host's leaves the lane has taken, for a joiner's replay too.
-// Game thread.
+// (a client removes them, the host sends them), `sent` the host's leaves the lane has taken, `peak` the most pending at
+// once (a wind burst's size) and `dropped` the leaves past the pending cap, which no lane took. Game thread.
 struct LeafTally {
     bool watching;
     uint32_t pending;
     uint32_t sent;
+    uint32_t peak;
+    uint32_t dropped;
 };
 LeafTally Leaves();
 

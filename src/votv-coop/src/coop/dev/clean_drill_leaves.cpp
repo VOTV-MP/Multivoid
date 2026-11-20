@@ -138,6 +138,11 @@ void TickLeaves(coop::net::Session& s) {
     case Lv::Settle: {
         // The lane drains what its hook saw in one tick: with nothing pending it has taken them all, or never saw them.
         if (coop::spill_sync::Leaves().pending != 0) return;
+        {
+            const coop::spill_sync::LeafTally lane = coop::spill_sync::Leaves();
+            UE_LOGI("[CLN] the lane's most fallen leaves pending at once: %u (%u dropped past its cap)", lane.peak,
+                    lane.dropped);
+        }
         if (host) {
             const uint32_t taken = coop::spill_sync::Leaves().sent - g_sent0;
             if (taken < g_own.size()) {
