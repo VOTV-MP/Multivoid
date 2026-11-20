@@ -114,6 +114,7 @@
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/props/prop_pry_host.h"  // the host's judge of a client's pry
 #include "coop/props/prop_pry_sync.h"  // a crowbar's pry of a prop with no wall-attach component
+#include "coop/dev/cleanup_trace.h"  // the props clean-up calls, named as each runs when the row is set
 #include "coop/dev/dev_lanes.h"  // the developer drills, probes and selftests, wired in one place
 #include "coop/dev/perf_probe.h"
 #include "coop/save/join_window_baseline.h"  // the connect edge's removes and position corrections
@@ -395,7 +396,7 @@ void ClientConnectEdge(coop::net::Session& session) {
 void DisconnectSlot(coop::net::Session& session, int slot) {
     // Abort any snapshot drain to this slot, so it does not iterate every candidate into a dead
     // connection.
-    coop::prop_snapshot::CancelForSlot(slot);
+    COOP_CLEANUP_STEP("peer-left", coop::prop_snapshot::CancelForSlot(slot));
     // Drop any in-flight save stream and close the world-ready send gate for the departed slot; a
     // rejoin re-opens both fresh.
     coop::save_transfer::CancelForSlot(slot);
@@ -405,18 +406,18 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     session.MarkSlotWorldReady(slot, false);
     // A slot teardown is a roster row transition: the leaver's half assemblies and seed brackets
     // must not survive into a recycled occupant.
-    coop::prop_save_data::OnPeerGone(static_cast<uint8_t>(slot));
+    COOP_CLEANUP_STEP("peer-left", coop::prop_save_data::OnPeerGone(static_cast<uint8_t>(slot)));
     coop::floppy_slot_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::dish_hashcode_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::sat_console_sync::OnPeerGone(static_cast<uint8_t>(slot));  // its terminal kept, running its command, for its return
     coop::daily_task_sync::OnPeerGone(static_cast<uint8_t>(slot));  // a departed slot is owed no task
-    coop::props::container_birth::OnPeerGone(static_cast<uint8_t>(slot));  // a container transfer it had in flight
-    coop::props::container_act_host::OnPeerGone(static_cast<uint8_t>(slot));  // a record it held in escrow goes back
+    COOP_CLEANUP_STEP("peer-left", coop::props::container_birth::OnPeerGone(static_cast<uint8_t>(slot)));  // a container transfer it had in flight
+    COOP_CLEANUP_STEP("peer-left", coop::props::container_act_host::OnPeerGone(static_cast<uint8_t>(slot)));  // a record it held in escrow goes back
     coop::kerfur_command_wire::OnPeerGone(static_cast<uint8_t>(slot));  // a kerfur command it had half sent
-    coop::prop_nametag::OnPeerGone(static_cast<uint8_t>(slot));  // a nametag it had half sent
+    COOP_CLEANUP_STEP("peer-left", coop::prop_nametag::OnPeerGone(static_cast<uint8_t>(slot)));  // a nametag it had half sent
     coop::garbage_bin_sync::OnPeerGone(static_cast<uint8_t>(slot));  // a replay it was still owed
     coop::kerfur_command_answer::OnPeerGone(static_cast<uint8_t>(slot));  // a consumed-held answer it was owed
-    coop::prop_act_host::OnPeerGone(static_cast<uint8_t>(slot));  // a take or use it had reserved
+    COOP_CLEANUP_STEP("peer-left", coop::prop_act_host::OnPeerGone(static_cast<uint8_t>(slot)));  // a take or use it had reserved
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);
     // Shut the chat lane's per-slot seed gate: the next occupant's applied range starts empty, so
@@ -499,35 +500,35 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands
     coop::kerfur_command_seat::OnDisconnect();  // drop the cached session (the watch stays registered)
     coop::requester_feedback::OnDisconnect();  // say the routed counts, close the scope
-    coop::remover_request::OnDisconnect();  // drop the remover queues and the shown notices
+    COOP_CLEANUP_STEP("disconnect", coop::remover_request::OnDisconnect());  // drop the remover queues and the shown notices
     coop::cheats::OnDisconnect();  // forget the last cheat's status
     coop::hit_intent::OnDisconnect();  // forget the once-per-session log latches
     coop::cremator_hit::OnDisconnect();  // say the cremator hits sent and applied, forget the once-per-session latches
-    coop::props::prop_damage_gate::OnDisconnect();  // say the cancelled counts, forget the once-per-class latches
-    coop::props::container_act_host::OnDisconnect();  // restore the records held in escrow, drop the tallies and refusals
-    coop::prop_act_host::OnDisconnect();  // drop the take-or-use tallies, refusals and reservations
-    coop::snack_act::OnDisconnect();  // drop the snacks marked for publication
-    coop::props::container_act_request::OnDisconnect();  // drop the pending container act, its expired records and unsent commits
-    coop::prop_act_request::OnDisconnect();  // drop the pending take or use, its latch and its expired records
+    COOP_CLEANUP_STEP("disconnect", coop::props::prop_damage_gate::OnDisconnect());  // say the cancelled counts, forget the once-per-class latches
+    COOP_CLEANUP_STEP("disconnect", coop::props::container_act_host::OnDisconnect());  // restore the records held in escrow, drop the tallies and refusals
+    COOP_CLEANUP_STEP("disconnect", coop::prop_act_host::OnDisconnect());  // drop the take-or-use tallies, refusals and reservations
+    COOP_CLEANUP_STEP("disconnect", coop::snack_act::OnDisconnect());  // drop the snacks marked for publication
+    COOP_CLEANUP_STEP("disconnect", coop::props::container_act_request::OnDisconnect());  // drop the pending container act, its expired records and unsent commits
+    COOP_CLEANUP_STEP("disconnect", coop::prop_act_request::OnDisconnect());  // drop the pending take or use, its latch and its expired records
     coop::vent_crawler_sync::OnDisconnect();
-    coop::prop_hold_claim::OnDisconnect();  // drop the refusal records and the notice cooldown
-    coop::props::prop_food_sync::OnDisconnect();  // the food lane's tallies, latches and waiting records
+    COOP_CLEANUP_STEP("disconnect", coop::prop_hold_claim::OnDisconnect());  // drop the refusal records and the notice cooldown
+    COOP_CLEANUP_STEP("disconnect", coop::props::prop_food_sync::OnDisconnect());  // the food lane's tallies, latches and waiting records
     coop::hand_record_sync::OnDisconnect();  // the hands' records and half-assemblies
     coop::cover_sync::OnDisconnect();  // the covers sent, the asks and states queued
-    coop::fireext_sync::OnDisconnect();  // the sprays shown, the thrusts waiting for a copy, the asks and the tallies
+    COOP_CLEANUP_STEP("disconnect", coop::fireext_sync::OnDisconnect());  // the sprays shown, the thrusts waiting for a copy, the asks and the tallies
     coop::desk_short_sync::OnDisconnect();
-    coop::food_tick_gate::OnDisconnect();  // say the refused food ticks, start the next session from zero
+    COOP_CLEANUP_STEP("disconnect", coop::food_tick_gate::OnDisconnect());  // say the refused food ticks, start the next session from zero
     coop::plant_gate::OnDisconnect();  // say the refused counts, start the next session from zero
     coop::woodchipper_gate::OnDisconnect();  // say the refused ticks and the asks, start the next session from zero
     coop::plant_sync::OnDisconnect();
     coop::world_sound_sync::OnDisconnect();
-    coop::prop_tool_flags::OnDisconnect();  // drop the pending press and the counters
+    COOP_CLEANUP_STEP("disconnect", coop::prop_tool_flags::OnDisconnect());  // drop the pending press and the counters
     coop::garbage_bin_sync::OnDisconnect();
-    coop::props::container_break::OnDisconnect();
-    coop::props::hacksaw_cut::OnDisconnect();
-    coop::prop_stick_sync::OnDisconnect();  // drop commit-pending stick records
-    coop::prop_pry_sync::OnDisconnect();  // the session's pry counters and its pried-keys record
-    coop::prop_pry_host::OnDisconnect();  // the host's pry counters (a sender's queue goes with its slot)
+    COOP_CLEANUP_STEP("disconnect", coop::props::container_break::OnDisconnect());
+    COOP_CLEANUP_STEP("disconnect", coop::props::hacksaw_cut::OnDisconnect());
+    COOP_CLEANUP_STEP("disconnect", coop::prop_stick_sync::OnDisconnect());  // drop commit-pending stick records
+    COOP_CLEANUP_STEP("disconnect", coop::prop_pry_sync::OnDisconnect());  // the session's pry counters and its pried-keys record
+    COOP_CLEANUP_STEP("disconnect", coop::prop_pry_host::OnDisconnect());  // the host's pry counters (a sender's queue goes with its slot)
     coop::sleepingbag_sync::OnDisconnect();
     coop::item_activate::OnDisconnect();
     coop::weather_sync::OnDisconnect();
@@ -563,8 +564,8 @@ DisconnectStats DisconnectAll() {
     coop::mirror_slot_entry::OnDisconnect();
     coop::orb_authority::OnDisconnect();  // the encounters the host was judging
     coop::ufo_sync::OnDisconnect();  // the paths sent and pending
-    coop::roomba_sync::OnDisconnect();  // the cleaners known, the presses and states queued
-    coop::fireext_thrust_sync::OnDisconnect();  // the thrusting extinguishers it held
+    COOP_CLEANUP_STEP("disconnect", coop::roomba_sync::OnDisconnect());  // the cleaners known, the presses and states queued
+    COOP_CLEANUP_STEP("disconnect", coop::fireext_thrust_sync::OnDisconnect());  // the thrusting extinguishers it held
     coop::puppet_identity::OnDisconnect();  // the resolved classes and stubs, the grunt and wisp_p windows
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
@@ -578,21 +579,21 @@ DisconnectStats DisconnectAll() {
     coop::turbine_sync::OnDisconnect();
     coop::woodchipper_sync::OnDisconnect();
     coop::atv_host_sync::OnDisconnect();
-    coop::glowstick_sync::OnDisconnect();
+    COOP_CLEANUP_STEP("disconnect", coop::glowstick_sync::OnDisconnect());
     coop::upgrade_sync::OnDisconnect();  // and its own upgrade panel buys locally again
     coop::device_occupancy::OnDisconnect();
     coop::notebook_sync::OnDisconnect();  // and its last-published text
     coop::console_state_sync::OnDisconnect();
     coop::signal_catch_sync::OnDisconnect();
-    coop::prop_save_data::OnDisconnect();
+    COOP_CLEANUP_STEP("disconnect", coop::prop_save_data::OnDisconnect());
     coop::laptop_sync::OnDisconnect();
     coop::laptop_tab::OnDisconnect();
     coop::portable_pc_lid::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler
     coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + canonical retries
-    coop::props::container_contents_sync::OnDisconnect();  // dirty set + retry + parked + assembler
-    coop::props::prop_record_refresh::OnDisconnect();  // session release, counters, the drill red's map
-    coop::props::prop_can_state::OnDisconnect();  // its counters (what is known of every can goes with the world)
+    COOP_CLEANUP_STEP("disconnect", coop::props::container_contents_sync::OnDisconnect());  // dirty set + retry + parked + assembler
+    COOP_CLEANUP_STEP("disconnect", coop::props::prop_record_refresh::OnDisconnect());  // session release, counters, the drill red's map
+    COOP_CLEANUP_STEP("disconnect", coop::props::prop_can_state::OnDisconnect());  // its counters (what is known of every can goes with the world)
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
     coop::subsystems::desk::OnDisconnect();  // the desk, the drives and the dishes: each lane's counters, shadows and sessions
     coop::oven_progress_sync::OnDisconnect();  // the known ovens + parked masks
@@ -601,7 +602,7 @@ DisconnectStats DisconnectAll() {
     coop::level_visit::OnDisconnect();
     coop::puppet_hide::OnDisconnect();  // every copy hidden for a dream or a visit is shown
     coop::sleep_rest::OnDisconnect();  // the session ended: a rest goes back; a host's last client left: its sleep is declared again
-    coop::prop_throw::OnDisconnect();  // the thrower's records of its own throws
+    COOP_CLEANUP_STEP("disconnect", coop::prop_throw::OnDisconnect());  // the thrower's records of its own throws
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
     coop::wisp_tear_mirror::OnDisconnect();  // clear any armed victim-death deadline
     coop::wisp_grab_hold::OnDisconnect();  // release a live self-grab (un-strand MOVE_None) and drop the holds
@@ -613,22 +614,22 @@ DisconnectStats DisconnectAll() {
     coop::voice_chat::OnDisconnect();
     coop::window_sync::OnDisconnect();
     coop::window_stroke_sync::OnDisconnect();
-    coop::trash_pile_sync::OnDisconnect();
+    COOP_CLEANUP_STEP("disconnect", coop::trash_pile_sync::OnDisconnect());
     coop::broom_stroke::OnDisconnect();  // with no session the game's broom sweeps as written
-    coop::pack_trash_intent::OnDisconnect();  // with no session the game's own bagging stands
+    COOP_CLEANUP_STEP("disconnect", coop::pack_trash_intent::OnDisconnect());  // with no session the game's own bagging stands
     coop::verb_lanes::OnDisconnect();  // and each verb lane's counters and summary line (a sender's queue goes with its slot)
     coop::kerfus_lanes::OnDisconnect();  // and the Kerfus lanes' records and waiting states
     coop::served_player::OnDisconnect();  // and every served robot's record: its seams disarm
     coop::broom_push::OnDisconnect();  // forget pushes not yet handed on
-    coop::trash_collect_sync::OnDisconnect();
-    coop::trash_channel::OnDisconnect();  // drop the per-eid trash sync-time-context map
+    COOP_CLEANUP_STEP("disconnect", coop::trash_collect_sync::OnDisconnect());
+    COOP_CLEANUP_STEP("disconnect", coop::trash_channel::OnDisconnect());  // drop the per-eid trash sync-time-context map
     coop::puppet_carry_drive::OnDisconnect();  // drop all puppet-held clump drives
-    coop::trash_sweep::OnDisconnect();  // drop the swept clumps still rolling
-    coop::trash_clump_pose_stream::OnDisconnect();  // drop all client per-eid carry drives
-    coop::prop_drive_host::OnDisconnect();  // drop the host's driven-prop set and the client syncers' table (prop_syncer_host)
+    COOP_CLEANUP_STEP("disconnect", coop::trash_sweep::OnDisconnect());  // drop the swept clumps still rolling
+    COOP_CLEANUP_STEP("disconnect", coop::trash_clump_pose_stream::OnDisconnect());  // drop all client per-eid carry drives
+    COOP_CLEANUP_STEP("disconnect", coop::prop_drive_host::OnDisconnect());  // drop the host's driven-prop set and the client syncers' table (prop_syncer_host)
     coop::element::bind_wait::Clear("disconnect");  // the messages waiting for a bind go with the session
-    coop::props::bracket_position_wait::Reset();  // and the spawns waiting for a bracket that will not close
-    coop::prop_drive_stream::OnDisconnect();  // every driven prop here gets its physics back
+    COOP_CLEANUP_STEP("disconnect", coop::props::bracket_position_wait::Reset());  // and the spawns waiting for a bracket that will not close
+    COOP_CLEANUP_STEP("disconnect", coop::prop_drive_stream::OnDisconnect());  // every driven prop here gets its physics back
     coop::prop_park::OnDisconnect();  // after both receivers gave their props back: the holds a park still has
     coop::rider_hold::OnDisconnect();  // last: any movement still held ticks again
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup

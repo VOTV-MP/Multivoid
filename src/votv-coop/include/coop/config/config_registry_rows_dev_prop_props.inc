@@ -105,3 +105,7 @@ CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|j
     "running away before the client is launched (the rig's client-after), and the joiner must show both once its join is "
     "done and show the spray's end: rig: VERDICT fireext-spray-join PASS, FAIL or INVALID. Both peers print every "
     "extinguisher they have and every move of one.")
+CFG_FLAG(cleanup_trace, "cleanup_trace", "dev", false, "VOTVCOOP_CLEANUP_TRACE",
+    "Developer trace (both peers, default off): each props clean-up call the session runs for a peer that left and for "
+    "the session's end is logged as \"cleanup-trace: <phase> <the call>\" before it runs, so two builds that move those "
+    "calls between files can be compared by their two lists of lines, which must be equal. It changes no behaviour.")
