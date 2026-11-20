@@ -340,3 +340,10 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   floor or hung in the air once its record was written into it, because the prop's own load turns its physics back on. Kept as
   written: the display made again after the record's write. On top: one definition of a display the hand's spawn and the kerfur's
   disc carry use too, and a drill arm with a red.
+- **The base's grime across a rehost** ([#179](https://github.com/VOTV-MP/Multivoid/pull/179)): a save replay that ran while a session
+  was live read the map's own decal deletes as wipes and lowered the save's grime (935 decals on the rig). Kept as written: the
+  replay is watched and the lane forgets as it begins. On top: a drill that judges only a cycle whose replay the session saw, with a red.
+- **Fallen leaves and a cleaned stain** ([#188](https://github.com/VOTV-MP/Multivoid/pull/188)): autumn leaves grew on each machine apart,
+  and a stain cleaned away stood on the others. Kept as written: the host's leaves go out as spills, a decal's end as its own mark.
+  On top: a peer's grime value is bounded, leaves have their own join record and are indexed as they spawn, a joiner holds the
+  host's leaves, and drills with a red for each.
