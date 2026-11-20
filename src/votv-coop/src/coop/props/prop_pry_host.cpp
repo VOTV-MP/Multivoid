@@ -13,6 +13,7 @@
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"  // what the sender's hand holds, and held last
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/props/constraint_ties.h"  // AddBreakListener: the one patch on BreakConstraint
 #include "coop/props/prop_drive_host.h"  // OverrideClientSyncer: a write to the copy ends a client's row on it
 #include "coop/props/prop_key_index.h"
 #include "coop/props/prop_pry_sync.h"
@@ -22,8 +23,6 @@
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/ufunction_hook.h"
-#include "ue_wrap/facts/function_row.h"
 
 #include <cmath>
 #include <cstdint>
@@ -88,7 +87,7 @@ void Refuse(uint8_t slot, const std::wstring& key, Why why) {
 // A pry on the host's copy. A plank: the flags its crowbarOpen clears, the sound it plays and the kick along the crowbar's
 // right vector the client read, renormalised -- a client's kick is a direction, never a magnitude. A radiator or a
 // security TV: its own crowbarOpen, whose breakingSequence draws its own shuffle and spin on the host's body alone and
-// reaches the clients as the joints its BreakConstraint breaks (OnBreakPost).
+// reaches the clients as the joints its BreakConstraint breaks (OnBreak).
 bool RunPry(void* prop, const coop::net::PryAskPayload& p) {
     // The pry writes the copy's flags and physics, so a client that syncs the prop loses it first, as to a host verb. A
     // no-op for a prop with no client row.
@@ -103,22 +102,17 @@ bool RunPry(void* prop, const coop::net::PryAskPayload& p) {
     return true;
 }
 
-// UPhysicsConstraintComponent::BreakConstraint, native, so the gate cannot see it: a post hook on its Func, which fires
-// for every route into it, the Blueprint's own call among them. The host's break of a radiator's or a TV's joint goes
-// to the clients as the joint, in the host's order.
-UE_FACT_FN(kRowBreakConstraint, "prop_pry_host", L"PhysicsConstraintComponent", L"BreakConstraint", Declared);
-bool g_hookInstalled = false;
-uint64_t g_hookTryMs = 0;
-bool g_hostActive = false;  // the host's session runs: set by Tick, read by the hook
-BreakListener g_listener = nullptr;
+// UPhysicsConstraintComponent::BreakConstraint, native, so the gate cannot see it: constraint_ties' post patch on its Func
+// fires for every route into it, the Blueprint's own call among them, and tells this listener. The host's break of a
+// radiator's or a TV's joint goes to the clients as the joint, in the host's order.
+bool g_hostActive = false;  // the host's session runs: set by Tick, read by the listener
+bool g_listening = false;   // the listener is on constraint_ties
 
-void OnBreakPost(void* context, void*, void*) {
-    if (!context || (!g_hostActive && !g_listener)) return;
-    void* owner = R::OuterOf(context);
-    const int joint = PP::JointOf(owner, context);
+void OnBreak(void* constraint) {
+    if (!constraint || !g_hostActive) return;
+    void* owner = R::OuterOf(constraint);
+    const int joint = PP::JointOf(owner, constraint);
     if (joint == 0) return;
-    if (g_listener) g_listener(owner, joint);
-    if (!g_hostActive) return;
     PS::NoteBroken(owner, joint);
     // The loop's random spin follows this call on the host's body, and the radiator hangs between breaks long enough for
     // a row to end (kRestMs, 500, against 1.5 to 3 s), so each break opens or re-times a row of its own, whatever the body
@@ -194,14 +188,8 @@ void OnAsk(coop::net::Session&, const coop::net::PryAskPayload& payload, uint8_t
 void Tick(coop::net::Session& session) {
     UE_ASSERT_GAME_THREAD("prop_pry_host::Tick");
     g_hostActive = session.running() && session.role() == coop::net::Role::Host;
-    // The one patch on BreakConstraint: the host needs it to report joints, a drill's listener on either role.
-    const uint64_t now = coop::net::NowMs();
-    if ((g_hostActive || g_listener) && !g_hookInstalled && now >= g_hookTryMs) {
-        g_hookTryMs = now + 1000;  // the class is looked up through the object array on a miss
-        const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowBreakConstraint);
-        g_hookInstalled = fn && ue_wrap::ufunction_hook::InstallPostHook(fn, &OnBreakPost);
-        if (g_hookInstalled) UE_LOGI("prop_pry_host: BreakConstraint's post hook is live");
-    }
+    // The host reports joints from constraint_ties' one patch on BreakConstraint.
+    if (!g_listening) g_listening = coop::constraint_ties::AddBreakListener(&OnBreak);
     if (!g_hostActive) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         Slot& sl = g_slots[slot];
@@ -214,9 +202,6 @@ void Tick(coop::net::Session& session) {
 }
 
 Counts GetCounts() { return g_counts; }
-
-void SetBreakListener(BreakListener fn) { g_listener = fn; }
-bool BreakHookLive() { return g_hookInstalled; }
 
 void OnDisconnect() {
     if (g_counts.granted || g_counts.refused)

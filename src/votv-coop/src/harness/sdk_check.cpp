@@ -147,7 +147,7 @@ const ClassCheck kClasses[] = {
     // --- Important: gameplay subsystems (degrade silently if missing) ---
     {P::name::PropClass,                     Severity::Important, "prop_C base -- ALL prop wire sync"},
     {P::name::PhysicsHandleComponentClass,   Severity::Important, "light-grab observers"},
-    {P::name::PhysicsConstraintComponentClass, Severity::Important, "heavy-grab observers"},
+    {P::name::PhysicsConstraintComponentClass, Severity::Important, "constraint ties (coop/props/constraint_ties)"},
     {P::name::PrimitiveComponentClass,       Severity::Important, "throw impulse + velocity capture"},
     {P::name::ControllerClassName,           Severity::Important, "control rotation (camera + head yaw)"},
     {P::name::PlayerControllerClassName,     Severity::Important, "SetViewTargetWithBlend (freecam)"},

@@ -28,9 +28,6 @@ UE_FACT_FN(kRowSetTargetLocation, "grab_observer", L"PhysicsHandleComponent", L"
 UE_FACT_FN(kRowSetTargetLocationAndRotation, "grab_observer", L"PhysicsHandleComponent",
            L"SetTargetLocationAndRotation", Declared);
 UE_FACT_FN(kRowReleaseComponent, "grab_observer", L"PhysicsHandleComponent", L"ReleaseComponent", Declared);
-UE_FACT_FN(kRowSetConstrainedComponents, "grab_observer", L"PhysicsConstraintComponent",
-           L"SetConstrainedComponents", Declared);
-UE_FACT_FN(kRowBreakConstraint, "grab_observer", L"PhysicsConstraintComponent", L"BreakConstraint", Declared);
 UE_FACT_FN(kRowAddImpulse, "grab_observer", L"PrimitiveComponent", L"AddImpulse", Declared);
 UE_FACT_FN(kRowSetPhysicsLinearVelocity, "grab_observer", L"PrimitiveComponent",
            L"SetPhysicsLinearVelocity", Declared);
@@ -97,18 +94,6 @@ void GrabObserver_PHC_Release_PRE(void* self, void* /*function*/, void* /*params
     }
     void* comp = ue_wrap::engine::ReadPhysicsHandleGrabbedComponent(self);
     UE_LOGI("grab_hook[PHC.Release PRE]: handle=%p released_component=%p", self, comp);
-}
-
-// Primary: the physics-constraint component, the heavy drag path. `self` is the constraint
-// component, owned by the player as its heavy grab. The game uses a physics constraint joint
-// between the player and a heavy prop instead of a kinematic handle.
-
-void GrabObserver_PCC_SetConstrainedComponents(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[PCC.SetConstrainedComponents]: constraint=%p (heavy grab START)", self);
-}
-
-void GrabObserver_PCC_BreakConstraint_PRE(void* self, void* /*function*/, void* /*params*/) {
-    UE_LOGI("grab_hook[PCC.BreakConstraint PRE]: constraint=%p (heavy grab END)", self);
 }
 
 // The throw signal: the primitive component's add-impulse. Fires whenever the blueprint
@@ -205,12 +190,11 @@ void Install() {
     }
 
     void* phcCls = R::FindClass(P::name::PhysicsHandleComponentClass);
-    void* pccCls = R::FindClass(P::name::PhysicsConstraintComponentClass);
     void* primCls = R::FindClass(P::name::PrimitiveComponentClass);
     void* playerCls = R::FindClass(P::name::MainPlayerClass);
-    if (!phcCls || !pccCls || !primCls || !playerCls) {
-        UE_LOGW("grab_hook: class not found yet (PHC=%p, PCC=%p, PrimComp=%p, mainPlayer=%p) -- retry in 60 ticks",
-                phcCls, pccCls, primCls, playerCls);
+    if (!phcCls || !primCls || !playerCls) {
+        UE_LOGW("grab_hook: class not found yet (PHC=%p, PrimComp=%p, mainPlayer=%p) -- retry in 60 ticks",
+                phcCls, primCls, playerCls);
         g_installRetryCountdown.store(60, std::memory_order_relaxed);
         return;
     }
@@ -247,10 +231,6 @@ void Install() {
     reg(kRowSetTargetLocationAndRotation,        GrabObserver_PHC_SetTargetWithRotation, /*pre=*/false);
     reg(kRowReleaseComponent,                    GrabObserver_PHC_Release_PRE,           /*pre=*/true);
 
-    // Primary: the engine physics constraint (the heavy grab path, a different class).
-    reg(kRowSetConstrainedComponents, GrabObserver_PCC_SetConstrainedComponents, /*pre=*/false);
-    reg(kRowBreakConstraint,          GrabObserver_PCC_BreakConstraint_PRE,      /*pre=*/true);
-
     // The throw signal: the primitive component's add-impulse.
     reg(kRowAddImpulse,               GrabObserver_PrimComp_AddImpulse,          /*pre=*/false);
 
@@ -265,7 +245,7 @@ void Install() {
     reg(kRowGrabFinishedFunc, GrabObserver_grab_Finished_PRE,  /*pre=*/true);
 
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("grab_hook: Stage 1+ core observers installed (5 PHC + 2 PCC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline) -- press E on a prop to see hook lines");
+    UE_LOGI("grab_hook: Stage 1+ core observers installed (5 PHC + 1 PrimComp.AddImpulse + 2 PrimComp.SetVel + 3 BP-Timeline) -- press E on a prop to see hook lines");
 }
 
 }  // namespace coop::grab_observer

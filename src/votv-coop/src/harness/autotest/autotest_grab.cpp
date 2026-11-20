@@ -3,9 +3,9 @@
 //
 // Expected on the host: grab_hook[PHC.Grab] at the GrabComponentAtLocation call,
 // grab_hook[PHC.SetTarget] once a second (throttled one in thirty), grab_hook[PHC.Release PRE]
-// at the ReleaseComponent call; then, from the arms below, grab_hook[PCC.SetConstrainedComponents]
-// and grab_hook[PCC.BreakConstraint PRE] for the heavy drag, and grab_hook[grab.Update] three
-// times with grab_hook[grab.Finished PRE] for the timeline force. Missing any is not green.
+// at the ReleaseComponent call; then, from the arms below, grab_hook[grab.Update] three
+// times with grab_hook[grab.Finished PRE] for the timeline force. Missing any is not green. The heavy
+// drag's two constraint calls are run too, and their seam is coop/props/constraint_ties (no log line per call).
 //
 // It establishes that FindClass and FindFunction resolve engine-native UFunctions, that
 // reflection::CallFunction dispatches through ProcessEvent, and that our detour catches
@@ -331,8 +331,7 @@ void RunAutonomousGrabTest() {
                 *reinterpret_cast<void**>(frame.data() + hr->scPComp2) = pr->heavyMesh;
                 *reinterpret_cast<R::FName*>(frame.data() + hr->scPBone2) = R::FName{0, 0};
                 const bool ok = R::CallFunction(hr->heavyGrab, hr->setConstrainedFn, frame.data());
-                UE_LOGI("grab_test: CallFunction(PCC.SetConstrainedComponents) -> %d "
-                        "(expect grab_hook[PCC.SetConstrainedComponents])", ok);
+                UE_LOGI("grab_test: CallFunction(PCC.SetConstrainedComponents) -> %d", ok);
                 done->store(1);
             });
             while (done->load() == 0) ::Sleep(5);
@@ -342,8 +341,7 @@ void RunAutonomousGrabTest() {
             done->store(0);
             GT::Post([hr, done] {
                 const bool ok = R::CallFunction(hr->heavyGrab, hr->breakFn, nullptr);
-                UE_LOGI("grab_test: CallFunction(PCC.BreakConstraint) -> %d "
-                        "(expect grab_hook[PCC.BreakConstraint PRE])", ok);
+                UE_LOGI("grab_test: CallFunction(PCC.BreakConstraint) -> %d", ok);
                 done->store(1);
             });
             while (done->load() == 0) ::Sleep(5);

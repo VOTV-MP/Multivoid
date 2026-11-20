@@ -6,7 +6,7 @@
 #include "coop/dev/drill_hand.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
-#include "coop/props/prop_pry_host.h"
+#include "coop/props/constraint_ties.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_flags.h"
@@ -61,8 +61,12 @@ Mark& MarkOf(void* prop) {
     return g_marks.back();
 }
 
-// The lane's own BreakConstraint hook calls this (prop_pry_host::SetBreakListener): one patch on the seam.
-void OnBreak(void* owner, int joint) { MarkOf(owner).mask |= static_cast<uint8_t>(1u << (joint - 1)); }
+// constraint_ties' BreakConstraint patch calls this (AddBreakListener): one patch on the seam, a field read of the owner.
+void OnBreak(void* constraint) {
+    void* owner = R::OuterOf(constraint);
+    const int joint = PP::JointOf(owner, constraint);
+    if (joint != 0) MarkOf(owner).mask |= static_cast<uint8_t>(1u << (joint - 1));
+}
 
 void OnBodyPost(const sg::Call& c) {
     if (PP::KindOf(c.object) != PP::Kind::None) ++MarkOf(c.object).bodies;
@@ -198,8 +202,8 @@ bool WitnessesLive() {
         g_watchAsked = true;
         g_watchOk = sg::WatchName(kRowCrowbarOpen, kTagBody, nullptr, &OnBodyPost);
     }
-    coop::prop_pry_host::SetBreakListener(&OnBreak);  // the lane's Tick then installs the hook on either role
-    const bool conds[3] = {g_watchOk, coop::prop_pry_host::BreakHookLive(), sg::NameWatchLive(kRowCrowbarOpen, kTagBody)};
+    coop::constraint_ties::AddBreakListener(&OnBreak);  // the patch is constraint_ties', on from boot on either role
+    const bool conds[3] = {g_watchOk, coop::constraint_ties::BreakSeamLive(), sg::NameWatchLive(kRowCrowbarOpen, kTagBody)};
     static const char* const kNames[3] = {"the crowbarOpen watch was refused", "BreakConstraint's hook is not on yet",
                                           "the crowbarOpen name has not resolved yet"};
     for (int i = 0; i < 3; ++i)

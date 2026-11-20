@@ -21,6 +21,7 @@
 #include "coop/dev/log_drill.h"  // [dev] the two-process log drill
 #include "coop/input/game_window_proc.h"
 #include "coop/input/input_owner.h"
+#include "coop/props/constraint_ties.h"  // Install, posted at boot
 #include "coop/props/prop_key_index.h"  // Install, posted at boot
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
@@ -542,6 +543,9 @@ void Start() {
     // were taken is known before any session can start (coop::session_manager::SubstrateRefusal reads it);
     // the frame tail drives their names on after.
     GT::Post([] { coop::prop_key_index::Install(); });
+    // The constraint ties' two native patches, on before any world loads (a host loads its save before its session
+    // starts, and the saved nails' ties are built by that load); the frame tail drives them on until both are live.
+    GT::Post([] { coop::constraint_ties::Install(); });
     // A config change's subscribers run on the game thread.
     cfg::SetNotifier([](std::function<void()> task) { GT::Post(std::move(task)); });
     // The persisted nameplate pref (absent = visible), read by the Join's prefs byte.

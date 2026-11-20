@@ -23,8 +23,8 @@ namespace coop::prop_pry_host {
 // queue refuses it. Game thread.
 void OnAsk(coop::net::Session& session, const coop::net::PryAskPayload& payload, uint8_t senderSlot);
 
-// HOST: judges one queued ask a tick for each sender, and arms the BreakConstraint hook that reports a pried radiator's
-// joints. Game thread, once per pump tick.
+// HOST: judges one queued ask a tick for each sender, and listens to coop/props/constraint_ties for the BreakConstraint
+// calls that report a pried radiator's joints. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // Counters for the session-end line and the pried drill.
@@ -34,13 +34,6 @@ struct Counts {
     uint64_t farRefused;  // of those, out of the sender's reach
 };
 Counts GetCounts();
-
-// [dev] The pried drill's witness of a joint's break, on either role: `fn` is called, after the engine's BreakConstraint
-// ran, with the radiator or TV and its joint (1..4), by the same hook the host reports joints with, installed by Tick once a
-// listener is set. One patch serves both. BreakHookLive says the hook is on. Game thread.
-using BreakListener = void (*)(void* prop, int joint);
-void SetBreakListener(BreakListener fn);
-bool BreakHookLive();
 
 // Session end: the counters are said and cleared. A sender's queue and its latches live in its slot's state.
 void OnDisconnect();

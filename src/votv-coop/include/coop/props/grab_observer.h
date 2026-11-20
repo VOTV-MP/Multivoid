@@ -1,8 +1,8 @@
 // coop/props/grab_observer.h -- physics-prop grab/release/throw observers.
 //
 // The observation stage of physics-prop pickup. Engine-native UFunction
-// observers on UPhysicsHandleComponent / UPhysicsConstraintComponent /
-// UPrimitiveComponent + BP-Timeline observers on mainPlayer_C. Logs the
+// observers on UPhysicsHandleComponent / UPrimitiveComponent + BP-Timeline
+// observers on mainPlayer_C (the constraint ties are coop/props/constraint_ties). Logs the
 // pickup/per-tick-drive/release path for the wire layer.
 //
 // Idempotent: Install() may be called every NetPumpTick; once successfully
@@ -16,8 +16,8 @@
 
 namespace coop::grab_observer {
 
-// Try to install all grab observers. Resolves the four UClasses
-// (UPhysicsHandleComponent, UPhysicsConstraintComponent, UPrimitiveComponent,
+// Try to install all grab observers. Resolves the three UClasses
+// (UPhysicsHandleComponent, UPrimitiveComponent,
 // mainPlayer_C); if any aren't loaded yet, logs a warning and returns -- the
 // caller (NetPumpTick) retries on the next tick. Eager-warms the PHC.Release
 // resolver cache used by ue_wrap::engine::ReleaseMainPlayerGrabIfHolding so
