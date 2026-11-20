@@ -43,7 +43,7 @@ struct Resolved {
 
 // A host never loads for a CLIENT's class name: that site asks with LookupOnly and gets Found or Absent from the
 // object index alone. A client loads for a name the host sent, and a host loads only for a class named in its own fixed
-// table (the mining rig's three items, coop/props/miner_sync).
+// table (the items a refund or a hand-over makes, ue_wrap/actors/item_spawn's callers, and the hook's variants).
 enum class Load {
     Budgeted,    // load on demand inside the per-tick budget
     Immediate,   // load on demand outside the budget: a caller that must return its result in place (it says why)

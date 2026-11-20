@@ -594,6 +594,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_cover_measure.cpp
     src/harness/autotest/autotest_woodchipper.cpp
     src/harness/autotest/autotest_class_resolve.cpp
+    src/harness/autotest/autotest_item_spawn.cpp
     src/harness/autotest/autotest_prop_props.cpp
     src/harness/autotest/autotest_nightmare.cpp
     src/harness/autotest/autotest_level_visit.cpp

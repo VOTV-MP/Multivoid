@@ -286,6 +286,8 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The class-resolve drill: the host spawns prop classes the client has not loaded, and the client must load and
     // mirror each.
     SpawnIfRow(coop::config_registry::rows::class_resolve_drill, "class-resolve drill", &ClassResolveDrillThread, role);
+    // The item-spawn drill: the host spawns the items its refunds make, for each class its world has not loaded.
+    SpawnIfRow(coop::config_registry::rows::item_spawn_drill, "item-spawn drill", &ItemSpawnDrillThread, role);
     // The woodchipper drill: the client pours a gas can and presses the button (1), or feeds a paper to the running
     // chipper (feed); the host judges each.
     SpawnIfEnum(coop::config_registry::rows::woodchipper_drill, "woodchipper drill", &WoodchipperThread, role);

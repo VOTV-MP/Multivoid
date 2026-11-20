@@ -320,3 +320,5 @@ CFG_FLAG(voice_loopback, "voice.loopback", "voice", false, "VOTVCOOP_VOICE_LOOPB
 
 // The [dev] section, its own file: it grows with every drill, and the rows above are the product's.
 #include "coop/config/config_registry_rows_dev.inc"
+// The item-spawn drill's rows: their own file, one concept (the dev file above is at its size cap).
+#include "coop/config/config_registry_rows_dev_item_spawn.inc"
