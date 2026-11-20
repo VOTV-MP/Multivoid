@@ -124,13 +124,13 @@ bool IsKillerWisp(void* obj) {
         // wrapper only ever resolved when the dev probe's unguarded ReadState ran, leaving the
         // whole killerwisp lane probe-armed-only. While unresolved this pays one NameEquals per
         // candidate; a session that never spawns a killerwisp keeps paying that (an FName compare
-        // per tracked NPC per tick), everyone else latches on the first real killerwisp. Exact-name
-        // only: a hypothetical subclass resolves through EnsureResolved instead, and killerwisp_C
-        // has no subclasses in VOTV.
-        void* candCls = R::ClassOf(obj);
-        if (!candCls || !R::NameEquals(R::NameOf(candCls), P::name::NpcClass_KillerWisp))
-            return false;
-        if (!ResolveFromClass(candCls)) return false;
+        // per tracked NPC per tick), everyone else latches on the first real killerwisp. The candidate's
+        // parent chain is walked to killerwisp_C: killerlamb_C is a subclass, and a lamb met before any
+        // wisp resolves the lane from its parent.
+        void* wispCls = nullptr;
+        for (void* c = R::ClassOf(obj); c && !wispCls; c = R::SuperStructOf(c))
+            if (R::NameEquals(R::NameOf(c), P::name::NpcClass_KillerWisp)) wispCls = c;
+        if (!wispCls || !ResolveFromClass(wispCls)) return false;
     }
     if (!g_wispCls) return false;
     void* cls = R::ClassOf(obj);
