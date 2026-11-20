@@ -58,14 +58,16 @@ void Tick();
 void ForgetDecal(void* actor);
 
 // DEV-DRILL ONLY: what the lane has done in this process, read by the drills that judge it. `replays` counts the save
-// replays it saw begin (the gamemode's loadObjects), `passes` the index passes completed since the last one (since the
-// start before any), `lowered` the decals it wrote or destroyed here from a floor, a parked value or a peer's value, and
-// `endsSent` the ends of decals (a destroy, never a stream-out) it has sent. Any thread.
+// replays it saw begin (the gamemode's loadObjects, which it sees only while something holds the script gate), `passes`
+// the index passes completed in the world generation `passGen` since its first or the last replay, `lowered` the decals
+// it wrote or destroyed here from a floor, a parked value or a peer's value, and `endsSent` the ends of decals (a
+// destroy, never a stream-out) it has sent. Any thread.
 struct Tally {
     uint32_t replays;
     uint32_t passes;
     uint32_t lowered;
     uint32_t endsSent;
+    uint32_t passGen;
 };
 Tally Tallies();
 

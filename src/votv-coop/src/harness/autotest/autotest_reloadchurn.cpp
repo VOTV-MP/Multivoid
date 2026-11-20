@@ -14,6 +14,7 @@
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
+#include "coop/element/death_seam.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/session/rig_verdict.h"
 #include "coop/session/session_manager.h"
@@ -23,6 +24,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
@@ -338,16 +340,41 @@ constexpr const char* kVerdictTag = "reload-churn";
 constexpr uint32_t kSettlePasses = 3;
 constexpr int kSettleBoundS = 180;
 
-// Waits for the grime lane to have indexed the world it is in: a replay seen since `replaysBefore` (when `needReplay`),
-// then kSettlePasses completed passes. False past the bound, which the caller says as INVALID, never as a verdict.
+// Waits for the grime lane to have indexed the world it is in: kSettlePasses completed passes in this world, and (when
+// `needReplay`) a save replay seen since `replaysBefore`. False past the bound, which the caller says as INVALID, never as
+// a verdict.
 bool WaitGrimeSettled(uint32_t replaysBefore, bool needReplay) {
     for (int i = 0; i < kSettleBoundS * 10; ++i) {
         const coop::grime_sync::Tally t = coop::grime_sync::Tallies();
-        if ((!needReplay || t.replays > replaysBefore) && t.passes >= kSettlePasses) return true;
+        if ((!needReplay || t.replays > replaysBefore) && t.passGen == ue_wrap::world_identity::Generation() &&
+            t.passes >= kSettlePasses)
+            return true;
         ::Sleep(100);
     }
     return false;
 }
+
+// The host arm's hold on the script gate and the death seam for its whole run. Both are the coop session's while it runs
+// and let go at its end, and between two sessions (the menu, the rehost's world load) nothing watches the save replay or
+// records the decals it deletes: a probe that must see outside a session holds them itself, as the gate's own comment
+// allows a dev probe to.
+class SeamHold {
+public:
+    SeamHold() {
+        ue_wrap::script_gate::Acquire(kWho);
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([done] { coop::element::death_seam::Acquire(kWho); done->store(1); });
+        WaitDone(done, 20000);
+    }
+    ~SeamHold() {
+        ue_wrap::script_gate::Release(kWho);
+        GT::Post([] { coop::element::death_seam::Release(kWho); });
+    }
+    SeamHold(const SeamHold&) = delete;
+    SeamHold& operator=(const SeamHold&) = delete;
+private:
+    static constexpr const char* kWho = "the reload churn's host arm";
+};
 
 void RunProbe() {
     const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", 3);
@@ -388,6 +415,8 @@ void RunProbe() {
         ue_wrap::log::Flush();
         return;
     }
+    std::unique_ptr<SeamHold> seams;
+    if (judged) seams = std::make_unique<SeamHold>();
 
     const std::string arm = rejoin ? ("REJOIN -> " + ue_wrap::log::Addr(addr))
                                    : (slot.empty() ? std::string("SOLO <fresh new game>")

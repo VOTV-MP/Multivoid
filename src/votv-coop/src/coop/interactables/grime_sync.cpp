@@ -72,7 +72,7 @@ bool ProbeLog() {
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 // What the lane has done, for Tallies. Written on the game thread, read on any.
-std::atomic<uint32_t> g_replays{0}, g_passes{0}, g_lowered{0}, g_endsSent{0};
+std::atomic<uint32_t> g_replays{0}, g_passes{0}, g_lowered{0}, g_endsSent{0}, g_passGen{0};
 
 // An indexed decal: the actor, its slot and the serial the slot held when a pass took it (the key cache's
 // own), so a new object the allocator put at the address in the same slot is never read as the decal.
@@ -284,6 +284,10 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         g_scanNextCache.clear();
         std::lock_guard<std::mutex> lk(g_indexMutex);
         return g_byKey.size();
+    }
+    if (g_passGen.load(std::memory_order_relaxed) != worldGen) {   // a new world counts its passes from none
+        g_passGen.store(worldGen, std::memory_order_relaxed);
+        g_passes.store(0, std::memory_order_relaxed);
     }
     g_passes.fetch_add(1, std::memory_order_relaxed);
     const size_t added = g_scanFound.size();
@@ -625,7 +629,7 @@ void ForgetDecal(void* actor) {
 
 Tally Tallies() {
     return Tally{g_replays.load(std::memory_order_relaxed), g_passes.load(std::memory_order_relaxed),
-                 g_lowered.load(std::memory_order_relaxed), g_endsSent.load(std::memory_order_relaxed)};
+                 g_lowered.load(std::memory_order_relaxed), g_endsSent.load(std::memory_order_relaxed), g_passGen.load(std::memory_order_relaxed)};
 }
 
 std::wstring DebugPosKeyForActor(void* actor) {
