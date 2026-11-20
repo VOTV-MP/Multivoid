@@ -16,6 +16,7 @@
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
+#include <deque>
 #include <vector>
 
 namespace coop::prop_drive_host {
@@ -103,9 +104,11 @@ Driven* ElectClientRow(void* actor, uint8_t slot, const char* why);
 // Close `row`: it is skipped by every reader at once and swept after the tick's pass. Game thread.
 void EraseRow(Driven& row);
 
-// Every row, closed ones not yet swept included (skip `dead`). Rows are only marked closed outside Tick, so a
-// pass over them may call EraseRow; a new row (a Claim, a grant) invalidates the references. Game thread.
-std::vector<Driven>& Rows();
+// Every row, closed ones not yet swept included (skip `dead`). A row opened while a pass runs (a Claim, a grant, a join
+// opened by an End) moves no row: a reference or pointer to a row stays valid until Tick's sweep, which runs last and
+// erases the dead rows, and until OnDisconnect. A pass over the table indexes it (an iterator does not survive an
+// opened row) and may call EraseRow, which only marks. Game thread.
+std::deque<Driven>& Rows();
 
 }  // namespace coop::prop_drive_host
 

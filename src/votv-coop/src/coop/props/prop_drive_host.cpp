@@ -35,6 +35,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,7 +51,7 @@ using coop::prop_drive_rules::kRestMs;
 using coop::prop_drive_rules::kRestProbeMs;
 using coop::prop_drive_rules::kRestVelCmS;
 
-std::vector<Driven> g_driven;   // game thread only
+std::deque<Driven>  g_driven;   // game thread only; a deque, so a row opened mid-pass moves none (Rows)
 size_t              g_turn = 0; // where the next tick's publishing starts, so no prop waits forever
 uint64_t            g_coastRefused = 0;   // the coasts refused past the cap this session (CoastCapReached)
 // The claim generation is PER PROP: the receiver's closed-generation gate is keyed by eid and
@@ -283,7 +284,7 @@ void EraseRow(Driven& row) {
     row.dead = true;   // Tick's sweep erases it; every reader skips a dead row
 }
 
-std::vector<Driven>& Rows() {
+std::deque<Driven>& Rows() {
     return g_driven;
 }
 

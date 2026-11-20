@@ -306,7 +306,9 @@ void AdmitRow(const coop::net::PropDriveRow& e, uint8_t slot, uint64_t nowMs) {
 // Diverges from MTA, which has no cap on a syncer's tenure and no first-row deadline (its only take-back is distance,
 // :134-146): a thrown prop has a bounded life, and a lost grant would otherwise wait out the silence rule below.
 void Pass(uint64_t nowMs) {
-    for (Driven& d : coop::prop_drive_host::Rows()) {
+    auto& rows = coop::prop_drive_host::Rows();
+    for (size_t i = 0; i < rows.size(); ++i) {   // by index: an End opens the join's rows behind this one
+        Driven& d = rows[i];
         if (d.dead || d.syncer == 0) continue;
         // A thrown prop is the host's again when no row was admitted in time, or when its flight outlasts any throw.
         if (d.elected && !d.admittedEver &&
@@ -523,8 +525,9 @@ void Admit(coop::net::Session& s) {
 
 void OnSlotLeft(uint8_t slot) {
     UE_ASSERT_GAME_THREAD("prop_syncer_host::OnSlotLeft");
-    for (Driven& d : coop::prop_drive_host::Rows())
-        if (!d.dead && d.syncer == slot) EndClientRow(d, Ending::SlotLeft);
+    auto& rows = coop::prop_drive_host::Rows();
+    for (size_t i = 0; i < rows.size(); ++i)   // by index: an End opens the join's rows behind this one
+        if (!rows[i].dead && rows[i].syncer == slot) EndClientRow(rows[i], Ending::SlotLeft);
     for (auto it = g_handBack.begin(); it != g_handBack.end();)
         it = (it->second.slot == slot) ? g_handBack.erase(it) : std::next(it);
 }
