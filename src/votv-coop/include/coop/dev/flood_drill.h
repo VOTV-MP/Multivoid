@@ -3,16 +3,16 @@
 //
 // Each arm ends on one `rig: VERDICT flood-<arm> PASS|FAIL|INVALID` line (coop/session/rig_verdict.h): the host says PASS, a
 // peer says FAIL where it decides, a bound or an unreadable world says INVALID. The peers pace each other with drill_chat
-// lines: a FloodState goes before the chat line the host says after it on the one ordered channel, so a peer that reads the
-// line has applied it. The client is walked by the director, never teleported.
+// lines: a FloodState goes before the chat line the host says after it on the one ordered channel, so a peer that reads
+// the line has applied it. The client is walked by the director, never teleported.
 //   burst  the host bursts its first pipe on its own addDamage; the client's pipes read the host's, and once the host's level
 //          has risen a whole step its level reads the host's within kLevelTolUu.
 //   mend   the burst, then the client walks to the pipe, takes a toolbox into its hand and runs toolboxFix; the host's judge
 //          mends its pipe (decided at the judge's own count), and once its level has fallen the client reads it.
-//   far    the burst, then the client, out of reach with a toolbox in its hand, sends a raw FloodIntent; the host's judge must
-//          refuse it at the target check and its pipe must stay burst.
-//   join   the burst and the rise, read on the client, which then leaves (the rig's --rejoin); the rejoined client
-//          (VOTVCOOP_FLOOD_DRILL_REJOIN=1) reads the host's pipes and level at its world-ready.
+//   far    the burst, then the client, out of reach with a toolbox, sends a raw FloodIntent: refused at the target check.
+//   join   the burst and the rise, read on the client, which leaves (the rig's --rejoin); the host bursts a second pipe once
+//          the rejoined client's world is captured, and that client (VOTVCOOP_FLOOD_DRILL_REJOIN=1) must read it at its
+//          world-ready: only the ready edge's replay carries it.
 
 #pragma once
 

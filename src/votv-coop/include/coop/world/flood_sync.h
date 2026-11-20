@@ -62,8 +62,8 @@ Counts Read();
 // The lane's smallest level step, in the level's own units (the volume is 500 high): a flood that moves less is not sent.
 float LevelEpsilon();
 
-// The first pipe by object name, the same on every peer; null when the world has none.
-void* FirstPipe();
+// The pipe at `rank` in object-name order, the same on every peer (0 the first); null when the world has fewer.
+void* PipeByRank(size_t rank);
 
 // Every pipe's bit in object-name order, '1' a burst one; false when the world has none.
 bool PipeBits(std::string& out);

@@ -5,6 +5,7 @@
 #include "flood_drill_detail.h"
 
 #include "coop/net/session.h"
+#include "coop/save/save_transfer.h"
 #include "coop/world/flood_sync.h"
 
 #include "ue_wrap/core/call.h"
@@ -27,6 +28,7 @@ enum class HS {
 };
 HS g_h = HS::Start;
 bool g_burstDone = false;   // the join arm: the first life's burst and rise were read by the client (outlives a disconnect)
+bool g_windowBurst = false; // the join arm's second connection: the second pipe was burst in the rejoined client's window
 Reading g_before;           // the pipes and the level before the burst
 std::string g_burstBits;    // the pipes as the burst left them
 float g_mendLevel = 0.f;
@@ -46,7 +48,7 @@ bool Burst(void* pipe) {
 bool HasBurst(const std::string& bits) { return bits.find('1') != std::string::npos; }
 
 void StartBurst() {
-    void* const pipe = FS::FirstPipe();
+    void* const pipe = FS::PipeByRank(0);
     if (!pipe) return Invalid("the world holds no burst pipe");
     if (!Read(g_before)) return;
     if (HasBurst(g_before.bits)) return Invalid("a pipe is burst before the drill's burst");
@@ -60,6 +62,22 @@ void StartBurst() {
          now.bits.c_str(), now.level, FS::Read().pipesSent - g_c0.pipesSent);
     Say(Line("h-state1", now));
     HGo(HS::WaitState1Ok);
+}
+
+// The rejoined client's window: its world is captured and not ready. A change made now reaches it by the ready edge's
+// replay alone (its world was taken before the change, and a FloodState is not sent to a slot that is not ready), so the
+// second pipe is burst here, and the level has moved since the capture as the flood rises.
+void BurstInWindow() {
+    void* const pipe = FS::PipeByRank(1);
+    Reading before;
+    if (!pipe || !Read(before) || before.bits.size() < 2) return Invalid("the world holds no second burst pipe");
+    if (before.bits[1] == '1') return Invalid("the second pipe is burst before the rejoined client's window");
+    if (!Burst(pipe)) return Invalid("the second pipe's addDamage did not run");
+    g_windowBurst = true;
+    Reading now;
+    if (!Read(now)) return;
+    Fact("the rejoined client's window: the second pipe burst, pipes %s -> %s, level %.1f", before.bits.c_str(),
+         now.bits.c_str(), now.level);
 }
 
 void StartJoinCheck() {
@@ -125,9 +143,17 @@ void HostStep(coop::net::Session& s) {
     if (g_h != HS::Start && PeerFailed()) return;
     switch (g_h) {
     case HS::Start:
+        if (ArmOf() == Arm::Join && g_burstDone) {
+            if (!g_windowBurst) {
+                if (coop::save_transfer::WorldTakenFor(1) && !s.IsSlotWorldReady(1)) BurstInWindow();
+                else if (HostMayStart(s)) Invalid("the rejoined client's world was ready before the host saw its window");
+            } else if (HostMayStart(s)) {
+                StartJoinCheck();
+            }
+            return;
+        }
         if (!HostMayStart(s)) return;
-        if (ArmOf() == Arm::Join && g_burstDone) StartJoinCheck();
-        else StartBurst();
+        StartBurst();
         return;
     case HS::WaitState1Ok:
         if (!Seen("c-ok 1")) {
@@ -214,6 +240,7 @@ void HostTick(coop::net::Session& s) { HostStep(s); }
 
 void ResetHost() {
     g_h = HS::Start;
+    g_windowBurst = false;
     g_before = Reading{};
     g_burstBits.clear();
     g_mendLevel = 0.f;

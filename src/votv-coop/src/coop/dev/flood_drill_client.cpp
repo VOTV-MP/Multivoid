@@ -82,7 +82,7 @@ bool CheckLine(const char* head, const char* what, Reading* mine = nullptr) {
 bool OwnToolboxAnnounced() { return HB::OwnAnnounced(kToolbox); }
 
 void StartWalk(void* me) {
-    void* const pipe = FS::FirstPipe();
+    void* const pipe = FS::PipeByRank(0);
     ue_wrap::FVector at{}, from{};
     if (!pipe || !E::TryGetActorLocation(pipe, at) || !E::TryGetActorLocation(me, from)) return Invalid("the pipe's or the player's place is unread");
     if (!coop::director::RouteInLegs(me, from, at, kStandCm)) return Invalid("no NavMesh route reaches the pipe");
@@ -92,7 +92,7 @@ void StartWalk(void* me) {
 }
 
 void StartFar(void* me) {
-    void* const pipe = FS::FirstPipe();
+    void* const pipe = FS::PipeByRank(0);
     ue_wrap::FVector at{}, from{};
     if (!pipe || !E::TryGetActorLocation(pipe, at) || !E::TryGetActorLocation(me, from)) return Invalid("the pipe's or the player's place is unread");
     const float dx = at.X - from.X, dy = at.Y - from.Y, dz = at.Z - from.Z;
@@ -169,7 +169,7 @@ void ClientStep(coop::net::Session& s) {
             Late("the hand's toolbox was never announced");
             return;
         }
-        void* const pipe = FS::FirstPipe();
+        void* const pipe = FS::PipeByRank(0);
         if (!pipe || !FixWithHand(pipe)) return Invalid("the pipe's toolboxFix did not mend on this copy");
         Fact("the repair ran here and is asked of the host");
         CGo(CS::WaitMended);
@@ -198,7 +198,7 @@ void ClientStep(coop::net::Session& s) {
             Late("the hand's toolbox was never announced");
             return;
         }
-        void* const pipe = FS::FirstPipe();
+        void* const pipe = FS::PipeByRank(0);
         if (!pipe || !SendRawAsk(s, pipe)) return Invalid("the raw repair ask could not be sent");
         Fact("a raw repair ask sent from out of reach");
         Finish();

@@ -390,17 +390,12 @@ Counts Read() { return g_counts; }
 
 float LevelEpsilon() { return kLevelEps; }
 
-void* FirstPipe() {
-    void* best = nullptr;
-    std::wstring bestName;
-    for (void* p : All(kPipeClass)) {
-        const std::wstring n = R::ToString(R::NameOf(p));
-        if (!best || n < bestName) {
-            best = p;
-            bestName = n;
-        }
-    }
-    return best;
+void* PipeByRank(size_t rank) {
+    std::vector<std::pair<std::wstring, void*>> pipes;
+    for (void* p : All(kPipeClass)) pipes.emplace_back(R::ToString(R::NameOf(p)), p);
+    if (rank >= pipes.size()) return nullptr;
+    std::sort(pipes.begin(), pipes.end());
+    return pipes[rank].second;
 }
 
 bool PipeBits(std::string& out) {

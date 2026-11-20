@@ -10,7 +10,9 @@ CFG_ENUM(flood_drill, "flood_drill", "dev", "off", "off|burst|mend|far|join", "V
     "fallen the client's copy must read the host's pipes and level. far: the burst, then the client, standing out of reach, sends "
     "a raw FloodIntent with a toolbox in its hand; the host must refuse it for the target check and leave its pipe burst. join: "
     "the burst; the client then leaves (set --rejoin with --rejoin-marker \"[FLOOD-DRILL] CLIENT LIFE DONE\" and --rejoin-env "
-    "VOTVCOOP_FLOOD_DRILL_REJOIN=1) and the joiner's pipes and level must read the host's at its world-ready.")
+    "VOTVCOOP_FLOOD_DRILL_REJOIN=1); once the rejoining client's world is captured and before it is ready the host bursts a "
+    "second pipe, which only the ready edge's replay can carry, and the joiner's pipes and level must read the host's at its "
+    "world-ready.")
 CFG_FLAG(flood_state_off, "flood_state_off", "dev", false, "VOTVCOOP_FLOOD_STATE_OFF",
     "Developer red arm of the flood drill (host): never set. The host sends no change of a pipe or of the level to the clients "
     "(a joiner's replay and the answer to a refused repair still go), so burst must say FAIL at the client's first read.")
