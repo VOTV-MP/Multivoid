@@ -233,15 +233,27 @@ these on the peers' own copies, and its red arms withhold the send, the judge an
 `PlaySoundAtLocation` is a local one-shot, so a sound a Blueprint plays at a place on one machine is heard there alone:
 a player's melee hit (`mainPlayer_C::attack`, the struck material's impact sound) and the vent knocker's knocks
 (`kocker_C::knock`, an event actor on the host alone) reached no other player (Ghezra/Multivoid#41, #39). A pre hook on
-that call sends the sound, place, volume, pitch and attenuation when the calling function is on the lane's list: a
-player's own, from the machine whose player ran it, or the host's world, from the host (`SoundAt`; the host plays a
-client's and relays it). A receiver loads the assets by path and plays the same sound there; its own play has no
-Blueprint caller, so nothing echoes (`coop/world/sound_relay`) `[V]` (`coop/dev/hit_probe`: a client's three crowbar
-hits and the host's played on the other peer in the same second, and the host's knocks on the client). Whether a
-client's puppet in the vent trips the host's knocker is not measured `[?]`. The wandering church (`church_C`) is on the list as
-the host's world too: its tick moves it, unseen, to a random place on the navigation mesh and rings its bell there, which a
-client's copy never did; the host's bells now play on every peer at the host's church `[V]` (`coop/dev/event_probe`,
-`church_C.bell`: each of the host's strikes played on the client in the same second).
+that call sends the sound when the calling function is on the lane's list: a player's own, from the machine whose
+player ran it, or the host's world, from the host (`SoundAt`). A sound crosses as an index into a table every peer
+builds the same way, never as a path: the distinct impact sounds of the game's `list_physSound` table (34 on this build),
+the knocker's knock and the church's bell, sorted by path (`coop/world/sound_catalog`), read through a verified walk of
+the table (`ue_wrap/world/physsound_table`). Each entry carries the callers that may play it, its attenuation and the
+volume and pitch its callers pass, so the wire holds the index, the place, the volume and pitch (clamped to the entry's
+range) and the sender's table digest; a receiver whose own digest differs drops the sound `[?]`. A table that cannot be
+read yet is tried again at the next need, and until it builds a peer sends nothing and drops what it receives.
+
+A client's sound is an ask, not a state: the host judges it (`coop/world/sound_judge`) before any peer plays it. The
+entry must be a player's melee sound (a knock or a bell is refused whatever the client names), the sender needs a body
+on the host within a melee swing's reach of the place named (500 cm and the authority's allowance for the puppet's
+lag), and each client holds a budget of eight asks refilled at four a second. Each refusal is counted by reason. The
+host then plays the sound and sends it to every client but the asker; its own sounds go to every client. A client's own
+copy of the knocker or the church plays nothing, so the host's sound is the only one it hears, and its relayed play has no
+Blueprint caller, so nothing echoes `[?]`. The wandering church (`church_C`) is on the list as the host's world: its tick
+moves it, unseen, to a random place on the navigation mesh and rings its bell there. Whether a client's puppet in the
+vent trips the host's knocker is not measured `[?]`. A sound is a one-shot, so a joining peer has nothing to be given: a
+sound it missed is gone, as it is for a player who was not near. The drill is `coop/dev/hit_probe` (`sound_drill`: a
+crowbar hit, the knock, and a far, a church-bell and a past-the-table sound the host must refuse); its rig proof is owed
+`[?]`.
 
 ### Emails and the daily task
 
@@ -354,5 +366,5 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
-| sounds played at a place | `coop/world/sound_relay`; `coop/dev/hit_probe` |
+| sounds played at a place | `coop/world/sound_relay`, `coop/world/sound_catalog`, `coop/world/sound_judge`, `ue_wrap/world/physsound_table`, `ue_wrap/core/object_path`; `coop/dev/hit_probe` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
