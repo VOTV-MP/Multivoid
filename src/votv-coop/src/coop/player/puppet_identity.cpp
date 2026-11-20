@@ -56,6 +56,10 @@ UE_FACT_FN(kRowPuppetMapTransition, "puppet_identity", L"trigger_box_openMapTran
            L"BndEvt__Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature", Declared);
 UE_FACT_FN(kRowPuppetBoxMark, "puppet_identity", L"trigger_box_C",
            L"BndEvt__Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature", Declared);
+// trigger_box_N_C (a box that runs its targets n times, then closes) declares the same stub over the parent's, so a
+// watch on the parent's never sees its touch: its own row marks the same scope.
+UE_FACT_FN(kRowPuppetBoxNMark, "puppet_identity", L"trigger_box_N_C",
+           L"BndEvt__Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature", Declared);
 UE_FACT_FN(kRowPuppetRunTriggerOpenLevel, "puppet_identity", L"trigger_openLevel_C", L"runTrigger", Declared);
 UE_FACT_FN(kRowPuppetRunTriggerSpikes, "puppet_identity", L"tutorWall_spikes_C", L"runTrigger", Declared);
 UE_FACT_FN(kRowPuppetDreamClimb, "puppet_identity", L"dream_climb_C",
@@ -79,6 +83,8 @@ UE_FACT_FN(kRowPuppetSkullzone, "puppet_identity", L"skullzone_C",
 sg::Verdict OnWholePre(const sg::Call& call);
 sg::Verdict OnOrborbPre(const sg::Call& call);
 sg::Verdict OnBoxMarkPre(const sg::Call& call);
+bool ResolveStub(const wchar_t* clsName, const ue_wrap::facts::Function& row, void*& cls, uint64_t& listing,
+                 void*& stub);
 sg::Verdict OnRunTriggerPre(const sg::Call& call);
 sg::Verdict OnGruntPre(const sg::Call& call);
 void OnGruntPost(const sg::Call& call);
@@ -106,6 +112,7 @@ const Watch kWatches[] = {
     {&kRowPuppetDreamBoulder, kDreamBoulder, &OnWholePre, nullptr},
     {&kRowPuppetMapTransition, kMapTransition, &OnWholePre, nullptr},
     {&kRowPuppetBoxMark, kRowCount, &OnBoxMarkPre, nullptr},
+    {&kRowPuppetBoxNMark, kRowCount, &OnBoxMarkPre, nullptr},
     {&kRowPuppetRunTriggerOpenLevel, kTriggerOpenLevel, &OnRunTriggerPre, nullptr},
     {&kRowPuppetRunTriggerSpikes, kTriggerSpikes, &OnRunTriggerPre, nullptr},
     {&kRowPuppetDreamClimb, kDreamClimb, &OnWholePre, nullptr},
@@ -117,7 +124,7 @@ const Watch kWatches[] = {
     {&kRowPuppetSkullzone, kSkullzone, &OnWholePre, nullptr},
 };
 constexpr int kWatchCount = static_cast<int>(sizeof(kWatches) / sizeof(kWatches[0]));
-static_assert(kWatchCount == 19, "nineteen name watches: seventeen stubs and two runTrigger bodies");
+static_assert(kWatchCount == 20, "twenty name watches: eighteen stubs and two runTrigger bodies");
 
 constexpr int kPiTagBase = 0x50490000;  // 'PI' and the watch's index
 
@@ -171,6 +178,10 @@ uint64_t g_wispPListing = 0;
 void*    g_boxStub = nullptr;
 void*    g_gruntStub = nullptr;
 void*    g_wispPStub = nullptr;
+// trigger_box_N_C's stub, resolved at a puppet's first touch of one (the class is in few worlds): no per-world lookup.
+void*    g_boxNCls = nullptr;
+uint64_t g_boxNListing = 0;
+void*    g_boxNStub = nullptr;
 int      g_gen = 0;  // moves with each resolve that looked at anything
 
 // The stub's toucher, or null.
@@ -220,13 +231,17 @@ sg::Verdict OnBoxMarkPre(const sg::Call& call) {
     const int index = call.tag - kPiTagBase;
     if (!g_bit || index < 0 || index >= kWatchCount) return sg::Verdict::Run;
     void* actor = Toucher(index, call);
-    if (actor && PL::Registry::Get().IsPuppetBody(actor)) sg::MarkScope(call, g_bit);
+    if (!actor || !PL::Registry::Get().IsPuppetBody(actor)) return sg::Verdict::Run;
+    if (kWatches[index].row == &kRowPuppetBoxNMark && !ClassStands(g_boxNCls, g_boxNListing))
+        ResolveStub(L"trigger_box_N_C", kRowPuppetBoxNMark, g_boxNCls, g_boxNListing, g_boxNStub);
+    sg::MarkScope(call, g_bit);
     return sg::Verdict::Run;
 }
 
 // The two targets of the box that leave the level or the game. The box's other targets run on.
 sg::Verdict OnRunTriggerPre(const sg::Call& call) {
-    if (!InScope(g_boxStub, g_boxCls, g_boxListing)) return sg::Verdict::Run;
+    if (!InScope(g_boxStub, g_boxCls, g_boxListing) && !InScope(g_boxNStub, g_boxNCls, g_boxNListing))
+        return sg::Verdict::Run;
     const int index = call.tag - kPiTagBase;
     if (index < 0 || index >= kWatchCount) return sg::Verdict::Run;
     NoteRefused(kWatches[index].counter, nullptr);
@@ -415,6 +430,8 @@ void OnDisconnect() {
     g_boxCls = g_gruntCls = g_wispPCls = nullptr;
     g_boxListing = g_gruntListing = g_wispPListing = 0;
     g_boxStub = g_gruntStub = g_wispPStub = nullptr;
+    g_boxNCls = g_boxNStub = nullptr;
+    g_boxNListing = 0;
     g_resolvedVer = kNoVersion;
     g_logged = 0;
     scan::Clear();
