@@ -253,6 +253,13 @@ void StepWaitPeer(coop::net::Session& s) {
         Wait('H', "the client's puppet and this host's pawn to read");
         return;
     }
+    // The host's body streams no push: a body's row on a member would pass for the join's (the carried chain swings within
+    // reach of the host's body), and Judge asks each member's row who opened it. The row is set by its env twin on every arm.
+    if (!coop::config::ResolveFlag(::coop::config_registry::rows::body_push_off)) {
+        Invalid('H', "body_push_off must be set (VOTVCOOP_BODY_PUSH_OFF=1) on every arm: a body's push would give a member a row "
+                "the join did not open");
+        return;
+    }
     g_slot = slot;
     g_n = BoxCount(ArmOf());
     if (ArmOf() == Arm::C3 && coop::config::ResolveInt(::coop::config_registry::rows::constraint_join_drill_cap) <= 0) {
@@ -441,12 +448,36 @@ void StepAnnounce() {
     To(Step::Run);
 }
 
-// A member that has had no row since `since` is a FAIL under `leg`, naming it.
+const char* CauseName(PD::CoastCause c) {
+    switch (c) {
+    case PD::CoastCause::Verb:     return "a verb";
+    case PD::CoastCause::LetGo:    return "a let-go";
+    case PD::CoastCause::BodyPush: return "body push";
+    case PD::CoastCause::Joined:   return "the join";
+    }
+    return "an unknown cause";
+}
+
+// A member that has had no row since `since` is a FAIL under `leg`, naming it; so is a member whose row was opened by anything
+// but the join (a body's push, a verb): the drill is about the join's rows, and a row of another author proves nothing of it.
+// A row whose cause the host no longer holds is INVALID, since the verdict cannot be read.
 bool Judge(const char* leg, const char* since, const uint8_t* gens) {
     for (size_t i = 1; i < g_n; ++i) {
         if (gens[i] != g_gen0[i]) continue;
         Fail('H', leg, "box %c (element %u) had no drive row since %s: its drive generation stayed %u", Letter(i), g_eid[i], since,
              static_cast<unsigned>(gens[i]));
+        return false;
+    }
+    for (size_t i = 1; i < g_n; ++i) {
+        PD::CoastCause cause{};
+        if (!PD::LastOpenCause(g_eid[i], cause)) {
+            Invalid('H', "box %c (element %u) had a row since %s but the host holds no record of what opened it", Letter(i),
+                    g_eid[i], since);
+            return false;
+        }
+        if (cause == PD::CoastCause::Joined) continue;
+        Fail('H', leg, "box %c (element %u): its row since %s was opened by %s, not the join", Letter(i), g_eid[i], since,
+             CauseName(cause));
         return false;
     }
     return true;

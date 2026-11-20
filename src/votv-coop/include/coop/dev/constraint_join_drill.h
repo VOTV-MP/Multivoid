@@ -17,8 +17,9 @@
 
 // Verdicts, each at its event (a time bound says INVALID and nothing else):
 //   rig: VERDICT constraint-join PASS | FAIL -- <leg>: ... | INVALID -- ...
-//   HOST    at the leader's End, every arm: each box but the leader had a row in this drive, else FAIL at `leader-end` naming it
-//           (c3 first needs a member to have waited past the cap, else INVALID). c2 also at the client's let-go: B had a row
+//   HOST    at the leader's End, every arm: each box but the leader had a row in this drive, opened by the join (the cause
+//           the host keeps of each prop's last row, prop_drive_host::LastOpenCause), else FAIL at `leader-end` naming it
+//           (body_push_off must be set, or the host says INVALID at the start; c3 first needs a member to have waited past the cap, else INVALID). c2 also at the client's let-go: B had a row
 //           since the take, else FAIL at `let-go`. The spread of the boxes' End times is logged against two rest probes.
 //   CLIENT  at each End applied to a member: its copy within 5 cm of the End pose, else FAIL at `client-end`. PASS when every
 //           box's last End is the host's final pose (c1, c3); in c2, after the rejoin, when every copy stands within 5 cm of

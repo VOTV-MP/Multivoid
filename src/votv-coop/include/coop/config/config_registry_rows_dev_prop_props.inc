@@ -24,7 +24,8 @@ CFG_FLAG(body_push_drill, "body_push_drill", "dev", false, "VOTVCOOP_BODY_PUSH_D
     "pose and the host compares it with its own, within 1 cm and 1 degree. The host says rig: VERDICT body-push PASS, FAIL "
     "(a push rested apart: said at that push) or INVALID.")
 CFG_FLAG(body_push_off, "body_push_off", "dev", false, "VOTVCOOP_BODY_PUSH_OFF",
-    "Developer red arm of the body-push drill: never set. The host sees a body's push and streams nothing for it, so in the "
+    "Developer red arm of the body-push drill: never set outside a drill's run (the constraint-join drill requires it, so a "
+    "body's push never gives a member its row). The host sees a body's push and streams nothing for it, so in the "
     "drill's last leg, where the host's own player walks into the prop, the host's copy and the client's rest each by their "
     "own physics (or no host row opens) and the drill must say FAIL at that leg. A client's push is its own claim and is not "
     "affected; one that rests apart first says INVALID, since it is not what this red turns.")
@@ -172,7 +173,8 @@ CFG_ENUM(constraint_join_drill, "constraint_join_drill", "dev", "off", "off|c1|c
     "away from C and lets go. c2: a pair nailed A-B; the host walks more than 5 m away, the client carries A 300 cm and lets go "
     "(the host judges B's row at the client's let-go), then the client leaves and rejoins and its copies must stand where the "
     "host's rest. c3: a chain of six boxes with constraint_join_drill_cap=2; the host carries A, and the members past the cap "
-    "are owed a row. The host says FAIL at the leader's End when a member never had a row; the client says PASS when every "
+    "are owed a row. Run with body_push_off set on every arm (the host says INVALID without it). The host says FAIL at the "
+    "leader's End when a member never had a row, or its row was opened by anything but the join; the client says PASS when every "
     "member's copy stood at its End pose. rig: VERDICT constraint-join PASS, FAIL or INVALID.")
 CFG_ENUM(constraint_join_off, "constraint_join_off", "dev", "off", "off|join|hand|owed", "VOTVCOOP_CONSTRAINT_JOIN_OFF",
     "Developer red arm of the constraint-join drill (host): never set. join: a prop that gets a row owes the props tied to it "
