@@ -363,3 +363,8 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   pour only from the plain can in the hand. Kept as written: a subclass in the hand, or a can carried by the grab, pours. On top:
   both judges test the class by a cached pointer, and drills pour from a mini can and a carried big can, each with a red. The
   generator half waits for #141.
+
+- **A prop on its side stops streaming** ([#186](https://github.com/VOTV-MP/Multivoid/pull/186), its turn-measure commit): a still prop lying at pitch -90 reads back a new
+  yaw and roll of the same sum on every read, so the per-axis check never saw it stop and its stream ran for minutes. Kept as
+  written: a turn is the angle between the two quaternions, in the drive's send check and the body push. On top: a boot selftest
+  of the measure, and the rest compare's own copy of the angle folded into it. The rest of #186 waits for its own proof.

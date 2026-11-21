@@ -310,7 +310,7 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     coop::ban_list::RunSelftest();
     // And the one file writer: a write that is not whole is a lost ini, ban or key.
     coop::atomic_file::RunSelftest();
-    // And the four the session once ran (join beacon, nickname arbiter and trims, novelty cap).
+    // And the module selftests no LAN drill stages (join beacon, nickname arbiter and trims, novelty cap, the prop turn).
     coop::boot_selftests::RunOnce();
     // Reset net_pump's edge detectors, so a Stop/Start on one process carries no stale "was
     // connected" or "was holding" entries into the new session.

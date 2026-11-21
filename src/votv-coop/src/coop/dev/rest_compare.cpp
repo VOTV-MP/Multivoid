@@ -2,6 +2,7 @@
 
 #include "coop/dev/rest_compare.h"
 
+#include "coop/props/prop_drive_rules.h"
 #include "coop/session/rig_verdict.h"
 
 #include "ue_wrap/core/log.h"
@@ -35,29 +36,7 @@ float Cm(const Pose& a, const Pose& b) {
     return std::sqrt(x * x + y * y + z * z);
 }
 
-namespace {
-
-struct Quat {
-    double x, y, z, w;
-};
-
-// UE's FRotator::Quaternion: yaw about Z, pitch about Y, roll about X.
-Quat QuatOf(const ue_wrap::FRotator& r) {
-    constexpr double kHalfRad = 3.14159265358979323846 / 360.0;
-    const double sp = std::sin(r.Pitch * kHalfRad), cp = std::cos(r.Pitch * kHalfRad);
-    const double sy = std::sin(r.Yaw * kHalfRad), cy = std::cos(r.Yaw * kHalfRad);
-    const double sr = std::sin(r.Roll * kHalfRad), cr = std::cos(r.Roll * kHalfRad);
-    return Quat{cr * sp * sy - sr * cp * cy, -cr * sp * cy - sr * cp * sy, cr * cp * sy - sr * sp * cy,
-                cr * cp * cy + sr * sp * sy};
-}
-
-}  // namespace
-
-float Deg(const Pose& a, const Pose& b) {
-    const Quat p = QuatOf(a.rot), q = QuatOf(b.rot);
-    const double dot = std::fmin(1.0, std::fabs(p.x * q.x + p.y * q.y + p.z * q.z + p.w * q.w));
-    return static_cast<float>(2.0 * std::acos(dot) * 180.0 / 3.14159265358979323846);
-}
+float Deg(const Pose& a, const Pose& b) { return coop::prop_drive_rules::TurnDeg(a.rot, b.rot); }
 
 bool Judge(const char* tag, const char* what, const Pose& host, const Pose& client, bool sayFail) {
     const float cm = Cm(host, client), deg = Deg(host, client);

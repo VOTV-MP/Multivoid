@@ -1,5 +1,5 @@
-// coop/session/boot_selftests.h -- the selftests of game modules that the session once ran inside
-// Session::Start: the join beacon, the nickname arbiter, the nickname's trims and the novelty cap.
+// coop/session/boot_selftests.h -- the selftests of game modules that no LAN drill stages: the join beacon,
+// the nickname arbiter, the nickname's trims, the novelty cap and the prop drive's turn measure.
 // They test those modules, not the session, so the DLL's session bring-up runs them.
 
 #pragma once

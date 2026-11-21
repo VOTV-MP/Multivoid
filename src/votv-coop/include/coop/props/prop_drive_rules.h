@@ -42,8 +42,9 @@ constexpr size_t kMaxCoasting = 32;
 constexpr size_t kCoastPushReserve = 8;
 
 // The angle in degrees of the turn from `b` to `a`: the quaternions' (UE4.27's FRotator::Quaternion) angle, not the axes'
-// differences. A prop lying at pitch +-90 has one pose for every yaw and roll of the same sum; the game reads it back
-// with a different pair from one read to the next, so a still drive on its side moves 6-90 degrees on each axis.
+// differences. A prop lying at pitch -90 has one pose for every yaw and roll of the same sum (at +90, of the same
+// difference); the game reads it back with a different pair from one read to the next, so a still drive on its side
+// moves 6-90 degrees on each axis.
 inline float TurnDeg(const ue_wrap::FRotator& a, const ue_wrap::FRotator& b) {
     constexpr double kHalfRad = 3.14159265358979323846 / 360.0;
     auto quat = [](const ue_wrap::FRotator& r, double q[4]) {
@@ -59,8 +60,11 @@ inline float TurnDeg(const ue_wrap::FRotator& a, const ue_wrap::FRotator& b) {
     quat(a, qa);
     quat(b, qb);
     const double dot = std::fabs(qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3]);
-    return static_cast<float>(2.0 * std::acos(dot < 1.0 ? dot : 1.0) / kHalfRad / 2.0);
+    return static_cast<float>(std::acos(dot < 1.0 ? dot : 1.0) / kHalfRad);
 }
+
+// The boot selftest of TurnDeg and MovedPastEps: a still prop on its side is no turn, a real turn reads as its angle.
+bool RunTurnDegSelftest();
 
 // True when a pose moved past the send epsilons since `sentLoc`/`sentRot`, the last one that went out: any axis of the
 // location, or the turn's angle.
