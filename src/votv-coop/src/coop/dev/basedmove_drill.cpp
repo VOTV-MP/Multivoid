@@ -21,6 +21,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/trace.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <windows.h>
@@ -29,6 +30,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace coop::dev::basedmove_drill::detail {
 
@@ -119,21 +121,61 @@ bool Late(const char* why, uint64_t boundMs) {
 
 // ---- reads ----------------------------------------------------------------------------------------------------------------
 
-bool ReadPlatformBox(void* platformActor, PlatformBox& out) {
+bool ReadPlatform(void* ctx, void* platformActor, float platformZ, PlatformBox& out) {
     if (!platformActor || !E::GetActorBounds(platformActor, true, out.centre, out.extent)) return false;
     if (!(out.extent.X > 0.f) || !(out.extent.Y > 0.f) || !(out.extent.Z > 0.f)) return false;
     out.top = out.centre.Z + out.extent.Z;
-    return true;
+    out.restZ = platformZ;
+    // Down from just over the bounds' top, hit after hit: each next trace starts a hair under the last hit, so a rail or a
+    // frame over the slab is passed and the slab's own top is the lowest upward-facing hit on the platform's actor. The floor
+    // under the platform (another actor) ends the descent.
+    const uint8_t types[] = {0, 1, 3};   // WorldStatic, WorldDynamic, PhysicsBody (trace.h)
+    const float bottom = out.centre.Z - out.extent.Z - 30.f;
+    float z = out.top + 30.f;
+    bool found = false;
+    std::string samples;
+    for (int i = 0; i < 6; ++i) {
+        ue_wrap::trace::Hit hit;
+        if (!ue_wrap::trace::LineHitForObjects(ctx, {out.centre.X, out.centre.Y, z}, {out.centre.X, out.centre.Y, bottom}, types, 3,
+                                               nullptr, 0, &hit)) {
+            samples += " [trace unresolved]";
+            break;
+        }
+        if (!hit.blocked) {
+            samples += " [clear]";
+            break;
+        }
+        const bool mine = hit.actor == platformActor;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), " [z=%.1f nz=%.2f %s%s]", hit.point.Z, hit.normal.Z, mine ? "platform:" : "other:",
+                      NameOf(hit.component).c_str());
+        samples += buf;
+        if (!mine) break;
+        if (hit.normal.Z >= 0.7f && (!found || hit.point.Z < out.surface)) {
+            found = true;
+            out.surface = hit.point.Z;
+        }
+        z = hit.point.Z - 2.f;
+    }
+    Fact("platform bounds top %.1f bottom %.1f, down-trace over its centre from the top:%s", out.top, bottom + 30.f,
+         samples.c_str());
+    return found;
 }
 
-bool StandsOn(void* character, const PlatformBox& box, float* flatPast, float* feetOver) {
+bool StandsOn(void* character, const PlatformBox& box, float platformZ, float* flatPast, float* feetOver) {
     ue_wrap::FVector at{};
     if (!character || !E::TryGetActorLocation(character, at)) return false;
     const float past = std::fmax(std::fabs(at.X - box.centre.X) - box.extent.X, std::fabs(at.Y - box.centre.Y) - box.extent.Y);
-    const float feet = at.Z - E::GetActorCharacterHalfHeight(character) - box.top;
+    const float feet = at.Z - E::GetActorCharacterHalfHeight(character) - (box.surface + platformZ - box.restZ);
     if (flatPast) *flatPast = past;
     if (feetOver) *feetOver = feet;
-    return past <= kEdgeSlackCm && feet >= -kFeetBelowCm && feet <= kFeetAboveCm;
+    return past <= kEdgeSlackCm && std::fabs(feet) <= kFeetTolCm;
+}
+
+int CountOf(const std::string& prefix) {
+    std::vector<std::string> rests;
+    DC::SeenRestsOf(std::string(kPrefix) + prefix, &rests);
+    return static_cast<int>(rests.size());
 }
 
 std::string NameOf(void* obj) { return obj && R::IsLive(obj) ? Narrow(R::ToString(R::NameOf(obj))) : std::string("?"); }

@@ -1,6 +1,7 @@
-// coop/dev/basedmove_drill_host.cpp -- the host's steps of the based-movement drill: it names its lift, waits for the client to
-// say it stands on the platform and for the client's puppet to stand over it on this copy, presses the lift with the game's own
-// call, and logs every frame the numbers the lift's reversal reads and what this engine thinks of the puppet, until the lift
+// coop/dev/basedmove_drill_host.cpp -- the host's steps of the based-movement drill: it names its lift (and the stop it rests at),
+// brings the lift to the other stop with the game's own press when the client says no route reaches the platform's floor,
+// waits for the client to say it stands on the platform and for the client's puppet to stand there on this copy, presses the
+// lift, and logs every frame the numbers the lift's reversal reads and what this engine thinks of the puppet, until the lift
 // stops or the Blueprint reverses it. See coop/dev/basedmove_drill.h. The log, chat and verdict are basedmove_drill.cpp.
 
 #include "basedmove_drill_detail.h"
@@ -23,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <sstream>
 #include <string>
 
 namespace coop::dev::basedmove_drill::detail {
@@ -35,13 +37,15 @@ namespace CB = ue_wrap::character_base;
 namespace {
 
 constexpr int kClientSlot = 1;
-constexpr uint64_t kStartBoundMs = 20000;   // the press sets `moving` within a tick; this long without it says INVALID
+constexpr uint64_t kStartBoundMs = 20000;   // a press sets `moving` within a tick; this long without it says INVALID
 
-enum class HS { Start, WaitOnboard, WaitPuppet, Ride, WaitBase };
+enum class HS { Start, WaitOnboard, Bring, WaitPuppet, Ride, WaitBase };
 HS g_h = HS::Start;
 
 ue_wrap::CachedObjRef g_lift;   // the host's lift, held by slot and serial across ticks
-PlatformBox g_box;              // the platform's bounds at rest, before the press
+PlatformBox g_box;              // the platform's bounds and surface at rest, before the press
+int g_stops = 0;                // the rest positions the client was told of: 1, then 2 once the lift was brought to the other
+bool g_bringSawMoving = false;
 bool g_prevDir = false, g_sawMoving = false;
 int g_frames = 0, g_flips = 0;
 float g_maxGap = 0.f;
@@ -64,6 +68,27 @@ void* FindLift() {
     return nullptr;
 }
 
+// The lift at rest: its platform's bounds and walkable surface, said to the client with the number of this stop. False (said
+// INVALID) when anything does not read.
+bool RestAndSay(void* lift) {
+    void* const platform = CL::PlatformActor(lift);
+    if (!platform) return Invalid("the host's lift has no platform component yet (`comp` is set at its begin play)"), false;
+    bool moving = false, up = false, ign = false;
+    float platZ = 0.f, attZ = 0.f;
+    if (!CL::ReadMoving(lift, moving) || !CL::ReadDir(lift, up) || !CL::ReadPlatformZ(lift, platZ) ||
+        !CL::ReadAttachZ(lift, attZ) || !CL::ReadIgnoreCheck(lift, ign))
+        return Invalid("the lift's state, platform, attach point or ignoreCheck did not read"), false;
+    if (moving) return Invalid("the lift is moving where the drill expects it at rest"), false;
+    if (!ReadPlatform(coop::players::Registry::Get().Local(), platform, platZ, g_box))
+        return Invalid("a down-trace over the platform struck no upward-facing surface of it"), false;
+    ++g_stops;
+    Fact("lift %s at rest (stop %d): dir=%d platformZ=%.1f attachZ=%.1f ignoreCheck=%d, platform surface %.1f, bounds top %.1f "
+         "centre (%.0f,%.0f) half (%.0f,%.0f,%.0f)", NameOf(lift).c_str(), g_stops, up ? 1 : 0, platZ, attZ, ign ? 1 : 0,
+         g_box.surface, g_box.top, g_box.centre.X, g_box.centre.Y, g_box.extent.X, g_box.extent.Y, g_box.extent.Z);
+    Say("lift " + NameOf(lift) + " " + std::to_string(g_stops));
+    return true;
+}
+
 void Start() {
     if (!CL::EnsureResolved()) {
         Late("the cargo lift class never resolved", kWalkBoundMs);
@@ -72,35 +97,45 @@ void Start() {
     void* const lift = FindLift();
     if (!lift) return Invalid("the host has no cargo lift");
     g_lift.Set(lift);
-    void* const platform = CL::PlatformActor(lift);
-    if (!platform) return Invalid("the host's lift has no platform component yet (`comp` is set at its begin play)");
-    if (!ReadPlatformBox(platform, g_box)) return Invalid("the platform's bounds did not read");
-    bool moving = false, up = false;
-    if (!CL::ReadMoving(lift, moving) || !CL::ReadDir(lift, up)) return Invalid("the lift's state did not read");
-    if (moving) return Invalid("the lift is moving before the drill's press");
-    float platZ = 0.f, attZ = 0.f;
-    bool ign = false;
-    if (!CL::ReadPlatformZ(lift, platZ) || !CL::ReadAttachZ(lift, attZ) || !CL::ReadIgnoreCheck(lift, ign))
-        return Invalid("the lift's platform, attach point or ignoreCheck did not read");
-    Fact("lift %s at rest: dir=%d platformZ=%.1f attachZ=%.1f ignoreCheck=%d, platform top %.1f centre (%.0f,%.0f) half "
-         "(%.0f,%.0f,%.0f)", NameOf(lift).c_str(), up ? 1 : 0, platZ, attZ, ign ? 1 : 0, g_box.top, g_box.centre.X,
-         g_box.centre.Y, g_box.extent.X, g_box.extent.Y, g_box.extent.Z);
-    Say("lift " + NameOf(lift));
-    HGo(HS::WaitOnboard);
+    if (RestAndSay(lift)) HGo(HS::WaitOnboard);
 }
 
-// The puppet over the platform on this copy: the press waits for it, a few seconds of the stream after the client's walk ended.
-void WaitPuppet(void* lift) {
-    void* const body = ClientPuppet();
-    float past = 0.f, feet = 0.f;
-    if (!body || !StandsOn(body, g_box, &past, &feet)) {
-        if (coop::net_pump::TickSerial() % 60 == 0)
-            Fact("waiting for the puppet over the platform: %s, %.0f cm past its edge, feet %.0f cm over its top",
-                 body ? "placed" : "not placed", past, feet);
-        Late("the client's puppet never stood over the platform on the host's copy", kBoundMs);
+// The client says no route reaches the platform's floor at this stop: the lift goes to its other stop (the game's own press,
+// the call a call button runs), once.
+void BringOther(void* lift) {
+    if (g_stops >= 2) return Invalid("no route reaches the platform's floor at either stop of the lift");
+    if (!CL::Press(lift)) return Invalid("the lift's own press did not run");
+    Fact("the client reached no floor beside the platform at stop %d: pressed the lift to bring it to its other stop", g_stops);
+    g_bringSawMoving = false;
+    HGo(HS::Bring);
+}
+
+// The lift's own end of the move is nothing to bind to: `moving` falls after it rose.
+void Bring(void* lift) {
+    bool moving = false;
+    if (!CL::ReadMoving(lift, moving)) return Invalid("the lift's `moving` did not read");
+    if (moving) g_bringSawMoving = true;
+    if (g_bringSawMoving && !moving) {
+        if (RestAndSay(lift)) HGo(HS::WaitOnboard);
         return;
     }
-    Fact("the puppet stands over the platform: %.0f cm past its edge, feet %.0f cm over its top", past, feet);
+    if (!g_bringSawMoving) Late("the lift never began to move when brought to its other stop", kStartBoundMs);
+    else Late("the lift moved to its other stop and did not stop", kRideBoundMs);
+}
+
+// The puppet on the platform on this copy: the press waits for it, a few seconds of the stream after the client's step.
+void WaitPuppet(void* lift) {
+    void* const body = ClientPuppet();
+    float platZ = 0.f, past = 0.f, feet = 0.f;
+    if (!CL::ReadPlatformZ(lift, platZ)) return Invalid("the platform's height did not read");
+    if (!body || !StandsOn(body, g_box, platZ, &past, &feet)) {
+        if (coop::net_pump::TickSerial() % 60 == 0)
+            Fact("waiting for the puppet on the platform: %s, %.0f cm past its edge, feet %.0f cm over its surface",
+                 body ? "placed" : "not placed", past, feet);
+        Late("the client's puppet never stood on the platform on the host's copy", kBoundMs);
+        return;
+    }
+    Fact("the puppet stands on the platform: %.0f cm past its edge, feet %.0f cm over its surface", past, feet);
     if (Nocoll()) {
         void* const cap = CB::CapsuleComponent(body);
         const bool ok = E::SetActorEnableCollision(body, false);
@@ -110,6 +145,7 @@ void WaitPuppet(void* lift) {
     }
     bool dir0 = false;
     if (!CL::ReadDir(lift, dir0)) return Invalid("the lift's direction did not read");
+    g_box.restZ = platZ;
     if (!CL::Press(lift)) return Invalid("the lift's own press did not run");
     g_pressedAt = std::chrono::steady_clock::now();
     bool dirNow = dir0;
@@ -151,9 +187,8 @@ void Ride(coop::net::Session& s, void* lift) {
     void* const cap = CB::CapsuleComponent(body);
     void* const platform = CL::PlatformActor(lift);
     const bool overlap = cap && platform && E::IsOverlappingActor(cap, platform);
-    PlatformBox box;
-    const bool boxRead = ReadPlatformBox(platform, box);
-    const float feet = boxRead ? at.Z - E::GetActorCharacterHalfHeight(body) - box.top : 0.f;
+    float past = 0.f, feet = 0.f;
+    StandsOn(body, g_box, platZ, &past, &feet);
     CB::Base base;
     CB::ReadMovementBase(body, base);
     if (!base.component) ++g_pNone;
@@ -163,7 +198,7 @@ void Ride(coop::net::Session& s, void* lift) {
     ++g_frames;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - g_pressedAt).count();
     Fact("f=%d t=%.1fms platZ=%.2f attZ=%.2f attZ-platZ=%.2f dir=%d ignoreCheck=%d moving=%d flip=%d puppetZ=%.2f poseZ=%.2f "
-         "feetOverTop=%.1f capsuleColl=%d overlap=%d puppetBase=%s",
+         "feetOverSurface=%.1f capsuleColl=%d overlap=%d puppetBase=%s",
          g_frames, ms, platZ, attZ, gap, dir ? 1 : 0, ign ? 1 : 0, moving ? 1 : 0, flipped ? 1 : 0, at.Z,
          havePose ? pose.z : 0.f, feet, cap ? E::GetComponentCollisionEnabled(cap) : -1, overlap ? 1 : 0,
          BaseName(base.component, base.owner).c_str());
@@ -182,14 +217,17 @@ void WaitBase() {
         Late("the client's movement base summary never came");
         return;
     }
-    int cp = 0, co = 0, cn = 0, cf = 0, ap = 0, ao = 0, an = 0, af = 0;
-    char other[96] = {};
-    if (std::sscanf(rest.c_str(), "%d %d %d %d %d %d %d %d %95s", &cp, &co, &cn, &cf, &ap, &ao, &an, &af, other) < 8)
-        return Invalid("the client's movement base summary could not be read");
+    int c[8] = {};
+    std::string other;
+    std::istringstream in(rest);
+    for (int& v : c) in >> v;
+    if (!in) return Invalid("the client's movement base summary could not be read");
+    in >> other;
+    const int cp = c[0], co = c[1], cn = c[2], cf = c[3], ap = c[4], ao = c[5], an = c[6], af = c[7];
     Measured("flips=%d, max |attach-comp|=%.1f, frames=%d; client base while the lift moved (of %d frames): platform=%d "
              "other=%d none=%d, over all %d frames: platform=%d other=%d none=%d, first other base '%s'; host's engine on the "
              "puppet: platform=%d other=%d none=%d",
-             g_flips, g_maxGap, g_frames, cf, cp, co, cn, af, ap, ao, an, other[0] ? other : "-", g_pBase, g_pOther, g_pNone);
+             g_flips, g_maxGap, g_frames, cf, cp, co, cn, af, ap, ao, an, other.empty() ? "-" : other.c_str(), g_pBase, g_pOther, g_pNone);
     Finish();
 }
 
@@ -206,11 +244,20 @@ void HostTick(coop::net::Session& s) {
         Start();
         return;
     case HS::WaitOnboard:
-        if (!Seen("onboard")) {
-            Late("the client never reached the platform", kWalkBoundMs);
+        if (!lift) return Invalid("the host's lift was lost");
+        if (Seen("onboard")) {
+            HGo(HS::WaitPuppet);
             return;
         }
-        HGo(HS::WaitPuppet);
+        if (CountOf("noroute ") >= g_stops) {
+            BringOther(lift);
+            return;
+        }
+        Late("the client never reached the platform", kWalkBoundMs);
+        return;
+    case HS::Bring:
+        if (!lift) return Invalid("the host's lift was lost");
+        Bring(lift);
         return;
     case HS::WaitPuppet:
         if (!lift) return Invalid("the host's lift was lost");

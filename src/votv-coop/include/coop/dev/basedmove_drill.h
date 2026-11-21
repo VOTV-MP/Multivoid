@@ -3,7 +3,9 @@
 //
 // A MEASURE, not a test: its end is `rig: VERDICT basedmove-<ride|ride_nocoll> MEASURED -- <numbers>` (the rig's
 // --done-marker; the verdict words of coop/session/rig_verdict.h stay PASS, FAIL and INVALID, and a missing precondition says
-// INVALID there). The client is walked onto the lift's platform by the director, never teleported; the host presses the
+// INVALID there). The client is walked to the platform's edge by the director and steps onto the platform's walkable surface
+// (a down-trace's, not the bounds' top) through the input seam, never teleported; when no route reaches the floor the lift
+// rests at, the host first brings the lift to its other stop with its own press. The host presses the
 // lift with the game's own call and, every frame until the lift stops or the Blueprint reverses it, logs the numbers its
 // reversal reads and what its engine thinks of the client's puppet. The client logs each frame its own height, its copy of
 // the platform and the movement base its engine reads (ue_wrap/actors/character_base).
