@@ -150,8 +150,11 @@ void Reset() {
 
 bool SeenHas(const std::string& needle) {
     Arm();
+    // The chat lane trims a line's trailing spaces on send (chat_sync's TrimAndCap). A needle's trailing space is a
+    // separator ("item0 " must not match "item01"), so the line's end counts as one: the needle is sought in the line
+    // with a space put back after it.
     for (const Seen& s : g_seen)
-        if (s.line.find(needle) != std::string::npos) return true;
+        if ((s.line + ' ').find(needle) != std::string::npos) return true;
     return false;
 }
 
