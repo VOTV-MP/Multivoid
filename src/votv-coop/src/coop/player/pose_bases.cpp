@@ -123,6 +123,10 @@ bool Resolve(uint32_t baseId, Resolved& out) {
     return true;
 }
 
+bool Claim(const coop::net::PoseSnapshot& pose, uint8_t /*slot*/, Resolved& out) {
+    return pose.baseKind == coop::net::pose_base_kind::kMover && Resolve(pose.baseId, out);
+}
+
 void FillBase(void* localPlayer, coop::net::PoseSnapshot& pose) {
     pose.baseId = 0;
     pose.bx = pose.by = pose.bz = 0.f;

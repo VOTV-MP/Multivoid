@@ -294,7 +294,14 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
 
     ShowBurning((snap.stateBits & coop::net::kStateBitBurning) != 0);
 
-    const ue_wrap::FVector tgtPos{snap.x, snap.y, snap.z};
+    // The base this pose names, if this peer resolves one: the puppet rides it and every position below is an offset from it
+    const BaseClaim claim = ClaimOf(snap);
+    if (claim.actor ? (!riding_ || base_.Get() != claim.actor) : riding_) {
+        if (hasPose_) AdvanceInterp();
+        ChangeBase(claim);
+    }
+    const ue_wrap::FVector tgtPos = riding_ ? ue_wrap::FVector{snap.bx, snap.by, snap.bz}
+                                            : ue_wrap::FVector{snap.x, snap.y, snap.z};
 
     // The first packet: the puppet sits at the placeholder placement, so snap rather than
     // interpolate across the whole vector.
@@ -501,6 +508,7 @@ void RemotePlayer::Destroy() {
     actor_ = nullptr;
     internalIdx_ = -1;
     hasPose_ = false;
+    ForgetBase();
     window_.Close();
     dirty_ = false;
     bodyYaw_.Reset(0.f);    // clears the latch + dt clock; re-seeded at the next Spawn
@@ -560,7 +568,7 @@ void RemotePlayer::ApplyToEngine() {
         // The wire carries the source's actor Z (the capsule centre, MTA's vPos shape, unaffected by BP
         // init transients), and the puppet's actor is the wire pose unchanged: both ends are
         // mainPlayer_C, so no actor-level Z or yaw offset exists.
-        E::SetActorLocation(actor_, curPos_);
+        E::SetActorLocation(actor_, WorldPosForWrite());
         // bodyYaw_ (the presentation), not curYaw_ (the wire truth): standing, the body holds so the
         // head can lead.
         E::SetActorRotation(actor_, ue_wrap::FRotator{0.f, shownYaw, 0.f});
@@ -632,6 +640,7 @@ void RemotePlayer::ApplyToEngine() {
         // default step's volume is the skin layer's call: a replace-mode variant mutes it to 0, and
         // lib step still runs its trace, water and friction side effects.
         const bool crouched = (curStateBits_ & coop::net::kStateBitCrouched) != 0;
+        const ue_wrap::FVector stepAt = WorldPos();
         if (footsteps_.StepDue(curPos_, curSpeed_, !inAir, crouched)) {
             // A step whose ground trace finds nothing is silent. The trace's hit is read back and said only under
             // step_ground_log: the first step, every 25th and every 25th miss, a line no normal run carries.
@@ -643,9 +652,9 @@ void RemotePlayer::ApplyToEngine() {
             const bool sayStep = (stepsPlayed_++ % 25) == 0;
             if (sayGround && ((!ground && (stepMisses_++ % 25) == 0) || sayStep))
                 UE_LOGI("puppet_footsteps: slot %u stepped at (%.0f,%.0f,%.0f), ground %s (%u steps, %u silent)",
-                        static_cast<unsigned>(slot_), curPos_.X, curPos_.Y, curPos_.Z, ground ? "hit" : "missed",
+                        static_cast<unsigned>(slot_), stepAt.X, stepAt.Y, stepAt.Z, ground ? "hit" : "missed",
                         stepsPlayed_, stepMisses_);
-            coop::skin_effects::OnStep(actor_, curPos_);
+            coop::skin_effects::OnStep(actor_, stepAt);
         }
     }
 

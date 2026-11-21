@@ -42,4 +42,8 @@ struct Resolved {
 // map holds none under that hash, the hash is unusable (two actors), or the mover is not live.
 bool Resolve(uint32_t baseId, Resolved& out);
 
+// The receiver's judgment of a pose's base claim from peer `slot`: true with the mover when the pose names one this peer
+// resolves, false when the pose is to be placed by its absolute position (it names none, or names one that does not resolve).
+bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out);
+
 }  // namespace coop::pose_bases

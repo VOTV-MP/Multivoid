@@ -34,6 +34,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/remote_player.cpp
     src/coop/player/pose_bases.cpp
     src/coop/player/puppet_seat.cpp
+    src/coop/player/remote_player_based.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp
     src/coop/player/skin_effects.cpp
