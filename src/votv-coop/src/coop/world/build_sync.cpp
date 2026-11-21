@@ -25,6 +25,7 @@
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/keyed_objects.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -98,8 +99,21 @@ struct Known {
     bool hasHealth = false;
     Clock::time_point snapped{};   // when this copy's nail was first seen broken, the host's not
     bool snapSent = false;         // this player's pull broke it here, and the host was told
+    // This copy's remakes of a lost piece and re-ties of a snapped nail, and the earliest the next may run (Backoff):
+    // a piece the game takes away again, or a tie it breaks again, was made every poll for good. A piece that has
+    // held for kHeld starts over.
+    uint8_t remakes = 0, reties = 0;
+    Clock::time_point remakeAfter{}, retieAfter{};
 };
 std::unordered_map<std::wstring, Known> g_known;
+constexpr uint8_t kFreeTries = 3;
+constexpr auto kHeld = std::chrono::seconds(30);
+// The wait before try `n` (from 1): none for the first kFreeTries, then 2 s doubling to a minute.
+Clock::duration Backoff(uint8_t n) {
+    if (n <= kFreeTries) return Clock::duration::zero();
+    const int doublings = std::min<int>(n - kFreeTries - 1, 5);
+    return std::min<Clock::duration>(std::chrono::seconds(2) * (1 << doublings), std::chrono::seconds(60));
+}
 struct Pending {
     uint8_t op = 0;
     SaveRecord rec;
@@ -425,6 +439,13 @@ bool Make(const std::wstring& key, const SaveRecord& rec, void* piece, bool last
         if (made) B::DestroyQuiet(piece);
         return false;
     }
+    // The key its record gave it is the one it is found by: under another, the next poll would not find it and make
+    // one more, a copy each poll (atv_runtime_mirror's ResolveSpawn checks the same).
+    if (made && B::KeyOf(piece) != key) {
+        UE_LOGW("build_sync: the host's '%ls' came up here as '%ls' -- not kept", key.c_str(), B::KeyOf(piece).c_str());
+        B::DestroyQuiet(piece);
+        return false;
+    }
     B::ScaleWallHealth(piece, kWallHealthScale);
     B::Park(piece, !g_freed.count(key));
     k.hasHealth = B::WallHealth(piece, k.health);
@@ -460,6 +481,12 @@ bool Lost(coop::net::Session& s, const std::wstring& key, Known& k, Clock::time_
     }
     if (!k.confirmed) return true;   // this player's own, which the host never had
     const SaveRecord rec = k.rec;   // made again from its record, once its ends are here
+    if (now < k.remakeAfter) return false;
+    const uint8_t tries = k.remakes < 0xFF ? ++k.remakes : k.remakes;
+    k.remakeAfter = now + Backoff(static_cast<uint8_t>(tries + 1));
+    if (tries == kFreeTries + 1)
+        UE_LOGW("build_sync: the host's %s '%ls' was made again %u times here and did not stay -- made less often",
+                KindName(kind), key.c_str(), static_cast<unsigned>(kFreeTries));
     if (Make(key, rec, nullptr, false, now))
         UE_LOGI("build_sync: the host's %s '%ls' was lost here -- made again", KindName(kind), key.c_str());
     return false;
@@ -571,13 +598,19 @@ void ClientPoll(coop::net::Session& s, Clock::time_point now) {
         if (!k.confirmed || p == here.end() || g_inbox.count(e.first)) continue;
         if (!B::NailBroken(p->second) || RecordBroken(k.rec)) {
             k.snapped = {};
+            if (k.reties && now - k.since > kHeld) k.reties = 0;
             continue;
         }
         if (k.snapped == Clock::time_point{}) {
             k.snapped = now;
             continue;
         }
-        if (now - k.snapped < kSnapWait) continue;
+        if (now - k.snapped < kSnapWait || now < k.retieAfter) continue;
+        const uint8_t tries = k.reties < 0xFF ? ++k.reties : k.reties;
+        k.retieAfter = now + Backoff(static_cast<uint8_t>(tries + 1));
+        if (tries == kFreeTries + 1)
+            UE_LOGW("build_sync: the host's nail '%ls' was tied again %u times here and snapped each time -- tied less "
+                    "often", e.first.c_str(), static_cast<unsigned>(kFreeTries));
         k.print = 0;
         const SaveRecord rec = k.rec;
         if (Make(e.first, rec, p->second, true, now)) {
@@ -595,6 +628,7 @@ void ClientPoll(coop::net::Session& s, Clock::time_point now) {
             it = g_known.erase(it);
             continue;
         }
+        if (present && k.remakes && now - k.since > kHeld) k.remakes = 0;
         if (present || g_inbox.count(it->first)) {
             ++it;
             continue;
