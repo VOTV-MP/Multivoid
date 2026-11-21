@@ -26,10 +26,15 @@ std::string g_dir;
 std::string g_tag;
 uint64_t g_start = 0;  // FILETIME of this peer's drill start
 
-std::mutex g_markLock;                                                  // guards the three below
-uint64_t g_lastStamp = 0;                                               // the newest stamp this process gave a mark
-std::unordered_map<std::string, std::vector<std::wstring>> g_ownFiles;  // per name: the files this process left, oldest first
-uint32_t g_deleteRefused = 0;                                           // deletes an outside holder refused, all names
+struct OwnFile {
+    std::wstring path;
+    bool refused = false;  // an outside holder refused its delete (counted once)
+};
+
+std::mutex g_markLock;                                           // guards the three below
+uint64_t g_lastStamp = 0;                                        // the newest stamp this process gave a mark
+std::unordered_map<std::string, std::vector<OwnFile>> g_ownFiles;  // per name: the files this process left, oldest first
+uint32_t g_deleteRefused = 0;                                    // files an outside holder refused a delete, all names
 
 // The path in the wide form the file calls take; empty when it does not convert.
 std::wstring Widen(const std::string& path) {
@@ -142,19 +147,26 @@ uint64_t NextStamp() {
     return t;
 }
 
-// Deletes this process's files of `name` that are older than the one just left (the last of `files`). An outside holder
-// (a scanner) can refuse a delete; the file stays on the list for the next mark of that name, and a leftover is
-// harmless because a reader takes the newest. The refusals are counted and said every 256th, never one by one.
-void DeleteOlder(const std::string& name, std::vector<std::wstring>& files) {
-    std::vector<std::wstring> kept;
-    for (size_t i = 0; i + 1 < files.size(); ++i) {
-        if (::DeleteFileW(files[i].c_str()) || ::GetLastError() == ERROR_FILE_NOT_FOUND) continue;
-        kept.push_back(files[i]);
-        if (++g_deleteRefused % 256 == 0)
-            UE_LOGI("%hs: %u deletes of older signal files were refused by an outside holder (last: '%hs')", g_tag.c_str(),
-                    g_deleteRefused, name.c_str());
+// Deletes this process's files of `name` older than its TWO newest (the last two of `files`). Keeping two removes the
+// race by construction: a reader lists the newest mark and opens it one poll later, and the mark it listed is still
+// there, since only a mark two newer than it is ever deleted. An outside holder (a scanner) can refuse a delete; the
+// file stays on the list for the next mark of that name, and a leftover is harmless because a reader takes the newest.
+// A file counts once, when first refused; the count is said every 256th file, never one by one.
+void DeleteOlder(const std::string& name, std::vector<OwnFile>& files) {
+    if (files.size() <= 2) return;
+    const size_t doomed = files.size() - 2;
+    std::vector<OwnFile> kept;
+    for (size_t i = 0; i < files.size(); ++i) {
+        OwnFile& f = files[i];
+        if (i < doomed && (::DeleteFileW(f.path.c_str()) || ::GetLastError() == ERROR_FILE_NOT_FOUND)) continue;
+        if (i < doomed && !f.refused) {
+            f.refused = true;
+            if (++g_deleteRefused % 256 == 0)
+                UE_LOGI("%hs: %u older signal files were refused a delete by an outside holder (last: '%hs')", g_tag.c_str(),
+                        g_deleteRefused, name.c_str());
+        }
+        kept.push_back(std::move(f));
     }
-    kept.push_back(files.back());
     files.swap(kept);
 }
 
@@ -206,8 +218,8 @@ void Mark(const char* name, const std::string& text) {
         UE_LOGW("%hs: signal '%hs' could not be left (every stamp tried was taken)", g_tag.c_str(), name);
         return;
     }
-    std::vector<std::wstring>& files = g_ownFiles[name];
-    files.push_back(to);
+    std::vector<OwnFile>& files = g_ownFiles[name];
+    files.push_back(OwnFile{to, false});
     DeleteOlder(name, files);
 }
 
