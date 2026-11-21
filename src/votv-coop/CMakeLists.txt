@@ -217,7 +217,7 @@ add_library(miniaudio STATIC third_party/miniaudio/miniaudio.c)
 target_include_directories(miniaudio PUBLIC third_party/miniaudio)
 
 # miniz (MIT, vendored, pinned 3.0.2) -- deflate + zip writer for the bug-report bundle
-# (coop/bug_report). One C TU, miniaudio's pattern. MINIZ_NO_ZLIB_COMPATIBLE_NAMES: else miniz.h
+# (coop/bug_report), and the deflate of a blob past the chunk ceiling (coop/net/blob_chunks). One C TU, miniaudio's pattern. MINIZ_NO_ZLIB_COMPATIBLE_NAMES: else miniz.h
 # #defines crc32 and the other zlib names, and the one named crc32 is a field of a wire struct
 # (protocol.h).
 add_library(miniz STATIC third_party/miniz/miniz.c)
@@ -240,7 +240,7 @@ target_include_directories(coop-net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated third_party/GameNetworkingSockets/include)
 target_compile_definitions(coop-net PRIVATE
     "VOTVCOOP_FINGERPRINT_TABLE=\"ue_wrap/facts/fingerprints_${VOTVCOOP_GAME_TARGET}.inc\"")
-target_link_libraries(coop-net PUBLIC nlohmann_json::nlohmann_json GameNetworkingSockets::static
+target_link_libraries(coop-net PUBLIC nlohmann_json::nlohmann_json GameNetworkingSockets::static miniz
     ws2_32 bcrypt crypt32 winhttp)
 
 # multivoid-loadpeer: a client that holds a seat on a host with no game behind it, linked against coop-net

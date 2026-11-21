@@ -23,4 +23,10 @@ inline constexpr size_t kTransportBodyBytes = coop::blob_chunks::MaxBlobBytes() 
 // The ceiling in force. A body over it is refused, never cut: half a record through loadData is worse than none.
 size_t MaxBodyBytes();
 
+// The record lane's own ceiling: what a blob carries deflated (blob_chunks::MaxRawBlobBytes), where the slot
+// lane's entries stay at MaxBodyBytes. A full box's record is 64 KB and holds no disc (Ghezra/Multivoid issue
+// 42); a disc's record past MaxBodyBytes crosses as a prop and is refused if it goes into a slot, as it was
+// before at both. The sender also needs blob_chunks::FitsWire. The dev red arm keeps both at 32 KB.
+size_t MaxRecordBodyBytes();
+
 }  // namespace coop::disc_record

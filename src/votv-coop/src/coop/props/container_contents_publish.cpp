@@ -102,9 +102,10 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
             return true;  // unchanged -- say nothing
     }
     const std::vector<uint8_t> blob = cw::Pack(eid, recs, flags);
-    if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
-        UE_LOGW("container_contents: eid=%u blob %zu B exceeds the transport ceiling -- dropped "
-                "(contents stay diverged; there is no bulk path)", eid, blob.size());
+    // Past the chunk ceiling the blob crosses deflated (issue 42: the drone storage holding a full box, 69 KB).
+    if (!coop::blob_chunks::FitsWire(blob)) {
+        UE_LOGW("container_contents: eid=%u blob %zu B exceeds the transport ceiling deflated too -- dropped "
+                "(contents stay diverged)", eid, blob.size());
         return true;
     }
     if (toSlot < 0 && s && !s->AnyWorldReadyPeer()) {

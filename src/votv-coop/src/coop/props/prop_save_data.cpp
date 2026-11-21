@@ -47,10 +47,10 @@ constexpr uint8_t kBodyVersion = 1;
 // A Key is an Aprop_C save key: ASCII, at most WireKey's 31 chars.
 constexpr size_t kMaxKeyChars = 31;
 
-// The record ceiling is disc_record::MaxBodyBytes(), the slot lane's too. A lower bound would be welcome (the codec
-// allocates engine memory per declared group), but a disc of sv.request rows costs 1.5 KB a row (24 rows, 36.8 KB)
-// and takes 32 writes, about 50 KB. A record over it is REFUSED and logged, never truncated: half a record
-// through loadData is worse than none.
+// The record ceiling is disc_record::MaxRecordBodyBytes(); past the chunk ceiling a body crosses deflated. A
+// lower bound would be welcome (the codec allocates engine memory per declared group), but a disc of sv.request
+// rows costs 1.5 KB a row (24 rows, 36.8 KB) and takes 32 writes, about 50 KB, and a full box 64 KB. A record
+// over it is REFUSED and logged, never truncated: half a record through loadData is worse than none.
 constexpr size_t kMaxOversizeLogged = 256;
 std::set<std::wstring> g_oversizeLogged;   // keys whose over-ceiling record was logged, one line each
 
@@ -341,11 +341,15 @@ bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
               const SR::SaveRecord& rec, size_t* bytesOut = nullptr) {
     const std::vector<uint8_t> body = BuildBody(key, rec);
     if (bytesOut) *bytesOut = body.size();
-    if (body.size() > coop::disc_record::MaxBodyBytes()) {
-        UE_LOGW("prop_save_data: record for key '%ls' is %zu B, over the %zu cap -- REFUSED, not "
-                "truncated; that prop's state stays where it is. If this fires on a legitimate "
+    const size_t cap = coop::disc_record::MaxRecordBodyBytes();
+    const bool over = body.size() > cap ||
+                      (body.size() > coop::disc_record::MaxBodyBytes() && cap > coop::disc_record::MaxBodyBytes() &&
+                       !coop::blob_chunks::FitsWire(body));
+    if (over) {
+        UE_LOGW("prop_save_data: record for key '%ls' is %zu B, over the %zu cap or the chunk ceiling deflated -- "
+                "REFUSED, not truncated; that prop's state stays where it is. If this fires on a legitimate "
                 "prop the cap is wrong, not the prop.",
-                key.c_str(), body.size(), coop::disc_record::MaxBodyBytes());
+                key.c_str(), body.size(), cap);
         return false;
     }
     const bool host = PT::SessionIsHost();
@@ -524,13 +528,13 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
     if (!(intent ? g_asmIntent : g_asmCanonical).OnChunk(p, senderSlot, body)) return;
     // The sender's own ceiling, applied on receive: a body above it would be applied here and then REFUSED on
     // the re-publish, leaving this peer holding state no other peer can be given. One line per key.
-    if (body.size() > coop::disc_record::MaxBodyBytes()) {
+    if (body.size() > coop::disc_record::MaxRecordBodyBytes()) {
         if (g_oversizeLogged.size() >= kMaxOversizeLogged) g_oversizeLogged.clear();   // turns over, never quiet
         const std::wstring named = HeadKey(body);
         if (g_oversizeLogged.insert(named).second) {
             UE_LOGW("prop_save_data: %s body for key '%ls' from slot %u is %zu B, over the %zu ceiling -- "
                     "refused (said once per key)", intent ? "intent" : "record", named.c_str(),
-                    static_cast<unsigned>(senderSlot), body.size(), coop::disc_record::MaxBodyBytes());
+                    static_cast<unsigned>(senderSlot), body.size(), coop::disc_record::MaxRecordBodyBytes());
             if (intent) AnswerRefused(s, senderSlot, named);
         }
         return;

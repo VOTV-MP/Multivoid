@@ -732,7 +732,8 @@ void OnChunk(coop::net::Session& session, const void* payload, size_t payloadLen
     std::memcpy(&chunk, payload, sizeof(chunk));
     std::vector<uint8_t> blob;
     // The assembler refuses these quietly (it returns false for a part way too): counted here, as every other refusal.
-    if (chunk.chunks == 0 || chunk.chunkIdx >= chunk.chunks || chunk.chunkLen > sizeof(chunk.data)) {
+    if (chunk.chunks == 0 || chunk.chunkIdx >= chunk.chunks ||
+        (chunk.chunkLen & ~coop::blob_chunks::kChunkDeflated) > sizeof(chunk.data)) {
         DropLogged("a chunk whose part fields do not add up", senderPeerSlot);
         return;
     }

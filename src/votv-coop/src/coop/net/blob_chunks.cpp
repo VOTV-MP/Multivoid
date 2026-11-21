@@ -6,6 +6,8 @@
 
 #include "ue_wrap/core/log.h"
 
+#include "miniz.h"
+
 #include <cstring>
 
 namespace coop::blob_chunks {
@@ -20,18 +22,59 @@ namespace {
 // n)` hands the whole blob to the transport in one call (broadcast vs slot-targeted), so a join gate
 // cannot split it; everything else (chunk count, 255-cap, all-or-nothing) is identical (RULE 2 --
 // one chunking implementation). The chunk buffer is reused across blobs.
+// The last blob deflated, kept by its hash and size: a lane's FitsWire and the SendBlob after it, or one
+// blob sent to each peer in turn, deflate once. Game thread.
+struct Deflated {
+    uint64_t hash = 0;
+    size_t raw = 0;
+    bool ok = false;
+    std::vector<uint8_t> wire;   // [u32 raw length][zlib stream]
+};
+Deflated g_deflated;
+
+// `blob` deflated for the wire; null when it is over MaxRawBlobBytes or does not deflate within MaxBlobBytes.
+const std::vector<uint8_t>* DeflateForWire(const std::vector<uint8_t>& blob) {
+    const uint64_t h = Fnv64(blob);
+    if (g_deflated.raw != blob.size() || g_deflated.hash != h) {
+        g_deflated = Deflated{};
+        g_deflated.hash = h;
+        g_deflated.raw = blob.size();
+        if (blob.size() <= MaxRawBlobBytes()) {
+            mz_ulong len = mz_compressBound(static_cast<mz_ulong>(blob.size()));
+            g_deflated.wire.resize(4 + static_cast<size_t>(len));
+            const uint32_t raw = static_cast<uint32_t>(blob.size());
+            std::memcpy(g_deflated.wire.data(), &raw, 4);
+            if (mz_compress2(g_deflated.wire.data() + 4, &len, blob.data(), static_cast<mz_ulong>(blob.size()),
+                             MZ_DEFAULT_LEVEL) == MZ_OK) {
+                g_deflated.wire.resize(4 + static_cast<size_t>(len));
+                g_deflated.ok = g_deflated.wire.size() <= MaxBlobBytes();
+            }
+        }
+        if (!g_deflated.ok) g_deflated.wire.clear();
+    }
+    return g_deflated.ok ? &g_deflated.wire : nullptr;
+}
+
 template <class SendAll>
 bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
-                  const std::vector<uint8_t>& blob, SendAll sendAll) {
+                  const std::vector<uint8_t>& raw, SendAll sendAll) {
     static thread_local std::vector<coop::net::BlobChunkPayload> chunkBuf;
     const size_t maxData = sizeof(coop::net::BlobChunkPayload{}.data);
+    const std::vector<uint8_t>* wire = &raw;
+    if (raw.size() > maxData * 255) {
+        wire = DeflateForWire(raw);
+        if (!wire) {
+            UE_LOGW("blob_chunks: blob of %zu bytes exceeds the 255-chunk cap deflated too (kind %u) -- dropped",
+                    raw.size(), static_cast<unsigned>(kind));
+            return false;
+        }
+        UE_LOGI("blob_chunks: blob of %zu bytes goes deflated as %zu (kind %u, seq=%u)", raw.size(),
+                wire->size(), static_cast<unsigned>(kind), seq);
+    }
+    const std::vector<uint8_t>& blob = *wire;
+    const bool deflated = wire != &raw;
     const uint8_t chunks =
         static_cast<uint8_t>(blob.empty() ? 1 : (blob.size() + maxData - 1) / maxData);
-    if (blob.size() > maxData * 255) {
-        UE_LOGW("blob_chunks: blob of %zu bytes exceeds the 255-chunk cap (kind %u) -- dropped",
-                blob.size(), static_cast<unsigned>(kind));
-        return false;
-    }
     chunkBuf.assign(chunks, coop::net::BlobChunkPayload{});
     size_t off = 0;
     for (uint8_t i = 0; i < chunks; ++i) {
@@ -40,7 +83,7 @@ bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
         p.chunkIdx = i;
         p.chunks = chunks;
         const size_t take = blob.size() - off > maxData ? maxData : blob.size() - off;
-        p.chunkLen = static_cast<uint16_t>(take);
+        p.chunkLen = static_cast<uint16_t>(take | (deflated && i == 0 ? kChunkDeflated : 0u));
         if (take) std::memcpy(p.data, blob.data() + off, take);
         off += take;
     }
@@ -52,7 +95,33 @@ bool ChunkAndSend(coop::net::ReliableKind kind, uint32_t seq,
     }
     return true;
 }
+// The bytes of a completed assembly: as they came, or inflated when its first chunk said deflated.
+bool Finish(bool deflated, std::vector<uint8_t>& blob, uint8_t senderSlot) {
+    if (!deflated) return true;
+    uint32_t raw = 0;
+    if (blob.size() < 4) return false;
+    std::memcpy(&raw, blob.data(), 4);
+    if (raw <= MaxBlobBytes() || raw > MaxRawBlobBytes()) {
+        UE_LOGW("blob_chunks: a deflated blob from slot %u names %u raw bytes, outside (%zu, %zu] -- dropped",
+                static_cast<unsigned>(senderSlot), raw, MaxBlobBytes(), MaxRawBlobBytes());
+        return false;
+    }
+    std::vector<uint8_t> out(raw);
+    mz_ulong len = raw;
+    if (mz_uncompress(out.data(), &len, blob.data() + 4, static_cast<mz_ulong>(blob.size() - 4)) != MZ_OK ||
+        len != raw) {
+        UE_LOGW("blob_chunks: a deflated blob from slot %u did not inflate to its %u bytes -- dropped",
+                static_cast<unsigned>(senderSlot), raw);
+        return false;
+    }
+    blob.swap(out);
+    return true;
+}
 }  // namespace
+
+bool FitsWire(const std::vector<uint8_t>& blob) {
+    return blob.size() <= MaxBlobBytes() || DeflateForWire(blob) != nullptr;
+}
 
 bool SendBlob(coop::net::Session* s, coop::net::ReliableKind kind, uint32_t seq,
               const std::vector<uint8_t>& blob) {
@@ -73,7 +142,10 @@ bool SendBlobToSlot(coop::net::Session* s, int peerSlot, coop::net::ReliableKind
 
 bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot,
                         std::vector<uint8_t>& outBlob) {
-    if (p.chunks == 0 || p.chunkIdx >= p.chunks || p.chunkLen > sizeof(p.data))
+    const bool deflatedFlag = (p.chunkLen & kChunkDeflated) != 0;
+    const uint16_t chunkLen = static_cast<uint16_t>(p.chunkLen & ~kChunkDeflated);
+    if (p.chunks == 0 || p.chunkIdx >= p.chunks || chunkLen > sizeof(p.data) ||
+        (deflatedFlag && p.chunkIdx != 0))
         return false;
 
     const auto now = std::chrono::steady_clock::now();
@@ -101,6 +173,7 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
     auto& a = map_[key];
     if (a.expectChunks == 0) {
         a.expectChunks = p.chunks;
+        a.deflated = deflatedFlag;
         a.started = now;
         a.blob.reserve(static_cast<size_t>(p.chunks) * sizeof(p.data));
     }
@@ -110,24 +183,27 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
         if (p.chunkIdx != 0) return false;
         auto& fresh = map_[key];
         fresh.expectChunks = p.chunks;
+        fresh.deflated = deflatedFlag;
         fresh.started = now;
         fresh.blob.reserve(static_cast<size_t>(p.chunks) * sizeof(p.data));
-        fresh.blob.insert(fresh.blob.end(), p.data, p.data + p.chunkLen);
+        fresh.blob.insert(fresh.blob.end(), p.data, p.data + chunkLen);
         fresh.gotChunks = 1;
         if (fresh.gotChunks == fresh.expectChunks) {
             outBlob = std::move(fresh.blob);
+            const bool deflated = fresh.deflated;
             map_.erase(key);
-            return true;
+            return Finish(deflated, outBlob, senderSlot);
         }
         return false;
     }
-    a.blob.insert(a.blob.end(), p.data, p.data + p.chunkLen);
+    a.blob.insert(a.blob.end(), p.data, p.data + chunkLen);
     ++a.gotChunks;
     if (a.gotChunks < a.expectChunks) return false;
 
     outBlob = std::move(a.blob);
+    const bool deflated = a.deflated;
     map_.erase(key);
-    return true;
+    return Finish(deflated, outBlob, senderSlot);
 }
 
 void Assembler::Sweep(std::chrono::steady_clock::time_point now, std::chrono::seconds ttl) {

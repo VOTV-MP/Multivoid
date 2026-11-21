@@ -38,13 +38,25 @@ inline uint64_t Fnv64(const uint8_t* p, size_t n) {
 }
 inline uint64_t Fnv64(const std::vector<uint8_t>& b) { return Fnv64(b.data(), b.size()); }
 
-// The transport ceiling: 255 chunks x the inline chunk payload. A blob past this NEVER sends
-// (ChunkAndSend warns and returns false before any chunk), so a caller with unbounded content must
-// bound BELOW this and check the return -- an ignored false on a canonical path is a silent
-// permanent divergence.
+// The transport ceiling: 255 chunks x the inline chunk payload. A blob past this sends only deflated
+// (below); one that does not deflate within it NEVER sends (ChunkAndSend warns and returns false before
+// any chunk), so a caller with unbounded content must bound it and check the return -- an ignored false
+// on a canonical path is a silent permanent divergence.
 inline constexpr size_t MaxBlobBytes() {
     return sizeof(coop::net::BlobChunkPayload{}.data) * 255;
 }
+
+// A blob past MaxBlobBytes crosses deflated when it deflates within it: the first chunk's chunkLen carries
+// kChunkDeflated, and the chunks hold [u32 raw length][a zlib stream]. MaxRawBlobBytes is the most a lane
+// may hand SendBlob and the most a receiver inflates. Ghezra/Multivoid issue 42: a full box's record
+// (64 KB) and the drone storage holding it (69 KB) were refused for good at MaxBlobBytes.
+inline constexpr size_t MaxRawBlobBytes() { return 512 * 1024; }
+inline constexpr uint16_t kChunkDeflated = 0x8000;
+
+// Whether `blob` can be sent: as it is, or deflated within MaxBlobBytes. A lane that checks this before
+// SendBlob refuses an oversize blob once, where SendBlob's false would be retried. The deflate is kept
+// for the send that follows.
+bool FitsWire(const std::vector<uint8_t>& blob);
 
 // Ship one blob as BlobChunkPayload chunks under `kind` with per-sender id `seq`. True only if
 // every chunk was accepted.
@@ -83,6 +95,7 @@ public:
 private:
     struct Assembly {
         uint8_t expectChunks = 0, gotChunks = 0;
+        bool deflated = false;   // its first chunk said so: inflated at completion
         std::vector<uint8_t> blob;
         std::chrono::steady_clock::time_point started{};
     };
