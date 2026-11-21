@@ -18,7 +18,7 @@ CFG_FLAG(grime_replay_watch_off, "grime_replay_watch_off", "dev", false, "VOTVCO
 CFG_ENUM(clean_drill, "clean_drill", "dev", "off", "off|clean|leaves|leaves_join", "VOTVCOOP_CLEAN_DRILL",
     "Drill, the grime lane on THREE peers (the host and two clients, mp.py --clients 2); set on ALL, with VOTVCOOP_CAN_DIR "
     "on all, on the rig's save (it holds the bucket the targets are picked around). clean -- the first client (VOTVCOOP_CLEAN_ACTOR=host: the host) cleans away, in the "
-    "rain's call form, one decal of each grime kind near the save's bucket (VOTVCOOP_CLEAN_BUCKET names its key); every peer says whether its copy ended, the actor's last clean (a sentinel decal's fall, behind its "
+    "rain's call form (a client with a sponge it spawns and holds, walking to each decal, strokes it until the host's word ends it), one decal of each grime kind near the save's bucket (VOTVCOOP_CLEAN_BUCKET names its key); every peer says whether its copy ended, the actor's last clean (a sentinel decal's fall, behind its "
     "ends on the ordered wire) being the moment each peer decides: 'rig: VERDICT grime-clean PASS|FAIL|INVALID', FAIL "
     "naming the decals that stood and the peer; every peer dumps the grime it holds before and after ('[CLN] all'). leaves -- every peer runs the autumn leaf spawn the wind's timer runs; "
     "every peer must hold the host's fallen leaves at the host's places and none of its own: 'rig: VERDICT grime-leaves "

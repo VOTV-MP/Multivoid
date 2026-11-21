@@ -7,7 +7,8 @@
 //   the ACTOR (the first client; VOTVCOOP_CLEAN_ACTOR=host: the host) picks, around the save's bucket, the decal of each grime
 //   kind that stands nearest it and one more cleanable, rain-proof decal (the SENTINEL), and marks them. Every other peer finds
 //   each of them standing on its own copy and says so.
-//   the actor cleans every target until it ends (the rain's call form, no sponge), waits until the lane has
+//   the actor cleans every target until it ends (a client actor with a sponge in its hand, walking to each decal, strokes it
+//   until the host's word ends it; a host actor makes the rain's call form, no sponge), waits until the lane has
 //   sent each end, then cleans the sentinel a little: the lane's wire is ordered, so a peer that sees the sentinel fall has
 //   applied every end the actor sent before it. Each other peer judges at that event: a target that ended on the actor and
 //   stands on this copy fails the run, named. The host says PASS once every peer's copy has ended them all.
@@ -17,15 +18,21 @@
 
 #include "clean_drill_detail.h"   // co-located private header (src tree, not include/)
 
+#include "coop/dev/director/director.h"
 #include "coop/interactables/grime_sync.h"
+#include "coop/player/hand_item.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "ue_wrap/core/asset_load.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <cstdint>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -66,7 +73,7 @@ struct Target {
     float start = 0.f;
 };
 
-enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
+enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Equip, AwaitHand, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
                 AwaitEnd, Done };
 Ph g_ph = Ph::Arrive;
 FVector g_anchor{};
@@ -79,6 +86,77 @@ bool g_dumpedAfter = false;
 void Go(Ph p, const char* name) {
     g_ph = p;
     Enter(name);
+}
+
+// ---- a client actor cleans with a sponge in its hand ------------------------------------------------------------------
+// The host judges a client's fall (coop/interactables/grime_judge): a clean with no sponge is the rain's call, which the
+// host grants only while it rains, and every fall must come from a body within reach of the decal. So a client actor
+// spawns and holds a sponge, waits for the host's record of it, walks to each decal, and strokes it as a sponge does (the
+// call prop_sponge makes, Sub 6, with the sponge as its first argument) every 0.3 s until the host's word ends the decal
+// on its copy. The host actor cleans its own decals natively, with no sponge.
+constexpr float kSpongeSub = 6.f;          // getStrength * 4 without soap: prop_sponge dump line 134
+constexpr float kWalkReachCm = 450.f;      // inside the judge's reach of a decal, not on top of it
+constexpr int   kWalkDeadlineS = 240;
+constexpr auto  kStrokeGap = std::chrono::milliseconds(300);
+constexpr const wchar_t* kSpongePath = L"/Game/objects/prop_sponge.prop_sponge_C";
+constexpr const wchar_t* kSpongeCls = L"prop_sponge_C";
+
+ue_wrap::CachedObjRef g_sponge;
+std::shared_ptr<coop::director::BackgroundWalk> g_walk;
+std::chrono::steady_clock::time_point g_strokeAt{};
+size_t g_ti = 0;   // the target being cleaned
+bool g_handMarked = false;
+
+bool UsesSponge() { return IsActor() && !IsHost(); }
+
+const char* HoldSponge(void* player) {
+    void* const cls = ue_wrap::asset_load::LoadObjectByPath(kSpongePath);
+    FVector at{};
+    if (!cls || !E::TryGetActorLocation(player, at)) return "the sponge class did not load or the player's place is unread";
+    void* const sponge = E::SpawnActor(cls, {at.X, at.Y, at.Z + 60.f});
+    bool collected = false;
+    if (!sponge || !E::CallMainPlayerHoldObject(player, sponge, collected) || !collected)
+        return "this client's own sponge could not be spawned and held";
+    g_sponge.Set(sponge);
+    return nullptr;
+}
+
+// One tick of the sponge's work on the decal of `cls` at `at`: 1 when it ended on this copy (or, `once`, after one stroke),
+// 0 working, -1 the run is over.
+int SpongeWork(const std::wstring& cls, const FVector& at, bool once) {
+    void* const d = DecalAt(cls, at);
+    if (!d || !R::IsLive(d)) {
+        g_walk.reset();
+        return 1;
+    }
+    if (!g_walk) {
+        g_walk = coop::director::StartBackgroundWalk(at, kWalkReachCm, kWalkDeadlineS);
+        if (!g_walk) {
+            Decide(Outcome::Invalid, "the walk to the %s decal did not start", Narrow(cls).c_str());
+            g_ph = Ph::AwaitEnd;
+            return -1;
+        }
+    }
+    const int st = g_walk->state.load();
+    if (st == 2) {
+        Decide(Outcome::Invalid, "the walk to the %s decal ended without reaching it", Narrow(cls).c_str());
+        g_ph = Ph::AwaitEnd;
+        return -1;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (st != 1 || now - g_strokeAt < kStrokeGap) return 0;
+    g_strokeAt = now;
+    // A decal held at zero waits for the host's word; a stroke on it would only ask again.
+    if (ProcessOf(d) > 0.01f && !Clean(d, g_sponge.Get(), kSpongeSub)) {
+        Decide(Outcome::Invalid, "the sponge's clean did not run on the %s decal", Narrow(cls).c_str());
+        g_ph = Ph::AwaitEnd;
+        return -1;
+    }
+    if (once) {
+        g_walk.reset();
+        return 1;
+    }
+    return 0;
 }
 
 // ---- the targets on the wire -------------------------------------------------------------------------------------------
@@ -202,6 +280,11 @@ void TickClean(coop::net::Session& s) {
     if (g_ph > Ph::Arrive && Overdue()) return;
     const bool host = IsHost();
     const bool acts = IsActor();
+    // The host says when its record of the first client's hand holds the sponge the client actor spawned: the first stroke waits.
+    if (host && !acts && !g_handMarked && g_ph > Ph::Arrive && coop::hand_item::HeldClassIs(1, kSpongeCls)) {
+        g_handMarked = true;
+        MarkShared("cl_hand", "ok");
+    }
     std::string text;
 
     switch (g_ph) {
@@ -251,10 +334,40 @@ void TickClean(coop::net::Session& s) {
     case Ph::AwaitSeen: {
         for (int slot = 0; slot < kPeers; ++slot)
             if (slot != MySlot() && !PeekOf("cl_seen", slot, text)) return;
-        Go(Ph::Clean, "the cleaning");
+        if (UsesSponge()) Go(Ph::Equip, "the sponge in the hand");
+        else Go(Ph::Clean, "the cleaning");
         return;
     }
+    case Ph::Equip: {
+        if (const char* why = HoldSponge(coop::players::Registry::Get().Local())) {
+            Decide(Outcome::Invalid, "%s", why);
+            g_ph = Ph::AwaitEnd;
+            return;
+        }
+        Go(Ph::AwaitHand, "the host's record of the sponge");
+        return;
+    }
+    case Ph::AwaitHand:
+        if (!PeekShared("cl_hand", text)) return;
+        g_ti = 0;
+        g_ended = 0;
+        Go(Ph::Clean, "the cleaning");
+        return;
     case Ph::Clean: {
+        if (UsesSponge()) {
+            if (g_ti >= g_targets.size()) {
+                Go(Ph::Sentinel, "the sentinel");
+                return;
+            }
+            const int w = SpongeWork(g_targets[g_ti].cls, g_targets[g_ti].at, /*once=*/false);
+            if (w == 1) {
+                UE_LOGI("[CLN] target %zu %ls ended on this copy by the host's word", g_ti, g_targets[g_ti].cls.c_str());
+                ++g_ended;
+                ++g_ti;
+                Enter("the cleaning");   // each target has its own bound
+            }
+            return;
+        }
         g_ends0 = coop::grime_sync::Tallies().endsSent;
         g_ended = 0;
         for (size_t i = 0; i < g_targets.size(); ++i) {
@@ -284,7 +397,17 @@ void TickClean(coop::net::Session& s) {
     case Ph::Sentinel: {
         void* const d = DecalAt(g_sentinel.cls, g_sentinel.at);
         const float before = ProcessOf(d);
-        if (!d || !Clean(d, nullptr, kSentinelSub) || ProcessOf(d) >= before - kFallEps) {
+        bool ran = false;
+        if (UsesSponge()) {
+            // The sentinel's one stroke is the sponge's, from beside it; the lane's order puts the host's ends first.
+            const int w = d ? SpongeWork(g_sentinel.cls, g_sentinel.at, /*once=*/true) : -1;
+            if (w == 0) return;
+            if (w < 0 && g_ph == Ph::AwaitEnd) return;
+            ran = w == 1;
+        } else {
+            ran = d && Clean(d, nullptr, kSentinelSub);
+        }
+        if (!ran || ProcessOf(d) >= before - kFallEps) {
             Decide(Outcome::Invalid, "the sentinel %s did not fall by a clean of %.0f", Narrow(g_sentinel.cls).c_str(),
                    kSentinelSub);
             g_ph = Ph::AwaitEnd;
