@@ -1684,7 +1684,7 @@ struct PoseSnapshot {
     // base is sent as none. baseId is the FNV-1a 32 of the mover's portable interactable key, meaningful with kMover only;
     // bx, by, bz the player's position minus the mover's reference location, world axes, no rotation (MTA's contact offset,
     // CNetAPI.cpp:1160-1168) -- x, y, z stay the absolute position, so a reader that knows no base reads the pose as before.
-    // All zero with kNone; _pad is zero and ValidatePose refuses anything else.
+    // All zero with kNone; _pad is zero. A bad base field drops the claim, never the pose (BaseFieldsValid).
     uint32_t baseId;
     float   bx, by, bz;
     uint8_t baseKind;
@@ -5361,16 +5361,26 @@ inline bool ValidatePose(const PoseSnapshot& p) {
     // The engine's control rotation is unnormalised (looking down reads 350), so the range is the
     // full axis, not a small pitch band.
     if (p.yaw          < -180.f || p.yaw          > 180.f) return false;
-    if (p.pitch        < -180.f || p.pitch        > 180.f) return false;
     if (p.headYawDelta < -180.f || p.headYawDelta > 180.f) return false;
-    // The base claim: a known kind, a finite offset a player cannot stand farther from its mover than (a claim past it is no
-    // rider), zero pad. A refusal drops the whole pose, as every other field's does.
+    if (p.pitch        < -180.f || p.pitch        > 180.f) return false;
+    return true;
+}
+
+// The base claim of a pose ValidatePose passed: a known kind, a finite offset no farther than a player can stand from its mover,
+// zero pad. A pose that fails keeps its place and loses only the claim (DropBase), as every receiver does to its own copy.
+inline bool BaseFieldsValid(const PoseSnapshot& p) {
     if (p.baseKind > pose_base_kind::kMover) return false;
     const float offs[3] = {p.bx, p.by, p.bz};
     for (float v : offs)
         if (!std::isfinite(v) || std::fabs(v) > kMaxBaseOffsetCm) return false;
-    if (p._pad[0] != 0 || p._pad[1] != 0 || p._pad[2] != 0) return false;
-    return true;
+    return p._pad[0] == 0 && p._pad[1] == 0 && p._pad[2] == 0;
+}
+
+inline void DropBase(PoseSnapshot& p) {
+    p.baseKind = pose_base_kind::kNone;
+    p.baseId = 0;
+    p.bx = p.by = p.bz = 0.f;
+    p._pad[0] = p._pad[1] = p._pad[2] = 0;
 }
 
 // The world bounds of a held or driven prop's pose, for a pose already known finite: |xyz| within kMaxCoord and

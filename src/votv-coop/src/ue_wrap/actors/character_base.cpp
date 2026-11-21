@@ -68,6 +68,13 @@ bool ReadMovementBase(void* character, Base& out) {
     return true;
 }
 
+void* MovementBaseComponent(void* character) {
+    if (!IsCharacter(character) || !g_layout.usable) return nullptr;
+    void* const comp = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(character) + g_layout.baseOff +
+                                                      g_layout.componentOff);
+    return comp && R::IsLive(comp) ? comp : nullptr;
+}
+
 void* CapsuleComponent(void* character) {
     if (!IsCharacter(character)) return nullptr;
     void* const capsule = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(character) +

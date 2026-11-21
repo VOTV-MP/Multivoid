@@ -22,6 +22,7 @@
 #include <steam/steamnetworkingsockets.h>
 #pragma warning(pop)
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -193,6 +194,16 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
             streamRefusals_.Refused(routeSlot, StreamRefusals::Why::FailedValidation, seq,
                                     origin.pose.LastSeq());
             return;
+        }
+        // A bad base field costs the claim, never the pose: the puppet is then placed by the absolute position. Counted.
+        if (!BaseFieldsValid(pkt.pose)) {
+            static std::atomic<uint32_t> sBaseDropped{0};
+            const uint32_t n = ++sBaseDropped;
+            if (n == 1 || n % 1000 == 0)
+                UE_LOGW("net: slot %d sent a pose with a bad base field (kind %u, offset %.0f,%.0f,%.0f): its base claim was "
+                        "dropped, the pose kept (%u so far)", static_cast<int>(routeSlot), static_cast<unsigned>(pkt.pose.baseKind), pkt.pose.bx,
+                        pkt.pose.by, pkt.pose.bz, n);
+            DropBase(pkt.pose);
         }
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);

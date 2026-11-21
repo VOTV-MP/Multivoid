@@ -20,7 +20,7 @@ namespace R = reflection;
 std::atomic<bool> g_resolved{false};
 int32_t g_dirOff = -1, g_movingOff = -1;
 // The measure fields, optional: -1 when the class lacks one (its reader then returns false).
-int32_t g_attachOff = -1, g_compOff = -1, g_ignoreOff = -1;
+int32_t g_attachOff = -1, g_compOff = -1, g_ignoreOff = -1, g_speedOff = -1;
 uint8_t g_ignoreMask = 0;
 void* g_failedCls = nullptr;
 
@@ -63,6 +63,7 @@ bool EnsureResolved() {
     g_movingOff = movingOff;
     g_attachOff = R::FindPropertyOffset(cls, L"attach");
     g_compOff = R::FindPropertyOffset(cls, L"comp");
+    g_speedOff = R::FindPropertyOffset(cls, L"speed");
     int32_t ignoreOff = -1;
     uint8_t ignoreMask = 0;
     if (R::FindBoolProperty(cls, L"ignoreCheck", ignoreOff, ignoreMask) && ignoreOff >= 0 && ignoreMask != 0) {
@@ -133,6 +134,14 @@ bool ReadStopsZ(void* lift, float& lowZ, float& highZ) {
     if (!attach || !engine::TryGetComponentLocation(attach, at)) return false;
     lowZ = at.Z - engine::GetComponentRelativeLocation(attach).Z;
     highZ = lowZ + kTravelCm;
+    return true;
+}
+
+bool ReadMaxSpeedCmS(void* lift, float& cmPerSec) {
+    if (!lift || g_speedOff < 0 || !IsCargoLift(lift)) return false;
+    const float speed = *reinterpret_cast<const float*>(static_cast<const uint8_t*>(lift) + g_speedOff);
+    if (!(speed > 0.f)) return false;
+    cmPerSec = 2.f * kTravelCm / speed;
     return true;
 }
 

@@ -18,6 +18,10 @@ struct Base {
 // once).
 bool ReadMovementBase(void* character, Base& out);
 
+// The component alone (`Base::component`), for a caller that compares it with the one it saw last before it asks for the owner.
+// Null for none and for an unreadable character.
+void* MovementBaseComponent(void* character);
+
 // ACharacter::CapsuleComponent, or null when `character` is not a live Character.
 void* CapsuleComponent(void* character);
 

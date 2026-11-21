@@ -60,4 +60,9 @@ inline constexpr float kTravelCm = 500.f;
 // height (the loop sets that to 0..kTravelCm), the high one kTravelCm over it. False when `attach` does not read.
 bool ReadStopsZ(void* lift, float& lowZ, float& highZ);
 
+// The fastest the platform moves, cm/s: the move loop adds dt / `speed` x `spd` to `alpha` (cargoLift.cpp:48-56) and
+// Ease(0, 1, alpha, EaseInOut, 2, 2) (:114) maps it onto kTravelCm; EaseInOut with exponent 2 peaks at twice the mean rate, so the
+// peak is 2 x kTravelCm / `speed` (the field, 12 by default) for the timeline's `spd` of at most 1 (assumed, not measured). False when `speed` does not read.
+bool ReadMaxSpeedCmS(void* lift, float& cmPerSec);
+
 }  // namespace ue_wrap::cargo_lift

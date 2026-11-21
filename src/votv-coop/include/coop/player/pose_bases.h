@@ -50,7 +50,9 @@ bool Resolve(uint32_t baseId, Resolved& out);
 // The checks are per axis and independent of the link: the lift moves on Z only, so the XY gap between the absolute position
 // and (the platform's location now + the offset) must stay within kMaxXyGapCm whatever the link's lag; the absolute Z must lie
 // within the lift's travel (its two stops, minus kBelowStopCm and plus kAboveStopCm for a standing player); the offset's Z
-// must put the player's centre over the platform's origin, 0..kMaxOffsetZCm. The same call judges a client's pose on the host
+// must put the player's centre over the platform's origin, 0..kMaxOffsetZCm; the Z gap between the absolute pose and (platform +
+// offset) must stay within the lift's peak speed times kMaxZGapSeconds, and the offset's XY inside the platform's own bounds plus
+// kBoundsMarginCm. The same call judges a client's pose on the host
 // and a relayed pose on every other client.
 bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out);
 
@@ -58,9 +60,11 @@ inline constexpr float kMaxXyGapCm = 30.f;
 inline constexpr float kBelowStopCm = 50.f;
 inline constexpr float kAboveStopCm = 250.f;
 inline constexpr float kMaxOffsetZCm = 250.f;
+inline constexpr float kMaxZGapSeconds = 1.f;    // the Z gap between the absolute pose and (platform + offset): the lift's peak speed times this
+inline constexpr float kBoundsMarginCm = 50.f;   // the offset's XY lies inside the platform's own bounds plus this
 
 // Why a claim was set aside, each counted per slot (the log says the first of each minute).
-enum class Reject : uint8_t { XyGap, OffsetZ, Volume };
+enum class Reject : uint8_t { XyGap, OffsetZ, Volume, ZGap, OffsetBounds };
 // How many claims of `slot` were set aside for `why`, and how many passed, since the process began. A drill reads them.
 uint32_t Rejected(uint8_t slot, Reject why);
 uint32_t Accepted(uint8_t slot);

@@ -99,7 +99,8 @@ void SaidNone(void* owner) {
     const std::wstring cls = owner ? R::ClassNameOf(owner) : std::wstring(L"?");
     for (const std::wstring& c : g_saidClasses)
         if (c == cls) return;
-    if (g_saidClasses.size() < 16) g_saidClasses.push_back(cls);
+    if (g_saidClasses.size() >= 16) return;   // the list is full: no more classes are said (a log line per base change otherwise)
+    g_saidClasses.push_back(cls);
     UE_LOGI("pose_bases: the local player stands on a %ls, which is no registered mover: its pose names no base", cls.c_str());
 }
 
@@ -130,7 +131,7 @@ bool Resolve(uint32_t baseId, Resolved& out) {
 
 namespace {
 
-constexpr int kReasons = 3;
+constexpr int kReasons = 5;
 uint32_t g_rejected[coop::players::kMaxPeers][kReasons] = {};
 uint32_t g_accepted[coop::players::kMaxPeers] = {};
 Forge g_forge = nullptr;
@@ -143,8 +144,8 @@ void SetAside(uint8_t slot, Reject why, const char* what, float a, float b, floa
     if (g_saidAt[slot].time_since_epoch().count() != 0 && now - g_saidAt[slot] < std::chrono::minutes(1)) return;
     g_saidAt[slot] = now;
     UE_LOGW("pose_bases: slot %u's base claim set aside (%s: %.0f, %.0f, %.0f); it is placed by its absolute pose "
-            "(counts xy=%u offsetZ=%u volume=%u)", static_cast<unsigned>(slot), what, a, b, c,
-            g_rejected[slot][0], g_rejected[slot][1], g_rejected[slot][2]);
+            "(counts xy=%u offsetZ=%u volume=%u zGap=%u bounds=%u)", static_cast<unsigned>(slot), what, a, b, c,
+            g_rejected[slot][0], g_rejected[slot][1], g_rejected[slot][2], g_rejected[slot][3], g_rejected[slot][4]);
 }
 
 }  // namespace
@@ -176,6 +177,23 @@ bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out) {
         SetAside(slot, Reject::Volume, "abs z, low stop, high stop", pose.z, low, high);
         return false;
     }
+    // The claimed Z against the absolute Z: the platform moves at the lift's own peak speed at most, so a gap past a second of it is
+    // no link lag. A speed that does not read fails closed.
+    float peak = 0.f;
+    const float zGap = std::fabs(pose.z - (out.origin.Z + pose.bz));
+    if (!CL::ReadMaxSpeedCmS(out.lift, peak) || zGap > peak * kMaxZGapSeconds) {
+        SetAside(slot, Reject::ZGap, "z gap, peak speed, offset z", zGap, peak, pose.bz);
+        return false;
+    }
+    // The offset lies inside the platform's own bounds (the XY of where the claim puts the player) plus a margin: feet on or over the
+    // slab. The bounds are read now, as the platform stands.
+    ue_wrap::FVector centre{}, extent{};
+    if (!E::GetActorBounds(out.actor, true, centre, extent) ||
+        std::fabs(out.origin.X + pose.bx - centre.X) > extent.X + kBoundsMarginCm ||
+        std::fabs(out.origin.Y + pose.by - centre.Y) > extent.Y + kBoundsMarginCm) {
+        SetAside(slot, Reject::OffsetBounds, "offset x, offset y, half x", pose.bx, pose.by, extent.X);
+        return false;
+    }
     if (slot < coop::players::kMaxPeers) ++g_accepted[slot];
     return true;
 }
@@ -189,12 +207,15 @@ void FillBase(void* localPlayer, coop::net::PoseSnapshot& pose) {
     static const bool baseOff = coop::config::ResolveFlag(::coop::config_registry::rows::basedmove_base_off);
     if (baseOff) return;
 
-    CB::Base base;
-    if (!CB::ReadMovementBase(localPlayer, base) || !base.component) {
+    // The component alone first: the verdict on it is cached, so a player standing where it stood costs one pointer compare.
+    void* const comp = CB::MovementBaseComponent(localPlayer);
+    if (!comp) {
         g_sender.comp.Reset();
         return;
     }
-    if (g_sender.comp.Get() != base.component) {
+    if (g_sender.comp.Get() != comp) {
+        CB::Base base;
+        if (!CB::ReadMovementBase(localPlayer, base) || base.component != comp) return;
         const int row = LiftRow(base, g_sender.id);
         if (row < 0) return;   // a lift not indexed yet: none for now, asked again at the next pose
         g_sender.comp.Set(base.component);
