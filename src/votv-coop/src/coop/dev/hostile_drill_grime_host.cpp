@@ -52,6 +52,8 @@ const char*           g_waiting = "slot 1's world-ready";
 uint16_t              g_playerNo = 0;     // slot 1's occupant when the host said ready
 bool                  g_rainAsked = false;
 bool                  g_clientReady = false;
+bool                  g_fixerSaid = false;   // the measure arm: the host saw a fixer in the client's hand and said so
+GJ::Stats             g_fixBase{};
 bool                  g_life1Done = false;   // the join-leak arm's first life judged: its decal and bases stand for the second
 ue_wrap::CachedObjRef g_decal;
 ue_wrap::CachedObjRef g_crack;            // the measure arm's second decal
@@ -319,12 +321,36 @@ void Judge(coop::net::Session* s, const Spec& sp) {
     if (sp.arm == Arm::Last && ReportHas(sp, "early"))
         return Finish(sp, "FAIL", "the client's decal was gone before the host's word: its destroy ran");
     if (sp.arm == Arm::Measure) {
+        // The wall fixer's turn: once the host's record holds a fixer in slot 1's hand its crack is lowered to where one use ends
+        // it (the client does the same to its copy) and the client is told; the use's ask must then be granted, by the tool route.
+        if (!g_fixerSaid && HI::HeldClassIs(kSlot, kFixerCls)) {
+            void* const crack = g_crack.Get();
+            if (crack && R::IsLive(crack)) G::WriteProcessAndApply(crack, kCrackLeft);
+            g_fixBase = GJ::GetStats();
+            g_fixerSaid = true;
+            DC::Say(Line(sp.arm, "fixer-ready") + "ok");
+        }
         std::string rest;
-        if (!ReportHas(sp, "done", &rest)) {
+        if (!g_fixerSaid || !ReportHas(sp, "done", &rest)) {
             if (Clock::now() - g_judgeAt > kFailBound) Finish(sp, "INCONCLUSIVE", "the client never reported its measures");
             return;
         }
-        return Finish(sp, rest.rfind("held=0 ", 0) == 0 ? "FAIL" : "PASS", "client's measures: " + rest + "; host " + Summary(d));
+        const GJ::Stats n = GJ::GetStats();
+        const GJ::Stats& b = g_fixBase;
+        const uint64_t grants = n.toolGrants - b.toolGrants;
+        const uint64_t refused = (n.refusedNotool - b.refusedNotool) + (n.refusedReach - b.refusedReach) +
+                                 (n.refusedRain - b.refusedRain) + (n.refusedNodecal - b.refusedNodecal) +
+                                 (n.refusedNobody - b.refusedNobody) + (n.refusedKind - b.refusedKind) +
+                                 (n.refusedQueue - b.refusedQueue);
+        if (grants == 0 && refused == 0) {   // the ask is still queued
+            if (Clock::now() - g_judgeAt > kFailBound) Finish(sp, "INCONCLUSIVE", "the wall fixer's ask was never judged");
+            return;
+        }
+        if (grants == 0 || refused != 0)
+            return Finish(sp, "FAIL", "the wall fixer's ask was not granted by the tool route: " + std::to_string(grants) + " granted, " +
+                                          std::to_string(refused) + " refused (notool " + std::to_string(n.refusedNotool - b.refusedNotool) + ")");
+        return Finish(sp, rest.rfind("held=0 ", 0) == 0 || rest.find("fixheld=0") != std::string::npos ? "FAIL" : "PASS",
+                      "client's measures: " + rest + "; the fixer's ask granted; host " + Summary(d));
     }
     if (d[kAsked] == 0) {
         if (Clock::now() - g_judgeAt > kFailBound) Finish(sp, "INCONCLUSIVE", "the client's message never arrived");
@@ -486,7 +512,8 @@ void HostReset() {
     g_armAt = g_judgeAt = {};
     g_waiting = "slot 1's world-ready";
     g_playerNo = 0;
-    g_rainAsked = g_clientReady = g_life1Done = false;
+    g_rainAsked = g_clientReady = g_life1Done = g_fixerSaid = false;
+    g_fixBase = GJ::Stats{};
     g_decal.Reset();
     g_crack.Reset();
     g_target = Target{};

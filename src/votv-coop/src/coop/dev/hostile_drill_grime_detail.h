@@ -20,6 +20,7 @@ constexpr uint8_t kSlot = 1;                             // the one slot the fam
 
 // The classes a held sponge and a wall fixer are found by in a hand record, and the paths the client spawns them from.
 constexpr const wchar_t* kSpongeCls = L"prop_sponge_C";
+constexpr const wchar_t* kFixerCls = L"prop_wallfixer_C";
 constexpr const wchar_t* kSpongePath = L"/Game/objects/prop_sponge.prop_sponge_C";
 constexpr const wchar_t* kFixerPath = L"/Game/objects/prop_wallfixer.prop_wallfixer_C";
 
@@ -38,6 +39,8 @@ constexpr float kFarMinCm = 3000.0f;
 constexpr float kWideMaxCm = 9000.0f;
 // What `last` leaves the decal at on the host before the client's stroke: one stroke takes it below zero.
 constexpr float kLastLeft = 5.0f;
+// What the measure arm leaves a crack at on both copies before the wall fixer's use: one use (a flat 10) ends it.
+constexpr float kCrackLeft = 5.0f;
 constexpr float kValueEps = 0.05f;
 // How near the client walks to the decal it will clean: inside the judge's reach, not on top of it.
 constexpr float kWalkReachCm = 450.0f;

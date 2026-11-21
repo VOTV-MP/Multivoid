@@ -52,8 +52,8 @@ constexpr float kSpongeRadiusCm = 15.0f;
 constexpr float kFixerRadiusCm = 5.0f;
 // One call's fall of a sponge: grime_C::clean takes `Sub * cleanStrength * 1.2` (lines 220-222 of the grime_C dump); the sponge's Sub is
 // getStrength * 4 (prop_sponge.cpp:134), and getStrength is the sponge's `strength` and double that with soap
-// (prop_sponge.cpp:756-761). Set from the measure arm: `strength`'s 1.5 (prop_sponge.cpp:9) is the property's default and
-// getStrength's body does not show it as the value it returns, so the host cannot prove it from the Blueprint.
+// (prop_sponge.cpp:756-761). `strength`'s 1.5 (prop_sponge.cpp:9) is the property's default and getStrength's body does not show it as
+// the value it returns; the measure run agrees with it: a stroke of Sub 6 fell 14.4 on a decal of cleanStrength 2, the judge's step read 28.8.
 constexpr float kSpongeStrength = 1.5f;
 constexpr float kSpongeSoapFactor = 2.0f;
 constexpr float kSpongeSubFactor = 4.0f;
@@ -70,16 +70,19 @@ constexpr float kRainRadiusCm = 10000.0f;
 constexpr float kRainRoofForwardCm = 25.0f;
 constexpr float kRainRoofTraceCm = 2500.0f;
 constexpr uint64_t kRainPeriodMs = 2000;
-// Provisional, set from the measure arm: how much of the rain's period a per-key cadence forgives (frame jitter and the
-// transport's batching), and what a reach adds beyond the tool's trace, its overlap and the decal's box (the pose
-// allowance is the authority's own).
+// Provisional: a per-key rain cadence forgives this much of the period (frame jitter, the transport's batching); no run has
+// read it. A reach adds this beyond the tool's trace, its overlap and the decal's box (the pose allowance is the authority's
+// own); the measure run's strokes stood 432 uu from the decal, and every grant logs that distance with the reach allowed, so
+// the slack is read from the next run.
 constexpr uint64_t kRainPeriodSlackMs = 250;
 constexpr float kReachSlackCm = 100.0f;
 // A fall that lands within this of the host's value minus the step is no cut: float arithmetic on both sides.
 constexpr float kStepEps = 0.01f;
 
-// A sender's asks run from one ordered queue at a bounded rate. Provisional, set from the measure arm: the sponge's
-// stroke rate times the decals one overlap touches.
+// A sender's asks run from one ordered queue at a bounded rate. The measure run read about 3.3 asks a second per decal (the
+// drill's own 300 ms stroke; the game's sponge loop is 4 a second, prop_sponge dump line 87) and one decal under a sponge's
+// overlap, so 16 a second with a burst of 16 holds several decals at once; a human's sponge over a cluster of decals is the
+// reading still to take.
 constexpr coop::net::IntentBudget kBudget{16.0f, 16.0f};
 // The keys one sender may have queued; an ask of a key already queued is folded into it.
 constexpr size_t kMaxPending = 64;
@@ -135,6 +138,7 @@ struct Route {
     bool        ok = false;
     float       step = 0.f;
     float       dist = -1.f;
+    float       allowed = -1.f;  // the reach the authority allowed for it, its pose allowance included
     const char* why = nullptr;
 };
 
@@ -155,6 +159,7 @@ Route ToolRoute(coop::net::Session& s, uint8_t slot, void* decal, const ue_wrap:
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, reach).AuthorizeSegment(centre, centre);
     r.dist = subject.distUU;
+    r.allowed = subject.reachUU;
     if (!subject) { r.why = coop::element::OutcomeName(subject.outcome); return r; }
     float cleanStrength = 1.0f;
     if (!crack && !G::ReadCleanStrength(decal, cleanStrength)) { r.why = "the decal's strength does not read"; return r; }
@@ -211,6 +216,7 @@ Route RainRoute(coop::net::Session& s, uint8_t slot, const std::wstring& key, vo
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, kRainRadiusCm).AuthorizeSegment(centre, centre);
     r.dist = subject.distUU;
+    r.allowed = subject.reachUU;
     if (!subject) { r.why = coop::element::OutcomeName(subject.outcome); return r; }
     const auto last = g_rainLast.find(key);
     if (last != g_rainLast.end() && NowMs() - last->second + kRainPeriodSlackMs < kRainPeriodMs) {
@@ -306,10 +312,15 @@ bool Execute(coop::net::Session& s, Slot& sl, Item& it, uint8_t slot) {
         ++g_stats.granted;
         coop::grime_sync::GrantFall(s, it.key, decal, granted, slot, cut);
     }
-    if (ProbeLog())
-        UE_LOGI("grime_judge: GRANT slot=%u key='%ls' asked %.2f of %.2f -> %.2f%s (step %.2f; tool %.0f uu, rain %.0f uu)",
-                static_cast<unsigned>(slot), it.key.c_str(), value, host, granted, cut ? " cut" : "", step, tool.dist,
-                rain.dist);
+    // The distance each grant was measured at, with the reach allowed for it: the first of a session's grants always, the rest
+    // under grime_log, so the reach slack reads from any run.
+    static uint32_t s_grantsSaid = 0;
+    if (ProbeLog() || s_grantsSaid < 64) {
+        ++s_grantsSaid;
+        UE_LOGI("grime_judge: GRANT slot=%u key='%ls' asked %.2f of %.2f -> %.2f%s (step %.2f; tool %.0f of %.0f uu, rain %.0f of "
+                "%.0f uu)", static_cast<unsigned>(slot), it.key.c_str(), value, host, granted, cut ? " cut" : "", step,
+                tool.dist, tool.allowed, rain.dist, rain.allowed);
+    }
     return consume();
 }
 

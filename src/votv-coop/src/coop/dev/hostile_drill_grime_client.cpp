@@ -8,6 +8,7 @@
 
 #include "clean_drill_detail.h"  // Clean: grime_C::clean with the sponge as its first argument, as prop_sponge calls it
 
+#include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/director.h"
 #include "coop/config/config.h"
 #include "coop/dev/drill_chat.h"
@@ -60,7 +61,8 @@ std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 ue_wrap::CachedObjRef g_sponge;
 
 // The measure arm's state.
-enum class MStep : uint8_t { Strokes, AwaitEnd, CrackWait, CrackWalk, CrackFix, Report };
+enum class MStep : uint8_t { Strokes, AwaitEnd, CrackWait, CrackWalk, CrackClear, CrackReady, CrackFix };
+coop::director::ClearHand g_clear;
 MStep       g_m = MStep::Strokes;
 Target      g_crack;
 int         g_strokes = 0, g_overlap = 0;
@@ -196,40 +198,62 @@ void MeasureAwaitEnd(const Spec& sp, void* decal) {
     if (Late("the host's end of the held decal")) Invalid(sp, "the host never ended the decal the last stroke asked for");
 }
 
+// One wall fixer use, with the fixer in the hand as a player has it: the sponge is put down, a fixer this client spawns is
+// held, the host's record of it is awaited (the judge's tool route reads that record), the crack's copy is lowered to where
+// one use ends it (the host lowers its own to the same), and wallFixer_fix is called with the hand's fixer. The ask the use
+// sends must be granted; the host says so in the verdict.
 void MeasureCrack(coop::net::Session*, const Spec& sp, void* player) {
+    static R::InstanceOffset sConcrete{L"concrete"};
     std::string rest;
-    if (g_m == MStep::CrackWait) {
+    switch (g_m) {
+    case MStep::CrackWait:
         if (!DC::SeenRestOf(Line(sp.arm, "crack"), &rest)) return;
         if (!ParseTarget(rest, g_crack)) return Invalid(sp, "the host's crack line could not be read: " + rest);
         if (!StartWalk(g_crack)) return Invalid(sp, "the walk to the crack did not start");
         g_m = MStep::CrackWalk;
         return;
-    }
-    if (g_m == MStep::CrackWalk) {
+    case MStep::CrackWalk: {
         const int st = g_walk ? g_walk->state.load() : 2;
         if (st == 0) return;
         if (st == 2) return Invalid(sp, "the walk to the crack decal ended without reaching it");
+        g_m = MStep::CrackClear;
+        return;
+    }
+    case MStep::CrackClear: {
+        // The hand holds the sponge: it is put down as a player puts it down, then the fixer is taken.
+        const coop::director::ClearState cs = g_clear.Tick();
+        if (cs == coop::director::ClearState::Working) return;
+        if (cs == coop::director::ClearState::Failed) return Invalid(sp, std::string("the hand did not clear: ") + g_clear.Why());
+        void* fixer = nullptr;
+        if (const char* why = HoldNew(player, kFixerPath, &fixer)) return Invalid(sp, why);
+        g_m = MStep::CrackReady;
+        return;
+    }
+    case MStep::CrackReady: {
+        if (!DC::SeenHas(Line(sp.arm, "fixer-ready"))) {
+            if (Late("the host's record of the wall fixer")) Invalid(sp, "the host never saw the wall fixer in the hand");
+            return;
+        }
+        g_waiting = nullptr;
         g_m = MStep::CrackFix;
         return;
     }
-    // One wall fixer use: a fixer this client spawns, its concrete set above 0, the crack's copy lowered to where one use
-    // ends it, and wallFixer_fix called with the fixer. The use is the game's own verb; the fixer is not in the hand, so the
-    // host's judge answers the ask with its own value.
-    static R::InstanceOffset sConcrete{L"concrete"};
-    void* const cls = ue_wrap::asset_load::LoadObjectByPath(kFixerPath);
-    ue_wrap::FVector at{};
-    std::wstring ckey = GS::DebugPosKeyForActor(nullptr);   // placeholder to keep the name used below readable
-    ckey.assign(g_crack.key.begin(), g_crack.key.end());
+    default:
+        break;
+    }
+    E::MainPlayerGrabState hand{};
+    std::wstring ckey(g_crack.key.begin(), g_crack.key.end());
     void* const crack = GS::DecalOfKey(ckey);
-    if (!cls || !crack || !E::TryGetActorLocation(player, at)) return Invalid(sp, "the fixer class, the crack or the player did not resolve");
-    void* const fixer = E::SpawnActor(cls, {at.X, at.Y, at.Z + 60.f});
-    const int32_t off = fixer ? sConcrete.Of(fixer) : -1;
-    if (!fixer || off < 0) return Invalid(sp, "the wall fixer did not spawn or its concrete did not resolve");
+    if (!crack || !E::ReadMainPlayerGrabState(player, hand) || !hand.holdingActor)
+        return Invalid(sp, "the crack or the fixer in the hand did not resolve");
+    void* const fixer = hand.holdingActor;
+    const int32_t off = sConcrete.Of(fixer);
+    if (off < 0) return Invalid(sp, "the wall fixer's concrete did not resolve");
     *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(fixer) + off) = 3;
     void* const fn = R::FindDispatchFunctionCached(R::ClassOf(crack), L"wallFixer_fix");
     ue_wrap::ParamFrame f(fn);
     if (!fn || !f.valid() || !f.Set<void*>(L"wallFixer", fixer)) return Invalid(sp, "wallFixer_fix did not resolve");
-    G::WriteProcessAndApply(crack, 5.f);
+    G::WriteProcessAndApply(crack, kCrackLeft);
     const uint64_t heldBefore = GJ::GetStats().held;
     const bool ran = ue_wrap::Call(crack, f);
     const bool alive = R::IsLive(crack);
@@ -467,6 +491,7 @@ void ClientReset() {
     g_goneMs = -1;
     g_strokeAt = g_heldAt = {};
     g_crackSeen = g_crackWalked = false;
+    g_clear = coop::director::ClearHand{};
 }
 
 }  // namespace coop::dev::hostile_drill::grime::detail
