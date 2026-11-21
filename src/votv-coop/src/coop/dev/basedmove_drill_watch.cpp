@@ -59,6 +59,7 @@ Watched Watcher::Frame(coop::net::Session& s, void* lift, const PlatformBox& box
         const float dx = at.X - (origin.X + pose.bx), dy = at.Y - (origin.Y + pose.by), dz = at.Z - (origin.Z + pose.bz);
         w.d = std::sqrt(dx * dx + dy * dy + dz * dz);
     }
+    w.at = at;
     w.feet = at.Z - E::GetActorCharacterHalfHeight(body) - (box.surface + platZ - box.restZ);
     void* parent = nullptr;
     w.attached = E::GetAttachParentActor(body, parent) && parent == platform;

@@ -15,6 +15,9 @@
 
 #include "coop/player/remote_player.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+
 #include "coop/player/players_registry.h"
 #include "coop/player/pose_bases.h"
 #include "coop/player/puppet_seat.h"
@@ -32,6 +35,9 @@ namespace {
 
 // The engine's end of an actor's play: a puppet riding that actor leaves it now, before the engine marks it for death.
 void OnEndPlay(void* actor, ue_wrap::actor_end_play::Reason) {
+    // [dev red] basedmove_end_sink_off: the sink does nothing, so a rider is left to the engine when its base ends.
+    static const bool off = coop::config::ResolveFlag(::coop::config_registry::rows::basedmove_end_sink_off);
+    if (off) return;
     for (uint8_t slot = 0; slot < coop::players::kMaxPeers; ++slot)
         if (RemotePlayer* const p = coop::players::Registry::Get().Puppet(slot)) p->OnBaseEnding(actor);
 }

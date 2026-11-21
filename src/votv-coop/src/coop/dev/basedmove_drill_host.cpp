@@ -17,6 +17,8 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/actor_end_play.h"
+#include "ue_wrap/engine/engine_pawn.h"
 #include "ue_wrap/devices/cargo_lift.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
@@ -40,7 +42,7 @@ constexpr uint64_t kStartBoundMs = 20000;   // a press sets `moving` within a ti
 constexpr uint32_t kRejectsToPass = 5;      // forged claims set aside before the host's puppet is judged
 constexpr uint32_t kAcceptsToFail = 10;     // forged claims let through: the check is not holding
 
-enum class HS { Start, WaitOnboard, Bring, WaitPuppet, Ride, Hostile, Board, WaitSeen, HostRide, WaitResult };
+enum class HS { Start, WaitOnboard, Bring, WaitPuppet, Ride, Hostile, Board, WaitSeen, HostRide, WaitResult, EndJudge };
 HS g_h = HS::Start;
 
 ue_wrap::CachedObjRef g_lift;   // the host's lift, held by slot and serial across ticks
@@ -52,6 +54,9 @@ bool g_bringSawMoving = false;
 bool g_sawMoving = false, g_prevDir = false;   // hostride: the host's own lift
 bool g_forgedSeen = false;
 uint32_t g_accepted0 = 0;
+ue_wrap::FVector g_endPre{};     // baseend: where the puppet stood the frame before its platform was destroyed
+void* g_endActor = nullptr;      // the platform actor the drill destroyed, compared by pointer inside the engine's end of play
+bool g_endSeen = false;          // its end of play came
 
 void HGo(HS s) {
     g_h = s;
@@ -100,6 +105,8 @@ void Rested(void* lift) {
     }
 }
 
+void EndSink(void* actor, ue_wrap::actor_end_play::Reason);
+
 void Start() {
     if (!CL::EnsureResolved()) {
         Late("the cargo lift class never resolved", kWalkBoundMs);
@@ -108,6 +115,7 @@ void Start() {
     void* const lift = FindLift();
     if (!lift) return Invalid("the host has no cargo lift");
     g_lift.Set(lift);
+    if (ArmOf() == Arm::BaseEnd && !ue_wrap::actor_end_play::AddSink(&EndSink)) return Invalid("the end-of-play sink table is full");
     if (RestAndSay(lift)) Rested(lift);
 }
 
@@ -161,10 +169,13 @@ void WaitPuppet(void* lift) {
     HGo(HS::Ride);
 }
 
+void DestroyWhenAttached(const Watched& w, void* lift);
+
 // One frame of the ride: PASS when the lift reaches its stop, FAIL at the first reversal.
 void Ride(coop::net::Session& s, void* lift) {
     const Watched w = g_watch.Frame(s, lift, g_box);
     if (!w.ok) return Invalid("the lift or the client's puppet stopped reading during the ride");
+    if (ArmOf() == Arm::BaseEnd) return DestroyWhenAttached(w, lift);
     if (w.flipped) {
         Say("end");
         return Fail("the lift reversed at frame %d (its own block test read a gap of %.1f cm against 10): max |attach-comp|=%.1f, "
@@ -234,6 +245,57 @@ void JudgeForged(coop::net::Session& s, void* lift) {
                     "attached=%d", rejected, off, attached ? 1 : 0);
     }
     Late("the host neither set the forged claims aside nor let them through", kBoundMs);
+}
+
+// ---- baseend: the host destroys the platform under the rider -------------------------------------------------------------------
+// The engine's end of the destroyed platform's play, seen here as the receiver's own sink sees it. The drill's sink is added first,
+// so it runs before the receiver's: the judge below reads what is left after both.
+void EndSink(void* actor, ue_wrap::actor_end_play::Reason) {
+    if (actor && actor == g_endActor) g_endSeen = true;
+}
+
+// Mid-travel, once the puppet is attached to the platform (the event): the drill destroys its own copy of the platform actor
+// with the game's K2_DestroyActor and judges the puppet at the next frame.
+void DestroyWhenAttached(const Watched& w, void* lift) {
+    if (w.flipped) return Invalid("the lift reversed before the drill destroyed its platform");
+    if (g_watch.SawMoving() && w.moving && w.attached) {
+        void* const platform = CL::PlatformActor(lift);
+        if (!platform) return Invalid("the lift's platform actor was not there to destroy");
+        g_endPre = w.at;
+        g_endActor = platform;
+        g_endSeen = false;
+        Fact("the drill destroys the host's copy of the platform actor %s (K2_DestroyActor) mid-travel, frame %d; the puppet stands at "
+             "(%.1f,%.1f,%.1f), attached", NameOf(platform).c_str(), g_watch.frames, w.at.X, w.at.Y, w.at.Z);
+        if (!E::DestroyActor(platform)) return Invalid("K2_DestroyActor did not run on the platform actor");
+        HGo(HS::EndJudge);
+        return;
+    }
+    if (g_watch.SawMoving() && !w.moving) return Invalid("the lift reached its stop and the puppet never attached to the platform");
+    if (!g_watch.SawMoving()) Late("the lift never began to move after the press", kStartBoundMs);
+    else Late("the lift moved and did not stop", kRideBoundMs);
+}
+
+// The frame after the platform's end of play: the puppet still exists, hangs from no parent and stands where it stood.
+void JudgeEnd() {
+    if (!g_endSeen) {
+        Late("the platform's end of play never came after its destroy", kStartBoundMs);
+        return;
+    }
+    Say("end");
+    coop::RemotePlayer* const rp = coop::players::Registry::Get().Puppet(kClientSlot);
+    void* const body = rp && rp->valid() ? rp->GetActor() : nullptr;
+    if (!body) return Fail("the puppet was destroyed with its base");
+    ue_wrap::FVector at{}, rootLoc{};
+    ue_wrap::FRotator rootRot{};
+    if (!E::TryGetActorLocation(body, at)) return Invalid("the puppet's place did not read after its base ended");
+    if (!E::TryGetRootPoseRaw(body, rootLoc, rootRot))
+        return Fail("the puppet is still parented to the ended platform (its root's attach parent is set)");
+    const float dx = at.X - g_endPre.X, dy = at.Y - g_endPre.Y, dz = at.Z - g_endPre.Z;
+    const float moved = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (moved > PB::kMaxXyGapCm)
+        return Fail("the puppet moved %.0f cm when its base ended (it stood at (%.1f,%.1f,%.1f), now (%.1f,%.1f,%.1f))", moved,
+                    g_endPre.X, g_endPre.Y, g_endPre.Z, at.X, at.Y, at.Z);
+    Pass("the platform's end of play came; the puppet still exists, has no parent and moved %.1f cm", moved);
 }
 
 // ---- hostride: the host rides -------------------------------------------------------------------------------------------------
@@ -345,6 +407,9 @@ void HostTick(coop::net::Session& s) {
     case HS::HostRide:
         if (!lift) return Invalid("the host's lift was lost");
         HostRide(lift);
+        return;
+    case HS::EndJudge:
+        JudgeEnd();
         return;
     case HS::WaitResult:
         WaitResult();

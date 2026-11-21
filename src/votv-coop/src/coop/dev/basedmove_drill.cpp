@@ -72,7 +72,7 @@ bool Enabled() { return ArmOf() != Arm::Off; }
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::basedmove_drill);
-        return v == "ride" ? Arm::Ride : v == "hostride" ? Arm::HostRide : v == "bad_base_xy" ? Arm::BadXy
+        return v == "ride" ? Arm::Ride : v == "hostride" ? Arm::HostRide : v == "baseend" ? Arm::BaseEnd : v == "bad_base_xy" ? Arm::BadXy
              : v == "bad_base_vol" ? Arm::BadVol : Arm::Off;
     }();
     return a;
@@ -84,6 +84,7 @@ const char* ArmName() {
     case Arm::HostRide: return "hostride";
     case Arm::BadXy:    return "bad_base_xy";
     case Arm::BadVol:   return "bad_base_vol";
+    case Arm::BaseEnd:  return "baseend";
     default:            return "off";
     }
 }

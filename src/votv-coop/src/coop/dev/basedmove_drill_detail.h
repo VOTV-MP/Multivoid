@@ -32,7 +32,8 @@ inline constexpr float kEdgeSlackCm = 10.f;
 //   ride        the client rides; the host presses and watches the client's puppet; PASS at the lift's stop, FAIL at a reversal.
 //   hostride    the host rides and presses; the client watches the host's puppet against its own platform copy: MEASURED.
 //   bad_base_*  the client rides, then forges its claim; the host judges what it does with it.
-enum class Arm : uint8_t { Off, Ride, HostRide, BadXy, BadVol };
+//   baseend     the client rides; mid-travel the host destroys its copy of the platform actor and judges the puppet it carried.
+enum class Arm : uint8_t { Off, Ride, HostRide, BadXy, BadVol, BaseEnd };
 Arm ArmOf();
 const char* ArmName();
 bool Hostile();   // a bad_base arm
@@ -126,6 +127,7 @@ struct Watched {
     float gap = 0.f;           // attach Z - platform Z: what the lift's own block test reads (it reverses at 10)
     float d = -1.f;            // |puppet - (platform now + the rider's offset from its latest pose)|, -1 without a base
     float feet = 0.f;          // the puppet's feet over the platform's surface
+    ue_wrap::FVector at{};     // the puppet's place this frame
 };
 // The tallies and per-frame log of one watch. The press sets `moving`; a reversal is `dir` changing once it moved.
 class Watcher {
