@@ -32,6 +32,7 @@
 #include "ue_wrap/engine/engine_mainplayer.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <chrono>
 #include <cstring>
@@ -74,7 +75,7 @@ struct Target {
     float start = 0.f;
 };
 
-enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Equip, AwaitHand, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
+enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
                 AwaitEnd, Done };
 Ph g_ph = Ph::Arrive;
 FVector g_anchor{};
@@ -91,10 +92,12 @@ void Go(Ph p, const char* name) {
 
 // ---- a client actor cleans with a sponge in its hand ------------------------------------------------------------------
 // The host judges a client's fall (coop/interactables/grime_judge): a clean with no sponge is the rain's call, which the
-// host grants only while it rains, and every fall must come from a body within reach of the decal. So a client actor
-// spawns and holds a sponge, waits for the host's record of it, walks to each decal, and strokes it as a sponge does (the
-// call prop_sponge makes, Sub 6, with the sponge as its first argument) every 0.3 s until the host's word ends the decal
-// on its copy. The host actor cleans its own decals natively, with no sponge.
+// host grants only while it rains, and every fall must come from a body within reach of the decal. So a client actor, at
+// each decal, walks to a standpoint about it, THEN spawns and holds a sponge (the director's walk drops whatever the hand
+// holds when it starts, so a sponge held on the way would be thrown), waits for the host's record of it, and strokes the decal
+// as a sponge does (the call prop_sponge makes, Sub 6, the sponge as its first argument) every 0.3 s until the host's word
+// ends it on its copy. A hand that empties mid-work ends the run INVALID at once. The host actor cleans its own decals
+// natively, with no sponge.
 constexpr float kSpongeSub = 6.f;          // getStrength * 4 without soap: prop_sponge dump line 134
 constexpr float kWalkReachCm = 100.f;      // how near a standpoint the walker must read
 constexpr int   kWalkDeadlineS = 240;
@@ -102,7 +105,6 @@ constexpr auto  kStrokeGap = std::chrono::milliseconds(300);
 constexpr const wchar_t* kSpongePath = L"/Game/objects/prop_sponge.prop_sponge_C";
 constexpr const wchar_t* kSpongeCls = L"prop_sponge_C";
 
-ue_wrap::CachedObjRef g_sponge;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 std::chrono::steady_clock::time_point g_strokeAt{};
 size_t g_ti = 0;   // the target being cleaned
@@ -111,11 +113,17 @@ size_t g_stand = 0;            // the one being walked to
 bool g_ringBuilt = false;
 constexpr int   kStandpoints = 3;
 constexpr float kStandRingCm = 400.f;   // the decal stays inside the judge's reach: 400 on the floor, its height above it
-bool g_handMarked = false;
+// Where the actor is at the target: walking to a standpoint, equipping there, waiting for the host's record, stroking.
+enum class Sw : uint8_t { Walk, Equip, AwaitRecord, Strokes };
+Sw g_sw = Sw::Walk;
+int g_equips = 0;              // sponges this actor has put in its hand: the host's record counts the same
+int g_recorded = 0;            // the host's count of sponges it saw taken up, as the host last said it
+bool g_handHeld = false;       // the host: the record held a sponge at the last tick
 
 bool UsesSponge() { return IsActor() && !IsHost(); }
 
-const char* HoldSponge(void* player) {
+// A sponge spawned beside the player and taken up as a pickup does; the hand's own item is what a stroke names.
+const char* HoldSponge(void* player, void** handItem) {
     void* const cls = ue_wrap::asset_load::LoadObjectByPath(kSpongePath);
     FVector at{};
     if (!cls || !E::TryGetActorLocation(player, at)) return "the sponge class did not load or the player's place is unread";
@@ -123,61 +131,90 @@ const char* HoldSponge(void* player) {
     bool collected = false;
     if (!sponge || !E::CallMainPlayerHoldObject(player, sponge, collected) || !collected)
         return "this client's own sponge could not be spawned and held";
-    g_sponge.Set(sponge);
+    E::MainPlayerGrabState hand{};
+    *handItem = E::ReadMainPlayerGrabState(player, hand) ? hand.holdingActor : nullptr;
     return nullptr;
 }
 
-// One tick of the sponge's work on the decal of `cls` at `at`: 1 when it ended on this copy (or, `once`, after one stroke),
+// The item in the actor's hand, null when the hand is empty.
+void* HandItem(void* player) {
+    E::MainPlayerGrabState hand{};
+    return E::ReadMainPlayerGrabState(player, hand) ? hand.holdingActor : nullptr;
+}
+
+// One tick of the actor's work on the decal of `cls` at `at`: 1 when it ended on this copy (or, `once`, after one stroke),
 // 0 working, -1 the run is over.
 int SpongeWork(const std::wstring& cls, const FVector& at, bool once) {
     void* const d = DecalAt(cls, at);
     if (!d || !R::IsLive(d)) {
         g_walk.reset();
         g_ringBuilt = false;
+        g_sw = Sw::Walk;
         return 1;
     }
-    if (!g_walk) {
-        // Where the decal stands is no place to walk to: a ceiling decal is metres above the NavMesh, and a route to it
-        // is none, so the stage could neither compare routes nor place the walker at the bed. The walk goes to a standpoint
-        // about the decal that a route reaches, and the stage then has a goal it can measure.
-        void* const player = coop::players::Registry::Get().Local();
-        if (!g_ringBuilt) {
-            g_ring = coop::director::ReachableStandpoints(player, at, kStandRingCm, kStandpoints, kWalkReachCm);
-            g_ringBuilt = true;
-            g_stand = 0;
-            UE_LOGI("[CLN] a route reaches %zu of the %d standpoints about the %ls decal", g_ring.size(), kStandpoints,
-                    cls.c_str());
-        }
-        if (g_stand >= g_ring.size()) {
-            Decide(Outcome::Invalid, "no standpoint about the %s decal could be walked to", Narrow(cls).c_str());
-            g_ph = Ph::AwaitEnd;
-            return -1;
-        }
-        g_walk = coop::director::StartBackgroundWalk(g_ring[g_stand], kWalkReachCm, kWalkDeadlineS);
-        if (!g_walk) {
-            Decide(Outcome::Invalid, "the walk to the %s decal did not start", Narrow(cls).c_str());
-            g_ph = Ph::AwaitEnd;
-            return -1;
-        }
-    }
-    const int st = g_walk->state.load();
-    if (st == 2) {   // this standpoint was not reached: the next
-        ++g_stand;
-        g_walk.reset();
-        return 0;
-    }
-    const auto now = std::chrono::steady_clock::now();
-    if (st != 1 || now - g_strokeAt < kStrokeGap) return 0;
-    g_strokeAt = now;
-    // A decal held at zero waits for the host's word; a stroke on it would only ask again.
-    if (ProcessOf(d) > 0.01f && !Clean(d, g_sponge.Get(), kSpongeSub)) {
-        Decide(Outcome::Invalid, "the sponge's clean did not run on the %s decal", Narrow(cls).c_str());
+    void* const player = coop::players::Registry::Get().Local();
+    const auto fail = [&](const char* fmt) {
+        Decide(Outcome::Invalid, fmt, Narrow(cls).c_str());
         g_ph = Ph::AwaitEnd;
         return -1;
+    };
+    if (g_sw == Sw::Walk) {
+        if (!g_walk) {
+            // Where the decal stands is no place to walk to: a ceiling decal is metres above the NavMesh, and a route to it
+            // is none, so the stage could neither compare routes nor place the walker at the bed. The walk goes to a
+            // standpoint about the decal that a route reaches, and the stage then has a goal it can measure.
+            if (!g_ringBuilt) {
+                g_ring = coop::director::ReachableStandpoints(player, at, kStandRingCm, kStandpoints, kWalkReachCm);
+                g_ringBuilt = true;
+                g_stand = 0;
+                UE_LOGI("[CLN] a route reaches %zu of the %d standpoints about the %ls decal", g_ring.size(), kStandpoints,
+                        cls.c_str());
+            }
+            if (g_stand >= g_ring.size()) return fail("no standpoint about the %s decal could be walked to");
+            g_walk = coop::director::StartBackgroundWalk(g_ring[g_stand], kWalkReachCm, kWalkDeadlineS);
+            if (!g_walk) return fail("the walk to the %s decal did not start");
+        }
+        const int st = g_walk->state.load();
+        if (st == 2) {   // this standpoint was not reached: the next
+            ++g_stand;
+            g_walk.reset();
+        } else if (st == 1) {
+            g_sw = Sw::Equip;
+        }
+        return 0;
     }
+    if (g_sw == Sw::Equip) {
+        void* item = nullptr;
+        if (const char* why = HoldSponge(player, &item)) {
+            Decide(Outcome::Invalid, "%s", why);
+            g_ph = Ph::AwaitEnd;
+            return -1;
+        }
+        ++g_equips;
+        g_sw = Sw::AwaitRecord;
+        return 0;
+    }
+    if (g_sw == Sw::AwaitRecord) {
+        // The first stroke waits for the host's record of this sponge in the hand: its count has reached the actor's own.
+        std::string text;
+        if (!PeekShared("cl_hand", text)) return 0;
+        g_recorded = std::atoi(text.c_str());
+        if (g_recorded >= g_equips) g_sw = Sw::Strokes;
+        return 0;
+    }
+    // Strokes. A hand that has emptied (the sponge thrown, taken, dropped) ends the run here, not after strokes the host
+    // would refuse for no tool.
+    void* const item = HandItem(player);
+    if (!item) return fail("the sponge left the actor's hand before the %s decal ended");
+    const auto now = std::chrono::steady_clock::now();
+    if (now - g_strokeAt < kStrokeGap) return 0;
+    g_strokeAt = now;
+    // A decal held at zero waits for the host's word; a stroke on it would only ask again.
+    if (ProcessOf(d) > 0.01f && !Clean(d, item, kSpongeSub)) return fail("the sponge's clean did not run on the %s decal");
     if (once) {
         g_walk.reset();
         g_ringBuilt = false;
+        g_sw = Sw::Walk;
         return 1;
     }
     return 0;
@@ -304,10 +341,12 @@ void TickClean(coop::net::Session& s) {
     if (g_ph > Ph::Arrive && Overdue()) return;
     const bool host = IsHost();
     const bool acts = IsActor();
-    // The host says when its record of the first client's hand holds the sponge the client actor spawned: the first stroke waits.
-    if (host && !acts && !g_handMarked && g_ph > Ph::Arrive && coop::hand_item::HeldClassIs(1, kSpongeCls)) {
-        g_handMarked = true;
-        MarkShared("cl_hand", "ok");
+    // The host counts the sponges its record of the first client's hand takes up, each at its rising edge, and says the count:
+    // the client actor strokes only once the count has reached the number of sponges it has put in its hand.
+    if (host && !acts && g_ph > Ph::Arrive) {
+        const bool held = coop::hand_item::HeldClassIs(1, kSpongeCls);
+        if (held && !g_handHeld) MarkShared("cl_hand", std::to_string(++g_recorded));
+        g_handHeld = held;
     }
     std::string text;
 
@@ -358,25 +397,11 @@ void TickClean(coop::net::Session& s) {
     case Ph::AwaitSeen: {
         for (int slot = 0; slot < kPeers; ++slot)
             if (slot != MySlot() && !PeekOf("cl_seen", slot, text)) return;
-        if (UsesSponge()) Go(Ph::Equip, "the sponge in the hand");
-        else Go(Ph::Clean, "the cleaning");
-        return;
-    }
-    case Ph::Equip: {
-        if (const char* why = HoldSponge(coop::players::Registry::Get().Local())) {
-            Decide(Outcome::Invalid, "%s", why);
-            g_ph = Ph::AwaitEnd;
-            return;
-        }
-        Go(Ph::AwaitHand, "the host's record of the sponge");
-        return;
-    }
-    case Ph::AwaitHand:
-        if (!PeekShared("cl_hand", text)) return;
         g_ti = 0;
         g_ended = 0;
         Go(Ph::Clean, "the cleaning");
         return;
+    }
     case Ph::Clean: {
         if (UsesSponge()) {
             if (g_ti >= g_targets.size()) {

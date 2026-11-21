@@ -119,7 +119,9 @@ const char* HoldNew(void* player, const wchar_t* path, void** out) {
     bool collected = false;
     if (!prop || !E::CallMainPlayerHoldObject(player, prop, collected) || !collected)
         return "this client's own prop could not be spawned and held";
-    *out = prop;
+    // The hand's own item is what a verb names, not the world prop the pickup consumed.
+    E::MainPlayerGrabState hand{};
+    *out = (E::ReadMainPlayerGrabState(player, hand) && hand.holdingActor) ? hand.holdingActor : prop;
     return nullptr;
 }
 
@@ -166,6 +168,12 @@ void MeasureStrokes(coop::net::Session*, const Spec& sp, void* decal) {
         g_heldAtStart = GJ::GetStats().held;
         UE_LOGI("[GRIME-MEASURE] decal '%s' process %.2f: %d decal(s) a sponge's overlap here could touch", g_target.key.c_str(),
                 ProcessOf(decal), g_overlap);
+    }
+    {
+        // A hand that has emptied ends the arm here, not after strokes the host would refuse for no tool.
+        E::MainPlayerGrabState hand{};
+        if (!E::ReadMainPlayerGrabState(coop::players::Registry::Get().Local(), hand) || !hand.holdingActor)
+            return Invalid(sp, "the sponge left the hand mid-measure");
     }
     const auto now = Clock::now();
     if (g_strokes > 0 && now - g_strokeAt < std::chrono::milliseconds(300)) return;   // the sponge's own 0.25 s and a margin
