@@ -52,4 +52,12 @@ void* PlatformActor(void* lift);
 bool ReadAttachZ(void* lift, float& z);
 bool ReadPlatformZ(void* lift, float& z);
 
+// How far the move loop eases `attach` up from its low stop: its relative height runs 0..500 cm (cargoLift.cpp:116-118,
+// VLerp((0,0,0), (0,0,500), Ease)).
+inline constexpr float kTravelCm = 500.f;
+
+// The lift's two stops as the world Z of the platform component: the low one is `attach`'s world Z less its current relative
+// height (the loop sets that to 0..kTravelCm), the high one kTravelCm over it. False when `attach` does not read.
+bool ReadStopsZ(void* lift, float& lowZ, float& highZ);
+
 }  // namespace ue_wrap::cargo_lift

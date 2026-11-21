@@ -34,6 +34,7 @@ void FillBase(void* localPlayer, coop::net::PoseSnapshot& pose);
 
 // A mover as this peer resolves it, for one call.
 struct Resolved {
+    void* lift = nullptr;        // the keyed lift actor (it never moves), live now
     void* actor = nullptr;       // the platform actor (the part that moves), live now
     ue_wrap::FVector origin{};   // its location now: the offset's reference point
 };
@@ -43,7 +44,22 @@ struct Resolved {
 bool Resolve(uint32_t baseId, Resolved& out);
 
 // The receiver's judgment of a pose's base claim from peer `slot`: true with the mover when the pose names one this peer
-// resolves, false when the pose is to be placed by its absolute position (it names none, or names one that does not resolve).
+// resolves AND the claim is consistent with the pose's absolute position, false when the pose is to be placed by its absolute
+// position (it names none, names one that does not resolve, or fails a check below, which is then counted).
+//
+// The checks are per axis and independent of the link: the lift moves on Z only, so the XY gap between the absolute position
+// and (the platform's location now + the offset) must stay within kMaxXyGapCm whatever the link's lag; the absolute Z must lie
+// within the lift's travel (its two stops, minus kBelowStopCm and plus kAboveStopCm for a standing player); the offset's Z
+// must put the player's centre over the platform's origin, 0..kMaxOffsetZCm. The same call judges a client's pose on the host
+// and a relayed pose on every other client.
 bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out);
+
+inline constexpr float kMaxXyGapCm = 30.f;
+inline constexpr float kBelowStopCm = 50.f;
+inline constexpr float kAboveStopCm = 250.f;
+inline constexpr float kMaxOffsetZCm = 250.f;
+
+// Why a claim was set aside, each counted per slot (the log says the first of each minute).
+enum class Reject : uint8_t { XyGap, OffsetZ, Volume };
 
 }  // namespace coop::pose_bases

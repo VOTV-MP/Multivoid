@@ -12,6 +12,8 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -119,12 +121,50 @@ bool Resolve(uint32_t baseId, Resolved& out) {
     void* const lift = e->lift.Get();
     void* const platform = lift ? CL::PlatformActor(lift) : nullptr;
     if (!platform || !E::TryGetActorLocation(platform, out.origin)) return false;
+    out.lift = lift;
     out.actor = platform;
     return true;
 }
 
-bool Claim(const coop::net::PoseSnapshot& pose, uint8_t /*slot*/, Resolved& out) {
-    return pose.baseKind == coop::net::pose_base_kind::kMover && Resolve(pose.baseId, out);
+namespace {
+
+constexpr int kReasons = 3;
+uint32_t g_rejected[coop::players::kMaxPeers][kReasons] = {};
+std::chrono::steady_clock::time_point g_saidAt[coop::players::kMaxPeers] = {};
+
+void SetAside(uint8_t slot, Reject why, const char* what, float a, float b, float c) {
+    if (slot >= coop::players::kMaxPeers) return;
+    ++g_rejected[slot][static_cast<int>(why)];
+    const auto now = std::chrono::steady_clock::now();
+    if (g_saidAt[slot].time_since_epoch().count() != 0 && now - g_saidAt[slot] < std::chrono::minutes(1)) return;
+    g_saidAt[slot] = now;
+    UE_LOGW("pose_bases: slot %u's base claim set aside (%s: %.0f, %.0f, %.0f); it is placed by its absolute pose "
+            "(counts xy=%u offsetZ=%u volume=%u)", static_cast<unsigned>(slot), what, a, b, c,
+            g_rejected[slot][0], g_rejected[slot][1], g_rejected[slot][2]);
+}
+
+}  // namespace
+
+bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out) {
+    if (pose.baseKind != coop::net::pose_base_kind::kMover || !Resolve(pose.baseId, out)) return false;
+    // The XY of (platform now + offset) against the absolute XY: the lift never moves in XY, so link lag cannot widen it.
+    const float gx = pose.x - (out.origin.X + pose.bx), gy = pose.y - (out.origin.Y + pose.by);
+    const float gap = std::sqrt(gx * gx + gy * gy);
+    if (gap > kMaxXyGapCm) {
+        SetAside(slot, Reject::XyGap, "xy gap, offset z, abs z", gap, pose.bz, pose.z);
+        return false;
+    }
+    if (pose.bz < 0.f || pose.bz > kMaxOffsetZCm) {
+        SetAside(slot, Reject::OffsetZ, "xy gap, offset z, abs z", gap, pose.bz, pose.z);
+        return false;
+    }
+    // The absolute Z against the lift's travel, read on this peer from the lift itself.
+    float low = 0.f, high = 0.f;
+    if (!CL::ReadStopsZ(out.lift, low, high) || pose.z < low - kBelowStopCm || pose.z > high + kAboveStopCm) {
+        SetAside(slot, Reject::Volume, "abs z, low stop, high stop", pose.z, low, high);
+        return false;
+    }
+    return true;
 }
 
 void FillBase(void* localPlayer, coop::net::PoseSnapshot& pose) {

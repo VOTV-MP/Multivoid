@@ -127,6 +127,15 @@ bool ReadAttachZ(void* lift, float& z) {
     return true;
 }
 
+bool ReadStopsZ(void* lift, float& lowZ, float& highZ) {
+    ue_wrap::FVector at{};
+    void* const attach = ReadObj(lift, g_attachOff);
+    if (!attach || !engine::TryGetComponentLocation(attach, at)) return false;
+    lowZ = at.Z - engine::GetComponentRelativeLocation(attach).Z;
+    highZ = lowZ + kTravelCm;
+    return true;
+}
+
 bool ReadPlatformZ(void* lift, float& z) {
     FVector at{};
     void* const comp = PlatformComponent(lift);
