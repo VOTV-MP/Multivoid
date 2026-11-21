@@ -9,17 +9,22 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 
+#include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine_component.h"
 #include "ue_wrap/world/world_singleton.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <random>
+#include <string>
 #include <vector>
 
 namespace coop::roach_sync {
@@ -257,6 +262,72 @@ void RebuildTracked(void* master) {
     }
 }
 
+// ---- the burger look (CLIENT) ----
+// summonRoach, which a client does not run, also gives each roach the look the local player sees: below 15 food a
+// roach shows as a burger, with the chance 1 - food/15 (cockroachMaster_C.summonRoach: setStaticMesh(
+// randomBoolWithWeight(clamp(food, 0, 15) / 15) ? cockroach : burger)), rolled again at every summon. It is the
+// hungry player's own sight and the roach under it is the host's, so a client rolls the look of its own copies from
+// its own food, at the summoner's own interval and after each rebuild; the host's game rolls the host's, and no look
+// is ever sent.
+void* g_burgerMesh = nullptr;
+void* g_roachMesh = nullptr;
+void* g_meshesSoughtFor = nullptr;  // the master they were sought for: a walk of the static meshes once a world
+long long g_lookEveryMs = 0;   // the summoner's tick interval, read once
+long long g_nextLookMs = 0;
+bool g_rollNow = false;        // a rebuild made new copies, with the roach mesh
+int g_lastBurgers = -1;
+
+bool FindLookMeshes() {
+    if (g_burgerMesh && g_roachMesh && R::IsLive(g_burgerMesh) && R::IsLive(g_roachMesh)) return true;
+    if (g_meshesSoughtFor == g_trackedMaster) return false;
+    g_meshesSoughtFor = g_trackedMaster;
+    g_burgerMesh = g_roachMesh = nullptr;
+    for (void* m : R::FindObjectsByClass(L"StaticMesh")) {
+        const std::wstring n = R::ToString(R::NameOf(m));
+        if (n == L"burger") g_burgerMesh = m;
+        else if (n == L"cockroach") g_roachMesh = m;
+    }
+    UE_LOGI("roach_sync: the burger look's meshes -- burger=%p cockroach=%p", g_burgerMesh, g_roachMesh);
+    return g_burgerMesh && g_roachMesh;
+}
+
+long long SummonEveryMs() {
+    if (g_lookEveryMs) return g_lookEveryMs;
+    g_lookEveryMs = 10000;  // the summoner not found: a summon every 10 s
+    for (void* t : R::FindObjectsByClass(L"ticker_roachSummoner_C")) {
+        if (!t || R::NameStartsWith(R::NameOf(t), L"Default__")) continue;
+        ue_wrap::ParamFrame f(R::FindFunction(R::ClassOf(t), L"GetActorTickInterval"));
+        if (f.valid() && ue_wrap::Call(t, f)) {
+            const float v = f.Get<float>(L"ReturnValue");
+            if (v > 0.1f) g_lookEveryMs = static_cast<long long>(v * 1000.f);
+        }
+        break;
+    }
+    UE_LOGI("roach_sync: the burger look is rolled every %lld ms here", g_lookEveryMs);
+    return g_lookEveryMs;
+}
+
+void RollLooks() {
+    if (g_tracked.empty() || !FindLookMeshes()) return;
+    float food = 100.f;
+    if (!ue_wrap::vitals::Read(ue_wrap::vitals::Field::Food, &food)) return;
+    const float roachWeight = std::clamp(food, 0.f, 15.f) / 15.f;
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> roll(0.f, 1.f);
+    int burgers = 0;
+    for (const TrackedRoach& t : g_tracked) {
+        if (!R::IsLiveByIndex(t.comp, t.idx)) continue;
+        const bool roach = roll(rng) < roachWeight;
+        ue_wrap::engine::SetStaticMesh(t.comp, roach ? g_roachMesh : g_burgerMesh);
+        burgers += roach ? 0 : 1;
+    }
+    if (burgers != g_lastBurgers) {
+        g_lastBurgers = burgers;
+        UE_LOGI("roach_sync: %d of %zu roach(es) look like burgers to this player (food %.1f)", burgers,
+                g_tracked.size(), food);
+    }
+}
+
 void ApplySnapshot(const SnapEntry* entries, int total) {
     void* master = Master();
     if (!master) return;  // no world/master yet; the next snapshot re-delivers
@@ -301,6 +372,7 @@ void ApplySnapshot(const SnapEntry* entries, int total) {
         }
         UE_LOGI("roach_sync: client REBUILT population (%zu local -> %d host roaches)",
                 slots.size(), total);
+        g_rollNow = true;  // the new copies carry the roach mesh
     }
     RebuildTracked(master);
     g_haveApplied = true;
@@ -362,6 +434,11 @@ void Tick() {
 
     if (s->role() != coop::net::Role::Host) {
         DetectLocalConsumption(s);
+        if (g_haveApplied && (g_rollNow || now >= g_nextLookMs)) {
+            g_rollNow = false;
+            g_nextLookMs = now + SummonEveryMs();
+            RollLooks();
+        }
         return;
     }
 

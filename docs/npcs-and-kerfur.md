@@ -127,6 +127,12 @@ simulation mutates shared props, eating food and destroying what it empties. A c
 own would diverge the shared food, so the host runs it and clients mirror a paged snapshot; a
 roach a client stomps or eats is a consumed intent to the host (`coop/creatures/roach_sync`).
 
+A roach's burger look is the hungry player's own. The summon the host runs also re-rolls each
+roach's mesh from the local food: below 15 a roach shows as a burger, with the chance 1 - food/15.
+No look is sent; a client rolls its own copies' look from its own food, at the summoner's interval
+and after each rebuild, so only a hungry player sees burgers and the roach under each is still the
+host's `[V]` (`coop/creatures/roach_sync`).
+
 ### The kerfur
 
 There are two robots. The regular one, the kerfus, is a corded prop with three radial actions: its
