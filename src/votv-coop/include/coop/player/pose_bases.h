@@ -61,5 +61,13 @@ inline constexpr float kMaxOffsetZCm = 250.f;
 
 // Why a claim was set aside, each counted per slot (the log says the first of each minute).
 enum class Reject : uint8_t { XyGap, OffsetZ, Volume };
+// How many claims of `slot` were set aside for `why`, and how many passed, since the process began. A drill reads them.
+uint32_t Rejected(uint8_t slot, Reject why);
+uint32_t Accepted(uint8_t slot);
+
+// [dev] A hostile client's claim: when set, every pose that names a mover is handed to `fn` after it is filled, which may
+// rewrite the claim (the drill's bad_base arms). Null clears it.
+using Forge = void (*)(coop::net::PoseSnapshot& pose);
+void SetOutboundForge(Forge fn);
 
 }  // namespace coop::pose_bases

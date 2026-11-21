@@ -2,6 +2,8 @@
 
 #include "coop/player/pose_bases.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/interactables/interactable_sync.h"
 
 #include "ue_wrap/actors/character_base.h"
@@ -130,6 +132,8 @@ namespace {
 
 constexpr int kReasons = 3;
 uint32_t g_rejected[coop::players::kMaxPeers][kReasons] = {};
+uint32_t g_accepted[coop::players::kMaxPeers] = {};
+Forge g_forge = nullptr;
 std::chrono::steady_clock::time_point g_saidAt[coop::players::kMaxPeers] = {};
 
 void SetAside(uint8_t slot, Reject why, const char* what, float a, float b, float c) {
@@ -144,6 +148,14 @@ void SetAside(uint8_t slot, Reject why, const char* what, float a, float b, floa
 }
 
 }  // namespace
+
+uint32_t Rejected(uint8_t slot, Reject why) {
+    return slot < coop::players::kMaxPeers ? g_rejected[slot][static_cast<int>(why)] : 0u;
+}
+
+uint32_t Accepted(uint8_t slot) { return slot < coop::players::kMaxPeers ? g_accepted[slot] : 0u; }
+
+void SetOutboundForge(Forge fn) { g_forge = fn; }
 
 bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out) {
     if (pose.baseKind != coop::net::pose_base_kind::kMover || !Resolve(pose.baseId, out)) return false;
@@ -164,6 +176,7 @@ bool Claim(const coop::net::PoseSnapshot& pose, uint8_t slot, Resolved& out) {
         SetAside(slot, Reject::Volume, "abs z, low stop, high stop", pose.z, low, high);
         return false;
     }
+    if (slot < coop::players::kMaxPeers) ++g_accepted[slot];
     return true;
 }
 
@@ -172,6 +185,9 @@ void FillBase(void* localPlayer, coop::net::PoseSnapshot& pose) {
     pose.bx = pose.by = pose.bz = 0.f;
     pose.baseKind = coop::net::pose_base_kind::kNone;
     pose._pad[0] = pose._pad[1] = pose._pad[2] = 0;
+    // [dev red] basedmove_base_off: the pose names no base, so the receiver places the rider by its absolute pose alone.
+    static const bool baseOff = coop::config::ResolveFlag(::coop::config_registry::rows::basedmove_base_off);
+    if (baseOff) return;
 
     CB::Base base;
     if (!CB::ReadMovementBase(localPlayer, base) || !base.component) {
@@ -194,6 +210,7 @@ void FillBase(void* localPlayer, coop::net::PoseSnapshot& pose) {
     pose.bx = pose.x - at.origin.X;
     pose.by = pose.y - at.origin.Y;
     pose.bz = pose.z - at.origin.Z;
+    if (g_forge) g_forge(pose);
 }
 
 }  // namespace coop::pose_bases

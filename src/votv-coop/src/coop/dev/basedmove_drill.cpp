@@ -1,5 +1,5 @@
-// coop/dev/basedmove_drill.cpp -- the based-movement drill's log, chat, verdict, reads and tick; see coop/dev/basedmove_drill.h.
-// The host's steps are basedmove_drill_host.cpp, the client's basedmove_drill_client.cpp.
+// coop/dev/basedmove_drill.cpp -- the based-movement drill's arm, log, chat, verdict, platform reads and tick; see coop/dev/basedmove_drill.h.
+// The host's steps are basedmove_drill_host.cpp, the client's basedmove_drill_client.cpp, the boarding _rider, the per-frame reads _watch.
 //
 // Every step is decided by an event: a chat line the other peer said, the walk's end, the puppet standing over the platform, the
 // lift's own `moving` edge or a reversal of its `dir`. A bound only says INVALID.
@@ -64,19 +64,31 @@ std::string Narrow(const std::wstring& w) {
     return s;
 }
 
-bool Enabled() {
-    static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::basedmove_drill);
-    return on;
-}
+bool Enabled() { return ArmOf() != Arm::Off; }
 
 }  // namespace
 
-bool Nocoll() {
-    static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::basedmove_puppet_nocoll);
-    return on;
+
+Arm ArmOf() {
+    static const Arm a = [] {
+        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::basedmove_drill);
+        return v == "ride" ? Arm::Ride : v == "hostride" ? Arm::HostRide : v == "bad_base_xy" ? Arm::BadXy
+             : v == "bad_base_vol" ? Arm::BadVol : Arm::Off;
+    }();
+    return a;
 }
 
-const char* ArmName() { return Nocoll() ? "ride_nocoll" : "ride"; }
+const char* ArmName() {
+    switch (ArmOf()) {
+    case Arm::Ride:     return "ride";
+    case Arm::HostRide: return "hostride";
+    case Arm::BadXy:    return "bad_base_xy";
+    case Arm::BadVol:   return "bad_base_vol";
+    default:            return "off";
+    }
+}
+
+bool Hostile() { return ArmOf() == Arm::BadXy || ArmOf() == Arm::BadVol; }
 
 // ---- the log, the chat, the verdict and the bound -------------------------------------------------------------------------
 
@@ -97,8 +109,26 @@ void Invalid(const char* why) {
     g_ended = true;
 }
 
-// This increment measures, so its end is not one of rig_verdict.h's three words: the line keeps the contract's prefix and tag
-// shape, and the rig's --done-marker names it.
+void Pass(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    const std::string text = Format(fmt, ap);
+    va_end(ap);
+    RV::Say(Tag().c_str(), RV::Outcome::Pass, "%s", text.c_str());
+    g_ended = true;
+}
+
+void Fail(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    const std::string text = Format(fmt, ap);
+    va_end(ap);
+    RV::Say(Tag().c_str(), RV::Outcome::Fail, "%s", text.c_str());
+    g_ended = true;
+}
+
+// An arm that only measures (hostride: its threshold is set from its first green and red runs, never guessed) ends in no one of
+// rig_verdict.h's three words: the line keeps the contract's prefix and tag shape, and the rig's --done-marker names it.
 void Measured(const char* fmt, ...) {
     if (g_ended) return;
     va_list ap;

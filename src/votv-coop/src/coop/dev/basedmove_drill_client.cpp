@@ -1,18 +1,15 @@
-// coop/dev/basedmove_drill_client.cpp -- the client's steps of the based-movement drill: it finds the host's lift by the name the
-// host said, waits for its own copy to rest, finds the platform's open side (sides.cpp) and is walked by the director to the floor in front of it, steps
-// in across the open edge onto the platform's surface through the input seam (a short straight leg: the NavMesh does not cover a moving platform), says it
-// boarded only when its feet stand on the surface, then logs every frame its own height, its copy of the platform and the
-// movement base its engine reads, until the host says the ride ended and is told the tally. A floor no route reaches is told to
-// the host, which brings the lift to its other stop; a leg that gains no ground ends the run INVALID at once. See coop/dev/basedmove_drill.h. The log, chat and verdict are
-// basedmove_drill.cpp.
+// coop/dev/basedmove_drill_client.cpp -- the client's steps of the based-movement drill. In ride and the bad_base arms it finds the
+// host's lift by the name the host said and boards it (basedmove_drill_rider.cpp); it says it boarded, logs every frame its own
+// height, its copy of the platform and the movement base its engine reads, and in a bad_base arm forges its claim when the host
+// says so, until the host ends the run. In hostride it watches the host's puppet against its own copy of the platform and tells
+// the host what it read. See coop/dev/basedmove_drill.h. The log, chat and verdict are basedmove_drill.cpp.
 
 #include "basedmove_drill_detail.h"
 
-#include "coop/dev/director/director.h"
-#include "coop/dev/director/routes.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/session/net_pump.h"
+#include "coop/player/pose_bases.h"
+#include "coop/player/remote_player.h"
 
 #include "ue_wrap/actors/character_base.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -21,16 +18,10 @@
 #include "ue_wrap/devices/cargo_lift.h"
 #include "ue_wrap/engine/engine.h"
 
-#include <windows.h>
-
-#include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
-#include <memory>
 #include <sstream>
 #include <string>
-#include <vector>
 
 namespace coop::dev::basedmove_drill::detail {
 
@@ -38,24 +29,23 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace CL = ue_wrap::cargo_lift;
 namespace CB = ue_wrap::character_base;
+namespace PB = coop::pose_bases;
 
 namespace {
 
-constexpr float kReachCm = 60.f;       // the director's stop at a standpoint beside the platform
-constexpr float kStepReachCm = 30.f;   // the stop of the straight step, from the platform's centre
-constexpr int kWalkDeadlineS = 420;
-constexpr int kStepDeadlineS = 60;
+constexpr float kForgedXyCm = 200.f;     // bad_base_xy: the claimed offset lies this far from the absolute pose (the check's cap is 30)
+constexpr float kForgedLiftCm = 3000.f;  // bad_base_vol: the absolute height lies this far above the pose's true one (the travel is 500)
 
-enum class CS { WaitReady, WaitLift, Walk, Step, Riding };
+enum class CS { WaitReady, WaitLift, Board, Riding, WaitHostOnboard, WaitPuppet, Observing };
 CS g_c = CS::WaitReady;
 
-ue_wrap::CachedObjRef g_lift;          // this copy of the host's lift
-PlatformBox g_box;                     // its platform's bounds and surface when the walk began
+Boarder g_boarder;
+Watcher g_watch;
+PlatformBox g_box;                     // hostride: the platform copy's bounds and surface, read when the host boarded
+std::string g_name;                    // the host's lift, by name
+ue_wrap::CachedObjRef g_lift;          // this copy of it
 int g_lastStop = 0;                    // the host's stop number this client has acted on
-std::vector<ue_wrap::FVector> g_ring;  // the stand points before the platform's open sides a route reaches, shortest route first
-std::vector<std::string> g_sides;      // their sides' names
-size_t g_stand = 0;
-std::shared_ptr<coop::director::BackgroundWalk> g_walk;
+bool g_forging = false;
 std::chrono::steady_clock::time_point g_boardedAt;
 
 // The engine's reading of this client's base, over the frames the lift moved on this copy and over every frame since it boarded.
@@ -69,57 +59,6 @@ int g_frame = 0;
 void CGo(CS s) {
     g_c = s;
     Go();
-}
-
-// A leg that gains no ground ends the run at once, naming where it stalled: the flat distance to its goal must fall by
-// `minGainCm` within `spanMs`, or the walk is cancelled and the run says INVALID (a time bound says INVALID only). The route's
-// own detours can lead away from the goal for a while, so the nav leg's span is long; the straight step's is short.
-constexpr float kNavGainCm = 100.f;
-constexpr uint64_t kNavSpanMs = 45000;
-constexpr float kStepGainCm = 5.f;
-constexpr uint64_t kStepSpanMs = 5000;
-float g_bestDist = 0.f;
-uint64_t g_bestAt = 0;
-
-float FlatTo(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::hypot(a.X - b.X, a.Y - b.Y); }
-
-void ResetProgress(void* me, const ue_wrap::FVector& goal) {
-    ue_wrap::FVector at{};
-    E::TryGetActorLocation(me, at);
-    g_bestDist = FlatTo(at, goal);
-    g_bestAt = ::GetTickCount64();
-}
-
-// True (and INVALID said, the walk cancelled) when the leg to `goal` stalled.
-bool Stalled(void* me, const ue_wrap::FVector& goal, float minGainCm, uint64_t spanMs, const char* what) {
-    ue_wrap::FVector at{};
-    if (!E::TryGetActorLocation(me, at)) return false;
-    const float d = FlatTo(at, goal);
-    const uint64_t now = ::GetTickCount64();
-    if (d < g_bestDist - minGainCm) {
-        g_bestDist = d;
-        g_bestAt = now;
-        return false;
-    }
-    if (now - g_bestAt <= spanMs) return false;
-    if (g_walk) coop::director::CancelBackgroundWalk(*g_walk);
-    char buf[240];
-    std::snprintf(buf, sizeof(buf), "%s stalled: no %.0f cm gained in %llu s; the walker stands at (%.0f,%.0f,%.0f), %.0f cm from "
-                  "its goal (%.0f,%.0f), best %.0f cm", what, minGainCm, static_cast<unsigned long long>(spanMs / 1000), at.X,
-                  at.Y, at.Z, d, goal.X, goal.Y, g_bestDist);
-    Invalid(buf);
-    return true;
-}
-
-// The nav leg to the stand point before the open side g_stand.
-void StartLeg(void* me) {
-    g_walk = coop::director::StartBackgroundWalk(g_ring[g_stand], kReachCm, kWalkDeadlineS);
-    if (!g_walk) return Invalid("the walk to the platform did not start");
-    ResetProgress(me, g_ring[g_stand]);
-    Fact("open side %s chosen (the floor there is level with the platform's, nothing stands between it and the slab, a route "
-         "reaches it): walking to its stand point (%.0f,%.0f) by the director", g_sides[g_stand].c_str(), g_ring[g_stand].X,
-         g_ring[g_stand].Y);
-    CGo(CS::Walk);
 }
 
 void* FindLiftNamed(const std::string& name) {
@@ -141,60 +80,9 @@ bool NewStop(std::string* name, int* stop) {
     return true;
 }
 
-// The lift is at rest on this copy: measure its platform and ask the engine for the points beside it that a route reaches.
-void Approach(void* me, const std::string& name, int stop) {
-    if (!CL::EnsureResolved()) {
-        Late("the cargo lift class never resolved", kWalkBoundMs);
-        return;
-    }
-    void* const lift = FindLiftNamed(name);
-    if (!lift) return Invalid("the client has no cargo lift of the host's name");
-    bool moving = false;
-    if (!CL::ReadMoving(lift, moving)) return Invalid("this copy's lift state did not read");
-    if (moving) {   // its own travel, run from the time it was told, ends after the host's did
-        Late("this copy of the lift never came to rest", kBoundMs);
-        return;
-    }
-    g_lift.Set(lift);
-    void* const platform = CL::PlatformActor(lift);
-    float platZ = 0.f;
-    if (!platform || !CL::ReadPlatformZ(lift, platZ) || !ReadPlatform(me, platform, platZ, g_box))
-        return Invalid("this copy's platform, its bounds or its walkable surface did not read");
-    g_lastStop = stop;
-    // The way on is the platform's open side: its rails and the room's walls close the others, and an outside ground level with
-    // nothing is no floor to stand on. Each open side whose stand point a NavMesh route reaches is a candidate, shortest first.
-    ue_wrap::FVector from{};
-    if (!E::TryGetActorLocation(me, from)) return Invalid("the client's place did not read");
-    struct Cand {
-        std::string name;
-        ue_wrap::FVector stand;
-        float len;
-    };
-    std::vector<Cand> cands;
-    for (const Side& s : ProbeSides(me, g_box, E::GetActorCharacterHalfHeight(me))) {
-        float len = 0.f;
-        const bool routed = s.open && coop::director::RouteInLegs(me, from, s.stand, kReachCm, &len);
-        Fact("side %s: %s -- %s%s", s.name, s.open ? "OPEN" : "closed", s.why.c_str(),
-             !s.open ? "" : routed ? " (a route reaches its stand point)" : " (no route reaches its stand point)");
-        if (routed) cands.push_back({s.name, s.stand, len});
-    }
-    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.len < b.len; });
-    g_ring.clear();
-    g_sides.clear();
-    for (const Cand& c : cands) {
-        g_ring.push_back(c.stand);
-        g_sides.push_back(c.name);
-    }
-    Fact("stop %d: platform surface %.1f, floor %.1f; %zu open side(s) with a route", stop, g_box.surface, g_box.floorZ,
-         g_ring.size());
-    if (g_ring.empty()) {   // this floor has no way to the platform: the host brings the lift to its other stop
-        Say("noroute " + std::to_string(stop));
-        CGo(CS::WaitLift);
-        return;
-    }
-    g_stand = 0;
-    StartLeg(me);
-}
+// A hostile client's claim, as the sender fills it (pose_bases::SetOutboundForge): the offset moved, or the absolute height.
+void ForgeXy(coop::net::PoseSnapshot& pose) { pose.bx += kForgedXyCm; }
+void ForgeVol(coop::net::PoseSnapshot& pose) { pose.z += kForgedLiftCm; }
 
 void CountBase(void* me, void* lift, bool moving, std::string* baseText) {
     CB::Base base;
@@ -226,39 +114,120 @@ void RideFrame(void* me, void* lift) {
     CountBase(me, lift, moving, &base);
     ++g_frame;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - g_boardedAt).count();
-    float past = 0.f, feet = 0.f;
-    StandsOn(me, g_box, platZ, &past, &feet);
-    Fact("f=%d t=%.1fms ownZ=%.2f platZ=%.2f attZ=%.2f dir=%d moving=%d feetOverSurface=%.1f base=%s", g_frame, ms, at.Z, platZ,
-         attZ, dir ? 1 : 0, moving ? 1 : 0, feet, base.c_str());
+    Fact("f=%d t=%.1fms ownZ=%.2f platZ=%.2f attZ=%.2f dir=%d moving=%d forging=%d base=%s", g_frame, ms, at.Z, platZ, attZ,
+         dir ? 1 : 0, moving ? 1 : 0, g_forging ? 1 : 0, base.c_str());
 }
 
-void SendTally() {
-    char line[200];
-    std::snprintf(line, sizeof(line), "base %d %d %d %d %d %d %d %d %s", g_moving.platform, g_moving.other, g_moving.none,
-                  g_moving.frames, g_all.platform, g_all.other, g_all.none, g_all.frames,
-                  g_firstOther.empty() ? "-" : g_firstOther.c_str());
+void LogTally() {
     Fact("movement base: while the lift moved on this copy (%d frames) platform=%d other=%d none=%d; over all %d frames "
          "platform=%d other=%d none=%d; first other '%s'",
          g_moving.frames, g_moving.platform, g_moving.other, g_moving.none, g_all.frames, g_all.platform, g_all.other,
          g_all.none, g_firstOther.empty() ? "-" : g_firstOther.c_str());
-    Say(line);
 }
 
-// The step from the standpoint onto the platform: a straight leg to the platform's centre through the input seam.
-void StartStep(void* me) {
-    const float standZ = g_box.surface + E::GetActorCharacterHalfHeight(me);
-    g_walk = coop::director::StartBackgroundWalk({g_box.centre.X, g_box.centre.Y, standZ}, kStepReachCm, kStepDeadlineS, false,
-                                                 nullptr, /*straight*/ true);
-    if (!g_walk) return Invalid("the step onto the platform did not start");
-    ResetProgress(me, {g_box.centre.X, g_box.centre.Y, 0.f});
-    Fact("at the %s side's stand point: stepping in across the open edge to the platform's centre by the director's straight leg",
-         g_sides[g_stand].c_str());
-    CGo(CS::Step);
+// ---- the arms where the client rides ------------------------------------------------------------------------------------------
+void BeginBoarding(const std::string& name, int stop) {
+    void* const lift = FindLiftNamed(name);
+    if (!lift) return Invalid("the client has no cargo lift of the host's name");
+    if (!CL::EnsureResolved()) {
+        Late("the cargo lift class never resolved", kWalkBoundMs);
+        return;
+    }
+    g_lastStop = stop;
+    g_lift.Set(lift);
+    g_boarder.Begin(lift);
+    CGo(CS::Board);
+}
+
+void Board(void* me) {
+    switch (g_boarder.Tick(me)) {
+    case Boarder::State::OnPlatform:
+        g_boardedAt = std::chrono::steady_clock::now();
+        Say("onboard");
+        CGo(CS::Riding);
+        return;
+    case Boarder::State::NoRoute:   // this floor has no way to the platform: the host brings the lift to its other stop
+        Say("noroute " + std::to_string(g_lastStop));
+        CGo(CS::WaitLift);
+        return;
+    default:
+        return;
+    }
+}
+
+void Riding(void* me) {
+    void* const lift = g_lift.Get();
+    if (!lift) return Invalid("this copy of the lift was lost");
+    if (Seen("end")) {
+        PB::SetOutboundForge(nullptr);
+        LogTally();
+        Finish();
+        return;
+    }
+    if (Hostile() && !g_forging && Seen("forge")) {   // the host sees the client on its platform: the claim is forged from now on
+        g_forging = true;
+        PB::SetOutboundForge(ArmOf() == Arm::BadXy ? &ForgeXy : &ForgeVol);
+        Fact("forging the claim from now on (%s)", ArmName());
+    }
+    RideFrame(me, lift);
+    Late("the host never said the run ended", kWalkBoundMs);
+}
+
+// ---- hostride: the client watches the host's puppet ---------------------------------------------------------------------------
+// The host has boarded and its lift is at rest here: the platform copy's bounds and surface, then the host's puppet on it.
+void WaitHostOnboard(void* me) {
+    if (!Seen("hostonboard")) {
+        Late("the host never boarded", kWalkBoundMs);
+        return;
+    }
+    void* const lift = FindLiftNamed(g_name);
+    if (!lift) return Invalid("the client has no cargo lift of the host's name");
+    bool moving = false;
+    if (!CL::ReadMoving(lift, moving)) return Invalid("this copy's lift state did not read");
+    if (moving) {   // its own travel, run from the time it was told, ends after the host's did
+        Late("this copy of the lift never came to rest", kBoundMs);
+        return;
+    }
+    void* const platform = CL::PlatformActor(lift);
+    float platZ = 0.f;
+    if (!platform || !CL::ReadPlatformZ(lift, platZ) || !ReadPlatform(me, platform, platZ, g_box))
+        return Invalid("this copy's platform, its bounds or its walkable surface did not read");
+    g_lift.Set(lift);
+    CGo(CS::WaitPuppet);
+}
+
+void WaitPuppet(void* lift) {
+    coop::RemotePlayer* const rp = coop::players::Registry::Get().Puppet(0);
+    void* const body = rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
+    float platZ = 0.f, past = 0.f, feet = 0.f;
+    if (!CL::ReadPlatformZ(lift, platZ)) return Invalid("the platform's height did not read");
+    if (!body || !StandsOn(body, g_box, platZ, &past, &feet)) {
+        Late("the host's puppet never stood on this copy of the platform", kBoundMs);
+        return;
+    }
+    Fact("the host's puppet stands on the platform: %.0f cm past its edge, feet %.0f cm over its surface", past, feet);
+    g_watch.Begin(0);
+    Say("seen");
+    CGo(CS::Observing);
+}
+
+void Observing(coop::net::Session& s, void* lift) {
+    if (Seen("end")) {
+        char line[200];
+        std::snprintf(line, sizeof(line), "result %d %d %.2f %.2f %d %d %.2f", g_watch.frames, g_watch.flips, g_watch.maxD,
+                      g_watch.maxFeet, g_watch.basedFrames, g_watch.attachedFrames, g_watch.maxGap);
+        Say(line);
+        Finish();
+        return;
+    }
+    const Watched w = g_watch.Frame(s, lift, g_box);
+    if (!w.ok) return;   // the puppet or the lift did not read this frame: the next
+    Late("the host never said its ride ended", kWalkBoundMs);
 }
 
 }  // namespace
 
-void ClientTick(coop::net::Session&) {
+void ClientTick(coop::net::Session& s) {
     void* const me = coop::players::Registry::Get().Local();
     if (!me || !R::IsLive(me)) return;
     switch (g_c) {
@@ -277,59 +246,34 @@ void ClientTick(coop::net::Session&) {
             Late("the host never named its lift at a stop", kWalkBoundMs);
             return;
         }
-        Approach(me, name, stop);
-        return;
-    }
-    case CS::Walk: {
-        const int st = g_walk ? g_walk->state.load() : 2;
-        if (st == 0) {
-            if (!Stalled(me, g_ring[g_stand], kNavGainCm, kNavSpanMs, ("the walk to the " + g_sides[g_stand] + " side").c_str()))
-                Late("the walk to the platform never ended", kWalkBoundMs);
+        g_name = name;
+        if (ArmOf() == Arm::HostRide) {   // the host boards, whatever stop it settles on: the platform is read when it has
+            g_lastStop = stop;
+            CGo(CS::WaitHostOnboard);
             return;
         }
-        if (st == 2) {   // this stand point was not reached: the next open side
-            g_walk.reset();
-            if (++g_stand >= g_ring.size()) return Invalid("no open side of the platform could be walked to");
-            StartLeg(me);
-            return;
-        }
-        StartStep(me);
+        BeginBoarding(name, stop);
         return;
     }
-    case CS::Step: {
-        const int st = g_walk ? g_walk->state.load() : 2;
-        if (st == 0) {
-            const ue_wrap::FVector centre{g_box.centre.X, g_box.centre.Y, 0.f};
-            if (!Stalled(me, centre, kStepGainCm, kStepSpanMs, ("the step in over the " + g_sides[g_stand] + " side").c_str()))
-                Late("the step onto the platform never ended", kBoundMs);
-            return;
-        }
-        void* const lift = g_lift.Get();
-        float platZ = 0.f, past = 0.f, feet = 0.f;
-        if (!lift || !CL::ReadPlatformZ(lift, platZ)) return Invalid("this copy of the lift was lost");
-        if (!StandsOn(me, g_box, platZ, &past, &feet) || st == 2) {
-            char buf[200];
-            std::snprintf(buf, sizeof(buf), "the step ended off the platform (leg %s): %.0f cm past its edge, feet %.0f cm over "
-                          "its surface (tolerance %.0f cm, %.0f cm past the edge)", st == 2 ? "failed" : "arrived", past, feet,
-                          kFeetTolCm, kEdgeSlackCm);
-            return Invalid(buf);
-        }
-        Fact("on the platform: %.0f cm past its edge, feet %.0f cm over its surface", past, feet);
-        g_boardedAt = std::chrono::steady_clock::now();
-        Say("onboard");
-        CGo(CS::Riding);
+    case CS::Board:
+        Board(me);
         return;
-    }
-    case CS::Riding: {
+    case CS::Riding:
+        Riding(me);
+        return;
+    case CS::WaitHostOnboard:
+        WaitHostOnboard(me);
+        return;
+    case CS::WaitPuppet: {
         void* const lift = g_lift.Get();
         if (!lift) return Invalid("this copy of the lift was lost");
-        if (Seen("end")) {
-            SendTally();
-            Finish();
-            return;
-        }
-        RideFrame(me, lift);
-        Late("the host never said the ride ended", kWalkBoundMs);
+        WaitPuppet(lift);
+        return;
+    }
+    case CS::Observing: {
+        void* const lift = g_lift.Get();
+        if (!lift) return Invalid("this copy of the lift was lost");
+        Observing(s, lift);
         return;
     }
     }

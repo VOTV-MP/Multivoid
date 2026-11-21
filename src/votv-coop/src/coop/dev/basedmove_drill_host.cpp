@@ -1,27 +1,26 @@
 // coop/dev/basedmove_drill_host.cpp -- the host's steps of the based-movement drill: it names its lift (and the stop it rests at),
-// brings the lift to the other stop with the game's own press when the client says no route reaches the platform's floor,
-// waits for the client to say it stands on the platform and for the client's puppet to stand there on this copy, presses the
-// lift, and logs every frame the numbers the lift's reversal reads and what this engine thinks of the puppet, until the lift
-// stops or the Blueprint reverses it. See coop/dev/basedmove_drill.h. The log, chat and verdict are basedmove_drill.cpp.
+// brings the lift to its other stop with the game's own press when the rider reaches no floor beside the platform, and then,
+// by arm: ride -- waits for the client's puppet to stand on the platform, presses the lift and judges every frame (PASS at the
+// lift's stop, FAIL at a reversal); hostride -- boards itself, presses, and prints the client's measure; bad_base_* -- waits
+// for the client's forged claim and judges what it does with it. See coop/dev/basedmove_drill.h. The log, chat and verdict
+// are basedmove_drill.cpp, the boarding basedmove_drill_rider.cpp, the per-frame reads basedmove_drill_watch.cpp.
 
 #include "basedmove_drill_detail.h"
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/pose_bases.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
 
-#include "ue_wrap/actors/character_base.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/cargo_lift.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
-#include "ue_wrap/engine/engine_component.h"
 
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -32,33 +31,35 @@ namespace coop::dev::basedmove_drill::detail {
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace CL = ue_wrap::cargo_lift;
-namespace CB = ue_wrap::character_base;
+namespace PB = coop::pose_bases;
 
 namespace {
 
 constexpr int kClientSlot = 1;
 constexpr uint64_t kStartBoundMs = 20000;   // a press sets `moving` within a tick; this long without it says INVALID
+constexpr uint32_t kRejectsToPass = 5;      // forged claims set aside before the host's puppet is judged
+constexpr uint32_t kAcceptsToFail = 10;     // forged claims let through: the check is not holding
 
-enum class HS { Start, WaitOnboard, Bring, WaitPuppet, Ride, WaitBase };
+enum class HS { Start, WaitOnboard, Bring, WaitPuppet, Ride, Hostile, Board, WaitSeen, HostRide, WaitResult };
 HS g_h = HS::Start;
 
 ue_wrap::CachedObjRef g_lift;   // the host's lift, held by slot and serial across ticks
-PlatformBox g_box;              // the platform's bounds and surface at rest, before the press
-int g_stops = 0;                // the rest positions the client was told of: 1, then 2 once the lift was brought to the other
+PlatformBox g_box;              // the platform's bounds and surface at rest, before the press (the ride arms)
+Boarder g_boarder;              // hostride: the host boards itself
+Watcher g_watch;                // ride: the client's puppet against this lift
+int g_stops = 0;                // the rest positions the rider was told of: 1, then 2 once the lift was brought to the other
 bool g_bringSawMoving = false;
-bool g_prevDir = false, g_sawMoving = false;
-int g_frames = 0, g_flips = 0;
-float g_maxGap = 0.f;
-int g_pBase = 0, g_pOther = 0, g_pNone = 0;   // this engine's reading of the puppet's movement base, per frame
-std::chrono::steady_clock::time_point g_pressedAt;
+bool g_sawMoving = false, g_prevDir = false;   // hostride: the host's own lift
+bool g_forgedSeen = false;
+uint32_t g_accepted0 = 0;
 
 void HGo(HS s) {
     g_h = s;
     Go();
 }
 
-void* ClientPuppet() {
-    coop::RemotePlayer* const rp = coop::players::Registry::Get().Puppet(kClientSlot);
+void* PuppetOf(int slot) {
+    coop::RemotePlayer* const rp = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot));
     return rp && rp->valid() && rp->HasPose() ? rp->GetActor() : nullptr;
 }
 
@@ -68,7 +69,7 @@ void* FindLift() {
     return nullptr;
 }
 
-// The lift at rest: its platform's bounds and walkable surface, said to the client with the number of this stop. False (said
+// The lift at rest: its platform's bounds and walkable surface, said to the rider with the number of this stop. False (said
 // INVALID) when anything does not read.
 bool RestAndSay(void* lift) {
     void* const platform = CL::PlatformActor(lift);
@@ -89,6 +90,16 @@ bool RestAndSay(void* lift) {
     return true;
 }
 
+// The lift is at rest at a stop the rider is to board from: the next step by arm.
+void Rested(void* lift) {
+    if (ArmOf() == Arm::HostRide) {
+        g_boarder.Begin(lift);
+        HGo(HS::Board);
+    } else {
+        HGo(HS::WaitOnboard);
+    }
+}
+
 void Start() {
     if (!CL::EnsureResolved()) {
         Late("the cargo lift class never resolved", kWalkBoundMs);
@@ -97,15 +108,15 @@ void Start() {
     void* const lift = FindLift();
     if (!lift) return Invalid("the host has no cargo lift");
     g_lift.Set(lift);
-    if (RestAndSay(lift)) HGo(HS::WaitOnboard);
+    if (RestAndSay(lift)) Rested(lift);
 }
 
-// The client says no route reaches the platform's floor at this stop: the lift goes to its other stop (the game's own press,
-// the call a call button runs), once.
+// The rider reaches no floor beside the platform at this stop: the lift goes to its other stop (the game's own press, the
+// call a call button runs), once.
 void BringOther(void* lift) {
     if (g_stops >= 2) return Invalid("no route reaches the platform's floor at either stop of the lift");
     if (!CL::Press(lift)) return Invalid("the lift's own press did not run");
-    Fact("the client reached no floor beside the platform at stop %d: pressed the lift to bring it to its other stop", g_stops);
+    Fact("the rider reached no floor beside the platform at stop %d: pressed the lift to bring it to its other stop", g_stops);
     g_bringSawMoving = false;
     HGo(HS::Bring);
 }
@@ -116,16 +127,17 @@ void Bring(void* lift) {
     if (!CL::ReadMoving(lift, moving)) return Invalid("the lift's `moving` did not read");
     if (moving) g_bringSawMoving = true;
     if (g_bringSawMoving && !moving) {
-        if (RestAndSay(lift)) HGo(HS::WaitOnboard);
+        if (RestAndSay(lift)) Rested(lift);
         return;
     }
     if (!g_bringSawMoving) Late("the lift never began to move when brought to its other stop", kStartBoundMs);
     else Late("the lift moved to its other stop and did not stop", kRideBoundMs);
 }
 
-// The puppet on the platform on this copy: the press waits for it, a few seconds of the stream after the client's step.
+// ---- ride and the hostile arms: the client rides ------------------------------------------------------------------------------
+// The puppet on the platform on this copy: the next step waits for it, a few seconds of the stream after the rider's step.
 void WaitPuppet(void* lift) {
-    void* const body = ClientPuppet();
+    void* const body = PuppetOf(kClientSlot);
     float platZ = 0.f, past = 0.f, feet = 0.f;
     if (!CL::ReadPlatformZ(lift, platZ)) return Invalid("the platform's height did not read");
     if (!body || !StandsOn(body, g_box, platZ, &past, &feet)) {
@@ -136,98 +148,131 @@ void WaitPuppet(void* lift) {
         return;
     }
     Fact("the puppet stands on the platform: %.0f cm past its edge, feet %.0f cm over its surface", past, feet);
-    if (Nocoll()) {
-        void* const cap = CB::CapsuleComponent(body);
-        const bool ok = E::SetActorEnableCollision(body, false);
-        Fact("ride_nocoll: the puppet's collision off (call ran=%d), capsule collision now %d", ok ? 1 : 0,
-             cap ? E::GetComponentCollisionEnabled(cap) : -1);
-        if (!ok) return Invalid("the puppet's collision could not be switched off");
+    if (Hostile()) {   // the rider forges its claim now; the host judges what the receiver does with it
+        Say("forge");
+        g_forgedSeen = false;
+        HGo(HS::Hostile);
+        return;
     }
-    bool dir0 = false;
-    if (!CL::ReadDir(lift, dir0)) return Invalid("the lift's direction did not read");
     g_box.restZ = platZ;
     if (!CL::Press(lift)) return Invalid("the lift's own press did not run");
-    g_pressedAt = std::chrono::steady_clock::now();
-    bool dirNow = dir0;
-    CL::ReadDir(lift, dirNow);
-    g_prevDir = dirNow;
-    Fact("pressed: dir %d -> %d", dir0 ? 1 : 0, dirNow ? 1 : 0);
+    g_watch.Begin(kClientSlot);
+    Fact("pressed");
     HGo(HS::Ride);
 }
 
-void EndRide(const char* why) {
-    if (Nocoll())
-        if (void* const body = ClientPuppet()) E::SetActorEnableCollision(body, true);
-    Fact("ride ended (%s): flips=%d, largest |attach-comp|=%.1f, frames=%d", why, g_flips, g_maxGap, g_frames);
-    Say("end");
-    HGo(HS::WaitBase);
+// One frame of the ride: PASS when the lift reaches its stop, FAIL at the first reversal.
+void Ride(coop::net::Session& s, void* lift) {
+    const Watched w = g_watch.Frame(s, lift, g_box);
+    if (!w.ok) return Invalid("the lift or the client's puppet stopped reading during the ride");
+    if (w.flipped) {
+        Say("end");
+        return Fail("the lift reversed at frame %d (its own block test read a gap of %.1f cm against 10): max |attach-comp|=%.1f, "
+                    "max d=%.1f, max |feet|=%.1f, frames with a base %d of %d, attached %d", g_watch.frames, w.gap, g_watch.maxGap,
+                    g_watch.maxD, g_watch.maxFeet, g_watch.basedFrames, g_watch.frames, g_watch.attachedFrames);
+    }
+    if (g_watch.SawMoving() && !w.moving) {
+        Say("end");
+        if (g_watch.basedFrames == 0)
+            return Invalid("the lift reached its stop, but the client's pose never named a base: nothing was judged");
+        return Pass("the lift reached its stop with no reversal: frames=%d, max |attach-comp|=%.1f, max d=%.1f, max |feet|=%.1f, "
+                    "frames with a base %d, attached %d", g_watch.frames, g_watch.maxGap, g_watch.maxD, g_watch.maxFeet,
+                    g_watch.basedFrames, g_watch.attachedFrames);
+    }
+    if (!g_watch.SawMoving()) Late("the lift never began to move after the press", kStartBoundMs);
+    else Late("the lift moved and did not stop", kRideBoundMs);
 }
 
-// One frame of the ride: what the lift's own reversal reads, then the puppet.
-void Ride(coop::net::Session& s, void* lift) {
-    bool moving = false, dir = false, ign = false;
-    float platZ = 0.f, attZ = 0.f;
-    if (!CL::ReadMoving(lift, moving) || !CL::ReadDir(lift, dir) || !CL::ReadIgnoreCheck(lift, ign) ||
-        !CL::ReadPlatformZ(lift, platZ) || !CL::ReadAttachZ(lift, attZ))
-        return Invalid("the lift's state stopped reading during the ride");
-    void* const body = ClientPuppet();
-    if (!body) return Invalid("the client's puppet was lost during the ride");
+// A forged pose, as this receiver reads it: the XY gap past the check's cap (bad_base_xy) or an absolute height past the lift's
+// travel (bad_base_vol).
+bool Forged(const coop::net::PoseSnapshot& p, void* lift) {
+    if (p.baseKind != coop::net::pose_base_kind::kMover) return false;
+    PB::Resolved at;
+    if (!PB::Resolve(p.baseId, at)) return false;
+    if (ArmOf() == Arm::BadXy) {
+        const float gx = p.x - (at.origin.X + p.bx), gy = p.y - (at.origin.Y + p.by);
+        return std::sqrt(gx * gx + gy * gy) > PB::kMaxXyGapCm;
+    }
+    float low = 0.f, high = 0.f;
+    return CL::ReadStopsZ(lift, low, high) && p.z > high + PB::kAboveStopCm;
+}
 
-    const float gap = attZ - platZ;
-    g_maxGap = std::fmax(g_maxGap, std::fabs(gap));
-    const bool flipped = dir != g_prevDir;
-    if (flipped) ++g_flips;
-    g_prevDir = dir;
-    if (moving) g_sawMoving = true;
-
-    ue_wrap::FVector at{};
-    E::TryGetActorLocation(body, at);
+// The hostile arms: once the forged pose is in, the claim must be set aside (counted) and the puppet must follow the absolute
+// pose; a puppet that rides the forged claim, its claims let through, is the failure. Decided by the counts of poses.
+void JudgeForged(coop::net::Session& s, void* lift) {
     coop::net::PoseSnapshot pose{};
-    const bool havePose = s.TryGetRemotePose(kClientSlot, pose);
-    void* const cap = CB::CapsuleComponent(body);
+    if (!s.TryGetRemotePose(kClientSlot, pose)) return;
+    if (!g_forgedSeen) {
+        if (!Forged(pose, lift)) {
+            Late("the client's forged pose never arrived", kBoundMs);
+            return;
+        }
+        g_forgedSeen = true;
+        g_accepted0 = PB::Accepted(kClientSlot);
+        Fact("the forged pose arrived: abs (%.0f,%.0f,%.0f), offset (%.0f,%.0f,%.0f)", pose.x, pose.y, pose.z, pose.bx, pose.by,
+             pose.bz);
+        Go();
+    }
+    const PB::Reject why = ArmOf() == Arm::BadXy ? PB::Reject::XyGap : PB::Reject::Volume;
+    const uint32_t rejected = PB::Rejected(kClientSlot, why), accepted = PB::Accepted(kClientSlot) - g_accepted0;
+    void* const body = PuppetOf(kClientSlot);
     void* const platform = CL::PlatformActor(lift);
-    const bool overlap = cap && platform && E::IsOverlappingActor(cap, platform);
-    float past = 0.f, feet = 0.f;
-    StandsOn(body, g_box, platZ, &past, &feet);
-    CB::Base base;
-    CB::ReadMovementBase(body, base);
-    if (!base.component) ++g_pNone;
-    else if (platform && (base.component == CL::PlatformComponent(lift) || base.owner == platform)) ++g_pBase;
-    else ++g_pOther;
+    void* parent = nullptr;
+    const bool attached = body && platform && E::GetAttachParentActor(body, parent) && parent == platform;
+    ue_wrap::FVector at{};
+    if (!body || !E::TryGetActorLocation(body, at)) return Invalid("the client's puppet was lost");
+    const float off = std::sqrt((at.X - pose.x) * (at.X - pose.x) + (at.Y - pose.y) * (at.Y - pose.y) +
+                                (at.Z - pose.z) * (at.Z - pose.z));
+    if (accepted >= kAcceptsToFail) {
+        Say("end");
+        return Fail("%u forged claims were let through (%u set aside): the puppet rides the forged offset, %.0f cm from the "
+                    "absolute pose, attached=%d", accepted, rejected, off, attached ? 1 : 0);
+    }
+    if (rejected >= kRejectsToPass && !attached && off <= PB::kMaxXyGapCm) {
+        Say("end");
+        return Pass("%u forged claims were set aside and none let through; the puppet follows the absolute pose (%.0f cm off), "
+                    "attached=%d", rejected, off, attached ? 1 : 0);
+    }
+    Late("the host neither set the forged claims aside nor let them through", kBoundMs);
+}
 
-    ++g_frames;
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - g_pressedAt).count();
-    Fact("f=%d t=%.1fms platZ=%.2f attZ=%.2f attZ-platZ=%.2f dir=%d ignoreCheck=%d moving=%d flip=%d puppetZ=%.2f poseZ=%.2f "
-         "feetOverSurface=%.1f capsuleColl=%d overlap=%d puppetBase=%s",
-         g_frames, ms, platZ, attZ, gap, dir ? 1 : 0, ign ? 1 : 0, moving ? 1 : 0, flipped ? 1 : 0, at.Z,
-         havePose ? pose.z : 0.f, feet, cap ? E::GetComponentCollisionEnabled(cap) : -1, overlap ? 1 : 0,
-         BaseName(base.component, base.owner).c_str());
-
-    // The ride ends at the first reversal the Blueprint makes, or when the lift stops after it has moved.
-    if (flipped) return EndRide("the lift reversed");
-    if (g_sawMoving && !moving) return EndRide("the lift arrived");
+// ---- hostride: the host rides -------------------------------------------------------------------------------------------------
+// The host's own lift after the press: its stop or its reversal ends the ride, as the client's watch is told.
+void HostRide(void* lift) {
+    bool moving = false, dir = false;
+    if (!CL::ReadMoving(lift, moving) || !CL::ReadDir(lift, dir)) return Invalid("the lift's state stopped reading during the ride");
+    if (moving && !g_sawMoving) {
+        g_sawMoving = true;
+        g_prevDir = dir;
+    }
+    const bool flipped = g_sawMoving && dir != g_prevDir;
+    g_prevDir = dir;
+    if (flipped || (g_sawMoving && !moving)) {
+        Fact("the host's ride ended (%s)", flipped ? "the lift reversed" : "the lift arrived");
+        Say("end");
+        HGo(HS::WaitResult);
+        return;
+    }
     if (!g_sawMoving) Late("the lift never began to move after the press", kStartBoundMs);
     else Late("the lift moved and did not stop", kRideBoundMs);
 }
 
-// The client's summary: the base its engine read, over the frames the lift moved and over all of its frames since it boarded.
-void WaitBase() {
+// The client's reading of the host's puppet: its tallies, in the order it says them.
+void WaitResult() {
     std::string rest;
-    if (!Rest("base ", &rest)) {
-        Late("the client's movement base summary never came");
+    if (!Rest("result ", &rest)) {
+        Late("the client's reading of the host's puppet never came");
         return;
     }
-    int c[8] = {};
-    std::string other;
     std::istringstream in(rest);
-    for (int& v : c) in >> v;
-    if (!in) return Invalid("the client's movement base summary could not be read");
-    in >> other;
-    const int cp = c[0], co = c[1], cn = c[2], cf = c[3], ap = c[4], ao = c[5], an = c[6], af = c[7];
-    Measured("flips=%d, max |attach-comp|=%.1f, frames=%d; client base while the lift moved (of %d frames): platform=%d "
-             "other=%d none=%d, over all %d frames: platform=%d other=%d none=%d, first other base '%s'; host's engine on the "
-             "puppet: platform=%d other=%d none=%d",
-             g_flips, g_maxGap, g_frames, cf, cp, co, cn, af, ap, ao, an, other.empty() ? "-" : other.c_str(), g_pBase, g_pOther, g_pNone);
+    int frames = 0, flips = 0, based = 0, attached = 0;
+    float maxD = 0.f, maxFeet = 0.f, maxGap = 0.f;
+    if (!(in >> frames >> flips >> maxD >> maxFeet >> based >> attached >> maxGap))
+        return Invalid("the client's reading of the host's puppet could not be read");
+    // hostride MEASURES: the threshold a verdict needs is set from its first runs, green (attached) and red (base off), and kept only
+    // if the red exceeds it by 3x. Until those runs exist a number here would be a guess.
+    Measured("the client's copy of the lift, the host riding: frames=%d, reversals=%d, max d=%.1f, max |feet|=%.1f, frames with a "
+             "base %d, attached %d, max |attach-comp|=%.1f", frames, flips, maxD, maxFeet, based, attached, maxGap);
     Finish();
 }
 
@@ -267,8 +312,42 @@ void HostTick(coop::net::Session& s) {
         if (!lift) return Invalid("the host's lift was lost");
         Ride(s, lift);
         return;
-    case HS::WaitBase:
-        WaitBase();
+    case HS::Hostile:
+        if (!lift) return Invalid("the host's lift was lost");
+        JudgeForged(s, lift);
+        return;
+    case HS::Board: {
+        void* const me = coop::players::Registry::Get().Local();
+        if (!lift || !me) return;
+        switch (g_boarder.Tick(me)) {
+        case Boarder::State::OnPlatform:
+            Say("hostonboard");
+            HGo(HS::WaitSeen);
+            return;
+        case Boarder::State::NoRoute:
+            BringOther(lift);
+            return;
+        default:
+            return;
+        }
+    }
+    case HS::WaitSeen:
+        if (!lift) return Invalid("the host's lift was lost");
+        if (!Seen("seen")) {
+            Late("the client never saw the host's puppet on its platform", kBoundMs);
+            return;
+        }
+        if (!CL::Press(lift)) return Invalid("the lift's own press did not run");
+        Fact("pressed");
+        g_sawMoving = false;
+        HGo(HS::HostRide);
+        return;
+    case HS::HostRide:
+        if (!lift) return Invalid("the host's lift was lost");
+        HostRide(lift);
+        return;
+    case HS::WaitResult:
+        WaitResult();
         return;
     }
 }
