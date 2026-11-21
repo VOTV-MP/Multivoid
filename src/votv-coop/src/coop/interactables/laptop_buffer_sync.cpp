@@ -460,6 +460,18 @@ void Tick() {
         return;
     }
 
+    // A joiner first sees its laptop before its world's load has written the disc's rows and read count, and when the
+    // host's slot then matches what loaded the slot lane writes nothing and primes nothing: the shadow was still of an
+    // empty laptop. The load's writes are the host's world arriving, never this player's edit, so until the world is
+    // ready the shadow follows them; otherwise the first canonical's drain sent them to the host as an edit, and the
+    // host appended the disc's rows a second time (a second joiner of a session whose laptop held a disc doubled its
+    // files and its read count on every peer).
+    if (!IsHost() && !coop::net_pump::HasAnnouncedWorldReady()) {
+        L::BufferQuad q;
+        if (L::ReadQuad(q) && QuadSeqHash(q) != g_prevHash) PrimeFrom(q);
+        return;
+    }
+
     if (s->connected()) {
         if (IsHost()) {
             // Retry: a backpressure-refused canonical re-sends here.
