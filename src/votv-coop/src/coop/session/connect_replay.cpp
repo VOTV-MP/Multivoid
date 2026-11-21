@@ -125,7 +125,7 @@ void ConnectReplayForSlot(int slot) {
     coop::prop_snapshot::TriggerForSlot(slot);
     coop::prop_drive_host::OnPeerWorldReady();  // every driven prop's pose again, so the joiner parks the resting ones the delta gate would never send it
     coop::kerfus_lanes::OnPeerWorldReady(slot);  // and every Kerfus's on, charging and energy
-    coop::sat_console_sync::OnPeerWorldReady(slot);  // a SAT console typist back at a terminal still running finds it
+    coop::sat_console_sync::OnPeerWorldReady(slot);  // every SAT console's lines and busy flag
     // Deliver the current position of any save-authoritative chipPile the host moved in this
     // joiner's connect window (the move's convert was dropped pre-world, and chipPiles carry no
     // position in the snapshot). After the snapshot, so the join gate holds it behind the snapshot's spawns; the

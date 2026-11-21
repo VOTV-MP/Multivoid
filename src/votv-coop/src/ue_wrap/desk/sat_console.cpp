@@ -43,6 +43,7 @@ int32_t g_offWriteB = -1, g_offWriteType = -1;  // writeToLog's B and bracketsTy
 
 int32_t g_offAtlasTerm = -1;  // ui_consolesAtlas_C.umg_console
 int32_t g_offDeskPanels = -1;  // analogDScreenTest_C.consoles
+int32_t g_offDeskRoot = -1;    // analogDScreenTest_C.rootConsole
 
 void*   g_fnSetText = nullptr;  // EditableTextBox.SetText
 void*   g_wblCdo = nullptr;
@@ -128,6 +129,7 @@ bool EnsureResolved() {
     const bool haveInit = fnInit && R::FindParamOffset(fnInit, L"name") >= 0 && R::FindParamOffset(fnInit, L"dish") >= 0;
     g_offAtlasTerm  = R::FindPropertyOffset(atlas, L"umg_console");
     g_offDeskPanels = R::FindPropertyOffset(desk, L"consoles");
+    g_offDeskRoot   = R::FindPropertyOffset(desk, L"rootConsole");  // optional: RootPanel answers null without it
     g_fnSetText = R::FindFunction(box, L"SetText");
     g_wblCdo = R::FindClassDefaultObject(L"WidgetBlueprintLibrary");
     if (g_wblCdo) g_fnCreate = R::FindFunction(R::ClassOf(g_wblCdo), L"Create");
@@ -221,6 +223,13 @@ bool ReadLog(void* term, std::wstring& out) {
     return true;
 }
 
+bool WriteLog(void* term, const std::wstring& text) {
+    if (!g_resolved || !IsTerminal(term)) return false;
+    if (!WriteFStringField(term, g_offLog, text)) return false;
+    ParamFrame f(TerminalFn(term, L"fixLog"));
+    return f.valid() && Call(term, f);
+}
+
 bool CallInit(void* term, const std::wstring& name, bool hide, void* dish) {
     if (!g_resolved || !IsTerminal(term)) return false;
     ParamFrame f(TerminalFn(term, kInit));
@@ -281,13 +290,24 @@ void* FindPanelByName(const std::wstring& name) {
     void* desk = console_desk::Instance();
     if (!desk) return nullptr;
     const auto* arr = At<TArrayView>(desk, g_offDeskPanels);
-    if (!arr->data || arr->num <= 0) return nullptr;
-    void* const* elems = reinterpret_cast<void* const*>(arr->data);
-    for (int32_t i = 0; i < arr->num; ++i) {
+    void* const* elems = arr->data && arr->num > 0 ? reinterpret_cast<void* const*>(arr->data) : nullptr;
+    for (int32_t i = 0; elems && i < arr->num; ++i) {
         void* p = elems[i];
         if (p && R::IsLive(p) && R::ToString(R::NameOf(p)) == name) return p;
     }
-    return nullptr;
+    void* root = g_offDeskRoot >= 0 ? ReadObject(desk, g_offDeskRoot) : nullptr;
+    return root && R::ToString(R::NameOf(root)) == name ? root : nullptr;
+}
+
+void* RootPanel() {
+    if (!EnsureResolved() || g_offDeskRoot < 0) return nullptr;
+    return ReadObject(console_desk::Instance(), g_offDeskRoot);
+}
+
+void* PanelDish(void* panel) {
+    if (!panel || !R::IsLive(panel)) return nullptr;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(panel), L"control_asDish");
+    return ReadObject(panel, off);
 }
 
 }  // namespace ue_wrap::sat_console

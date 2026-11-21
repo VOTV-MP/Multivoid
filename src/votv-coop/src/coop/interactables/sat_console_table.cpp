@@ -73,4 +73,17 @@ bool SpawnsEveryCall(const std::wstring& line) {
     return Listed(command, kSpawnEveryCall);
 }
 
+std::wstring CommandOf(const std::wstring& line) {
+    std::wstring command, arg;
+    Split(line, command, arg);
+    return command;
+}
+
+bool Conflicts(const std::wstring& line, const std::wstring& running) {
+    const std::wstring a = CommandOf(line), b = CommandOf(running);
+    const bool aAll = EqualsNoCase(a, L"sd.calall"), bAll = EqualsNoCase(b, L"sd.calall");
+    const bool aOne = EqualsNoCase(a, L"sd.cal"), bOne = EqualsNoCase(b, L"sd.cal");
+    return (aAll && (bAll || bOne)) || (aOne && bAll);
+}
+
 }  // namespace coop::sat_console_table

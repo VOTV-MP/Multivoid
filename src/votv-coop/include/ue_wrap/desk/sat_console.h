@@ -51,6 +51,9 @@ bool  WriteUsed(void* term, void* panel);
 void* ReadActiveDish(void* term);            // the dish init pointed it at, or null (ROOT)
 bool  ReadName(void* term, std::wstring& out);
 bool  ReadLog(void* term, std::wstring& out);  // the printed lines, the last 3000 characters (fixLog)
+// The printed lines replaced with `text`, then fixLog, which keeps the last 3000 characters and redraws them. The
+// widget's own writeToLog is not called, so a watch of it sees nothing.
+bool  WriteLog(void* term, const std::wstring& text);
 
 // The terminal's verbs, as the game calls them. RunCommand runs a line as the input's commit does:
 // the input `command` holds the line, then enterCommand(line), which echoes `command`.
@@ -64,5 +67,10 @@ bool ConsumeInput(void* term);
 // name, and this machine's panel of that name in the desk's list, or null.
 std::wstring PanelName(void* panel);
 void* FindPanelByName(const std::wstring& name);
+// The desk's ROOT console (analogDScreenTest_C.rootConsole), the panel the world's broken-device alerts light; null
+// while the desk is not live.
+void* RootPanel();
+// A panel's dish (panel_SATconsole_C.control_asDish); null when none.
+void* PanelDish(void* panel);
 
 }  // namespace ue_wrap::sat_console
