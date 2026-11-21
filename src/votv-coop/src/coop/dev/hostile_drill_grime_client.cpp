@@ -10,6 +10,7 @@
 
 #include "coop/dev/director/clear_hand.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 #include "coop/config/config.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/interactables/grime_judge.h"
@@ -36,6 +37,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace coop::dev::hostile_drill::grime::detail {
 namespace {
@@ -70,7 +72,13 @@ int         g_strokes = 0, g_overlap = 0;
 uint64_t    g_heldAtStart = 0, g_heldAfterSponge = 0;
 int         g_goneMs = -1;
 Clock::time_point g_strokeAt{}, g_heldAt{};
-bool        g_crackSeen = false, g_crackWalked = false;
+size_t      g_crackIdx = 0;                  // the host's crack being tried
+std::vector<ue_wrap::FVector> g_crackRing;   // the standpoints a route reaches about it
+size_t      g_crackStand = 0;
+bool        g_crackRingBuilt = false;
+constexpr float kCrackRingCm = 400.f;       // inside the judge's reach of the fixer's overlap, the crack on a wall above
+constexpr float kCrackReachCm = 100.f;      // how near a standpoint the walker must read
+constexpr int   kCrackStandpoints = 3;
 
 void Invalid(const Spec& sp, const std::string& why) {
     DC::Say(Line(sp.arm, "client-invalid") + why);
@@ -215,16 +223,48 @@ void MeasureCrack(coop::net::Session*, const Spec& sp, void* player) {
     static R::InstanceOffset sConcrete{L"concrete"};
     std::string rest;
     switch (g_m) {
-    case MStep::CrackWait:
-        if (!DC::SeenRestOf(Line(sp.arm, "crack"), &rest)) return;
-        if (!ParseTarget(rest, g_crack)) return Invalid(sp, "the host's crack line could not be read: " + rest);
-        if (!StartWalk(g_crack)) return Invalid(sp, "the walk to the crack did not start");
+    case MStep::CrackWait: {
+        // The host offers its nearest cracks, each as a line; this client tries them in turn, each by the standpoints about it
+        // that a route reaches (the crack itself is on a wall, off the NavMesh), the next standpoint when a walk fails and the
+        // next crack when none is left. Only when the host has said it offered no more is the arm INVALID.
+        std::vector<std::string> lines;
+        DC::SeenRestsOf(Line(sp.arm, "crack"), &lines);
+        if (g_crackIdx >= lines.size()) {
+            if (DC::SeenHas(Line(sp.arm, "crack-end")))
+                return Invalid(sp, "no crack the host offered has a standpoint a route reaches and a walk got to");
+            return;
+        }
+        if (!ParseTarget(lines[g_crackIdx], g_crack)) return Invalid(sp, "the host's crack line could not be read: " + lines[g_crackIdx]);
+        if (!g_crackRingBuilt) {
+            g_crackRing = coop::director::ReachableStandpoints(player, g_crack.at, kCrackRingCm, kCrackStandpoints, kCrackReachCm);
+            g_crackRingBuilt = true;
+            g_crackStand = 0;
+            UE_LOGI("[GRIME-MEASURE] crack %zu '%s': a route reaches %zu of the %d standpoints about it", g_crackIdx,
+                    g_crack.key.c_str(), g_crackRing.size(), kCrackStandpoints);
+        }
+        if (g_crackStand >= g_crackRing.size()) {
+            ++g_crackIdx;
+            g_crackRingBuilt = false;
+            return;
+        }
+        g_walk = coop::director::StartBackgroundWalk(g_crackRing[g_crackStand], kCrackReachCm, kWalkDeadlineS);
+        if (!g_walk) {
+            ++g_crackStand;
+            return;
+        }
         g_m = MStep::CrackWalk;
         return;
+    }
     case MStep::CrackWalk: {
         const int st = g_walk ? g_walk->state.load() : 2;
         if (st == 0) return;
-        if (st == 2) return Invalid(sp, "the walk to the crack decal ended without reaching it");
+        g_walk.reset();
+        if (st == 2) {   // this standpoint was not reached: the next, then the next crack
+            ++g_crackStand;
+            g_m = MStep::CrackWait;
+            return;
+        }
+        DC::Say(Line(sp.arm, "crack-chosen") + g_crack.key);   // the crack this client stands at: the host lowers its copy
         g_m = MStep::CrackClear;
         return;
     }
@@ -501,7 +541,10 @@ void ClientReset() {
     g_heldAtStart = g_heldAfterSponge = 0;
     g_goneMs = -1;
     g_strokeAt = g_heldAt = {};
-    g_crackSeen = g_crackWalked = false;
+    g_crackIdx = 0;
+    g_crackRing.clear();
+    g_crackStand = 0;
+    g_crackRingBuilt = false;
     g_clear = coop::director::ClearHand{};
 }
 

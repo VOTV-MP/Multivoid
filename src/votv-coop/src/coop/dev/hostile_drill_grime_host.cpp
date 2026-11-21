@@ -28,6 +28,7 @@
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/engine/engine.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -60,9 +61,7 @@ bool                  g_washMade = false;    // the rain arm own decal was spawn
 Clock::time_point     g_washAt{};
 bool                  g_life1Done = false;   // the join-leak arm's first life judged: its decal and bases stand for the second
 ue_wrap::CachedObjRef g_decal;
-ue_wrap::CachedObjRef g_crack;            // the measure arm's second decal
 Target                g_target;
-Target                g_crackTarget;
 GJ::Stats             g_base{};
 float                 g_decalBase = 0.f;  // the decal's process when the host said ready
 float                 g_snapBase = 0.f;   // the value a joiner's snapshot would carry for it then
@@ -112,12 +111,13 @@ struct Rejects {
 
 struct PickCtx {
     Pick             pick;
-    bool             crack;       // the measure arm's second pick: the nearest crack
+    bool             crack;       // the measure arm's second pick: the cracks, nearest first, for the client to try in turn
     ue_wrap::FVector from;
     float            best;
     void*            actor;
     float            process;
     Rejects          rej;
+    std::vector<std::pair<float, void*>> cracks;   // the crack pick: each crack the lane resolves by its key, with its distance
 };
 
 void Visit(void* ctx, void* d) {
@@ -134,6 +134,10 @@ void Visit(void* ctx, void* d) {
     const float dist = Dist(at, c.from);
     if (c.crack) {
         if (!G::IsCrack(d)) { ++c.rej.notCrack; return; }
+        const std::wstring ckey = GS::DebugPosKeyForActor(d);
+        if (ckey.empty() || GS::DecalOfKey(ckey) != d) { ++c.rej.unkeyed; return; }
+        c.cracks.emplace_back(dist, d);
+        return;
     } else {
         const bool rain = c.pick == Pick::Wash || c.pick == Pick::Wide;
         if (c.pick != Pick::Any) {
@@ -177,6 +181,30 @@ bool PickDecal(const Spec& sp, bool crack, Target& out, ue_wrap::CachedObjRef& r
     return true;
 }
 
+// The cracks the lane resolves, nearest the client's puppet first, up to `n`: the client tries them in turn, each by a standpoint
+// a route reaches, since only its own NavMesh query can say which one a walk gets it to.
+std::vector<Target> PickCracks(const Spec& sp, size_t n) {
+    std::vector<Target> out;
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kSlot);
+    PickCtx c{sp.pick, true, {}, 1e30f, nullptr, 0.f, {}, {}};
+    if (!E::TryGetActorLocation(rp.GetActor(), c.from)) return out;
+    G::ForEachDecal(&Visit, &c);
+    std::sort(c.cracks.begin(), c.cracks.end(),
+              [](const std::pair<float, void*>& a, const std::pair<float, void*>& b) { return a.first < b.first; });
+    for (const auto& cr : c.cracks) {
+        if (out.size() >= n) break;
+        Target t;
+        const std::wstring key = GS::DebugPosKeyForActor(cr.second);
+        t.key.assign(key.begin(), key.end());
+        E::TryGetActorLocation(cr.second, t.at);
+        G::ReadProcess(cr.second, t.process);
+        out.push_back(std::move(t));
+    }
+    UE_LOGI("[HOSTILE-DRILL] %s crack pick: %zu crack(s) offered of %zu resolved (%s)", sp.name, out.size(), c.cracks.size(),
+            RejectLine(c.rej).c_str());
+    return out;
+}
+
 // ---- the rain arm's own decal ----
 
 // The decal as the spill lane makes one on a client (coop/world/spill_sync, "the host's ... made here"): ue_wrap::grime_spill's
@@ -184,6 +212,8 @@ bool PickDecal(const Spec& sp, bool crack, Target& out, ue_wrap::CachedObjRef& r
 // of this world is when there is one. It stands where the rain can reach it: on the floor near the client's puppet, at the
 // first of a ring of places whose roof test (the judge's own, RoofClear) finds the sky.
 constexpr const wchar_t* kRainDecalClass = L"grime_coffee_C";
+// The cracks the measure arm offers the client: it walks to the first whose standpoint a route reaches.
+constexpr size_t kCracksOffered = 4;
 
 struct Template {
     bool                          found = false;
@@ -424,9 +454,12 @@ void Judge(coop::net::Session* s, const Spec& sp) {
     if (sp.arm == Arm::Measure) {
         // The wall fixer's turn: once the host's record holds a fixer in slot 1's hand its crack is lowered to where one use ends
         // it (the client does the same to its copy) and the client is told; the use's ask must then be granted, by the tool route.
-        if (!g_fixerSaid && HI::HeldClassIs(kSlot, kFixerCls)) {
-            void* const crack = g_crack.Get();
-            if (crack && R::IsLive(crack)) G::WriteProcessAndApply(crack, kCrackLeft);
+        std::string chosen;
+        if (!g_fixerSaid && HI::HeldClassIs(kSlot, kFixerCls) && DC::SeenRestOf(Line(sp.arm, "crack-chosen"), &chosen)) {
+            // The crack the client reached and named: it picks among those the host offered the one a route reaches.
+            void* const crack = GS::DecalOfKey(std::wstring(chosen.begin(), chosen.end()));
+            if (!crack || !R::IsLive(crack)) return Finish(sp, "INCONCLUSIVE", "the crack the client named does not resolve here");
+            G::WriteProcessAndApply(crack, kCrackLeft);
             g_fixBase = GJ::GetStats();
             g_fixerSaid = true;
             DC::Say(Line(sp.arm, "fixer-ready") + "ok");
@@ -570,7 +603,7 @@ void HostTick(coop::net::Session* s, const Spec& sp) {
         else if (g_step != HStep::Done && Clock::now() - g_armAt > kFailBound)
             Finish(sp, "INCONCLUSIVE", std::string("the precondition never held: waiting for ") + g_waiting);
         return;
-    case HStep::PickDecal:
+    case HStep::PickDecal: {
         if (!G::EnsureResolved()) return;
         if (sp.pick == Pick::Wash) {
             // The rain arm makes its own decal, and waits for the lane's index to hold it under its key.
@@ -591,16 +624,22 @@ void HostTick(coop::net::Session* s, const Spec& sp) {
             Finish(sp, "INCONCLUSIVE", "the world holds no decal this arm can use");
             return;
         }
-        if (sp.arm == Arm::Measure && !PickDecal(sp, /*crack=*/true, g_crackTarget, g_crack)) {
-            Finish(sp, "INCONCLUSIVE", "the world holds no crack decal for the wall fixer");
-            return;
+        std::vector<Target> cracks;
+        if (sp.arm == Arm::Measure) {
+            cracks = PickCracks(sp, kCracksOffered);
+            if (cracks.empty()) {
+                Finish(sp, "INCONCLUSIVE", "the world holds no crack decal for the wall fixer");
+                return;
+            }
         }
         DC::Say(Line(sp.arm, "pick") + FormatTarget(g_target));
-        if (sp.arm == Arm::Measure) DC::Say(Line(sp.arm, "crack") + FormatTarget(g_crackTarget));
+        for (const Target& t : cracks) DC::Say(Line(sp.arm, "crack") + FormatTarget(t));
+        if (!cracks.empty()) DC::Say(Line(sp.arm, "crack-end") + "ok");
         g_step = HStep::WaitClient;
         UE_LOGI("[HOSTILE-DRILL] %s picked '%s' (%.0f, %.0f, %.0f) process %.2f", sp.name, g_target.key.c_str(),
                 g_target.at.X, g_target.at.Y, g_target.at.Z, g_target.process);
         return;
+    }
     case HStep::WaitClient:
         WaitClient(s, sp);
         return;
@@ -632,9 +671,7 @@ void HostReset() {
     g_washAt = {};
     g_fixBase = GJ::Stats{};
     g_decal.Reset();
-    g_crack.Reset();
     g_target = Target{};
-    g_crackTarget = Target{};
     g_base = GJ::Stats{};
     g_decalBase = g_snapBase = 0.f;
     g_strength = 1.f;
