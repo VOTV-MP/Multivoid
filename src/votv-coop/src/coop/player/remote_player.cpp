@@ -93,6 +93,7 @@ bool RemotePlayer::Spawn(const std::string& skinName, uint8_t peerSlot) {
     actor_ = nullptr;
     internalIdx_ = -1;
     ResetBurning();   // a new body owes no flame state to the one before it
+    ForgetBase();     // nor a base: a world change leaves the old body invalid with no Destroy
     // Registry::Local() first (controller-filtered: the genuine local, not a puppet, which is also
     // a mainPlayer_C); FindObjectByClass as the fallback during the splash and pre-possession
     // window, where no controller is attached and no puppet exists yet. Without it Spawn failed
@@ -294,12 +295,8 @@ void RemotePlayer::SetTargetPose(const coop::net::PoseSnapshot& snap) {
 
     ShowBurning((snap.stateBits & coop::net::kStateBitBurning) != 0);
 
-    // The base this pose names, if this peer resolves one: the puppet rides it and every position below is an offset from it
-    const BaseClaim claim = ClaimOf(snap);
-    if (claim.actor ? (!riding_ || base_.Get() != claim.actor) : riding_) {
-        if (hasPose_) AdvanceInterp();
-        ChangeBase(claim);
-    }
+    // The base this pose names, if this peer resolves one: the puppet rides it and every position below is an offset from it.
+    UpdateBase(snap);
     const ue_wrap::FVector tgtPos = riding_ ? ue_wrap::FVector{snap.bx, snap.by, snap.bz}
                                             : ue_wrap::FVector{snap.x, snap.y, snap.z};
 

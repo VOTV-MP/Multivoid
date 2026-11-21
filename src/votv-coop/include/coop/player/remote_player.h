@@ -61,6 +61,10 @@ public:
     // the next packet) and applies the pose to the engine. Speed is not interpolated; the AnimBP's
     // locomotion blend smooths it.
     void SetTargetPose(const coop::net::PoseSnapshot& snap);
+
+    // The engine is ending `actor`'s play (before it is marked for death): a puppet riding it is detached now, keeping its place,
+    // so nothing depends on what the engine does to a dead parent's children. A pointer compare when nothing rides it. Game thread.
+    void OnBaseEnding(void* actor);
     void Tick();
 
     // Ragdoll physics sync, on each fresh RagdollPose packet while the peer ragdolls: slaves the
@@ -200,20 +204,26 @@ private:
     bool riding_ = false;
     uint32_t baseId_ = 0;
     ue_wrap::FVector baseOrigin_{};   // the platform's location at the last write, for leaving a base that died
-    // The base `snap` names that this puppet may ride now: none for a pose naming none or one this peer does not resolve, and
-    // none while the body is ragdolled or seated (those attachments own its transform).
-    BaseClaim ClaimOf(const coop::net::PoseSnapshot& snap) const;
+    // A base this puppet did not take (the attach was refused) or lost (another attachment replaced it): its claim is treated as
+    // none, so the absolute pose places the puppet, until the pose names another base or none.
+    ue_wrap::CachedObjRef refusedBase_;
+    // Judges the base `snap` names and rides it or leaves it (one attach attempt per change of base).
+    void UpdateBase(const coop::net::PoseSnapshot& snap);
+    // The base `snap` names that this puppet may ride now: none for a pose naming none or one this peer does not resolve, one
+    // refused, and while the body is ragdolled or seated (those attachments own its transform).
+    BaseClaim ClaimOf(const coop::net::PoseSnapshot& snap);
     // Rides `to` (an empty claim: the world), re-expressing the puppet's real place in the new space; closes the window.
     void ChangeBase(const BaseClaim& to);
     // The world position curPos_ stands for, and the one an engine write takes (a base that died is left here).
     ue_wrap::FVector WorldPos() const;
-    // The body is gone: no base is ridden.
+    ue_wrap::FVector WorldPosForWrite();
+    // The body is gone, or its base is: no base is ridden and none is refused.
     void ForgetBase() {
         riding_ = false;
         base_.Reset();
         baseId_ = 0;
+        refusedBase_.Reset();
     }
-    ue_wrap::FVector WorldPosForWrite();
 
     // The peer slot Spawn registers the puppet under, read by OnBeforeFinish during the spawn call.
     uint8_t pendingSlot_ = players::kPeerIdUnknown;
