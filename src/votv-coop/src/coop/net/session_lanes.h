@@ -142,7 +142,7 @@ constexpr bool IsClientRelayableReliableKind(ReliableKind k) {
     // to it alone) and DriveSlotState (the host relays only the slot lines it accepted).
     case ReliableKind::WindowCleanState:  // symmetric
     case ReliableKind::WindowStroke:      // presser-authored
-    case ReliableKind::GrimeState:        // symmetric
+    // GrimeState is not relayable: a client's fall is an ask the host judges (grime_judge), and the host sends it on itself.
     case ReliableKind::TrashPileState:    // symmetric
     case ReliableKind::FireflySpawn:      // each peer spawns near its own camera and shares
     case ReliableKind::OwnerEntitySpawn:  // each peer owns its stalker; every peer must see it

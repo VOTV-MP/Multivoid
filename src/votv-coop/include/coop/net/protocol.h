@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 314;
+inline constexpr uint16_t kProtocolVersion = 315;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -254,9 +254,14 @@ enum class ReliableKind : uint16_t {
     // the host's value as is. KeyedScalarPayload.
     WindowCleanState = 30,
 
-    // Any peer, relayed by the host: a grime decal's process scalar decreased, keyed by the decal's
-    // quantized world position (a static decal's position is its identity). Minimum wins, like the
-    // window. A decal wiped out of existence rides the same kind, as a zero. KeyedScalarPayload.
+    // A grime decal's process scalar decreased, keyed by the decal's quantized world position (a static
+    // decal's position is its identity). Minimum wins, like the window. Client to host: an ask, a live fall
+    // alone; the host's judge (coop/interactables/grime_judge) grants it, cut to one call of the game's own
+    // fall, when the sender holds the verb's tool within its reach or the host is itself raining on a decal
+    // the rain washes within the sender's radius, and sends the fall on to every other client; a refused or
+    // cut ask is answered to the asker alone with the host's value, adopted as is. A client's ended mark or
+    // snapshot is refused. Never relayed. Host to clients: a live fall, the connect snapshot (adopt 1), and a
+    // decal that ended (kGrimeGone), which every peer destroys its own by. KeyedScalarPayload.
     GrimeState = 31,
 
     // Any peer, relayed by the host: the garage door's open state, keyed by the garage's

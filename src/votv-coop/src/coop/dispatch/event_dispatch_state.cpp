@@ -14,6 +14,7 @@
 #include "coop/items/player_inventory_sync.h"  // the inventory blob receiver
 #include "coop/voice/voice_chat.h"
 #include "coop/interactables/drone_sync.h"
+#include "coop/interactables/grime_judge.h"  // CLIENT->HOST a grime fall ask, judged before the lane
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/oven_repair_judge.h"  // CLIENT->HOST an oven repair ask, judged before the channel
@@ -301,10 +302,11 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::GrimeState: {
-        // The surface grime scalar. Symmetric cooperative cleaning keyed by a quantised world
-        // position (a grime decal is static); the host relays a client edge. The receiver applies
-        // the minimum and repaints. A decal wiped out of existence arrives on this same kind as
-        // kGrimeGone, below every dirt, and the receiver destroys its own.
+        // The surface grime scalar, keyed by a quantised world position (a grime decal is static). A
+        // client's message is an ask the host's judge weighs and answers (it is not relayed); every
+        // message a client receives is the host's, which the lane applies as the minimum and
+        // repaints. A decal wiped out of existence arrives on this same kind as kGrimeGone, below
+        // every dirt, and the receiver destroys its own.
         if (msg.payloadLen < sizeof(net::KeyedScalarPayload)) {
             UE_LOGW("event_feed: GrimeState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedScalarPayload));
@@ -322,6 +324,11 @@ bool HandleStateEvent(net::Session& session,
         if (gp.adopt != 0 && gp.adopt != 1) {  // consistency with WindowCleanState's guard
             UE_LOGW("event_feed: GrimeState adopt=%u out of range -- dropping",
                     static_cast<unsigned>(gp.adopt));
+            break;
+        }
+        // A client's GrimeState is an ask: the host's judge takes it before the lane, whose receive would apply it unjudged.
+        if (session.role() == net::Role::Host) {
+            coop::grime_judge::OnAsk(session, gp, senderSlot);
             break;
         }
         coop::grime_sync::OnReliable(gp, senderSlot);

@@ -477,14 +477,16 @@ std::wstring KeyOf(void* actor, int32_t idx, int32_t serial) {
     return ck ? ck->key : std::wstring();
 }
 
-void Send(const std::wstring& key, float value) {
+// A live fall, to the host (a client's ask) or to every client (the host's own). `skipSlot` leaves one client out: the
+// asker of a granted fall, whose own copy already stands at what it asked.
+void Send(const std::wstring& key, float value, int skipSlot = -1) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     coop::net::KeyedScalarPayload p{};
     WireKeyFromString(key, p.key);
     p.value = value;
     p.adopt = 0;  // a live fall: receivers apply the minimum
-    if (!s->SendReliable(coop::net::ReliableKind::GrimeState, &p, sizeof(p)))
+    if (!s->SendReliable(coop::net::ReliableKind::GrimeState, &p, sizeof(p), skipSlot))
         UE_LOGW("grime: SendReliable failed key='%ls'", key.c_str());
     else if (ProbeLog())
         UE_LOGI("grime: sent process=%.3f key='%ls'", value, key.c_str());
@@ -696,6 +698,46 @@ void ForgetDecal(void* actor) {
     }
     g_posKeyByActor.erase(actor);
     g_scanNextCache.erase(actor);
+}
+
+void* DecalOfKey(const std::wstring& key) { return ResolveFast(key); }
+
+bool HostValueOf(const std::wstring& key, void* decal, float& out) {
+    float process = 0.f;
+    if (!decal || !G::ReadProcess(decal, process)) return false;
+    const auto& floor = Floor();
+    const auto it = floor.find(key);
+    out = (it != floor.end() && it->second < process) ? it->second : process;
+    return true;
+}
+
+void GrantFall(coop::net::Session& session, const std::wstring& key, void* decal, float value, uint8_t askerSlot,
+               bool raiseAsker) {
+    Lower(key, value);
+    ApplyResolved(decal, key, value, "a granted ask", /*lowerOnly=*/true);
+    // The decal is lowered; the others hear the fall as a peer's own live fall, the asker only when it was cut.
+    Send(key, value, askerSlot);
+    if (raiseAsker) {
+        coop::net::KeyedScalarPayload p{};
+        WireKeyFromString(key, p.key);
+        p.value = value;
+        p.adopt = 1;
+        session.SendReliableToSlot(askerSlot, coop::net::ReliableKind::GrimeState, &p, sizeof(p));
+    }
+}
+
+void GrantEnd(void* decal) {
+    // Not ApplyResolved's destroy: that one forgets the decal first, so its end of play sends nothing. Here the end of
+    // play is the send (OnGrimeEnd), the one that tells the asker its held decal is gone.
+    E::DestroyActor(decal);
+}
+
+void AnswerAsker(coop::net::Session& session, const std::wstring& key, float hostValue, uint8_t askerSlot) {
+    coop::net::KeyedScalarPayload p{};
+    WireKeyFromString(key, p.key);
+    p.value = hostValue;
+    p.adopt = 1;
+    session.SendReliableToSlot(askerSlot, coop::net::ReliableKind::GrimeState, &p, sizeof(p));
 }
 
 Tally Tallies() {

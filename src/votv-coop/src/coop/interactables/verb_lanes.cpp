@@ -15,6 +15,7 @@
 #include "coop/interactables/door_verb_intent.h"
 #include "coop/interactables/drone_call_intent.h"
 #include "coop/interactables/eraser_press_intent.h"
+#include "coop/interactables/grime_judge.h"
 #include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
 #include "coop/interactables/oven_repair_judge.h"
@@ -58,6 +59,7 @@ void Tick(coop::net::Session& session) {
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
     coop::oven_repair_judge::Tick(session);  // settle its gate; HOST: judge one queued oven step or repair a tick a client
+    coop::grime_judge::Tick(session);        // HOST: judge one queued grime fall a tick a client
     coop::point_sack_intent::Tick();    // settle the point sack watch
     coop::prop_nametag::Tick();         // settle the nametag watch
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
@@ -84,6 +86,7 @@ void OnDisconnect() {
     coop::lightgroup_verbs::OnDisconnect();
     coop::toggle_verbs::OnDisconnect();
     coop::oven_repair_judge::OnDisconnect();
+    coop::grime_judge::OnDisconnect();
     coop::keypad_verbs::OnDisconnect();
     coop::desk_verb_intent::OnDisconnect();
     coop::point_sack_intent::OnDisconnect();

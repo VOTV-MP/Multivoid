@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
 #include <cstdint>
 
 namespace ue_wrap::grime {
@@ -45,5 +47,20 @@ bool ReadType(void* grime, int32_t& out);
 // applyMaterial instead. Returns false on null or unresolved. The receiver of a remote wipe
 // uses this; it runs no lowering verb, so coop::grime_sync never hears it back as a fall.
 bool WriteProcessAndApply(void* grime, float process);
+
+// The decal's own settings, read where the host's judge weighs a client's fall (coop/interactables/grime_judge). Each
+// false on null, an unresolved field or a dead object; `out` is untouched then. Game thread.
+// `cleanStrength`: the multiplier clean() puts on a call's amount (1 on the base decal, 2 on beer, coffee and wine, 4 on
+// the blood drip).
+bool ReadCleanStrength(void* grime, float& out);
+// `isCleanable`: false on a crack and on fallen leaves, whose clean() returns without a fall.
+bool ReadIsCleanable(void* grime, bool& out);
+// `resistRain`: a decal the rain's own pass leaves alone.
+bool ReadResistRain(void* grime, bool& out);
+// True iff `obj` is a grime_crack_C (or a descendant): the decal the wall fixer repairs.
+bool IsCrack(void* obj);
+// The decal's `Box` component, the volume every cleaning verb's overlap tests: its world centre and half the length of
+// its scaled extent (the farthest an overlap can touch from the centre). False when the box or its extent does not read.
+bool ReadBox(void* grime, FVector& centre, float& halfDiagonalCm);
 
 }  // namespace ue_wrap::grime

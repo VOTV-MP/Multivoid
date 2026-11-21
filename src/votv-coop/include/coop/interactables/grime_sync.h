@@ -30,16 +30,16 @@ namespace coop::grime_sync {
 // Idempotent. Game thread.
 void Install(coop::net::Session* session);
 
-// The receive edge's bound on a GrimeState value, run by every receiver (the host relays a client's value as it came, so
-// each peer judges it): a number that is the ended mark (kGrimeGone) or a dirt from 0 to kGrimeDirtMax. A value outside
-// is refused and counted by sender slot (coop/net/refusal_tally.h); false then. Game thread.
+// The receive edge's bound on a GrimeState value, run by every receiver (the host's judge reads a client's value only
+// after it): a number that is the ended mark (kGrimeGone) or a dirt from 0 to kGrimeDirtMax. A value outside is refused
+// and counted by sender slot (coop/net/refusal_tally.h); false then. Game thread.
 bool AdmitValue(float value, uint8_t senderPeerSlot);
 
-// Receiver entry: a GrimeState packet arrived (event_feed has copied and range-checked it). A live
-// fall (adopt 0) lowers the key's floor and is written to a decal reading above it; a value of the
-// host's connect snapshot (adopt 1) sets the floor and is written as is to a decal indexed when it
-// arrives. A pass lowers a decal it takes to its floor and never raises one. Called from event_feed's
-// reliable drain loop.
+// Receiver entry: a GrimeState packet arrived from the host (event_feed has copied and range-checked it; a client's
+// message on the host goes to the judge instead). A live fall (adopt 0) lowers the key's floor and is written to a
+// decal reading above it; a value of the host's connect snapshot or its answer to an ask (adopt 1) sets the floor
+// and is written as is to a decal indexed when it arrives. A pass lowers a decal it takes to its floor and never
+// raises one. Called from event_feed's reliable drain loop.
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot);
 
 // HOST-only: snapshot the current `process` of every indexed grime (the lower of it and its floor),
@@ -60,6 +60,31 @@ void IndexNow(void* decal);
 // A decal this peer removes as not its own (coop/world/spill_sync refuses a client's own spill): it leaves the index,
 // so its end of play is no wipe. Call before the destroy. Game thread.
 void ForgetDecal(void* actor);
+
+// HOST, the judge's calls (coop/interactables/grime_judge): a client's fall is an ask the judge weighs against what the
+// host holds, and the host's own copy then moves, then every other peer's.
+//
+// The live decal the index holds under `key`, null for none. Game thread.
+void* DecalOfKey(const std::wstring& key);
+
+// What the host holds for the key: its decal's process, lowered to the key's floor (the value the connect snapshot would
+// send for it). False when the decal does not read. Game thread.
+bool HostValueOf(const std::wstring& key, void* decal, float& out);
+
+// A granted fall to `value`, which is above zero: the host's floor and decal are lowered to it (only after the grant, so
+// a refused fall is in no joiner's snapshot), and it is sent as a live fall to every client but the asker, whose own copy
+// already stands at what it asked. `raiseAsker` sends the asker the host's value too, adopted as is: the grant was cut
+// to one step and the asker's copy is raised back to it. Game thread.
+void GrantFall(coop::net::Session& session, const std::wstring& key, void* decal, float value, uint8_t askerSlot,
+               bool raiseAsker);
+
+// A granted fall to zero: the host's decal is destroyed as the game's clean destroys one past zero, and its end of play
+// sends kGrimeGone to every client, the asker's held decal included. Game thread.
+void GrantEnd(void* decal);
+
+// The asker alone is told what the host holds for the key, adopted as is: its optimistic copy is raised back to it. Used
+// when an ask on a known decal is refused. Game thread.
+void AnswerAsker(coop::net::Session& session, const std::wstring& key, float hostValue, uint8_t askerSlot);
 
 // DEV-DRILL ONLY: what the lane has done in this process, read by the drills that judge it. `replays` counts the save
 // replays it saw begin (the gamemode's loadObjects, which it sees only while something holds the script gate), `passes`

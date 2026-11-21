@@ -38,3 +38,12 @@ CFG_FLAG(leaves_lane_off, "leaves_lane_off", "dev", false, "VOTVCOOP_LEAVES_LANE
     "Developer red arm of the clean drill (leaves): never set; on every peer. The spill lane does not take the fallen "
     "leaves an autumn leaf spawner makes, so the host's are sent to no one and each client keeps its own: the drill must "
     "say 'rig: VERDICT grime-leaves FAIL'.")
+CFG_FLAG(grime_judge_off, "grime_judge_off", "dev", false, "VOTVCOOP_GRIME_JUDGE_OFF",
+    "Developer red arm of the grime judge's drill (the hostile_drill grime_* arms): never set; on the host. The host applies a "
+    "client's grime message as it came, as before the judge: a fall from beyond reach, with nothing in hand, to zero from a "
+    "full decal, an ended mark and a refused fall in a joiner's snapshot all stand, so far, notool, gone, fast and joinleak "
+    "must FAIL at the host's value.")
+CFG_FLAG(grime_rain_open, "grime_rain_open", "dev", false, "VOTVCOOP_GRIME_RAIN_OPEN",
+    "Developer red arm of the grime judge's drill (grime_dry): never set; on the host. The rain route of the judge skips its "
+    "checks (the host's own rain, the decal's rain test, the roof and the radius), so an empty hand's fall on a dry host is "
+    "granted and dry must FAIL.")
