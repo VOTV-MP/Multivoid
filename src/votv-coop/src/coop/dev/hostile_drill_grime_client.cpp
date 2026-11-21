@@ -56,6 +56,7 @@ const char* g_waiting = nullptr;
 Target      g_target;
 std::wstring g_wkey;
 float       g_hostValue = 0.f;             // what the host said the decal holds when it said ready
+float       g_hostStrength = 1.f;          // and its cleanStrength, which sets the rain's step
 float       g_start = 0.f;                 // this copy's reading when the arm acted
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 ue_wrap::CachedObjRef g_sponge;
@@ -270,8 +271,9 @@ void MeasureCrack(coop::net::Session*, const Spec& sp, void* player) {
 // ---- the acts ----
 
 void Act(coop::net::Session* s, const Spec& sp, void* player) {
+    // The rain arm's decal is the host's own, made for it: this copy holds none, and the ask names it by its key alone.
     void* const decal = DecalOf();
-    if (!decal || !R::IsLive(decal)) return Invalid(sp, "the picked decal does not resolve on this copy");
+    if (sp.pick != Pick::Wash && (!decal || !R::IsLive(decal))) return Invalid(sp, "the picked decal does not resolve on this copy");
     switch (sp.arm) {
     case Arm::Far: case Arm::Notool: case Arm::Dry:
         if (!SendValue(s, g_hostValue - 5.f)) return Invalid(sp, "the raw fall was not sent");
@@ -291,8 +293,7 @@ void Act(coop::net::Session* s, const Spec& sp, void* player) {
         g_step = CStep::Await;
         return;
     case Arm::Rain: {
-        float cs = 1.f;
-        if (!G::ReadCleanStrength(decal, cs)) return Invalid(sp, "the decal's strength did not read");
+        const float cs = g_hostStrength;   // the host's reading of the decal's cleanStrength
         if (!SendValue(s, g_hostValue - kRainFallPerStrength * cs)) return Invalid(sp, "the raw fall was not sent");
         g_step = CStep::Done;
         return;
@@ -453,8 +454,9 @@ void ClientTick(coop::net::Session* s, const Spec& sp) {
             return;
         }
         g_hostValue = std::strtof(rest.c_str(), nullptr);
+        if (const size_t sp2 = rest.find(' '); sp2 != std::string::npos) g_hostStrength = std::strtof(rest.c_str() + sp2 + 1, nullptr);
         // The decal this copy holds reads what the host holds (the host's own fall reaches it through the lane).
-        const float mine = ProcessOf(DecalOf());
+        const float mine = sp.pick == Pick::Wash ? g_hostValue : ProcessOf(DecalOf());
         if (mine < 0.f || std::fabs(mine - g_hostValue) > 0.5f) {
             if (Late("this copy's decal to read the host's value")) Invalid(sp, "this copy's decal never read the host's value");
             return;
@@ -482,6 +484,7 @@ void ClientReset() {
     g_target = Target{};
     g_wkey.clear();
     g_hostValue = g_start = 0.f;
+    g_hostStrength = 1.f;
     g_walk.reset();
     g_sponge.Reset();
     g_m = MStep::Strokes;

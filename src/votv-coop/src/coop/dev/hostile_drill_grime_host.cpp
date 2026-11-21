@@ -20,9 +20,11 @@
 #include "coop/save/join_window_baseline.h"
 #include "coop/world/weather_rain.h"
 
+#include "ue_wrap/actors/grime_spill.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/trace.h"
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -54,6 +56,8 @@ bool                  g_rainAsked = false;
 bool                  g_clientReady = false;
 bool                  g_fixerSaid = false;   // the measure arm: the host saw a fixer in the client's hand and said so
 GJ::Stats             g_fixBase{};
+bool                  g_washMade = false;    // the rain arm own decal was spawned
+Clock::time_point     g_washAt{};
 bool                  g_life1Done = false;   // the join-leak arm's first life judged: its decal and bases stand for the second
 ue_wrap::CachedObjRef g_decal;
 ue_wrap::CachedObjRef g_crack;            // the measure arm's second decal
@@ -100,6 +104,12 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(x * x + y * y + z * z);
 }
 
+// What each filter of the pick turned away, said in the pick's line: a pick that finds nothing then names why.
+struct Rejects {
+    uint32_t seen = 0, unread = 0, notCrack = 0, uncleanable = 0, resists = 0, stale = 0, tooNear = 0, tooFar = 0, roofed = 0,
+             unkeyed = 0;
+};
+
 struct PickCtx {
     Pick             pick;
     bool             crack;       // the measure arm's second pick: the nearest crack
@@ -107,45 +117,57 @@ struct PickCtx {
     float            best;
     void*            actor;
     float            process;
+    Rejects          rej;
 };
 
 void Visit(void* ctx, void* d) {
     auto& c = *static_cast<PickCtx*>(ctx);
+    ++c.rej.seen;
     float process = 0.f;
     bool cleanable = false, resist = false;
     ue_wrap::FVector at{};
     if (!G::ReadProcess(d, process) || !G::ReadIsCleanable(d, cleanable) || !G::ReadResistRain(d, resist) ||
-        !E::TryGetActorLocation(d, at))
+        !E::TryGetActorLocation(d, at)) {
+        ++c.rej.unread;
         return;
+    }
     const float dist = Dist(at, c.from);
     if (c.crack) {
-        if (!G::IsCrack(d)) return;
+        if (!G::IsCrack(d)) { ++c.rej.notCrack; return; }
     } else {
-        switch (c.pick) {
-        case Pick::Near:  if (!cleanable || G::IsCrack(d) || process < kFreshProcess) return; break;
-        case Pick::Far:   if (!cleanable || G::IsCrack(d) || process < kFreshProcess || dist < kFarMinCm) return; break;
-        case Pick::Any:   break;
-        case Pick::Wash:
-            if (resist || !cleanable || process < kFreshProcess || dist > kWideMaxCm || !GJ::RoofClear(d)) return;
-            break;
-        case Pick::Wide:  if (resist || !cleanable || process < kFreshProcess || dist > kWideMaxCm) return; break;
+        const bool rain = c.pick == Pick::Wash || c.pick == Pick::Wide;
+        if (c.pick != Pick::Any) {
+            if (!cleanable || (!rain && G::IsCrack(d))) { ++c.rej.uncleanable; return; }
+            if (rain && resist) { ++c.rej.resists; return; }
+            if (process < kFreshProcess) { ++c.rej.stale; return; }
         }
+        if (c.pick == Pick::Far && dist < kFarMinCm) { ++c.rej.tooNear; return; }
+        if (rain && dist > kWideMaxCm) { ++c.rej.tooFar; return; }
     }
     if (dist >= c.best) return;
     // The lane must resolve the decal by its key to this one: a place two decals share names the first the index took.
     const std::wstring key = GS::DebugPosKeyForActor(d);
-    if (key.empty() || GS::DecalOfKey(key) != d) return;
+    if (key.empty() || GS::DecalOfKey(key) != d) { ++c.rej.unkeyed; return; }
     c.best = dist;
     c.actor = d;
     c.process = process;
 }
 
+std::string RejectLine(const Rejects& r) {
+    char b[200];
+    std::snprintf(b, sizeof(b), "%u decal(s) seen; turned away: %u unread, %u not a crack, %u uncleanable, %u rain-proof, %u stale, "
+                  "%u too near, %u too far, %u unkeyed", r.seen, r.unread, r.notCrack, r.uncleanable, r.resists, r.stale,
+                  r.tooNear, r.tooFar, r.unkeyed);
+    return b;
+}
+
 // The nearest decal the arm's rule admits to the client's puppet, with its key and place. False when none stands.
 bool PickDecal(const Spec& sp, bool crack, Target& out, ue_wrap::CachedObjRef& ref) {
     coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kSlot);
-    PickCtx c{sp.pick, crack, {}, 1e30f, nullptr, 0.f};
+    PickCtx c{sp.pick, crack, {}, 1e30f, nullptr, 0.f, {}};
     if (!E::TryGetActorLocation(rp.GetActor(), c.from)) return false;
     G::ForEachDecal(&Visit, &c);
+    UE_LOGI("[HOSTILE-DRILL] %s pick%s: %s", sp.name, crack ? " (the crack)" : "", RejectLine(c.rej).c_str());
     if (!c.actor) return false;
     const std::wstring key = GS::DebugPosKeyForActor(c.actor);
     out.key.assign(key.begin(), key.end());
@@ -153,6 +175,78 @@ bool PickDecal(const Spec& sp, bool crack, Target& out, ue_wrap::CachedObjRef& r
     out.process = c.process;
     ref.Set(c.actor);
     return true;
+}
+
+// ---- the rain arm's own decal ----
+
+// The decal as the spill lane makes one on a client (coop/world/spill_sync, "the host's ... made here"): ue_wrap::grime_spill's
+// SpawnSpill, here of the spill class a drink leaves (grime_coffee_C: cleanable, not rain-proof), shaped as a coffee decal
+// of this world is when there is one. It stands where the rain can reach it: on the floor near the client's puppet, at the
+// first of a ring of places whose roof test (the judge's own, RoofClear) finds the sky.
+constexpr const wchar_t* kRainDecalClass = L"grime_coffee_C";
+
+struct Template {
+    bool                          found = false;
+    ue_wrap::grime_spill::Spill   spill;
+};
+
+void TakeTemplate(void* ctx, void* d) {
+    auto& t = *static_cast<Template*>(ctx);
+    if (t.found) return;
+    ue_wrap::grime_spill::Spill s;
+    if (ue_wrap::grime_spill::ReadSpill(d, s) && s.className == kRainDecalClass) {
+        t.spill = s;
+        t.found = true;
+    }
+}
+
+// Makes the decal; false (with the places tried said) when none of the ring stands open to the sky.
+bool SpawnWashDecal(const Spec& sp, Target& out, ue_wrap::CachedObjRef& ref) {
+    namespace GSP = ue_wrap::grime_spill;
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kSlot);
+    ue_wrap::FVector pp{};
+    if (!E::TryGetActorLocation(rp.GetActor(), pp) || !GSP::EnsureResolved()) return false;
+    Template t;
+    G::ForEachDecal(&TakeTemplate, &t);
+    GSP::Spill s = t.spill;
+    s.className = kRainDecalClass;
+    s.process = 100.f;
+    if (!t.found) s.rotation = {0.f, 0.f, 0.f};
+    constexpr float kRing[] = {300.f, 600.f, 900.f};
+    constexpr int kAround = 8;
+    int tried = 0, noFloor = 0, roofed = 0, unspawned = 0;
+    for (const float r : kRing) {
+        for (int i = 0; i < kAround; ++i) {
+            const float a = 6.2831853f * static_cast<float>(i) / kAround;
+            const float x = pp.X + r * std::cos(a), y = pp.Y + r * std::sin(a);
+            ue_wrap::trace::Hit hit;
+            ++tried;
+            if (!ue_wrap::trace::LineHitStatDyn(rp.GetActor(), {x, y, pp.Z + 100.f}, {x, y, pp.Z - 600.f}, &hit) || !hit.blocked) {
+                ++noFloor;
+                continue;
+            }
+            s.location = {hit.point.X, hit.point.Y, hit.point.Z + 2.f};
+            void* d = GSP::SpawnSpill(s);
+            if (!d) { ++unspawned; continue; }
+            if (!GJ::RoofClear(d)) {
+                ++roofed;
+                E::DestroyActor(d);
+                continue;
+            }
+            const std::wstring key = GS::DebugPosKeyForActor(d);
+            out.key.assign(key.begin(), key.end());
+            out.at = s.location;
+            out.process = s.process;
+            ref.Set(d);
+            UE_LOGI("[HOSTILE-DRILL] %s made its own decal %ls at (%.0f, %.0f, %.0f), %.0f cm from the client (%d place(s) tried: "
+                    "%d without a floor, %d roofed, %d not spawned; shaped as %s)", sp.name, kRainDecalClass, s.location.X,
+                    s.location.Y, s.location.Z, r, tried, noFloor, roofed, unspawned, t.found ? "a coffee decal of this world" : "the defaults");
+            return true;
+        }
+    }
+    UE_LOGW("[HOSTILE-DRILL] %s found no open place for its decal: %d place(s) tried, %d without a floor, %d roofed, %d not "
+            "spawned", sp.name, tried, noFloor, roofed, unspawned);
+    return false;
 }
 
 // The weather the arm needs, on the host: a dry arm is invalid in rain, a rain arm starts it. True once it holds.
@@ -181,8 +275,8 @@ bool WeatherHolds(const Spec& sp) {
 }
 
 void SayReady(const Spec& sp, void* decal) {
-    char text[32];
-    std::snprintf(text, sizeof(text), "%.2f", ProcessOf(decal));
+    char text[48];
+    std::snprintf(text, sizeof(text), "%.2f %.3f", ProcessOf(decal), g_strength);   // the value, and the decal's cleanStrength
     DC::Say(Line(sp.arm, "host-ready") + text);
 }
 
@@ -471,7 +565,22 @@ void HostTick(coop::net::Session* s, const Spec& sp) {
         return;
     case HStep::PickDecal:
         if (!G::EnsureResolved()) return;
-        if (!PickDecal(sp, /*crack=*/false, g_target, g_decal)) {
+        if (sp.pick == Pick::Wash) {
+            // The rain arm makes its own decal, and waits for the lane's index to hold it under its key.
+            if (!g_washMade) {
+                if (!SpawnWashDecal(sp, g_target, g_decal)) {
+                    Finish(sp, "INCONCLUSIVE", "no open place near the client for the rain arm's own decal");
+                    return;
+                }
+                g_washMade = true;
+                g_washAt = Clock::now();
+            }
+            const std::wstring key(g_target.key.begin(), g_target.key.end());
+            if (GS::DecalOfKey(key) != g_decal.Get()) {
+                if (Clock::now() - g_washAt > kFailBound) Finish(sp, "INCONCLUSIVE", "the lane never indexed the rain arm's own decal");
+                return;
+            }
+        } else if (!PickDecal(sp, /*crack=*/false, g_target, g_decal)) {
             Finish(sp, "INCONCLUSIVE", "the world holds no decal this arm can use");
             return;
         }
@@ -512,7 +621,8 @@ void HostReset() {
     g_armAt = g_judgeAt = {};
     g_waiting = "slot 1's world-ready";
     g_playerNo = 0;
-    g_rainAsked = g_clientReady = g_life1Done = g_fixerSaid = false;
+    g_rainAsked = g_clientReady = g_life1Done = g_fixerSaid = g_washMade = false;
+    g_washAt = {};
     g_fixBase = GJ::Stats{};
     g_decal.Reset();
     g_crack.Reset();
