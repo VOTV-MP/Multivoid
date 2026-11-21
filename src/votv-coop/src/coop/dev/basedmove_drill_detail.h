@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::net { class Session; }
 
@@ -45,8 +46,9 @@ struct PlatformBox {
     float top = 0.f;             // the bounds' top: NOT a surface a body stands on
     float surface = 0.f;         // the platform's walkable surface at rest, from a down-trace over its centre
     float restZ = 0.f;           // the platform component's world Z when the surface was read; the surface follows it
+    float floorZ = 0.f;          // the floor under the platform (another actor's top), where a body stands to reach it
 };
-// The platform's colliding bounds and its walkable surface: the lowest upward-facing hit of a down-trace over the bounds'
+// The platform's colliding bounds and its walkable surface: the first upward-facing hit of a down-trace over the bounds'
 // centre that strikes the platform's own actor (`ctx` is the trace's world context, any live actor but the platform). Says its
 // samples in the log. False when the bounds do not read or the trace strikes no upward-facing surface of the platform.
 bool ReadPlatform(void* ctx, void* platformActor, float platformZ, PlatformBox& out);
@@ -54,6 +56,19 @@ bool ReadPlatform(void* ctx, void* platformActor, float platformZ, PlatformBox& 
 // component's Z now), and the two numbers that say it: the flat distance past the platform's extent (negative inside) and
 // the feet's height over the surface.
 bool StandsOn(void* character, const PlatformBox& box, float platformZ, float* flatPast = nullptr, float* feetOver = nullptr);
+// One side of the platform as a way on: `stand` is the floor point (capsule-centre height) in front of it. A side is OPEN when
+// the floor in front of it is the floor the platform rests on (an outside ground or a ledge is not) and nine lines from the
+// stand point to the platform's centre -- three heights over the surface, three across the body's width -- strike nothing: no
+// rail, wall or door between the floor and the slab. `why` says what decided it, for the log.
+struct Side {
+    const char* name = "";
+    ue_wrap::FVector stand{};
+    bool open = false;
+    std::string why;
+};
+// The four sides (+X, -X, +Y, -Y), probed by traces from `ctx`'s world; `halfHeight` is the capsule's.
+std::vector<Side> ProbeSides(void* ctx, const PlatformBox& box, float halfHeight);
+
 // How many chat rows of this drill start with `prefix`.
 int CountOf(const std::string& prefix);
 // "<component>/<owner>" of a movement base, or "none"; `isPlatform` when the component or its owner is the platform's.

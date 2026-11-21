@@ -126,9 +126,10 @@ bool ReadPlatform(void* ctx, void* platformActor, float platformZ, PlatformBox& 
     if (!(out.extent.X > 0.f) || !(out.extent.Y > 0.f) || !(out.extent.Z > 0.f)) return false;
     out.top = out.centre.Z + out.extent.Z;
     out.restZ = platformZ;
+    out.floorZ = 0.f;
     // Down from just over the bounds' top, hit after hit: each next trace starts a hair under the last hit, so a rail or a
-    // frame over the slab is passed and the slab's own top is the lowest upward-facing hit on the platform's actor. The floor
-    // under the platform (another actor) ends the descent.
+    // frame over the slab is passed, the first upward-facing hit on the platform's actor is its walkable surface (nothing
+    // stands over its centre), and the floor under the platform (another actor) ends the descent: the floor it rests on.
     const uint8_t types[] = {0, 1, 3};   // WorldStatic, WorldDynamic, PhysicsBody (trace.h)
     const float bottom = out.centre.Z - out.extent.Z - 30.f;
     float z = out.top + 30.f;
@@ -150,8 +151,11 @@ bool ReadPlatform(void* ctx, void* platformActor, float platformZ, PlatformBox& 
         std::snprintf(buf, sizeof(buf), " [z=%.1f nz=%.2f %s%s]", hit.point.Z, hit.normal.Z, mine ? "platform:" : "other:",
                       NameOf(hit.component).c_str());
         samples += buf;
-        if (!mine) break;
-        if (hit.normal.Z >= 0.7f && (!found || hit.point.Z < out.surface)) {
+        if (!mine) {
+            out.floorZ = hit.point.Z;
+            break;
+        }
+        if (!found && hit.normal.Z >= 0.7f) {
             found = true;
             out.surface = hit.point.Z;
         }
@@ -159,6 +163,7 @@ bool ReadPlatform(void* ctx, void* platformActor, float platformZ, PlatformBox& 
     }
     Fact("platform bounds top %.1f bottom %.1f, down-trace over its centre from the top:%s", out.top, bottom + 30.f,
          samples.c_str());
+    if (found && out.floorZ == 0.f) out.floorZ = out.surface;   // no floor under it was struck: the slab's own height
     return found;
 }
 
