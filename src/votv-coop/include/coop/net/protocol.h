@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 315;
+inline constexpr uint16_t kProtocolVersion = 316;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1587,6 +1587,11 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // The Ariral's float (trigger_agrav_C, coop/world/agrav_sync). HOST->ALL: the bodies the host's event set rising, each
+    // with the rise the host measured, and those whose gravity came back on, by host element id; a client switches its
+    // own copy the same way. Never relayed. Not pre-world. Late join: none, the float lasts seconds and its props rest
+    // where the joiner's world loads them. AgravStatePayload.
+    AgravState = 299,
     // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
     // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
     // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
@@ -2439,6 +2444,25 @@ struct FloodPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
+
+// AgravState. `lifted` 1: these bodies were seen rising on the host (lift them at `vz`); 0: their gravity came back on
+// (drop them; `vz` is zero).
+struct AgravRow {
+    uint32_t eid;     // 4 -- host element id
+    int16_t  vz;      // 2 -- the host body's rise, in tenths of a cm/s
+    uint16_t _pad;    // 2 -- zero
+};
+static_assert(sizeof(AgravRow) == 8, "AgravRow must be 8 bytes");
+inline constexpr int kAgravRowsMax = 28;   // 228 bytes in all, the reliable payload's most
+struct AgravStatePayload {
+    uint8_t  lifted;                // 1 -- 1 lifted, 0 dropped
+    uint8_t  _pad;                  // 1 -- zero
+    uint16_t count;                 // 2 -- 1..kAgravRowsMax
+    AgravRow row[kAgravRowsMax];    // 224 -- only the first `count` are read
+};
+static_assert(sizeof(AgravStatePayload) == 228, "AgravStatePayload must be 228 bytes");
+static_assert(sizeof(AgravStatePayload) <= 256 - 20 - 8,
+              "AgravStatePayload must fit in one reliable datagram (kMaxReliablePayload)");
 // KerfurDressState (272): an Omega's outfit, by its NPC element id. `names` holds `count` rows of list_kerfurDrip, each
 // 1..kKerfurDressMaxRowChars printable ASCII characters followed by one NUL, back to back from names[0]; every byte past
 // the last NUL is zero. `flags` bit 0 says a pat plays on the Omega; the other bits and `pad` are zero. A pat carries the

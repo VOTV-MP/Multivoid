@@ -572,6 +572,9 @@ inline constexpr const wchar_t* GetCenterOfMassFn                    = L"GetCent
 inline constexpr const wchar_t* GetClosestPointOnCollisionFn          = L"GetClosestPointOnCollision";
 // PutRigidBodyToSleep: UPrimitiveComponent's own call, the one the game's Blueprints make to rest a body.
 inline constexpr const wchar_t* PutRigidBodyToSleepFn                = L"PutRigidBodyToSleep";
+// SetEnableGravity and IsGravityEnabled: whether the body falls, the switch the Ariral float event (trigger_agrav_C) turns.
+inline constexpr const wchar_t* SetEnableGravityFn                   = L"SetEnableGravity";
+inline constexpr const wchar_t* IsGravityEnabledFn                   = L"IsGravityEnabled";
 
 // AdaynightCycle_C: the singleton weather authority (the scheduler timers, the state fields, the
 // mutator UFunctions), resolved through R::FindObjectByClass.

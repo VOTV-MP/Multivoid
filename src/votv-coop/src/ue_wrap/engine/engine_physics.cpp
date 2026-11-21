@@ -21,7 +21,7 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// Every frame here fits 64 bytes: SetSimulatePhysics takes 1, the two velocity setters 24,
+// Every frame here fits 64 bytes: SetSimulatePhysics and SetEnableGravity take 1, IsGravityEnabled 1, the two velocity setters 24,
 // IsSimulatingPhysics 12, GetCenterOfMass 20. A UFunction whose frame outgrows it is refused at the resolve, so a
 // recooked signature can never make ProcessEvent write past the buffer.
 constexpr int32_t kFrameBytes = 64;
@@ -45,6 +45,8 @@ Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", L"ReturnValue"
 Thunk g_getCenterOfMass{P::name::GetCenterOfMassFn, L"BoneName", L"ReturnValue"};
 Thunk g_putToSleep{P::name::PutRigidBodyToSleepFn, L"BoneName", nullptr};
 Thunk g_closestPoint{P::name::GetClosestPointOnCollisionFn, L"Point", L"ReturnValue"};
+Thunk g_setGravity{P::name::SetEnableGravityFn, L"bGravityEnabled", nullptr};
+Thunk g_isGravity{P::name::IsGravityEnabledFn, L"ReturnValue", nullptr};
 
 // The class they are found on. A native class outlives every world, but the references are checked:
 // a freed one is found again, and each thunk, holding the class it resolved on by slot and serial,
@@ -166,6 +168,20 @@ bool IsComponentSimulatingPhysics(void* component) {
     *reinterpret_cast<R::FName*>(frame + g_isSimulating.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_isSimulating.fn, frame);
     return *reinterpret_cast<bool*>(frame + g_isSimulating.off1);
+}
+
+bool SetComponentGravity(void* component, bool enabled) {
+    if (!IsPrimitiveComponent(component) || !Resolve(g_setGravity)) return false;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<bool*>(frame + g_setGravity.off0) = enabled;
+    return R::CallFunction(component, g_setGravity.fn, frame);
+}
+
+bool IsComponentGravityEnabled(void* component) {
+    if (!IsPrimitiveComponent(component) || !Resolve(g_isGravity)) return false;
+    unsigned char frame[kFrameBytes] = {};
+    R::CallFunction(component, g_isGravity.fn, frame);
+    return *reinterpret_cast<bool*>(frame + g_isGravity.off0);
 }
 
 bool GetComponentCenterOfMass(void* component, FVector& out) {

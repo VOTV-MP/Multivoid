@@ -72,8 +72,9 @@ const NoReplayRow kNoReplayRows[] = {
     // atvExplode sets car.trap on the host's own ATV; the ATV lane carries that flag to every copy in the stamp's
     // bit 4, so the event itself stays host-only (a client's car need not be the host's). `zapped` has no lane:
     { "atvExplode", "car.trap rides the ATV lane's stamp (zapped has no lane)" },
+    // The Ariral's float: its random pick is the host's, and what it does to each body crosses on its own lane:
+    { "agrav", "host-only; the bodies it lifts and drops ride AgravState (coop/world/agrav_sync)" },
     // Host-local by design:
-    { "agrav", "physics divergence (by-design host-local)" },
     { "treehouseSleep", "per-player teleport" },
     // Creature and save-actor spawns, host-only until mirrored. The crawler, the egger's eggs, the
     // grays and the tentacle balls are mirrored; the eventer's other outputs are not (its catch

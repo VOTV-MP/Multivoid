@@ -208,6 +208,7 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::TurbineState:
     case ReliableKind::WoodchipperState:
     case ReliableKind::FloodState:
+    case ReliableKind::AgravState:
     case ReliableKind::KerfurDressState:
     case ReliableKind::AtvHostState:
     case ReliableKind::SkySignalState:
