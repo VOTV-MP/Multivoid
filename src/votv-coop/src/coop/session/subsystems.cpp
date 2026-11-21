@@ -218,6 +218,7 @@
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
 #include "coop/world/spill_sync.h"
+#include "coop/interactables/car_charger_sync.h"
 #include "coop/world/weather_sync.h"
 
 #include "ue_wrap/core/log.h"
@@ -378,6 +379,7 @@ void Install(coop::net::Session& session) {
     // the join's world loads. Its tick and per-slot hooks below stay.
     coop::balance_sync::SetSession(&session);  // shared host-authoritative balance
     coop::spill_sync::Install(&session);  // the host's spilled liquids
+    coop::car_charger_sync::Install(&session);  // the car charger's clips and cord, a loose ATV battery's charge
     // The client world-save block: registers its gate and arms the one save detour, in every
     // role (the gate reads the role when a save fires; a host's save passes and is reported).
     coop::save_block::Install(&session);
@@ -602,6 +604,7 @@ DisconnectStats DisconnectAll() {
     coop::rider_hold::OnDisconnect();  // last: any movement still held ticks again
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup
     coop::spill_sync::OnDisconnect();
+    coop::car_charger_sync::OnDisconnect();  // what it told of the car chargers and batteries
     // Last, after every element drain: the client's transfer state, its received identity map (whose binds resolve
     // against Elements, so it must outlive their drain) and the ephemeral zcoop_<pid> slot the join wrote, which the
     // boot sweep's one-hour cutoff would otherwise collect. On a host this clears its own per-slot streams only.
@@ -762,6 +765,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; coop::kerfus_lanes::Tick(session); }  // the Kerfus lanes' watches; CLIENT: waiting states; HOST: queued verbs
     { PP::Scope _s{PP::Bucket::Interactable}; coop::served_player::Tick(); }  // HOST: the served robots' seams
     { PP::Scope _s{PP::Bucket::Interactable}; coop::spill_sync::Tick(); }  // the spills the hook saw
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::car_charger_sync::Tick(); }  // the host's clip and charge rows, a client's clip moves
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_creature"}; coop::ambient_creature_sync::Tick(); }  // the walking trees' size and landing
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:ambient_fixture"}; coop::ambient_fixture_sync::Tick(); }  // the holes' and branches' poll
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sus_hole_intent"}; coop::sus_hole_intent::Tick(session); }  // CLIENT: its stamped sus holes go to the host; HOST: the queued ones are made
