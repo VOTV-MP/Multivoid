@@ -125,7 +125,9 @@ gone on both peers either way.
 Roaches are not actors: they are mesh components of one world-anchored master, and their
 simulation mutates shared props, eating food and destroying what it empties. A client running its
 own would diverge the shared food, so the host runs it and clients mirror a paged snapshot; a
-roach a client stomps or eats is a consumed intent to the host (`coop/creatures/roach_sync`).
+roach a client stomps or eats is a consumed intent to the host (`coop/creatures/roach_sync`). The
+game's `addRoach` adds none past 100 m of the local camera or past the peer's own roach cap, so a
+client mirrors only the host's roaches within 95 m of it, up to that cap.
 
 ### The kerfur
 
