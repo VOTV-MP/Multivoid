@@ -166,6 +166,13 @@ bool     g_applying = false;
 bool     g_sizeWarned[coop::net::kFuseTowerKinds] = {};  // a puzzle sized otherwise here, said once per kind
 uint64_t g_applied = 0;
 uint64_t g_panelAskedMs[kFuseTowers] = {};
+// The asks of each panel toward the host's present target, and that target (its opened and anim bits): a retract the
+// game does not take was asked every 2 s for good. Past kPanelFree asks the wait doubles to kPanelRetryMaxMs; another
+// target from the host starts over.
+constexpr uint8_t kPanelFree = 3;
+constexpr uint64_t kPanelRetryMaxMs = 60000;
+uint8_t g_panelTries[kFuseTowers] = {};
+uint8_t g_panelTarget[kFuseTowers] = {};
 uint64_t g_waitLookMs = 0;
 Edges    g_edges[coop::net::kFuseTowerKinds];  // the changes applied, per kind of tower
 
@@ -256,13 +263,23 @@ void ConvergePanels() {
         const FuseTowerRow& w = g_rows.rows[i];
         if (w.kind != coop::net::kFuseTowerKindCoordinate) continue;  // the radio tower has no panel
         void* t = TowerById(FK::Kind::Coordinate, w.id);
-        if (!t || now - g_panelAskedMs[i] < kPanelRetryMs) continue;
+        const uint8_t target = w.flags & (coop::net::kFuseTowerOpened | coop::net::kFuseTowerAnim);
+        if (target != g_panelTarget[i]) {
+            g_panelTarget[i] = target;
+            g_panelTries[i] = 0;
+        }
+        const int over = g_panelTries[i] > kPanelFree ? std::min(g_panelTries[i] - kPanelFree, 5) : 0;
+        const uint64_t wait = std::min<uint64_t>(kPanelRetryMs << over, kPanelRetryMaxMs);
+        if (!t || now - g_panelAskedMs[i] < wait) continue;
         g_applying = true;
         bool opens = false, ran = false;
         const bool asked = FK::ConvergePanel(FK::Kind::Coordinate, t, player, w, opens, ran);
         g_applying = false;
         if (!asked) continue;
         g_panelAskedMs[i] = now;
+        if (g_panelTries[i] < 0xFF && ++g_panelTries[i] == kPanelFree + 1)
+            UE_LOGW("fuse_tower: tower %d's panel was asked %u times toward the host's and did not move -- asked again "
+                    "less often", w.id, static_cast<unsigned>(kPanelFree));
         ++g_edges[coop::net::kFuseTowerKindCoordinate].panels;
         UE_LOGI("fuse_tower: tower %d's panel %s as the host's (retract ran=%d)", w.id, opens ? "opens" : "closes",
                 ran ? 1 : 0);
@@ -409,6 +426,8 @@ void OnDisconnect() {
     g_broadcasts = g_applied = 0;
     for (Edges& e : g_edges) e = Edges{};
     for (auto& t : g_panelAskedMs) t = 0;
+    for (auto& t : g_panelTries) t = 0;
+    for (auto& t : g_panelTarget) t = 0;
     for (Kept& k : g_kept) k = Kept{};
     g_waitLookMs = g_lookMs = 0;
     g_towerCount = 0;
