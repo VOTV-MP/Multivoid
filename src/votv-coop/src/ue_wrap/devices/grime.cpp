@@ -168,9 +168,12 @@ bool ReadBoolField(void* grime, const wchar_t* name, void*& cachedCls, int32_t& 
     void* cls = R::ClassOf(grime);
     if (!cls) return false;
     if (cls != cachedCls) {
-        off = -1;
-        mask = 0;
-        if (!R::FindBoolProperty(cls, name, off, mask) || off < 0 || mask == 0) return false;
+        // Looked up into locals: a class without the field must leave the last class's cached byte and bit as they were.
+        int32_t foundOff = -1;
+        uint8_t foundMask = 0;
+        if (!R::FindBoolProperty(cls, name, foundOff, foundMask) || foundOff < 0 || foundMask == 0) return false;
+        off = foundOff;
+        mask = foundMask;
         cachedCls = cls;
     }
     out = (*(reinterpret_cast<const uint8_t*>(grime) + off) & mask) != 0;
