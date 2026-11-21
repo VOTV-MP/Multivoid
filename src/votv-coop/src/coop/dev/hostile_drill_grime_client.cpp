@@ -9,6 +9,7 @@
 #include "clean_drill_detail.h"  // Clean: grime_C::clean with the sponge as its first argument, as prop_sponge calls it
 
 #include "coop/dev/director/director.h"
+#include "coop/config/config.h"
 #include "coop/dev/drill_chat.h"
 #include "coop/interactables/grime_judge.h"
 #include "coop/interactables/grime_sync.h"
@@ -248,9 +249,13 @@ void Act(coop::net::Session* s, const Spec& sp, void* player) {
     void* const decal = DecalOf();
     if (!decal || !R::IsLive(decal)) return Invalid(sp, "the picked decal does not resolve on this copy");
     switch (sp.arm) {
-    case Arm::Far: case Arm::Joinleak: case Arm::Notool: case Arm::Dry:
+    case Arm::Far: case Arm::Notool: case Arm::Dry:
         if (!SendValue(s, g_hostValue - 5.f)) return Invalid(sp, "the raw fall was not sent");
         g_step = CStep::Done;
+        return;
+    case Arm::Joinleak:
+        if (!SendValue(s, g_hostValue - 5.f)) return Invalid(sp, "the raw fall was not sent");
+        g_step = CStep::Await;
         return;
     case Arm::Gone:
         if (!SendValue(s, coop::net::kGrimeGone)) return Invalid(sp, "the raw ended mark was not sent");
@@ -294,6 +299,16 @@ void Act(coop::net::Session* s, const Spec& sp, void* player) {
 
 void Await(coop::net::Session* s, const Spec& sp, void* player) {
     void* const decal = DecalOf();
+    if (sp.arm == Arm::Joinleak) {
+        // The host judges the refused ask first: this life ends only once it has, since a slot that leaves takes its queue along.
+        if (DC::SeenHas(Line(sp.arm, "life1-done"))) {
+            UE_LOGI("[HOSTILE-DRILL] grime_joinleak CLIENT LIFE DONE");
+            g_step = CStep::Done;
+        } else if (Late("the host's verdict on the refused ask")) {
+            Invalid(sp, "the host never judged the refused ask");
+        }
+        return;
+    }
     if (sp.arm == Arm::Fast) {
         const float v = ProcessOf(decal);
         if (v >= 0.f && std::fabs(v - g_start) > 0.5f) {
@@ -323,6 +338,32 @@ void Await(coop::net::Session* s, const Spec& sp, void* player) {
     }
 }
 
+
+// ---- the join-leak arm's second life ----
+
+// The rig starts this life with VOTVCOOP_GRIME_DRILL_REJOIN=1 after the first's life-done line: the host names the decal again,
+// and what this copy reads at its world-ready is the host's value, which the refused fall left as it was.
+bool RejoinedLife() {
+    static const bool second = coop::config::ReadEnv("VOTVCOOP_GRIME_DRILL_REJOIN") == "1";
+    return second;
+}
+
+void RejoinedTick(const Spec& sp) {
+    std::string rest;
+    if (!DC::SeenRestOf(Line(sp.arm, "rejoin-pick"), &rest)) {
+        if (Late("the host's line naming the decal")) Invalid(sp, "the host never named the decal for the rejoined life");
+        return;
+    }
+    Target t;
+    if (!ParseTarget(rest, t)) return Invalid(sp, "the host's rejoin line could not be read: " + rest);
+    g_wkey.assign(t.key.begin(), t.key.end());
+    void* const decal = DecalOf();
+    const float v = ProcessOf(decal);
+    if (v < 0.f) return Invalid(sp, "the decal does not resolve on the rejoined copy");
+    Report(sp, "joined " + F(v));
+    UE_LOGI("[HOSTILE-DRILL] grime_joinleak CLIENT LIFE 2 DONE: the decal reads %.2f at world-ready", v);
+    g_step = CStep::Done;
+}
 }  // namespace
 
 void ClientTick(coop::net::Session* s, const Spec& sp) {
@@ -345,6 +386,7 @@ void ClientTick(coop::net::Session* s, const Spec& sp) {
         return;
     }
     std::string rest;
+    if (sp.arm == Arm::Joinleak && RejoinedLife()) return RejoinedTick(sp);
     switch (g_step) {
     case CStep::WaitJoin:
         g_step = CStep::WaitPick;

@@ -10,6 +10,7 @@
 // real clean call with the sponge for `last` and `measure`. The HOST judges by the judge's counters and by the value it
 // holds for the decal: a refused fall leaves both the decal and the value a joiner's snapshot would carry as they were.
 //   grime_measure  grime_last  grime_far  grime_notool  grime_gone  grime_fast  grime_rain  grime_dry  grime_joinleak
+// grime_joinleak has two lives: the client leaves after the host judged the refused ask and rejoins (VOTVCOOP_GRIME_DRILL_REJOIN=1).
 // The table of what each does is in hostile_drill_grime.cpp. The family acts on slot 1 only; another slot idles.
 
 #pragma once

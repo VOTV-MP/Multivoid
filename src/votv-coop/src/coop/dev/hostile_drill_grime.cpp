@@ -39,8 +39,8 @@ const Spec kSpecs[] = {
     // A raw fall on a decal within the rain's radius, an empty hand, the host dry: refused (the rain route's red arm is
     // grime_rain_open, which grants it).
     {"grime_dry",      Arm::Dry,      Pick::Wide, false, false, Weather::Dry},
-    // The far arm judged on the value a joiner's snapshot would carry for the decal: a fall lowered before it was judged
-    // would leave that lowered though the decal stood.
+    // The far arm, then the client leaves and rejoins: its decal at its world-ready must read the host's value from before
+    // the refused fall (a fall lowered before it was judged would be in the snapshot).
     {"grime_joinleak", Arm::Joinleak, Pick::Far,  false, true,  Weather::Dry},
 };
 

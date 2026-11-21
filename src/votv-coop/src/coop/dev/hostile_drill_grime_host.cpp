@@ -45,13 +45,14 @@ namespace GJ = coop::grime_judge;
 namespace GS = coop::grime_sync;
 namespace HI = coop::hand_item;
 
-enum class HStep { WaitSlot, Weather, PickDecal, WaitClient, Judge, Done };
+enum class HStep { WaitSlot, Weather, PickDecal, WaitClient, Judge, Rejoin, RejoinJudge, Done };
 HStep                 g_step = HStep::WaitSlot;
 Clock::time_point     g_armAt{}, g_judgeAt{};
 const char*           g_waiting = "slot 1's world-ready";
 uint16_t              g_playerNo = 0;     // slot 1's occupant when the host said ready
 bool                  g_rainAsked = false;
 bool                  g_clientReady = false;
+bool                  g_life1Done = false;   // the join-leak arm's first life judged: its decal and bases stand for the second
 ue_wrap::CachedObjRef g_decal;
 ue_wrap::CachedObjRef g_crack;            // the measure arm's second decal
 Target                g_target;
@@ -159,6 +160,11 @@ bool WeatherHolds(const Spec& sp) {
     if (!found) { g_waiting = "the host's weather to read"; return false; }
     if (sp.weather == Weather::Dry && raining) {
         Finish(sp, "INCONCLUSIVE", "the host is raining, and this arm needs a dry host");
+        return false;
+    }
+    bool winter = false;
+    if (sp.weather == Weather::Raining && G::ReadWinter(winter) && winter) {
+        Finish(sp, "INCONCLUSIVE", "the season is winter, when the rain's pass cleans nothing");
         return false;
     }
     if (sp.weather == Weather::Raining && !raining) {
@@ -367,10 +373,57 @@ void Judge(coop::net::Session* s, const Spec& sp) {
         if (Clock::now() - g_judgeAt > kFailBound) Finish(sp, "INCONCLUSIVE", "the client's decal never reported held then gone");
         return;
     }
+    if (sp.arm == Arm::Joinleak) {
+        // The first life's verdict is only half the arm: the refused ask left the decal and the snapshot's value as they were. The
+        // client leaves now (its life-done line, which the rig's rejoin waits on) and comes back; its decal is read at its
+        // world-ready.
+        UE_LOGI("[HOSTILE-DRILL] %s life 1: the far ask was refused and the value a joiner's snapshot carries stands at %.2f: %s",
+                sp.name, snap, Summary(d).c_str());
+        DC::Say(Line(sp.arm, "life1-done") + "ok");
+        g_life1Done = true;
+        g_armAt = Clock::now();
+        g_step = HStep::Rejoin;
+        return;
+    }
     Finish(sp, "PASS", "the message ended as the arm's table: " + Summary(d) + "; host's decal " + F(g_decalBase) + " -> " +
                            (live ? F(now) : "gone"));
 }
 
+
+// ---- the join-leak arm's second life ----
+
+// The client is back: a new occupant of slot 1, world-ready, its puppet posed. The host says the decal again for it.
+void RejoinWait(coop::net::Session* s, const Spec& sp) {
+    if (Clock::now() - g_armAt > kFailBound) {
+        Finish(sp, "INCONCLUSIVE", "the client never rejoined");
+        return;
+    }
+    const uint16_t occupant = coop::roster_ledger::Get(kSlot).playerNo;
+    if (occupant == 0 || occupant == g_playerNo || !PuppetReady(s)) return;
+    g_playerNo = occupant;
+    DC::Say(Line(sp.arm, "rejoin-pick") + FormatTarget(g_target));
+    g_judgeAt = Clock::now();
+    g_step = HStep::RejoinJudge;
+    UE_LOGI("[HOSTILE-DRILL] %s life 2: the client is back as occupant %u; its decal is read at its world-ready", sp.name,
+            static_cast<unsigned>(occupant));
+}
+
+// What the rejoined client's decal read at its world-ready is the value the host held before the refused ask.
+void RejoinJudge(const Spec& sp) {
+    void* const decal = g_decal.Get();
+    std::string rest;
+    if (!ReportHas(sp, "joined", &rest)) {
+        if (Clock::now() - g_judgeAt > kFailBound) Finish(sp, "INCONCLUSIVE", "the rejoined client never reported its decal");
+        return;
+    }
+    const float joiner = std::strtof(rest.c_str(), nullptr);
+    const float now = decal && R::IsLive(decal) ? ProcessOf(decal) : -1.f;
+    if (std::fabs(joiner - g_decalBase) > kValueEps || std::fabs(now - g_decalBase) > kValueEps)
+        return Finish(sp, "FAIL", "the joiner's decal reads " + F(joiner) + ", the host's " + F(now) + ", where the host held " +
+                                      F(g_decalBase) + " before the refused fall");
+    Finish(sp, "PASS", "the refused fall left no trace: the rejoined client's decal reads " + F(joiner) + ", the host's value " +
+                           F(g_decalBase));
+}
 }  // namespace
 
 void HostTick(coop::net::Session* s, const Spec& sp) {
@@ -412,17 +465,28 @@ void HostTick(coop::net::Session* s, const Spec& sp) {
     case HStep::Judge:
         Judge(s, sp);
         return;
+    case HStep::Rejoin:
+        RejoinWait(s, sp);
+        return;
+    case HStep::RejoinJudge:
+        RejoinJudge(sp);
+        return;
     case HStep::Done:
         return;
     }
 }
 
 void HostReset() {
+    if (g_life1Done) {   // the join-leak arm's client left between its lives: what the second reads stands
+        g_step = HStep::Rejoin;
+        g_armAt = g_judgeAt = {};
+        return;
+    }
     g_step = HStep::WaitSlot;
     g_armAt = g_judgeAt = {};
     g_waiting = "slot 1's world-ready";
     g_playerNo = 0;
-    g_rainAsked = g_clientReady = false;
+    g_rainAsked = g_clientReady = g_life1Done = false;
     g_decal.Reset();
     g_crack.Reset();
     g_target = Target{};
