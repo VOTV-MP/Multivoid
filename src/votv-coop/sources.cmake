@@ -134,6 +134,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/atv_index.cpp
     src/coop/interactables/atv_runtime_mirror.cpp
     src/coop/interactables/atv_spawn_park.cpp
+    src/coop/interactables/atv_spawn_ask.cpp
     src/coop/interactables/atv_condition_sync.cpp
     src/coop/interactables/atv_part_intent.cpp
     src/coop/interactables/atv_corrector.cpp
