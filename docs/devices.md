@@ -530,8 +530,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
 | the fuse towers (the three coordinate towers and the radio tower) | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
-| a window | any peer, minimum wins | monotone decreases |
-| the grime | a client asks, the host judges; the host sends | monotone decreases, one step a grant |
+| a window; the grime | a window: any peer, minimum wins; the grime: a client asks, the host judges and sends | monotone decreases, a grime grant one step |
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
 | the drone | the host | a timed transform stream; the client's tick and physics off |
 | a woodchipper's fuel and on/off | the host | a client's pour and press are intents the host judges; the host's state when it changes and every second while its fuel moves |
@@ -554,8 +553,7 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
 | `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
 | `FuseTowerState` | the host to all; a client to the host | every tower's row (kind, broken, fuses, puzzle, panel, levers), each slot's last op taken and last claim refused; a press of a puzzle button, a lever or the retract, a fuse pulled or inserted |
-| `TurbineState`, `WindowCleanState` | each peer or the host | the driver floats; a decrease |
-| `GrimeState` | a client to the host (an ask); the host to all | a decal's dirt, a decrease, or its end; the host's answer to a cut or refused ask, adopted as is |
+| `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host; `GrimeState`: a client asks, the host answers and sends | the driver floats; a decrease (a decal's dirt or its end; the host's answer to a cut or refused ask, adopted as is) |
 | `SpillState`, `SpillIntent` | the host to all; a client to the host | a spill's class, transform, decal turn and dirt, or that it was wiped away; a client's spill from its hand, or its wipe |
 | `SpillPour`, `SpillPourIntent` | the host to all; a client to the host | where a bottle poured and who poured it; a pour of a bottle in a client's hand |
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
