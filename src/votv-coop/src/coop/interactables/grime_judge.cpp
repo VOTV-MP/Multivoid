@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
 #include "coop/session/net_pump.h"      // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/world/weather_rain.h"
@@ -33,6 +34,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace coop::grime_judge {
@@ -115,6 +117,11 @@ struct Slot {
     coop::net::IntentQueue<Item> queue;
     std::unordered_map<std::wstring, float> asked;
     uint64_t lastAskMs = 0;  // when this sender's previous ask arrived: the grime_log line's stroke cadence
+    std::unordered_set<std::wstring> owed;   // keys the queue could not take: each is answered with the host's value
+    uint64_t windowStartMs = 0;
+    uint32_t windowAsks = 0;
+    size_t   windowPeak = 0;
+    size_t   windowOwed = 0;
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
@@ -247,7 +254,16 @@ bool Execute(coop::net::Session& s, Slot& sl, Item& it, uint8_t slot) {
         Refuse(slot, "refused nodecal: a key naming no decal the host holds");
         return consume();
     }
-    if (value >= host - kStepEps) {
+    // A player who is not alive cleans nothing and is not answered: judged before reach and the routes, as the coffee and
+    // woodchipper judges do.
+    if (coop::players::Registry::Get().LifeOf(slot) != coop::players::PuppetLife::Alive) {
+        ++g_stats.refusedDead;
+        Refuse(slot, "refused dead: the sender's player is not alive");
+        return consume();
+    }
+    // A stroke that reports zero is a decal's last, held on its client: zero is always judged, even where the host already
+    // holds the decal near zero, so the decal the client holds at zero ends on the host too.
+    if (value > 0.f && value >= host - kStepEps) {
         ++g_stats.already;
         return consume();
     }
@@ -273,7 +289,9 @@ bool Execute(coop::net::Session& s, Slot& sl, Item& it, uint8_t slot) {
     bool inHand = false;
     bool raining = false;
     const Route tool = ToolRoute(s, slot, decal, centre, halfDiag, inHand);
-    Route rain = RainRoute(s, slot, it.key, decal, centre, raining);
+    // The rain's step never exceeds a tool's, so its roof trace runs only when the tool route did not hold.
+    Route rain;
+    if (!tool.ok || RainOpen()) rain = RainRoute(s, slot, it.key, decal, centre, raining);
     if (RainOpen() && !rain.ok) {  // the red arm: the rain route skips its checks
         rain.ok = true;
         rain.step = kRainSub * kCleanFactor;
@@ -325,28 +343,31 @@ bool Execute(coop::net::Session& s, Slot& sl, Item& it, uint8_t slot) {
 }
 
 // ---- the client's hold -----------------------------------------------------------------------
-// grime_C::clean destroys the decal inside its own body once its process is below zero (the K2_DestroyActor call at line
-// 241 of the grime_C dump), and wallFixer_fix does the same (line 892 of the grime_crack dump), both ahead of anything the
-// host could say. K2_DestroyActor is a native, which the script gate never sees, so the hold stands on the native
-// function seam (ue_wrap/core/ufunction_hook), whose PRE can refuse a call with no result and no out parameter. It is armed
-// only while a scope is open, and acts only on the scope's decal from a call whose own frame is clean or wallFixer_fix, so
-// every other destroy of every actor, and the lane's own apply of the host's end, passes untouched. Whether the PRE fires
-// for the destroy inside clean's body is what the measure arm reads.
+// A client never loses a decal the host keeps, whatever destroys it. What destroys a grime decal, in the Blueprint dumps:
+// grime_C::clean at a process below zero (line 241 of the grime_C dump; called by prop_sponge, lines 136 and 261, and by
+// the rain, daynightCycle line 973), wallFixer_fix (line 892 of the grime_crack dump; prop_wallfixer, line 157), and a
+// gasoline decal's fuel burnt out (line 21 of the grime_gasoline dump, reached by fireDamage); the save slot's grime reset
+// edits save data and no actor, and no other Blueprint holds a destroy of a grime decal. All three are the native
+// K2_DestroyActor, which the script gate never sees, so the hold stands on the native function seam
+// (ue_wrap/core/ufunction_hook), whose PRE can refuse a call with no result and no out parameter. It is armed for a client in
+// a session and holds the destroy of any grime decal in an announced world, except the lane's own (the host's end applied
+// here, a spill the lane removes: AllowDestroy). A destroy inside a clean or a wallFixer_fix is a player's or the
+// rain's fall, which the host judges: the lane's POST asks zero for it. Any other is no ask, and the host's world decides:
+// its own end of the decal reaches this peer as kGrimeGone. The verb's frame is read from the scope the lane marks on the
+// body (the script gate's RAII mark), never from a counter a fault could leave raised.
 UE_FACT_FN(kRowK2Destroy, "grime_judge", L"Actor", L"K2_DestroyActor", Declared);
 
 namespace UH = ue_wrap::ufunction_hook;
-namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-bool  g_seamSettled = false;
-void* g_seamFn = nullptr;
-
-struct Scope {
-    void* decal = nullptr;  // the grime decal whose clean or fix is running; null outside one
-    bool  held = false;     // the scope cancelled that decal's destroy
-};
-Scope g_scope;
+bool      g_seamSettled = false;
+void*     g_seamFn = nullptr;
+bool      g_seamArmed = false;
+int       g_allow = 0;            // AllowDestroy scopes open: the lane's own destroys
+uintptr_t g_verbBit = 0;          // the scope bit a clean or wallFixer_fix body carries
+void*     g_heldInVerb = nullptr; // the decal whose destroy the PRE held inside a verb: the POST asks zero for it
+const char g_verbOwner = 0;       // the address the scope bit is taken for
 
 // The dev red arm of the hold: the client's destroy runs as the game wrote it, so the decal is gone before the host's word.
 bool HoldOff() {
@@ -355,18 +376,20 @@ bool HoldOff() {
 }
 
 sg::Verdict OnDestroyPre(void* context, void* /*sourceObject*/, const uint8_t* /*parms*/) {
-    if (!g_scope.decal || context != g_scope.decal) return sg::Verdict::Run;
-    void* const caller = UH::CurrentCallerFrame().function;
-    if (!caller || !(R::NameEquals(R::NameOf(caller), L"clean") || R::NameEquals(R::NameOf(caller), L"wallFixer_fix")))
-        return sg::Verdict::Run;
+    if (g_allow > 0 || !G::IsGrime(context)) return sg::Verdict::Run;
+    // A destroy of an object of a world this client has not announced ready is that world's load: it runs natively.
+    if (!coop::net_pump::IsInAnnouncedWorld(context)) return sg::Verdict::Run;
     if (HoldOff()) {
         ++g_stats.heldOff;
         return sg::Verdict::Run;
     }
-    g_scope.held = true;
+    void* const caller = UH::CurrentCallerFrame().function;
+    const bool inVerb = caller && g_verbBit != 0 && (sg::ScopeBits(caller) & g_verbBit) != 0;
+    if (inVerb) g_heldInVerb = context;
     if (++g_stats.held <= 8)
-        UE_LOGI("grime_judge: held the destroy of decal %p inside %ls (#%llu) -- the host is asked to end it", context,
-                R::ToString(R::NameOf(caller)).c_str(), static_cast<unsigned long long>(g_stats.held));
+        UE_LOGI("grime_judge: held the destroy of decal %p (%s) (#%llu)%s", context,
+                inVerb ? "inside a clean or a wall fixer's repair" : "by another path",
+                static_cast<unsigned long long>(g_stats.held), inVerb ? " -- the host is asked to end it" : " -- the host's world decides");
     return sg::Verdict::Cancel;
 }
 
@@ -377,10 +400,12 @@ void SettleSeam() {
     void* const actorCls = ue_wrap::object_index::ClassByName(ue_wrap::profile::name::ActorClassName);
     if (!actorCls) return;
     g_seamSettled = true;
+    g_verbBit = sg::ScopeBitFor(&g_verbOwner);
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::ResolveOn(kRowK2Destroy, actorCls);
-    if (!fn || !UH::InstallPreHook(fn, &OnDestroyPre, /*armed=*/false)) {
-        UE_LOGE("grime_judge: the K2_DestroyActor pre hook did not go on (a full native hook table says so in its own line "
-                "above) -- a client's last stroke destroys its decal before the host is asked");
+    if (!g_verbBit || !fn || !UH::InstallPreHook(fn, &OnDestroyPre, /*armed=*/false)) {
+        UE_LOGE("grime_judge: the client's destroy hold is OFF -- the K2_DestroyActor pre hook (or its scope bit) did not go on (a "
+                "full native hook table says so in its own line above): a client's last stroke destroys its decal and asks "
+                "zero after the fact, and any other destroy of its decals is not held");
         return;
     }
     g_seamFn = fn.Fn();
@@ -390,40 +415,87 @@ void SettleSeam() {
             patched);
 }
 
-}  // namespace
+// The seam is armed for a client in a session and idle otherwise: no peer pays a PRE on every destroy of every actor
+// outside it.
+void ArmSeam(coop::net::Session& session) {
+    if (!g_seamFn) return;
+    const bool want = session.connected() && session.role() == coop::net::Role::Client;
+    if (want == g_seamArmed) return;
+    g_seamArmed = want;
+    UH::SetArmed(g_seamFn, &OnDestroyPre, want);
+}
 
-void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
+}  // namespace
 
 bool RoofClear(void* decal) { return decal && RoofOf(decal) == Roof::Clear; }
 
 Stats GetStats() { return g_stats; }
 
-void HoldOpen(void* decal) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!g_seamFn || !s || !s->connected() || s->role() != coop::net::Role::Client) return;
-    // A clean of an object of a world this client has not announced ready is that world's load: it runs natively.
-    if (!coop::net_pump::IsInAnnouncedWorld(decal)) return;
-    g_scope = Scope{decal, false};
-    UH::SetArmed(g_seamFn, &OnDestroyPre, true);
+AllowDestroy::AllowDestroy() { ++g_allow; }
+AllowDestroy::~AllowDestroy() { --g_allow; }
+
+uintptr_t OpenVerb() {
+    g_heldInVerb = nullptr;
+    return g_verbBit;
 }
 
-bool HoldClose(void* decal) {
-    if (!g_seamFn || g_scope.decal != decal) return false;
-    const bool held = g_scope.held;
-    g_scope = Scope{};
-    UH::SetArmed(g_seamFn, &OnDestroyPre, false);
+bool TakeHeld(void* decal) {
+    const bool held = g_heldInVerb != nullptr && g_heldInVerb == decal;
+    if (held) g_heldInVerb = nullptr;
     return held;
+}
+
+bool HoldIsOff() { return g_seamSettled && !g_seamFn; }
+
+// The keys a sender's queue could not take, answered with the host's value, a few a tick: a refusal of a known decal is never
+// silent, so the asker's lowered copy is raised back, and a key refused again before its answer is one answer (a set).
+constexpr size_t kOwedPerTick = 32;
+
+void AnswerOwed(coop::net::Session& s, uint8_t slot, Slot& sl) {
+    size_t sent = 0;
+    for (auto it = sl.owed.begin(); it != sl.owed.end() && sent < kOwedPerTick;) {
+        void* const decal = coop::grime_sync::DecalOfKey(*it);
+        float host = 0.f;
+        if (decal && coop::grime_sync::HostValueOf(*it, decal, host)) {
+            coop::grime_sync::AnswerAsker(s, *it, host, slot);
+            ++sent;
+        }
+        it = sl.owed.erase(it);
+    }
+}
+
+// What one sender asked in a window of the rain's own period: how many asks, and the most keys its queue held at once. A
+// rain pass washes a random share of every decal near the client's camera in one tick, so this is the number the queue's cap
+// and the budget are sized on.
+constexpr uint64_t kWindowMs = kRainPeriodMs;
+
+void SayWindow(uint8_t slot, Slot& sl, uint64_t now) {
+    if (!sl.windowStartMs) sl.windowStartMs = now;
+    sl.windowPeak = std::max(sl.windowPeak, sl.asked.size());
+    if (now - sl.windowStartMs < kWindowMs) return;
+    if (sl.windowAsks >= 4)
+        UE_LOGI("grime_judge: slot %u asked %u time(s) in the last %llu ms; its queue held at most %zu key(s) (cap %zu), %zu "
+                "answered unqueued", static_cast<unsigned>(slot), sl.windowAsks, static_cast<unsigned long long>(now - sl.windowStartMs),
+                sl.windowPeak, kMaxPending, sl.windowOwed);
+    sl.windowStartMs = now;
+    sl.windowAsks = 0;
+    sl.windowPeak = sl.asked.size();
+    sl.windowOwed = 0;
 }
 
 void Tick(coop::net::Session& session) {
     SettleSeam();
+    ArmSeam(session);
     g_refusals.Flush(coop::net::RefusalTally::Clock::now());
     if (!session.running() || session.role() != coop::net::Role::Host) return;
+    const uint64_t now = NowMs();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         Slot& sl = g_slots[slot];
         sl.queue.Serve(kBudget, NowMs, [&](Item& it) {
             return Execute(session, sl, it, slot) ? coop::net::Served::Done : coop::net::Served::Wait;
         });
+        if (!sl.owed.empty()) AnswerOwed(session, slot, sl);
+        SayWindow(slot, sl, now);
     }
 }
 
@@ -431,6 +503,7 @@ void OnAsk(coop::net::Session& session, const coop::net::KeyedScalarPayload& pay
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
     ++g_stats.asked;
+    ++g_slots[senderSlot].windowAsks;
     if (ProbeLog()) {
         // The measure of a real stroke: the gap since the sender's previous ask (a sponge's overlap that touched several
         // decals asks each in one burst, so a gap near 0 is the same stroke).
@@ -463,6 +536,11 @@ void OnAsk(coop::net::Session& session, const coop::net::KeyedScalarPayload& pay
     if (!sl.queue.Push(Item{key, 0}, kMaxPending)) {
         ++g_stats.refusedQueue;
         Refuse(senderSlot, "refused queue: the sender has the most keys queued it may");
+        // Its copy of the decal stands lowered: the key is owed the host's value (a key the host holds no decal for is not).
+        if (coop::grime_sync::DecalOfKey(key)) {
+            sl.owed.insert(std::move(key));
+            ++sl.windowOwed;
+        }
         return;
     }
     sl.asked.emplace(std::move(key), payload.value);
@@ -473,7 +551,7 @@ void OnDisconnect() {
     if (t.asked || t.held || t.heldOff)
         UE_LOGI("grime_judge: session end -- asked=%llu coalesced=%llu granted=%llu cut=%llu ended=%llu (tool=%llu rain=%llu) "
                 "already=%llu refused: kind=%llu queue=%llu nodecal=%llu nobody=%llu reach=%llu notool=%llu rain=%llu; "
-                "client destroys held=%llu left to run=%llu",
+                "dead=%llu; client destroys held=%llu left to run=%llu",
                 static_cast<unsigned long long>(t.asked), static_cast<unsigned long long>(t.coalesced),
                 static_cast<unsigned long long>(t.granted), static_cast<unsigned long long>(t.clamped),
                 static_cast<unsigned long long>(t.ended), static_cast<unsigned long long>(t.toolGrants),
@@ -481,14 +559,13 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(t.refusedKind), static_cast<unsigned long long>(t.refusedQueue),
                 static_cast<unsigned long long>(t.refusedNodecal), static_cast<unsigned long long>(t.refusedNobody),
                 static_cast<unsigned long long>(t.refusedReach), static_cast<unsigned long long>(t.refusedNotool),
-                static_cast<unsigned long long>(t.refusedRain), static_cast<unsigned long long>(t.held),
+                static_cast<unsigned long long>(t.refusedRain), static_cast<unsigned long long>(t.refusedDead),
+                static_cast<unsigned long long>(t.held),
                 static_cast<unsigned long long>(t.heldOff));
     g_stats = Stats{};
     g_rainLast.clear();
     g_refusals.Clear();
-    // A scope the session ended inside never closes: the seam goes back to disarmed.
-    if (g_seamFn) HoldClose(g_scope.decal);
-    g_scope = Scope{};
+    g_heldInVerb = nullptr;   // a verb the session ended inside holds nothing for the next; Tick disarms the seam
 }
 
 }  // namespace coop::grime_judge

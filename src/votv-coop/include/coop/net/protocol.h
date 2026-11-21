@@ -259,7 +259,8 @@ enum class ReliableKind : uint16_t {
     // alone; the host's judge (coop/interactables/grime_judge) grants it, cut to one call of the game's own
     // fall, when the sender holds the verb's tool within its reach or the host is itself raining on a decal
     // the rain washes within the sender's radius, and sends the fall on to every other client; a refused or
-    // cut ask is answered to the asker alone with the host's value, adopted as is. A client's ended mark or
+    // cut ask, and one a full queue could not take, is answered to the asker alone with the host's value, adopted as is; a
+    // dead sender and a key naming no decal get no answer. A client's ended mark or
     // snapshot is refused. Never relayed. Host to clients: a live fall, the connect snapshot (adopt 1), and a
     // decal that ended (kGrimeGone), which every peer destroys its own by. KeyedScalarPayload.
     GrimeState = 31,
@@ -3459,8 +3460,9 @@ struct KeyedScalarPayload {
     uint8_t  _pad[3];    // 3  -- 8-byte alignment / reserved
 };
 static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 bytes");
-// GrimeState's value for a decal that ended (cleaned or repaired past zero, raked, burnt out): every peer destroys its
-// own, as the game's clean does at a process below zero, where a 0 would leave it standing at no dirt.
+// GrimeState's value for a decal that ended on the HOST (cleaned or repaired past zero, or a gasoline decal burnt out): every
+// client destroys its own, as the game's clean does at a process below zero, where a 0 would leave it standing at no dirt. A
+// client's own destroy of a grime decal is held and sends none: its last stroke asks the host for zero.
 inline constexpr float kGrimeGone = -1.f;
 // The most dirt a grime decal holds: the largest `process` any grime class declares (the oil and the blood-test decals
 // start at 300; the base decal at 100). A GrimeState value above it is no state the game can have, and a receiver drops it.

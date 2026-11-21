@@ -11,7 +11,7 @@
 // the game's own fall, so no ask removes a decal in one message. The host lowers its own copy and floor only after the
 // grant, then sends the fall to every client but the asker; a cut ask raises the asker's copy back to the host's value, a
 // refused one on a known decal likewise, and one naming no decal gets no answer.
-// The last stroke is held at its source (HoldOpen). docs/devices.md carries the lane and its trust line.
+// A client holds every destroy of its grime decals (the seam in grime_judge.cpp). docs/devices.md carries the lane and its trust line.
 
 #pragma once
 
@@ -42,26 +42,36 @@ struct Stats {
     uint64_t refusedReach = 0;      // HOST: the tool in hand, the decal out of its reach
     uint64_t refusedNotool = 0;     // HOST: no tool in hand and the host not raining
     uint64_t refusedRain = 0;       // HOST: the host raining, the rain route's own test refused it
+    uint64_t refusedDead = 0;       // HOST: the sender's player is not alive
     uint64_t held = 0;              // CLIENT: destroys cancelled at the source
     uint64_t heldOff = 0;           // CLIENT: destroys left to run (the red arm's)
 };
 
-// Both roles: stores the session the hold reads its role from. Game thread.
-void Install(coop::net::Session* session);
-
-// Both roles: puts the K2_DestroyActor seam on, once its class resolves. Host: serves each sender's queue, one head a
-// tick. Game thread.
+// Both roles: puts the K2_DestroyActor seam on, once its class resolves, and arms it for a client in a session. Host:
+// serves each sender's queue, one head a tick, and answers the keys a full queue could not take. Game thread.
 void Tick(coop::net::Session& session);
 
 // HOST: GrimeState from a client, the dispatcher's case, before the lane's receive sees it.
 void OnAsk(coop::net::Session& session, const coop::net::KeyedScalarPayload& payload, uint8_t senderSlot);
 
-// CLIENT, from the lane's PRE and POST on clean and wallFixer_fix: the scope inside which the decal's own destroy (both
-// verbs run it in their own bodies at a process below zero, ahead of anything the host could say) is
-// held. Open on a grime decal of a client in a session and an announced world (a load's own cleans run natively);
-// Close ends it and returns true when it cancelled the destroy, which left the decal's process below zero. Game thread.
-void HoldOpen(void* decal);
-bool HoldClose(void* decal);
+// CLIENT. The destroy of a grime decal is held (the seam above) unless a lane of ours destroys it: a scope of this type
+// lets the destroys inside it through (the lane's apply of the host's end, a spill the spill lane removes). Game thread.
+class AllowDestroy {
+public:
+    AllowDestroy();
+    ~AllowDestroy();
+    AllowDestroy(const AllowDestroy&) = delete;
+    AllowDestroy& operator=(const AllowDestroy&) = delete;
+};
+
+// CLIENT, from the lane's watch on clean and wallFixer_fix. OpenVerb, in the PRE, forgets what the last verb held and
+// returns the scope bit the lane puts on the body it lets run (script_gate::MarkScope), 0 when the hold is off. The seam
+// reads that bit off the calling frame to tell a destroy inside the verb, which asks the host for zero, from any other.
+// TakeHeld, in the POST, says whether the seam held `decal`'s destroy inside the verb. HoldIsOff: the seam did not go on, so a
+// destroy the verb ran is already done and its POST asks zero after the fact. Game thread.
+uintptr_t OpenVerb();
+bool TakeHeld(void* decal);
+bool HoldIsOff();
 
 // DEV-DRILL ONLY: what the lane has done in this process, read by the drills that judge it; and the rain's roof test the
 // judge runs on the host's copy, which a drill's pick of a decal the rain washes asks too (true: no WorldStatic object

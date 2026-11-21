@@ -3,6 +3,7 @@
 #include "coop/world/spill_sync.h"
 
 #include "coop/config/config.h"
+#include "coop/interactables/grime_judge.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/refusal_tally.h"
@@ -255,6 +256,7 @@ void OnFinishSpawnPost(void* /*context*/, void* source, void* spawned) {
 // A decal that was never this world's own: gone, and its going is no wipe of this peer's.
 void RemoveOwn(void* decal) {
     coop::grime_sync::ForgetDecal(decal);
+    const coop::grime_judge::AllowDestroy allow;   // the spill lane's own removal: the client's destroy hold lets it through
     E::DestroyActor(decal);
     ++g_removed;
 }
@@ -448,6 +450,7 @@ void ClientTick(coop::net::Session& s) {
             for (auto it = g_copies.begin(); it != g_copies.end();) it = it->decal.Is(here) ? g_copies.erase(it) : std::next(it);
             if (here) {
                 coop::grime_sync::ForgetDecal(here);   // the host's end, not a wipe of this peer's
+                const coop::grime_judge::AllowDestroy allow;   // the host's end applied here
                 E::DestroyActor(here);
                 UE_LOGI("spill: the host's %ls was wiped away here", sp.className.c_str());
             }

@@ -233,6 +233,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
     // first, so its own end of play here is no wipe of this peer's and is not sent again.
     if (target <= coop::net::kGrimeGone + kProcessEps) {
         coop::grime_sync::ForgetDecal(actor);
+        const coop::grime_judge::AllowDestroy allow;   // this peer's own apply of the host's end: the hold lets it through
         const bool ok = E::DestroyActor(actor);
         if (g_replayWindow.load(std::memory_order_relaxed)) g_lowered.fetch_add(1, std::memory_order_relaxed);
         UE_LOGI("grime: a decal another peer ended is destroyed here (%s) ok=%d key='%ls'", why, ok ? 1 : 0, key.c_str());
@@ -497,8 +498,9 @@ sg::Verdict OnLowerPre(const sg::Call& call) {
     g_lowering = nullptr;
     if (call.object && G::IsGrime(call.object) && G::ReadProcess(call.object, g_before)) {
         g_lowering = call.object;
-        // On a client the decal's own destroy inside this verb waits for the host's word (coop/interactables/grime_judge).
-        coop::grime_judge::HoldOpen(call.object);
+        // The body carries the judge's scope bit: on a client a destroy the seam holds inside it is told from any other by
+        // the frame that makes it, and asks the host (coop/interactables/grime_judge).
+        if (const uintptr_t bit = coop::grime_judge::OpenVerb()) sg::MarkScope(call, bit);
     }
     return sg::Verdict::Run;
 }
@@ -507,27 +509,32 @@ sg::Verdict OnLowerPre(const sg::Call& call) {
 // body. On the host that end of play sends the wipe (OnGrimeEnd). On a client the destroy was held: the process stands
 // below zero, which the game's clean leaves for the destroy to settle, so the held decal is written to zero here, the
 // stroke's own report, and zero is asked of the host, which destroys at a granted zero; its end of play ends the decal
-// on every peer, this one included.
+// on every peer, this one included. With the hold off (its seam did not go on) the decal is already dead here: zero is
+// asked after the fact, so the host still ends it.
 void OnLowerPost(const sg::Call& call) {
     if (!g_lowering || call.object != g_lowering) return;
     g_lowering = nullptr;
-    const bool held = coop::grime_judge::HoldClose(call.object);
+    const bool held = coop::grime_judge::TakeHeld(call.object);
     const int32_t idx = R::InternalIndexOf(call.object);
-    if (!R::IsLiveByIndex(call.object, idx)) return;
-    float cur = 0.f;
-    const CachedKey* ck = held ? CachedOf(call.object, idx, R::SlotSerial(idx)) : nullptr;
-    if (held && !ck) {
-        // A decal the lane has no name for cannot be asked of the host: nothing would ever end it, so the held destroy runs now.
-        E::DestroyActor(call.object);
+    if (!R::IsLiveByIndex(call.object, idx)) {
+        auto* s = g_session.load(std::memory_order_acquire);
+        if (!coop::grime_judge::HoldIsOff() || !s || !s->connected() || s->role() != coop::net::Role::Client) return;
+        const CachedKey* dead = CachedOf(call.object, idx, R::SlotSerial(idx));
+        if (!dead) return;
+        const std::wstring deadKey = dead->key;
+        Lower(deadKey, 0.f);
+        Send(deadKey, 0.f);
         return;
     }
+    float cur = 0.f;
+    const CachedKey* ck = CachedOf(call.object, idx, R::SlotSerial(idx));
+    if (!ck && held) G::WriteProcessAndApply(call.object, 0.f);   // a decal the lane has no name for stays at zero, asking no one
+    if (!ck) return;
     if (held) {
         if (!G::WriteProcessAndApply(call.object, 0.f)) return;
         cur = 0.f;
-    } else {
-        if (!G::ReadProcess(call.object, cur) || cur >= g_before) return;  // an uncleanable decal
-        ck = CachedOf(call.object, idx, R::SlotSerial(idx));
-        if (!ck) return;
+    } else if (!G::ReadProcess(call.object, cur) || cur >= g_before) {
+        return;  // an uncleanable decal
     }
     const std::wstring key = ck->key;
     // Measured against the floor, the lowest value every peer knows for the key, or, before the key has
