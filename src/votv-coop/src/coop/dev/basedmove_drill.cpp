@@ -128,18 +128,6 @@ void Fail(const char* fmt, ...) {
     g_ended = true;
 }
 
-// An arm that only measures (hostride: its threshold is set from its first green and red runs, never guessed) ends in no one of
-// rig_verdict.h's three words: the line keeps the contract's prefix and tag shape, and the rig's --done-marker names it.
-void Measured(const char* fmt, ...) {
-    if (g_ended) return;
-    va_list ap;
-    va_start(ap, fmt);
-    const std::string text = Format(fmt, ap);
-    va_end(ap);
-    UE_LOGI("rig: VERDICT %s MEASURED -- %s", Tag().c_str(), text.c_str());
-    g_ended = true;
-}
-
 bool Ended() { return g_ended; }
 void Finish() { g_ended = true; }
 void Go() { g_stepMs = ::GetTickCount64(); }

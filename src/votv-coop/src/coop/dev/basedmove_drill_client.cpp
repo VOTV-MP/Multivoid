@@ -19,6 +19,7 @@
 #include "ue_wrap/engine/engine.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -222,6 +223,13 @@ void Observing(coop::net::Session& s, void* lift) {
     }
     const Watched w = g_watch.Frame(s, lift, g_box);
     if (!w.ok) return;   // the puppet or the lift did not read this frame: the next
+    // The verdict is known at the first frame the host's puppet is off the slab on this copy: said now, with nothing after it.
+    if (std::fabs(w.feet) > kFeetTolCm) {
+        Fail("the host's puppet left the slab on this copy at frame %d: feet %.1f cm over its surface (limit %.0f cm), d=%.1f, "
+             "with a base %d of %d frames, attached %d", g_watch.frames, w.feet, kFeetTolCm, w.d, g_watch.basedFrames,
+             g_watch.frames, g_watch.attachedFrames);
+        return;
+    }
     Late("the host never said its ride ended", kWalkBoundMs);
 }
 

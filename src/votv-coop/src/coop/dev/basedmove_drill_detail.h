@@ -30,7 +30,8 @@ inline constexpr float kEdgeSlackCm = 10.f;
 
 // The arm this peer runs (the basedmove_drill row). Who rides, who presses and who watches:
 //   ride        the client rides; the host presses and watches the client's puppet; PASS at the lift's stop, FAIL at a reversal.
-//   hostride    the host rides and presses; the client watches the host's puppet against its own platform copy: MEASURED.
+//   hostride    the host rides and presses; the client watches the host's puppet against its own platform copy: PASS at the stop,
+//               FAIL at the first frame its feet are more than kFeetTolCm off the slab.
 //   bad_base_*  the client rides, then forges its claim; the host judges what it does with it.
 //   baseend     the client rides; mid-travel the host destroys its copy of the platform actor and judges the puppet it carried.
 enum class Arm : uint8_t { Off, Ride, HostRide, BadXy, BadVol, BaseEnd };
@@ -47,7 +48,6 @@ int CountOf(const std::string& prefix);                    // how many chat rows
 void Invalid(const char* why);
 void Pass(const char* fmt, ...);                           // `rig: VERDICT basedmove-<arm> PASS`, said once (the host)
 void Fail(const char* fmt, ...);                           // FAIL, said where it is decided
-void Measured(const char* fmt, ...);                       // `rig: VERDICT basedmove-<arm> MEASURED -- <text>`, said once
 bool Ended();
 void Finish();                                             // this peer has nothing more to do
 void Go();                                                 // a step began: its bound starts again

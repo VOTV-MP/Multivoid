@@ -331,10 +331,13 @@ void WaitResult() {
     float maxD = 0.f, maxFeet = 0.f, maxGap = 0.f;
     if (!(in >> frames >> flips >> maxD >> maxFeet >> based >> attached >> maxGap))
         return Invalid("the client's reading of the host's puppet could not be read");
-    // hostride MEASURES: the threshold a verdict needs is set from its first runs, green (attached) and red (base off), and kept only
-    // if the red exceeds it by 3x. Until those runs exist a number here would be a guess.
-    Measured("the client's copy of the lift, the host riding: frames=%d, reversals=%d, max d=%.1f, max |feet|=%.1f, frames with a "
-             "base %d, attached %d, max |attach-comp|=%.1f", frames, flips, maxD, maxFeet, based, attached, maxGap);
+    // The client fails the arm at the first frame its feet left the slab by more than kFeetTolCm (measured: 2.2 cm green, 96.5 cm
+    // with the base off), so a result that reaches here held the limit on every frame; a pose that never named a base judged nothing.
+    if (frames <= 0 || based <= 0) return Invalid("the host's pose never named a base on the client's copy: nothing was judged");
+    if (maxFeet > kFeetTolCm) return Fail("the host's puppet left the slab by %.1f cm on the client's copy (limit %.0f)", maxFeet, kFeetTolCm);
+    Pass("the lift reached its stop with the host riding: the host's puppet stayed within %.1f cm of the slab on the client's copy "
+         "(limit %.0f) over %d frames, %d with a base, attached %d, reversals %d, max d=%.1f, max |attach-comp|=%.1f", maxFeet,
+         kFeetTolCm, frames, based, attached, flips, maxD, maxGap);
     Finish();
 }
 
