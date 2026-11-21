@@ -1,7 +1,8 @@
 // harness/autotest/autotest_spill.cpp -- TEST-ONLY: spilled liquids are the host's and lie on both peers.
 //
 // A. The host stands a coffee cup on its head: the client must have the host's decal at its place, none of its own, and
-//    hear the splash. B. The host wipes part of it, then the client does: each fall must reach the other's copy. The host
+//    hear the splash. B. The host wipes part of it, then the client does, with a sponge it holds (the host judges a client's
+//    wipe, a step a stroke): each fall must reach the other's copy. The host
 //    wipes it away: the client's goes. A second host spill the client wipes away: the host's goes. C. An opened beer and
 //    an opened wine turned over, and a gas bottle broken, on the host: every decal each leaves must lie on the client at
 //    its place, once. D. A cup in the client's hand turned over: its own decal goes, the host makes it and hears the
@@ -17,6 +18,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/drill_hand.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/session/net_pump.h"
@@ -195,11 +197,12 @@ void LogOff(const char* what, const std::vector<Row>& rows) {
     }
 }
 
-// The decal's own clean by `sub`; past its dirt it ends the decal.
-bool Clean(void* decal, float sub) {
+// The decal's own clean by `sub`; past its dirt it ends the decal. With a sponge it is the call prop_sponge makes, which the
+// host's judge of a client's fall grants one step at a time; with none it is the rain's call form.
+bool Clean(void* decal, float sub, void* sponge = nullptr) {
     void* fn = decal ? R::FindDispatchFunctionCached(R::ClassOf(decal), L"clean") : nullptr;
     ue_wrap::ParamFrame f(fn);
-    return fn && f.valid() && f.Set<void*>(L"sponge", nullptr) && f.Set(L"sub", sub) && f.Set(L"noSound", true) &&
+    return fn && f.valid() && f.Set<void*>(L"sponge", sponge) && f.Set(L"sub", sub) && f.Set(L"noSound", sponge == nullptr) &&
            ue_wrap::Call(decal, f);
 }
 
@@ -210,6 +213,30 @@ float Process(void* decal) {
 }
 
 void* Me() { return coop::players::Registry::Get().Local(); }
+
+// A sponge this player spawns and holds, as a player's pickup puts it in the hand; the host's judge of a client's fall
+// grants a wipe only to a sender whose hand holds one within reach. Null when it did not spawn or was not held.
+void* HoldSponge() {
+    void* held = nullptr;
+    OnGameThread([&] {
+        void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/prop_sponge.prop_sponge_C");
+        ue_wrap::FVector at{};
+        if (!Me() || !cls || !E::TryGetActorLocation(Me(), at)) return;
+        void* sponge = E::SpawnActor(cls, {at.X, at.Y, at.Z + 60.f});
+        bool collected = false;
+        if (sponge && E::CallMainPlayerHoldObject(Me(), sponge, collected) && collected) held = sponge;
+    });
+    return held;
+}
+
+// A sponge stroke on the decal at most every 0.3 s, on the game thread: the call is the host's to grant a step at a time.
+void Stroke(void* decal, void* sponge) {
+    static ULONGLONG last = 0;
+    const ULONGLONG now = ::GetTickCount64();
+    if (!decal || now - last < 300) return;
+    last = now;
+    Clean(decal, 6.f, sponge);
+}
 
 // A prop of `path` on its head `side` cm beside the point 150 cm before the host. `open` runs a bottle's openBottle.
 void* StandOnHead(const wchar_t* path, float side, bool open) {
@@ -284,6 +311,7 @@ void RunHost() {
     if (!Await("a_seen", 30)) return;
     // B. Stands for the grime lane's scan indexing the new decal, so the wipe below is sent; no signal exposes the index.
     ::Sleep(10000);
+    Check(WaitFor([&] { return coop::hand_item::HeldClassIs(1, L"prop_sponge_C"); }, 30), "the host's record holds a sponge in slot 1's hand");
     float mine = -1.f;
     OnGameThread([&] {
         const float was = Process(spill);
@@ -419,6 +447,8 @@ void RunClient() {
     }, false);
     OnGameThread([&] { Check(Near(kCoffee, h, 400.f) == 1, "no spill of this copy's own beside it"); });
     Mark("a_seen");
+    void* const sponge = HoldSponge();
+    Check(sponge != nullptr, "this player holds a sponge");
     // B.
     std::string hp;
     if (!AwaitText("b_host_part", hp, 60)) return;
@@ -432,7 +462,7 @@ void RunClient() {
     float mine = -1.f;
     OnGameThread([&] {
         UE_LOGI("spill-drill: this copy after the host's wipe: %.2f (host %.2f)", Process(copy), hostPart);
-        Clean(copy, 10.f);
+        Clean(copy, 6.f, sponge);
         mine = Process(copy);
     });
     Check(mine >= 0.f && mine < hostPart, "this player wiped part of the spill");
@@ -448,7 +478,12 @@ void RunClient() {
     if (b2rows.empty()) return;
     bool wiped = false;
     Check(WaitFor([&] { return AllHere(b2rows); }, 10), "the host's second spill lies here");
-    OnGameThread([&] { wiped = Clean(GS::FindSpill(kCoffee, b2rows[0].at, 2.f), 100000.f); });
+    // The host's judge grants a client one step a stroke, so the wipe is strokes until the host's word takes the spill here.
+    wiped = WaitFor([&] {
+        void* d = GS::FindSpill(kCoffee, b2rows[0].at, 2.f);
+        if (d) Stroke(d, sponge);
+        return Near(kCoffee, b2rows[0].at, 2.f) == 0;
+    }, 60);
     Check(wiped, "this player wiped the host's spill away");
     Mark("b_client_wiped");
     // C.
