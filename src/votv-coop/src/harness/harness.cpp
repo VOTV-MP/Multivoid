@@ -434,7 +434,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
             // The same location and yaw with the speed bumped: the first SetTargetPose since spawn
             // snaps, then Tick applies.
-            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/200.f};
+            coop::net::PoseSnapshot s{};
+            s.x = at.X; s.y = at.Y; s.z = at.Z; s.speed = 200.f;
+            s.healthFrac = s.foodFrac = s.sleepFrac = 255;   // a full bar, as a real pose carries until the save resolves
             coop::puppet_drive::Puppet(1).SetTargetPose(s);
             coop::puppet_drive::Puppet(1).Tick();
         });
@@ -442,7 +444,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] {
             ue_wrap::FVector at{};
             if (!coop::puppet_drive::Puppet(1).TryGetLocation(at)) return;
-            coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/0.f};
+            coop::net::PoseSnapshot s{};
+            s.x = at.X; s.y = at.Y; s.z = at.Z;
+            s.healthFrac = s.foodFrac = s.sleepFrac = 255;
             coop::puppet_drive::Puppet(1).SetTargetPose(s);
             coop::puppet_drive::Puppet(1).Tick();
             UE_LOGI("show: back to idle (speed=0)");
