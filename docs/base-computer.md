@@ -243,7 +243,12 @@ Every device's floppy slot goes to a joiner at the same edge, an empty one as mu
 the joiner's world came from the host's save file, which coop stops the game refreshing, so it knows
 nothing the host has done since. The laptop's file quad follows the laptop's slot on the same lane
 and under the same count, so the joiner takes the disc before its files, and a set the transport
-refused is sent again with the quad behind it.
+refused is sent again with the quad behind it. Until its world is ready, a joiner's file-quad
+shadow follows whatever its load writes into the laptop: those rows are the host's, so they are
+never sent back as the joiner's edit. Before this, a joiner whose loaded laptop already held the
+host's disc sent the disc's rows back at the first canonical, and the host appended them a second
+time, doubling the files and the read count on every peer `[V]`
+(`coop/interactables/laptop_buffer_sync`).
 
 The inbox rides the joiner's save transfer, so it arrives whole. A mail written during the 30 to
 60 seconds the joiner spends loading is in neither that save nor any later diff, so the host
