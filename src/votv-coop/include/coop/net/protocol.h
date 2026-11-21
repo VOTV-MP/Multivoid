@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 315;
+inline constexpr uint16_t kProtocolVersion = 316;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1587,6 +1587,11 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // Client to host: this client's player took an ATV from the spawn menu (coop/interactables/atv_spawn_ask). The
+    // client's own ATV is removed and the host, judging the sender (world ready, the place within 20 m of its
+    // body, one ask per 3 s), spawns the ATV there, which the ATV lane's AtvSpawn brings to every peer, the asker's
+    // included. Never relayed. Not pre-world. Late join: none, an ask is an act. AtvSpawnAskPayload.
+    AtvSpawnAsk = 300,
     // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
     // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
     // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
@@ -2439,6 +2444,13 @@ struct FloodPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
+
+// AtvSpawnAsk: where the client's spawn menu put its ATV, and its yaw.
+struct AtvSpawnAskPayload {
+    float x, y, z;  // 12
+    float yaw;      // 4
+};
+static_assert(sizeof(AtvSpawnAskPayload) == 16, "AtvSpawnAskPayload must be 16 bytes");
 // KerfurDressState (272): an Omega's outfit, by its NPC element id. `names` holds `count` rows of list_kerfurDrip, each
 // 1..kKerfurDressMaxRowChars printable ASCII characters followed by one NUL, back to back from names[0]; every byte past
 // the last NUL is zero. `flags` bit 0 says a pat plays on the Omega; the other bits and `pad` are zero. A pat carries the

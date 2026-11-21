@@ -56,7 +56,11 @@ host applies only its syncer's blocks, paced, and re-sends each to the other cli
 An idle ATV is
 synced by the host at five hertz gated on change with a two-second keepalive floor, so a parked
 vehicle costs one packet every two seconds. An ATV that appears at runtime, from the spawn menu,
-has no save twin, so the host announces it under its game key.
+has no save twin, so the host announces it under its game key. A client's spawn menu makes no ATV of its own: the
+ATV its player's spawn verb births is removed on its next tick and asked of the host (`AtvSpawnAsk`) with its place
+and yaw; the host makes it there for a sender whose world is ready, within 20 m of the sender's body and one ask per
+3 s, and announces it like any other, so the asker gets its ATV as the host's copy. Before this, the ATV stayed on
+the client that spawned it and no other player saw it `[?]` (`coop/interactables/atv_spawn_ask`).
 The client parks a valid announcement until gameplay, the discovery index and load quiescence
 agree, stamped with the world it arrived in: a world change drops it, the new world's own replay
 bringing it again, and a spawn that fails in a ready world is final, never retried.
@@ -256,6 +260,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvPartIntent` | a client to the host | one piece of work on an ATV's wheels or spare: a wheel unbolted, a held wheel fitted or stowed as the spare, the spare taken; with the held wheel's scalars |
+| `AtvSpawnAsk` | a client to the host | the place and yaw of the ATV the client's spawn menu made |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
 | `AtvHostState` | the host to all | an ATV's fuel, health, battery, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
@@ -312,6 +317,7 @@ join window is not queued.
 | the seat and syncer table, and the host's judgements | `coop/interactables/atv_authority` |
 | the corrector, the hit guard and the damage gate | `coop/interactables/atv_corrector`, `coop/interactables/atv_hit_guard`, `coop/interactables/atv_damage_gate` |
 | condition | `coop/interactables/atv_condition_sync`, `ue_wrap/devices/atv_condition` |
+| a client's spawn-menu ATV | `coop/interactables/atv_spawn_ask`, the seam in `coop/props/prop_drop_intent` |
 | a client's part work | `coop/interactables/atv_part_intent`, `ue_wrap/devices/atv_parts`, `coop/dev/atv_part_drill` |
 | the engine wrapper | `ue_wrap/devices/atv` |
 | the seat | `coop/interactables/device_occupancy` |

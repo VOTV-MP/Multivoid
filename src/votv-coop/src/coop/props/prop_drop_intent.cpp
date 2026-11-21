@@ -15,6 +15,7 @@
 #include "coop/props/join_membership_sweep.h"// RecordSelfAuthored (a player's own prop is never divergence)
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
 #include "coop/props/prop_save_data.h"
+#include "coop/interactables/atv_spawn_ask.h"  // a client's spawn-menu ATV, asked of the host
 #include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu, the toolgun, the hacksaw, the pry)
 #include "coop/props/prop_drive_rules.h"    // kRestVelCmS: the floor under which a spawn is written no velocity
 #include "coop/props/prop_throw.h"          // ThrowSeqFor: the throw that launched a drained place
@@ -29,6 +30,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"          // dev::LastClientPlaceSpawn
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
 #include "ue_wrap/core/fname_utils.h"            // StringToFName
+#include "ue_wrap/devices/atv.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"         // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
@@ -156,6 +158,11 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     // this instant can answer -- the VM's calling frame is gone by the drain -- and because it is
     // what exempts a birth from the load gates below.
     const bool playerAuthored = coop::prop_spawn_authoring::BirthIsPlayerAuthored(result);
+    // An ATV the player's spawn menu made is the host's to make: asked of it, and this copy removed.
+    if (playerAuthored && result && R::IsLive(result) && ue_wrap::atv::IsAtv(result)) {
+        coop::atv_spawn_ask::OnPlayerSpawnedAtv(result);
+        return;
+    }
     // The end condition: quiet during the load episode and the reconcile window's load-kind
     // segments (the join and reload bracket, whose spawn churn flooded this path; the mirror mark
     // below already scopes our own applies out). A mid-session bracket does not suppress: a
