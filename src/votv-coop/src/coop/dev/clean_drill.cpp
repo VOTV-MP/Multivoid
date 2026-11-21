@@ -19,6 +19,7 @@
 #include "clean_drill_detail.h"   // co-located private header (src tree, not include/)
 
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/routes.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/player/hand_item.h"
 #include "coop/net/session.h"
@@ -95,7 +96,7 @@ void Go(Ph p, const char* name) {
 // call prop_sponge makes, Sub 6, with the sponge as its first argument) every 0.3 s until the host's word ends the decal
 // on its copy. The host actor cleans its own decals natively, with no sponge.
 constexpr float kSpongeSub = 6.f;          // getStrength * 4 without soap: prop_sponge dump line 134
-constexpr float kWalkReachCm = 450.f;      // inside the judge's reach of a decal, not on top of it
+constexpr float kWalkReachCm = 100.f;      // how near a standpoint the walker must read
 constexpr int   kWalkDeadlineS = 240;
 constexpr auto  kStrokeGap = std::chrono::milliseconds(300);
 constexpr const wchar_t* kSpongePath = L"/Game/objects/prop_sponge.prop_sponge_C";
@@ -105,6 +106,11 @@ ue_wrap::CachedObjRef g_sponge;
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 std::chrono::steady_clock::time_point g_strokeAt{};
 size_t g_ti = 0;   // the target being cleaned
+std::vector<FVector> g_ring;   // the standpoints a route reaches about it, shortest route first
+size_t g_stand = 0;            // the one being walked to
+bool g_ringBuilt = false;
+constexpr int   kStandpoints = 3;
+constexpr float kStandRingCm = 400.f;   // the decal stays inside the judge's reach: 400 on the floor, its height above it
 bool g_handMarked = false;
 
 bool UsesSponge() { return IsActor() && !IsHost(); }
@@ -127,10 +133,27 @@ int SpongeWork(const std::wstring& cls, const FVector& at, bool once) {
     void* const d = DecalAt(cls, at);
     if (!d || !R::IsLive(d)) {
         g_walk.reset();
+        g_ringBuilt = false;
         return 1;
     }
     if (!g_walk) {
-        g_walk = coop::director::StartBackgroundWalk(at, kWalkReachCm, kWalkDeadlineS);
+        // Where the decal stands is no place to walk to: a ceiling decal is metres above the NavMesh, and a route to it
+        // is none, so the stage could neither compare routes nor place the walker at the bed. The walk goes to a standpoint
+        // about the decal that a route reaches, and the stage then has a goal it can measure.
+        void* const player = coop::players::Registry::Get().Local();
+        if (!g_ringBuilt) {
+            g_ring = coop::director::ReachableStandpoints(player, at, kStandRingCm, kStandpoints, kWalkReachCm);
+            g_ringBuilt = true;
+            g_stand = 0;
+            UE_LOGI("[CLN] a route reaches %zu of the %d standpoints about the %ls decal", g_ring.size(), kStandpoints,
+                    cls.c_str());
+        }
+        if (g_stand >= g_ring.size()) {
+            Decide(Outcome::Invalid, "no standpoint about the %s decal could be walked to", Narrow(cls).c_str());
+            g_ph = Ph::AwaitEnd;
+            return -1;
+        }
+        g_walk = coop::director::StartBackgroundWalk(g_ring[g_stand], kWalkReachCm, kWalkDeadlineS);
         if (!g_walk) {
             Decide(Outcome::Invalid, "the walk to the %s decal did not start", Narrow(cls).c_str());
             g_ph = Ph::AwaitEnd;
@@ -138,10 +161,10 @@ int SpongeWork(const std::wstring& cls, const FVector& at, bool once) {
         }
     }
     const int st = g_walk->state.load();
-    if (st == 2) {
-        Decide(Outcome::Invalid, "the walk to the %s decal ended without reaching it", Narrow(cls).c_str());
-        g_ph = Ph::AwaitEnd;
-        return -1;
+    if (st == 2) {   // this standpoint was not reached: the next
+        ++g_stand;
+        g_walk.reset();
+        return 0;
     }
     const auto now = std::chrono::steady_clock::now();
     if (st != 1 || now - g_strokeAt < kStrokeGap) return 0;
@@ -154,6 +177,7 @@ int SpongeWork(const std::wstring& cls, const FVector& at, bool once) {
     }
     if (once) {
         g_walk.reset();
+        g_ringBuilt = false;
         return 1;
     }
     return 0;
