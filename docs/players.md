@@ -539,7 +539,7 @@ is mirrored by the balance lane; an event is broadcast by the event watch.
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `PoseSnapshot` (stream) | each peer | position, yaw, pitch, head delta, speed, state bits, three vitals |
+| `PoseSnapshot` (stream) | each peer | position, yaw, pitch, head delta, speed, state bits, three vitals, and the mover the player stands on (a base id and the offset from it; the host checks the claim) |
 | `RagdollPose` (stream) | each peer, while ragdolled | pelvis transform and velocity |
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
