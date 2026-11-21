@@ -36,7 +36,8 @@ void* ReadActiveInterface(void* player);
 // Classify an ACTIVE INTERFACE widget into its cross-peer claim key:
 //   ui_consolesAtlas_C -> "desk"   (the 4-screen main desk; coords is the
 //                                   only enterable screen of it)
-//   ui_console_C       -> "sat"    (ALL SAT consoles share this one widget)
+//   ui_console_C       -> "sat_<hash of the panel>" (all SAT consoles share this one widget; the panel its
+//                                   player used, sat_console ReadUsed, names the console)
 //   ui_radar_C         -> "radar"
 //   ui_reactor_C       -> "reactor"
 //   ui_laptop_C        -> "laptop" (base laptop + every portable PC -- ONE
@@ -51,7 +52,7 @@ std::wstring ClassifyWidgetClaimKey(void* widget);
 
 // Classify an AIMED ACTOR into the claim key its E-press would enter (the
 // deny-gate side): analogDScreenTest_C -> "desk", panel_SATconsole_C ->
-// "sat", panel_radar_C -> "radar", panel_reactor_C -> "reactor", laptop_C /
+// "sat_<hash of its name>", panel_radar_C -> "radar", panel_reactor_C -> "reactor", laptop_C /
 // prop_portablePc_C -> "laptop", transformerMGPanel_C -> "tfm_<posKey>",
 // prop_arcade_C -> "arc_<posKey>", prop_notebook_C (the torn sheet too) -> "note_<hash>",
 // prop_paper_drawable_C -> "draw_<hash>". Empty for a non-device actor, for a transformer or arcade

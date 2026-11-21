@@ -2,12 +2,12 @@
 
 #include "coop/interactables/sat_console_sync.h"
 
+#include "coop/config/config.h"  // [dev] the lock's bound, shortened for a drill
 #include "coop/interactables/sat_console_table.h"
 #include "coop/items/save_record_wire.h"  // the blob's read and append primitives
 #include "coop/net/blob_chunks.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/session/player_handshake.h"  // GuidForSlot: a typist's durable identity
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/gc_pin.h"
@@ -21,7 +21,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <deque>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,31 +41,42 @@ using Clock = std::chrono::steady_clock;
 using coop::net::kMaxPeers;
 using coop::net::ReliableKind;
 
-// The blobs. A dish is named by its gamemode.dishs index, a panel by its placed actor's name.
+// The blobs. A dish is named by its gamemode.dishs index, a console by its panel's placed actor's name.
 constexpr uint8_t kOpLine = 0;  // typist -> host: [i32 dish][str name][str used panel][str line]
-constexpr uint8_t kOpLog  = 1;  // host -> typist: [u8 bracketsType][str text]
-constexpr uint8_t kOpBusy = 2;  // host -> typist: [u8 busy], the level, on each change and as a seed
+constexpr uint8_t kOpLog  = 1;  // host -> typist: [u8 bracketsType][str text], an answer to that typist alone
+constexpr uint8_t kOpBusy = 2;  // host -> all: [str panel][u8 busy], a console's level, on each change and as a seed
+constexpr uint8_t kOpShow = 3;  // host -> all: [str panel][str log], a console's printed lines, on change and as a seed
 
 constexpr int32_t kNoDish = -1;  // init with no dish: the ROOT console
 
 constexpr size_t kMaxLineChars   = 255;   // MTA's clamp too; every command name is short
 constexpr size_t kMaxNameChars   = 64;
-constexpr size_t kMaxLogChars    = 8192;  // `debug rules` prints the game rules as JSON, a few thousand
+constexpr size_t kMaxLogChars    = 8192;  // fixLog keeps 3000; `debug rules` prints a few thousand at once
 constexpr int    kLinesPerWindow = 4;     // a person types slower: lines a typist may run per window
 constexpr auto   kWindow         = std::chrono::seconds(1);
 constexpr auto   kSpawnEvery     = std::chrono::seconds(2);  // a typist's spawn-on-every-call commands
-constexpr size_t kMaxTerminals   = 16;    // kept terminals, by identity, while the session lasts
+constexpr size_t kMaxTerminals   = 32;    // kept terminals, one a console, while the session lasts
 constexpr size_t kOutboxCap      = 512;   // blobs owed to one slot while its sends are refused
 constexpr auto   kResendEvery    = std::chrono::milliseconds(250);  // a refused slot is tried this often
+constexpr auto   kShowEvery      = std::chrono::milliseconds(250);  // a console's lines are sent this often at most
+// A console busy longer than this is stuck: its terminal is discarded, which stops its command and frees its lock.
+// The longest command, sd.calall, takes well under a minute; VOTVCOOP_SAT_LOCK_TIMEOUT_S shortens it for a drill.
+constexpr int64_t kStuckAfterSecs = 600;
 const wchar_t* const kBusyLine = L"<r>The terminal is busy</>";  // the game's answer to a line it cannot take
 const wchar_t* const kErrLine  = L"<r>err</>";                   // the game's answer to a line it cannot run
 
 UE_FACT_FN(kRowEnterCommand, "sat_console_sync", L"ui_console_C", L"enterCommand", Declared);
 UE_FACT_FN(kRowUbergraph, "sat_console_sync", L"ui_console_C", L"ExecuteUbergraph_ui_console", Declared);
 UE_FACT_FN(kRowWriteToLog, "sat_console_sync", L"ui_console_C", L"writeToLog", Declared);
+// The world's broken-device alerts: the shown terminal's own three, which its Construct binds, and the panel's.
+UE_FACT_FN(kRowServerBroken, "sat_console_sync", L"ui_console_C", L"serverBroken", Declared);
+UE_FACT_FN(kRowTowerBroken, "sat_console_sync", L"ui_console_C", L"radioTowerBroken", Declared);
+UE_FACT_FN(kRowCoordBroken, "sat_console_sync", L"ui_console_C", L"coordDishBroken", Declared);
+UE_FACT_FN(kRowServerAlert, "sat_console_sync", L"panel_SATconsole_C", L"Server Alert", Declared);
 constexpr int kTagEnter = 0x53434E45;  // 'SCNE'
 constexpr int kTagWrite = 0x53434E57;  // 'SCNW'
 constexpr int kTagGraph = 0x53434E47;  // 'SCNG'
+constexpr int kTagAlert = 0x53434E41;  // 'SCNA'
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watched = false;
@@ -74,9 +87,9 @@ Counts g_counts{};
 bool g_saidOffThread = false;
 
 // Blobs owed to a slot whose send was refused. A blob goes whole or not at all, and one refused waits
-// at the head, so a slot's blobs arrive in the order they were made. The host keeps one per typist's
+// at the head, so a slot's blobs arrive in the order they were made. The host keeps one per client's
 // slot; a client keeps slot 0's, to the host. At its cap an outbox gives up its oldest blob that is not a
-// busy level, which the typist's terminal needs to stop being busy.
+// busy level, which a console needs to stop being busy.
 struct Outbox {
     std::deque<std::vector<uint8_t>> q;
     Clock::time_point nextTry{};
@@ -84,33 +97,68 @@ struct Outbox {
 };
 Outbox g_out[kMaxPeers];
 
-// HOST: the terminal each typist runs on, keyed by its durable identity, not its slot: a typist that
-// leaves mid-command leaves its terminal running that command, as the game's terminal runs on when its
-// player walks away, and a typist that comes back finds it again. A terminal lasts while the session
-// does and its world stays current; the last client's leave ends the session, and each terminal is
-// then discarded, its command stopping where it stands.
+// HOST: the terminal each console runs on, keyed by its panel's name: a line typed at a console runs on
+// that console's terminal whoever typed it, the host included, so two consoles never wait on each other,
+// and a console's command and its lines are that console's whoever leaves. A terminal lasts while the
+// session does and its world stays current; the session's end discards each, its command stopping there.
 struct Terminal {
-    std::string guid;
+    std::wstring panel;
     ue_wrap::GcPin pin;
     void*   world = nullptr;  // the world it was made in, when known
-    int     slot = -1;        // its typist's slot while connected, -1 once it left
-    bool    busySent = false; // the busy level its typist last got
+    bool    busySent = false; // the busy level last told
     bool    haveContext = false;
     int32_t dish = kNoDish;
     std::wstring name;
-    int     lines = 0;        // lines run in the current window
+    std::wstring logSent;     // the lines last told
+    Clock::time_point nextShow{};
+    std::wstring running;     // the line it runs, until its busy flag falls
+    // What changed since the lane last read it, marked by the terminal's own watches: a print (writeToLog) marks
+    // its lines, the end of a body (enterCommand or the ubergraph, which every latent continuation resumes) its
+    // busy flag, the only places either changes.
+    bool logDirty = false;
+    bool busyDirty = true;
+    Clock::time_point busySince{};
+};
+// HOST: a console's lines last told, kept when its terminal goes, so the one made after it starts from them.
+std::map<std::wstring, std::wstring> g_history;
+std::vector<Terminal> g_terms;
+
+// HOST: each typist's pace, by slot (0 the host's own player).
+struct Typist {
+    int lines = 0;
     Clock::time_point windowStart{};
     Clock::time_point nextSpawnOk{};
 };
-std::vector<Terminal> g_terms;
+Typist g_typists[kMaxPeers];
 bool g_saidRefused[kMaxPeers] = {};
 bool g_saidMalformed[kMaxPeers] = {};
 bool g_saidNoTerminal[kMaxPeers] = {};
 bool g_saidNoContext[kMaxPeers] = {};
 
-// CLIENT: the host's busy level for this terminal, and whether a line this terminal ran itself holds
-// the flag: the mirror sets it while the host's terminal is busy and clears only what it set.
-bool g_mirrorBusy = false;
+// HOST: the host's own lines, refused at its terminal's enterCommand and run from Tick, never inside the watch.
+struct HostLine {
+    int32_t dish = kNoDish;
+    std::wstring name, used, line;
+};
+std::deque<HostLine> g_hostLines;
+
+// HOST: the alert lines owed to the ROOT console's terminal, written from Tick.
+std::deque<std::pair<std::wstring, uint8_t>> g_rootLines;
+int g_alertDepth = 0;  // inside an alert's body: its write is the ROOT console's
+
+// EVERY PEER: what each console printed and whether it is busy, as the host tells it, and the console this
+// machine's terminal shows: the panel its player last used. The shown console's lines go onto the terminal as
+// they come, after whatever it printed itself; moving to another console shows that console's lines.
+struct Screen {
+    std::wstring log;
+    bool busy = false;
+};
+std::map<std::wstring, Screen> g_screens;
+std::wstring g_shown;
+void* g_shownPanel = nullptr;  // the panel object g_shown was read from: its name is read again only when it moves
+bool g_haveShown = false;
+// Whether a line this terminal ran itself holds its busy flag: the shown console's level sets it while that
+// console is busy and clears only what it set.
 bool g_localHolds = false;
 
 coop::net::Session* SessionIf(coop::net::Role role) {
@@ -125,6 +173,91 @@ std::wstring Printable(const std::wstring& s) {
     for (wchar_t ch : s) out.push_back(ch < 0x20 || ch == 0x7F ? L'?' : ch);
     return out;
 }
+
+// What `now` printed after `before`: fixLog keeps the last 3000 characters, so `now` is a tail of `before`
+// followed by the new lines. False when `now` holds no tail of `before` (a console whose lines were replaced).
+bool TailAfter(const std::wstring& before, const std::wstring& now, std::wstring& added) {
+    const size_t most = before.size() < now.size() ? before.size() : now.size();
+    for (size_t j = most;; --j) {
+        if (before.compare(before.size() - j, j, now, 0, j) == 0) {
+            added = now.substr(j);
+            return j > 0 || before.empty();
+        }
+        if (j == 0) return false;
+    }
+}
+
+// ---- the shown console, on every peer ----
+
+bool ShownBusy() {
+    auto it = g_screens.find(g_shown);
+    return g_haveShown && it != g_screens.end() && it->second.busy;
+}
+
+void PaintBusy(void* term) {
+    const bool busy = ShownBusy();
+    if (busy || !g_localHolds) SC::WriteProcessing(term, busy);
+}
+
+// The terminal moved to another console: that console's lines, and its level.
+void Repaint(void* term) {
+    auto it = g_screens.find(g_shown);
+    SC::WriteLog(term, it != g_screens.end() ? it->second.log : std::wstring());
+    PaintBusy(term);
+}
+
+void FollowShown() {
+    void* term = SC::LocalTerminal();
+    if (!term) return;
+    void* const used = SC::ReadUsed(term);
+    if (g_haveShown && used == g_shownPanel) return;  // the per-tick steady state: one pointer read
+    g_shownPanel = used;
+    const std::wstring panel = SC::PanelName(used);
+    if (!g_haveShown) {
+        g_haveShown = true;  // first sight: what it shows stays until a console's lines come
+        g_shown = panel;
+        PaintBusy(term);
+        return;
+    }
+    if (panel == g_shown) return;
+    g_shown = panel;
+    Repaint(term);
+}
+
+void ApplyShow(const std::wstring& panel, const std::wstring& log) {
+    Screen& sc = g_screens[panel];
+    const std::wstring before = std::move(sc.log);
+    sc.log = log;
+    void* term = g_haveShown && panel == g_shown ? SC::LocalTerminal() : nullptr;
+    if (!term) return;
+    std::wstring added, cur;
+    if (TailAfter(before, log, added) && SC::ReadLog(term, cur)) SC::WriteLog(term, cur + added);
+    else SC::WriteLog(term, log);
+}
+
+void ApplyBusy(const std::wstring& panel, bool busy) {
+    g_screens[panel].busy = busy;
+    if (g_haveShown && panel == g_shown)
+        if (void* term = SC::LocalTerminal()) PaintBusy(term);
+}
+
+// After this machine's terminal ran a body of its own. While the shown console is busy the flag is that
+// console's: a line this terminal ran itself may have cleared it, and it is set again, the line's hold over.
+// Else the flag is the line's own.
+void AfterLocalBody(void* term) {
+    bool busy = false;
+    if (!SC::ReadProcessing(term, busy)) return;
+    if (ShownBusy()) {
+        if (!busy) {
+            g_localHolds = false;
+            SC::WriteProcessing(term, true);
+        }
+    } else {
+        g_localHolds = busy;
+    }
+}
+
+// ---- the wire ----
 
 void Flush(uint8_t slot) {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -167,30 +300,57 @@ void SendLog(uint8_t slot, const std::wstring& text, uint8_t bracketsType) {
     Enqueue(slot, std::move(b));
 }
 
-void SendBusy(uint8_t slot, bool busy) {
+void SendBusy(uint8_t slot, const std::wstring& panel, bool busy) {
     std::vector<uint8_t> b;
     W::AppU8(b, kOpBusy);
+    W::AppWStr(b, panel);
     W::AppU8(b, busy ? 1 : 0);
     Enqueue(slot, std::move(b));
 }
 
-// A line the host will not run is answered as the game answers one it cannot take or run: its echo,
-// then the reason's line. The typist already consumed it.
+void SendShow(uint8_t slot, const std::wstring& panel, const std::wstring& log) {
+    std::vector<uint8_t> b;
+    W::AppU8(b, kOpShow);
+    W::AppWStr(b, panel);
+    W::AppWStr(b, log);
+    Enqueue(slot, std::move(b));
+    ++g_counts.linesReturned;
+}
+
+// Every client whose world is ready.
+template <class F>
+void ToReadyClients(F&& f) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    for (int slot = 1; slot < kMaxPeers; ++slot)
+        if (s->IsSlotWorldReady(slot)) f(static_cast<uint8_t>(slot));
+}
+
+// A line the host will not run is answered as the game answers one it cannot take or run: its echo, then the
+// reason's line, on the typist's own terminal alone. The typist already consumed it.
 void AnswerRefused(uint8_t slot, const std::wstring& line, const wchar_t* why) {
+    if (slot == 0) {
+        if (void* term = SC::LocalTerminal()) {
+            SC::CallWriteToLog(term, line, 1);
+            SC::CallWriteToLog(term, why, 0);
+        }
+        return;
+    }
     SendLog(slot, line, 1);
     SendLog(slot, why, 0);
 }
 
 // ---- the typist ----
 
-// A line whose command rests on the shared world goes to the host, with the terminal's context as it
-// stands: the dish its panel pointed it at (or ROOT), its name, and the panel last used. A busy
-// terminal answers the line itself, as it would alone; so does a line the terminal owns. The body is
-// refused, which leaves its own tail unrun, so the input is consumed here as that tail does
-// (ui_console.enterCommand: `command = ""`, the text box emptied); the echo and every answer come back
-// from the host.
+// A line whose command rests on the shared world goes to the console's terminal on the host, with the
+// terminal's context as it stands: the dish its panel pointed it at (or ROOT), its name, and the panel last
+// used, which names the console. A busy console answers the line itself, as it would alone; so does a line
+// the terminal owns. The body is refused, which leaves its own tail unrun, so the input is consumed here as
+// that tail does (ui_console.enterCommand: `command = ""`, the text box emptied); the echo and every line come
+// back with the console's. The host's own player's lines go the same way, run from its Tick.
 sg::Verdict OnEnterPre(const sg::Call& c) {
-    if (!SessionIf(coop::net::Role::Client)) return sg::Verdict::Run;
+    const bool host = SessionIf(coop::net::Role::Host) != nullptr;
+    if (!host && !SessionIf(coop::net::Role::Client)) return sg::Verdict::Run;
     void* term = c.object;
     if (term != SC::LocalTerminal()) return sg::Verdict::Run;
     bool busy = false;
@@ -206,40 +366,28 @@ sg::Verdict OnEnterPre(const sg::Call& c) {
     const int32_t dishIdx = dish ? ue_wrap::dish::IndexOf(dish) : kNoDish;
     std::wstring used = SC::PanelName(SC::ReadUsed(term));
     if (used.size() > kMaxNameChars) used.clear();
-    std::vector<uint8_t> b;
-    W::AppU8(b, kOpLine);
-    W::AppI32(b, dishIdx < 0 ? kNoDish : dishIdx);
-    W::AppWStr(b, name);
-    W::AppWStr(b, used);
-    W::AppWStr(b, line);
-    Enqueue(0, std::move(b));
-    SC::ConsumeInput(term);
-    ++g_counts.linesSent;
-    UE_LOGI("sat_console: CLIENT '%ls' runs on the host's terminal (dish %d)", line.c_str(), dishIdx);
-    return sg::Verdict::Cancel;
-}
-
-// After this terminal ran a body of its own. While the host's terminal is busy the flag is the mirror's:
-// a line this terminal ran itself may have cleared it, and it is set again, the line's hold over. Else
-// the flag is the line's own.
-void ClientAfterLocalBody(void* term) {
-    bool busy = false;
-    if (!SC::ReadProcessing(term, busy)) return;
-    if (g_mirrorBusy) {
-        if (!busy) {
-            g_localHolds = false;
-            SC::WriteProcessing(term, true);
-        }
+    if (host) {
+        g_hostLines.push_back(HostLine{dishIdx < 0 ? kNoDish : dishIdx, name, used, line});
     } else {
-        g_localHolds = busy;
+        std::vector<uint8_t> b;
+        W::AppU8(b, kOpLine);
+        W::AppI32(b, dishIdx < 0 ? kNoDish : dishIdx);
+        W::AppWStr(b, name);
+        W::AppWStr(b, used);
+        W::AppWStr(b, line);
+        Enqueue(0, std::move(b));
+        ++g_counts.linesSent;
     }
+    SC::ConsumeInput(term);
+    UE_LOGI("sat_console: %s '%ls' runs on the host's terminal for console '%ls' (dish %d)", host ? "HOST" : "CLIENT",
+            Printable(line).c_str(), used.c_str(), dishIdx);
+    return sg::Verdict::Cancel;
 }
 
 void ClientOnBlob(const std::vector<uint8_t>& blob) {
     size_t o = 0;
     uint8_t op = 0;
     if (!W::RdU8(blob, o, op)) return;
-    void* term = SC::LocalTerminal();
     if (op == kOpLog) {
         uint8_t type = 0;
         std::wstring text;
@@ -247,15 +395,26 @@ void ClientOnBlob(const std::vector<uint8_t>& blob) {
             UE_LOGW("sat_console: a malformed line from the host -- dropped");
             return;
         }
+        void* term = SC::LocalTerminal();
         if (!term || !SC::CallWriteToLog(term, text, type))
             UE_LOGW("sat_console: a line from the host found no terminal here -- dropped");
         return;
     }
+    std::wstring panel;
     if (op == kOpBusy) {
         uint8_t busy = 0;
-        if (!W::RdU8(blob, o, busy)) return;
-        g_mirrorBusy = busy != 0;
-        if (term && (g_mirrorBusy || !g_localHolds)) SC::WriteProcessing(term, g_mirrorBusy);
+        if (!W::RdWStr(blob, o, panel) || panel.size() > kMaxNameChars || !W::RdU8(blob, o, busy)) return;
+        ApplyBusy(panel, busy != 0);
+        return;
+    }
+    if (op == kOpShow) {
+        std::wstring log;
+        if (!W::RdWStr(blob, o, panel) || panel.size() > kMaxNameChars || !W::RdWStr(blob, o, log) ||
+            log.size() > kMaxLogChars) {
+            UE_LOGW("sat_console: a malformed console from the host -- dropped");
+            return;
+        }
+        ApplyShow(panel, log);
         return;
     }
     UE_LOGW("sat_console: op %u reached a client -- dropped", static_cast<unsigned>(op));
@@ -270,16 +429,19 @@ Terminal* ByObject(void* obj) {
     return nullptr;
 }
 
-Terminal* ByGuid(const std::string& guid) {
+Terminal* ByPanel(const std::wstring& panel) {
     for (Terminal& t : g_terms)
-        if (t.guid == guid) return &t;
+        if (t.panel == panel) return &t;
     return nullptr;
 }
 
-// Unpin a terminal and stop what it runs; its typist, if still here, is told it is no longer busy.
+// Unpin a terminal and stop what it runs; its console, if it was busy, is told it is not.
 void Discard(Terminal& t) {
     void* term = t.pin.Raw();
-    if (t.slot >= 0 && t.busySent) SendBusy(static_cast<uint8_t>(t.slot), false);
+    if (t.busySent) {
+        ToReadyClients([&](uint8_t slot) { SendBusy(slot, t.panel, false); });
+        ApplyBusy(t.panel, false);
+    }
     t.pin.Release();
     SC::DiscardTerminal(term);
 }
@@ -289,30 +451,14 @@ void DiscardAt(size_t i) {
     g_terms.erase(g_terms.begin() + static_cast<std::ptrdiff_t>(i));
 }
 
-// A typist back at the terminal it left: bound to it again and told its busy level, so its own terminal
-// is busy while the command it left runs on, and gets that command's lines from here on.
-void Rebind(Terminal& t, uint8_t slot) {
-    t.slot = slot;
-    bool busy = false;
-    SC::ReadProcessing(t.pin.Raw(), busy);
-    t.busySent = busy;
-    SendBusy(slot, busy);
-    ++g_counts.rebinds;
-    if (busy) ++g_counts.busyRebinds;
-    UE_LOGI("sat_console: HOST slot %u is back at its terminal (busy=%d)", static_cast<unsigned>(slot), busy ? 1 : 0);
-}
-
-// The typist's terminal, made on its first line. At the cap, a departed typist's idle terminal gives way;
-// with none, the line is refused.
-Terminal* TerminalFor(uint8_t slot, const std::string& guid) {
-    if (Terminal* t = ByGuid(guid)) {
-        if (t->slot != slot) Rebind(*t, slot);
-        return t;
-    }
+// A console's terminal, made on its first line. At the cap, an idle terminal gives way; with none, the line is
+// refused.
+Terminal* TerminalFor(const std::wstring& panel) {
+    if (Terminal* t = ByPanel(panel)) return t;
     if (g_terms.size() >= kMaxTerminals) {
         for (size_t i = 0; i < g_terms.size(); ++i) {
             bool busy = true;
-            if (g_terms[i].slot < 0 && SC::ReadProcessing(g_terms[i].pin.Raw(), busy) && !busy) {
+            if (SC::ReadProcessing(g_terms[i].pin.Raw(), busy) && !busy) {
                 DiscardAt(i);
                 break;
             }
@@ -327,11 +473,13 @@ Terminal* TerminalFor(uint8_t slot, const std::string& guid) {
         SC::DiscardTerminal(term);
         return nullptr;
     }
-    made.guid = guid;
+    made.panel = panel;
     made.world = WI::CurrentWorld();  // null while unknown: the world term then fails open
-    made.slot = slot;
+    // A console whose last terminal was discarded starts from that one's lines.
+    if (auto it = g_history.find(panel); it != g_history.end() && SC::WriteLog(term, it->second))
+        made.logSent = it->second;
     g_terms.push_back(std::move(made));
-    UE_LOGI("sat_console: HOST made slot %u's terminal (%zu kept)", static_cast<unsigned>(slot), g_terms.size());
+    UE_LOGI("sat_console: HOST made console '%ls''s terminal (%zu kept)", panel.c_str(), g_terms.size());
     return &g_terms.back();
 }
 
@@ -359,6 +507,85 @@ Context ApplyContext(Terminal& t, int32_t dish, const std::wstring& name) {
     return Context::Ready;
 }
 
+void HostRunLine(uint8_t slot, int32_t dish, const std::wstring& name, const std::wstring& used,
+                 const std::wstring& line) {
+    Typist& ty = g_typists[slot];
+    const auto now = Clock::now();
+    if (now - ty.windowStart >= kWindow) {
+        ty.windowStart = now;
+        ty.lines = 0;
+    }
+    const bool spawns = T::SpawnsEveryCall(line);
+    if (++ty.lines > kLinesPerWindow || (spawns && now < ty.nextSpawnOk)) {
+        AnswerRefused(slot, line, kBusyLine);  // the terminal cannot take the line, as the game says it
+        return;
+    }
+    Terminal* t = TerminalFor(used);
+    if (!t) {
+        if (!g_saidNoTerminal[slot]) {
+            g_saidNoTerminal[slot] = true;
+            UE_LOGW("sat_console: HOST no terminal for console '%ls' (slot %u) -- answered err", used.c_str(),
+                    static_cast<unsigned>(slot));
+        }
+        AnswerRefused(slot, line, kErrLine);
+        return;
+    }
+    // A console still running a command keeps its context: its latent continuation reads the dish, name and
+    // panel it started with. The game's own terminal refuses a line while busy, so does this.
+    bool busy = false;
+    const bool readOk = SC::ReadProcessing(t->pin.Raw(), busy);
+    if (!readOk || busy) {
+        AnswerRefused(slot, line, readOk ? kBusyLine : kErrLine);   // an unreadable flag is not "busy"
+        return;
+    }
+    // A long command that writes what another console's running command writes waits for it: the host decides,
+    // and the console that asked second is told which console runs it.
+    for (const Terminal& o : g_terms) {
+        if (&o == t || o.running.empty() || !T::Conflicts(line, o.running)) continue;
+        const std::wstring who = o.name.empty() ? std::wstring(L"?") : o.name;
+        const std::wstring why = L"<r>Console '" + who + L"' is running " + T::CommandOf(o.running) + L"</>";
+        UE_LOGI("sat_console: HOST '%ls' at console '%ls' waits: console '%ls' runs '%ls'", Printable(line).c_str(),
+                used.c_str(), o.panel.c_str(), Printable(o.running).c_str());
+        AnswerRefused(slot, line, why.c_str());
+        return;
+    }
+    // The line runs only in the context it names. One that cannot be set up is answered err and not
+    // retried: a command with an effect in the world must not run twice.
+    const Context ctx = ApplyContext(*t, dish < kNoDish ? kNoDish : dish, name);
+    if (ctx != Context::Ready) {
+        if (!g_saidNoContext[slot]) {
+            g_saidNoContext[slot] = true;
+            UE_LOGW("sat_console: HOST no context for slot %u's line (dish %d: %s) -- answered err",
+                    static_cast<unsigned>(slot), dish,
+                    ctx == Context::Bad ? "past the host's dishes" : "not resolved, or the init failed");
+        }
+        AnswerRefused(slot, line, kErrLine);
+        return;
+    }
+    // The console's panel: none is a real answer (a terminal no panel named), a name that does not resolve here
+    // is not, and the line does not run against no panel in its place.
+    void* panel = used.empty() ? nullptr : SC::FindPanelByName(used);
+    if ((!used.empty() && !panel) || !SC::WriteUsed(t->pin.Raw(), panel)) {
+        if (!g_saidNoContext[slot]) {
+            g_saidNoContext[slot] = true;
+            UE_LOGW("sat_console: HOST no panel '%ls' for slot %u's line -- answered err", Printable(used).c_str(),
+                    static_cast<unsigned>(slot));
+        }
+        AnswerRefused(slot, line, kErrLine);
+        return;
+    }
+    if (spawns) ty.nextSpawnOk = now + kSpawnEvery;
+    UE_LOGI("sat_console: HOST runs '%ls' for slot %u at console '%ls' (dish %d)", Printable(line).c_str(),
+            static_cast<unsigned>(slot), used.c_str(), dish);
+    if (!SC::RunCommand(t->pin.Raw(), line)) {
+        AnswerRefused(slot, line, kErrLine);
+        return;
+    }
+    t->running = line;
+    t->logDirty = t->busyDirty = true;
+    if (slot != 0) ++g_counts.linesRun;
+}
+
 void HostOnBlob(uint8_t slot, const std::vector<uint8_t>& blob) {
     size_t o = 0;
     uint8_t op = 0;
@@ -383,113 +610,154 @@ void HostOnBlob(uint8_t slot, const std::vector<uint8_t>& blob) {
         }
         return;
     }
-    const std::string& guid = coop::player_handshake::GuidForSlot(slot);
-    Terminal* t = guid.empty() ? nullptr : TerminalFor(slot, guid);
-    if (!t) {
-        if (!g_saidNoTerminal[slot]) {
-            g_saidNoTerminal[slot] = true;
-            UE_LOGW("sat_console: HOST no terminal for slot %u (%s) -- its lines are answered err",
-                    static_cast<unsigned>(slot), guid.empty() ? "its identity not in yet" : "none could be made");
-        }
-        AnswerRefused(slot, line, kErrLine);
-        return;
+    HostRunLine(slot, dish, name, used, line);
+}
+
+// The ROOT console's terminal, in its own context, for the alerts.
+Terminal* RootTerminal() {
+    void* root = SC::RootPanel();
+    if (!root) return nullptr;
+    Terminal* t = TerminalFor(SC::PanelName(root));
+    if (!t) return nullptr;
+    // A ROOT console made by a typist's line has its context already, and may be running that line.
+    if (!t->haveContext && (ApplyContext(*t, kNoDish, L"root") != Context::Ready || !SC::WriteUsed(t->pin.Raw(), root)))
+        return nullptr;
+    return t;
+}
+
+void DrainHostWork() {
+    while (!g_hostLines.empty()) {
+        HostLine l = std::move(g_hostLines.front());
+        g_hostLines.pop_front();
+        HostRunLine(0, l.dish, l.name, l.used, l.line);
     }
+    if (!g_rootLines.empty()) {
+        Terminal* t = RootTerminal();
+        UE_LOGI("sat_console: HOST %zu alert line(s) onto the ROOT console%s", g_rootLines.size(),
+                t ? "" : " -- no ROOT console here, dropped");
+        while (!g_rootLines.empty()) {
+            if (t) SC::CallWriteToLog(t->pin.Raw(), g_rootLines.front().first, g_rootLines.front().second);
+            g_rootLines.pop_front();
+        }
+    }
+}
+
+int64_t StuckAfterSecs() {
+    static const int64_t v = [] {
+        const std::string e = coop::config::ReadEnv("VOTVCOOP_SAT_LOCK_TIMEOUT_S");
+        const long n = e.empty() ? 0 : std::strtol(e.c_str(), nullptr, 10);
+        return n > 0 ? static_cast<int64_t>(n) : kStuckAfterSecs;
+    }();
+    return v;
+}
+
+// Each console's level and lines, read only when its watches marked them and sent as they change, its lines at most
+// four times a second. A console busy past its bound is stuck: its terminal goes, its lines kept for the next.
+void HostTellConsoles() {
     const auto now = Clock::now();
-    if (now - t->windowStart >= kWindow) {
-        t->windowStart = now;
-        t->lines = 0;
-    }
-    const bool spawns = T::SpawnsEveryCall(line);
-    if (++t->lines > kLinesPerWindow || (spawns && now < t->nextSpawnOk)) {
-        AnswerRefused(slot, line, kBusyLine);  // the terminal cannot take the line, as the game says it
-        return;
-    }
-    // A terminal still running a command keeps its context: its latent continuation reads the dish,
-    // name and panel it started with. The game's own terminal refuses a line while busy, so does this.
-    bool busy = false;
-    const bool readOk = SC::ReadProcessing(t->pin.Raw(), busy);
-    if (!readOk || busy) {
-        AnswerRefused(slot, line, readOk ? kBusyLine : kErrLine);   // an unreadable flag is not "busy"
-        return;
-    }
-    // The line runs only in the context it names. One that cannot be set up is answered err and not
-    // retried: a command with an effect in the world must not run twice.
-    const Context ctx = ApplyContext(*t, dish < kNoDish ? kNoDish : dish, name);
-    if (ctx != Context::Ready) {
-        if (!g_saidNoContext[slot]) {
-            g_saidNoContext[slot] = true;
-            UE_LOGW("sat_console: HOST no context for slot %u's line (dish %d: %s) -- answered err",
-                    static_cast<unsigned>(slot), dish,
-                    ctx == Context::Bad ? "past the host's dishes" : "not resolved, or the init failed");
+    for (size_t i = 0; i < g_terms.size();) {
+        Terminal& t = g_terms[i];
+        void* term = t.pin.Raw();
+        if (t.busyDirty) {
+            t.busyDirty = false;
+            bool busy = false;
+            if (SC::ReadProcessing(term, busy)) {
+                if (!busy && !t.running.empty()) {
+                    UE_LOGI("sat_console: HOST console '%ls' finished '%ls'", t.panel.c_str(), Printable(t.running).c_str());
+                    t.running.clear();
+                }
+                if (busy != t.busySent) {
+                    t.busySent = busy;
+                    if (busy) t.busySince = now;
+                    ToReadyClients([&](uint8_t slot) { SendBusy(slot, t.panel, busy); });
+                    ApplyBusy(t.panel, busy);
+                }
+            }
         }
-        AnswerRefused(slot, line, kErrLine);
-        return;
-    }
-    // The panel the typist last used: none is a real answer (ROOT), a name that does not resolve here
-    // is not, and the line does not run against no panel in its place.
-    void* panel = used.empty() ? nullptr : SC::FindPanelByName(used);
-    if ((!used.empty() && !panel) || !SC::WriteUsed(t->pin.Raw(), panel)) {
-        if (!g_saidNoContext[slot]) {
-            g_saidNoContext[slot] = true;
-            UE_LOGW("sat_console: HOST no panel '%ls' for slot %u's line -- answered err",
-                    Printable(used).c_str(), static_cast<unsigned>(slot));
+        if (t.logDirty && now >= t.nextShow) {
+            t.logDirty = false;
+            std::wstring log;
+            if (SC::ReadLog(term, log) && log != t.logSent) {
+                if (log.size() > kMaxLogChars) log.erase(0, log.size() - kMaxLogChars);
+                t.logSent = log;
+                g_history[t.panel] = log;
+                t.nextShow = now + kShowEvery;
+                ToReadyClients([&](uint8_t slot) { SendShow(slot, t.panel, log); });
+                ApplyShow(t.panel, log);
+            }
         }
-        AnswerRefused(slot, line, kErrLine);
-        return;
+        if (t.busySent && now - t.busySince >= std::chrono::seconds(StuckAfterSecs())) {
+            UE_LOGW("sat_console: HOST console '%ls' busy for %lld s running '%ls' -- its terminal stopped, its lock freed",
+                    t.panel.c_str(), static_cast<long long>(StuckAfterSecs()), Printable(t.running).c_str());
+            DiscardAt(i);
+            continue;
+        }
+        ++i;
     }
-    if (spawns) t->nextSpawnOk = now + kSpawnEvery;
-    UE_LOGI("sat_console: HOST runs '%ls' for slot %u (dish %d)", Printable(line).c_str(),
-            static_cast<unsigned>(slot), dish);
-    if (!SC::RunCommand(t->pin.Raw(), line)) {
-        AnswerRefused(slot, line, kErrLine);
-        return;
-    }
-    ++g_counts.linesRun;
 }
 
-// Every write of a terminal's busy flag lies in its enterCommand or its ubergraph, the latent
-// continuations included, so the level is read after each and sent when it moved.
-void HostAfterBody(Terminal& t) {
-    bool busy = false;
-    if (t.slot < 0 || !SC::ReadProcessing(t.pin.Raw(), busy) || busy == t.busySent) return;
-    t.busySent = busy;
-    SendBusy(static_cast<uint8_t>(t.slot), busy);
-}
-
+// An alert writes into the shown terminal, whichever console it shows: on the host the line is the ROOT
+// console's, written there from Tick, and on a client the host's ROOT console carries it.
 sg::Verdict OnWritePre(const sg::Call& c) {
-    if (!SessionIf(coop::net::Role::Host)) return sg::Verdict::Run;
-    Terminal* t = ByObject(c.object);
-    if (!t || t->slot < 0) return sg::Verdict::Run;  // the host's own terminal, or no typist to show it to
-    std::wstring text;
-    uint8_t type = 0;
-    if (!SC::ReadWriteToLogArgs(c.locals, text, type)) return sg::Verdict::Run;
-    if (text.size() > kMaxLogChars) text.resize(kMaxLogChars);
-    SendLog(static_cast<uint8_t>(t->slot), text, type);
-    ++g_counts.linesReturned;
+    if (SessionIf(coop::net::Role::Host))
+        if (Terminal* t = ByObject(c.object)) {
+            t->logDirty = true;  // read once the write ran, from Tick
+            return sg::Verdict::Run;
+        }
+    if (g_alertDepth <= 0 || !c.object || c.object != SC::LocalTerminal()) return sg::Verdict::Run;
+    if (SessionIf(coop::net::Role::Host)) {
+        std::wstring text;
+        uint8_t type = 0;
+        if (SC::ReadWriteToLogArgs(c.locals, text, type) && g_rootLines.size() < kOutboxCap) {
+            if (text.size() > kMaxLogChars) text.resize(kMaxLogChars);
+            g_rootLines.emplace_back(std::move(text), type);
+        }
+        return sg::Verdict::Cancel;
+    }
+    return SessionIf(coop::net::Role::Client) ? sg::Verdict::Cancel : sg::Verdict::Run;
+}
+
+sg::Verdict OnAlertPre(const sg::Call&) {
+    ++g_alertDepth;
     return sg::Verdict::Run;
 }
 
-void OnBodyPost(const sg::Call& c) {
-    if (SessionIf(coop::net::Role::Host)) {
-        if (Terminal* t = ByObject(c.object)) HostAfterBody(*t);
-    } else if (SessionIf(coop::net::Role::Client)) {
-        if (c.object == SC::LocalTerminal()) ClientAfterLocalBody(c.object);
-    }
+void OnAlertPost(const sg::Call&) {
+    if (g_alertDepth > 0) --g_alertDepth;
 }
 
-// The three watches stand or fall together: a line refused on a client whose answers no watch would send
-// back would vanish.
+void OnBodyPost(const sg::Call& c) {
+    if (SessionIf(coop::net::Role::Host))
+        if (Terminal* t = ByObject(c.object)) {
+            t->busyDirty = true;
+            return;
+        }
+    if (!SessionIf(coop::net::Role::Host) && !SessionIf(coop::net::Role::Client)) return;
+    if (c.object && c.object == SC::LocalTerminal()) AfterLocalBody(c.object);
+}
+
+// The three terminal watches stand or fall together: a line refused at a terminal whose console no watch would
+// show would vanish. The alert watches are their own: without them an alert shows on whichever console is up.
 void EnsureWatched() {
     if (g_watched) return;
     g_watched = true;
     const bool enter = sg::WatchName(kRowEnterCommand, kTagEnter, OnEnterPre, OnBodyPost);
     const bool graph = sg::WatchName(kRowUbergraph, kTagGraph, nullptr, OnBodyPost);
     const bool write = sg::WatchName(kRowWriteToLog, kTagWrite, OnWritePre, nullptr);
-    if (enter && graph && write) return;
-    if (enter) sg::UnwatchName(kRowEnterCommand, kTagEnter, OnEnterPre, OnBodyPost);
-    if (graph) sg::UnwatchName(kRowUbergraph, kTagGraph, nullptr, OnBodyPost);
-    if (write) sg::UnwatchName(kRowWriteToLog, kTagWrite, OnWritePre, nullptr);
-    UE_LOGE("sat_console: a terminal watch did not register -- none kept, the SAT console's lines run where typed");
+    if (!(enter && graph && write)) {
+        if (enter) sg::UnwatchName(kRowEnterCommand, kTagEnter, OnEnterPre, OnBodyPost);
+        if (graph) sg::UnwatchName(kRowUbergraph, kTagGraph, nullptr, OnBodyPost);
+        if (write) sg::UnwatchName(kRowWriteToLog, kTagWrite, OnWritePre, nullptr);
+        UE_LOGE("sat_console: a terminal watch did not register -- none kept, the SAT console's lines run where typed");
+        return;
+    }
+    const bool a1 = sg::WatchName(kRowServerBroken, kTagAlert, OnAlertPre, OnAlertPost);
+    const bool a2 = sg::WatchName(kRowTowerBroken, kTagAlert, OnAlertPre, OnAlertPost);
+    const bool a3 = sg::WatchName(kRowCoordBroken, kTagAlert, OnAlertPre, OnAlertPost);
+    const bool a4 = sg::WatchName(kRowServerAlert, kTagAlert, OnAlertPre, OnAlertPost);
+    if (!(a1 && a2 && a3 && a4))
+        UE_LOGW("sat_console: an alert watch did not register (server=%d tower=%d coord=%d panel=%d) -- that alert "
+                "shows on whichever console is up", a1 ? 1 : 0, a2 ? 1 : 0, a3 ? 1 : 0, a4 ? 1 : 0);
 }
 
 }  // namespace
@@ -519,6 +787,13 @@ void Tick() {
             DiscardAt(i);
         }
     }
+    if (s->connected()) {
+        if (s->role() == coop::net::Role::Host) {
+            DrainHostWork();
+            HostTellConsoles();
+        }
+        FollowShown();
+    }
     if (!g_asm.Idle() && now >= g_nextSweep) {
         g_nextSweep = now + std::chrono::seconds(1);
         g_asm.Sweep(now, std::chrono::seconds(10));
@@ -545,31 +820,41 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 
 void OnPeerWorldReady(int slot) {
     if (!SessionIf(coop::net::Role::Host) || slot < 1 || slot >= kMaxPeers) return;
-    const std::string& guid = coop::player_handshake::GuidForSlot(slot);
-    if (guid.empty()) return;
-    if (Terminal* t = ByGuid(guid))
-        if (t->slot != slot) Rebind(*t, static_cast<uint8_t>(slot));
+    // Every console's lines and level, so a joiner's consoles show what they ran before it came.
+    for (Terminal& t : g_terms) {
+        SendShow(static_cast<uint8_t>(slot), t.panel, t.logSent);
+        SendBusy(static_cast<uint8_t>(slot), t.panel, t.busySent);
+        ++g_counts.rebinds;
+        if (t.busySent) ++g_counts.busyRebinds;
+    }
+    if (!g_terms.empty())
+        UE_LOGI("sat_console: HOST slot %d's world is ready -- %zu console(s) sent to it", slot, g_terms.size());
 }
 
 void OnPeerGone(uint8_t slot) {
     if (slot >= kMaxPeers) return;
     g_asm.ClearSlot(slot);
     g_out[slot] = Outbox{};
+    g_typists[slot] = Typist{};
     g_saidRefused[slot] = g_saidMalformed[slot] = g_saidNoTerminal[slot] = g_saidNoContext[slot] = false;
-    for (Terminal& t : g_terms) {
-        if (t.slot != slot) continue;
-        t.slot = -1;  // its command, if any, runs to its end; the terminal waits for its typist
-        UE_LOGI("sat_console: HOST slot %u left -- its terminal kept", static_cast<unsigned>(slot));
-    }
 }
 
 void OnDisconnect() {
-    // A busy flag this terminal holds only as the host's mirror goes with the session.
-    if (g_mirrorBusy && !g_localHolds)
+    // A busy flag this terminal holds only as the shown console's goes with the session.
+    if (ShownBusy() && !g_localHolds)
         if (void* term = SC::LocalTerminal()) SC::WriteProcessing(term, false);
-    g_mirrorBusy = g_localHolds = false;
+    g_localHolds = false;
+    g_hostLines.clear();
+    g_rootLines.clear();
+    g_alertDepth = 0;
     while (!g_terms.empty()) DiscardAt(g_terms.size() - 1);
+    g_screens.clear();
+    g_history.clear();
+    g_shown.clear();
+    g_shownPanel = nullptr;
+    g_haveShown = false;
     for (auto& o : g_out) o = Outbox{};
+    for (auto& t : g_typists) t = Typist{};
     for (bool& b : g_saidRefused) b = false;
     for (bool& b : g_saidMalformed) b = false;
     for (bool& b : g_saidNoTerminal) b = false;

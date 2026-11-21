@@ -412,7 +412,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // must not survive into a recycled occupant.
     coop::floppy_slot_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::dish_hashcode_sync::OnPeerGone(static_cast<uint8_t>(slot));
-    coop::sat_console_sync::OnPeerGone(static_cast<uint8_t>(slot));  // its terminal kept, running its command, for its return
+    coop::sat_console_sync::OnPeerGone(static_cast<uint8_t>(slot));  // its chunks, owed blobs and pace; the consoles it used run on
     coop::daily_task_sync::OnPeerGone(static_cast<uint8_t>(slot));  // a departed slot is owed no task
     coop::kerfur_command_wire::OnPeerGone(static_cast<uint8_t>(slot));  // a kerfur command it had half sent
     coop::garbage_bin_sync::OnPeerGone(static_cast<uint8_t>(slot));  // a replay it was still owed

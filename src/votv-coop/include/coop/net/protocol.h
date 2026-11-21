@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 315;
+inline constexpr uint16_t kProtocolVersion = 316;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -967,11 +967,12 @@ enum class ReliableKind : uint16_t {
     // Never relayed. ServerUpgradeStatePayload.
     ServerUpgradeState = 156,
 
-    // The SAT console's shared commands. Client to host: a typed line whose command rests on the shared
-    // world, with its terminal's context (its dish or ROOT, its name, the panel last used); the host
-    // runs the line on a terminal it keeps for that client. Host to that client alone: each line that
-    // terminal prints, and each change of its busy flag. Never relayed; a joiner
-    // has nothing to replay. BlobChunkPayload: [u8 op] then the op's fields (sat_console_sync).
+    // The SAT consoles' shared commands. Client to host: a typed line whose command rests on the shared
+    // world, with its terminal's context (its dish or ROOT, its name, the panel last used, which names the
+    // console); the host runs the line on the terminal it keeps for that console. Host to every client: each
+    // console's printed lines and its busy flag as they change, and to the typist alone the answer to a line
+    // it refused. Never relayed; a joiner gets every console's lines and flag at its world-ready.
+    // BlobChunkPayload: [u8 op] then the op's fields (sat_console_sync).
     SatConsole = 157,
 
     // Client to host: the dishes whose precision this client's player just set with a verb of its

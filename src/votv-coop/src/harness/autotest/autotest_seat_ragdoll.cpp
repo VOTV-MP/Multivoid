@@ -51,7 +51,12 @@ constexpr int kBackstopSec = 10;  // a bound says INVALID only: every verdict is
 std::string Device() {
     return coop::config::ResolveEnum(coop::config_registry::rows::seat_ragdoll_device);
 }
-const wchar_t* Key() { return Device() == "desk" ? L"desk" : Device() == "sat" ? L"sat" : L"laptop"; }
+void* DeviceWidget();
+// A SAT console's claim is its own console's: the key the shared terminal names as the player enters it.
+std::wstring Key() {
+    if (Device() == "sat") return ue_wrap::device_screen::ClassifyWidgetClaimKey(DeviceWidget());
+    return Device() == "desk" ? L"desk" : L"laptop";
+}
 
 // The device's widget: the laptop's, or the first live instance of the desk's or the SAT console's shared widget.
 void* DeviceWidget() {
@@ -80,7 +85,7 @@ bool EnterDevice() {
 
 unsigned Holder() {
     unsigned h = 0xFF;
-    OnGameThread([&] { h = coop::device_occupancy::HolderOf(Key()); });
+    OnGameThread([&] { h = coop::device_occupancy::HolderOf(Key().c_str()); });
     return h;
 }
 
@@ -143,7 +148,7 @@ bool HoldsToPingEnd(char& freed) {
         uint8_t ping = 0xFF;
         bool free = false;
         OnGameThread([&] {
-            free = coop::device_occupancy::HolderOf(Key()) == 0xFF;
+            free = coop::device_occupancy::HolderOf(Key().c_str()) == 0xFF;
             ping = coop::desk_input_sync::PingActiveSlot();
         });
         if (ping == 0xFF) {

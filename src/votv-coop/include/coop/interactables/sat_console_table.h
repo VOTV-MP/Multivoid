@@ -20,4 +20,13 @@ Runs Classify(const std::wstring& line);
 // box, a rufus, a thiccfus): the host holds a typist to its own budget of these.
 bool SpawnsEveryCall(const std::wstring& line);
 
+// Whether `line` may not start at one console while another console runs `running`: a long command that writes
+// what the other one writes. sd.calall writes every dish, so it waits for every other calibration; sd.cal writes
+// its own console's dish, so it waits only for an sd.calall. Every other command runs at each console on its own:
+// a read, one that finishes at once, or one whose effect is its console's own server (sv.request, sv.eject).
+bool Conflicts(const std::wstring& line, const std::wstring& running);
+
+// The command of a line, as enterCommand splits it.
+std::wstring CommandOf(const std::wstring& line);
+
 }  // namespace coop::sat_console_table

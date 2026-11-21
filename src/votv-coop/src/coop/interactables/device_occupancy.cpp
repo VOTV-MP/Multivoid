@@ -23,6 +23,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/desk/dish.h"         // a SAT console named by its dish
+#include "ue_wrap/desk/sat_console.h"  // the dish a SAT console's panel controls
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
@@ -93,13 +95,22 @@ constexpr auto kLineCooldown = std::chrono::seconds(3);
 // announce, ungated by the cosmetic peer-actions chat toggle: deny feedback is functional,
 // since without it the deny is a bare click. An empty device name falls back to the claim
 // key.
+// A SAT console by the dish its panel controls, as its terminal's title names it; the ROOT console has none.
+std::wstring SatConsoleName(void* panel) {
+    void* dish = ue_wrap::sat_console::PanelDish(panel);
+    const int32_t i = dish ? ue_wrap::dish::IndexOf(dish) : -1;
+    return i >= 0 ? L"the SAT console " + ue_wrap::dish::TechName(i) : std::wstring(L"the ROOT SAT console");
+}
+
 void PushBusyLine(const std::wstring& key, const std::wstring& deviceName, uint8_t holder) {
     const auto now = std::chrono::steady_clock::now();
     if (key == g_lastLineKey && now - g_lastLineTime < kLineCooldown) return;
     g_lastLineKey = key;
     g_lastLineTime = now;
+    // A SAT console's key is a hash: without the aimed panel's name the line says what it is.
+    const std::wstring fallback = key.rfind(L"sat_", 0) == 0 ? std::wstring(L"a SAT console") : key;
     coop::peer_action_feed::AnnounceDirect(holder, coop::peer_action_feed::Action::UsingDevice,
-                                           deviceName.empty() ? key : deviceName);
+                                           deviceName.empty() ? fallback : deviceName);
 }
 
 bool g_observersInstalled = false;
@@ -272,6 +283,29 @@ void ForceExitLocal(void* local, const std::wstring& key, uint8_t holder) {
     PushBusyLine(key, fresh ? g_memoName : std::wstring(), holder);
 }
 
+// A SAT console's refusal waits a few ticks before it exits the player: the panel's own use enters the terminal
+// three frames after the interface (panel_SATconsole_C: delayframes 3, then the widget's enter), and an exit
+// before that left the next console entered closed again at once. Other devices exit at once, as before.
+constexpr uint64_t kSatExitTicks = 10;
+struct LaterExit {
+    std::wstring key;
+    uint8_t holder = 0xFF;
+    uint64_t due = 0;
+};
+LaterExit g_laterExit;
+
+// Exit the local player from `key`, which `holder` holds: now, or a SAT console's a few ticks later.
+void DenyExit(void* local, const std::wstring& key, uint8_t holder) {
+    if (key.rfind(L"sat_", 0) == 0) {
+        g_localKey.clear();
+        g_pendingSend = false;
+        g_laterExit = LaterExit{key, holder, coop::net_pump::TickSerial() + kSatExitTicks};
+        return;
+    }
+    ForceExitLocal(local, key, holder);
+    g_localWidget = DS::ReadActiveInterface(local);
+}
+
 // The use-input deny gate (pre clears the aim, post restores). Both roles: any peer aiming
 // the use key at a device the wire says another peer holds gets the native chain no-opped
 // and the deny click. The door's discipline: leak-restore first in pre (a faulted dispatch
@@ -311,7 +345,7 @@ void OnUseInputPre(void* self, void*, void*) {
     // The aim memo is written unconditionally, before the busy check: the rising-edge and
     // lost-race denies see the table free at this press, so a deny-gated write would leave
     // exactly those surfaces nameless.
-    g_memoName = R::ToString(R::NameOf(aimed));
+    g_memoName = key.rfind(L"sat_", 0) == 0 ? SatConsoleName(aimed) : R::ToString(R::NameOf(aimed));
     g_memoKey = key;
     g_memoLastTick = coop::net_pump::TickSerial() + kMemoFreshTicks;
     uint8_t holder = 0xFF;
@@ -396,10 +430,21 @@ void Tick() {
         g_localWidget = nullptr;
         g_pendingSend = false;
         g_holdPending = false;
+        g_laterExit = LaterExit{};
         return;
     }
 
     const uint8_t mySlot = LocalSlot();
+
+    // A SAT console's refusal, due: the player is exited now, whichever interface it shows.
+    if (!g_laterExit.key.empty() && coop::net_pump::TickSerial() >= g_laterExit.due) {
+        const LaterExit e = std::move(g_laterExit);
+        g_laterExit = LaterExit{};
+        if (DS::ReadActiveInterface(local)) ForceExitLocal(local, e.key, e.holder);
+        g_localWidget = DS::ReadActiveInterface(local);
+        return;
+    }
+    if (!g_laterExit.key.empty()) return;  // the refused screen stays up until its exit
 
     // The pending claim retry: the rising edge fired before the slot was assigned or before the
     // channel accepted the send (a menu-window client). The falling edge clears this, so a retry
@@ -448,8 +493,8 @@ void Tick() {
                 // Known busy locally: lose immediately, no round-trip.
                 UE_LOGI("device_occupancy: entered '%ls' but slot %u holds it -- immediate deny",
                         key.c_str(), static_cast<unsigned>(holder));
-                ForceExitLocal(local, key, holder);
-                g_localWidget = DS::ReadActiveInterface(local);  // null after force-exit
+                DenyExit(local, key, holder);
+                if (!g_laterExit.key.empty()) g_localWidget = w;  // the exit comes later; this is no new edge
                 return;
             }
             g_localKey = key;
@@ -559,8 +604,7 @@ void OnReliable(const coop::net::DeviceClaimPayload& p, uint8_t senderSlot) {
             if (local) {
                 UE_LOGI("device_occupancy: lost '%ls' to slot %u -- force-exiting",
                         key.c_str(), static_cast<unsigned>(p.slot));
-                ForceExitLocal(local, key, p.slot);
-                g_localWidget = DS::ReadActiveInterface(local);
+                DenyExit(local, key, p.slot);
             } else {
                 ClaimEnded(g_localKey);
                 g_localKey.clear();  // world down -- nothing to exit
@@ -657,6 +701,7 @@ void OnDisconnect() {
     g_localWidget = nullptr;
     g_pendingSend = false;
     g_denyPending = false;
+    g_laterExit = LaterExit{};
     g_denyHolder = 0xFF;
     g_denyName.clear();
     g_memoName.clear();      // busy-notice aim memo (session-end full teardown)
