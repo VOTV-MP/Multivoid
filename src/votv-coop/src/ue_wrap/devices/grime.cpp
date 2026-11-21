@@ -12,6 +12,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine_component.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <cmath>
@@ -199,6 +200,13 @@ bool ReadResistRain(void* grime, bool& out) {
     static int32_t off = -1;
     static uint8_t mask = 0;
     return ReadBoolField(grime, L"resistRain", cls, off, mask, out);
+}
+
+bool ReadWinter(bool& out) {
+    static void* cls = nullptr;
+    static int32_t off = -1;
+    static uint8_t mask = 0;
+    return ReadBoolField(ue_wrap::world_singleton::Gamemode(), L"isWinter", cls, off, mask, out);
 }
 
 size_t ForEachDecal(DecalFn fn, void* ctx) {

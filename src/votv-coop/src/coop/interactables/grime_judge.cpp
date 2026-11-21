@@ -190,6 +190,11 @@ Route RainRoute(coop::net::Session& s, uint8_t slot, const std::wstring& key, vo
     const bool raining = coop::weather_rain::ReadLocalIsRaining(&found) && found;
     applicable = raining;
     if (!raining) { r.why = "the host is not raining"; return r; }
+    // The rain's pass does nothing in winter: it returns when getSeason reads 2 (lines 1593-1597 of the daynightCycle dump),
+    // which the gamemode's isWinter holds, Christmas included.
+    bool winter = false;
+    if (!G::ReadWinter(winter)) { r.why = "the season does not read"; return r; }
+    if (winter) { r.why = "winter: the rain's pass cleans nothing"; return r; }
     bool resist = false;
     bool cleanable = false;
     float cleanStrength = 1.0f;
@@ -363,12 +368,15 @@ void SettleSeam() {
     g_seamSettled = true;
     const ue_wrap::facts::Resolved fn = ue_wrap::facts::ResolveOn(kRowK2Destroy, actorCls);
     if (!fn || !UH::InstallPreHook(fn, &OnDestroyPre, /*armed=*/false)) {
-        UE_LOGE("grime_judge: the K2_DestroyActor pre hook did not go on -- a client's last stroke destroys its decal "
-                "before the host is asked");
+        UE_LOGE("grime_judge: the K2_DestroyActor pre hook did not go on (a full native hook table says so in its own line "
+                "above) -- a client's last stroke destroys its decal before the host is asked");
         return;
     }
     g_seamFn = fn.Fn();
-    UE_LOGI("grime_judge: the client's destroy hold is on K2_DestroyActor @ %p", g_seamFn);
+    int patched = 0;
+    UH::DebugForEachHook([](void* ctx, void*, bool) { ++*static_cast<int*>(ctx); }, &patched);
+    UE_LOGI("grime_judge: the client's destroy hold is on K2_DestroyActor @ %p (%d native hook slot(s) in use with it)", g_seamFn,
+            patched);
 }
 
 }  // namespace

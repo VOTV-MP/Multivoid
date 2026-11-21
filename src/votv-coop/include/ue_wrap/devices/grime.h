@@ -63,6 +63,9 @@ bool ReadResistRain(void* grime, bool& out);
 // a tick. Game thread.
 using DecalFn = void (*)(void* ctx, void* decal);
 size_t ForEachDecal(DecalFn fn, void* ctx);
+// The gamemode's `isWinter`: the season is winter (or it is Christmas, which sets the season to winter), when the rain's
+// own pass runs no cleaning. False when the gamemode or the field does not read. Game thread.
+bool ReadWinter(bool& out);
 // True iff `obj` is a grime_crack_C (or a descendant): the decal the wall fixer repairs.
 bool IsCrack(void* obj);
 // The decal's `Box` component, the volume every cleaning verb's overlap tests: its world centre and half the length of
