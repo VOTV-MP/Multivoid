@@ -18,6 +18,7 @@
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/media_device.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -36,6 +37,9 @@ using Clock = std::chrono::steady_clock;
 constexpr auto kPoll = std::chrono::milliseconds(250);
 constexpr auto kHeartbeat = std::chrono::seconds(5);  // a late copy's time, a joiner's first state
 constexpr auto kPredictFor = std::chrono::seconds(3);  // this client's own edit stands until the host has answered
+constexpr uint8_t kOpenFree = 3;   // openLink calls for one state before the wait between them
+constexpr auto kOpenWait = std::chrono::seconds(2);
+constexpr auto kOpenWaitMax = std::chrono::seconds(60);
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 Clock::time_point g_nextPoll{};
@@ -55,6 +59,12 @@ struct Want {
     Clock::time_point predictUntil{};
     bool have = false;
     bool warned = false;
+    // This copy's openLink calls for the state it holds that have not come to Done, and the earliest the next may run:
+    // an open that never takes (a link this peer's player cannot reach) was asked again every poll, each one restarting
+    // the track. Past kOpenFree the wait doubles from kOpenWait to kOpenWaitMax; a new state or a Done clears it.
+    uint8_t opens = 0;
+    Clock::time_point openAfter{};
+    uint64_t openedFor = 0;   // the track those opens were for
     MD::State seen;
     bool seenAny = false;
 };
@@ -209,14 +219,28 @@ void PollClient(coop::net::Session& s, const std::vector<void*>& radios, Clock::
         MD::State target = want.state;
         if (target.playing)
             target.ticks += std::chrono::duration_cast<std::chrono::microseconds>(now - want.at).count() * 10;
-        const MD::Apply result = MD::ApplyState(actor, target);
+        if (now < want.openAfter) continue;
+        bool opened = false;
+        const MD::Apply result = MD::ApplyState(actor, target, &opened);
+        if (opened && ++want.opens > kOpenFree) {
+            const int doublings = std::min<int>(want.opens - kOpenFree - 1, 5);
+            const auto wait = std::min<Clock::duration>(kOpenWait * (1 << doublings), kOpenWaitMax);
+            want.openAfter = now + wait;
+            if (want.opens == kOpenFree + 1)
+                UE_LOGW("media_device_sync: '%ls' was opened %u times here and did not play the host's track -- asked "
+                        "again less often", key.c_str(), static_cast<unsigned>(kOpenFree));
+        }
         if (result == MD::Apply::NoSuchTrack && !want.warned) {
             want.warned = true;
             ++g_missing;
             UE_LOGI("media_device_sync: '%ls' plays a track this peer cannot open (not in its catalog, or Custom Content off) -- "
                     "silent here", key.c_str());
         }
-        if (result == MD::Apply::Done) want.warned = false;
+        if (result == MD::Apply::Done) {
+            want.warned = false;
+            want.opens = 0;
+            want.openAfter = {};
+        }
     }
 }
 
@@ -245,6 +269,11 @@ void OnState(int senderSlot, const coop::net::MediaDeviceStatePayload& p) {
         want.state = Decode(p);
         want.at = Clock::now();
         want.have = true;
+        if (want.state.track != want.openedFor) {   // another track: its opens are its own
+            want.openedFor = want.state.track;
+            want.opens = 0;
+            want.openAfter = {};
+        }
         ++g_applied;
         return;
     }

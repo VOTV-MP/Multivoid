@@ -277,7 +277,7 @@ bool Read(void* actor, State& out) {
     return true;
 }
 
-Apply ApplyState(void* actor, const State& state) {
+Apply ApplyState(void* actor, const State& state, bool* opened) {
     const Kind kind = KindOf(actor);
     if (kind == Kind::None || !Layout(actor)) return Apply::Waiting;
     const int32_t data = g_data.Of(actor), mode = g_mode.Of(actor), pause = g_pause.Of(actor);
@@ -310,6 +310,7 @@ Apply ApplyState(void* actor, const State& state) {
         void* const open = R::FindDispatchFunctionCached(R::ClassOf(actor), L"openLink");
         if (open) {
             ParamFrame f(open);
+            if (opened) *opened = true;
             if (f.valid() && f.SetRaw(L"data", found, g_stride) && f.Set<bool>(L"pausePlayer", !state.playing)) Call(actor, f);
         }
         return Apply::Waiting;
