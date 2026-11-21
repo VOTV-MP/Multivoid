@@ -372,6 +372,10 @@ void* ResolveCargoLift(const std::wstring& key) {
     return g_cargoLift.ActorForKey(key);
 }
 
+void LiveCargoLifts(std::vector<std::pair<std::wstring, void*>>& out) { g_cargoLift.LiveIndexed(out); }
+
+uint64_t CargoLiftIndexPasses() { return g_cargoLift.Passes(); }
+
 void OnCargoLiftVerb(void* lift) { g_cargoLift.OnLocalEdge(lift); }
 
 void ResendCargoLiftsTo(uint8_t slot) { g_cargoLift.QueueConnectBroadcastForSlot(slot); }

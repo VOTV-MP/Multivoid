@@ -81,6 +81,11 @@ std::wstring CargoLiftKey(void* lift);
 // The live cargo lift the lane indexes under `key` in the current world, or null. Game thread.
 void* ResolveCargoLift(const std::wstring& key);
 
+// Every cargo lift the lane indexes now, key and actor (empty with a stale index), and the hub passes its index has
+// completed: a table built from the list is stale once the pass count or the world moves. Game thread.
+void LiveCargoLifts(std::vector<std::pair<std::wstring, void*>>& out);
+uint64_t CargoLiftIndexPasses();
+
 // Host: a cargo lift's press just ran; the lane sends the direction it left when that changed. Game thread.
 void OnCargoLiftVerb(void* lift);
 

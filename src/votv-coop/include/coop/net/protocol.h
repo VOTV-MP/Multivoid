@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 315;
+inline constexpr uint16_t kProtocolVersion = 316;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1680,8 +1680,20 @@ struct PoseSnapshot {
     uint8_t healthFrac;  // health / maxHealth, quantized 0..255 (maxHealth is per-peer)
     uint8_t foodFrac;    // food  / kVitalScalarMax, quantized 0..255
     uint8_t sleepFrac;   // sleep / kVitalScalarMax, quantized 0..255
+    // The base the player stands on (coop/player/pose_bases): a registered mover, today the cargo lift's platform; any other
+    // base is sent as none. baseId is the FNV-1a 32 of the mover's portable interactable key, meaningful with kMover only;
+    // bx, by, bz the player's position minus the mover's reference location, world axes, no rotation (MTA's contact offset,
+    // CNetAPI.cpp:1160-1168) -- x, y, z stay the absolute position, so a reader that knows no base reads the pose as before.
+    // All zero with kNone; _pad is zero and ValidatePose refuses anything else.
+    uint32_t baseId;
+    float   bx, by, bz;
+    uint8_t baseKind;
+    uint8_t _pad[3];
 };
-static_assert(sizeof(PoseSnapshot) == 32, "PoseSnapshot must be 32 bytes");
+static_assert(sizeof(PoseSnapshot) == 52, "PoseSnapshot must be 52 bytes");
+
+// PoseSnapshot.baseKind values.
+namespace pose_base_kind { constexpr uint8_t kNone = 0; constexpr uint8_t kMover = 1; }
 
 // PropSpawnPayload.hasMatchPos values.
 namespace match_form { constexpr uint8_t kNone = 0; constexpr uint8_t kPile = 1; constexpr uint8_t kClump = 2; }
@@ -1714,7 +1726,7 @@ struct PosePacket {
     PacketHeader header;
     PoseSnapshot pose;
 };
-static_assert(sizeof(PosePacket) == 52, "PosePacket must be 52 bytes");
+static_assert(sizeof(PosePacket) == 72, "PosePacket must be 72 bytes");
 
 // A reliable message: the standard header (type Reliable) + ReliableHeader + the payload. `kind` took the first of
 // the three pad bytes that followed it when it was one byte; the builder zeroes the header, so a kind below 256 is
@@ -5290,6 +5302,8 @@ inline constexpr int kMaxReliablePayload = kMaxPacketBytes - 20 - 8;
 // is a few km; +/-1e6 cm (10 km) is generous headroom.
 inline constexpr float kMaxCoord = 1.0e6f;
 inline constexpr float kMaxSpeed = 1.0e5f;  // cm/s (well above any real walk/sprint)
+// The farthest a pose's base offset may name (cm, per axis): a player stands on a mover's slab, within its own bounds and a body's height.
+inline constexpr float kMaxBaseOffsetCm = 1000.f;
 
 // Fill a header in place. senderEpoch is the sender's per-process epoch; senderSlot the logical
 // origin (direct sends pass their own slot, the relay passes the true origin).
@@ -5349,6 +5363,13 @@ inline bool ValidatePose(const PoseSnapshot& p) {
     if (p.yaw          < -180.f || p.yaw          > 180.f) return false;
     if (p.pitch        < -180.f || p.pitch        > 180.f) return false;
     if (p.headYawDelta < -180.f || p.headYawDelta > 180.f) return false;
+    // The base claim: a known kind, a finite offset a player cannot stand farther from its mover than (a claim past it is no
+    // rider), zero pad. A refusal drops the whole pose, as every other field's does.
+    if (p.baseKind > pose_base_kind::kMover) return false;
+    const float offs[3] = {p.bx, p.by, p.bz};
+    for (float v : offs)
+        if (!std::isfinite(v) || std::fabs(v) > kMaxBaseOffsetCm) return false;
+    if (p._pad[0] != 0 || p._pad[1] != 0 || p._pad[2] != 0) return false;
     return true;
 }
 

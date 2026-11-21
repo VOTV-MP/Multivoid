@@ -32,6 +32,7 @@ set(VOTVCOOP_SOURCES
     ${VOTVCOOP_SOURCES_UE_WRAP_2}
     src/coop/player/movement_ledger.cpp
     src/coop/player/remote_player.cpp
+    src/coop/player/pose_bases.cpp
     src/coop/player/puppet_seat.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp

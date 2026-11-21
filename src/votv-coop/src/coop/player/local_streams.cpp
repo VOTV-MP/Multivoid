@@ -17,6 +17,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"     // the hotbar hand-item axis
 #include "coop/player/players_registry.h"
+#include "coop/player/pose_bases.h"     // the base a pose names
 #include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
@@ -170,6 +171,8 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
                     out.healthFrac, out.foodFrac, out.sleepFrac);
         }
     }
+    // What the player stands on, when it is a registered mover: the offset a receiver rides its puppet by. Also zeroes the pad.
+    coop::pose_bases::FillBase(local, out);
     return true;
 }
 
