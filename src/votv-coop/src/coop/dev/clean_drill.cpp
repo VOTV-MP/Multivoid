@@ -19,6 +19,7 @@
 #include "clean_drill_detail.h"   // co-located private header (src tree, not include/)
 
 #include "coop/dev/director/director.h"
+#include "coop/dev/drill_chat.h"
 #include "coop/dev/director/routes.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/player/hand_item.h"
@@ -75,7 +76,7 @@ struct Target {
     float start = 0.f;
 };
 
-enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Clean, Ends, Sentinel, AwaitDone, Judge, AwaitResults,
+enum class Ph { Arrive, Choose, AwaitTargets, AwaitSeen, Clean, Ends, Sentinel, AwaitLine, AwaitDone, Judge, AwaitResults,
                 AwaitEnd, Done };
 Ph g_ph = Ph::Arrive;
 FVector g_anchor{};
@@ -209,6 +210,19 @@ int SpongeWork(const std::wstring& cls, const FVector& at, bool once) {
     const auto now = std::chrono::steady_clock::now();
     if (now - g_strokeAt < kStrokeGap) return 0;
     g_strokeAt = now;
+    // A decal held at zero is asked for its end. The event that moves the actor on is the host's own copy ending (its count of
+    // ended targets in the shared marks), not this copy's: a copy the host's end never reaches stands at zero for good, and
+    // the verdict on that is the host's line below.
+    if (!once && ProcessOf(d) <= 0.01f) {
+        std::string hostEnded;
+        if (PeekShared("cl_hostend", hostEnded) && static_cast<size_t>(std::atoi(hostEnded.c_str())) > g_ti) {
+            g_walk.reset();
+            g_ringBuilt = false;
+            g_sw = Sw::Walk;
+            return 1;
+        }
+        return 0;
+    }
     // A decal held at zero waits for the host's word; a stroke on it would only ask again.
     if (ProcessOf(d) > 0.01f && !Clean(d, item, kSpongeSub)) return fail("the sponge's clean did not run on the %s decal");
     if (once) {
@@ -334,6 +348,33 @@ void DumpAll(const char* when) {
 // The lane is ready on this peer: its index has settled, so a target's end finds its cached key and is sent.
 bool LaneReady() { return coop::grime_sync::Tallies().passes >= kLanePasses; }
 
+// The line the host says on the lobby chat once every target has ended on its copy and the lane has sent each end.
+constexpr const char* kHostEndedLine = "clean-drill the host ended every target";
+bool g_lineSeen = false;       // a client: the line has arrived
+bool g_lineSaid = false;       // the host: said
+int  g_hostEnded = -1;         // the host: how many targets have ended on its copy, as last marked
+
+// HOST, with a client as the actor: counts the targets that ended on its own copy (every 100 ms), marks the count when it moves,
+// and says the line once all have and the lane's end of each has been sent.
+void HostEnds() {
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::milliseconds(100)) return;
+    last = now;
+    int ended = 0;
+    for (const Target& t : g_targets)
+        if (!DecalAt(t.cls, t.at)) ++ended;
+    if (ended != g_hostEnded) {
+        g_hostEnded = ended;
+        MarkShared("cl_hostend", std::to_string(ended));
+    }
+    if (!g_lineSaid && static_cast<size_t>(ended) == g_targets.size() &&
+        coop::grime_sync::Tallies().endsSent - g_ends0 >= g_targets.size()) {
+        g_lineSaid = true;
+        coop::dev::drill_chat::Say(kHostEndedLine);
+    }
+}
+
 // ---- one tick ----------------------------------------------------------------------------------------------------------
 void TickClean(coop::net::Session& s) {
     if (g_ph == Ph::Done) return;
@@ -348,6 +389,11 @@ void TickClean(coop::net::Session& s) {
         if (held && !g_handHeld) MarkShared("cl_hand", std::to_string(++g_recorded));
         g_handHeld = held;
     }
+    // The host says when every target has ended on its own copy: each ended count is a shared mark (the actor moves on at
+    // it), and once all have ended and the lane has sent each end, a line on the lobby chat, which rides the ordered lane the
+    // ends were sent on: a client that reads the line has applied every end. The client actor judges its copy at that line.
+    if (host && !acts && !g_targets.empty() && g_ph >= Ph::AwaitDone) HostEnds();
+    if (!host && !g_lineSeen && g_ph > Ph::Arrive) g_lineSeen = coop::dev::drill_chat::SeenHas(kHostEndedLine);
     std::string text;
 
     switch (g_ph) {
@@ -390,6 +436,7 @@ void TickClean(coop::net::Session& s) {
             g_ph = Ph::AwaitEnd;
             return;
         }
+        g_ends0 = coop::grime_sync::Tallies().endsSent;   // the host counts the ends its lane sends from here
         MarkMine("cl_seen", "ok");
         Go(Ph::AwaitDone, "the actor's cleaning");
         return;
@@ -464,9 +511,15 @@ void TickClean(coop::net::Session& s) {
         }
         UE_LOGI("[CLN] the sentinel fell %.2f -> %.2f after the %zu end(s)", before, ProcessOf(d), g_ended);
         MarkShared("cl_done", "ok");
-        g_ph = Ph::Judge;   // the actor's own copy ended them all by its own strokes
+        g_ph = UsesSponge() ? Ph::AwaitLine : Ph::Judge;   // a client actor judges its copy at the host's line; a host actor's own ended them
         return;
     }
+    case Ph::AwaitLine:
+        // The client actor's copy is judged where it cannot change any more: at the host's line, which follows the host's
+        // own end of every target on the ordered lane, so a copy standing then is one the host's end never reached.
+        if (!g_lineSeen) return;
+        g_ph = Ph::Judge;
+        return;
     case Ph::AwaitDone: {
         if (!PeekShared("cl_done", text)) return;
         void* const sd = DecalAt(g_sentinel.cls, g_sentinel.at);
