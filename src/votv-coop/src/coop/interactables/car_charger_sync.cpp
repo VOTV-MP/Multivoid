@@ -282,6 +282,15 @@ struct ParkedBattery {
 std::unordered_map<uint32_t, ParkedCharger> g_parkedCh;
 std::unordered_map<uint32_t, ParkedBattery> g_parkedBat;
 uint64_t g_nextLook = 0;
+// The cord put-backs of each charger since the host's last row or the last one that held, and the earliest the next
+// may run: a cord something else on this client keeps flipping was put back every look for good. Past kFreeReplugs the
+// wait doubles from 2 s to a minute.
+struct Replug {
+    uint8_t tries = 0;
+    uint64_t after = 0;
+};
+std::unordered_map<uint32_t, Replug> g_replug;
+constexpr uint8_t kFreeReplugs = 3;
 uint32_t g_applied = 0, g_asked = 0, g_replugs = 0;
 
 bool ApplyCharger(const N::CarChargerRow& r) {
@@ -289,6 +298,7 @@ bool ApplyCharger(const N::CarChargerRow& r) {
     if (!ch || !Of(ch, g_l.charger) || (r.red && !ActorOf(r.red)) || (r.blue && !ActorOf(r.blue))) return false;
     WriteCharger(ch, r);
     g_told[r.eid] = r;
+    g_replug.erase(r.eid);   // the host's row: its cord stands again
     ++g_applied;
     return true;
 }
@@ -315,7 +325,18 @@ void ClientLook(N::Session& s) {
         if (!eid || told == g_told.end()) continue;   // nothing told yet: the host's first row primes it
         const N::CarChargerRow now = ReadCharger(ch, eid);
         // Its cord is the host's: a local plug or unplug (this copy's own cord event) is put back, never asked.
-        if ((now.flags ^ told->second.flags) & N::kCarChargerPlugged) {
+        const bool cordOff = ((now.flags ^ told->second.flags) & N::kCarChargerPlugged) != 0;
+        Replug& rp = g_replug[eid];
+        if (!cordOff) rp = Replug{};   // the last put-back held
+        if (cordOff && t >= rp.after) {
+            if (rp.tries < 0xFF) ++rp.tries;
+            if (rp.tries > kFreeReplugs) {
+                const int doublings = std::min<int>(rp.tries - kFreeReplugs - 1, 5);
+                rp.after = t + std::min<uint64_t>(2000ull << doublings, 60000ull);
+                if (rp.tries == kFreeReplugs + 1)
+                    UE_LOGW("car_charger_sync: car charger eid=%u's cord was put back %u times here and something flips "
+                            "it again -- put back less often", eid, static_cast<unsigned>(kFreeReplugs));
+            }
             SetB(ch, g_l.plugged, (told->second.flags & N::kCarChargerPlugged) != 0);
             CallNoArgs(ch, L"setBulb");
             ++g_replugs;
@@ -447,12 +468,13 @@ void OnState(const coop::net::CarChargerStatePayload& p) {
 void OnDisconnect() {
     if (g_rowsSent || g_applied || g_asked)
         UE_LOGI("car_charger_sync: session end -- host rows sent %u, clip edits %u, refused %u; client rows applied %u, "
-                "asks %u", g_rowsSent, g_edits, g_refused, g_applied, g_asked);
+                "asks %u, cord put-backs %u", g_rowsSent, g_edits, g_refused, g_applied, g_asked, g_replugs);
     g_sentCh.clear();
     g_sentBat.clear();
     g_told.clear();
     g_parkedCh.clear();
     g_parkedBat.clear();
+    g_replug.clear();
     g_nextPoll = g_nextLook = 0;
     g_rowsSent = g_edits = g_refused = g_applied = g_asked = g_replugs = 0;
 }
