@@ -255,7 +255,14 @@ bool WeatherHolds(const Spec& sp) {
     const bool raining = coop::weather_rain::ReadLocalIsRaining(&found) && found;
     if (!found) { g_waiting = "the host's weather to read"; return false; }
     if (sp.weather == Weather::Dry && raining) {
-        Finish(sp, "INCONCLUSIVE", "the host is raining, and this arm needs a dry host");
+        // A fresh game's weather is random: the arm makes the host dry itself, by the game's own stop of rain, the counterpart
+        // of the start below (causeRain(false), whose setRainProperties(false) ends isRaining; the enable flag it clears
+        // keeps the scheduler from starting rain again; daynightCycle dump lines 3177-3218).
+        if (!g_rainAsked) {
+            g_rainAsked = true;
+            coop::weather_rain::DebugForceRain(false, 0.f);
+        }
+        g_waiting = "the host's rain to stop";
         return false;
     }
     bool winter = false;
