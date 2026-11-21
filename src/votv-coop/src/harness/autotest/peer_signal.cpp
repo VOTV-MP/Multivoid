@@ -28,6 +28,27 @@ std::wstring Widen(const std::string& path) {
     return w;
 }
 
+// The first line of the signal file at `path`, read through a handle that shares delete as well as read and write: a peer
+// leaving the signal renames its temp file over it, and Windows refuses that rename (error 5, access denied) for as long
+// as any other process holds the target open without sharing delete, which an ifstream's handle does not. False when the
+// file is not there or holds no line.
+bool ReadFirstLine(const std::string& path, std::string& out) {
+    const std::wstring w = Widen(path);
+    if (w.empty()) return false;
+    HANDLE h = ::CreateFileW(w.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    char buf[4096];
+    DWORD got = 0;
+    const BOOL ok = ::ReadFile(h, buf, sizeof(buf), &got, nullptr);
+    ::CloseHandle(h);
+    if (!ok || got == 0) return false;
+    size_t n = 0;
+    while (n < got && buf[n] != '\n') ++n;
+    out.assign(buf, n);
+    return !out.empty();
+}
+
 bool WrittenSinceStart(const std::string& path) {
     const std::wstring w = Widen(path);
     if (w.empty()) return false;
@@ -75,9 +96,8 @@ bool Await(const char* name, int seconds) {
 bool AwaitText(const char* name, std::string& out, int seconds) {
     for (int i = 0; i < seconds * 10; ++i) {
         const std::string path = g_dir + "\\" + name;
-        std::ifstream f(path, std::ios::binary);
         std::string s;
-        if (f && std::getline(f, s) && !s.empty() && WrittenSinceStart(path)) {
+        if (ReadFirstLine(path, s) && WrittenSinceStart(path)) {
             out = s;
             return true;
         }
@@ -89,9 +109,8 @@ bool AwaitText(const char* name, std::string& out, int seconds) {
 
 bool Peek(const char* name, std::string& out) {
     const std::string path = g_dir + "\\" + name;
-    std::ifstream f(path, std::ios::binary);
     std::string s;
-    if (!f || !std::getline(f, s) || s.empty() || !WrittenSinceStart(path)) return false;
+    if (!ReadFirstLine(path, s) || !WrittenSinceStart(path)) return false;
     out = s;
     return true;
 }
