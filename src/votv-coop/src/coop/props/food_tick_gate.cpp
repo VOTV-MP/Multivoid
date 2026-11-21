@@ -2,9 +2,7 @@
 
 #include "coop/props/food_tick_gate.h"
 
-#include "coop/player/hand_item.h"
-#include "coop/player/players_registry.h"
-#include "coop/world/spawn_authority.h"
+#include "coop/props/mirror_gate.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -47,19 +45,9 @@ constexpr int kTagBase = 0x46540000;   // 'FT', then the row
 std::uint64_t g_refused[kRowCount] = {};
 std::uint64_t g_ran = 0;
 
-// The copy shown in another slot's hand: hand_item spawns it and nothing else owns its numbers.
-bool IsRemoteHandMirror(void* food) {
-    for (std::uint8_t slot = 0; slot < coop::players::kMaxPeers; ++slot)
-        if (coop::hand_item::MirrorActorForSlot(slot) == food) return true;
-    return false;
-}
-
-// The rule. A client's own held food keeps its tick (FoodHand: the holder's food is its own); the other peers' hand
-// copies never run theirs.
-bool Refuses(void* food) {
-    if (coop::spawn_authority::IsActiveClientSession()) return !coop::hand_item::IsLocalHandViewActor(food);
-    return IsRemoteHandMirror(food);
-}
+// The rule (coop/props/mirror_gate): a client's own held food keeps its tick (FoodHand: the holder's food is its own); the
+// other peers' copies never run theirs.
+bool Refuses(void* food) { return coop::mirror_gate::IsPeerCopy(food); }
 
 SG::Verdict OnRowPre(const SG::Call& call) {
     if (!Refuses(call.object)) return SG::Verdict::Run;

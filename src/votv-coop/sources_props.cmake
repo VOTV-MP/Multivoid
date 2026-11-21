@@ -54,6 +54,7 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/miner_judge.cpp
     src/coop/props/miner_record.cpp
     src/coop/props/food_tick_gate.cpp
+    src/coop/props/mirror_gate.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/prop_record_wire.cpp
     src/coop/props/bucket_sync.cpp
