@@ -60,6 +60,19 @@ own process where the host cannot see the trigger; a validator that refused a di
 refuse a legitimate game event. A discontinuity costs trust in the movement ledger
 (`coop/player/movement_ledger`), never display, and any bound is client-scoped.
 
+### Riding a mover
+A pose also names what its player stands on when that is a registered mover (`coop/player/pose_bases`; today the cargo lift's
+platform): a base id (FNV-1a 32 of the lift's interactable key) and the offset from the platform, beside the absolute position
+every other reader still reads (`PoseSnapshot`, 52 bytes). The sender asks its own engine
+(`BasedMovement.MovementBase`, `ue_wrap/actors/character_base`); any other base goes as none. A receiver that resolves the id
+attaches the puppet's root to the platform, as a seated body is to its ATV, so the engine carries it, and interpolates the offset
+(`remote_player_based`). Before, a puppet placed at the rider's last absolute pose lagged the rising platform and its capsule made
+the lift's own block test reverse it (once in each of 2 measured runs). `[?]` The base is a claim, checked with no tolerance tied
+to the link: XY gap within 30 cm, absolute Z within the lift's stops (minus 50, plus 250 cm), offset Z 0..250 cm; else the absolute
+pose places the puppet, counted. A ragdolled or seated body never rides; a joiner needs no state (the pose is a stream). MTA's
+contact entity is the precedent (`CNetAPI.cpp:1117-1168`, `:859-991`): world-axis offsets, so a rotating mover needs its own row.
+Drill `coop/dev/basedmove_drill`; red `basedmove_base_off`. `[?]`
+
 ### Ragdoll and faint
 
 A state bit says the sender is ragdolled: fainted, knocked out or dropped on purpose, not dead.
