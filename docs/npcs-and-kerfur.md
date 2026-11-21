@@ -62,7 +62,8 @@ leaving one leaves nothing to restore.
 
 | Spawner | On a client | Why |
 |---|---|---|
-| insomniac, fossilhound | tick refused | the host mirrors the product |
+| fossilhound | tick refused | the host mirrors the product |
+| insomniac | runs on every peer | a sleepless player's own: rolled from its sleep, beside and at its own player, never mirrored |
 | cockroach master and summoner | tick, summon and timers refused | its tick also drains and destroys shared food props; `coop/creatures/roach_sync` drives the client's population |
 | mushroom master and spawner | spawn refused | they spawn at their own world transform |
 | yellow wisp spawner | tick refused | anchors on a random navmesh point; the product is host-mirrored |

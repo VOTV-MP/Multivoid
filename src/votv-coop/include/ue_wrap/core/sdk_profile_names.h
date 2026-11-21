@@ -57,6 +57,9 @@ inline constexpr const wchar_t* NpcClass_KerfurOmega  = L"kerfurOmega_C";
 inline constexpr const wchar_t* NpcClass_Krampus      = L"npc_krampus_C";
 inline constexpr const wchar_t* NpcClass_Funguy       = L"npc_funguy_C";
 inline constexpr const wchar_t* NpcClass_GoreSlither  = L"npc_goreSlither_C";
+// insomniac_C (and its rare insomniac_Child_C): a sleepless player's own hallucination. The gamemode's
+// trySpawnInsomniac rolls it from that player's sleep beside that player's camera, and it walks at that player's pawn,
+// so every peer spawns its own and it is NOT on kNpcAllowlist: never broadcast, never suppressed, never mirrored.
 inline constexpr const wchar_t* NpcClass_Insomniac    = L"insomniac_C";
 inline constexpr const wchar_t* NpcClass_Fossilhound  = L"fossilhound_C";
 inline constexpr const wchar_t* NpcClass_Antibreather = L"antibreather_C";
@@ -112,7 +115,6 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_Krampus,
     NpcClass_Funguy,
     NpcClass_GoreSlither,
-    NpcClass_Insomniac,
     NpcClass_Fossilhound,
     NpcClass_Antibreather,
     NpcClass_Orborb,
