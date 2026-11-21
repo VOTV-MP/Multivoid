@@ -456,6 +456,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/flood_drill.cpp
     src/coop/dev/flood_drill_host.cpp
     src/coop/dev/flood_drill_client.cpp
+    src/coop/dev/basedmove_drill.cpp
+    src/coop/dev/basedmove_drill_host.cpp
+    src/coop/dev/basedmove_drill_client.cpp
     src/coop/dev/kdress_drill.cpp
     src/coop/dev/kdress_drill_host.cpp
     src/coop/dev/kdress_drill_host_arms.cpp

@@ -797,3 +797,4 @@ CFG_FLAG(class_resolve_lookup_only, "class_resolve_lookup_only", "dev", false, "
 // The remote player's footsteps: the ground line, the crouch drill and its red arm: their own file, one concept.
 #include "coop/config/config_registry_rows_dev_footsteps.inc"
 #include "coop/config/config_registry_rows_dev_flood.inc"  // the basement flood's drill and red arms: their own file
+#include "coop/config/config_registry_rows_dev_basedmove.inc"
