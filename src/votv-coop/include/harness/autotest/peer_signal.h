@@ -4,6 +4,12 @@
 // waits for it. A signal counts only when it was written after THIS peer's drill began: an earlier run's files stay
 // in the folder, and reading one as the other peer's answer let a drill pass or move on against a run that never
 // happened (measured, 6866cee81). State is per process, since one drill runs per process.
+//
+// A mark is never written over a file nor renamed into place (Windows refuses both while an outside process holds the
+// target or the source open): each Mark creates a NEW file `<name>.<stamp>` in one write ending with '\n', the stamp
+// being the system time in 100 ns units as 16 hex digits. A reader takes the newest COMPLETE `<name>.<stamp>` (one that
+// ends with '\n') written since Begin. The writer deletes its own older files of the name; one an outside holder
+// refuses stays, harmless because readers take the newest.
 
 #pragma once
 

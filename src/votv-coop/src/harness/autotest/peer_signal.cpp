@@ -8,16 +8,28 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdint>
-#include <fstream>
+#include <cwchar>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace harness::autotest::peer_signal {
 namespace {
 
+constexpr size_t kStampDigits = 16;  // a mark's file is `<name>.<stamp as 16 hex digits>`
+
 std::string g_dir;
 std::string g_tag;
 uint64_t g_start = 0;  // FILETIME of this peer's drill start
+
+std::mutex g_markLock;                                                  // guards the three below
+uint64_t g_lastStamp = 0;                                               // the newest stamp this process gave a mark
+std::unordered_map<std::string, std::vector<std::wstring>> g_ownFiles;  // per name: the files this process left, oldest first
+uint32_t g_deleteRefused = 0;                                           // deletes an outside holder refused, all names
 
 // The path in the wide form the file calls take; empty when it does not convert.
 std::wstring Widen(const std::string& path) {
@@ -25,37 +37,125 @@ std::wstring Widen(const std::string& path) {
     if (n <= 0) return {};
     std::wstring w(static_cast<size_t>(n), L'\0');
     ::MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, w.data(), n);
+    w.resize(static_cast<size_t>(n) - 1);  // MultiByteToWideChar counted the terminator
     return w;
 }
 
-// The first line of the signal file at `path`, read through a handle that shares delete as well as read and write: a peer
-// leaving the signal renames its temp file over it, and Windows refuses that rename (error 5, access denied) for as long
-// as any other process holds the target open without sharing delete, which an ifstream's handle does not. False when the
-// file is not there or holds no line.
-bool ReadFirstLine(const std::string& path, std::string& out) {
-    const std::wstring w = Widen(path);
-    if (w.empty()) return false;
-    HANDLE h = ::CreateFileW(w.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+uint64_t Ticks(const FILETIME& t) { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; }
+
+// The first line of the signal file at `path`, read through a handle that shares delete as well as read and write, so a
+// writer cleaning up its older marks is never refused by this read. A file counts only when it is COMPLETE: a writer
+// creates it in place and ends it with '\n' in one write, so a file read while its writer is mid-create is empty or lacks
+// the newline and is skipped. False when the file is not there, is incomplete, or its first line is empty.
+bool ReadFirstLine(const std::wstring& path, std::string& out) {
+    HANDLE h = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
-    char buf[4096];
-    DWORD got = 0;
-    const BOOL ok = ::ReadFile(h, buf, sizeof(buf), &got, nullptr);
+    LARGE_INTEGER size{};
+    std::string all;
+    bool ok = ::GetFileSizeEx(h, &size) && size.QuadPart > 0 && size.QuadPart <= (1 << 20);
+    if (ok) {
+        all.resize(static_cast<size_t>(size.QuadPart));
+        DWORD got = 0;
+        ok = ::ReadFile(h, all.data(), static_cast<DWORD>(all.size()), &got, nullptr) && got == all.size();
+    }
     ::CloseHandle(h);
-    if (!ok || got == 0) return false;
-    size_t n = 0;
-    while (n < got && buf[n] != '\n') ++n;
-    out.assign(buf, n);
+    if (!ok || all.back() != '\n') return false;
+    out.assign(all, 0, all.find('\n'));
     return !out.empty();
 }
 
-bool WrittenSinceStart(const std::string& path) {
-    const std::wstring w = Widen(path);
-    if (w.empty()) return false;
-    WIN32_FILE_ATTRIBUTE_DATA a{};
-    if (!::GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return false;
-    const uint64_t t = (static_cast<uint64_t>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
-    return t >= g_start;
+// Creates the file at `path` holding `text` and one '\n', in one write. `exists` is set when CREATE_NEW refused because
+// the name is taken. Read and delete are shared, so a reader and the cleanup of an older mark meet no refusal.
+bool CreateWhole(const std::wstring& path, const std::string& text, bool& exists) {
+    exists = false;
+    HANDLE h = ::CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        const DWORD e = ::GetLastError();
+        exists = e == ERROR_FILE_EXISTS || e == ERROR_ALREADY_EXISTS;
+        return false;
+    }
+    const std::string line = text + "\n";
+    DWORD put = 0;
+    const bool ok = ::WriteFile(h, line.data(), static_cast<DWORD>(line.size()), &put, nullptr) && put == line.size();
+    const DWORD e = ::GetLastError();
+    ::CloseHandle(h);
+    if (!ok) {
+        ::DeleteFileW(path.c_str());
+        ::SetLastError(e);
+    }
+    return ok;
+}
+
+// The stamp in a file name `<name>.<16 hex digits>`; false for any other name, so a dotted signal name is never taken
+// for a mark of `name`.
+bool ParseStamp(const wchar_t* file, const std::wstring& prefix, uint64_t& stamp) {
+    if (::_wcsnicmp(file, prefix.c_str(), prefix.size()) != 0) return false;
+    const wchar_t* d = file + prefix.size();
+    if (std::wcslen(d) != kStampDigits) return false;
+    uint64_t v = 0;
+    for (size_t i = 0; i < kStampDigits; ++i) {
+        const wchar_t c = d[i];
+        uint64_t digit;
+        if (c >= L'0' && c <= L'9') digit = static_cast<uint64_t>(c - L'0');
+        else if (c >= L'a' && c <= L'f') digit = static_cast<uint64_t>(c - L'a' + 10);
+        else if (c >= L'A' && c <= L'F') digit = static_cast<uint64_t>(c - L'A' + 10);
+        else return false;
+        v = (v << 4) | digit;
+    }
+    stamp = v;
+    return true;
+}
+
+// The first line of the newest COMPLETE mark of `name` written since this peer's drill began: the `<name>.<stamp>` files
+// whose last write is not before the start, highest stamp first, until one reads complete. A newer one still being
+// created is skipped this poll.
+bool ReadNewest(const char* name, std::string& out) {
+    const std::wstring dir = Widen(g_dir), base = Widen(name);
+    if (dir.empty() || base.empty()) return false;
+    const std::wstring prefix = base + L".";
+    WIN32_FIND_DATAW fd{};
+    HANDLE h = ::FindFirstFileW((dir + L"\\" + prefix + L"*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    std::vector<std::pair<uint64_t, std::wstring>> marks;
+    do {
+        uint64_t stamp = 0;
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !ParseStamp(fd.cFileName, prefix, stamp)) continue;
+        if (Ticks(fd.ftLastWriteTime) < g_start) continue;
+        marks.emplace_back(stamp, fd.cFileName);
+    } while (::FindNextFileW(h, &fd));
+    ::FindClose(h);
+    std::sort(marks.begin(), marks.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& m : marks)
+        if (ReadFirstLine(dir + L"\\" + m.second, out)) return true;
+    return false;
+}
+
+// A time-ordered name for the next mark: the system time in 100 ns units, never the same twice in this process.
+uint64_t NextStamp() {
+    FILETIME now{};
+    ::GetSystemTimePreciseAsFileTime(&now);
+    uint64_t t = Ticks(now);
+    if (t <= g_lastStamp) t = g_lastStamp + 1;
+    g_lastStamp = t;
+    return t;
+}
+
+// Deletes this process's files of `name` that are older than the one just left (the last of `files`). An outside holder
+// (a scanner) can refuse a delete; the file stays on the list for the next mark of that name, and a leftover is
+// harmless because a reader takes the newest. The refusals are counted and said every 256th, never one by one.
+void DeleteOlder(const std::string& name, std::vector<std::wstring>& files) {
+    std::vector<std::wstring> kept;
+    for (size_t i = 0; i + 1 < files.size(); ++i) {
+        if (::DeleteFileW(files[i].c_str()) || ::GetLastError() == ERROR_FILE_NOT_FOUND) continue;
+        kept.push_back(files[i]);
+        if (++g_deleteRefused % 256 == 0)
+            UE_LOGI("%hs: %u deletes of older signal files were refused by an outside holder (last: '%hs')", g_tag.c_str(),
+                    g_deleteRefused, name.c_str());
+    }
+    kept.push_back(files.back());
+    files.swap(kept);
 }
 
 }  // namespace
@@ -64,7 +164,7 @@ bool Begin(const char* logTag) {
     g_tag = logTag;
     FILETIME now{};
     ::GetSystemTimeAsFileTime(&now);
-    g_start = (static_cast<uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+    g_start = Ticks(now);
     g_dir = coop::config::ReadEnv("VOTVCOOP_CAN_DIR");
     if (g_dir.empty()) {
         coop::rig_verdict::Say(g_tag.c_str(), coop::rig_verdict::Outcome::Invalid, "VOTVCOOP_CAN_DIR is unset");
@@ -77,15 +177,38 @@ const std::string& Dir() { return g_dir; }
 
 void Mark(const char* name) { Mark(name, "x"); }
 
-// Written whole: the text goes to `<name>.tmp` and is renamed over `<name>`, so a reader polling the signal never
-// sees a half-written line.
+// Created in place, never over a file and never renamed: `<name>.<stamp>` is a name that does not exist yet (CREATE_NEW;
+// a taken name takes the next stamp), so no holder of an older mark can refuse it. The text and its closing '\n' go
+// in one write; a reader takes a file only once it ends with '\n'.
 void Mark(const char* name, const std::string& text) {
-    const std::string path = g_dir + "\\" + name;
-    const std::string tmp = path + ".tmp";
-    { std::ofstream(tmp, std::ios::binary | std::ios::trunc) << text; }
-    const std::wstring from = Widen(tmp), to = Widen(path);
-    if (from.empty() || to.empty() || !::MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING))
-        UE_LOGW("%hs: signal '%hs' could not be left (error %lu)", g_tag.c_str(), name, ::GetLastError());
+    std::lock_guard<std::mutex> lock(g_markLock);
+    const std::wstring base = Widen(g_dir + "\\" + name);
+    if (base.empty()) {
+        UE_LOGW("%hs: signal '%hs' could not be left (the path does not convert)", g_tag.c_str(), name);
+        return;
+    }
+    std::wstring to;
+    bool exists = true;
+    for (int attempt = 0; exists && attempt < 64; ++attempt) {
+        wchar_t stampText[kStampDigits + 1];
+        std::swprintf(stampText, kStampDigits + 1, L"%016llx", static_cast<unsigned long long>(NextStamp()));
+        to = base + L"." + stampText;
+        if (CreateWhole(to, text, exists)) {
+            exists = false;
+            break;
+        }
+        if (!exists) {
+            UE_LOGW("%hs: signal '%hs' could not be left (error %lu)", g_tag.c_str(), name, ::GetLastError());
+            return;
+        }
+    }
+    if (exists) {
+        UE_LOGW("%hs: signal '%hs' could not be left (every stamp tried was taken)", g_tag.c_str(), name);
+        return;
+    }
+    std::vector<std::wstring>& files = g_ownFiles[name];
+    files.push_back(to);
+    DeleteOlder(name, files);
 }
 
 bool Await(const char* name, int seconds) {
@@ -95,9 +218,8 @@ bool Await(const char* name, int seconds) {
 
 bool AwaitText(const char* name, std::string& out, int seconds) {
     for (int i = 0; i < seconds * 10; ++i) {
-        const std::string path = g_dir + "\\" + name;
         std::string s;
-        if (ReadFirstLine(path, s) && WrittenSinceStart(path)) {
+        if (ReadNewest(name, s)) {
             out = s;
             return true;
         }
@@ -108,9 +230,8 @@ bool AwaitText(const char* name, std::string& out, int seconds) {
 }
 
 bool Peek(const char* name, std::string& out) {
-    const std::string path = g_dir + "\\" + name;
     std::string s;
-    if (!ReadFirstLine(path, s) || !WrittenSinceStart(path)) return false;
+    if (!ReadNewest(name, s)) return false;
     out = s;
     return true;
 }
