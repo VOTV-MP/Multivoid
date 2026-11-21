@@ -35,4 +35,21 @@ bool ReadMoving(void* lift, bool& moving);
 // The lift's own press: actionOptionIndex with the use action. True when the call ran.
 bool Press(void* lift);
 
+// The fields its move loop compares each frame (the Blueprint reverses the lift when its platform lags the point it eases
+// by 10 cm or more, unless `ignoreCheck` is set), for a drill that measures a rider's effect on the platform. Each is
+// resolved on its own, so a missing one fails only its reader and never the lift lane.
+
+// `ignoreCheck`: the move loop's skip of that comparison, held for a second after each reversal.
+bool ReadIgnoreCheck(void* lift, bool& ignore);
+
+// The platform's primitive component (`comp`, the root of the `lift` child actor, set at begin play), or null.
+void* PlatformComponent(void* lift);
+
+// The platform's actor (`comp`'s owner), or null.
+void* PlatformActor(void* lift);
+
+// World Z of the `attach` sphere the move loop eases 0..500 cm up, and of the platform component. False when unread.
+bool ReadAttachZ(void* lift, float& z);
+bool ReadPlatformZ(void* lift, float& z);
+
 }  // namespace ue_wrap::cargo_lift

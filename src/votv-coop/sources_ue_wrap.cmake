@@ -163,6 +163,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/desk/meadow_store.cpp
     src/ue_wrap/desk/saved_signals.cpp
     src/ue_wrap/actors/puppet.cpp
+    src/ue_wrap/actors/character_base.cpp
     src/ue_wrap/actors/character_floor.cpp
     src/ue_wrap/actors/puppet_spawn.cpp
     src/ue_wrap/actors/kerfur.cpp
