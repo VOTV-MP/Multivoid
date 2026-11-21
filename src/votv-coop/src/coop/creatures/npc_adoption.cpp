@@ -9,6 +9,7 @@
 #include "coop/element/identity_create.h"   // the single NPC mirror create funnel (Inc A)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/creatures/kerfur_dress_sync.h"  // OnMirrorBound: an Omega's outfit the host said before the bind
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/npc_mirror_brain.h"  // PrepareBirth / SetUpPresentation: a parked family's twin has its brain off
 #include "coop/creatures/npc_ride.h"  // a stored ride is applied to the adopted twin
@@ -98,6 +99,7 @@ bool BindAsMirror(uint32_t eid, void* obj, const std::wstring& classW) {
     ue_wrap::kerfur::NeutralizeAiTimers(obj);
     // An adopted twin is never hidden: a ride the stamp stored before this bind is applied now.
     coop::npc_ride::OnMirrorBound(static_cast<coop::element::ElementId>(eid));
+    coop::kerfur_dress_sync::OnMirrorBound(static_cast<uint32_t>(eid));   // an Omega's outfit the host said before this bind
     return true;
 }
 

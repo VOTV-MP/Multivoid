@@ -150,6 +150,10 @@ bool SubscribeHandApplied(HandAppliedFn fn);
 // nothing. Game thread only.
 std::wstring HeldItem(uint8_t slot);
 
+// The class of the item `slot`'s hand holds, as its owner last announced (the class hand_spend::Spend is asked for), or
+// empty when it holds nothing. Game thread only.
+std::wstring HeldClass(uint8_t slot);
+
 // Host, each tick after the roster reconcile and before the drain (event_feed::Update): a client's newest hand state
 // that arrived past its budget is applied once the budget allows it. Game thread only.
 void PayOwed(coop::net::Session& session);

@@ -511,7 +511,7 @@ bool HandleIntentEvent(net::Session& session,
             coop::prop_act_host::NoteBadSender();
             break;
         }
-        if (msg.payloadLen < sizeof(net::PropActRequestPayload)) {
+        if (msg.payloadLen != sizeof(net::PropActRequestPayload)) {
             coop::prop_act_host::NoteShortPayload(senderSlot);
             break;
         }
@@ -534,7 +534,7 @@ bool HandleIntentEvent(net::Session& session,
             coop::prop_act_host::NoteBadSender();
             break;
         }
-        if (msg.payloadLen < sizeof(net::PropActCommitPayload)) {
+        if (msg.payloadLen != sizeof(net::PropActCommitPayload)) {
             coop::prop_act_host::NoteShortPayload(senderSlot);
             break;
         }
@@ -547,7 +547,7 @@ bool HandleIntentEvent(net::Session& session,
         // HOST->CLIENT: the host's answer to this client's take or use of a shared prop: a grant replays the verb, a
         // refusal shows a line (coop::prop_act_request). Never relayed.
         if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 ||
-            msg.payloadLen < sizeof(net::PropActReplyPayload)) {
+            msg.payloadLen != sizeof(net::PropActReplyPayload)) {
             UE_LOGW("event_feed: PropActReply dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
                     static_cast<size_t>(msg.payloadLen));
             break;

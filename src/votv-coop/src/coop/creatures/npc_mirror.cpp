@@ -15,6 +15,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"
+#include "coop/creatures/kerfur_dress_sync.h"  // OnMirrorBound / OnMirrorEnded: an Omega's outfit the host said before the bind
 #include "coop/creatures/npc_ride.h"  // a stored ride is applied to the new mirror
 #include "coop/creatures/kerfur_prop_adoption.h"  // the deferred prop-form kerfur adoption
 #include "coop/creatures/kerfur_reconcile.h"  // ArmPendingRetireByEid
@@ -468,6 +469,7 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
                                         /*holdUntilQuiescence=*/false);
     // After the hide, so a ride applied to a hidden mirror waits for the reveal instead of being undone by it.
     coop::npc_ride::OnMirrorBound(elementId);
+    coop::kerfur_dress_sync::OnMirrorBound(elementId);   // an Omega's outfit the host said before this bind
 
     UE_LOGI("npc-sync[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             elementId, classW.c_str(), spawned, locX, locY, locZ);
@@ -485,6 +487,7 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
     }
     const coop::element::ElementId eid =
         static_cast<coop::element::ElementId>(payload.elementId);
+    coop::kerfur_dress_sync::OnMirrorEnded(payload.elementId);   // an outfit word held for this Omega's copy is dropped
     // A spawn still waiting on its class's load for this eid ends here: it is never spawned.
     if (coop::element::class_load_wait::Cancel("EntitySpawn", payload.elementId)) {
         UE_LOGI("npc-sync[client OnDestroy]: eid=%u -- its spawn was waiting on a class load and is cancelled; it "

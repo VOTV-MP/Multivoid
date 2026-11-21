@@ -483,7 +483,7 @@ msgstr ""
 msgid "An event with a level volume only arms it: walk in, or press NOW! to complete it. Red events can wreck a save: Ctrl+click."
 msgstr ""
 
-#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_lines.cpp
 msgid "Another player is using that item."
 msgstr ""
 
@@ -1133,7 +1133,7 @@ msgstr ""
 msgid "Not ready yet -- try again in a moment."
 msgstr ""
 
-#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_lines.cpp
 msgid "Not ready yet, try again in a moment."
 msgstr ""
 
@@ -1567,7 +1567,7 @@ msgstr ""
 msgid "Snow"
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/prop_act_lines.cpp
 msgid "Someone else has that item."
 msgstr ""
 
@@ -1667,7 +1667,7 @@ msgstr ""
 msgid "Teleport to the host"
 msgstr ""
 
-#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_lines.cpp
 msgid "That can't be done right now."
 msgstr ""
 
@@ -1699,11 +1699,11 @@ msgstr ""
 msgid "That is not available right now."
 msgstr ""
 
-#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_lines.cpp
 msgid "That item is gone."
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/prop_act_lines.cpp
 msgid "That item is too far away."
 msgstr ""
 
@@ -1796,7 +1796,7 @@ msgstr ""
 msgid "The host could not accept the connection."
 msgstr ""
 
-#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_lines.cpp
 msgid "The host could not be asked; try again."
 msgstr ""
 
@@ -2078,7 +2078,7 @@ msgstr ""
 msgid "Too fast -- wait a moment."
 msgstr ""
 
-#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_request.cpp
+#: src/coop/props/container_act_request.cpp src/coop/props/prop_act_lines.cpp
 msgid "Too many actions at once, try again."
 msgstr ""
 
@@ -2342,7 +2342,7 @@ msgstr ""
 msgid "You can play anyway. This message will not show again for this game version."
 msgstr ""
 
-#: src/coop/props/prop_act_request.cpp
+#: src/coop/props/prop_act_lines.cpp
 msgid "You can't do that with this item."
 msgstr ""
 

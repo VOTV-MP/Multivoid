@@ -188,4 +188,10 @@ std::wstring HeldItem(uint8_t slot) {
     return h.has ? h.item : std::wstring();
 }
 
+std::wstring HeldClass(uint8_t slot) {
+    if (slot >= coop::players::kMaxPeers) return {};
+    const SlotHand& h = g_hands[slot];
+    return h.has ? h.cls : std::wstring();
+}
+
 }  // namespace coop::hand_item

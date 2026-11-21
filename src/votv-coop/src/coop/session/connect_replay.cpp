@@ -145,7 +145,6 @@ void ConnectReplayForSlot(int slot) {
     coop::turbine_sync::QueueConnectBroadcastForSlot(slot);  // wind-turbine facing/spin snap
     coop::woodchipper_sync::QueueConnectBroadcastForSlot(slot);  // every woodchipper again
     coop::flood_sync::SendJoin(slot);                            // and the basement's pipes and flood
-    coop::kerfur_dress_sync::SendJoin(slot);                     // and every Omega's outfit
     coop::atv_host_sync::QueueConnectBroadcastForSlot(slot);  // every ATV's host state again
     coop::device_occupancy::QueueConnectBroadcastForSlot(slot);  // live device claims (busy table)
     coop::download_arm_sync::QueueConnectResetForSlot(slot);  // a reset since the capture, ahead of the desk's seed: the game's order is reset, catch, arm
@@ -180,6 +179,7 @@ void ConnectReplayForSlot(int slot) {
     coop::trash_pile_sync::QueueConnectBroadcastForSlot(slot);  // pile counters (adopt=1) + depleted-key replay
     coop::npc_world_enum::RegisterExistingWorldNpcs(slot);  // pre-existing/level-load NPCs (the save's kerfur) -> the peers already in; the joiner (slot) is skipped, its connect broadcast below sends it and it adopts its twin
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
+    coop::kerfur_dress_sync::SendJoin(slot);  // and every Omega's outfit, dressed or not: its copies are told by eid first, and a copy not bound yet holds the word
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
     coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake

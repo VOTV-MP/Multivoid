@@ -10,6 +10,7 @@
 #include "coop/dev/hostile_drill_cord.h"  // the cord link lane's refusal arms
 #include "coop/dev/hostile_drill_destroy.h"  // the destroy-by-eid arm
 #include "coop/dev/hostile_drill_dingus.h"  // the dingus found-report arm
+#include "coop/dev/hostile_drill_kdress.h"  // the Omega outfit ask and pat arm
 #include "coop/dev/hostile_drill_explosion.h"  // the explosion request lane's refusal arms
 #include "coop/dev/hostile_drill_hand.h"  // the hand-item class arm
 #include "coop/dev/hostile_drill_ignite.h"  // the salt rocket ignite lane's refusal arms
@@ -66,6 +67,7 @@ Arm ArmOf() {
              : v.rfind("cord_", 0) == 0      ? Arm::Cord
              : v.rfind("coffee_", 0) == 0    ? Arm::Coffee
              : v == "dingus_report"          ? Arm::Dingus
+             : v == "kdress_ask"             ? Arm::Kdress
                                           : Arm::Off;
     }();
     return a;
@@ -110,6 +112,14 @@ dingus::Arm DingusArmOf() {
     static const dingus::Arm a = ArmOf() == Arm::Dingus
         ? dingus::ArmOf(coop::config::ResolveEnum(::coop::config_registry::rows::hostile_drill))
         : dingus::Arm::None;
+    return a;
+}
+
+// The Omega outfit arm, the same way.
+kdress::Arm KdressArmOf() {
+    static const kdress::Arm a = ArmOf() == Arm::Kdress
+        ? kdress::ArmOf(coop::config::ResolveEnum(::coop::config_registry::rows::hostile_drill))
+        : kdress::Arm::None;
     return a;
 }
 
@@ -160,6 +170,7 @@ const char* ArmName() {
     case Arm::Cord:              return cord::ArmName(CordArmOf());
     case Arm::Coffee:            return coffee::ArmName(CoffeeArmOf());
     case Arm::Dingus:            return dingus::ArmName(DingusArmOf());
+    case Arm::Kdress:            return kdress::ArmName(KdressArmOf());
     default:                     return "off";
     }
 }
@@ -230,6 +241,7 @@ bool TickFamilyHost(coop::net::Session* s) {
     const cord::Arm cordArm = CordArmOf();
     const coffee::Arm coffeeArm = CoffeeArmOf();
     const dingus::Arm dingusArm = DingusArmOf();
+    const kdress::Arm kdressArm = KdressArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
@@ -239,6 +251,7 @@ bool TickFamilyHost(coop::net::Session* s) {
     else if (cordArm != cord::Arm::None)     cord::TickHostJudge(s, cordArm);
     else if (coffeeArm != coffee::Arm::None) coffee::TickHostJudge(s, coffeeArm);
     else if (dingusArm != dingus::Arm::None) dingus::TickHostJudge(s, dingusArm);
+    else if (kdressArm != kdress::Arm::None) kdress::TickHostJudge(s, kdressArm);
     else if (IsWalkArm())                    walk::TickHostJudge(s, WalkArmOf());  // host counts its own walks
     else if (handArm != hand::Arm::None)     hand::TickHostJudge(s, handArm);
     else if (latestArm != latest::Arm::None) latest::TickHostJudge(s, latestArm);
@@ -273,6 +286,7 @@ bool TickFamilyClient(coop::net::Session* s) {
     const cord::Arm cordArm = CordArmOf();
     const coffee::Arm coffeeArm = CoffeeArmOf();
     const dingus::Arm dingusArm = DingusArmOf();
+    const kdress::Arm kdressArm = KdressArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
@@ -282,6 +296,7 @@ bool TickFamilyClient(coop::net::Session* s) {
     else if (cordArm != cord::Arm::None)     cord::TickClient(s, cordArm);
     else if (coffeeArm != coffee::Arm::None) coffee::TickClient(s, coffeeArm);
     else if (dingusArm != dingus::Arm::None) dingus::TickClient(s, dingusArm);
+    else if (kdressArm != kdress::Arm::None) kdress::TickClient(s, kdressArm);
     else if (IsWalkArm())                    walk::TickClient(s, WalkArmOf());
     else if (handArm != hand::Arm::None)     hand::TickClient(s, handArm);
     else if (latestArm != latest::Arm::None) latest::TickClient(s, latestArm);
@@ -310,6 +325,7 @@ void OnDisconnectFamilies() {
     cord::OnDisconnect();
     coffee::OnDisconnect();
     dingus::OnDisconnect();
+    kdress::OnDisconnect();
     chat::OnDisconnect();
 }
 

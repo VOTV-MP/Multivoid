@@ -185,3 +185,19 @@ CFG_INT(constraint_join_drill_cap, "constraint_join_drill_cap", "dev", 0, 0, 32,
     "Drill knob of the constraint-join drill (host): never set outside it. Above 0, a joined row opens only while fewer props "
     "than this coast (the join's own cap, in place of the drive's maximum less the let-go reserve), so a short chain reaches "
     "the cap. 0 leaves the cap as built.")
+CFG_ENUM(kdress_drill, "kdress_drill", "dev", "off", "off|puton|takeoff|pat|born|join", "VOTVCOOP_KDRESS_DRILL",
+    "Drill (BOTH peers): an Omega's outfit and its pat. The host says rig: VERDICT kdress PASS, FAIL or INVALID. The host "
+    "spawns the targets near the client's puppet; a FAIL is said where it is decided and nothing after it runs; a bound says "
+    "INVALID. puton: the client holds the glasses and puts them on an Omega through the player's own use; the host's copy "
+    "wears them once its commit is taken. takeoff: the host dresses an Omega, the client takes the glasses off through "
+    "upgradeTake; both copies lack them and one glasses item stands beside the Omega on both peers. pat: the client pats an "
+    "Omega and the host's copy plays the pat montage; the host pats and the client's copy plays it. born: the host spawns an "
+    "Omega and dresses it in the same tick; the client's copy wears the row at its bind, told by the updateDrip send. join: "
+    "the host dresses an Omega, "
+    "takes the row off after the joiner's capture and before its world-ready; the joiner's copy lacks it after the host's "
+    "join send (run it with the rig's client-after set to the host's [KDRESS] [H] J dressed line).")
+CFG_ENUM(kdress_red, "kdress_red", "dev", "off", "off|apply|ask|pat|snapshot", "VOTVCOOP_KDRESS_RED",
+    "Developer red arm of the Omega outfit drill (both peers): never set. Each value withholds one effect of the lane, so "
+    "the arm that judges it must say FAIL. apply: the host writes no row at a put-on's commit (arm puton). ask: a client's "
+    "take-off cancels and asks nothing (arm takeoff). pat: the host sends no pat to a client (arm pat). snapshot: "
+    "the host sends a joiner no outfit (arm join).")

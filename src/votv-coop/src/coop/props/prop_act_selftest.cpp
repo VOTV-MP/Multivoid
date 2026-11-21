@@ -4,10 +4,14 @@
 // lines up.
 
 #include "coop/props/prop_act_host.h"
+#include "coop/props/prop_act_omega.h"
 #include "coop/props/prop_act_request.h"
 #include "coop/props/snack_act.h"
 
 #include "ue_wrap/core/log.h"
+
+#include <cstring>
+#include <string>
 
 namespace coop::prop_act_host {
 
@@ -284,12 +288,16 @@ void RunSelftest() {
     }
     check(!H::KnownFamily(0), "family: 0 is not a verb");
     check(H::KnownFamily(1) && H::KnownFamily(2) && H::KnownFamily(3), "family: 1..3 are verbs");
-    check(!H::KnownFamily(4), "family: 4 is not a verb");
+    check(H::KnownFamily(4) && H::KnownFamily(5), "family: 4 and 5 are the Omega verbs");
+    check(!H::KnownFamily(6), "family: 6 is not a verb");
+    check(H::IsPropFamily(3) && !H::IsPropFamily(4) && !H::IsPropFamily(5) && !H::IsPropFamily(0),
+          "family: the prop census judges 1..3 only");
+    check(H::FirstRefusal(4, Fitting()) == Tally::FitBadFamily, "refusal: an Omega verb is no prop verb");
     check(H::FirstRefusal(0, Fitting()) == Tally::FitBadFamily, "refusal: a byte that is no verb is named");
     // A bad verb byte that reached the fit would be refused whatever the traits say (the judge's second defence).
-    constexpr uint8_t kBadVerbs[] = {0, 4, 255};
+    constexpr uint8_t kBadVerbs[] = {0, 6, 255};
     for (const uint8_t bad : kBadVerbs) {
-        check(!H::KnownFamily(bad), "family: a byte outside 1..3 is no verb");
+        check(!H::KnownFamily(bad), "family: a byte outside 1..5 is no verb");
         check(H::FirstRefusal(bad, Fitting()) == Tally::FitBadFamily,
               "refusal: a fitting trait set does not rescue a bad verb");
     }
@@ -320,6 +328,41 @@ void RunSelftest() {
     check(H::DecideCommit(true, 2, true, true, 3) == H::CommitStep::SnackApplied, "commit: a 2 may carry both bits");
     check(H::DecideCommit(true, 2, true, true, 4) == H::CommitStep::BadCommit, "commit: a bit past the two is bad");
     check(H::DecideCommit(true, 2, false, true, 0) == H::CommitStep::TargetGone, "commit: a gone snack is gone");
+    // A registered family (the last argument): a live target's commit of 1 is the apply, never the destroy.
+    check(H::DecideCommit(true, 1, true, false, 0, true) == H::CommitStep::FamilyApply, "commit: a registered family's 1 is the apply");
+    check(H::DecideCommit(true, 1, true, false, 1, true) == H::CommitStep::BadCommit, "commit: a registered family's commit carries no flag");
+    check(H::DecideCommit(true, 2, true, false, 0, true) == H::CommitStep::BadCommit, "commit: a registered family's commit has no 2");
+    check(H::DecideCommit(true, 0, true, false, 0, true) == H::CommitStep::Abort, "commit: a registered family's 0 aborts");
+    check(H::DecideCommit(true, 1, false, false, 0, true) == H::CommitStep::TargetGone, "commit: a gone family target is gone");
+    check(H::DecideCommit(false, 1, true, false, 0, true) == H::CommitStep::BadCommit, "commit: no grant, no family apply");
+
+    // The Omega's put-on rules (the game's equipItem): (row found, type, pant, worn, bone taken) -> the first refusal.
+    namespace O = coop::prop_act_omega::internal;
+    check(O::PutOnRefusal(true, 0, false, false, false) == O::Refusal::None, "omega: a free type-0 row fits");
+    check(O::PutOnRefusal(true, 1, false, false, true) == O::Refusal::None, "omega: a type-1 row needs no free bone");
+    check(O::PutOnRefusal(false, 0, false, false, false) == O::Refusal::NotARow, "omega: a name outside the table is no row");
+    check(O::PutOnRefusal(true, 0, true, false, false) == O::Refusal::Pant, "omega: the pant row quits the game and is refused");
+    check(O::PutOnRefusal(true, 2, false, false, false) == O::Refusal::Type, "omega: a type the game does not equip is refused");
+    check(O::PutOnRefusal(true, 0, false, true, false) == O::Refusal::Worn, "omega: a worn row is refused");
+    check(O::PutOnRefusal(true, 0, false, false, true) == O::Refusal::Bone, "omega: a taken bone refuses a type-0 row");
+    check(O::TermOf(O::Refusal::Worn) == Tally::FitFamilyRule && O::TermOf(O::Refusal::Bone) == Tally::FitFamilyRule &&
+              O::TermOf(O::Refusal::NotARow) == Tally::FitFamilyArg,
+          "omega: each refusal has its tally term");
+    {
+        char row[coop::net::kPropActVerbBytes] = {};
+        std::wstring text;
+        check(!O::RowText(row, text), "omega: an empty row is refused");
+        std::memcpy(row, "kerfoacc_glasses", 16);
+        check(O::RowText(row, text) && text == L"kerfoacc_glasses", "omega: a NUL-padded row reads");
+        row[20] = 'x';
+        check(!O::RowText(row, text), "omega: a byte after the NUL refuses the row");
+        std::memset(row, 'a', sizeof(row));
+        check(!O::RowText(row, text), "omega: a row with no NUL inside its 28 is refused");
+        std::memset(row, 0, sizeof(row));
+        row[0] = 'a';
+        row[1] = '\n';
+        check(!O::RowText(row, text), "omega: a control character refuses the row");
+    }
 
     // The snack's bounded apply: (host uses, host open, beer, flags) -> what the host's copy holds.
     namespace S = coop::snack_act;

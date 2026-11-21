@@ -5,6 +5,9 @@
 
 set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/prop_act_host.cpp
+    src/coop/props/prop_act_families.cpp
+    src/coop/props/prop_act_lines.cpp
+    src/coop/props/prop_act_omega.cpp
     src/coop/props/prop_act_request.cpp
     src/coop/props/prop_act_selftest.cpp
     src/coop/props/snack_act.cpp

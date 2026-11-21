@@ -62,14 +62,14 @@ struct Req {
     Tgt target;
     uint8_t family;
 };
-constexpr uint8_t kBadFamily = 4;   // past the last family byte
+constexpr uint8_t kBadFamily = 0xFF;   // a byte no family registers (the families grow, so never the next one)
 constexpr Req kReqs[] = {
     {"crowbar Use", kCrowbar, static_cast<uint8_t>(Family::Use)},
     {"heater Pocket", kHeater, static_cast<uint8_t>(Family::Pocket)},
     {"heater Hold", kHeater, static_cast<uint8_t>(Family::Hold)},
     {"shrimp Use", kShrimp, static_cast<uint8_t>(Family::Use)},
     {"plush Use", kPlush, static_cast<uint8_t>(Family::Use)},
-    {"crowbar family 4", kCrowbar, kBadFamily},
+    {"crowbar family 0xFF", kCrowbar, kBadFamily},
 };
 constexpr size_t kSix = sizeof(kReqs) / sizeof(kReqs[0]);
 

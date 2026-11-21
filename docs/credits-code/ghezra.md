@@ -368,3 +368,9 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   yaw and roll of the same sum on every read, so the per-axis check never saw it stop and its stream ran for minutes. Kept as
   written: a turn is the angle between the two quaternions, in the drive's send check and the body push. On top: a boot selftest
   of the measure, and the rest compare's own copy of the angle folded into it. The rest of #186 waits for its own proof.
+
+- **An Omega's outfit and its pat** ([#167](https://github.com/VOTV-MP/Multivoid/pull/167)): an Omega's outfit and a pat showed only on the copy of the player who gave them.
+  Kept as written: his two commits, renumbered to this tree's build. On top: the outfit is the host's, sent when it changes and to a
+  joiner instead of read twice a second; a client's put-on and take-off are asked of the host through the prop actions' request,
+  judged by the game's own rules and the item really in the hand, and the put-on runs on the client only once granted, so nothing is
+  lost or made twice; the pat is shown on every copy; drills with reds, and a hostile arm that forges the asks.

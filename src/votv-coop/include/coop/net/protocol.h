@@ -1092,9 +1092,10 @@ enum class ReliableKind : uint16_t {
     // absolute. BadSunPayload.
     BadSun = 176,
 
-    // CLIENT->HOST: a client asks to take or use a shared prop before its verb runs (coop::prop_act_host).
-    // Never relayed. Late join: not pre-world; a request before the sender's world is ready waits in the host's queue.
-    // Trust: the host judges the prop, its family, who holds or reserves it, and the reach.
+    // CLIENT->HOST: a client asks to take or use a shared prop before its verb runs (coop::prop_act_host), or to put an
+    // outfit item on an Omega or take one off. Never relayed. Late join: not pre-world; a request before the sender's world
+    // is ready waits in the host's queue. Trust: the host judges the prop, its family, who holds or reserves it, and the
+    // reach; an Omega's outfit row is judged against the game's own rules and the hand lane's record (coop::prop_act_omega).
     PropActRequest = 178,
 
     // HOST->CLIENT: the host's answer to one PropActRequest: granted (the prop is reserved for the sender) or refused
@@ -1580,10 +1581,10 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
-    // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL: an Omega's `drip` rows when they change
-    // and every one to a joiner (op 0), and a pat to show (op 3, sent on past its patter). CLIENT->HOST: its player put an
-    // item on (op 1) or took one off (op 2) an Omega, or patted one (op 3); the host judges and runs it on its copy. Not
-    // pre-world. KerfurDressPayload.
+    // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
+    // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
+    // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
+    // take-off of an outfit item ride PropActRequest. Not pre-world. KerfurDressPayload (272), KerfurDressPatPayload (273).
     KerfurDressState = 272,
     KerfurDressIntent = 273,
 };
@@ -2432,17 +2433,33 @@ struct FloodPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
-// KerfurDressState / KerfurDressIntent. An Omega by its NPC element id; `names` holds `count` row names of
-// list_kerfurdrip, ASCII, each NUL-terminated, back to back (op 0: the whole outfit; ops 1 and 2: one row; op 3: none).
-inline constexpr uint8_t kKerfurDressOutfit = 0, kKerfurDressEquip = 1, kKerfurDressUnequip = 2, kKerfurDressPat = 3;
+// KerfurDressState (272): an Omega's outfit, by its NPC element id. `names` holds `count` rows of list_kerfurDrip, each
+// 1..kKerfurDressMaxRowChars printable ASCII characters followed by one NUL, back to back from names[0]; every byte past
+// the last NUL is zero. `flags` bit 0 says a pat plays on the Omega; the other bits and `pad` are zero. A pat carries the
+// Omega's current rows too, so a receiver never strips what the Omega wears. The word is 224 bytes, inside one reliable
+// datagram; the host refuses to send an outfit that does not pack (a longer row, more rows) and never cuts it short.
+inline constexpr uint8_t kKerfurDressMaxRows = 8;
+inline constexpr uint8_t kKerfurDressMaxRowChars = 26;
+inline constexpr uint8_t kKerfurDressFlagPat = 1;
+inline constexpr size_t  kKerfurDressNamesBytes = 216;   // eight rows of 26 characters and a NUL
 struct KerfurDressPayload {
     uint32_t elementId;   // 4 -- the Omega's NPC element id (the host's)
-    uint8_t  op;          // 1 -- kKerfurDress*
-    uint8_t  count;       // 1 -- how many names follow
-    uint8_t  _pad[2];     // 2 -- zero
-    char     names[216];  // 216
+    uint8_t  count;       // 1 -- 0..kKerfurDressMaxRows
+    uint8_t  flags;       // 1 -- bit 0 a pat to play
+    uint8_t  pad[2];      // 2 -- zero
+    char     names[kKerfurDressNamesBytes];   // 216 -- the rows, NUL-terminated, back to back
 };
 static_assert(sizeof(KerfurDressPayload) == 224, "KerfurDressPayload must be 224 bytes");
+static_assert(sizeof(KerfurDressPayload) <= 256 - 20 - 8,
+              "KerfurDressPayload must fit in one reliable datagram (kMaxReliablePayload)");
+static_assert(kKerfurDressMaxRows * (kKerfurDressMaxRowChars + 1) <= kKerfurDressNamesBytes,
+              "eight full rows must fit the names field");
+
+// KerfurDressIntent (273): this client's player patted the Omega.
+struct KerfurDressPatPayload {
+    uint32_t elementId;   // 4 -- the Omega's NPC element id
+};
+static_assert(sizeof(KerfurDressPatPayload) == 4, "KerfurDressPatPayload must be 4 bytes");
 
 // A client's press of the toolgun's prop-properties tool (PropPropsIntent): the element it hit, the camera point it
 // looked from and the point its shot struck in world centimetres, and the tool's own four values as the spawn menu set
@@ -3131,22 +3148,27 @@ struct DingusReportPayload {
 };
 static_assert(sizeof(DingusReportPayload) == 32, "DingusReportPayload must be 32 bytes");
 
-// A client's ask to pocket, hold or use a world prop (PropActRequest), the host's answer (PropActReply) and the client's
-// closing word (PropActCommit). `id` is the client's own, nonzero, and pairs the three; `eid` is the prop's element
-// id on the sender.
+// A client's ask to pocket, hold or use a world prop, or to put on or take off an Omega's outfit item (PropActRequest),
+// the host's answer (PropActReply) and the client's closing word (PropActCommit). `id` is the client's own, nonzero, and
+// pairs the three; `eid` is the prop's element id on the sender.
 // The family byte names the verb, and the host judges each verb by its own conditions (the game's pocket test, its
-// hold test, its use test); any other byte fits nothing.
-enum class PropActFamily : uint8_t { Pocket = 1, Use = 2, Hold = 3 };
+// hold test, its use test; an Omega family's by the game's equip rules and the hand lane); any other byte fits nothing.
+// The Omega families (an Omega's put-on of the held outfit item, and its take-off of a worn one) name an Omega by its NPC
+// element id and a list_kerfurDrip row in `verb`, the family-neutral argument every family beyond the three prop verbs
+// carries in its own way (coop/props/prop_act_families).
+inline constexpr uint8_t kPropActVerbBytes = 28;
+enum class PropActFamily : uint8_t { Pocket = 1, Use = 2, Hold = 3, OmegaPutOn = 4, OmegaTakeOff = 5 };
 enum class PropActReason : uint8_t { Granted = 0, Gone = 1, WrongFamily = 2, Held = 3, Reach = 4, QueueFull = 5 };
 inline constexpr uint8_t kPropActReasons = 6;   // Granted..QueueFull: the per-reason counter width
 
 struct PropActRequestPayload {
     uint16_t id;      // 2 -- the sender's request id
     uint8_t  family;  // 1 -- PropActFamily
-    uint8_t  pad;     // 1 -- zeroed
+    uint8_t  pad;     // 1 -- zeroed; the host refuses a request that sets it
     uint32_t eid;     // 4 -- the prop's Element id
+    char     verb[kPropActVerbBytes];   // 28 -- the family's argument, NUL-padded (an Omega's list_kerfurDrip row); zero for the prop verbs
 };
-static_assert(sizeof(PropActRequestPayload) == 8, "PropActRequestPayload must be 8 bytes");
+static_assert(sizeof(PropActRequestPayload) == 36, "PropActRequestPayload must be 36 bytes");
 
 struct PropActReplyPayload {
     uint16_t id;       // 2 -- the request's id
@@ -3159,6 +3181,8 @@ static_assert(sizeof(PropActReplyPayload) == 4, "PropActReplyPayload must be 4 b
 // eater ran and the client's copy lives. `flags` is a snack's report of what the replay changed on its copy: bit 0 a use
 // was spent, bit 1 a bottle was opened; a snack's commit of 1 carries exactly bit 0, of 2 any of the two, and every
 // other prop's commit carries none (a snack's commit outside this, or a 2 on another prop, is malformed and kept as one).
+// An Omega put-on's commit of 1 says the replay left the row worn on the client's copy and its hand without that hold,
+// and carries no flags; the Omega is never destroyed. An Omega take-off has no commit: the host applies it at the grant.
 struct PropActCommitPayload {
     uint16_t id;         // 2 -- the granted request's id
     uint8_t  committed;  // 1 -- 0 aborted, 1 the prop is gone on the client, 2 a snack's copy lives

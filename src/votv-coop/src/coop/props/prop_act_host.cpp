@@ -15,6 +15,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/props/host_spawn_watcher.h"
+#include "coop/props/prop_act_families.h"
 #include "coop/props/prop_hold.h"
 #include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop.h"
@@ -54,16 +55,13 @@ using coop::net::ReliableKind;
 // the request is only counted: nothing is sent to a link that cannot take it.
 constexpr size_t kCap = 2;
 constexpr coop::net::IntentBudget kBudget{4.0f, 2.0f};
-// The reach a take or use is allowed beyond the target's bounds and the pose-staleness ball. A lenient bound on the
-// sender's last-synced place, not its exact range: the shape of MTA's server cutoff (CGame.cpp:3113).
-constexpr float kActReachUU = 200.0f;
 
 struct Queued {
     coop::net::PropActRequestPayload req;
 };
 
 constexpr int kWaitCauses = static_cast<int>(WaitCause::kCount);
-constexpr int kCommitSteps = 6;
+constexpr int kCommitSteps = 7;
 
 struct Slot {
     coop::net::IntentQueue<Queued> queue;
@@ -239,7 +237,7 @@ std::optional<Tally> UseTraits(void* actor, internal::ActTraits& t) {
 // named.
 bool FitCensus(void* actor, uint8_t family, std::optional<Tally>& why) {
     why.reset();
-    if (!internal::KnownFamily(family)) {
+    if (!internal::IsPropFamily(family)) {   // a registered family judges itself (prop_act_families)
         why = Tally::FitBadFamily;
         return false;
     }
@@ -279,6 +277,17 @@ bool FamilyFits(void* actor, uint8_t family) {
     return false;
 }
 
+// A family's budget refused the request just judged: its reply says so (QueueFull's line) instead of a wrong item.
+bool g_fitBudget = false;
+
+// A registered family's own conditions, judged after the live, hold and reach steps; the term that refused it is tallied.
+bool RegisteredFits(const coop::prop_act_families::Family& fam, uint8_t slot, const Queued& q, void* actor) {
+    const std::optional<Tally> why = fam.judge(*g_session, slot, q.req, actor);
+    if (why) ++g_tally[static_cast<int>(*why)];
+    g_fitBudget = why && *why == Tally::FitFamilyBudget;
+    return !why;
+}
+
 // The reply goes to the sender alone: MTA broadcasts its entry confirm because every peer animates the entry
 // (CGame.cpp:3196-3197), while here nobody else shows anything before the destroy.
 bool Answer(uint8_t slot, const coop::net::PropActReplyPayload& reply) {
@@ -290,6 +299,7 @@ bool Answer(uint8_t slot, const coop::net::PropActReplyPayload& reply) {
 // Reads Decide's inputs in Decide's order and stops at the first that decides, so a request that must wait reads only
 // what the wait needs.
 void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& actor, float& dist, float& allowed) {
+    g_fitBudget = false;
     in.worldReady = g_session->IsSlotWorldReady(slot);
     if (!in.worldReady) return;
     in.holdsReservation = coop::prop_hold::HoldsReservation(slot);
@@ -297,7 +307,8 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
     const auto tok = EL::IntentTarget::ForClientIntent(*g_session, slot, kActReachUU);
     in.hasBody = tok.HasBody();
     if (!in.hasBody) return;
-    actor = coop::element::LivePropActor(q.req.eid);
+    const coop::prop_act_families::Family* const fam = coop::prop_act_families::Find(q.req.family);
+    actor = fam ? coop::element::LiveActorOfType(q.req.eid, fam->target) : coop::element::LivePropActor(q.req.eid);
     in.live = actor != nullptr;
     if (!in.live) return;
     in.heldByOther = coop::prop_hold::HeldByOther(actor, slot);
@@ -309,7 +320,7 @@ void ReadInputs(uint8_t slot, const Queued& q, internal::ActInputs& in, void*& a
     if (in.reach != EL::IntentOutcome::Ok) return;
     // The act's facts are the dear reads, so they come last; MTA's entry tests its cheap conditions first too
     // (trailer, action, occupant, then distance: CGame.cpp:3105-3113).
-    in.familyFits = FamilyFits(actor, q.req.family);
+    in.familyFits = fam ? RegisteredFits(*fam, slot, q, actor) : FamilyFits(actor, q.req.family);
 }
 
 // The slot's reservation and the verb it was granted for move together: prop_hold keeps at most one reservation per
@@ -329,6 +340,7 @@ bool ReserveFor(uint8_t slot, const coop::net::PropActRequestPayload& req, void*
 void ReleaseFor(int slot) {
     coop::prop_hold::Release(slot);
     g_slots[slot].grantedFamily = 0;
+    coop::prop_act_families::OnRelease(static_cast<uint8_t>(slot));
 }
 
 // One queued request, judged.
@@ -338,7 +350,7 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
     float dist = -1.f, allowed = -1.f;
     ReadInputs(slot, q, in, actor, dist, allowed);
 
-    const internal::ActVerdict v = internal::Decide(in);
+    internal::ActVerdict v = internal::Decide(in);
     if (v == internal::ActVerdict::Wait) {
         // A request waits where MTA answers or drops at once (a sender not joined, CGame.cpp:3025; one with an action in
         // flight, FAIL_ACTION at :3350): a peer joining mid-activity is never refused for it.
@@ -348,16 +360,30 @@ coop::net::Served ServeHead(uint8_t slot, const Queued& q) {
         return coop::net::Served::Wait;
     }
     if (v == internal::ActVerdict::Grant) ReserveFor(slot, q.req, actor);
-    const bool sent = Answer(slot, *internal::ReplyFor(v, q.req.id));
+    // A family with no replay and no commit applies BEFORE its grant is answered, as MTA changes a vehicle's exit state
+    // first and answers the failure to the requester (CGame.cpp:3475-3508): a write that fails is a refusal, never a
+    // grant that did nothing.
+    const auto* const fam = v == internal::ActVerdict::Grant ? coop::prop_act_families::Find(q.req.family) : nullptr;
+    const bool atGrant = fam && fam->apply == coop::prop_act_families::Apply::AtGrant;
+    if (atGrant && !fam->applyAtGrant(slot, actor)) {
+        ReleaseFor(slot);
+        ++g_tally[static_cast<int>(Tally::FitFamilyUnread)];
+        v = internal::ActVerdict::WrongFamily;
+    }
+    const bool budget = v == internal::ActVerdict::WrongFamily && g_fitBudget;
+    const bool sent = Answer(slot, budget ? coop::net::PropActReplyPayload{q.req.id, 0, static_cast<uint8_t>(PropActReason::QueueFull)}
+                                          : *internal::ReplyFor(v, q.req.id));
     if (v == internal::ActVerdict::Grant) {
         if (!sent) {
             ReleaseFor(slot);
             ++g_tally[static_cast<int>(Tally::GrantUnsent)];
             UE_LOGW("prop_act: the grant for slot %u id %u was not sent -- released", static_cast<unsigned>(slot),
                     static_cast<unsigned>(q.req.id));
+        } else if (atGrant) {
+            ReleaseFor(slot);
         }
     } else {
-        g_refusals.Note(slot, internal::VerdictName(v), Now());
+        g_refusals.Note(slot, budget ? "over the family's budget" : internal::VerdictName(v), Now());
     }
     UE_LOGI("prop_act: slot %u family %u eid %u -> %s (dist %.0f of %.0f uu)", static_cast<unsigned>(slot),
             static_cast<unsigned>(q.req.family), static_cast<unsigned>(q.req.eid),
@@ -389,6 +415,10 @@ ActVerdict Decide(const ActInputs& in) {
 }
 
 bool KnownFamily(uint8_t family) {
+    return IsPropFamily(family) || coop::prop_act_families::Find(family) != nullptr;
+}
+
+bool IsPropFamily(uint8_t family) {
     return family >= static_cast<uint8_t>(PropActFamily::Pocket) && family <= static_cast<uint8_t>(PropActFamily::Hold);
 }
 
@@ -406,7 +436,7 @@ bool HoldFits(const ActTraits& t) {
 bool UseFits(const ActTraits& t) { return t.read && t.offered && !(t.foodBody && t.notEdible); }
 
 std::optional<Tally> FirstRefusal(uint8_t family, const ActTraits& t) {
-    if (!KnownFamily(family)) return Tally::FitBadFamily;
+    if (!IsPropFamily(family)) return Tally::FitBadFamily;
     if (!t.read) return Tally::FitUnread;
     if (family == static_cast<uint8_t>(PropActFamily::Pocket)) {
         if (t.collectRefused) return Tally::FitCollectRefused;
@@ -447,11 +477,13 @@ std::optional<coop::net::PropActReplyPayload> ReplyFor(ActVerdict v, uint16_t id
     return std::nullopt;
 }
 
-CommitStep DecideCommit(bool matched, uint8_t committed, bool liveAndSame, bool snack, uint8_t flags) {
+CommitStep DecideCommit(bool matched, uint8_t committed, bool liveAndSame, bool snack, uint8_t flags, bool familyApply) {
     if (!matched) return CommitStep::BadCommit;
     if (committed == 0) return CommitStep::Abort;
     if (committed != 1 && committed != coop::snack_act::kCommitApplied) return CommitStep::BadCommit;
     if (!liveAndSame) return CommitStep::TargetGone;
+    // A registered family's target stays: its commit of 1 is its result written on the host, never the destroy.
+    if (familyApply) return committed == 1 && flags == 0 ? CommitStep::FamilyApply : CommitStep::BadCommit;
     // The flags are a snack's: a commit of the prop's other families carries none and never a 2.
     if (!snack) return committed == 1 && flags == 0 ? CommitStep::Destroy : CommitStep::BadCommit;
     if (!coop::snack_act::internal::WellFormedSnackCommit(committed, flags)) return CommitStep::BadCommit;
@@ -480,6 +512,7 @@ const char* CommitName(CommitStep s) {
     case CommitStep::Destroy:    return "destroy";
     case CommitStep::SnackEnded:   return "snack-ended";
     case CommitStep::SnackApplied: return "snack-applied";
+    case CommitStep::FamilyApply:  return "family-apply";
     }
     return "";
 }
@@ -510,7 +543,10 @@ void OnRequest(const coop::net::PropActRequestPayload& p, uint8_t senderSlot) {
     // The verb byte is judged before any world read. MTA ends the sender on an unknown action (CGame.cpp:3798-3802);
     // here the byte is refused with a reply, counted and never queued, and only the edge's budget ends a peer. As on
     // a full queue, a sender whose world is not ready is counted and not answered.
-    if (!internal::KnownFamily(p.family)) {
+    // The bytes an honest client writes zero are refused the same way: `pad`, and the argument of the three prop verbs.
+    const bool strayBytes = p.pad != 0 || (internal::IsPropFamily(p.family) &&
+                                           std::any_of(std::begin(p.verb), std::end(p.verb), [](char c) { return c != 0; }));
+    if (!internal::KnownFamily(p.family) || strayBytes) {
         ++g_tally[static_cast<int>(Tally::FitBadFamily)];
         if (g_session->IsSlotWorldReady(senderSlot)) {
             Answer(senderSlot, *internal::ReplyFor(internal::ActVerdict::WrongFamily, p.id));
@@ -541,11 +577,16 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
     // No act re-judge here: MTA's NOTIFY_IN re-tests only that the reservation stands (CGame.cpp:3376-3383).
     void* actor = nullptr;
     const bool matched = coop::prop_hold::Match(senderSlot, p.id, p.eid, &actor);
-    const bool liveAndSame = actor && actor == coop::element::LivePropActor(p.eid);
+    // A registered family is granted on the element type it names; the commit is routed by the grant's family, never to the
+    // destroy.
+    const coop::prop_act_families::Family* const fam = coop::prop_act_families::Find(g_slots[senderSlot].grantedFamily);
+    const bool familyApply = fam && fam->apply == coop::prop_act_families::Apply::AtCommit;
+    const bool liveAndSame = actor && actor == (fam ? coop::element::LiveActorOfType(p.eid, fam->target)
+                                                     : coop::element::LivePropActor(p.eid));
     // A snack's own commit words are for a USE grant alone: the pocket and the hold of a snack keep the destroy path.
     const bool snackUse = liveAndSame && g_slots[senderSlot].grantedFamily == static_cast<uint8_t>(PropActFamily::Use) &&
                           ue_wrap::snack::IsSnack(actor);
-    const internal::CommitStep step = internal::DecideCommit(matched, p.committed, liveAndSame, snackUse, p.flags);
+    const internal::CommitStep step = internal::DecideCommit(matched, p.committed, liveAndSame, snackUse, p.flags, familyApply);
     ++g_slots[senderSlot].commits[static_cast<int>(step)];
     if (step == internal::CommitStep::BadCommit) {
         // An unmatched commit owns nothing; a matched one with a bad byte keeps its reservation for the real commit.
@@ -560,6 +601,8 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         // A snack's use that aborted may have run the eater on the client's copy (an unreadable copy aborts): the host's
         // state is published so that copy is put back.
         if (snackUse) coop::snack_act::NoteAborted(actor);
+        // A registered family's commit that aborted may have left the client's copy ahead of the host's: it is put back.
+        if (familyApply && actor) fam->aborted(senderSlot, actor);
         ReleaseFor(senderSlot);
         LogCommit(senderSlot, p, internal::CommitName(step));
         return;
@@ -575,6 +618,14 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
         ReleaseFor(senderSlot);
         LogCommit(senderSlot, p, internal::CommitName(step));
         return;
+    case internal::CommitStep::FamilyApply: {
+        // The apply reads the family's record of the judge, which the release then drops.
+        const auto refused = fam->applyAtCommit(senderSlot, actor);
+        if (refused) ++g_tally[static_cast<int>(*refused)];
+        ReleaseFor(senderSlot);
+        LogCommit(senderSlot, p, refused ? "family-refused" : internal::CommitName(step));
+        return;
+    }
     case internal::CommitStep::Destroy:
         break;
     }
@@ -609,6 +660,7 @@ void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot) {
 // destructor here.
 void OnPeerGone(uint8_t slot) {
     if (!IsHostRole() || !InRoster(slot)) return;
+    coop::prop_act_families::OnPeerGone(slot);
     if (!coop::prop_hold::ReservationCount(slot)) return;
     const uint32_t eid = coop::prop_hold::ReservedEid(slot);
     ++g_tally[static_cast<int>(Tally::HeldAtDisconnect)];
@@ -624,7 +676,8 @@ const char* TallyName(Tally t) {
         "grant_unsent", "unpack_roll_failed", "fit_unread", "fit_bad_family", "fit_trash", "fit_not_prop", "fit_denied", "fit_no_use_row",
         "fit_collect_refused", "fit_pickup_refused", "fit_ignore_save", "fit_child", "fit_physics",
         "fit_can_collect", "fit_can_hold", "fit_heavy", "fit_mesh_root", "fit_volume", "fit_save_class",
-        "fit_equip_row", "fit_not_edible"};
+        "fit_equip_row", "fit_not_edible", "fit_family_arg", "fit_family_rule", "fit_family_hand",
+        "fit_family_budget", "fit_family_unread"};
     static_assert(std::size(kNames) == static_cast<size_t>(Tally::kCount), "a name for every tally");
     return t < Tally::kCount ? kNames[static_cast<int>(t)] : "";
 }
@@ -644,11 +697,12 @@ void OnDisconnect() {
     g_unreadSaid.clear();
     g_refusals.Clear();
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) ReleaseFor(slot);
+    coop::prop_act_families::OnDisconnect();
 }
 
 void NoteBadSender() { ++g_tally[static_cast<int>(Tally::BadSender)]; }
 
-void NoteShortPayload(uint8_t senderSlot) { g_refusals.Note(senderSlot, "payload too short", Now()); }
+void NoteShortPayload(uint8_t senderSlot) { g_refusals.Note(senderSlot, "payload not the exact length", Now()); }
 
 uint32_t AnsweredFor(int slot, PropActReason reason) {
     const size_t i = static_cast<size_t>(reason);

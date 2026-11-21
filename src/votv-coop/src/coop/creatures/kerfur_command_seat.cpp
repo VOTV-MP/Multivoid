@@ -55,20 +55,27 @@ sg::Verdict OnActionNamePre(const sg::Call& c) {
     // An FString frame is {Data, Num, Max}; a length no action name has is not read.
     const int32_t num = *reinterpret_cast<const int32_t*>(c.locals + off + sizeof(void*));
     if (num <= 1 || num > kMaxNameChars) return sg::Verdict::Run;
+    // The role decides first: a press this machine's seat does not take is read only when its name is as long as "pat" and
+    // its NUL (a pat runs where it is picked, either role).
+    const bool isClient = s->role() == coop::net::Role::Client;
+    const bool untaken = isClient ? GateOff() : coop::served_player::ServedSlot(c.object) == coop::players::kPeerIdHost;
+    constexpr int32_t kPatChars = 4;
+    if (untaken && num != kPatChars) return sg::Verdict::Run;
     const std::wstring name = ue_wrap::field_io::ReadFStringAt(c.locals, off);
-    // A pat runs where it is picked, either role; every other player is shown it (kerfur_dress_sync).
+    // At a pat's POST a client asks the host to show it and the host shows it to every client (kerfur_dress_sync).
     if (_wcsicmp(name.c_str(), L"pat") == 0) {
-        coop::kerfur_dress_sync::OnLocalPat(c.object);
+        coop::kerfur_dress_sync::OnPatPre(c.object);
         return sg::Verdict::Run;
     }
-    const bool isClient = s->role() == coop::net::Role::Client;
-    if (isClient ? GateOff() : coop::served_player::ServedSlot(c.object) == coop::players::kPeerIdHost)
-        return sg::Verdict::Run;
+    if (untaken) return sg::Verdict::Run;
     if (!coop::kerfur_command::TryRecordMenuCommand(c.object, name, isClient)) return sg::Verdict::Run;
     UE_LOGI("kerfur_command_seat: %s '%ls' on kerfur %p taken at the seat, %s", isClient ? "client" : "host",
             name.c_str(), c.object, c.callerFunction ? "from a Blueprint call" : "from a reflected call");
     return sg::Verdict::Cancel;
 }
+
+// The end of any action: a pat the PRE armed has run on this copy.
+void OnActionNamePost(const sg::Call& c) { coop::kerfur_dress_sync::OnPatPost(c.object); }
 
 }  // namespace
 
@@ -76,7 +83,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_dead) return;
     if (!g_watched) {
-        g_watched = sg::WatchName(kRowActionName, kTagActionName, &OnActionNamePre, nullptr);
+        g_watched = sg::WatchName(kRowActionName, kTagActionName, &OnActionNamePre, &OnActionNamePost);
         if (!g_watched) {
             g_dead = true;
             UE_LOGE("kerfur_command_seat: the gate took no watch on actionName -- an Omega's radial command runs on "

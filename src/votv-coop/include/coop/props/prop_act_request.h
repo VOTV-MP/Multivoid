@@ -16,6 +16,7 @@
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"   // FName
+#include "ue_wrap/core/script_gate.h"  // Verdict
 #include "ue_wrap/core/types.h"        // FVector
 
 #include <cstddef>
@@ -25,7 +26,7 @@ namespace coop::net { class Session; }
 
 namespace coop::prop_act_request {
 
-void Install(coop::net::Session* session);      // registers the eight watches on a take or use, on either role
+void Install(coop::net::Session* session);      // registers the watches on a take or use and the registered families', on either role
 void Tick();                                     // settles the watches; sends the commits the transport refused again;
                                                  // the 10 s expiry of an open record; a parked replay (dev)
 void OnDisconnect();                             // the pending record, the next id, the unsent commits, the latch, the
@@ -40,10 +41,18 @@ namespace internal {   // pure: prop_act_selftest drives it
 enum class ReplyAction : uint8_t { Stale, Refused, BadReason, Granted };
 ReplyAction DecideReply(bool pending, uint16_t pendingId, const coop::net::PropActReplyPayload& p);
 const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" "granted"
+
+// What the registered families' watches (coop/props/prop_act_families) take from the table's own: the session while a host link is
+// up, whether a call is the replay running now, and the host's own call cancelled for another slot's reservation.
+coop::net::Session* LinkedSession();
+bool ReplayingTarget(void* target);
+ue_wrap::script_gate::Verdict HostPre(void* target);
 }  // namespace internal
 
 // The row of the verb a record replays. kUnpack is an open whose contents the host rolls: an MRE, a first aid kit.
-enum Row : uint8_t { kPocket = 1, kHold, kFood, kUnpack, kPills, kSoap, kSnack };
+// kFamily is a family registered in coop/props/prop_act_families (the Omega's put-on and take-off): its replay or its
+// apply at the grant is the family's own, found by the record's `family` byte.
+enum Row : uint8_t { kPocket = 1, kHold, kFood, kUnpack, kPills, kSoap, kSnack, kFamily };
 
 // The pending record: the target's element id and the call's arguments, as the replay needs them.
 struct Pending {
@@ -59,6 +68,8 @@ struct Pending {
     uint8_t action = 0;
     ue_wrap::CachedObjRef lookAt;                  // the four action rows and kSoap
     ue_wrap::reflection::FName holdPropName{};     // kSoap
+    uint8_t family = 0;                            // kFamily: the registered family's wire byte
+    char verb[coop::net::kPropActVerbBytes] = {};  // kFamily: the family's argument (the wire's verb field)
     bool replayHeld = false;                       // dev: HoldReplayUntilGone parked the replay of a grant
 };
 

@@ -1,6 +1,7 @@
 // coop/dispatch/event_dispatch_kerfur_command.cpp -- a client's radial command for a kerfur and the host's answer:
 // KerfurCommand (client to host, handed to coop::kerfur_command) and KerfurCommandAnswer (host to the requester,
-// handed to coop::kerfur_command_answer). Each case validates at the trust boundary. The switch below is the
+// handed to coop::kerfur_command_answer), and an Omega's outfit and pat: KerfurDressState (host to every client) and
+// KerfurDressIntent (a client's pat, to the host), both handed to coop::kerfur_dress_sync. Each case validates at the trust boundary. The switch below is the
 // family's membership declaration; nothing re-lists it. Family contract per coop/dispatch/event_dispatch.h: returns
 // true iff msg.kind is in this family.
 
@@ -8,6 +9,7 @@
 
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_command_answer.h"
+#include "coop/creatures/kerfur_dress_sync.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -52,6 +54,38 @@ bool HandleKerfurCommandEvent(net::Session& session,
         net::KerfurCommandAnswerPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::kerfur_command_answer::OnAnswer(p);
+        break;
+    }
+    case net::ReliableKind::KerfurDressState: {
+        // HOST->CLIENT: an Omega's whole outfit, and a pat to show. Never relayed. coop::kerfur_dress_sync. The length is
+        // exactly the word's 224 bytes, then WellFormed walks `names` (count rows of 1..26 printable ASCII, zeros after).
+        net::KerfurDressPayload p{};
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0 || msg.payloadLen != sizeof(p)) {
+            UE_LOGW("event_feed: KerfurDressState dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (!coop::kerfur_dress_sync::internal::WellFormed(p)) {
+            UE_LOGW("event_feed: KerfurDressState malformed (count %u, flags %u) -- dropping", static_cast<unsigned>(p.count),
+                    static_cast<unsigned>(p.flags));
+            break;
+        }
+        coop::kerfur_dress_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::KerfurDressIntent: {
+        // CLIENT->HOST: this client's player patted an Omega. Never relayed. coop::kerfur_dress_sync.
+        net::KerfurDressPatPayload p{};
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen != sizeof(p)) {
+            UE_LOGW("event_feed: KerfurDressIntent dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            coop::kerfur_dress_sync::NoteIntentDropped();
+            break;
+        }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::kerfur_dress_sync::OnPatAsk(msg.senderPeerSlot, p);
         break;
     }
     default:

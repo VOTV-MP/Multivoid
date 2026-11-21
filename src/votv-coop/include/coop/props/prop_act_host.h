@@ -20,6 +20,11 @@ namespace coop::net { class Session; }
 
 namespace coop::prop_act_host {
 
+// The reach a take or use is allowed beyond the target's bounds and the pose-staleness ball. A lenient bound on the
+// sender's last-synced place, not its exact range: the shape of MTA's server cutoff (CGame.cpp:3113). A client's pat of an
+// Omega is judged by the same reach.
+inline constexpr float kActReachUU = 200.0f;
+
 void Install(coop::net::Session* session);
 void Tick();                                      // serves every slot's queue; flushes the refusal tally
 void OnDisconnect();                              // the session ended: tallies, refusals and reservations cleared
@@ -27,18 +32,19 @@ void OnPeerGone(uint8_t slot);                    // the DisconnectSlot fan-out;
 void OnRequest(const coop::net::PropActRequestPayload& p, uint8_t senderSlot);
 void OnCommit(const coop::net::PropActCommitPayload& p, uint8_t senderSlot);
 void NoteBadSender();                             // the dispatcher saw a sender outside 1..kMaxPeers-1
-void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a short payload
+void NoteShortPayload(uint8_t senderSlot);        // the dispatcher saw a payload of the wrong length
 void RunSelftest();                               // the pure decisions, once per start; NOT the game thread
 
 // The host's dev counters (TallyOf). The Fit* tallies name the term of an act's conditions that refused it; the reply
-// to the sender stays WrongFamily. MTA sends a reason byte per cause (CGame.cpp:3359) because its client rolls back a
+// to the sender stays WrongFamily (a family's budget answers QueueFull). MTA sends a reason byte per cause (CGame.cpp:3359) because its client rolls back a
 // predicted entry; ours cancels at PRE and shows one line, so every refusal of the act is one reply reason.
 enum class Tally : uint8_t { TargetGone, BadCommit, HeldAtDisconnect, DestroyFailed, QueueFullUnready, BadSender,
                              GrantUnsent, UnpackRollFailed, FitUnread, FitBadFamily, FitTrash, FitNotProp, FitDenied, FitNoUseRow,
                              FitCollectRefused, FitPickupRefused, FitIgnoreSave, FitChild, FitPhysics, FitCanCollect,
                              FitCanHold, FitHeavy, FitMeshRoot, FitVolume, FitSaveClass, FitEquipRow, FitNotEdible,
+                             FitFamilyArg, FitFamilyRule, FitFamilyHand, FitFamilyBudget, FitFamilyUnread,
                              kCount };
-const char* TallyName(Tally t);   // "target_gone" ... "fit_not_edible"; "" past kCount
+const char* TallyName(Tally t);   // "target_gone" ... "fit_family_unread"; "" past kCount
 
 namespace internal {   // pure, no engine call: prop_act_selftest drives these (NOT the game thread)
 enum class ActVerdict : uint8_t { Wait, Gone, WrongFamily, Held, Reach, Grant };
@@ -61,20 +67,23 @@ struct ActTraits {
 bool PocketFits(const ActTraits& t);   // putObjectInventory2 and addObject
 bool HoldFits(const ActTraits& t);     // Hold Object and updateHold
 bool UseFits(const ActTraits& t);      // the use verbs the lane carries
-bool KnownFamily(uint8_t family);      // 1..3
+bool KnownFamily(uint8_t family);      // 1..3 and every family coop/props/prop_act_families registers
+bool IsPropFamily(uint8_t family);     // 1..3: the verbs the prop census judges; a registered family judges itself
 // The first term of the verb's fit that is false, in the order the fit reads them; none when the act fits.
 std::optional<Tally> FirstRefusal(uint8_t family, const ActTraits& t);
 std::optional<coop::net::PropActReplyPayload> ReplyFor(ActVerdict v, uint16_t id);
 // A snack's commit never destroys by the lane: SnackEnded is its copy gone on the client (committed 1), SnackApplied the
 // eater run with the copy alive there (committed 2); the host applies the reported delta to its own copy either way
 // (coop/props/snack_act). `snack` is whether the grant was a USE of an actor that walks to prop_snack_C (a pocket or a
-// hold of a snack is no snack commit); `flags` the commit's second byte.
-enum class CommitStep : uint8_t { BadCommit, Abort, TargetGone, Destroy, SnackEnded, SnackApplied };
-CommitStep DecideCommit(bool matched, uint8_t committed, bool liveAndSame, bool snack, uint8_t flags);
+// hold of a snack is no snack commit); `flags` the commit's second byte. A registered family's commit never destroys: FamilyApply is its
+// commit of 1 on a live target, taken by `familyApply` (the grant was a family whose result is written at the commit).
+enum class CommitStep : uint8_t { BadCommit, Abort, TargetGone, Destroy, SnackEnded, SnackApplied, FamilyApply };
+CommitStep DecideCommit(bool matched, uint8_t committed, bool liveAndSame, bool snack, uint8_t flags,
+                        bool familyApply = false);
 enum class AfterStep : uint8_t { DestroyFailed, FanOut };
 AfterStep AfterDestroy(bool destroyed);
 const char* VerdictName(ActVerdict v);   // "wait" "gone" "wrong-family" "held" "reach" "grant"
-const char* CommitName(CommitStep s);    // "bad" "abort" "target-gone" "destroy" "snack-ended" "snack-applied"
+const char* CommitName(CommitStep s);    // "bad" "abort" "target-gone" "destroy" "snack-ended" "snack-applied" "family-apply"
 }  // namespace internal
 
 enum class WaitCause : uint8_t { NotReady, Reservation, NoBody, kCount };

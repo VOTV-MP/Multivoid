@@ -2,7 +2,6 @@
 
 #include "coop/props/prop_act_request.h"
 
-#include "coop/comms/chat_feed.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/element/element.h"
@@ -11,13 +10,13 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_act_families.h"
+#include "coop/props/prop_act_lines.h"
 #include "coop/props/prop_hold.h"
 #include "coop/props/prop_sound.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/snack_act.h"
 #include "coop/session/net_pump.h"
-
-#include "l10n/l10n.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/prop_use.h"
@@ -49,6 +48,14 @@ namespace EL = coop::element;
 namespace sg = ue_wrap::script_gate;
 using coop::net::PropActFamily;
 using coop::net::ReliableKind;
+using internal::HostPre;
+using internal::LinkedSession;
+using internal::ReplayingTarget;
+using coop::prop_act_lines::ShowBadReason;
+using coop::prop_act_lines::ShowBusy;
+using coop::prop_act_lines::ShowNotAsked;
+using coop::prop_act_lines::ShowNotReady;
+using coop::prop_act_lines::ShowRefusal;
 
 // A reply that has not come in this long closes the record: an honest wait ends in milliseconds, so the bound covers
 // only a transport that refused the reply. MTA's client has no timer: it refuses a new entry until the server's word
@@ -94,51 +101,6 @@ bool g_holdReplay = false;                 // a grant parks its replay
 void (*g_beforeVerb)(void* target) = nullptr;   // called on the target right before the replay's verb
 uint32_t g_refused[coop::net::kPropActReasons] = {};   // replies taken as refused, per reason
 uint32_t g_hostCancels = 0;                // the host's own calls cancelled for a reservation
-
-// ---- the lines ------------------------------------------------------------------------------------------------
-
-// A line is shown at most once per kind per window (D1's shape, remover_request.cpp).
-enum Line : size_t { kLineGone, kLineWrongFamily, kLineHeld, kLineReach, kLineQueueFull, kLineBadReason,
-                     kLineNotAsked, kLineNotReady, kLineBusy, kLineCount };
-constexpr uint64_t kShowEveryMs = 5000;
-uint64_t g_shownAt[kLineCount] = {};
-bool g_shown[kLineCount] = {};
-
-void Show(Line which, const char* line) {
-    const uint64_t now = coop::net::NowMs();
-    if (g_shown[which] && now - g_shownAt[which] < kShowEveryMs) return;
-    g_shown[which] = true;
-    g_shownAt[which] = now;
-    coop::chat_feed::Push(std::string(line), coop::chat_feed::Keep::Transient);
-}
-
-void ShowRefusal(uint8_t reason) {
-    switch (static_cast<coop::net::PropActReason>(reason)) {
-    case coop::net::PropActReason::Gone:
-        Show(kLineGone, l10n::T("That item is gone."));
-        return;
-    case coop::net::PropActReason::WrongFamily:
-        Show(kLineWrongFamily, l10n::T("You can't do that with this item."));
-        return;
-    case coop::net::PropActReason::Held:
-        Show(kLineHeld, l10n::T("Someone else has that item."));
-        return;
-    case coop::net::PropActReason::Reach:
-        Show(kLineReach, l10n::T("That item is too far away."));
-        return;
-    case coop::net::PropActReason::QueueFull:
-        Show(kLineQueueFull, l10n::T("Too many actions at once, try again."));
-        return;
-    default:
-        return;
-    }
-}
-
-void ShowBadReason() { Show(kLineBadReason, l10n::T("That can't be done right now.")); }
-void ShowNotAsked() { Show(kLineNotAsked, l10n::T("The host could not be asked; try again.")); }
-void ShowNotReady() { Show(kLineNotReady, l10n::T("Not ready yet, try again in a moment.")); }
-void ShowBusy() { Show(kLineBusy, l10n::T("Another player is using that item.")); }
-
 // ---- the record -----------------------------------------------------------------------------------------------
 
 void Close() { g_rec = Pending{}; }
@@ -211,6 +173,10 @@ bool RunVerb(void* target, void* local) {
         return PU::CallPlayerUsedOn(target, local, g_rec.hitComponent.Get(), g_rec.hitLocation, g_rec.lookAt.Get(),
                                     g.holdingActor, g_rec.holdPropName);
     }
+    case kFamily: {
+        const auto* fam = coop::prop_act_families::Find(g_rec.family);
+        return fam && fam->runVerb && fam->runVerb(target, local, g_rec.verb);
+    }
     default:
         return false;
     }
@@ -262,7 +228,8 @@ void Replay() {
         if (hearsUnpack) coop::prop_sound::PlayMreOpenAt(local, unpackAt);
     } else {
         if (!ran) UE_LOGW("prop_act: the replay of row %u could not run -- aborted", static_cast<unsigned>(g_rec.row));
-        SendCommit(0);
+        const auto* fam = g_rec.row == kFamily ? coop::prop_act_families::Find(g_rec.family) : nullptr;   // a registered family's target stays: its word
+        SendCommit(ran && fam && fam->commitWord ? fam->commitWord(target, g_rec.verb) : 0);
     }
     Close();
 }
@@ -301,9 +268,6 @@ constexpr int kTagPocket = 0x50414331, kTagHold = 0x50414332, kTagFood = 0x50414
 
 // The action index of eating, opening a food or a first aid kit, and taking pills.
 constexpr uint8_t kEatAction = 4;
-
-// Is this call the replay running now? The gate cannot tell a reflected call of ours from a drill's, so the latch does.
-bool ReplayingTarget(void* target) { return g_latch.target && g_latch.target == target; }
 
 // The trash lanes own the trash actors; a take or use of one is theirs.
 bool InTrashLane(void* actor) { return ue_wrap::prop::IsTrashActor(actor) || ue_wrap::prop::IsTrashBitsPile(actor); }
@@ -377,16 +341,6 @@ bool SoapDestroys(const sg::Call& c) {
     if (PU::ReadSpongeSoap(hold, spongeSoap) && spongeSoap > 0.0f) return false;
     int32_t soap = 0;
     return !PU::ReadSoapAmount(c.object, soap) || soap == 1;
-}
-
-// A watch fires on the game thread. Null while no host link is up.
-coop::net::Session* LinkedSession() { return g_session && g_session->connected() ? g_session : nullptr; }
-
-sg::Verdict HostPre(void* target) {
-    if (!target || !coop::prop_hold::ReservedByOther(target, 0)) return sg::Verdict::Run;
-    ++g_hostCancels;
-    ShowBusy();
-    return sg::Verdict::Cancel;
 }
 
 enum class Gate : uint8_t { Run, Cancel, Ask };
@@ -589,7 +543,7 @@ struct Watch {
     sg::PostFn post = nullptr;   // after the body ran, when the watch has one
     const char* dead = nullptr;  // what a dead watch costs, when it is not the raw destroy the take and use rows name
 };
-Watch g_watches[] = {
+std::vector<Watch> g_watches = {
     {kRowPocket, kTagPocket, &PrePocket, "take", WatchState::Pending},
     {kRowHold,   kTagHold,   &PreHold,   "take", WatchState::Pending},
     {kRowFood,   kTagFood,   &PreFood,   "use",  WatchState::Pending},
@@ -601,6 +555,7 @@ Watch g_watches[] = {
     {kRowKit,    kTagKit,    &PreKit,    "use",  WatchState::Pending},
 };
 bool g_watchesSettled = false;
+bool g_familyWatchesAdded = false;
 
 // Says once per watch whether the gate took it. The names resolve on the game thread, so a tick drives them.
 void SettleWatches() {
@@ -634,6 +589,19 @@ void SettleWatches() {
 
 namespace internal {
 
+// A watch fires on the game thread. Null while no host link is up.
+coop::net::Session* LinkedSession() { return g_session && g_session->connected() ? g_session : nullptr; }
+
+// Is this call the replay running now? The gate cannot tell a reflected call of ours from a drill's, so the latch does.
+bool ReplayingTarget(void* target) { return g_latch.target && g_latch.target == target; }
+
+sg::Verdict HostPre(void* target) {
+    if (!target || !coop::prop_hold::ReservedByOther(target, 0)) return sg::Verdict::Run;
+    ++g_hostCancels;
+    ShowBusy();
+    return sg::Verdict::Cancel;
+}
+
 ReplyAction DecideReply(bool pending, uint16_t pendingId, const coop::net::PropActReplyPayload& p) {
     if (!pending || p.id != pendingId) return ReplyAction::Stale;
     if (p.granted == 1 && p.reason == 0) return ReplyAction::Granted;
@@ -659,7 +627,8 @@ bool Ask(const Pending& filled, PropActFamily family) {
     if (g_rec.open || !g_session) return false;
     uint16_t id = ++g_nextId;
     if (id == 0) id = ++g_nextId;
-    const coop::net::PropActRequestPayload payload{id, static_cast<uint8_t>(family), 0, filled.eid};
+    coop::net::PropActRequestPayload payload{id, static_cast<uint8_t>(family), 0, filled.eid, {}};
+    std::memcpy(payload.verb, filled.verb, sizeof(payload.verb));
     if (!g_session->SendReliableToSlot(0, ReliableKind::PropActRequest, &payload, sizeof(payload))) {
         ShowNotAsked();
         return false;
@@ -667,12 +636,19 @@ bool Ask(const Pending& filled, PropActFamily family) {
     g_rec = filled;
     g_rec.open = true;
     g_rec.id = id;
+    g_rec.family = static_cast<uint8_t>(family);
     g_rec.sentMs = coop::net::NowMs();
     return true;
 }
 
 void Install(coop::net::Session* session) {
     g_session = session;
+    namespace PF = coop::prop_act_families;
+    for (size_t i = 0; !g_familyWatchesAdded && i < PF::WatchCount(); ++i) {   // the registered families' watches join once
+        const PF::WatchDef& d = PF::WatchAt(i);
+        g_watches.push_back(Watch{d.row, d.tag, d.pre, d.verb, WatchState::Pending, nullptr, d.dead});
+    }
+    g_familyWatchesAdded = true;
     // The gate refuses a watch it cannot keep for the process; a refused one is said dead at the settle.
     for (Watch& w : g_watches) {
         if (w.state != WatchState::Pending) continue;
@@ -728,6 +704,8 @@ void OnReply(const coop::net::PropActReplyPayload& p) {
             g_rec.replayHeld = true;
             return;
         }
+        if (const auto* fam = coop::prop_act_families::Find(g_rec.family);   // the host applied at the grant: no replay, no commit
+            g_rec.row == kFamily && fam && fam->apply == coop::prop_act_families::Apply::AtGrant) { Close(); return; }
         Replay();
         return;
     }
@@ -753,7 +731,7 @@ void OnDisconnect() {
     g_beforeVerb = nullptr;
     std::fill(std::begin(g_refused), std::end(g_refused), 0u);
     g_hostCancels = 0;
-    for (size_t i = 0; i < kLineCount; ++i) g_shown[i] = false;
+    coop::prop_act_lines::Forget();
 }
 
 namespace dev {
@@ -772,7 +750,7 @@ uint32_t RefusedCount(coop::net::PropActReason reason) {
 uint32_t HostCancels() { return g_hostCancels; }
 uint32_t LateGrantsAborted() { return g_lateGrantsAborted; }
 size_t ExpiredPending() { return g_expired.size(); }
-bool NotReadyShown() { return g_shown[kLineNotReady]; }
+bool NotReadyShown() { return coop::prop_act_lines::NotReadyShown(); }
 
 }  // namespace dev
 
