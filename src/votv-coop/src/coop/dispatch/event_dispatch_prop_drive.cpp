@@ -25,6 +25,7 @@
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/world/flood_sync.h"
+#include "coop/world/agrav_sync.h"
 #include "coop/interactables/woodchipper_sync.h"
 #include "coop/interactables/atv_host_judge.h"
 #include "coop/interactables/atv_host_sync.h"
@@ -444,6 +445,19 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (intent) ::coop::roomba_sync::OnIntent(msg.senderPeerSlot, p);
         else ::coop::roomba_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::AgravState: {
+        // HOST->ALL (coop/world/agrav_sync). Exact length, a count within the rows.
+        net::AgravStatePayload p{};
+        if (session.role() == net::Role::Host || msg.payloadLen != sizeof(p)) {
+            UE_LOGW("event_feed: an AgravState the wrong way or the wrong length from slot %d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.count == 0 || p.count > net::kAgravRowsMax || p.lifted > 1) break;
+        ::coop::agrav_sync::OnState(p);
         break;
     }
     case net::ReliableKind::FloodState:

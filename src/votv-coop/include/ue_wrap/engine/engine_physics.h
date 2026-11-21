@@ -40,6 +40,11 @@ float GetComponentDistanceToCollision(void* component, const FVector& point);
 // False for anything but a live primitive component, or when it did not resolve.
 bool IsComponentSimulatingPhysics(void* component);
 
+// UPrimitiveComponent::SetEnableGravity and IsGravityEnabled: whether the body falls. The set is true when the call ran;
+// the read is false for anything but a live primitive component, or when it did not resolve.
+bool SetComponentGravity(void* component, bool enabled);
+bool IsComponentGravityEnabled(void* component);
+
 // GetCenterOfMass: the body's centre of mass in world space; for a body others are welded into, the whole
 // weld's. False for anything but a live primitive component or when it did not resolve, `out` left as it was.
 bool GetComponentCenterOfMass(void* component, FVector& out);

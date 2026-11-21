@@ -228,6 +228,21 @@ world-ready, past four a second per sender, or naming no pipe or another op is d
 The flood drill (`coop/dev/flood_drill`: `rig: VERDICT flood-burst`, `-mend`, `-far`, `-join`, `-mendold`) reads each of
 these on the peers' own copies, and its red arms withhold the send, the judge and the joiner's replay `[?]`.
 
+### The Ariral's float
+
+The Ariral's float (`trigger_agrav_C`, the `agrav` event) runs on the host alone: five seconds in, the trigger gathers
+the physics bodies within 100 m of the host's camera into its `buf`, shuffles them, turns each one's gravity off and
+sets it rising at 10 cm/s (added to its own velocity) with a random spin, and after its time turns each back on, one a
+tick. A client ran none of it, so only the host saw the room float. The host now watches each body in a live trigger's
+`buf` that simulates (a frozen prop does not move), five times a second while any waits or is lifted and once a second
+otherwise: one whose gravity went off and that it then sees rise 3 cm is sent as an `AgravState` lifted row with the
+speed it rose at, and one sent whose gravity comes back on as a dropped row, by host element id; a body that never rises
+(blocked, or asleep) is not sent. A client switches its own copy's gravity the same way and sets it rising at the host's
+speed, and once a second sets a lifted copy rising again when it has stopped and no drive row holds it (a host coast of
+a body the float knocked ends with its copy asleep where the host's was); a dropped copy falls by its own physics. The
+spin is not sent: each copy turns by its own `[?]` (`coop/world/agrav_sync`; `VOTVCOOP_AGRAV_TRACE=1` for each body's
+height at its lift and drop on every peer).
+
 ### Emails and the daily task
 
 Every email producer funnels through one gamemode function into the save's list; the host owns
@@ -273,6 +288,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
 | the basement's pipes and flood | the host | a client's `addDamage`, `addWater` and `setLevel` refused outside the lane's apply; the bit and the level sent as they change; a client's repair asked |
+| the Ariral's float | the host | the bodies its trigger lifts and drops sent as each switches; a client's copy switched the same way |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
 
 ## Wire messages
@@ -289,6 +305,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | `AlarmState` | either role | the alarm's active flag |
 | `EmailAppend`, `EmailDelete`, `TaskNewState` | the host to all; either role; the host to all | an email; a deletion; the task |
 | `FloodState`, `FloodIntent` | the host to all; a client to the host | a pipe's `damaged` or the flood's level; a client's repair |
+| `AgravState` | the host to all | the props the Ariral's float lifted or dropped, by host element id |
 
 ## Late join
 
@@ -338,4 +355,5 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the Ariral's float | `coop/world/agrav_sync`, `ue_wrap/engine/engine_physics` (the gravity switch) |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
