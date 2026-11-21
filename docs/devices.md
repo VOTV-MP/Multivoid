@@ -315,7 +315,7 @@ position, since both peers place them from the same save (`coop/interactables/wi
 `coop/interactables/grime_sync`). A decal that ends (cleaned or repaired past zero, raked) goes out as `kGrimeGone`,
 below every dirt, and every peer destroys its own, as the game's clean does below zero; a zero had left it standing,
 unseen, on the others `[V]` (`coop/dev/clean_drill`'s `clean` arm, build 4be79d00: every decal a client cleaned away
-ended on the host and the other client and none stood on one peer alone; sent as a zero, they stood). The save replay's deletes are no wipe of the grime lane's
+ended on the host and the other client and none stood on one peer alone; sent as a zero, they stood). A decal has no syncer, so a client's grime fall is an ask the host judges (`coop/interactables/grime_judge`) and the host no longer relays it: the client's own verb runs at once on its copy and the lane asks; the host grants it when the sender's hand holds a sponge (a wall fixer on a crack) within the tool's trace, its overlap and the decal's box (the authority's pose allowance included), or when the host is itself raining on a decal the rain washes (not `resistRain`, no roof over it, within the rain's radius of the sender, once per the rain's own 2 s period per decal), cuts a grant to one call of the game's own fall (a soaped sponge's `14.4` times the decal's `cleanStrength`, the rain's `2.4` times it, the fixer's flat `10`), lowers its own copy and floor only after the grant, and sends the fall to every other client; a cut or refused ask on a known decal is answered to the asker with the host's value, one naming no decal gets no answer, and a client's ended mark or snapshot is refused. A client's last stroke is held at its source: a pre hook on the native `K2_DestroyActor`, armed only inside the client's own `clean` or `wallFixer_fix` frame on a grime decal, cancels the destroy those verbs run below zero; the lane writes the decal to zero and asks zero, the host destroys at a granted zero, and its end of play sends the end to everyone. Trust line `[?]`: a client with a sponge within reach may lower a decal a sponge can, a step per ask, as fast as its queue (64 keys, a refill of 16 a second) lets it; it cannot end a decal in one message, clean from beyond reach or with an empty hand (unless it rains on the host), or end a decal for others by its own end of play. The budget, the reach slack and the rain cadence are provisional until the drill's `measure` arm reads them; whether the destroy hold fires inside `clean`'s own call is `[RD]` until that arm says so. The arms `grime_last`, `grime_far`, `grime_notool`, `grime_gone`, `grime_fast`, `grime_rain`, `grime_dry`, `grime_joinleak` and `grime_measure` (`coop/dev/hostile_drill_grime`) judge it, with the reds `grime_judge_off`, `grime_hold_off` and `grime_rain_open`. The save replay's deletes are no wipe of the grime lane's
 (`docs/join.md`, world load).
 
 A spilled liquid is the host's (`coop/world/spill_sync`). A coffee cup tipped or flung fast, beer, wine and a gas
@@ -530,7 +530,8 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
 | the fuse towers (the three coordinate towers and the radio tower) | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
-| a window, the grime | any peer, minimum wins | monotone decreases |
+| a window | any peer, minimum wins | monotone decreases |
+| the grime | a client asks, the host judges; the host sends | monotone decreases, one step a grant |
 | a spilled liquid's decal | the host | a client's spill from its hand and its wipe are requests |
 | the drone | the host | a timed transform stream; the client's tick and physics off |
 | a woodchipper's fuel and on/off | the host | a client's pour and press are intents the host judges; the host's state when it changes and every second while its fuel moves |
@@ -553,7 +554,8 @@ removed from its author's hand -- and a joiner gets every box's count at its wor
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
 | `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
 | `FuseTowerState` | the host to all; a client to the host | every tower's row (kind, broken, fuses, puzzle, panel, levers), each slot's last op taken and last claim refused; a press of a puzzle button, a lever or the retract, a fuse pulled or inserted |
-| `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
+| `TurbineState`, `WindowCleanState` | each peer or the host | the driver floats; a decrease |
+| `GrimeState` | a client to the host (an ask); the host to all | a decal's dirt, a decrease, or its end; the host's answer to a cut or refused ask, adopted as is |
 | `SpillState`, `SpillIntent` | the host to all; a client to the host | a spill's class, transform, decal turn and dirt, or that it was wiped away; a client's spill from its hand, or its wipe |
 | `SpillPour`, `SpillPourIntent` | the host to all; a client to the host | where a bottle poured and who poured it; a pour of a bottle in a client's hand |
 | `DroneState` | the host to all | the drone's transform and flags, among them its leave timer |
