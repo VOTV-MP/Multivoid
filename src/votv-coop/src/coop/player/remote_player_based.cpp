@@ -15,34 +15,16 @@
 
 #include "coop/player/remote_player.h"
 
-#include "coop/config/config.h"
-#include "coop/config/config_registry.h"
-
-#include "coop/player/players_registry.h"
 #include "coop/player/pose_bases.h"
 #include "coop/player/puppet_seat.h"
 
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/engine/actor_end_play.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
 
 namespace coop {
 
 namespace E = ue_wrap::engine;
-
-namespace {
-
-// The engine's end of an actor's play: a puppet riding that actor leaves it now, before the engine marks it for death.
-void OnEndPlay(void* actor, ue_wrap::actor_end_play::Reason) {
-    // [dev red] basedmove_end_sink_off: the sink does nothing, so a rider is left to the engine when its base ends.
-    static const bool off = coop::config::ResolveFlag(::coop::config_registry::rows::basedmove_end_sink_off);
-    if (off) return;
-    for (uint8_t slot = 0; slot < coop::players::kMaxPeers; ++slot)
-        if (RemotePlayer* const p = coop::players::Registry::Get().Puppet(slot)) p->OnBaseEnding(actor);
-}
-
-}  // namespace
 
 RemotePlayer::BaseClaim RemotePlayer::ClaimOf(const coop::net::PoseSnapshot& snap) {
     BaseClaim claim;
@@ -100,11 +82,6 @@ void RemotePlayer::ChangeBase(const BaseClaim& to) {
     base_.Reset();
     baseId_ = 0;
     if (to.actor) {
-        static bool sinkAdded = false;
-        if (!sinkAdded) {
-            sinkAdded = ue_wrap::actor_end_play::AddSink(&OnEndPlay);
-            if (!sinkAdded) UE_LOGW("RemotePlayer: the end-of-play sink table is full -- a rider is not detached before its base ends");
-        }
         if (E::AttachActorToActorKeepWorld(actor_, to.actor, false)) {
             riding_ = true;
             base_.Set(to.actor);
@@ -117,21 +94,6 @@ void RemotePlayer::ChangeBase(const BaseClaim& to) {
         }
     }
     if (hasPose_) curPos_ = riding_ ? ue_wrap::FVector{world.X - to.origin.X, world.Y - to.origin.Y, world.Z - to.origin.Z} : world;
-    window_.Close();
-    dirty_ = true;
-}
-
-void RemotePlayer::OnBaseEnding(void* actor) {
-    if (!riding_ || !actor || base_.Get() != actor) return;
-    ue_wrap::FVector world{};
-    const bool read = E::TryGetActorLocation(actor_, world);
-    void* parent = nullptr;
-    if (E::GetAttachParentActor(actor_, parent) && parent == actor) E::DetachActorFromParent(actor_);
-    curPos_ = read ? world : WorldPos();
-    refusedBase_.Set(actor);   // a pose naming the ending base in this frame does not take it again
-    riding_ = false;
-    base_.Reset();
-    baseId_ = 0;
     window_.Close();
     dirty_ = true;
 }
@@ -149,8 +111,9 @@ ue_wrap::FVector RemotePlayer::WorldPosForWrite() {
         baseOrigin_ = origin;
         return {origin.X + curPos_.X, origin.Y + curPos_.Y, origin.Z + curPos_.Z};
     }
-    // The platform is gone without an end of play seen (the sink is the normal way out): the offset becomes a world position at the
-    // last origin, and the next pose places the puppet by its own claim.
+    // The platform is gone. The engine detaches an attached puppet from a destroyed parent itself, in place (the drill's baseend arm,
+    // with and without an end-of-play sink of ours doing it: no parent and 1.0 cm moved in both, so the sink was deleted); the offset
+    // becomes a world position at the last origin, and the next pose places the puppet by its own claim.
     curPos_ = WorldPos();
     riding_ = false;
     base_.Reset();

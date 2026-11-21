@@ -62,9 +62,6 @@ public:
     // locomotion blend smooths it.
     void SetTargetPose(const coop::net::PoseSnapshot& snap);
 
-    // The engine is ending `actor`'s play (before it is marked for death): a puppet riding it is detached now, keeping its place,
-    // so nothing depends on what the engine does to a dead parent's children. A pointer compare when nothing rides it. Game thread.
-    void OnBaseEnding(void* actor);
     void Tick();
 
     // Ragdoll physics sync, on each fresh RagdollPose packet while the peer ragdolls: slaves the

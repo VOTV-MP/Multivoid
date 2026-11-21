@@ -1,6 +1,6 @@
 // coop/dev/basedmove_drill.h -- drill: a pose names the mover its player stands on, and the receiver rides the puppet on it (ini
 // basedmove_drill=off|ride|hostride|bad_base_xy|bad_base_vol|baseend / env VOTVCOOP_BASEDMOVE_DRILL on BOTH peers; the red is
-// basedmove_base_off on the rider's peer, basedmove_end_sink_off on the host for baseend). The mover is the base's cargo lift: a rider on its platform presses the platform
+// basedmove_base_off on the rider's peer). The mover is the base's cargo lift: a rider on its platform presses the platform
 // into a puppet that lags it, and the lift's own block test reverses it.
 //
 // The rider is walked to the platform's open side by the director and steps onto its walkable surface through the input seam,
@@ -21,7 +21,7 @@ namespace coop::dev::basedmove_drill {
 // runs, not guessed. bad_base_xy and bad_base_vol: the client forges its claim (an offset 200 cm off its absolute pose; an absolute
 // height past the lift's travel); PASS when the host sets the claim aside, counted, and its puppet follows the absolute pose,
 // FAIL when the puppet rides the forged claim. baseend: the client rides; mid-travel the host destroys its copy of the platform and the
-// puppet must still exist, hang from no parent and stand within 30 cm of where it stood (red basedmove_end_sink_off).
+// puppet must still exist, hang from no parent and stand within 30 cm of where it stood: green only, it proves the engine's own detach.
 // Advance this peer's steps. Every pump tick in a world. Game thread. A latched enum read when off.
 void Tick(coop::net::Session* session);
 

@@ -248,8 +248,8 @@ void JudgeForged(coop::net::Session& s, void* lift) {
 }
 
 // ---- baseend: the host destroys the platform under the rider -------------------------------------------------------------------
-// The engine's end of the destroyed platform's play, seen here as the receiver's own sink sees it. The drill's sink is added first,
-// so it runs before the receiver's: the judge below reads what is left after both.
+// The engine's end of the destroyed platform's play, seen by the drill's own sink: the event the judge waits for. There is no red
+// for this arm: it proves what the ENGINE does with an attached puppet when its parent is destroyed (batch4: detached, in place).
 void EndSink(void* actor, ue_wrap::actor_end_play::Reason) {
     if (actor && actor == g_endActor) g_endSeen = true;
 }
