@@ -288,7 +288,6 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/end_play_probe.cpp
     src/coop/dev/death_seam_census.cpp
     src/coop/dev/damage_probe.cpp
-    src/coop/dev/grime_drill.cpp
     src/coop/dev/class_lifetime_probe.cpp
     src/coop/dev/init_seam_probe.cpp
     src/coop/dev/key_parity_probe.cpp

@@ -109,7 +109,6 @@
 #include "coop/dev/requester_feedback_exercise.h"  // [dev] the requester feedback's hint, raised inside a scope for slot 1
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/food_clock_probe.h"  // the food record's arrival catch-up and the two clocks behind it
-#include "coop/dev/grime_drill.h"  // [dev] a clean on either peer reaching the other's copy
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
 #include "coop/dev/hookdrag_selftest.h"  // [dev] a prop dragged by a hook, driven
 #include "coop/dev/inventory_pickup_drill.h"  // dev drill: one client pickup through putObjectInventory2
@@ -330,7 +329,6 @@ void EndSession() {
     coop::dev::meadow_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::lid_drill::OnDisconnect();  // [dev] the PC and the legs belong to one world
     coop::dev::subject_drill::OnDisconnect();  // [dev] the drives and the legs belong to one world
-    coop::dev::grime_drill::OnDisconnect();  // [dev] the decals and the phase belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::dingus_drill::OnDisconnect();  // [dev] back to the first step
@@ -510,7 +508,6 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::damage_probe::Tick();  // [dev] every player damage verb call: whose body, source, caller (latched read when off)
     coop::dev::hand_record_drill::Tick(&session);  // [dev] the held item's record drill (a latched read when off)
-    coop::dev::grime_drill::Tick(&session);  // [dev] the grime drill's legs (a latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive: the host's broadcast refill and each peer's own food and sleep (latched reads when off)
 }
 

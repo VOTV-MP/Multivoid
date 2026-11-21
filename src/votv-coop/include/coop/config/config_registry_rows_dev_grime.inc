@@ -1,14 +1,10 @@
 // coop/config/config_registry_rows_dev_grime.inc -- the [dev] rows of the grime lane (coop/interactables/grime_sync,
-// coop/world/spill_sync): its log, the grime drill, the rehost churn's red arm, and the clean drill's arms and reds.
+// coop/world/spill_sync): its log, the rehost churn's red arm, the clean drill's arms and reds, and the judge's reds.
 // Included by config_registry_rows_dev.inc at the place the grime rows stood, so each row keeps its place in every
 // expansion of the list. The entry forms are config_registry_rows.inc's.
 
 CFG_FLAG(grime_log, "grime_log", "dev", false, "VOTVCOOP_GRIME_LOG",
     "Diagnostic logging for grime/cleaning sync: each fall sent, each value applied, and every decal an index pass finds, one line each.")
-CFG_FLAG(grime_drill, "grime_drill", "dev", false, "VOTVCOOP_GRIME_DRILL",
-    "Drill (BOTH peers): each cleans one of the same two rain-proof decals partway, then below zero, in the "
-    "rain's clean call form, and ends when its copy of the other's decal reads zero and still stands. Lines "
-    "tagged [GRIME-DRILL]; the client's DONE line ends it.")
 CFG_FLAG(grime_replay_watch_off, "grime_replay_watch_off", "dev", false, "VOTVCOOP_GRIME_REPLAY_WATCH_OFF",
     "Developer red arm of the rehost churn (VOTVCOOP_RUN_RELOAD_CHURN=1 VOTVCOOP_RELOAD_HOST=1 VOTVCOOP_RELOAD_CYCLES=2): "
     "never set; the host. The grime lane does not forget its index as the save replay begins, so the replay's deletes of "
