@@ -361,9 +361,10 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     // actor is indexed, which is what makes the store keyed by identity rather than by actor.
     // Until then this key is AWAITED: the host has just spawned a class-default copy, and
     // publishing that as canonical would overwrite the author's real state on the author's own
-    // machine.
-    if (!coop::prop_save_data::ApplyParked(actor, key))
-        coop::prop_save_data::ExpectRecordFor(actor, key, authorSlot);
+    // machine. The wait is set before a parked record applies, so a class gate asked from the park
+    // finds the author's wait, and the record's land clears it and publishes what the host then holds.
+    coop::prop_save_data::ExpectRecordFor(actor, key, authorSlot);
+    coop::prop_save_data::ApplyParked(actor, key);
     // A container's contents are not in its record: they come as the author's birth slice.
     coop::props::container_birth::ExpectBirthSlice(actor, authorSlot);
     return actor;
