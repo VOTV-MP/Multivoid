@@ -182,8 +182,16 @@ void Apply(bool active, bool suppressDetection) {
     g_pendingApply = -1;
     UE_LOGI("alarm_sync: applied active=%d (native runTrigger replay)", active ? 1 : 0);
     if (suppressDetection) {
+        // The baseline is the field as read back (ProcessEvent is synchronous), not the state asked for: a replay the
+        // game did not take would read as this player's own change on the next poll and go to the host, which would
+        // turn its alarm back and broadcast it, a round each poll.
+        bool now = active;
+        const bool read = ReadActive(trig, now);
         g_polledTrigger = trig;
-        g_lastPolled = active ? 1 : 0;  // ProcessEvent is synchronous -- the field already flipped
+        g_lastPolled = now ? 1 : 0;
+        if (read && now != active)
+            UE_LOGW("alarm_sync: the host's active=%d did not take here -- this copy stays at %d, and nothing is sent",
+                    active ? 1 : 0, now ? 1 : 0);
     }
 }
 
