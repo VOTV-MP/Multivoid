@@ -487,6 +487,7 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 | notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
 | notebook page text | the editing peer; the host takes it from the claim's holder, or from anyone while it is free | the notebook's own save record on the record lane, at the editor's commit and at the close |
 | a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
+| a starving player's food hallucination (`prop_burgerHallucinate_C`) | that player's machine | per-player: never broadcast or snapshot-expressed; before, the host's became a real prop on every client `[V]` (`coop/props/prop_lifecycle`) |
 
 ## Wire messages
 

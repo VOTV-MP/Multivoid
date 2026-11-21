@@ -368,8 +368,12 @@ bool IsPerPlayerPropClass(const std::wstring& cls) {
     // broadcasts it, and the adoption sweep must never destroy the local one (a sweep of the
     // client's own inventory container fataled the client at the next GC purge). The opposite of
     // IsWireSuppressedPropClass, whose client site destroys the local instance. Compared without case,
-    // as IsWireSuppressedPropClass is and for its reason.
-    return ::_wcsicmp(cls.c_str(), P::name::PropInventoryContainerPlayerClass) == 0;
+    // as IsWireSuppressedPropClass is and for its reason. The food hallucination is the other: the
+    // gamemode's addHallFood spawns it beside a starving player's own camera, for that player alone.
+    // Expressed, the host's reached every client as a real burger, a physics prop in the world of
+    // players who were not starving.
+    return ::_wcsicmp(cls.c_str(), P::name::PropInventoryContainerPlayerClass) == 0 ||
+           ::_wcsicmp(cls.c_str(), P::name::PropBurgerHallucinateClass) == 0;
 }
 
 void Install(coop::net::Session* session) {
