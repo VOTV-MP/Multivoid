@@ -17,6 +17,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/drill_hand.h"
+#include "coop/interactables/grime_sync.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
@@ -37,6 +38,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -133,6 +135,28 @@ size_t Near(const wchar_t* cls, const ue_wrap::FVector& at, float cm) {
         const float dx = l.X - at.X, dy = l.Y - at.Y, dz = l.Z - at.Z;
         if (dx * dx + dy * dy + dz * dz <= cm * cm) ++n;
     }
+    return n;
+}
+
+// The coffee decals within `cm` of `at` that this world did not hold in `before`: the ones the step's own spill made. A decal
+// the world already held there (a spill of the save, or of a level) is not counted, and with `say` every one near is told
+// with its key and place, so a count that is not one names whose the others are.
+size_t NearNew(const std::vector<void*>& before, const ue_wrap::FVector& at, float cm, bool say) {
+    size_t n = 0;
+    for (void* d : Decals(kCoffee)) {
+        ue_wrap::FVector l{};
+        if (!E::TryGetActorLocation(d, l)) continue;
+        const float dx = l.X - at.X, dy = l.Y - at.Y, dz = l.Z - at.Z;
+        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > cm) continue;
+        const bool old = std::find(before.begin(), before.end(), d) != before.end();
+        if (!old) ++n;
+        if (say)
+            UE_LOGI("spill-drill: a coffee decal %.0f cm from the host's spill at (%.0f %.0f %.0f), key '%ls', %s", dist, l.X,
+                    l.Y, l.Z, coop::grime_sync::DebugPosKeyForActor(d).c_str(),
+                    old ? "held before this step" : "new since this step began");
+    }
+    if (say) UE_LOGI("spill-drill: %zu new coffee decal(s) within %.0f cm of the host's spill", n, cm);
     return n;
 }
 
@@ -308,7 +332,7 @@ void RunHost() {
     ue_wrap::FVector at{};
     OnGameThread([&] { E::TryGetActorLocation(spill, at); });
     Mark("a_spill", Rows({spill}));
-    if (!Await("a_seen", 30)) return;
+    if (!Await("a_seen", 40)) return;
     // B. Stands for the grime lane's scan indexing the new decal, so the wipe below is sent; no signal exposes the index.
     ::Sleep(10000);
     Check(WaitFor([&] { return coop::hand_item::HeldClassIs(1, L"prop_sponge_C"); }, 30), "the host's record holds a sponge in slot 1's hand");
@@ -428,6 +452,10 @@ bool HostPuppetUp() {
 void RunClient() {
     if (!HostPuppetUp()) return;
     if (!meet::WalkToHost("spill-drill")) return;
+    // The coffee decals this world holds before the host spills: the step counts what its own spill adds, not what a save or a
+    // level had standing there (the fresh world's gate holds one 423 cm from where the host spilled).
+    std::vector<void*> coffeeBefore;
+    OnGameThread([&] { coffeeBefore = Decals(kCoffee); });
     Mark("client_ready");
     // A.
     const uint32_t heard = coop::spill_sync::SplashesPlayed();
@@ -440,12 +468,13 @@ void RunClient() {
     Check(coop::spill_sync::SplashesPlayed() > heard, "the host's splash was heard here");
     // The check below follows the step's own: this copy's spill is gone once its own flight's decal is removed. A miss
     // is reported by the check, not by the wait.
-    PS::WaitFor("the host's decal here", 30, [&] {
+    // The bound ends before the host's own wait for a_seen (40 s), so this peer's verdict is said first.
+    PS::WaitFor("the host's decal here", 20, [&] {
         bool one = false;
-        OnGameThread([&] { one = Near(kCoffee, h, 400.f) == 1; });
+        OnGameThread([&] { one = NearNew(coffeeBefore, h, 400.f, false) == 1; });
         return one;
     }, false);
-    OnGameThread([&] { Check(Near(kCoffee, h, 400.f) == 1, "no spill of this copy's own beside it"); });
+    OnGameThread([&] { Check(NearNew(coffeeBefore, h, 400.f, true) == 1, "no spill of this copy's own beside it"); });
     Mark("a_seen");
     void* const sponge = HoldSponge();
     Check(sponge != nullptr, "this player holds a sponge");
