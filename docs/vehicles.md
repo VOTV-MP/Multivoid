@@ -180,6 +180,16 @@ The host publishes an ATV's state at one point: when a write to its copy changed
 ATV's state at its ready edge. The map is a display of the ATV's own place, and its module is a module. The padlock and
 the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 
+### The battery charger
+
+The battery charger, not the ATV's but the small batteries' (`prop_batteryCharger_C`), holds four rechargeable
+batteries as charges (`b1`..`b4`, -1 empty) and raises them in its own tick while powered. Its slots are the host's
+(`coop/interactables/battery_charger_sync`): the host sends a charger's row when a slot fills or empties, its battery
+count or power changes, every 2 s while a charge moves, and to a joiner, and a client writes it and refuses its own
+tick. A client's put runs on its copy, as the game's does, and is told with the battery's charge; one the host refuses
+comes back as a battery beside the sender. A client's take is cancelled and asked, and the host's answer puts the
+battery into its inventory at the host's charge.
+
 ### Who rides
 
 One table says who rides an ATV: the host's. Every write of an ATV's seat, syncer and rider goes through
@@ -246,6 +256,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | the driver's body in the seat | the host's seat table | each peer attaches a seated peer's body to the ATV once |
 | tyre, spare and battery presence | the host | consumed from the host's own copy only; a client's unbolt, fit, stow, insert and spare take are asked of the host |
 | a runtime ATV's identity | the host | its game key, announced |
+| a battery charger's four slots | the host | a row when a slot fills or empties and every 2 s while a charge moves; a client's put is told, its take asked |
 
 ## Wire messages
 
@@ -259,6 +270,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
 | `AtvHostState` | the host to all | an ATV's fuel, health, battery, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
+| `ChargerState`, `ChargerIntent`, `ChargerGive` | the host to all; a client to the host; the host to one client | a battery charger's slots, battery count and power; a put with its charge or a take; a taken battery's charge |
 | `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off, a battery fitted (its charge) or unscrewed (each with a request id), a copy's ask for the host's state |
 
 ## Late join

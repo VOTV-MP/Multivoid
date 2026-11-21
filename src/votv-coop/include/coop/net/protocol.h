@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 314;
+inline constexpr uint16_t kProtocolVersion = 315;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1581,6 +1581,17 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // The battery charger's four slots (coop/interactables/battery_charger_sync). HOST->ALL: each charger's slots,
+    // battery count and power when they change, every 2 s while one charges, and every one to a joiner; a client writes
+    // them and runs no charge of its own. Not pre-world. ChargerStatePayload. CLIENT->HOST: this client's player put the
+    // rechargeable battery in its hand into a slot (op 0, its charge, run on its own copy as the game does) or asked to
+    // take a slot's battery out (op 1, its own take cancelled); the host judges the reach and the slot and runs it on its
+    // own copy, and a refused put's battery is spawned beside the sender. Never relayed. Not pre-world.
+    // ChargerIntentPayload. HOST->ONE CLIENT: a take the host ran, with the battery's charge; the client puts that
+    // battery into its own inventory as the game's take does. ChargerGivePayload.
+    ChargerState = 294,
+    ChargerIntent = 295,
+    ChargerGive = 296,
     // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
     // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
     // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
@@ -2433,6 +2444,41 @@ struct FloodPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
+
+// ChargerState, ChargerIntent, ChargerGive. A battery charger (prop_batteryCharger_C) by host element id. A slot's charge
+// is its b1..b4: -1 empty, else 0..100.
+inline constexpr int kChargerSlots = 4;
+inline constexpr int kChargerRowsMax = 8;
+struct ChargerRow {
+    uint32_t eid;                   // 4
+    float    slot[kChargerSlots];   // 16
+    int8_t   plugged;               // 1 -- its plugged, the batteries in it
+    uint8_t  powered;               // 1
+    uint8_t  _pad[2];               // 2 -- zero
+};
+static_assert(sizeof(ChargerRow) == 24, "ChargerRow must be 24 bytes");
+struct ChargerStatePayload {
+    uint8_t    count;                     // 1 -- 1..kChargerRowsMax
+    uint8_t    _pad[3];                   // 3 -- zero
+    ChargerRow rows[kChargerRowsMax];     // 192
+};
+static_assert(sizeof(ChargerStatePayload) == 196, "ChargerStatePayload must be 196 bytes");
+inline constexpr uint8_t kChargerPut = 0, kChargerTake = 1;
+struct ChargerIntentPayload {
+    uint32_t eid;      // 4
+    uint8_t  op;       // 1 -- kChargerPut, kChargerTake
+    uint8_t  slot;     // 1 -- 0..kChargerSlots-1
+    uint8_t  _pad[2];  // 2 -- zero
+    float    charge;   // 4 -- a put's battery charge, 0..100; 0 for a take
+};
+static_assert(sizeof(ChargerIntentPayload) == 12, "ChargerIntentPayload must be 12 bytes");
+struct ChargerGivePayload {
+    uint32_t eid;      // 4
+    uint8_t  slot;     // 1
+    uint8_t  _pad[3];  // 3 -- zero
+    float    charge;   // 4 -- the battery's charge as the host's slot held it
+};
+static_assert(sizeof(ChargerGivePayload) == 12, "ChargerGivePayload must be 12 bytes");
 // KerfurDressState (272): an Omega's outfit, by its NPC element id. `names` holds `count` rows of list_kerfurDrip, each
 // 1..kKerfurDressMaxRowChars printable ASCII characters followed by one NUL, back to back from names[0]; every byte past
 // the last NUL is zero. `flags` bit 0 says a pat plays on the Omega; the other bits and `pad` are zero. A pat carries the

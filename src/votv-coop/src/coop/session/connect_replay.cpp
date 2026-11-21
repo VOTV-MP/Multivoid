@@ -91,6 +91,7 @@
 #include "coop/props/roomba_sync.h"  // every robot cleaner's switch
 #include "coop/world/spill_sync.h"
 #include "coop/world/vent_crawler_sync.h"
+#include "coop/interactables/battery_charger_sync.h"
 #include "coop/world/weather_sync.h"
 #include "ue_wrap/core/log.h"
 
@@ -235,6 +236,7 @@ void ConnectReplayForSlot(int slot) {
     // you were not in across your screen; it is there when you open the chat.
     coop::chat_sync::QueueConnectBroadcastForSlot(slot);
     coop::spill_sync::QueueConnectBroadcastForSlot(slot);  // every live spill again
+    coop::battery_charger_sync::OnPeerWorldReady(slot);  // every battery charger's slots
     coop::vent_crawler_sync::QueueConnectBroadcastForSlot(slot);  // the vent crawl's state, when one began in this world
     coop::desk_short_sync::SendCurrentToSlot(slot);  // the base computer, when the host's is shorting at this ready edge
 }
