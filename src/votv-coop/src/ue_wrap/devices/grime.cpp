@@ -8,6 +8,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/reflection_props.h"
 #include "ue_wrap/engine/engine_component.h"
@@ -15,12 +16,14 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace ue_wrap::grime {
 namespace {
 
 namespace R = reflection;
 namespace E = ue_wrap::engine;
+namespace OI = ue_wrap::object_index;
 
 // Resolved once at EnsureResolved, then read-only. Published via the g_resolved
 // release-store / acquire-load (game-thread writes; poll/apply reads).
@@ -196,6 +199,33 @@ bool ReadResistRain(void* grime, bool& out) {
     static int32_t off = -1;
     static uint8_t mask = 0;
     return ReadBoolField(grime, L"resistRain", cls, off, mask, out);
+}
+
+size_t ForEachDecal(DecalFn fn, void* ctx) {
+    if (!fn || !g_grimeCls) return 0;
+    // The decals are subclasses of grime_C (dust, blood, oil and the rest), each its own class in the index.
+    struct Classes {
+        void* base;
+        std::vector<void*> list;
+    } classes{g_grimeCls, {}};
+    OI::ForEachClass([](void* c, void* cls, void*) {
+        auto& x = *static_cast<Classes*>(c);
+        if (R::IsDescendantOfAny(cls, &x.base, 1)) x.list.push_back(cls);
+    }, &classes);
+    struct Visit {
+        DecalFn fn;
+        void*   ctx;
+        size_t  n;
+    } v{fn, ctx, 0};
+    for (void* cls : classes.list)
+        OI::ForEachInstance(cls, [](void* c, void* obj, int32_t index) {
+            auto& x = *static_cast<Visit*>(c);
+            if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            x.fn(x.ctx, obj);
+            ++x.n;
+        }, &v);
+    return v.n;
 }
 
 bool IsCrack(void* obj) {

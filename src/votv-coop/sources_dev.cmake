@@ -72,6 +72,9 @@ set(VOTVCOOP_DEV_SOURCES
     src/coop/dev/hostile_drill_coffee.cpp
     src/coop/dev/hostile_drill_coffee_client.cpp
     src/coop/dev/hostile_drill_coffee_host.cpp
+    src/coop/dev/hostile_drill_grime.cpp
+    src/coop/dev/hostile_drill_grime_client.cpp
+    src/coop/dev/hostile_drill_grime_host.cpp
     src/coop/dev/hostile_drill_dingus.cpp
     src/coop/dev/hostile_drill_dingus_client.cpp
     src/coop/dev/hostile_drill_dingus_host.cpp

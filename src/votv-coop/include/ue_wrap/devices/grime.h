@@ -18,6 +18,7 @@
 
 #include "ue_wrap/core/types.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace ue_wrap::grime {
@@ -57,6 +58,11 @@ bool ReadCleanStrength(void* grime, float& out);
 bool ReadIsCleanable(void* grime, bool& out);
 // `resistRain`: a decal the rain's own pass leaves alone.
 bool ReadResistRain(void* grime, bool& out);
+// Every live grime decal of every class (grime_C and its subclasses), once, in no particular order: not a class default
+// object, not dying. `fn` must not create or destroy objects. Walks each class's instances; for a dev drill's pick, never
+// a tick. Game thread.
+using DecalFn = void (*)(void* ctx, void* decal);
+size_t ForEachDecal(DecalFn fn, void* ctx);
 // True iff `obj` is a grime_crack_C (or a descendant): the decal the wall fixer repairs.
 bool IsCrack(void* obj);
 // The decal's `Box` component, the volume every cleaning verb's overlap tests: its world centre and half the length of

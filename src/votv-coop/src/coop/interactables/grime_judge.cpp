@@ -111,6 +111,7 @@ struct Item {
 struct Slot {
     coop::net::IntentQueue<Item> queue;
     std::unordered_map<std::wstring, float> asked;
+    uint64_t lastAskMs = 0;  // when this sender's previous ask arrived: the grime_log line's stroke cadence
 };
 coop::roster_ledger::PerSlotState<Slot> g_slots;
 
@@ -164,6 +165,22 @@ Route ToolRoute(coop::net::Session& s, uint8_t slot, void* decal, const ue_wrap:
     return r;
 }
 
+enum class Roof : uint8_t { Clear, Roofed, Unread };
+
+// The rain's roof test, as the game runs it: a trace up from a little ahead of the decal against WorldStatic.
+Roof RoofOf(void* decal) {
+    const ue_wrap::FVector fwd = E::GetActorForwardVector(decal);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(decal, loc) || (fwd.X == 0.f && fwd.Y == 0.f && fwd.Z == 0.f)) return Roof::Unread;
+    const ue_wrap::FVector from{loc.X + fwd.X * kRainRoofForwardCm, loc.Y + fwd.Y * kRainRoofForwardCm,
+                                loc.Z + fwd.Z * kRainRoofForwardCm};
+    const ue_wrap::FVector to{from.X, from.Y, from.Z + kRainRoofTraceCm};
+    const uint8_t worldStatic = 0;
+    ue_wrap::trace::Hit hit;
+    if (!ue_wrap::trace::LineHitForObjects(decal, from, to, &worldStatic, 1, nullptr, 0, &hit)) return Roof::Unread;
+    return hit.blocked ? Roof::Roofed : Roof::Clear;
+}
+
 // The rain route: the host is itself raining, and the decal is one the rain's pass would wash on the host's copy and the
 // sender's body is within the rain's radius. `applicable` says the host rains, so a refusal names the rain.
 Route RainRoute(coop::net::Session& s, uint8_t slot, const std::wstring& key, void* decal,
@@ -183,23 +200,9 @@ Route RainRoute(coop::net::Session& s, uint8_t slot, const std::wstring& key, vo
     }
     if (resist) { r.why = "a decal the rain leaves alone"; return r; }
     if (!cleanable) { r.why = "a decal a clean cannot lower"; return r; }
-    // The roof test, as the game runs it: a trace up from a little ahead of the decal against WorldStatic.
-    const ue_wrap::FVector fwd = E::GetActorForwardVector(decal);
-    ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(decal, loc) || (fwd.X == 0.f && fwd.Y == 0.f && fwd.Z == 0.f)) {
-        r.why = "the decal's place does not read";
-        return r;
-    }
-    const ue_wrap::FVector from{loc.X + fwd.X * kRainRoofForwardCm, loc.Y + fwd.Y * kRainRoofForwardCm,
-                                loc.Z + fwd.Z * kRainRoofForwardCm};
-    const ue_wrap::FVector to{from.X, from.Y, from.Z + kRainRoofTraceCm};
-    const uint8_t worldStatic = 0;
-    ue_wrap::trace::Hit hit;
-    if (!ue_wrap::trace::LineHitForObjects(decal, from, to, &worldStatic, 1, nullptr, 0, &hit)) {
-        r.why = "the roof trace does not run";
-        return r;
-    }
-    if (hit.blocked) { r.why = "a roofed decal"; return r; }
+    const Roof roof = RoofOf(decal);
+    if (roof == Roof::Unread) { r.why = "the roof trace does not run"; return r; }
+    if (roof == Roof::Roofed) { r.why = "a roofed decal"; return r; }
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, kRainRadiusCm).AuthorizeSegment(centre, centre);
     r.dist = subject.distUU;
@@ -372,6 +375,10 @@ void SettleSeam() {
 
 void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
 
+bool RoofClear(void* decal) { return decal && RoofOf(decal) == Roof::Clear; }
+
+Stats GetStats() { return g_stats; }
+
 void HoldOpen(void* decal) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!g_seamFn || !s || !s->connected() || s->role() != coop::net::Role::Client) return;
@@ -405,6 +412,15 @@ void OnAsk(coop::net::Session& session, const coop::net::KeyedScalarPayload& pay
     if (session.role() != coop::net::Role::Host) return;
     if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) return;
     ++g_stats.asked;
+    if (ProbeLog()) {
+        // The measure of a real stroke: the gap since the sender's previous ask (a sponge's overlap that touched several
+        // decals asks each in one burst, so a gap near 0 is the same stroke).
+        const uint64_t now = NowMs();
+        Slot& from = g_slots[senderSlot];
+        UE_LOGI("grime_judge: ask slot=%u value %.2f, %llu ms after its previous ask", static_cast<unsigned>(senderSlot),
+                payload.value, static_cast<unsigned long long>(from.lastAskMs ? now - from.lastAskMs : 0));
+        from.lastAskMs = now;
+    }
     // The red arm: the host takes a client's message as it came, as the lane did before the judge.
     if (JudgeOff()) {
         coop::grime_sync::OnReliable(payload, senderSlot);

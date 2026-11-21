@@ -63,6 +63,12 @@ void OnAsk(coop::net::Session& session, const coop::net::KeyedScalarPayload& pay
 void HoldOpen(void* decal);
 bool HoldClose(void* decal);
 
+// DEV-DRILL ONLY: what the lane has done in this process, read by the drills that judge it; and the rain's roof test the
+// judge runs on the host's copy, which a drill's pick of a decal the rain washes asks too (true: no WorldStatic object
+// within the trace above the decal). Game thread.
+Stats GetStats();
+bool RoofClear(void* decal);
+
 void OnDisconnect();
 
 }  // namespace coop::grime_judge
