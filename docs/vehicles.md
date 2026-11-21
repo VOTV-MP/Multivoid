@@ -180,6 +180,15 @@ The host publishes an ATV's state at one point: when a write to its copy changed
 ATV's state at its ready edge. The map is a display of the ATV's own place, and its module is a module. The padlock and
 the crowbar have no body on the ATV. `[?]` built to the design, not yet run.
 
+### The car battery charger
+
+The car battery charger charges an ATV battery, the loose one out of an ATV, while its cord is in and both clips sit
+on it the right way round. Its clips and cord, and every loose ATV battery's charge, are the host's
+(`coop/interactables/car_charger_sync`): the host sends a charger's row when they change and a battery's charge when
+it moves (every 2 s, or at once past 5 points), and a client writes them and refuses its charger's tick, so the charge
+and the spark are the host's. A client's clip move is seen against the host's last row and asked; the host sets it and
+each battery's pins from its clips. A client's own cord event is put back to the host's.
+
 ### Who rides
 
 One table says who rides an ATV: the host's. Every write of an ATV's seat, syncer and rider goes through
@@ -246,6 +255,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | the driver's body in the seat | the host's seat table | each peer attaches a seated peer's body to the ATV once |
 | tyre, spare and battery presence | the host | consumed from the host's own copy only; a client's unbolt, fit, stow, insert and spare take are asked of the host |
 | a runtime ATV's identity | the host | its game key, announced |
+| a car battery charger's clips and cord, a loose ATV battery's charge | the host | a row when they change, and a charge every 2 s while it moves; a client's clip move is asked |
 
 ## Wire messages
 
@@ -259,6 +269,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
 | `AtvSetComplete` | the host to a joiner | the count of distinct keys its connect snapshot named |
 | `AtvHostState` | the host to all | an ATV's fuel, health, battery, modules, empty and broken with its state sequence; the answer to a request (to its sender alone: the request's id, the verdict, the copy's state) |
+| `CarChargerState`, `CarChargerIntent` | the host to all; a client to the host | a car charger's clips (the battery each is on, its polarity) and cord, and a loose battery's charge and pins; a client's clips |
 | `AtvRequest` | a client to the host | a refuel's gain, a repair, a module fitted or taken off, a battery fitted (its charge) or unscrewed (each with a request id), a copy's ask for the host's state |
 
 ## Late join

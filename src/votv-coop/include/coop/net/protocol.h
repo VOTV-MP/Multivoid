@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 314;
+inline constexpr uint16_t kProtocolVersion = 315;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1581,6 +1581,14 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // The car battery charger's clips and a loose ATV battery's charge (coop/interactables/car_charger_sync). HOST->ALL:
+    // a car charger's clips (the battery each is on and its polarity) and a loose battery's charge and pins, when they
+    // change, a charge every 2 s while it moves, and every one to a joiner; a client writes them and runs no charge of its
+    // own. Not pre-world. CarChargerStatePayload. CLIENT->HOST: this client's player moved a clip, as the charger's own
+    // used event and drag left it here; the host judges the reach and the batteries and sets it on its own copy, and its
+    // row answers. Never relayed. Not pre-world. CarChargerIntentPayload.
+    CarChargerState = 297,
+    CarChargerIntent = 298,
     // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
     // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
     // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
@@ -2433,6 +2441,39 @@ struct FloodPayload {
     uint8_t _pad[2];   // 2 -- zero
 };
 static_assert(sizeof(FloodPayload) == 40, "FloodPayload must be 40 bytes");
+
+// CarChargerState and CarChargerIntent. A car battery charger (prop_carBatteryCharger_C) and an ATV battery
+// (prop_atvcarbattery_C) by host element id; 0 names no battery (a clip on none).
+inline constexpr uint8_t kCarClipRedToRed = 1, kCarClipBlueToRed = 2, kCarChargeDone = 4, kCarChargerPlugged = 8;
+struct CarChargerRow {
+    uint32_t eid;     // 4
+    uint32_t red;     // 4 -- the battery the red clip is on
+    uint32_t blue;    // 4 -- the battery the blue clip is on
+    uint8_t  flags;   // 1 -- kCarClipRedToRed | kCarClipBlueToRed | kCarChargeDone | kCarChargerPlugged (its cord in)
+    uint8_t  _pad[3]; // 3 -- zero
+};
+static_assert(sizeof(CarChargerRow) == 16, "CarChargerRow must be 16 bytes");
+inline constexpr uint8_t kCarPinRed = 1, kCarPinBlue = 2;
+struct CarBatteryRow {
+    uint32_t eid;     // 4
+    float    charge;  // 4 -- its battery, 0..100
+    uint8_t  pins;    // 1 -- kCarPinRed | kCarPinBlue: a clip on that pin
+    uint8_t  _pad[3]; // 3 -- zero
+};
+static_assert(sizeof(CarBatteryRow) == 12, "CarBatteryRow must be 12 bytes");
+inline constexpr int kCarChargerRowsMax = 4, kCarBatteryRowsMax = 12;
+struct CarChargerStatePayload {
+    uint8_t       chargers;                        // 1 -- 0..kCarChargerRowsMax
+    uint8_t       batteries;                       // 1 -- 0..kCarBatteryRowsMax, one at least of the two
+    uint8_t       _pad[2];                         // 2 -- zero
+    CarChargerRow charger[kCarChargerRowsMax];     // 64
+    CarBatteryRow battery[kCarBatteryRowsMax];     // 144
+};
+static_assert(sizeof(CarChargerStatePayload) == 212, "CarChargerStatePayload must be 212 bytes");
+struct CarChargerIntentPayload {
+    CarChargerRow row;  // 16 -- the charger's clips as this client's copy holds them now
+};
+static_assert(sizeof(CarChargerIntentPayload) == 16, "CarChargerIntentPayload must be 16 bytes");
 // KerfurDressState (272): an Omega's outfit, by its NPC element id. `names` holds `count` rows of list_kerfurDrip, each
 // 1..kKerfurDressMaxRowChars printable ASCII characters followed by one NUL, back to back from names[0]; every byte past
 // the last NUL is zero. `flags` bit 0 says a pat plays on the Omega; the other bits and `pad` are zero. A pat carries the
