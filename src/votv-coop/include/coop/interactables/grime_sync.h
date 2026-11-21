@@ -1,18 +1,18 @@
 // coop/interactables/grime_sync.h -- surface grime sync (Agrime_C::process, the wall, ceiling and
 // floor dirt), on ReliableKind::GrimeState. Gameplay and network layer (principle 7): the wire, the
 // lowering verbs' watches, the per-key floor, the position-to-actor index, the decals' end of play
-// and the connect snapshot; engine reads through ue_wrap::grime and ue_wrap::engine, plus reflection
-// for the liveness and class tests.
+// and the connect snapshot; engine reads through ue_wrap::grime, ue_wrap::engine and reflection (liveness, class tests).
 //
 // A monotone minimum register, the window_sync shape keyed differently. A decal the save holds has a
 // saved transform, so both peers put it at an identical world position, and that position IS its
 // cross-peer identity: the key is a quantised world-position string with the decal's type. Splatter spawned during a session
 // lands where each peer's own run put it, so its key names nothing on the other peer, and what is sent
 // for it is kept there as an unused floor. Only a FALL is propagated, read before and after a lowering
-// verb's body on the script gate (clean; the wall fixer's repair of a crack), so MIN(local, wire)
-// converges concurrent wipes. A verb that takes the process below zero destroys the decal inside the
-// Blueprint; the engine's end of play says destroyed, a wipe sent as kGrimeGone that every peer destroys its own by, or streamed out, whose
-// process is kept as the key's floor for the decal's return.
+// verb's body on the script gate (clean; the wall fixer's repair of a crack), so MIN(local, wire) converges concurrent
+// wipes. A verb that takes the process below zero destroys the decal inside the Blueprint; the engine's end of play says
+// destroyed, a wipe the HOST sends as kGrimeGone that every peer destroys its own by, or streamed out, whose process is
+// kept as the key's floor for the decal's return. A client's destroy is held at its source and asked of the host
+// (coop/interactables/grime_judge), so a client sends no wipe.
 
 #pragma once
 

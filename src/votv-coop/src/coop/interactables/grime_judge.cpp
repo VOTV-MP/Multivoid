@@ -13,14 +13,22 @@
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
 #include "coop/player/roster_ledger.h"  // PerSlotState
+#include "coop/session/net_pump.h"      // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/world/weather_rain.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/trace.h"
+#include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/facts/function_row.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -297,9 +305,92 @@ bool Execute(coop::net::Session& s, Slot& sl, Item& it, uint8_t slot) {
     return consume();
 }
 
+// ---- the client's hold -----------------------------------------------------------------------
+// grime_C::clean destroys the decal inside its own body once its process is below zero (the K2_DestroyActor call at line
+// 241 of the grime_C dump), and wallFixer_fix does the same (line 892 of the grime_crack dump), both ahead of anything the
+// host could say. K2_DestroyActor is a native, which the script gate never sees, so the hold stands on the native
+// function seam (ue_wrap/core/ufunction_hook), whose PRE can refuse a call with no result and no out parameter. It is armed
+// only while a scope is open, and acts only on the scope's decal from a call whose own frame is clean or wallFixer_fix, so
+// every other destroy of every actor, and the lane's own apply of the host's end, passes untouched. Whether the PRE fires
+// for the destroy inside clean's body is what the measure arm reads.
+UE_FACT_FN(kRowK2Destroy, "grime_judge", L"Actor", L"K2_DestroyActor", Declared);
+
+namespace UH = ue_wrap::ufunction_hook;
+namespace R  = ue_wrap::reflection;
+namespace sg = ue_wrap::script_gate;
+
+std::atomic<coop::net::Session*> g_session{nullptr};
+bool  g_seamSettled = false;
+void* g_seamFn = nullptr;
+
+struct Scope {
+    void* decal = nullptr;  // the grime decal whose clean or fix is running; null outside one
+    bool  held = false;     // the scope cancelled that decal's destroy
+};
+Scope g_scope;
+
+// The dev red arm of the hold: the client's destroy runs as the game wrote it, so the decal is gone before the host's word.
+bool HoldOff() {
+    static const bool s = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_hold_off);
+    return s;
+}
+
+sg::Verdict OnDestroyPre(void* context, void* /*sourceObject*/, const uint8_t* /*parms*/) {
+    if (!g_scope.decal || context != g_scope.decal) return sg::Verdict::Run;
+    void* const caller = UH::CurrentCallerFrame().function;
+    if (!caller || !(R::NameEquals(R::NameOf(caller), L"clean") || R::NameEquals(R::NameOf(caller), L"wallFixer_fix")))
+        return sg::Verdict::Run;
+    if (HoldOff()) {
+        ++g_stats.heldOff;
+        return sg::Verdict::Run;
+    }
+    g_scope.held = true;
+    if (++g_stats.held <= 8)
+        UE_LOGI("grime_judge: held the destroy of decal %p inside %ls (#%llu) -- the host is asked to end it", context,
+                R::ToString(R::NameOf(caller)).c_str(), static_cast<unsigned long long>(g_stats.held));
+    return sg::Verdict::Cancel;
+}
+
+// Puts the PRE on K2_DestroyActor, disarmed, once the Actor class is loaded: one attempt, since a patch that failed is
+// not mended by trying it again (prop_lifecycle settles the same function the same way).
+void SettleSeam() {
+    if (g_seamSettled) return;
+    void* const actorCls = ue_wrap::object_index::ClassByName(ue_wrap::profile::name::ActorClassName);
+    if (!actorCls) return;
+    g_seamSettled = true;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::ResolveOn(kRowK2Destroy, actorCls);
+    if (!fn || !UH::InstallPreHook(fn, &OnDestroyPre, /*armed=*/false)) {
+        UE_LOGE("grime_judge: the K2_DestroyActor pre hook did not go on -- a client's last stroke destroys its decal "
+                "before the host is asked");
+        return;
+    }
+    g_seamFn = fn.Fn();
+    UE_LOGI("grime_judge: the client's destroy hold is on K2_DestroyActor @ %p", g_seamFn);
+}
+
 }  // namespace
 
+void Install(coop::net::Session* session) { g_session.store(session, std::memory_order_release); }
+
+void HoldOpen(void* decal) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!g_seamFn || !s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    // A clean of an object of a world this client has not announced ready is that world's load: it runs natively.
+    if (!coop::net_pump::IsInAnnouncedWorld(decal)) return;
+    g_scope = Scope{decal, false};
+    UH::SetArmed(g_seamFn, &OnDestroyPre, true);
+}
+
+bool HoldClose(void* decal) {
+    if (!g_seamFn || g_scope.decal != decal) return false;
+    const bool held = g_scope.held;
+    g_scope = Scope{};
+    UH::SetArmed(g_seamFn, &OnDestroyPre, false);
+    return held;
+}
+
 void Tick(coop::net::Session& session) {
+    SettleSeam();
     g_refusals.Flush(coop::net::RefusalTally::Clock::now());
     if (!session.running() || session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
@@ -344,9 +435,10 @@ void OnAsk(coop::net::Session& session, const coop::net::KeyedScalarPayload& pay
 
 void OnDisconnect() {
     const Stats& t = g_stats;
-    if (t.asked)
+    if (t.asked || t.held || t.heldOff)
         UE_LOGI("grime_judge: session end -- asked=%llu coalesced=%llu granted=%llu cut=%llu ended=%llu (tool=%llu rain=%llu) "
-                "already=%llu refused: kind=%llu queue=%llu nodecal=%llu nobody=%llu reach=%llu notool=%llu rain=%llu",
+                "already=%llu refused: kind=%llu queue=%llu nodecal=%llu nobody=%llu reach=%llu notool=%llu rain=%llu; "
+                "client destroys held=%llu left to run=%llu",
                 static_cast<unsigned long long>(t.asked), static_cast<unsigned long long>(t.coalesced),
                 static_cast<unsigned long long>(t.granted), static_cast<unsigned long long>(t.clamped),
                 static_cast<unsigned long long>(t.ended), static_cast<unsigned long long>(t.toolGrants),
@@ -354,10 +446,14 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(t.refusedKind), static_cast<unsigned long long>(t.refusedQueue),
                 static_cast<unsigned long long>(t.refusedNodecal), static_cast<unsigned long long>(t.refusedNobody),
                 static_cast<unsigned long long>(t.refusedReach), static_cast<unsigned long long>(t.refusedNotool),
-                static_cast<unsigned long long>(t.refusedRain));
+                static_cast<unsigned long long>(t.refusedRain), static_cast<unsigned long long>(t.held),
+                static_cast<unsigned long long>(t.heldOff));
     g_stats = Stats{};
     g_rainLast.clear();
     g_refusals.Clear();
+    // A scope the session ended inside never closes: the seam goes back to disarmed.
+    if (g_seamFn) HoldClose(g_scope.decal);
+    g_scope = Scope{};
 }
 
 }  // namespace coop::grime_judge

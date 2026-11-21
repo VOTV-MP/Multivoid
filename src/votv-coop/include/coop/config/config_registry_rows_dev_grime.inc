@@ -47,3 +47,7 @@ CFG_FLAG(grime_rain_open, "grime_rain_open", "dev", false, "VOTVCOOP_GRIME_RAIN_
     "Developer red arm of the grime judge's drill (grime_dry): never set; on the host. The rain route of the judge skips its "
     "checks (the host's own rain, the decal's rain test, the roof and the radius), so an empty hand's fall on a dry host is "
     "granted and dry must FAIL.")
+CFG_FLAG(grime_hold_off, "grime_hold_off", "dev", false, "VOTVCOOP_GRIME_HOLD_OFF",
+    "Developer red arm of the grime judge's drill (grime_last): never set; on the client. The client's clean destroys "
+    "its decal as the game wrote it, so the decal is gone before the host's word and the arm must FAIL at the client's "
+    "decal gone ahead of the host's end.")

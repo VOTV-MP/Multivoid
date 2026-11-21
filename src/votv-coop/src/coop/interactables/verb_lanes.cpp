@@ -37,6 +37,7 @@ void Install(coop::net::Session& session) {
     coop::lightgroup_verbs::Install(&session);   // a light group's state moves at its runTrigger: the host sends, a client refuses its own
     coop::toggle_verbs::Install(&session);       // a symmetric device's state goes at the verb that writes it: each peer sends its own
     coop::oven_repair_judge::Install(&session);  // a client's oven repair is held and asked of the host, which judges it
+    coop::grime_judge::Install(&session);       // a client's last grime stroke is held at its source and asked of the host
     coop::keypad_verbs::Install(&session);       // a keypad's verbs: the host sends each, a client's own entries run on the host
     coop::desk_verb_intent::Install(&session);   // a client's press on the desk's save family is run by the host
     coop::point_sack_intent::Install(&session);  // a client's opened point sack is paid by the host
@@ -59,7 +60,7 @@ void Tick(coop::net::Session& session) {
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
     coop::oven_repair_judge::Tick(session);  // settle its gate; HOST: judge one queued oven step or repair a tick a client
-    coop::grime_judge::Tick(session);        // HOST: judge one queued grime fall a tick a client
+    coop::grime_judge::Tick(session);        // settle its destroy hold; HOST: judge one queued grime fall a tick a client
     coop::point_sack_intent::Tick();    // settle the point sack watch
     coop::prop_nametag::Tick();         // settle the nametag watch
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
