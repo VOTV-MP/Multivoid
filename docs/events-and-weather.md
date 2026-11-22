@@ -236,14 +236,23 @@ a player's melee hit (`mainPlayer_C::attack`, the struck material's impact sound
 that call sends the sound when the calling function is on the lane's list: a player's own, from the machine whose
 player ran it, or the host's world, from the host (`SoundAt`). A sound crosses as an index into a table every peer
 builds the same way, never as a path: the distinct impact sounds of the game's `list_physSound` table (34 on this build),
-the knocker's knock and the church's bell, sorted by path (`coop/world/sound_catalog`), read through a verified walk of
-the table (`ue_wrap/world/physsound_table`). Each entry carries the callers that may play it, its attenuation and the
+the knocker's knock, the church's bell and the cleaning sounds, sorted by path (`coop/world/sound_catalog`), read through
+a verified walk of the table (`ue_wrap/world/physsound_table`). Each entry carries the callers that may play it, its attenuation and the
 volume and pitch its callers pass, so the wire holds the index, the place, the volume and pitch (clamped to the entry's
 range) and the sender's table digest; a receiver whose own digest differs drops the sound `[?]`. A table that cannot be
 read yet is tried again at the next need, and until it builds a peer sends nothing and drops what it receives.
 
+The cleaning sounds are two more callers on that table. A scrubbed grime decal's squelch (`grime_C::clean`'s `poop_Cue`)
+is sent by the machine whose player cleaned it, since another peer takes the clean's dirt from the grime lane and never
+runs `clean`. A cleaning item's use sounds are `PlaySound2D`, heard by its own player alone: the mop's and the sponge's
+dip, the bucket's scoop, its water thrown out and its fuel poured (`wade_Cue`, `water_splash_Cue`, `poop_Cue`, `fuel1`,
+the last found among the loaded sounds by its name). A second pre hook sends one the item in this player's hand played,
+placed at the player with the game's `att_default`. `[V]` on the fork's build of the same change: the host's five strokes
+of a decal played on slot 1 five times; before, none. The dip is `[?]`: the fork's drill's sponge never dipped.
+
 A client's sound is an ask, not a state: the host judges it (`coop/world/sound_judge`) before any peer plays it. The
-entry must be a player's melee sound (a knock or a bell is refused whatever the client names), the sender needs a body
+entry must be a player's own sound, its melee hit, its scrub or its cleaning item's use (a knock or a bell is refused
+whatever the client names), the sender needs a body
 on the host within a melee swing's reach of the place named (500 cm and the authority's allowance for the puppet's
 lag), and each client holds a budget of eight asks refilled at four a second. Each refusal is counted by reason. The
 host then plays the sound and sends it to every client but the asker; its own sounds go to every client. A client's own

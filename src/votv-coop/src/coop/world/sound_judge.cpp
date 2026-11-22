@@ -44,7 +44,9 @@ bool JudgeOff() {
 bool Allow(coop::net::Session& session, uint8_t slot, const C::Entry& entry, const coop::net::SoundAtPayload& p,
            Refusal& why) {
     if (JudgeOff()) return true;
-    if (!(entry.callers & C::kAttack)) {
+    // A player's own sounds: its melee hit, its scrub of a grime decal and its hand item's use. A knock or a bell is the
+    // host's world's, whatever the sender claims.
+    if (!(entry.callers & (C::kAttack | C::kGrime | C::kHand))) {
         why = Refusal::Caller;
         return false;
     }
