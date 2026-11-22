@@ -118,9 +118,11 @@ bool OnCue(const N::EventCuePayload& p) {
         return true;
     }
     if (Visible(ship)) return true;
-    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(ship), L"appear"));
+    // The ship's own trigger, as the event's box runs it: appear(true), and its photo bound to this player's camera, so a
+    // photo this player takes reaches the reputation's lane as the game's own call.
+    ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(R::ClassOf(ship), L"runTrigger"));
     ++g_applying;
-    const bool ran = f.valid() && f.Set<bool>(L"dir", true) && ue_wrap::Call(ship, f);
+    const bool ran = f.valid() && f.Set<void*>(L"owner", ship) && f.Set<int32_t>(L"index", 0) && ue_wrap::Call(ship, f);
     --g_applying;
     UE_LOGI("arir_ship: the host's Ariral ship appears here too (ran=%d)", ran ? 1 : 0);
     return true;
