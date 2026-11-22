@@ -143,6 +143,7 @@
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/world/flood_sync.h"   // the basement flood, the host's
+#include "coop/world/host_event_presence.h"   // a host-only event counts on every client
 #include "coop/creatures/kerfur_dress_sync.h"   // an Omega's outfit and its pat
 #include "coop/props/glowstick_sync.h"   // a glowstick stuck to a surface, on every peer
 #include "coop/interactables/woodchipper_sync.h"
@@ -296,6 +297,7 @@ void Install(coop::net::Session& session) {
     coop::turbine_sync::Install(&session);  // wind-turbine facing/spin mirror (host-auth ~1 Hz)
     coop::woodchipper_sync::Install(&session);  // the host's woodchippers
     coop::flood_sync::Install(&session);        // the basement's burst pipes and flood
+    coop::host_event_presence::Install(&session);  // a host-only event counts on every client
     coop::glowstick_sync::Install(&session);    // a glowstick's stick, through its record
     coop::atv_host_sync::Install(&session);  // what of an ATV is the host's beyond its rig
     coop::upgrade_sync::Install(&session);  // a client's upgrade purchase is charged and written by the host
@@ -562,6 +564,7 @@ DisconnectStats DisconnectAll() {
     coop::woodchipper_sync::OnDisconnect();
     coop::atv_host_sync::OnDisconnect();
     coop::flood_sync::OnDisconnect();
+    coop::host_event_presence::OnDisconnect();
     coop::upgrade_sync::OnDisconnect();  // and its own upgrade panel buys locally again
     coop::device_occupancy::OnDisconnect();
     coop::notebook_sync::OnDisconnect();  // and its last-published text

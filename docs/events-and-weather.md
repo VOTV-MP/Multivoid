@@ -144,6 +144,15 @@ index, and a client spawns the same emitter (`coop/world/event_cue_sync`). A cue
 at its emitter's birth: the host sees the particle component born, reads its template at the next tick and
 sends the component's own place (the growth area's glow at the plant it fertilizes) `[?]`.
 
+An event whose actor stands on the host alone never registers on a client, and the game's `activeEvents` count is what
+its threat music, the meta paranoia, plays on: while any event is registered, `mainGamemode.threatMusic` fades the threat
+ambience in. The host tells every client when the first of its live registrations of such a class begins and when the
+last ends (`EventCue` 104, `x` 1 or 0), and a joiner while one runs; a client registers one stand-in event, its eventer
+(which never registers itself), through the game's own `setEvent`, and ends it (`coop/world/host_event_presence`). The
+classes are listed there as each is measured: the vent knocker (`kocker_C`, day 12) so far, whose knocks a client's
+player in its box (a metre cube in front of the main computer) starts on the host. `[V]` on the fork's build of the same
+change: slot 1 counted one event more from the knocker's spawn to the host's end; before, none.
+
 ### The actors an event flies in
 
 The saucers, the mothership, the ariral ships, the sky objects, the jellyfish, the fire tank and
@@ -274,6 +283,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | the base alarm | whoever transitions | polled; the host canonicalises |
 | the basement's pipes and flood | the host | a client's `addDamage`, `addWater` and `setLevel` refused outside the lane's apply; the bit and the level sent as they change; a client's repair asked |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
+| a host-only event's count | the host | its first begin and last end sent; a client registers one stand-in event |
 
 ## Wire messages
 
@@ -338,4 +348,5 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| a host-only event's count | `coop/world/host_event_presence` (fed by `coop/world/event_active_sync`) |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

@@ -21,6 +21,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/world/event_fire_sync.h"
+#include "coop/world/host_event_presence.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -200,6 +201,7 @@ void OnSetEventPost(const sg::Call& call) {
     void* sender = *reinterpret_cast<void* const*>(call.locals + g_offContext);
     if (!sender || !R::IsLive(sender)) return;
     const bool active = call.locals[g_offActive] != 0;
+    coop::host_event_presence::OnHostEdge(sender, active);   // a host-only event's count on every client
     ForgetOtherWorlds();
     const long long now = NowMs();
     if (active) {
