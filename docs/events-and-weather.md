@@ -177,6 +177,15 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The picnic's two Ariral warp arrows (day 8, `arirShipVanishing_C`) are not world actors either: the picnic is a
+`trigger_spawnProp_C`, which spawns its prop row's class, and an arrow is a saved actor that stands where it is put and
+fades for whoever comes near. It ran on the host alone, so a client saw only arrows its save already held, and kept them
+after the host's picnic was cleared. An arrow now crosses by its place on the fixture lane, as a dirt hole does, and its
+end crosses with it: a client binds a loaded arrow that stands where the host's does, spawns a copy only when none is, and
+the joiner's census-end ends the loaded arrows nothing named (`coop/world/ambient_fixture_sync`). Each copy fades for its
+own player. `[V]` on the fork's build of the same change: the host's picnic took every peer from 0 arrows to 2, a joiner
+after it had the same 2, and the clearing took all three to 0; before, a client saw none of the picnic's.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -269,6 +278,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the picnic's warp arrows | the host | each by its place and its end, on the fixture lane; a loaded one bound by place |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |

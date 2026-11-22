@@ -73,6 +73,8 @@ void ListBranches(std::vector<void*>& out);
 
 // A plain copy of either: a branch spawned this way makes no nest of its own.
 void* SpawnFixture(bool branch, const FVector& at, const FRotator& rot);
+// A plain copy of the class named, at `at` turned to `rot`.
+void* SpawnFixtureOf(const wchar_t* className, const FVector& at, const FRotator& rot);
 
 // A beehive branch's nest: `hiveKey` is the key its nest had (empty for None, which `touched` and a keyless save leave), and
 // `hive` is the nest actor it holds, null unless that actor is live. False when the branch has no such fields. Game thread.

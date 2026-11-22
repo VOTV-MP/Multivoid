@@ -185,13 +185,13 @@ bool ReadPlace(void* obj, Known& k) {
     return true;
 }
 
-// A fixture ended. Never sent means no client has it, and a join sends only the living. A branch's end is the host's and
-// crosses; a hole ends by each viewer's own distance and view (susDirtHole's 600 s check), so the host's end of one is its
+// A fixture ended. Never sent means no client has it, and a join sends only the living. A branch's end and a warp arrow's
+// are the host's and cross; a hole ends by each viewer's own distance and view (susDirtHole's 600 s check), so the host's end of one is its
 // own and no end of a hole is sent. MTA decides a per-player element's presence on the server and removes it for that player
 // alone (reference/mtasa-blue/Server/mods/deathmatch/logic/CPerPlayerEntity.cpp:186-239); here the game's own camera test
 // decides, on each peer (principle 6).
 void Retire(const Known& k) {
-    const bool branch = k.wire.family == fam::kBranch;
+    const bool branch = k.wire.family == fam::kBranch || k.wire.family == fam::kShip;
     if (k.sentAny && branch) {
         Payload end = k.wire;
         end.alive = 0;
@@ -206,7 +206,7 @@ void Retire(const Known& k) {
 void DrainHost() {
     for (const AB::Event& e : g_events) {
         if (e.cls == AB::Class::Nest || e.cls == AB::Class::Tree) continue;  // the prop lane's and the creature lane's
-        const uint8_t family = e.cls == AB::Class::Hole ? fam::kHole : fam::kBranch;
+        const uint8_t family = e.cls == AB::Class::Hole ? fam::kHole : e.cls == AB::Class::Ship ? fam::kShip : fam::kBranch;
         if (e.kind == AB::Kind::Death) {
             if (family == fam::kHole) coop::sus_hole_intent::OnHoleEnded(e.obj, e.index);  // a client's hole stops counting for it
             const auto it = g_known.find(e.obj);
@@ -353,6 +353,8 @@ std::unordered_map<uint32_t, Copy> g_copies;     // by the host's number; bound 
 std::unordered_map<void*, int32_t> g_spawned;    // the copies this lane made, with their slots
 std::vector<Ref> g_loadCandidates;               // the branches born before the load edge
 std::unordered_map<std::wstring, Ref> g_loaded;  // the loaded branches by the key their save gave them, until bound
+std::vector<Ref> g_shipCandidates;               // the warp arrows born before the load edge
+std::vector<Ref> g_loadedShips;                  // the loaded warp arrows, until bound by place
 bool g_loadedRead = false;
 bool g_retryNest = false;                        // a nest was born: ask for the ones still wanted
 uint64_t g_keyVersionSeen = 0;
@@ -371,6 +373,12 @@ void ForgetEnded(void* obj, int32_t index) {
         if (it->second.obj == obj && it->second.index == index) it = g_loaded.erase(it);
         else ++it;
     }
+    for (std::vector<Ref>* list : {&g_loadedShips, &g_shipCandidates})
+        for (size_t i = 0; i < list->size(); ++i)
+            if ((*list)[i].obj == obj && (*list)[i].index == index) {
+                list->erase(list->begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
 }
 
 void DrainClient() {
@@ -379,7 +387,7 @@ void DrainClient() {
             if (e.kind == AB::Kind::Birth) g_retryNest = true;
             continue;
         }
-        if (e.cls != AB::Class::Hole && e.cls != AB::Class::Branch) continue;
+        if (e.cls != AB::Class::Hole && e.cls != AB::Class::Branch && e.cls != AB::Class::Ship) continue;
         if (e.kind == AB::Kind::Death) {
             ForgetEnded(e.obj, e.index);
             for (size_t i = 0; i < g_loadCandidates.size(); ++i) {
@@ -391,6 +399,7 @@ void DrainClient() {
         }
         // The save's branches are met as births until the load edge reads them; a hole copy is spawned, never taken.
         if (e.cls == AB::Class::Branch && !g_loadedRead) g_loadCandidates.push_back(Ref{e.obj, e.index});
+        if (e.cls == AB::Class::Ship && !g_loadedRead) g_shipCandidates.push_back(Ref{e.obj, e.index});
     }
 }
 
@@ -404,8 +413,12 @@ void ReadLoaded() {
         if (Live(r) && AC::ReadBranch(r.obj, key, hive) && !key.empty()) g_loaded[key] = r;
     }
     g_counters.loaded = g_loaded.size();
-    UE_LOGI("ambient_fixture_sync: the load brought %zu keyed branches", g_loaded.size());
+    for (const Ref& r : g_shipCandidates)
+        if (Live(r)) g_loadedShips.push_back(r);
+    UE_LOGI("ambient_fixture_sync: the load brought %zu keyed branches and %zu warp arrows", g_loaded.size(),
+            g_loadedShips.size());
     g_loadCandidates.clear();
+    g_shipCandidates.clear();
 }
 
 bool BindNest(Copy& c) {
@@ -476,8 +489,30 @@ void ApplyCensus() {
         ++ended;
     }
     g_counters.censusEnded += ended;
-    UE_LOGI("ambient_fixture_sync: census end -- %zu loaded branches the host lacks ended", ended);
+    size_t ships = 0;
+    for (const Ref& r : g_loadedShips) {
+        if (!Live(r)) continue;
+        AC::Destroy(r.obj);
+        ++ships;
+    }
+    UE_LOGI("ambient_fixture_sync: census end -- %zu loaded branches and %zu warp arrows the host lacks ended", ended, ships);
     g_loaded.clear();
+    g_loadedShips.clear();
+}
+
+// A loaded warp arrow is the host's that stands where it does: the save put both there.
+Ref TakeLoadedShip(const Payload& p) {
+    constexpr float kSamePlaceCm = 100.f;
+    for (size_t i = 0; i < g_loadedShips.size(); ++i) {
+        const Ref r = g_loadedShips[i];
+        ue_wrap::FVector at{};
+        if (!Live(r) || !E::TryGetActorLocation(r.obj, at)) continue;
+        const float dx = at.X - p.x, dy = at.Y - p.y, dz = at.Z - p.z;
+        if (dx * dx + dy * dy + dz * dz > kSamePlaceCm * kSamePlaceCm) continue;
+        g_loadedShips.erase(g_loadedShips.begin() + static_cast<std::ptrdiff_t>(i));
+        return r;
+    }
+    return Ref{};
 }
 
 void ApplyInbox() {
@@ -489,6 +524,7 @@ void ApplyInbox() {
             continue;
         }
         const bool branch = p.family == fam::kBranch;
+        const bool ship = p.family == fam::kShip;
         auto it = g_copies.find(p.id);
         if (!p.alive) {
             if (it == g_copies.end()) continue;
@@ -513,15 +549,17 @@ void ApplyInbox() {
                 g_loaded.erase(lt);
             }
         }
+        if (ship && (c.actor = TakeLoadedShip(p)).obj) ++g_counters.shipsBound;
         if (!c.actor.obj) {
-            void* copy = AC::SpawnFixture(branch, {p.x, p.y, p.z}, {p.pitch, p.yaw, p.roll});
+            void* copy = ship ? AC::SpawnFixtureOf(L"arirShipVanishing_C", {p.x, p.y, p.z}, {p.pitch, p.yaw, p.roll})
+                              : AC::SpawnFixture(branch, {p.x, p.y, p.z}, {p.pitch, p.yaw, p.roll});
             if (!copy) {
                 UE_LOGW("ambient_fixture_sync: fixture %u family=%u did not spawn", p.id, p.family);
                 continue;
             }
             c.actor = Ref{copy, R::InternalIndexOf(copy)};
             g_spawned[copy] = c.actor.index;
-            ++(branch ? g_counters.branchCopies : g_counters.holeCopies);
+            ++(ship ? g_counters.shipCopies : branch ? g_counters.branchCopies : g_counters.holeCopies);
         }
         Copy& stored = g_copies.emplace(p.id, c).first->second;
         if (branch) ApplyNest(stored, p.hasNest);
@@ -569,7 +607,9 @@ void Tick() {
     if (!s) return;
     ResolveWatches();
     g_events.clear();
-    AB::Drain(static_cast<AB::Mask>(AB::Bit(AB::Class::Hole) | AB::Bit(AB::Class::Branch) | AB::Bit(AB::Class::Nest)), g_events);
+    AB::Drain(static_cast<AB::Mask>(AB::Bit(AB::Class::Hole) | AB::Bit(AB::Class::Branch) | AB::Bit(AB::Class::Nest) |
+                                    AB::Bit(AB::Class::Ship)),
+              g_events);
     if (s->role() == coop::net::Role::Host) HostTick(*s);
     else if (s->role() == coop::net::Role::Client) ClientTick();
 }
@@ -578,12 +618,39 @@ void OnState(const coop::net::AmbientFixtureStatePayload& p) { g_inbox.push_back
 
 Counters Read() { return g_counters; }
 
+namespace {
+
+// HOST: the branches and warp arrows that stand now, the save's own among them. The births record seeds at the session's
+// start, before the gamemode's loadObjects has made the save's, and a joiner's census-end then ended each of its loaded
+// ones. Holes are not swept: a hole copy is spawned beside the joiner's loaded one, never bound to it.
+void SweepStanding() {
+    if (!IsHost()) return;
+    size_t found = 0;
+    for (const auto& [cls, family] : {std::pair<const wchar_t*, uint8_t>{L"beehiveBranch_C", fam::kBranch},
+                                      std::pair<const wchar_t*, uint8_t>{L"arirShipVanishing_C", fam::kShip}}) {
+        for (void* o : R::FindObjectsByClass(cls)) {
+            if (!o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+            const int32_t index = R::InternalIndexOf(o);
+            if (index < 0) continue;
+            const auto it = g_known.find(o);
+            if (it != g_known.end() && it->second.index == index) continue;
+            Known& k = Ensure(o, index, family);
+            if (family == fam::kBranch) TryReadKey(o, k);
+            ++found;
+        }
+    }
+    if (found) UE_LOGI("ambient_fixture_sync: %zu standing branches and warp arrows the births record had not named", found);
+}
+
+}  // namespace
+
 // A joiner is sent every fixture the host holds, to it alone, and then the census-end; a branch whose key is not known yet
 // is sent to everyone when it is. MTA sends a joiner the whole element tree in one add packet
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:195-301), but a joiner's world here is a save, not an
 // empty world, so the snapshot needs an end marker that one atomic packet does not.
 void QueueConnectBroadcastForSlot(int slot) {
     if (slot <= 0 || slot >= coop::players::kMaxPeers) return;
+    SweepStanding();
     for (auto& kv : g_known) {
         Known& k = kv.second;
         if (k.wire.family == fam::kBranch && !k.keyKnown) continue;
@@ -613,6 +680,8 @@ void OnDisconnect() {
     g_spawned.clear();
     g_loadCandidates.clear();
     g_loaded.clear();
+    g_shipCandidates.clear();
+    g_loadedShips.clear();
     g_loadedRead = false;
     g_retryNest = false;
     g_keyVersionSeen = 0;

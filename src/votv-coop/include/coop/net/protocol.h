@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 315;
+inline constexpr uint16_t kProtocolVersion = 316;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2393,15 +2393,18 @@ inline constexpr uint8_t kHole = 0;
 inline constexpr uint8_t kBranch = 1;
 // Not a fixture: the host has sent a joiner every one it holds, so a loaded branch nothing named is one the host lacks.
 inline constexpr uint8_t kCensusEnd = 2;
+// An Ariral warp arrow the picnic leaves (arirShipVanishing_C), a saved actor that stands where it was put.
+inline constexpr uint8_t kShip = 3;
 }  // namespace ambient_fixture
 
-// A dirt hole or a beehive branch (AmbientFixtureState), or the end of a joiner's census (family kCensusEnd, the rest zero).
+// A dirt hole, a beehive branch or a picnic warp arrow (AmbientFixtureState), or the end of a joiner's census (family
+// kCensusEnd, the rest zero).
 struct AmbientFixtureStatePayload {
     uint32_t id;                // 4 -- the host's number for it
     float    x, y, z;           // 12
     float    pitch, yaw, roll;  // 12
     uint8_t  family;            // 1 -- ambient_fixture
-    uint8_t  alive;             // 1 -- 0: the branch ended (a hole's end never crosses)
+    uint8_t  alive;             // 1 -- 0: the branch or the warp arrow ended (a hole's end never crosses)
     uint8_t  _pad[2];           // 2 -- zero
     WireKey  birthKey;          // 32 -- a branch: the key its nest had when the host first read it; a hole: len 0
     uint8_t  hasNest;           // 1 -- a branch: the host's branch holds its nest now (read at every send)
