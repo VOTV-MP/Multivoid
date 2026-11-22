@@ -177,6 +177,18 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The warning obelisk (day 25, `obelisk_C`) is spawned by its event on the host alone. Its begin play drops it from high
+above; its landing shakes every camera near it, fires its particles, flags its radar point (the base alarm), pushes the
+props round it, flings seventy rocks, leaves the standing `prop_obelisk_C`, punches the main player and hides its own
+mesh. The rocks and the standing obelisk are host births and crossed as props, so a client saw them appear with no fall,
+shake or punch. The host now sends the obelisk's begin play while it has not fallen (`EventCue` 108 its yaw, then 107
+its place), and a client spawns its own copy there, turned as the host's, so the fall and landing play for its own
+player as the game's do: its own camera, its own punch, its own event count. The copy's push is turned off, as the
+host's push moves the props, and the props the copy's landing makes are ended at their birth, as the host's cross
+(`coop/world/obelisk_sync`). A joiner loads the obelisk the save holds. `[V]` on the fork's build of the same change:
+slot 1's copy fell from 10 km to the ground at the host's yaw, its landing's 71 props were ended, and every peer held
+the host's 136 rocks and one standing obelisk; before, slot 1 had no obelisk.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -269,6 +281,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the warning obelisk's fall | the host | its begin play sent; a client's own copy falls and lands, its push off and its prop births ended |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |

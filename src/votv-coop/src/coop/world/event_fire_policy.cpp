@@ -53,9 +53,9 @@ const NoReplayRow kNoReplayRows[] = {
     // a lane:
     { "arirShip", "actor spawn on armed overlap (no lane)" },
     // The obelisk's graph is not a bare flag flip: obelisk_C spawns prop_C/prop_obelisk_C actors
-    // and punches getMainPlayer -- a replay would double-spawn the props client-local and hit the
-    // client's own player. Host-only until the scene gets a lane:
-    { "obelisk", "obelisk_C prop spawns + getMainPlayer punch (no lane)" },
+    // and punches getMainPlayer, so a replay would double-spawn the props client-local. Its fall
+    // and landing reach a client through coop/world/obelisk_sync, which makes the client's copy:
+    { "obelisk", "obelisk_C's fall rides obelisk_sync (EventCue 107/108); its props the prop lane" },
     // earthTp fires newsky_C.tp, which a client refuses: its sky and black hole flip ride SkyState, its emails the
     // host's append feed and its two 2D sounds EventCue ids 100 and 101 (coop/world/world_sound_sync):
     { "earthTp", "newsky_C.tp: the flip rides SkyState, the emails the append feed, the sounds EventCue 100 and 101" },
