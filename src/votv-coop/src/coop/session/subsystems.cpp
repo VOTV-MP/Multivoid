@@ -144,6 +144,7 @@
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/world/flood_sync.h"   // the basement flood, the host's
+#include "coop/creatures/scout_target.h"   // the Rozital scouts hunt and pin any player
 #include "coop/creatures/kerfur_dress_sync.h"   // an Omega's outfit and its pat
 #include "coop/world/sound_relay.h"   // a player's own sounds at a place
 #include "coop/props/glowstick_sync.h"   // a glowstick stuck to a surface, on every peer
@@ -298,6 +299,7 @@ void Install(coop::net::Session& session) {
     coop::turbine_sync::Install(&session);  // wind-turbine facing/spin mirror (host-auth ~1 Hz)
     coop::woodchipper_sync::Install(&session);  // the host's woodchippers
     coop::flood_sync::Install(&session);        // the basement's burst pipes and flood
+    coop::scout_target::Install(&session);  // the Rozital scouts hunt and pin any player
     coop::glowstick_sync::Install(&session);    // a glowstick's stick, through its record
     coop::atv_host_sync::Install(&session);  // what of an ATV is the host's beyond its rig
     coop::upgrade_sync::Install(&session);  // a client's upgrade purchase is charged and written by the host
@@ -567,6 +569,7 @@ DisconnectStats DisconnectAll() {
     coop::woodchipper_sync::OnDisconnect();
     coop::atv_host_sync::OnDisconnect();
     coop::flood_sync::OnDisconnect();
+    coop::scout_target::OnDisconnect();
     coop::upgrade_sync::OnDisconnect();  // and its own upgrade panel buys locally again
     coop::device_occupancy::OnDisconnect();
     coop::notebook_sync::OnDisconnect();  // and its last-published text
@@ -654,7 +657,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: the host judges its own seat and grab, a client asks the host; the syncer streams its pose (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:woodchipper"}; coop::woodchipper_sync::Tick(); coop::flood_sync::Tick(); coop::kerfur_dress_sync::Tick(); }  // woodchippers: the host's intents and its changed chippers, the burn read once a second / the client's held states; the Omega outfit watch settles
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:woodchipper"}; coop::woodchipper_sync::Tick(); coop::flood_sync::Tick(); coop::scout_target::Tick(); coop::kerfur_dress_sync::Tick(); }  // woodchippers: the host's intents and its changed chippers, the burn read once a second / the client's held states; the Omega outfit watch settles
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:glowstick"}; coop::glowstick_sync::Tick(); }  // a glowstick's stick: the sticks a player ended published, the waits for a struck prop retried
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv_host"}; coop::atv_host_sync::Tick(); }  // the ATVs' fuel, health and modules
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }  // base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)

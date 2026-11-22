@@ -80,7 +80,7 @@ const NoReplayRow kNoReplayRows[] = {
     // enrols only what a client's copy is kept inert for, npc_world_enum), so they stay host-only:
     { "ventCrawler", "npc lane (allowlisted; eventer EX-catch)" },
     { "ventKnocker", "world-actor spawn (no lane yet: the eventer's catch leaves kocker_C out)" },
-    { "tentacleBalls", "npc lane (follower EX-catch)" },
+    { "tentacleBalls", "npc lane (follower EX-catch); the host's balls hunt any player (scout_target)" },
     { "morningGay", "world-actor spawn (no lane yet: the eventer's catch leaves morningUfo_C out)" },
     { "borgRozital", "world-actor spawn (no lane yet: the eventer's catch leaves rozitBorg_C out)" },
     { "graysforest", "npc lane (controller EX-catch)" },

@@ -177,6 +177,18 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The Rozital scouts (day 32, `tentacleBall_C`, five from `tentacleBallsFollower_C`) run on the host alone, and a client
+holds mirrors. A hostile ball traces from its light to each body within 150 m and, at a player, chases player 0 and calms
+its buddies; within 40 m it pins the first player its sphere finds, once player 0's camera has open sky above it: that
+player's `firstPersonBodyAnimation("pindown")`, and the ball lunges half way to player 0. A client's puppet on the host
+was seen, and the chase went to the host; a pinned puppet played the pin on the host's copy alone. Each hostile ball still
+looking is now served the nearest player (`coop/creatures/served_player`, its `GetPlayerPawn(0)`), kept while it chases
+and pins, so its chase, its sky checks and its lunge go to that player; its camera read answers the same body. A pin of
+a client's puppet is refused on the host and sent to that client (`EventCue` 109), whose own player plays it
+(`coop/creatures/scout_target`). `[V]` on the fork's build of the same change: slot 1 15 m
+from the scouts was seen, and before the chase walked 470 m to the host and pinned nobody; after, the balls hunted slot 1,
+one pinned it, and its own player played the pin for 762 frames.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -296,6 +308,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the Rozital scouts' hunt and pin | the host | each hostile ball serves the nearest player; a client's pin is sent to it |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
@@ -366,5 +379,6 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the Rozital scouts | `coop/creatures/scout_target`, `coop/creatures/served_player` |
 | sounds played at a place | `coop/world/sound_relay`, `coop/world/sound_catalog`, `coop/world/sound_judge`, `ue_wrap/world/physsound_table`, `ue_wrap/core/object_path`; `coop/dev/sound_drill` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
