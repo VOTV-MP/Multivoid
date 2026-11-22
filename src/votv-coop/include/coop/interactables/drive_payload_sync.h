@@ -48,6 +48,10 @@ void OnEnrolled(void* actor, uint32_t eid);
 void OnBound(uint32_t eid, void* actor, int senderSlot);
 
 // A peer's slot is free: its half-assembled rows and the drives it brought go with it (bind_wait drops its held rows).
+// HOST: a denied rack take's drive whose row arrived first. The drive `slot`'s client brought, whose row the host took in
+// the last ten seconds and which hashes to `rowHash`, is destroyed on every peer. True when one was. Game thread.
+bool ReapTakenRow(uint8_t slot, uint64_t rowHash);
+
 void OnPeerLeft(uint8_t slot);
 
 // The session's end: nothing held, sent or noted.

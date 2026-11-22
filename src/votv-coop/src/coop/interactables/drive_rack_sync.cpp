@@ -11,10 +11,10 @@
 #include "coop/element/bind_wait.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_snd_fx.h"   // ScopedWireApply (the shared desk wire guard)
+#include "coop/interactables/drive_payload_sync.h"  // ReapTakenRow: a denied take's drive whose row came first
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
-#include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
 #include "coop/props/prop_save_data.h"        // DeclareClassOwnedElsewhere (the rack's rows are this lane's)
 
 #include "ue_wrap/actors/prop.h"
@@ -480,9 +480,13 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
                     now - t.when < kDenyTtl) { rowHash = t.rowHash; break; }
             }
             RecordDeny(senderSlot, rowHash);
+            // The loser's drive sends its row as it is born, before its rack sweep sends this take, so its row is
+            // usually here already: the drive is destroyed now. One whose row comes later meets the armed record.
+            const bool reaped = rowHash && coop::drive_payload_sync::ReapTakenRow(senderSlot, rowHash) &&
+                                TryConsumeDenyReap(senderSlot, rowHash);
             UE_LOGW("drive_rack: rack eid=%u take idx=%u from slot %u RACED -- denied%s",
                     h.rackEid, h.idx, senderSlot,
-                    rowHash ? " + content-reap armed" : " (no row hash -- no reap)");
+                    reaped ? " + its drive reaped" : rowHash ? " + content-reap armed" : " (no row hash -- no reap)");
             return;
         }
         // Record the removed row's hash BEFORE clearing (the deny correlation).
@@ -506,36 +510,13 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
 void ReplayRack(const uint8_t* bytes, size_t n, int senderSlot);
 
 void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<uint8_t>& blob, uint8_t senderSlot) {
-    if (h.op == 2) {  // deny: destroy OUR ghost from that exact take (content-matched)
-        // Never sweep all untracked drives -- a legitimate fresh birth would die too. The denied
-        // take's ghost carries the row that sat at (rackEid, idx) in OUR shadow, so match by
-        // content hash.
-        uint64_t wantHash = 0;
-        {
-            const auto now = Clock::now();
-            for (const auto& t : g_takenRing) {
-                if (t.rackEid == h.rackEid && t.idx == h.idx &&
-                    now - t.when < kDenyTtl) { wantHash = t.rowHash; break; }
-            }
-        }
-        int destroyed = 0;
-        if (wantHash) {
-            for (void* obj : R::FindObjectsByClass(L"prop_drive_C")) {
-                if (!obj || !R::IsLive(obj)) continue;
-                if (coop::element::Registry::Get().EidForActor(obj) !=
-                    coop::element::kInvalidId) continue;
-                SD::Row grow;
-                if (!DC::ReadDriveRow(obj, grow)) continue;
-                if (coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(grow)) != wantHash)
-                    continue;
-                coop::prop_lifecycle::DestroyLocalProp(obj, /*deferred*/true);
-                ++destroyed;
-                break;
-            }
-        }
-        UE_LOGW("drive_rack: rack op=%u idx=%u DENIED by host -- %d content-matched ghost(s) "
-                "destroyed%s", h._pad0, h.idx, destroyed,
-                wantHash ? "" : " (no shadow row -- nothing destroyed; host reaps by payload)");
+    if (h.op == 2) {  // deny: the host's word that this client's take lost a race
+        // The drive the take spawned here is not destroyed here. It went to the host as this client's fresh birth and
+        // its row follows: the host reaps it by that row (drive_payload_sync's ReapTakenRow or its armed record),
+        // through its own destroy, which removes every copy. A local destroy here, before the row was sent, left the
+        // host's copy standing on every peer with no row to match.
+        UE_LOGW("drive_rack: rack op=%u idx=%u DENIED by host -- its drive is the host's to reap by its row", h._pad0,
+                h.idx);
         return;
     }
     if (h.op != 3) return;  // clients only ever apply canonical (+deny)
