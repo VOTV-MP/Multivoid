@@ -179,7 +179,6 @@ constexpr ClientAuthorship AuthorshipOf(ReliableKind k) {
     case ReliableKind::AtvPartIntent:
     case ReliableKind::PryAsk:
     case ReliableKind::OvenProgressState:
-    case ReliableKind::BucketIntent:
         return ClientAuthorship::Client;
     // The Host row matches MTA's protected element data, which a client may not write: opt-in there
     // (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2743-2755), the only mode here.

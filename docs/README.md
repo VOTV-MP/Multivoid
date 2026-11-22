@@ -58,6 +58,7 @@ messages, the late-join answer, the known limits with their evidence, and the co
 | [join.md](join.md) | Joining a game: admission, the save transfer, the connect replay, the join window, and the late-join rule every lane answers |
 | [players.md](players.md) | The remote player: the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation |
 | [props.md](props.md) | Props: identity, the birth and death seams, holding and throwing, containers, the props that change on their own |
+| [props-buckets.md](props-buckets.md) | Buckets and cement bags: the host's water and concrete, the rows, a client's verbs as asked families, a dropped item's record gate |
 | [prop-coasting.md](prop-coasting.md) | Props in motion with no hand on them: the host's drive set, its feeders (a hook, a broom, a birth, a let-go, a body's push), the cap and the rest rule |
 | [deployables.md](deployables.md) | The tools that leave an actor behind: the grappling hook and rope, the owner's stream, the anchor handoff, the tie that lives on the host |
 | [piles.md](piles.md) | Trash piles: the host's id across pile and clump, the client's grab as an intent, the dispenser piles |

@@ -289,15 +289,16 @@ void RunSelftest() {
     check(!H::KnownFamily(0), "family: 0 is not a verb");
     check(H::KnownFamily(1) && H::KnownFamily(2) && H::KnownFamily(3), "family: 1..3 are verbs");
     check(H::KnownFamily(4) && H::KnownFamily(5), "family: 4 and 5 are the Omega verbs");
-    check(!H::KnownFamily(6), "family: 6 is not a verb");
+    check(H::KnownFamily(6) && H::KnownFamily(11), "family: 6 and 11 are bucket verbs");
+    check(!H::KnownFamily(12), "family: 12 is not a verb");
     check(H::IsPropFamily(3) && !H::IsPropFamily(4) && !H::IsPropFamily(5) && !H::IsPropFamily(0),
           "family: the prop census judges 1..3 only");
     check(H::FirstRefusal(4, Fitting()) == Tally::FitBadFamily, "refusal: an Omega verb is no prop verb");
     check(H::FirstRefusal(0, Fitting()) == Tally::FitBadFamily, "refusal: a byte that is no verb is named");
     // A bad verb byte that reached the fit would be refused whatever the traits say (the judge's second defence).
-    constexpr uint8_t kBadVerbs[] = {0, 6, 255};
+    constexpr uint8_t kBadVerbs[] = {0, 12, 255};
     for (const uint8_t bad : kBadVerbs) {
-        check(!H::KnownFamily(bad), "family: a byte outside 1..5 is no verb");
+        check(!H::KnownFamily(bad), "family: a byte outside 1..11 is no verb");
         check(H::FirstRefusal(bad, Fitting()) == Tally::FitBadFamily,
               "refusal: a fitting trait set does not rescue a bad verb");
     }

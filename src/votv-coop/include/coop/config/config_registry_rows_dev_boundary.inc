@@ -39,7 +39,7 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "cord_malformed|cord_bad_op|cord_reach|cord_flood|cord_dead_sender|"
     "coffee_malformed|coffee_wrong_class|coffee_reach|coffee_flood|coffee_forged_record|coffee_dead_sender|"
     "grime_measure|grime_last|grime_far|grime_notool|grime_gone|grime_fast|grime_rain|grime_dry|grime_joinleak|"
-    "dingus_report|kdress_ask",
+    "dingus_report|kdress_ask|bucket_ask",
     "VOTVCOOP_HOSTILE_DRILL",
     "Receive-boundary drill (BOTH peers). signal_park: a client floods refused saved-signal rows "
     "(size 0, so the game's own gate rejects each) and the host must keep them from filling the apply "
@@ -132,6 +132,10 @@ CFG_ENUM(hostile_drill, "hostile_drill", "dev", "off",
     "held, an Omega out of reach, the same hold put on twice, a take-off flood past its drop budget) and 273 pats (a short "
     "payload, an eid with no Omega, an Omega out of reach, a flood past the pat budget), one at a time for the asks and in one "
     "tick for the pats; the host judges by the prop_act and pat counters' exact deltas per reason. "
+    "bucket_ask: a client forges the bucket verbs' asks (prop_act families 6..11: a soap amount of 99, a mix need the host's copy does "
+    "not give, a transfer direction 2, a family aimed at a prop of another kind, a dip branch the host's soap contradicts, an ask on a "
+    "target another ask reserved), one at a time, each after the host's reply to the one before; the host judges by the prop_act "
+    "counters' exact deltas per reason, and the red judge (bucket_red) makes the first forged ask be granted. "
     "Drill only.")
 
 // The act drill: an honest client takes and uses shared props through the real verbs, and the host judges what it

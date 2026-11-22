@@ -5,6 +5,7 @@
 
 #include "coop/dev/hostile_drill_act.h"  // the take-or-use request arms
 #include "coop/dev/hostile_drill_atv.h"  // the ATV lanes' refusal arms
+#include "coop/dev/hostile_drill_bucket.h"  // the bucket verbs' ask arm
 #include "coop/dev/hostile_drill_chat.h"  // the chat arms
 #include "coop/dev/hostile_drill_coffee.h"  // the coffee lane's refusal arms
 #include "coop/dev/hostile_drill_cord.h"  // the cord link lane's refusal arms
@@ -70,6 +71,7 @@ Arm ArmOf() {
              : v.rfind("grime_", 0) == 0     ? Arm::Grime
              : v == "dingus_report"          ? Arm::Dingus
              : v == "kdress_ask"             ? Arm::Kdress
+             : v == "bucket_ask"             ? Arm::Bucket
                                           : Arm::Off;
     }();
     return a;
@@ -133,6 +135,14 @@ kdress::Arm KdressArmOf() {
     return a;
 }
 
+// The bucket verbs' ask arm, the same way.
+bucket::Arm BucketArmOf() {
+    static const bucket::Arm a = ArmOf() == Arm::Bucket
+        ? bucket::ArmOf(coop::config::ResolveEnum(::coop::config_registry::rows::hostile_drill))
+        : bucket::Arm::None;
+    return a;
+}
+
 // The cord family's sub-arm, the same way.
 cord::Arm CordArmOf() {
     static const cord::Arm a = ArmOf() == Arm::Cord
@@ -182,6 +192,7 @@ const char* ArmName() {
     case Arm::Grime:             return grime::ArmName(GrimeArmOf());
     case Arm::Dingus:            return dingus::ArmName(DingusArmOf());
     case Arm::Kdress:            return kdress::ArmName(KdressArmOf());
+    case Arm::Bucket:            return bucket::ArmName(BucketArmOf());
     default:                     return "off";
     }
 }
@@ -254,6 +265,7 @@ bool TickFamilyHost(coop::net::Session* s) {
     const grime::Arm grimeArm = GrimeArmOf();
     const dingus::Arm dingusArm = DingusArmOf();
     const kdress::Arm kdressArm = KdressArmOf();
+    const bucket::Arm bucketArm = BucketArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
@@ -265,6 +277,7 @@ bool TickFamilyHost(coop::net::Session* s) {
     else if (grimeArm != grime::Arm::None)   grime::TickHostJudge(s, grimeArm);
     else if (dingusArm != dingus::Arm::None) dingus::TickHostJudge(s, dingusArm);
     else if (kdressArm != kdress::Arm::None) kdress::TickHostJudge(s, kdressArm);
+    else if (bucketArm != bucket::Arm::None) bucket::TickHostJudge(s, bucketArm);
     else if (IsWalkArm())                    walk::TickHostJudge(s, WalkArmOf());  // host counts its own walks
     else if (handArm != hand::Arm::None)     hand::TickHostJudge(s, handArm);
     else if (latestArm != latest::Arm::None) latest::TickHostJudge(s, latestArm);
@@ -301,6 +314,7 @@ bool TickFamilyClient(coop::net::Session* s) {
     const grime::Arm grimeArm = GrimeArmOf();
     const dingus::Arm dingusArm = DingusArmOf();
     const kdress::Arm kdressArm = KdressArmOf();
+    const bucket::Arm bucketArm = BucketArmOf();
     const chat::Arm chatArm = ArmOf() == Arm::ChatIllFormed ? chat::Arm::ChatIllFormed
                             : ArmOf() == Arm::ChatFlood     ? chat::Arm::ChatFlood
                                                             : chat::Arm::None;
@@ -312,6 +326,7 @@ bool TickFamilyClient(coop::net::Session* s) {
     else if (grimeArm != grime::Arm::None)   grime::TickClient(s, grimeArm);
     else if (dingusArm != dingus::Arm::None) dingus::TickClient(s, dingusArm);
     else if (kdressArm != kdress::Arm::None) kdress::TickClient(s, kdressArm);
+    else if (bucketArm != bucket::Arm::None) bucket::TickClient(s, bucketArm);
     else if (IsWalkArm())                    walk::TickClient(s, WalkArmOf());
     else if (handArm != hand::Arm::None)     hand::TickClient(s, handArm);
     else if (latestArm != latest::Arm::None) latest::TickClient(s, latestArm);
@@ -342,6 +357,7 @@ void OnDisconnectFamilies() {
     grime::OnDisconnect();
     dingus::OnDisconnect();
     kdress::OnDisconnect();
+    bucket::OnDisconnect();
     chat::OnDisconnect();
 }
 

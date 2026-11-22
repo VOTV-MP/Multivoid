@@ -1593,13 +1593,10 @@ enum class ReliableKind : uint16_t {
     // take-off of an outfit item ride PropActRequest. Not pre-world. KerfurDressPayload (272), KerfurDressPatPayload (273).
     KerfurDressState = 272,
     KerfurDressIntent = 273,
-    // A mop bucket's water and a concrete bucket's concrete (coop/props/bucket_sync). HOST->ALL: rows of the host's buckets
-    // and cement bags that changed, and every one to a joiner at its world-ready. Not pre-world. BucketStatePayload. CLIENT->HOST: this
-    // client's player changed a mop bucket's water (op 0, the bucket's water and soap after the verb), mixed cement into
-    // one (op 1) or took concrete out with the trowel (op 2); the host judges the reach and the items and runs it on its
-    // own, and its BucketState answers. Never relayed. Not pre-world. BucketIntentPayload.
+    // A world bucket's water, a concrete bucket's concrete and a cement bag's units (coop/props/bucket_sync). HOST->ALL: rows of
+    // the host's water buckets (the mop bucket among them), concrete buckets and cement bags that changed, and every one to a
+    // joiner at its world-ready. A client's verbs on them ride PropActRequest (families 6..11). Not pre-world. BucketStatePayload.
     BucketState = 283,
-    BucketIntent = 284,
 };
 
 #pragma pack(push, 1)
@@ -3172,38 +3169,34 @@ struct DingusReportPayload {
     WireKey key;     // 32 -- the save key of the dingus this client's touch found
 };
 static_assert(sizeof(DingusReportPayload) == 32, "DingusReportPayload must be 32 bytes");
-// BucketState and BucketIntent. A bucket by host element id. A mop bucket (prop_bucket_C): `level` its Height, `count`
-// its soap, `progress` its alcoholP, kBucketAlcohol and kBucketAlcReady its alcohol and alcReady. A concrete bucket
-// (prop_concreteBucket_C): `count` its units, `progress` its dryTimer, kBucketDry its dry. A cement bag (prop_cementBag_C,
-// what a mix takes from): `count` its units.
-inline constexpr uint8_t kBucketMop = 0, kBucketConcrete = 1, kBucketBag = 2;
+// BucketState. A bucket or bag by host element id. A water bucket (kBucketPlain: prop_bucket_C and the mop bucket under it):
+// `level` its height, `count` its soap, `progress` its alcoholP, kBucketAlcohol and kBucketAlcReady its alcohol and alcReady.
+// A concrete bucket (prop_concreteBucket_C): `count` its units, `progress` its dryTimer, kBucketDry its dry. A cement bag
+// (prop_cementBag_C): `count` its units. `seq` numbers the element's rows, rising by one per row the host sends for it.
+inline constexpr uint8_t kBucketPlain = 0, kBucketConcrete = 1, kBucketBag = 2;
 inline constexpr uint8_t kBucketAlcohol = 1, kBucketAlcReady = 2, kBucketDry = 4;
 struct BucketRow {
     uint32_t eid;       // 4
-    uint8_t  type;      // 1 -- kBucketMop, kBucketConcrete, kBucketBag
+    uint8_t  type;      // 1 -- kBucketPlain, kBucketConcrete, kBucketBag
     uint8_t  flags;     // 1 -- kBucketAlcohol | kBucketAlcReady | kBucketDry
     int16_t  count;     // 2
     float    level;     // 4
     float    progress;  // 4
+    uint32_t seq;       // 4 -- the element's row number
 };
-static_assert(sizeof(BucketRow) == 16, "BucketRow must be 16 bytes");
-inline constexpr int kBucketRowsMax = 13;
+static_assert(sizeof(BucketRow) == 20, "BucketRow must be 20 bytes");
+inline constexpr int kBucketRowsMax = 10;
 struct BucketStatePayload {
     uint8_t   count;                  // 1 -- 1..kBucketRowsMax
     uint8_t   _pad[3];                // 3 -- zero
-    BucketRow rows[kBucketRowsMax];   // 208
+    BucketRow rows[kBucketRowsMax];   // 200
 };
-static_assert(sizeof(BucketStatePayload) == 212, "BucketStatePayload must be 212 bytes");
-inline constexpr uint8_t kBucketIntentWater = 0, kBucketIntentConcrete = 1, kBucketIntentTake = 2;
-struct BucketIntentPayload {
-    uint8_t   op;          // 1 -- kBucketIntent*
-    uint8_t   _pad[3];     // 3 -- zero
-    uint32_t  itemEid;     // 4 -- the cement bag (op 1) or the trowel (op 2); 0 for op 0
-    BucketRow bucket;      // 16 -- the bucket; op 0 carries its level and count after the verb
-};
-static_assert(sizeof(BucketIntentPayload) == 24, "BucketIntentPayload must be 24 bytes");
+static_assert(sizeof(BucketStatePayload) == 204, "BucketStatePayload must be 204 bytes");
+static_assert(sizeof(BucketStatePayload) <= 256 - 20 - 8,
+              "BucketStatePayload must fit in one reliable datagram (kMaxReliablePayload)");
 
-// A client's ask to pocket, hold or use a world prop, or to put on or take off an Omega's outfit item (PropActRequest),
+// A client's ask to pocket, hold or use a world prop, to put on or take off an Omega's outfit item, or to use a held item on a
+// bucket or a cement bag (PropActRequest),
 // the host's answer (PropActReply) and the client's closing word (PropActCommit). `id` is the client's own, nonzero, and
 // pairs the three; `eid` is the prop's element id on the sender.
 // The family byte names the verb, and the host judges each verb by its own conditions (the game's pocket test, its
@@ -3211,8 +3204,15 @@ static_assert(sizeof(BucketIntentPayload) == 24, "BucketIntentPayload must be 24
 // The Omega families (an Omega's put-on of the held outfit item, and its take-off of a worn one) name an Omega by its NPC
 // element id and a list_kerfurDrip row in `verb`, the family-neutral argument every family beyond the three prop verbs
 // carries in its own way (coop/props/prop_act_families).
+// The bucket families name a world bucket or cement bag by its prop element id and carry the verb's word in `verb` (the first
+// bytes, little-endian, the rest zero): BucketSoap (a held soap into a water bucket) the soap's amount, an int32 0..10;
+// BucketJar (a held clean jar filled from a brewed bucket) nothing; BucketDip (a held sponge dipped in a water bucket) one byte,
+// 1 when the client's copy has soap in it; BucketMix (a held cement bag onto a water bucket) the units the mix takes, an int32
+// 1..20; BucketTrowel (a held trowel into a concrete bucket) nothing; BagTransfer (a held cement bag against a world bag) one
+// byte, 0 a unit from the held bag to the world bag, 1 a unit from the world bag to the held bag.
 inline constexpr uint8_t kPropActVerbBytes = 28;
-enum class PropActFamily : uint8_t { Pocket = 1, Use = 2, Hold = 3, OmegaPutOn = 4, OmegaTakeOff = 5 };
+enum class PropActFamily : uint8_t { Pocket = 1, Use = 2, Hold = 3, OmegaPutOn = 4, OmegaTakeOff = 5, BucketSoap = 6, BucketJar = 7,
+                                     BucketDip = 8, BucketMix = 9, BucketTrowel = 10, BagTransfer = 11 };
 enum class PropActReason : uint8_t { Granted = 0, Gone = 1, WrongFamily = 2, Held = 3, Reach = 4, QueueFull = 5 };
 inline constexpr uint8_t kPropActReasons = 6;   // Granted..QueueFull: the per-reason counter width
 

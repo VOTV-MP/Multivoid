@@ -470,23 +470,8 @@ its temperature in 0 to 2000, its ripeness finite and in -1 to 1e9, and its use 
 one whose copy is not born yet waits 30 s for it, judged against where the sender stood, and a refused release is
 answered like a refused bite. A held food placed down, not thrown, is run by the same drill on both peers `[?]`.
 
-A mop bucket (`prop_bucket_C`) holds its water as `Height`, with `soap` and brewing alcohol. Its tick pours it out when
-tipped, fills it under water and brews; verbs fill it, throw it out, water a plant, or dip a sponge or a jar. A cement
-bag on a bucket with water (`canConcrete`) makes it (`lib.replaceProp`) a concrete bucket (`prop_concreteBucket_C`) of
-round(Height / MaxHeight * 20) `units` from the bag; a trowel takes one, a tip spills five, 600 s dry it, and an empty
-one turns back. All of it ran only where it ran, a client's concrete bucket on its screen alone
-(`coop/props/bucket_sync`). The host sends a bucket or a cement bag when it changes (`BucketState`): a bucket's own tick
-marks it when it moved past a row's worth, a verb the host runs marks what it changed, one bucket goes ten times a
-second at most, and the lane does no work while none changes; a joiner gets all of them. A client's concrete buckets are
-refused their tick, so the spill, the drying and the turn back are the host's; a change to its mop bucket outside its
-tick (its own verb) goes to the host (`BucketIntent` op 0), and its cement bag on a bucket (op 1) and trowel on concrete
-(op 2) are refused and asked. The host judges each within 6 m of the sender, mixes by the bag's own rule, runs
-`takeConcrete`, and answers a refusal with its row to the sender. `[V]` on the rig, three peers
-(`coop/dev/bucket_drill`, once by a client and once by the host): every step's water, units, stage and bag on all three;
-before, a client's every step stayed on its own copy. The lane, its ReceiveTick watch included, measured 0.56 ms a
-second on the host and 0.45 to 0.54 on a client, against 0.64 and 1.03 to 1.06 when the host polled it. A class counts
-by its parent chain: the base's mop bucket (`prop_bucket_mop_C`, a `prop_bucket_C` with nothing of its own) stood on
-each peer alone under an exact match, Ghezra/Multivoid issue 42 `[V]` (`VOTVCOOP_BUCKET_CLASS`).
+A world bucket's water, a concrete bucket's concrete and a cement bag's units are the host's, the base's mop bucket among them,
+and a client's verbs on them are asked of the host ([props-buckets.md](props-buckets.md)).
 
 ## Who owns what
 
@@ -504,7 +489,7 @@ each peer alone under an exact match, Ghezra/Multivoid issue 42 `[V]` (`VOTVCOOP
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
 | notebook editor occupancy | the host arbitrates | a claim keyed by the owning prop |
 | notebook page text | the editing peer; the host takes it from the claim's holder, or from anyone while it is free | the notebook's own save record on the record lane, at the editor's commit and at the close |
-| a mop bucket's water, a concrete bucket's concrete, a cement bag's units | the host | rows when they change; a client's verb is a request; a client's concrete bucket tick refused |
+| a world bucket's water, a concrete bucket's concrete, a cement bag's units | the host | rows when they change; a client's verb is an asked family; a client's water bucket copy ticks on the host's last row |
 | a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
 
 ## Wire messages
@@ -514,7 +499,7 @@ each peer alone under an exact match, Ghezra/Multivoid issue 42 `[V]` (`VOTVCOOP
 | `PropPose` (stream) | the holder to all | the held prop's world transform, per frame, and its hold's generation |
 | `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class, key, id, transform, physics flags, the birth scalar; the key and id |
 | `PropRelease` | the holder to all | the prop's transform, its inherited linear and angular velocity and its frozen and sleep at the edge, the hold it closes and the throw sequence (0 = not a throw); a client's goes through the host, which clamps it and sends it on |
-| `BucketState`, `BucketIntent` | the host to all; a client to the host | the rows of the host's buckets and cement bags that changed; a client's water after its verb, its mix, or its trowel's take |
+| `BucketState` | the host to all | the rows of the host's water buckets, concrete buckets and cement bags that changed, numbered per element; every one to a joiner |
 | `PropHoldRefused` | the host to every client | a hold the host refused, by its holder's slot and generation, the prop's key, and the slot whose hold keeps the prop |
 | `FoodState`, `FoodBite`, `FoodRelease`, `FoodHand` | the host to all; a client to the host; a client to the host; the holder to all | a world food's temperature, ripeness, uses and poison; a client's bite; the condition of a food a client let go; the condition of the food in a hand |
 | `PropPropsIntent`, `PropPropsState` | a client to the host; the host to all, or to the sender alone for a refusal | a client's press of the prop-properties tool with the tool's four values; a prop's static, frozen and sleep read back from the host's copy, or the reason the press was refused `[?]` |
@@ -529,6 +514,7 @@ each peer alone under an exact match, Ghezra/Multivoid issue 42 `[V]` (`VOTVCOOP
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep; it carries the host's drive context for the prop (claim generation and open), the client drops one older than a drive END still on its copy, and a prop a hand held after its correction went out gets a follow-up after the release `[?]` |
 | `ContainerState`, `ContainerContents`, `ContainerBreakRequest` | the presser; the host; a client to the host (op 1) and the host to the requester (op 2 refusal, op 3 grant of a cut) | open or closed; one slice of the host's object array, its nested containers' contents in its tail; a break the host makes for a client, its refusal with a reason, or the grant of a saw's cut |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
+| `RoombaState`, `RoombaIntent` | the host to all; a client to the host | a robot cleaner's id and whether it runs; a client's press with the state it wants |
 
 ## Late join
 
@@ -566,7 +552,7 @@ prop resolves.
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Two peers changing one canned food inside one round trip each publish a whole record, and the last to reach the host stands, so a bite can be lost; a can's `health` travels only with those records, so impact damage short of opening it stays on each peer | `[RD]` `coop/props/prop_can_state` publishes the record and takes no claim |
 | Local-accumulator props other than the tape reel, the world food and the buckets drift between peers | `[V]` `coop/interactables/tape_caddy_sync`, `coop/props/prop_food_sync`, `coop/props/bucket_sync` |
-| The water a client throws out of a mop bucket, and the drops it pours while tipping one, are drawn on that client alone; its bucket's level is the host's | `[RD]` `getFromWater` and the tick spawn `prop_sponge_bucketpour_C` locally, a world birth that does not cross |
+| The drops a tipped or dipped bucket pours (`prop_sponge_bucketpour_C`) are a world birth that each peer's own tick makes: the host's cross, a client's local ones are matched to them and rekeyed | `[?]` `prop_sponge_bucketpour_C` |
 | A hot food's ignition is the host's alone, since a client's copy is refused its tick, so a client sees no flame on it | `[RD]` `prop_food_C.ReceiveTick`; `ue_wrap/actors/food` |
 | A client's food's frost, impact material and freeze sound are painted but only its frozen flag and steam were read back | `[RD]` `ue_wrap/actors/food`, `coop/props/prop_food_sync` |
 | A food subclass's own counter (the shrimp's `shrimps`) and its own tick are not carried, and a heating device's work on a client's copy is local until the host's next value | `[RD]` `coop/props/prop_food_sync` |
@@ -594,7 +580,7 @@ prop resolves.
 | the robot cleaner | `coop/props/roomba_sync`; `harness/autotest/autotest_roomba.cpp` (`roomba_drill`) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync`; a break, `coop/props/container_break`; nested contents, `ue_wrap/actors/container_inventory` |
 | a world food's condition | `coop/props/prop_food_sync`, `ue_wrap/actors/food` |
-| a mop bucket's water and a concrete bucket's concrete | `coop/props/bucket_sync`; `coop/dev/bucket_drill` |
+| a world bucket, a concrete bucket and a cement bag | `coop/props/bucket_sync`, `bucket_pin`, `bucket_record_gate`, `bucket_hold_ledger`, `prop_act_bucket*`; `ue_wrap/actors/bucket` |
 | a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case), `coop/props/prop_can_state` (the canned food) |
 | notebook sync | `coop/interactables/notebook_sync`, `coop/props/prop_save_data`, `ue_wrap/actors/notebook` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |

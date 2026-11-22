@@ -1,79 +1,256 @@
-// coop/dev/bucket_drill.cpp -- [dev] a mop bucket's water and concrete, acted on by one player and logged on every
-// peer (VOTVCOOP_BUCKET_DRILL=1 on every peer).
+// coop/dev/bucket_drill.cpp -- the bucket drill's log, chat, verdict, reads, the player's own verbs and the tick; see
+// coop/dev/bucket_drill.h. The host's stage is bucket_drill_stage.cpp (its places _spots), the client's walk to a staged prop _walk; the arms are
+// bucket_drill_verbs.cpp (soap, dip, transfer),
+// _concrete (mix, trowel), _tick (pin, visuals, mop), _drop, _join and _alc (alc, brew); the tick watch is _watch.
 //
-// The bucket is the save's prop_bucket_C under VOTVCOOP_BUCKET_KEY. HOST, VOTVCOOP_BUCKET_SETUP ms after it armed:
-// spawns a cement bag and a trowel (prop_wallfixer_C) 1 m beside it. The ACTOR (VOTVCOOP_BUCKET_ACTOR, `client` =
-// slot 1, or `host`), from VOTVCOOP_BUCKET_DELAY ms after it armed, a step every 8 s, as the game's own verbs:
-//   fill     -- the actor stood 1.5 m from the bucket 5 s before; the water as the bucket's getFromWater leaves it from a
-//               water volume (height 35)
-//   dump     -- the bucket's left click aimed at no plant: getFromWater throws the water out
-//   fill     -- again
-//   concrete -- the cement bag's left click on the bucket: lib.replaceProp makes it a concrete bucket
-//   take     -- the trowel's left click on the concrete bucket: one unit out
-//   take2    -- 16 s later, the trowel emptied first: the bucket the host left 1 unit turns back into a mop bucket
-// HOST, once a concrete bucket has stood 3 s after a take: its units made 1. EVERY PEER, every second: each mop bucket
-// and concrete bucket within 6 m of the bucket's start, each cement bag and trowel there (`[BKT]`).
+// Every verdict is decided by an event: a line a peer says after the effect it waits on, a counter the lane keeps, or a row of the
+// host's applied on the client's copy. A FAIL is said where it is decided and nothing after it runs; a bound only says INVALID.
 
 #include "coop/dev/bucket_drill.h"
+#include "bucket_drill_detail.h"
 
-#include "coop/cheats/item_catalog.h"
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
+#include "coop/dev/drill_chat.h"
+#include "coop/dev/drill_ground.h"
+#include "coop/dev/director/aim_fan.h"
 #include "coop/element/registry.h"
+#include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/hand_item.h"
 #include "coop/player/players_registry.h"
-#include "coop/session/teleport_client.h"
+#include "coop/player/puppet_drive.h"
+#include "coop/player/remote_player.h"
+#include "coop/player/roster.h"
+#include "coop/props/bucket_sync.h"
+#include "coop/props/prop_act_host.h"
+#include "coop/props/prop_key_index.h"
+#include "coop/props/prop_act_request.h"
+#include "coop/props/prop_snapshot.h"
+#include "coop/save/join_window_baseline.h"
+#include "coop/session/join_progress.h"
+#include "coop/session/net_pump.h"
+#include "coop/session/rig_verdict.h"
+
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/types.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_mainplayer.h"
-#include "ue_wrap/engine/engine_nav.h"
-#include "ue_wrap/world/world_singleton.h"
+#include "ue_wrap/engine/engine_pawn.h"
 
-#include <windows.h>
-
-#include <cctype>
-#include <cstdint>
+#include <cmath>
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <initializer_list>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-namespace coop::dev::bucket_drill {
+namespace coop::dev::bucket_drill::detail {
+
+namespace R   = ue_wrap::reflection;
+namespace E   = ue_wrap::engine;
+namespace OI  = ue_wrap::object_index;
+namespace DC  = coop::dev::drill_chat;
+namespace DG  = coop::dev::drill_ground;
+namespace EL  = coop::element;
+namespace HB  = coop::hand_item;
+namespace PAR = coop::prop_act_request;
+namespace RV  = coop::rig_verdict;
+
 namespace {
 
-namespace R  = ue_wrap::reflection;
-namespace E  = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
-using ue_wrap::FVector;
+bool g_ended = false, g_armed = false;
+int g_stepTicks = 0;
 
-constexpr uint64_t kStepMs = 8000;
+char Who() { return coop::roster::LocalIsHost() ? 'H' : 'C'; }
 
-bool On() {
-    static const bool on = coop::config::ReadEnv("VOTVCOOP_BUCKET_DRILL") == "1";
-    return on;
+std::string Format(const char* fmt, va_list ap) {
+    char buf[700];
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    return buf;
 }
 
-uint64_t EnvMs(const char* name, uint64_t dflt) {
-    const std::string v = coop::config::ReadEnv(name);
-    return v.empty() ? dflt : std::strtoull(v.c_str(), nullptr, 10);
+const char* g_verdictName = nullptr;   // set by a drill that runs the stage under its own name
+
+std::string Tag() { return std::string("bucket_") + (g_verdictName ? g_verdictName : ArmName(ArmOf())); }
+
+}  // namespace
+
+Arm ArmOf() {
+    static const Arm a = [] {
+        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::bucket_drill);
+        if (v == "soap") return Arm::Soap;
+        if (v == "dip") return Arm::Dip;
+        if (v == "mix") return Arm::Mix;
+        if (v == "trowel") return Arm::Trowel;
+        if (v == "transfer") return Arm::Transfer;
+        if (v == "pin") return Arm::Pin;
+        if (v == "visuals") return Arm::Visuals;
+        if (v == "ctick") return Arm::Ctick;
+        if (v == "drop") return Arm::Drop;
+        if (v == "join") return Arm::Join;
+        if (v == "mop") return Arm::Mop;
+        if (v == "alc") return Arm::Alc;
+        if (v == "brew") return Arm::Brew;
+        return Arm::Off;
+    }();
+    return a;
 }
 
-uint64_t Now() { return ::GetTickCount64(); }
-uint64_t WallMs() {
-    FILETIME ft{};
-    ::GetSystemTimePreciseAsFileTime(&ft);
-    return ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) / 10000ull;
+const char* ArmName(Arm a) {
+    switch (a) {
+    case Arm::Soap: return "soap";
+    case Arm::Dip: return "dip";
+    case Arm::Mix: return "mix";
+    case Arm::Trowel: return "trowel";
+    case Arm::Transfer: return "transfer";
+    case Arm::Pin: return "pin";
+    case Arm::Visuals: return "visuals";
+    case Arm::Ctick: return "ctick";
+    case Arm::Drop: return "drop";
+    case Arm::Join: return "join";
+    case Arm::Mop: return "mop";
+    case Arm::Alc: return "alc";
+    case Arm::Brew: return "brew";
+    default: return "off";
+    }
 }
 
-std::vector<void*> All(const wchar_t* cls) {
+// ---- the log, the chat, the verdict and the bound -------------------------------------------------------------------------
+
+void Fact(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    const std::string text = Format(fmt, ap);
+    va_end(ap);
+    UE_LOGI("[BUCKET] [%c] %s", Who(), text.c_str());
+}
+
+void Say(const std::string& line) { DC::Say(std::string(kPrefix) + line); }
+bool Seen(const std::string& line) { return DC::SeenHas(std::string(kPrefix) + line); }
+bool Rest(const std::string& prefix, std::string* rest) { return DC::SeenRestOf(std::string(kPrefix) + prefix, rest); }
+
+bool ParseInts(const std::string& text, int n, int* out) {
+    const char* p = text.c_str();
+    for (int i = 0; i < n; ++i) {
+        char* end = nullptr;
+        out[i] = static_cast<int>(std::strtol(p, &end, 10));
+        if (end == p) return false;
+        p = end;
+    }
+    return true;
+}
+
+std::string Ints(std::initializer_list<int> v) {
+    std::string out;
+    for (const int x : v) out += (out.empty() ? "" : " ") + std::to_string(x);
+    return out;
+}
+
+bool Late(const char* why, int boundTicks) {
+    if (++g_stepTicks <= boundTicks) return false;
+    Invalid(why);
+    return true;
+}
+
+// The peer's pin cost, said once as the drill ends here, before the verdict line: the rig ends a run by killing the peers, so the
+// session's teardown line never prints.
+namespace {
+void SayPinCost() {
+    if (!g_ended) coop::bucket_sync::dev::PinCostLine();
+}
+}  // namespace
+
+void Invalid(const char* why) {
+    SayPinCost();
+    if (coop::roster::LocalIsHost()) RV::Say(Tag().c_str(), RV::Outcome::Invalid, "%s", why);
+    else UE_LOGW("[BUCKET] [C] INVALID %s", why);
+    g_ended = true;
+}
+
+void Fail(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    const std::string text = Format(fmt, ap);
+    va_end(ap);
+    SayPinCost();
+    RV::Say(Tag().c_str(), RV::Outcome::Fail, "%s", text.c_str());
+    g_ended = true;
+}
+
+void Pass(const char* why) {
+    SayPinCost();
+    RV::Say(Tag().c_str(), RV::Outcome::Pass, "%s", why);
+    g_ended = true;
+}
+
+void Finish() {
+    SayPinCost();
+    g_ended = true;
+}
+bool Ended() { return g_ended; }
+void Go() { g_stepTicks = 0; }
+void NameVerdict(const char* arm) { g_verdictName = arm; }
+
+// ---- reads ---------------------------------------------------------------------------------------------------------------
+
+int Centi(float v) { return static_cast<int>(std::lround(v * 100.f)); }
+
+int EidOf(void* actor) {
+    const EL::ElementId eid = EL::Registry::Get().EidForActor(actor);
+    return eid == EL::kInvalidId ? 0 : static_cast<int>(eid);
+}
+
+void* LiveProp(int eid) {
+    return eid > 0 ? EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::Prop) : nullptr;
+}
+
+std::wstring KeyOf(void* actor) { return actor ? ue_wrap::prop::GetInteractableKeyString(actor) : std::wstring(); }
+
+void* ByKey(const std::wstring& key) {
+    void* const a = key.empty() ? nullptr : coop::prop_key_index::Find(key);
+    return a && R::IsLive(a) ? a : nullptr;
+}
+
+void* Local() { return coop::players::Registry::Get().Local(); }
+
+void* Puppet() {
+    coop::RemotePlayer& rp = coop::puppet_drive::Puppet(kSlot);
+    return rp.valid() ? rp.actor() : nullptr;
+}
+
+bool Quiet(void* actor) {
+    if (!actor) return false;
+    const ue_wrap::prop::VelocityState v = ue_wrap::prop::GetPhysicsVelocity(actor, /*linearOnly=*/true);
+    if (v.ok) return DG::Quiet(actor);
+    // A copy with no readable body: its place has not moved a centimetre since the last read of it.
+    static std::unordered_map<void*, ue_wrap::FVector> s_last;
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(actor, at)) return false;
+    const auto it = s_last.find(actor);
+    const bool still = it != s_last.end() && std::fabs(it->second.X - at.X) < 1.f && std::fabs(it->second.Y - at.Y) < 1.f &&
+                       std::fabs(it->second.Z - at.Z) < 1.f;
+    if (s_last.size() > 256) s_last.clear();
+    s_last[actor] = at;
+    return still;
+}
+
+bool Calm(void* actor, int& quiet) {
+    quiet = Quiet(actor) ? quiet + 1 : 0;
+    return quiet >= kQuietTicks;
+}
+
+bool HandEmpty() { return HB::LocalHandActor() == nullptr; }
+
+std::vector<void*> LiveOf(const wchar_t* cls) {
     std::vector<void*> out;
-    void* const c = OI::ClassByName(cls);
-    if (c)
+    if (void* const c = OI::ClassByName(cls))
         OI::ForEachInstance(c, [](void* ctx, void* obj, int32_t) {
             if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
                 static_cast<std::vector<void*>*>(ctx)->push_back(obj);
@@ -81,251 +258,270 @@ std::vector<void*> All(const wchar_t* cls) {
     return out;
 }
 
-template <class T>
-T Get(void* obj, const wchar_t* name, T dflt) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    return off >= 0 ? *reinterpret_cast<const T*>(static_cast<const char*>(obj) + off) : dflt;
+float Dist(void* a, void* b) {
+    ue_wrap::FVector p{}, q{};
+    if (!a || !b || !E::TryGetActorLocation(a, p) || !E::TryGetActorLocation(b, q)) return -1.f;
+    return DG::Dist(p, q);
 }
 
-template <class T>
-bool Put(void* obj, const wchar_t* name, T v) {
-    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
-    if (off < 0) return false;
-    *reinterpret_cast<T*>(static_cast<char*>(obj) + off) = v;
-    return true;
-}
-
-bool CallNoArgs(void* obj, const wchar_t* fn) {
-    void* const f = obj ? R::FindDispatchFunctionCached(R::ClassOf(obj), fn) : nullptr;
-    ue_wrap::ParamFrame frame(f);
-    return f && frame.valid() && ue_wrap::Call(obj, frame);
-}
-
-// The item's left click as the player's: the hit it reads written on `target` first (a held item's use breaks the trace).
-bool HandUse(void* player, void* item, void* target) {
-    FVector at{};
-    if (!player || !item || !target || !E::TryGetActorLocation(target, at) ||
-        !E::WriteMainPlayerHitResult(player, target, ue_wrap::prop::GetStaticMesh(target), at))
-        return false;
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(item), L"playerHandUse_LMB");
-    ue_wrap::ParamFrame f(fn);
-    return fn && f.valid() && f.Set<void*>(L"player", player) && ue_wrap::Call(item, f);
-}
-
-float Dist2(const FVector& a, const FVector& b) {
-    const float x = a.X - b.X, y = a.Y - b.Y, z = a.Z - b.Z;
-    return x * x + y * y + z * z;
-}
-
-FVector g_anchor{};
-bool g_anchored = false;
-
-// The nearest live instance of `cls` within 6 m of the bucket's start; null when none.
-void* Near(const wchar_t* cls) {
+void* Nearest(const wchar_t* cls, void* to, float maxCm) {
     void* best = nullptr;
-    float bd = 600.f * 600.f;
-    for (void* a : All(cls)) {
-        FVector p{};
-        if (!E::TryGetActorLocation(a, p)) continue;
-        const float d = Dist2(p, g_anchor);
-        if (d < bd) { bd = d; best = a; }
+    float bd = maxCm;
+    for (void* a : LiveOf(cls)) {
+        const float d = Dist(a, to);
+        if (d >= 0.f && d <= bd) {
+            bd = d;
+            best = a;
+        }
     }
     return best;
 }
 
-std::string Key(void* a) {
-    const std::wstring k = ue_wrap::prop::GetInteractableKeyString(a);
-    return std::string(k.begin(), k.end());
+bool HostMayStart(coop::net::Session& s) {
+    return s.IsSlotWorldReady(kSlot) && coop::prop_snapshot::IsBracketClosed(kSlot) &&
+           !coop::join_window_baseline::IsLateWindowOpen(kSlot);
 }
 
-unsigned Eid(void* a) { return static_cast<unsigned>(coop::element::Registry::Get().EidForActor(a)); }
-
-// The catalog's first row whose name holds `part` (case-insensitive); empty when none. Every row naming a bucket, cement
-// or a fixer is said once.
-std::wstring CatalogRow(const char* part) {
-    const auto names = coop::cheats::item_catalog::Names();
-    if (!names) return L"";
-    static bool s_said = false;
-    std::wstring found;
-    for (const std::string& n : *names) {
-        std::string low = n;
-        for (char& c : low) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        if (!s_said && (low.find("bucket") != std::string::npos || low.find("cement") != std::string::npos ||
-                        low.find("fixer") != std::string::npos || low.find("concrete") != std::string::npos))
-            UE_LOGI("[BKT] catalog row '%s'", n.c_str());
-        if (found.empty() && low.find(part) != std::string::npos) found.assign(n.begin(), n.end());
-    }
-    s_said = true;
-    return found;
+bool ClientMayStart() {
+    return coop::net_pump::HasAnnouncedWorldReady() &&
+           coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
 }
 
-bool SpawnRow(const wchar_t* row, const FVector& at) {
-    void* const gm = ue_wrap::world_singleton::Gamemode();
-    ue_wrap::ParamFrame f(gm ? R::FindDispatchFunctionCached(R::ClassOf(gm), L"spawnPropThroughGamemode") : nullptr);
-    if (!f.valid()) return false;
-    const R::FName name = ue_wrap::fname_utils::StringToFName(row);
-    ue_wrap::FTransform xf{};
-    xf.TX = at.X;
-    xf.TY = at.Y;
-    xf.TZ = at.Z;
-    return f.SetRaw(L"prop", &name, sizeof(name)) && f.SetRaw(L"InputPin", &xf, sizeof(xf)) &&
-           f.Set<int32_t>(L"amount", 1) && ue_wrap::Call(gm, f);
+// ---- the player's own verbs ------------------------------------------------------------------------------------------------
+
+// The hand key's `Hold Object` with `manual` set. A client's request to the host is open until its answer.
+bool Hold(void* player, void* item) {
+    bool collected = false;
+    const bool ran = player && item && E::CallMainPlayerHoldObject(player, item, collected);
+    Fact("Hold Object on %ls ran=%d collected=%d; a request to the host open=%u", item ? R::ClassNameOf(item).c_str() : L"(none)",
+         ran ? 1 : 0, collected ? 1 : 0, static_cast<unsigned>(PAR::dev::PendingId()));
+    return ran;
 }
 
-// VOTVCOOP_BUCKET_CLASS: the mop bucket's class the actor works on, prop_bucket_C by default. Another (prop_bucket_mop_C,
-// the base's mop bucket, a prop_bucket_C with nothing of its own: Ghezra/Multivoid issue 42) is spawned by the host
-// beside the save's bucket at its setup.
-const wchar_t* BucketCls() {
-    static const std::wstring c = [] {
-        const std::string v = coop::config::ReadEnv("VOTVCOOP_BUCKET_CLASS");
-        return v.empty() ? std::wstring(L"prop_bucket_C") : std::wstring(v.begin(), v.end());
-    }();
-    return c.c_str();
+// The hand holds an actor, and on a client the lane has announced it and no request is open.
+bool HandReady() {
+    if (PAR::dev::PendingId() != 0) return false;
+    void* const hand = HB::LocalHandActor();
+    if (!hand) return false;
+    return coop::roster::LocalIsHost() || HB::OwnAnnounced(R::ClassNameOf(hand).c_str());
 }
 
-void Report() {
-    const unsigned long long w = WallMs();
-    std::vector<void*> buckets = All(L"prop_bucket_C");
-    if (std::wstring(BucketCls()) != L"prop_bucket_C")
-        for (void* a : All(BucketCls())) buckets.push_back(a);
-    for (void* a : buckets) {
-        FVector p{};
-        if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
-        UE_LOGI("[BKT] wall=%llu bucket %ls key=%s eid=%u height=%.2f soap=%d empty=%d alc=%d alcP=%.3f canConcrete=%d", w,
-                R::ClassNameOf(a).c_str(), Key(a).c_str(), Eid(a), Get<float>(a, L"Height", -1.f), Get<int32_t>(a, L"soap", -1),
-                Get<uint8_t>(a, L"Empty", 9), Get<uint8_t>(a, L"alcohol", 9), Get<float>(a, L"alcoholP", -1.f),
-                Get<uint8_t>(a, L"canConcrete", 9));
+// The target's playerUsedOn with the hand actor and the player's holding_name: the call the use key makes through the interface.
+bool UseOn(void* player, void* target) {
+    void* const hand = HB::LocalHandActor();
+    ue_wrap::ParamFrame f(target ? R::FindDispatchFunctionCached(R::ClassOf(target), L"playerUsedOn") : nullptr);
+    const int32_t off = player ? R::FindPropertyOffset(R::ClassOf(player), L"holding_name") : -1;
+    if (!f.valid() || off < 0 || !hand) return false;
+    R::FName held;
+    std::memcpy(&held, static_cast<const char*>(player) + off, sizeof(held));
+    return f.Set<void*>(L"player", player) && f.Set<void*>(L"holdObject", hand) &&
+           f.SetRaw(L"holdPropName", &held, sizeof(held)) && ue_wrap::Call(target, f);
+}
+
+// The item's left or right click, the player's hit written on `target` first (a held item's use breaks the player's own trace).
+bool HandUse(void* player, void* item, void* target, bool rmb) {
+    ue_wrap::FVector at{};
+    if (!player || !item || !target || !E::TryGetActorLocation(target, at) ||
+        !E::WriteMainPlayerHitResult(player, target, ue_wrap::prop::GetStaticMesh(target), at))
+        return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(item), rmb ? L"playerHandUse_RMB" : L"playerHandUse_LMB");
+    ue_wrap::ParamFrame f(fn);
+    return fn && f.valid() && f.Set<void*>(L"player", player) && ue_wrap::Call(item, f);
+}
+
+bool DropHeld(void* player) {
+    void* const fn = player ? R::FindDispatchFunctionCached(R::ClassOf(player), L"simulateDrop") : nullptr;
+    ue_wrap::ParamFrame f(fn);
+    return fn && f.valid() && f.Set<bool>(L"dontCollect", true) && ue_wrap::Call(player, f);
+}
+
+namespace {
+coop::director::AimFan g_fan;
+constexpr float kRimOfHalfHeight = 0.8f;   // the aim point stands this share of the bucket's half height above its bounds centre
+constexpr float kRimFromActorCm = 100.f;   // colliding bounds whose centre is farther than this from the bucket are not its own
+}
+
+// The camera turned round a point near the target's rim until the player's own look-at trace names the target: the rim stands clear of
+// the low world geometry beside a bucket's base, which a trace aimed at the origin meets first.
+int Aim(void* player, void* target, std::string& why) {
+    if (!player || !target) return 0;
+    ue_wrap::FVector origin{}, extent{};
+    if (!E::GetActorBounds(target, true, origin, extent)) {
+        Invalid("the bounds of the staged bucket could not be read, so its rim is not known to aim at");
+        return 0;
     }
-    for (void* a : All(L"prop_concreteBucket_C")) {
-        FVector p{};
-        if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
-        UE_LOGI("[BKT] wall=%llu concrete key=%s eid=%u units=%d stage=%d dry=%d dryTimer=%.1f", w, Key(a).c_str(), Eid(a),
-                Get<int32_t>(a, L"units", -1), Get<int32_t>(a, L"stage", -1), Get<uint8_t>(a, L"dry", 9),
-                Get<float>(a, L"dryTimer", -1.f));
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(target, loc) || std::hypot(origin.X - loc.X, origin.Y - loc.Y) > kRimFromActorCm) {
+        Invalid("the staged bucket's colliding bounds do not stand at the bucket, so its rim is not known to aim at");
+        return 0;
     }
-    for (void* a : All(L"prop_cementBag_C")) {
-        FVector p{};
-        if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
-        UE_LOGI("[BKT] wall=%llu cementbag key=%s eid=%u units=%d", w, Key(a).c_str(), Eid(a), Get<int32_t>(a, L"units", -1));
+    const ue_wrap::FVector at{origin.X, origin.Y, origin.Z + kRimOfHalfHeight * extent.Z};
+    const bool aimed = E::ReadMainPlayerHitActor(player) == target;
+    const auto st = g_fan.Tick(player, at, aimed);
+    if (st == coop::director::AimFan::State::Failed) {
+        const ue_wrap::FVector cam = E::GetCameraLocation();
+        void* const hit = E::ReadMainPlayerHitActor(player);
+        const float reach = std::sqrt((cam.X - at.X) * (cam.X - at.X) + (cam.Y - at.Y) * (cam.Y - at.Y) + (cam.Z - at.Z) * (cam.Z - at.Z));
+        char text[400];
+        std::snprintf(text, sizeof(text),
+                      "the camera was turned round the target's rim and the player's trace never named it: this camera is at (%.0f, %.0f, %.0f), %.0f cm from "
+                      "the rim point at (%.0f, %.0f, %.0f); the trace names %ls",
+                      static_cast<double>(cam.X), static_cast<double>(cam.Y), static_cast<double>(cam.Z), static_cast<double>(reach),
+                      static_cast<double>(at.X), static_cast<double>(at.Y), static_cast<double>(at.Z),
+                      hit ? R::ClassNameOf(hit).c_str() : L"(nothing)");
+        why = text;
+        return -1;
     }
-    for (void* a : All(L"prop_wallfixer_C")) {
-        FVector p{};
-        if (!E::TryGetActorLocation(a, p) || Dist2(p, g_anchor) > 600.f * 600.f) continue;
-        UE_LOGI("[BKT] wall=%llu trowel key=%s eid=%u concrete=%d", w, Key(a).c_str(), Eid(a), Get<int32_t>(a, L"concrete", -1));
+    return st == coop::director::AimFan::State::Aimed ? 1 : 0;
+}
+
+void AimReset() { g_fan = coop::director::AimFan(); }
+
+// ---- the counters of the client's commits ----
+
+// The commits the host took of the client's, whatever their ending, and the ones that applied.
+uint32_t CommitsTaken() {
+    using Step = coop::prop_act_host::internal::CommitStep;
+    uint32_t n = 0;
+    for (const Step s : {Step::FamilyApply, Step::Abort, Step::BadCommit, Step::TargetGone})
+        n += coop::prop_act_host::CommitsOf(kSlot, s);
+    return n;
+}
+
+uint32_t Applies() { return coop::prop_act_host::CommitsOf(kSlot, coop::prop_act_host::internal::CommitStep::FamilyApply); }
+
+uint32_t Refusals() {
+    return coop::prop_act_host::AnsweredTotal(kSlot) -
+           coop::prop_act_host::AnsweredFor(kSlot, coop::net::PropActReason::Granted);
+}
+
+Round RoundBegin() { return Round{CommitsTaken(), Applies(), Refusals()}; }
+
+int RoundStep(const Round& r, const char* what) {
+    if (Refusals() > r.refusals) {
+        Fail("the host refused the client's %s", what);
+        return -1;
+    }
+    if (CommitsTaken() <= r.taken) {
+        Late("the host never took the client's commit");
+        return 0;
+    }
+    if (Applies() <= r.applies) {
+        Fail("the client's %s commit did not apply on the host: it was aborted or the target had changed", what);
+        return -1;
+    }
+    return 1;
+}
+
+bool PendingIdOpen() { return PAR::dev::PendingId() != 0; }
+
+bool RecordClosed() {
+    if (PAR::dev::PendingId() != 0) {
+        Late("the host never answered the client's ask");
+        return false;
+    }
+    return true;
+}
+
+bool RowPast(const char* prefix, int n, int* out, bool bounded) {
+    std::string rest;
+    if (!Rest(prefix, &rest)) {
+        if (bounded) Late("the host's row line never came");
+        return false;
+    }
+    if (!ParseInts(rest, n, out)) {
+        Invalid("the host's row line could not be read");
+        return false;
+    }
+    if (coop::bucket_sync::dev::AppliedSeq(static_cast<uint32_t>(out[0])) < static_cast<uint32_t>(out[1])) {
+        if (bounded) Late("the host's row past the commit never reached this client's copy");
+        return false;
+    }
+    return true;
+}
+
+// ---- the tick --------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+void HostTickArm(coop::net::Session& s) {
+    switch (ArmOf()) {
+    case Arm::Soap:     return SoapHost(s);
+    case Arm::Dip:      return DipHost(s);
+    case Arm::Mix:      return MixHost(s);
+    case Arm::Trowel:
+    case Arm::Ctick:    return TrowelHost(s);
+    case Arm::Transfer: return TransferHost(s);
+    case Arm::Pin:      return PinHost(s);
+    case Arm::Visuals:  return VisualsHost(s);
+    case Arm::Mop:      return MopHost(s);
+    case Arm::Drop:     return DropHost(s);
+    case Arm::Join:     return JoinHost(s);
+    case Arm::Alc:
+    case Arm::Brew:     return AlcHost(s);
+    case Arm::Off:      return;
     }
 }
 
-uint64_t g_armedAt = 0, g_reportAt = 0, g_takenAt = 0;
-int g_step = 0;
-bool g_setup = false, g_hostLeftOne = false;
-
-void Step(const char* what, bool ok) {
-    UE_LOGI("[BKT] step %s ok=%d wall=%llu", what, ok ? 1 : 0, static_cast<unsigned long long>(WallMs()));
+void ClientTickArm() {
+    switch (ArmOf()) {
+    case Arm::Soap:     return SoapClient();
+    case Arm::Dip:      return DipClient();
+    case Arm::Mix:      return MixClient();
+    case Arm::Trowel:
+    case Arm::Ctick:    return TrowelClient();
+    case Arm::Transfer: return TransferClient();
+    case Arm::Pin:      return PinClient();
+    case Arm::Visuals:  return VisualsClient();
+    case Arm::Mop:      return MopClient();
+    case Arm::Drop:     return DropClient();
+    case Arm::Join:     return JoinClient();
+    case Arm::Alc:
+    case Arm::Brew:     return AlcClient();
+    case Arm::Off:      return;
+    }
 }
 
 }  // namespace
 
-void Tick(coop::net::Session* session) {
-    if (!On() || !session || !session->running() || !session->connected()) return;
-    const bool host = session->role() == coop::net::Role::Host;
-    if (!g_armedAt) {
-        g_armedAt = Now();
-        UE_LOGI("[BKT] drill armed role=%s", host ? "host" : "client");
-        coop::cheats::item_catalog::RequestRefresh();
+void TickImpl(coop::net::Session& session) {
+    if (ArmOf() == Arm::Off || g_ended) return;
+    if (!g_armed) {
+        g_armed = true;
+        DC::SeenHas(kPrefix);   // the first read starts the chat history
     }
-    if (!g_anchored) {
-        const std::string want = coop::config::ReadEnv("VOTVCOOP_BUCKET_KEY").empty()
-                                     ? std::string("upAbhZM6weqmeddpJE6vHg")
-                                     : coop::config::ReadEnv("VOTVCOOP_BUCKET_KEY");
-        for (void* b : All(L"prop_bucket_C"))
-            if (Key(b) == want && E::TryGetActorLocation(b, g_anchor)) {
-                g_anchored = true;
-                UE_LOGI("[BKT] the bucket %s is at (%.0f,%.0f,%.0f)", want.c_str(), g_anchor.X, g_anchor.Y, g_anchor.Z);
-            }
-        if (!g_anchored) return;
-    }
-    const uint64_t t = Now() - g_armedAt;
-    void* const me = coop::players::Registry::Get().Local();
-
-    if (host && !g_setup && t >= EnvMs("VOTVCOOP_BUCKET_SETUP", 120000)) {
-        g_setup = true;
-        const std::wstring bagRow = CatalogRow("cement"), fixerRow = CatalogRow("fixer");
-        const bool bag = !bagRow.empty() && SpawnRow(bagRow.c_str(), {g_anchor.X + 100.f, g_anchor.Y, g_anchor.Z + 30.f});
-        const bool fixer =
-            !fixerRow.empty() && SpawnRow(fixerRow.c_str(), {g_anchor.X - 100.f, g_anchor.Y, g_anchor.Z + 30.f});
-        UE_LOGI("[BKT] host: spawned a cement bag '%ls' (ran=%d) and a trowel '%ls' (ran=%d)", bagRow.c_str(), bag ? 1 : 0,
-                fixerRow.c_str(), fixer ? 1 : 0);
-        if (std::wstring(BucketCls()) != L"prop_bucket_C") {
-            const std::wstring path = L"/Game/objects/prop_bucket_mop." + std::wstring(BucketCls());
-            void* const cls = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
-            void* const b = cls ? E::SpawnActor(cls, {g_anchor.X, g_anchor.Y + 120.f, g_anchor.Z + 30.f}) : nullptr;
-            UE_LOGI("[BKT] host: spawned a %ls %p beside the save's bucket", BucketCls(), b);
-        }
-    }
-    // HOST: a concrete bucket a take has stood 3 s after is left one unit, so the second take empties it.
-    if (host && !g_hostLeftOne && g_takenAt && Now() - g_takenAt >= 3000) {
-        if (void* c = Near(L"prop_concreteBucket_C")) {
-            g_hostLeftOne = true;
-            Put<int32_t>(c, L"units", 1);
-            const bool ok = CallNoArgs(c, L"updStage");
-            UE_LOGI("[BKT] host: the concrete bucket %s left 1 unit (upd ran=%d)", Key(c).c_str(), ok ? 1 : 0);
-        }
-    }
-    if (host && !g_takenAt) {
-        static int s_units = -1;
-        if (void* c = Near(L"prop_concreteBucket_C")) {
-            const int u = Get<int32_t>(c, L"units", -1);
-            if (s_units > 0 && u >= 0 && u < s_units) g_takenAt = Now();
-            s_units = u;
-        }
-    }
-
-    const std::string actor = coop::config::ReadEnv("VOTVCOOP_BUCKET_ACTOR");
-    const bool acts = (actor == "host") ? host : (!host && coop::players::Registry::Get().LocalPeerId() == 1);
-    const uint64_t d = EnvMs("VOTVCOOP_BUCKET_DELAY", 60000);
-    static bool s_placed = false;
-    if (acts && me && !s_placed && t + 5000 >= d) {   // 5 s before the first step: beside the bucket, within the host's reach
-        s_placed = true;
-        // Onto the NavMesh beside it, as the cheat teleport lands (a body put in geometry is taken out of bounds).
-        FVector floor{};
-        const float half = E::GetActorCharacterHalfHeight(me);
-        coop::teleport_client::ApplyArgs args{};
-        const bool onNav = E::ProjectToNav(me, {g_anchor.X + 150.f, g_anchor.Y, g_anchor.Z}, {150.f, 150.f, 400.f}, &floor);
-        args.locX = floor.X;
-        args.locY = floor.Y;
-        args.locZ = floor.Z + half;
-        const bool moved = onNav && half > 0.f && coop::teleport_client::ApplyLocally(args);
-        UE_LOGI("[BKT] the actor stands beside the bucket (moved=%d)", moved ? 1 : 0);
-    }
-    if (acts && me && g_step < 6 && t >= d + kStepMs * static_cast<uint64_t>(g_step == 5 ? 6 : g_step)) {
-        void* const bucket = Near(BucketCls());
-        switch (g_step) {
-        case 0:
-        case 2:
-            Step("fill", bucket && Put<float>(bucket, L"Height", 35.f) && CallNoArgs(bucket, L"upd"));
-            break;
-        case 1:
-            Step("dump", bucket && HandUse(me, bucket, bucket));
-            break;
-        case 3:
-            Step("concrete", bucket && HandUse(me, Near(L"prop_cementBag_C"), bucket));
-            break;
-        case 4:
-            Step("take", HandUse(me, Near(L"prop_wallfixer_C"), Near(L"prop_concreteBucket_C")));
-            break;
-        case 5: {
-            void* const fixer = Near(L"prop_wallfixer_C");
-            Put<int32_t>(fixer, L"concrete", 0);
-            Step("take2", HandUse(me, fixer, Near(L"prop_concreteBucket_C")));
-            UE_LOGI("[BKT] DONE wall=%llu", static_cast<unsigned long long>(WallMs()));
-            break;
-        }
-        }
-        ++g_step;
-    }
-    if (Now() < g_reportAt) return;
-    g_reportAt = Now() + 1000;
-    Report();
+    if (coop::roster::LocalIsHost()) HostTickArm(session);
+    else ClientTickArm();
 }
+
+void ResetArms() {
+    ResetVerbs();
+    ResetConcrete();
+    ResetTickArms();
+    ResetDrop();
+    ResetJoin();
+    ResetAlc();
+}
+
+void Reset() {
+    g_ended = g_armed = false;
+    g_stepTicks = 0;
+    AimReset();
+    ApproachReset();
+    StageReset();
+    ClientReset();
+    WatchReset();
+    ResetArms();
+}
+
+}  // namespace coop::dev::bucket_drill::detail
+
+namespace coop::dev::bucket_drill {
+
+void Tick(coop::net::Session* session) {
+    if (session) detail::TickImpl(*session);
+}
+
+void OnDisconnect() { detail::Reset(); }
 
 }  // namespace coop::dev::bucket_drill

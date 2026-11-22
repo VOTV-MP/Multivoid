@@ -374,3 +374,10 @@ One contributor's code, from the [credit ledger](../credits.md#the-ledger).
   joiner instead of read twice a second; a client's put-on and take-off are asked of the host through the prop actions' request,
   judged by the game's own rules and the item really in the hand, and the put-on runs on the client only once granted, so nothing is
   lost or made twice; the pat is shown on every copy; drills with reds, and a hostile arm that forges the asks.
+
+- **A bucket's water and concrete** ([#187](https://github.com/VOTV-MP/Multivoid/pull/187), [#194](https://github.com/VOTV-MP/Multivoid/pull/194)): a bucket's water, soap and alcohol and a concrete bucket's
+  concrete ran only on the peer that changed them, and the base's mop bucket matched none of the bucket rules.
+  Kept as written: his three commits, renumbered to this tree's build. On top: the host's rows carry a numbered row to every
+  copy and all of them to a joiner, and each copy is held to the host's row as it ticks; a client's soap, dip, mix, trowel and bag
+  transfer are asked of the host through the prop actions' request and judged by the game's own rules, the held bag counted by
+  the host; a dropped bucket's record is checked against the class's bounds; drills with reds, and a hostile arm that forges the asks.

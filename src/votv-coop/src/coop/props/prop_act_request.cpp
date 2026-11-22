@@ -595,6 +595,8 @@ coop::net::Session* LinkedSession() { return g_session && g_session->connected()
 // Is this call the replay running now? The gate cannot tell a reflected call of ours from a drill's, so the latch does.
 bool ReplayingTarget(void* target) { return g_latch.target && g_latch.target == target; }
 
+bool ReplayInProgress() { return g_latch.target != nullptr; }
+
 sg::Verdict HostPre(void* target) {
     if (!target || !coop::prop_hold::ReservedByOther(target, 0)) return sg::Verdict::Run;
     ++g_hostCancels;

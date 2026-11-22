@@ -13,6 +13,7 @@
 #include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 
 #include "coop/element/bind_wait.h"            // GiveUp: a destroyed eid's held messages are dropped
+#include "coop/props/bucket_sync.h"           // OnElementEnded: a bucket's state, a row waiting for its bind included
 #include "coop/element/mirror_manager.h"
 #include "coop/element/registry.h"             // Registry::EidForActor (the key fallback refuses another incarnation)
 #include "coop/element/mirror_managers.h"     // PropMirrors() (UnregisterPropMirror)
@@ -237,6 +238,7 @@ DestroyApply OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* 
     // no-op for unknown eids.
     // The eid ends here, so messages held for a bind that was still to come have nothing to reach.
     coop::element::bind_wait::GiveUp(payload.elementId, "the prop was destroyed before its bind");
+    coop::bucket_sync::OnElementEnded(payload.elementId);   // a bucket's row that waited for a bind that will not come
     UnregisterPropMirror(payload.elementId);
     if (!actor) {
         if (keyW.empty() &&

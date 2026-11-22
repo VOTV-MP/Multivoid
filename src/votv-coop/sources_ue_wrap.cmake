@@ -141,6 +141,7 @@ set(VOTVCOOP_SOURCES_UE_WRAP_2
     src/ue_wrap/actors/broom.cpp
     src/ue_wrap/actors/fire_extinguisher.cpp
     src/ue_wrap/actors/miner.cpp
+    src/ue_wrap/actors/bucket.cpp
     src/ue_wrap/actors/dingus.cpp
     src/ue_wrap/actors/item_spawn.cpp
     src/ue_wrap/actors/woodchipper.cpp

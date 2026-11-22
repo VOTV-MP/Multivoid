@@ -17,7 +17,7 @@ namespace coop::dev::hostile_drill {
 // hostile_drill_ignite.cpp and the atv_* arms (likewise) in hostile_drill_atv.cpp and the cord_* arms (likewise) in
 // hostile_drill_cord.cpp and the coffee_* arms (likewise) in hostile_drill_coffee.cpp and the grime_* arms (likewise) in
 // hostile_drill_grime.cpp and dingus_report in
-// hostile_drill_dingus.cpp and kdress_ask in hostile_drill_kdress.cpp and bad_destroy_eid in hostile_drill_destroy.cpp -- hostile_drill.cpp is the
+// hostile_drill_dingus.cpp and kdress_ask in hostile_drill_kdress.cpp and bucket_ask in hostile_drill_bucket.cpp and bad_destroy_eid in hostile_drill_destroy.cpp -- hostile_drill.cpp is the
 // dispatcher that owns the Step machine of its own arms, and hostile_drill_arms.cpp owns the arm selection and routes
 // those to their module's sender and judge.
 enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, RepeatJoin,
@@ -25,7 +25,7 @@ enum class Arm { Off, SignalPark, ChatIllFormed, PropConvert, ReliableFlood, Rep
                  BadPropSpawn, BadHandClass, BadHandFamily, KeepLatest, ChatFlood, WorldLatest, KerfurFlood, KerfurForged,
                  RemoverFar, RemoverHidden, RemoverFlood,
                  ActFar, ActGone, ActWrongFamily, ActBadCommit, ActNotYet, ActFlood, ActFloodEarly, Explosion, Ignite,
-                 Atv, Cord, Coffee, Dingus, Kdress, BadDestroyEid, Grime };
+                 Atv, Cord, Coffee, Dingus, Kdress, BadDestroyEid, Grime, Bucket };
 
 // The selected arm, resolved once from the config value.
 Arm ArmOf();

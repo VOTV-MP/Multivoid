@@ -134,6 +134,8 @@ uint64_t g_nextSweepMs = 0;
 // Applied since connect, both paths. Per-record lines are not logged -- a join lands hundreds --
 // so this is the number a run is read for, printed when the park empties.
 uint64_t g_appliedTotal = 0;
+void (*g_landObserver)(void* actor, const std::wstring& key) = nullptr;   // [dev] a drill's read at a record's land
+uint32_t g_awaitsExpired = 0;                                              // [dev] waits that ran out, for a drill's read
 
 coop::blob_chunks::Assembler g_asmCanonical;
 coop::blob_chunks::Assembler g_asmIntent;
@@ -292,6 +294,7 @@ bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
     coop::atv_drill_events::NoteRecordLanded(actor);   // [dev] the ATV drill's charge of a battery mirror; one compare with the row off
+    if (g_landObserver) g_landObserver(actor, key);    // [dev] the bucket drill's read of the host's copy at the land
     // The author's record has LANDED, so the host may publish this key again, and does so here, from
     // what it now holds: a peer that became ready while the key was awaited was declined by its join
     // seed then. Not at its arrival: a record that arrives before the host's actor is indexed is
@@ -410,8 +413,14 @@ bool StillAwaited(const std::wstring& key) {
             "-- publishing this key again from what the host has",
             static_cast<unsigned long long>(kAwaitTimeoutMs),
             static_cast<unsigned>(it->second.senderSlot), key.c_str());
+    ++g_awaitsExpired;
     g_awaiting.erase(it);
     return false;
+}
+
+void EndAwaitFrom(const std::wstring& key, uint8_t senderSlot) {
+    const auto it = g_awaiting.find(key);
+    if (it != g_awaiting.end() && it->second.senderSlot == senderSlot) g_awaiting.erase(it);
 }
 
 void DeclareClassOwnedElsewhere(const wchar_t* className) {
@@ -761,5 +770,9 @@ void OnPeerGone(uint8_t senderSlot) {
     }
 }
 
-namespace dev { bool Unsettled(const std::wstring& key) { return g_parked.count(key) != 0 || g_retry.count(key) != 0; } }
+namespace dev {
+bool Unsettled(const std::wstring& key) { return g_parked.count(key) != 0 || g_retry.count(key) != 0; }
+void SetLandObserver(LandObserver fn) { g_landObserver = fn; }
+uint32_t AwaitsExpired() { return g_awaitsExpired; }
+}  // namespace dev
 }  // namespace coop::prop_save_data

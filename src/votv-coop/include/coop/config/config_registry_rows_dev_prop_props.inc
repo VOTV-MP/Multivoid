@@ -201,3 +201,25 @@ CFG_ENUM(kdress_red, "kdress_red", "dev", "off", "off|apply|ask|pat|snapshot", "
     "the arm that judges it must say FAIL. apply: the host writes no row at a put-on's commit (arm puton). ask: a client's "
     "take-off cancels and asks nothing (arm takeoff). pat: the host sends no pat to a client (arm pat). snapshot: "
     "the host sends a joiner no outfit (arm join).")
+CFG_ENUM(bucket_drill, "bucket_drill", "dev", "off", "off|soap|dip|mix|trowel|transfer|pin|visuals|ctick|drop|join|mop|alc|brew",
+    "VOTVCOOP_BUCKET_DRILL",
+    "Drill (BOTH peers): a water bucket's, a concrete bucket's and a cement bag's state is the host's. The host says rig: "
+    "VERDICT bucket_<arm> PASS, FAIL or INVALID; a FAIL is said where it is decided and nothing after it runs; a bound says "
+    "INVALID. The host fills buckets on the water, carries each and sets it down before the client's puppet by the game's own "
+    "place; the client holds the item and runs the verb as a player does, and the peers pace each other with drill_chat lines. "
+    "soap: a soap on a bucket. dip: a sponge in a bucket, the water branch then the soap branch. mix: a cement bag on a bucket. "
+    "trowel: a trowel in a concrete bucket to its last unit. transfer: a unit between two bags, both directions. pin: a client "
+    "copy dipped by our own call is put back to the host's water at its next tick. visuals: a client copy's drawn water reaches "
+    "the host's after a dip. ctick: a client's concrete bucket copy never runs its own tick. drop: a client's held bucket "
+    "reaches the host in its drop's record, and a forged record is refused. join: the host soaps a bucket and dries a concrete "
+    "bucket before the client joins; the joiner's copies match after the host's join send (run it with the rig's client-after "
+    "set to the host's bucket_drill join STAGED line). mop: the base's mop bucket is told like a plain one. alc: a client copy's "
+    "deleteAlc is refused. brew: its own run of about ten minutes, the host's brew reaches the client and a jar is filled from it.")
+CFG_ENUM(bucket_red, "bucket_red", "dev", "off", "off|apply|pin|tick|ctick|gate|snapshot|exact|alc|judge", "VOTVCOOP_BUCKET_RED",
+    "Developer red arm of the bucket drill (both peers): never set. Each value withholds one effect of the lane, so the arm that "
+    "judges it must say FAIL. apply: the host writes nothing at a family's commit (arms soap, dip, mix, trowel, transfer, brew). "
+    "pin: a client copy's water is not put back to the host's at its tick (arm pin). tick: a client's plain bucket copy has its "
+    "own tick refused (arm visuals). ctick: a client's concrete bucket copy runs its own tick (arm ctick). gate: a client's drop "
+    "record for a bucket is taken without the gate (arm drop). snapshot: the host sends a joiner no bucket row (arm join). exact: "
+    "the host sends rows for the plain bucket class alone, not the mop bucket under it (arm mop). alc: a client copy's deleteAlc "
+    "is not refused (arm alc). judge: a family's own check on the host is skipped (the hostile arm bucket_ask).")

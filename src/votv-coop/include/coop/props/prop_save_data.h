@@ -81,6 +81,15 @@ void ExpectRecordFor(void* actor, const std::wstring& key, uint8_t senderSlot);
 // class gate on who may write its record asks it (coop/props/prop_record_gates). Host, game thread.
 bool AwaitsRecordFrom(const std::wstring& key, uint8_t senderSlot);
 
+// Whether the host still waits for any peer's author record for this key (ExpectRecordFor, not yet landed). A wait that has run
+// out is dropped here, as the publishers drop it. A lane that sends the prop's own state asks it first: until the record lands the
+// host's numbers are the class default's. Host, game thread.
+bool StillAwaited(const std::wstring& key);
+
+// A class gate refused the record `senderSlot` sent for this key: the refusal is final for it, so the wait ends and the lane that
+// holds the key's own state back sends it. A wait that names another slot is left. Host, game thread.
+void EndAwaitFrom(const std::wstring& key, uint8_t senderSlot);
+
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's
 // claim, which only the host acts on) from PropSaveData (the canonical). The session is the one
 // the host re-publishes a taken claim on. A class with a rule about who may write its record or when it may
@@ -112,10 +121,19 @@ void OnDisconnect();
 // Drop every parked record from one sender slot (a recycled slot must not inherit them).
 void OnPeerGone(uint8_t senderSlot);
 
-namespace dev {   // the act drill's snack arms read this
+namespace dev {   // the act drill's snack arms and the bucket drill read these
 // Whether a record for that Key is parked here (waiting to apply) or was refused by the transport and waits to go again:
 // what the peers show for the prop is not final until it has drained. Game thread.
 bool Unsettled(const std::wstring& key);
+
+// A drill's read at the land of a record: called after a record has been written onto `actor` (under `key`), before anything else
+// of the lane runs for it. One observer; null removes it. Game thread.
+using LandObserver = void (*)(void* actor, const std::wstring& key);
+void SetLandObserver(LandObserver fn);
+
+// How many waits for an author record ran out in this process (StillAwaited's expiry). A refused record ends its wait at once, so a
+// drill that expects the refusal reads this not moving.
+uint32_t AwaitsExpired();
 }  // namespace dev
 
 }  // namespace coop::prop_save_data

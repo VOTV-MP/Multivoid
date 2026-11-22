@@ -46,6 +46,7 @@ const char* ReplyActionName(ReplyAction a);   // "stale" "refused" "bad-reason" 
 // up, whether a call is the replay running now, and the host's own call cancelled for another slot's reservation.
 coop::net::Session* LinkedSession();
 bool ReplayingTarget(void* target);
+bool ReplayInProgress();   // a granted verb is being replayed now (the latch holds a target): a family PRE on another target cancels
 ue_wrap::script_gate::Verdict HostPre(void* target);
 }  // namespace internal
 
