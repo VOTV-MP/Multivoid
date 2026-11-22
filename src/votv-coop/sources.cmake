@@ -112,6 +112,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfus_intent.cpp
     src/coop/creatures/kerfus_lanes.cpp
     src/coop/creatures/kerfus_state.cpp
+    src/coop/creatures/scout_target.cpp
     src/coop/creatures/served_player.cpp
     src/coop/interactables/keypad_sync.cpp
     src/coop/interactables/keypad_verbs.cpp

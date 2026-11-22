@@ -20,6 +20,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"kavotia_skeleton_animblueprint_c", L"blueprintupdateanimation", L"kavotia_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x833d5cdfeac36a1cull},
     {L"kefrus_face_skeleton_animblueprint_c", L"blueprintupdateanimation", L"kefrus_face_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xaba68335ed3fffe9ull},
     {L"kerfuromegav1_skeleton_animblueprint3_c", L"blueprintupdateanimation", L"kerfuromegav1_skeleton_animblueprint3_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x988311fae1ba1efcull},
+    {L"mainplayer_c", L"firstpersonbodyanimation", L"mainplayer_c.firstpersonbodyanimation", 0xa9ce75648fc18a82ull, 0xa8787da07ca203cdull},
     {L"mannequinrerigged_skeleton_animblueprint_c", L"blueprintupdateanimation", L"mannequinrerigged_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xd51920a2253d59d8ull},
     {L"marsstruct_build_skeleton_animblueprint_c", L"blueprintupdateanimation", L"marsstruct_build_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x5a8d57c8e02c417full},
     {L"marsstruct_test1_skeleton_animblueprint_c", L"blueprintupdateanimation", L"marsstruct_test1_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x0ffc590698427747ull},
