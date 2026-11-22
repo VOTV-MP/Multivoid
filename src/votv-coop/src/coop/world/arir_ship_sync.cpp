@@ -4,6 +4,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/world/spawn_authority.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -28,10 +29,14 @@ namespace sg = ue_wrap::script_gate;
 
 constexpr const wchar_t* kShipClass = L"arirShipAppear_C";
 UE_FACT_FN(kRowAppear, "arir_ship_sync", L"arirShipAppear_C", L"appear", Declared);
+// The fade's end: forward, it mails the sixteen OUTSIDE emails, which the host's own end already sends to every inbox.
+UE_FACT_FN(kRowFadeEnd, "arir_ship_sync", L"arirShipAppear_C", L"a__FinishedFunc", Declared);
 constexpr int kTag = 0x41525300;   // 'ARS'
+constexpr int kTagFadeEnd = 0x41525301;
 
 std::atomic<N::Session*> g_session{nullptr};
 bool g_registered = false;
+bool g_fadeEndRegistered = false;
 int g_applying = 0;
 
 uint64_t Now() { return ::GetTickCount64(); }
@@ -65,6 +70,13 @@ void OnPost(const sg::Call& call) {
             sent ? "EventCue sent" : "no peer to send it to");
 }
 
+// A client's copy fades in and out as the host's does, but its fade's end mails nothing: the host's mails reach every
+// inbox, and a client's own emails are never sent, so they stayed in its inbox beside the host's.
+sg::Verdict OnFadeEndPre(const sg::Call& call) {
+    if (call.tag != kTagFadeEnd) return sg::Verdict::Run;
+    return coop::spawn_authority::IsActiveClientSession() ? sg::Verdict::Cancel : sg::Verdict::Run;
+}
+
 void* ShipNear(float x, float y, float z) {
     void* best = nullptr;
     float bestD = 1e18f;
@@ -84,14 +96,16 @@ void* ShipNear(float x, float y, float z) {
 void Install(N::Session* session) { g_session.store(session, std::memory_order_release); }
 
 void Tick() {
-    if (g_registered) return;
+    if (g_registered && g_fadeEndRegistered) return;
     N::Session* const s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     static uint64_t nextTry = 0;
     if (Now() < nextTry) return;
     nextTry = Now() + 1000;
-    if ((g_registered = sg::WatchName(kRowAppear, kTag, nullptr, &OnPost)))
+    if (!g_registered && (g_registered = sg::WatchName(kRowAppear, kTag, nullptr, &OnPost)))
         UE_LOGI("arir_ship: the Ariral ship's appear is watched");
+    if (!g_fadeEndRegistered && (g_fadeEndRegistered = sg::WatchName(kRowFadeEnd, kTagFadeEnd, &OnFadeEndPre, nullptr)))
+        UE_LOGI("arir_ship: the Ariral ship's fade end is watched (a client's mails nothing)");
 }
 
 bool OnCue(const N::EventCuePayload& p) {

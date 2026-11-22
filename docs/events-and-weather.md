@@ -177,13 +177,16 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
-The ship that appears high over the radio tower is not one of them: `arirShipAppear_C` is placed in the level, and the
-arirShip event's box runs its `appear(true)`, which fades it in and lights its radar point. That box runs on the host
-alone (its other spawns have no lane), so a client never saw the ship (Ghezra/Multivoid#39). The host's post watch on
-`appear` sends `EventCue` 103 when it comes up, and again to a joiner while it is up; a client runs its own copy's
-`appear(true)` (`coop/world/arir_ship_sync`). Each copy's own tick then fades its ship out once that copy's player has
-looked at it, as the game does for whoever sees it. `[V]` (`coop/dev/event_probe`, `VOTVCOOP_EVENT_PROBE=arirShip`: the
-host's forced box raised the client's ship in the same second.)
+The Ariral ship that shows outside the signal lab on day 13 (the arirShip event) is not one of them either:
+`arirShipAppear_C` is placed in the level, 270 m out, and the arirShip event's box runs its `appear(true)`, which fades
+it in and lights its radar point; its fade's end mails the sixteen OUTSIDE emails. That box runs on the host alone (its
+other spawns have no lane), so a client never saw the ship (Ghezra/Multivoid#39). The host's post watch on `appear` sends
+`EventCue` 103 when it comes up, and again to a joiner while it is up; a client runs its own copy's `appear(true)`
+(`coop/world/arir_ship_sync`). Each copy's own tick then fades its ship out once that copy's player has looked at it, as
+the game does for whoever sees it. `[V]` (`coop/dev/event_probe`, `VOTVCOOP_EVENT_PROBE=arirShip`: the host's forced box
+raised the client's ship in the same second.) A client's copy's fade end is refused, since the host's mails reach every
+inbox and a client's own emails are never sent: before, a client's inbox held the sixteen twice (63 rows where the host
+had 47) `[V]` on the fork's build of the same change (after, every inbox 47).
 
 The Antibreather's cave is shut by its spawner's rock (`antibreatherSPawner_C`'s `blockRock`, shown with its collision
 on). The spawner's `block` timer, every 5 s, hides the rock while its Antibreather lives and shows it again once player 0

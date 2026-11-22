@@ -5,7 +5,8 @@
 // timeline's end mails. The event's box runs on the host alone (its other spawns have no lane), so a client's ship never
 // appeared (Ghezra/Multivoid#39). HOST: a post watch on appear sends one EventCue when the ship comes up, and to a joiner
 // while it is up. CLIENT: runs its own copy's appear(true); the copy's own tick then ends it for that player when that
-// player looks, as the game does for whoever sees it. Game thread.
+// player looks, as the game does for whoever sees it. Its fade's end is refused, since the host's end mails every inbox.
+// Game thread.
 
 #pragma once
 
