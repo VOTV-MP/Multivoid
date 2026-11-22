@@ -137,7 +137,7 @@ snapshot entry per in-flight event so the joiner replays it from the start with 
 override (`coop/world/event_active_sync`). A creature with no event row is not replayed: the host sends the
 creature's count of running events whole, by element id, and a client applies it to its mirror's
 registration in the event count (`coop/world/creature_event_relay`) [?]; the creatures whose event
-is computed from the local camera, render state or player 0 (the killer wisp, the fossilhound, the antibreather, the egg) keep their own per viewer. Events whose only trace is a one-shot particle emitter
+is computed from the local camera, render state or player 0 (the killer wisp, the fossilhound, the antibreather, the egg) keep their own per viewer. A client's killer wisp mirror is parked with its actor tick off, so the 3 s loop its BeginPlay keeps for that never runs there; the relay runs the same check for it every 3 s (this player within 50 m and not avoided) (VOTV-MP/Multivoid#193). Events whose only trace is a one-shot particle emitter
 (the meteor shower) are mirrored as cues: the host sees the row's `runEvent` return and broadcasts
 the emitter's identity and position, a joiner's snapshot reads the live emitters from the object
 index, and a client spawns the same emitter (`coop/world/event_cue_sync`). A cue no row announces is taken
