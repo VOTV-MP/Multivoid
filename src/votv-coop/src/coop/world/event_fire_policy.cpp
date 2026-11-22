@@ -24,7 +24,8 @@ const char* const kReplayRows[] = {
     // the same resulting state, echo-suppressed by its last-known prime):
     "solar", "call0",
     // Trigger-box scare arms, per-viewer scares by design; arming both sides is the correct coop
-    // semantics (each player gets the scare on their own overlap):
+    // semantics (each player gets the scare on their own overlap). toeStab's box drops a shared gun,
+    // so a client's own copy of it is refused (coop/world/event_box_authority) and the host's runs:
     "toeStab", "falseEnter", "mann", "vent", "crys", "fakeGrays", "susArir",
     // Three noisers walk 25 to 35 m around player 0, sound every 5 to 10 s and go when that player sees one: each player
     // gets their own, as with the scares. No lane carries the host's, which walk around the host:

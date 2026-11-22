@@ -79,6 +79,7 @@ set(VOTVCOOP_SOURCES
     src/coop/comms/chat_rate.cpp
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/woodchipper_sync.cpp
+    src/coop/world/event_box_authority.cpp
     src/coop/world/flood_sync.cpp
     src/coop/creatures/kerfur_dress_sync.cpp
     src/coop/interactables/woodchipper_gate.cpp
