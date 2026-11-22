@@ -17,4 +17,9 @@ size_t MaxBodyBytes() {
     return old ? kOldCeilingBytes : kTransportBodyBytes;
 }
 
+size_t MaxRecordBodyBytes() {
+    static const bool old = coop::config::ResolveFlag(coop::config_registry::rows::disc_ceiling_32k);
+    return old ? kOldCeilingBytes : coop::blob_chunks::MaxRawBlobBytes();
+}
+
 }  // namespace coop::disc_record
