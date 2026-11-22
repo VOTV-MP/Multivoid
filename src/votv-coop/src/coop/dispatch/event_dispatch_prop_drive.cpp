@@ -17,6 +17,7 @@
 #include "coop/creatures/walker_gaze_host.h"
 #include "coop/creatures/walker_state_client.h"
 #include "coop/world/ambient_fixture_sync.h"
+#include "coop/world/arir_rep_sync.h"
 #include "coop/dev/container_parity.h"     // the container join drill's report receiver
 #include "coop/dev/prop_syncer_drill.h"    // the drill's filler receiver
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
@@ -667,6 +668,17 @@ bool HandlePropDriveEvent(net::Session& session,
         net::SusHoleIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::ArirRepIntent: {
+        // CLIENT->HOST. The cause, the amount and the sender's standing are the lane's to judge.
+        if (session.role() != net::Role::Host || msg.payloadLen != sizeof(net::ArirRepIntentPayload)) {
+            UE_LOGW("event_feed: a malformed or misdirected ArirRepIntent from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::ArirRepIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ::coop::arir_rep_sync::OnIntent(session, msg.senderPeerSlot, p);
         break;
     }
     case net::ReliableKind::WalkerSeen: {

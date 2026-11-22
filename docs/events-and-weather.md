@@ -256,6 +256,22 @@ bounds of the values, at a bounded rate per client; it answers a refused edit of
 plant is found by its save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
 harvest leaves the host's plant empty and the item with the harvester. Tests: `harness/autotest/autotest_plant_state.cpp`.
 
+### The Arirals' reputation
+
+The reputation is one float in the save slot, `arirReputation`, and lib_C's `addAriralRep` (clamped) is its only writer.
+Its callers are the world's: the treehouse's anti-steal box and its surroundings check, a graffiti's end, a fire tank's, a
+gray boar's and theEvil's deaths, the follower's pickups, the ship and float photos, the player's wake. Every peer ran
+them against its own copy, so each machine drifted to its own value, and what a client read from it (a brownie trail's
+note, the shrimp eaters' tier) was its own. The value is the host's (`coop/world/arir_rep_sync`): the host sends it
+(`EventCue` 105, the value in `x`) when an `addAriralRep` moves it, once a second when another route moved it, and to a
+joiner; a client's own `addAriralRep` is refused, and the host's value is written in. What a client's own player does is
+asked of the host (`ArirRepIntent`), which makes it as its own: its wake (the gamemode's `wakeup`, five either way), its
+swing at the follower (two off), and its photo of the visit ship (fifteen). The host judges each by its cause's own
+amount, one a second, and pays the ship's photo once, whoever took it first, as the game's do-once does. `[V]` on the
+fork's build of the same change: the host's +7 reached every peer and a joiner, and slot 1's own +100 was refused;
+before, the host held 7 and slot 1 100. Slot 1's wake took every peer to 11.13, the game's own scaling of +5, its photo
+to 22.38, and its second photo was refused as paid. The swing is `[?]`: the drill's world held no follower.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -274,6 +290,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | the base alarm | whoever transitions | polled; the host canonicalises |
 | the basement's pipes and flood | the host | a client's `addDamage`, `addWater` and `setLevel` refused outside the lane's apply; the bit and the level sent as they change; a client's repair asked |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
+| the Arirals' reputation | the host | sent as it moves and to a joiner; a client's own `addAriralRep` refused |
 
 ## Wire messages
 
@@ -311,6 +328,7 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | Limit | Evidence |
 |---|---|
 | The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given); its black hole and its light ride SkyState | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
+| A photo a client takes of the visit ship pays only once a client's copy binds the photo (the ship's lane raising it through its own `runTrigger`), and a photo of the Ariral float earns none: the float's trigger binds its `photoTaken` in its own `runTrigger`, which only the host's copy runs | `[RD]` `arirShipAppear_C.runTrigger`, `trigger_agrav_C.runTrigger` |
 | The alien sounds are each player's own: the event is replayed, and each peer's three noisers walk around its own player, sound and leave when that player sees one. A player does not hear the noisers around another. A joiner whose world is up while the host's noisers are out is sent the event once at its ready edge (the join snapshot, one row for the three noisers) and gets noisers of its own | `[?]` `harness/autotest/autotest_world_sound.cpp`: three noisers on each peer, and on a rejoined client (the rewritten drill has not run yet) |
 | A harvest's sound is the harvester's alone: no other peer plays it | `[RD]` the harvest half of #104 waits for the host to perform every harvest (#115): the host's own `growingPlant_C::harvestSound` call then sends an EventCue id 102 at the plant |
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
@@ -338,4 +356,5 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the Arirals' reputation | `coop/world/arir_rep_sync` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
