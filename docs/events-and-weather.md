@@ -177,6 +177,14 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+A story event's trigger box (`trigger_box_N_C`) runs its targets when a player of its class list walks in, and the
+host's copy sees a client's puppet, a `mainPlayer_C`, as it sees its own player: a client standing in the obelisk's box
+ran the host's box and the obelisk fell on every peer (measured on the fork's build). A box whose row is replayed on
+clients is armed there too, and the dropped Ariral gun's (day 24, `TB_event_arirToe`) then ran on the client's copy as
+well, leaving that client a gun of its own beside the host's. A client's own copy of a box listed in
+`coop/world/event_box_authority` is refused, so only the host's runs. `[V]` on the fork's build of the same change:
+slot 1's walk-in into its own garage box left it a gun nobody else had; after, its box was refused and it had none.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -296,6 +304,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| a story box whose walk-in makes shared props | the host | the host's box sees a client's puppet; a client's own copy of a listed box refused |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
