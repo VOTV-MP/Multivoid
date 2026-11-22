@@ -177,6 +177,17 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The ship beside the radio tower's top from day 20 is an event actor of its own: `arirShip_tower_C` is placed there,
+and its begin play loops every 5 s. A shown ship fades out (its fade's end leaves a `ufoDreamer_C` and ends it), and a
+hidden one fades in on a 10% roll from 21:00 to 03:00 while player 0 stands in its box and has not just seen it; a radial
+force then pushes the props near it. Every peer rolled it for its own player, so a client's ship showed on that client
+alone and pushed its own copies of the props. The ship is the host's (`coop/world/arir_tower_ship_sync`): the host sends
+its `appear` as it changes the ship (`EventCue` 106), and to a joiner while it is up, and every 5 s it rolls the game's
+own odds for each client's player in the box who is not looking at it; a client's own `appear` is refused, and the
+host's runs on its copy. `[V]` on the fork's build of the same change: with slot 1's player in the box, the host's roll
+showed the ship on all three peers and took it away from all three, and slot 1's own `appear` was refused; before,
+slot 1's own showed on slot 1 alone.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -269,6 +280,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the radio tower's Ariral ship | the host | its `appear` sent and rolled for every player in its box; a client's own refused |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
