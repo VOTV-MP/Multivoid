@@ -40,6 +40,7 @@ set(VOTVCOOP_SOURCES
     src/coop/player/local_body.cpp
     src/coop/requester_feedback/requester_feedback.cpp
     src/coop/save/save_guard.cpp
+    src/coop/world/arir_tower_ship_sync.cpp
     src/coop/world/balance_sync.cpp
     src/coop/world/daily_task_sync.cpp
     src/coop/save/save_block.cpp
