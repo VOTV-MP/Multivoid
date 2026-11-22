@@ -302,7 +302,10 @@ UE_FACT_FN(kRowPatty,   "prop_act", L"prop_cookingFood_rawPatty_C",    L"actionO
 UE_FACT_FN(kRowSausage, "prop_act", L"prop_cookingFood_rawSausage_C",  L"actionOptionIndex", Declared);
 UE_FACT_FN(kRowBurger,  "prop_act", L"prop_cookingFood_doughBurger_C", L"actionOptionIndex", Declared);
 UE_FACT_FN(kRowHotdog,  "prop_act", L"prop_cookingFood_doughHotdog_C", L"actionOptionIndex", Declared);
-constexpr int kTagConvert = 0x50414341;   // "PACA".."PACD", one per conversion row
+// The lantern prank's notepad: any use of it leaves a plain notebook, sends an Ariral at the door and destroys it.
+UE_FACT_FN(kRowBusterNote, "prop_act", L"prop_notebook_busterSpawner_C", L"actionOptionIndex", Declared);
+constexpr int kTagConvert = 0x50414341;   // "PACA".."PACE", one per conversion row
+constexpr int kBusterNote = 4;            // its conversion row, whatever the action
 constexpr int kTagPocket = 0x50414331, kTagHold = 0x50414332, kTagFood = 0x50414333,
               kTagMre = 0x50414334, kTagPills = 0x50414335, kTagSoap = 0x50414336,
               kTagSnack = 0x50414337, kTagBeer = 0x50414338, kTagKit = 0x50414339;   // "PAC1".."PAC9"
@@ -335,7 +338,7 @@ struct ActionParams {
     R::ParamOffset lookAt{L"lookAtComponent"};
 };
 ActionParams g_foodParams, g_mreParams, g_pillsParams, g_snackParams, g_beerParams, g_kitParams;
-ActionParams g_convertParams[4];
+ActionParams g_convertParams[5];
 
 struct SoapParams {
     R::ParamOffset holdObject{L"holdObject"};
@@ -368,7 +371,7 @@ bool FoodDestroys(const sg::Call& c) {
 }
 bool MreDestroys(const sg::Call& c) { return IsEat(g_mreParams, c); }
 template <int I>
-bool ConvertDestroys(const sg::Call& c) { return IsEat(g_convertParams[I], c); }
+bool ConvertDestroys(const sg::Call& c) { return I == kBusterNote || IsEat(g_convertParams[I], c); }
 bool KitDestroys(const sg::Call& c) { return IsEat(g_kitParams, c); }
 bool PillsDestroys(const sg::Call& c) { return IsEat(g_pillsParams, c); }
 // A snack is asked on every eat: a sip, an open and the last use all change the shared copy, whatever the client's copy
@@ -430,7 +433,7 @@ struct HitParam {
     int32_t size = -1;
 };
 HitParam g_foodHit, g_mreHit, g_pillsHit, g_soapHit, g_snackHit, g_beerHit, g_kitHit;
-HitParam g_convertHit[4];
+HitParam g_convertHit[5];
 
 // The hit of a use, as the replay writes it back: only its component and place matter.
 void CaptureHit(const sg::Call& c, HitParam& param, Pending& p) {
@@ -619,6 +622,7 @@ Watch g_watches[] = {
     {kRowSausage, kTagConvert + 1, &PreConvert<1>, "use", WatchState::Pending},
     {kRowBurger,  kTagConvert + 2, &PreConvert<2>, "use", WatchState::Pending},
     {kRowHotdog,  kTagConvert + 3, &PreConvert<3>, "use", WatchState::Pending},
+    {kRowBusterNote, kTagConvert + 4, &PreConvert<4>, "use", WatchState::Pending},
 };
 bool g_watchesSettled = false;
 

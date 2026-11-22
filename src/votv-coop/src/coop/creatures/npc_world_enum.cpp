@@ -157,6 +157,8 @@ struct ExSpawnSource {
     const wchar_t* const* outputs;   // null-terminated; null: any allowlisted output
 };
 constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
+// The lantern prank's notepad mints the Ariral that bashes the door (a follower child) when it is used, on the host.
+constexpr const wchar_t* kBusterNoteOutputs[] = {L"arirSlapper_C", nullptr};
 // The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
 // so its source is narrowed to the outputs whose client roll the spawn authority refuses: the night roll's
 // (mainGamemode_C::CustomEvent_5, an Octa or a night egg) and the four ambient UFO timers' (coop/world/ufo_sync).
@@ -177,6 +179,7 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
     {L"blackballSpawner_C",      nullptr},          // the orb event: its ubergraph mints npc_orborb_C
+    {L"prop_notebook_busterSpawner_C", kBusterNoteOutputs},  // the lantern prank's notepad: arirSlapper_C
 };
 
 // Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.
@@ -273,8 +276,8 @@ void InstallExSpawnCatch() {
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
                 "mainGamemode_C -> geomOcta_C + eg_C + the four ambient UFOs, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "
-                "tentacleBallsFollower_C -> tentacleBall_C, blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
-                "now enroll)");
+                "tentacleBallsFollower_C -> tentacleBall_C, blackballSpawner_C -> npc_orborb_C, "
+                "prop_notebook_busterSpawner_C -> arirSlapper_C; EX_CallMath spawns now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "
                 "NOT mirror this session (event-swarm wisps host-only)");

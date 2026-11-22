@@ -166,8 +166,11 @@ bool RollUnpack(void* actor, uint8_t slot, uint32_t eid) {
 // sausage and back, the burger and hotdog dough into buns) and destroys them, never reaching the food's eat: on a
 // client's granted use the host runs that conversion on its copy, so what it makes is host-born and reaches every peer,
 // and the client only removes its copy (prop_act_request's kConvert).
+// The lantern prank's notepad converts the same way, whatever the action: a plain notebook and the door-bashing Ariral
+// (arirSlapper_C, a follower the npc lane mirrors through its spawn source) are the host's.
 constexpr const wchar_t* kConverts[] = {L"prop_cookingFood_rawPatty_C", L"prop_cookingFood_rawSausage_C",
-                                        L"prop_cookingFood_doughBurger_C", L"prop_cookingFood_doughHotdog_C"};
+                                        L"prop_cookingFood_doughBurger_C", L"prop_cookingFood_doughHotdog_C",
+                                        L"prop_notebook_busterSpawner_C"};
 ue_wrap::CachedObjRef g_convertCls[std::size(kConverts)];
 uint32_t g_conversionsRun = 0;
 

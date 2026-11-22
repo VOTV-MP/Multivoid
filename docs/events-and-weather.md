@@ -177,6 +177,15 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The lantern prank (day 15, `arirBuster`) leaves two crates and a notepad (`prop_notebook_busterSpawner_C`) at the
+buildings by the Hole; they are props, and cross as any prop. Any use of the notepad swaps it for a plain notebook and
+sends an Ariral at the door (`arirSlapper_C`, a follower child). A client's use ran on its own copy: the notepad went
+for everyone through the destroy seam, and the Ariral stood on that client alone. A client's use is now asked of the
+host, which runs it on its own copy as it converts a raw patty (`coop/props/prop_act_host`), and the Ariral the host's
+notepad mints is caught at its spawn and mirrored (`coop/creatures/npc_world_enum`). `[V]` on the fork's build of the
+same change: slot 1's use was granted and converted on the host, and the Ariral stood on all three peers; before, on
+slot 1 alone, with the notepad gone everywhere.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's

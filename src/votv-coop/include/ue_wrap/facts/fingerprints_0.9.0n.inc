@@ -33,6 +33,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"prop_cookingfood_doughhotdog_c", L"actionoptionindex", L"prop_cookingfood_doughhotdog_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x6724b61f84263f16ull},
     {L"prop_cookingfood_rawpatty_c", L"actionoptionindex", L"prop_cookingfood_rawpatty_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0x48e5e0ece4e85d2eull},
     {L"prop_cookingfood_rawsausage_c", L"actionoptionindex", L"prop_cookingfood_rawsausage_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0xffcc766419d63b00ull},
+    {L"prop_notebook_busterspawner_c", L"actionoptionindex", L"prop_notebook_busterspawner_c.actionoptionindex", 0x5a7351a33bbf62a6ull, 0xb5bc7bb4c8a30acfull},
     {L"rufus_skeleton_animblueprint_c", L"blueprintupdateanimation", L"rufus_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf4ab9b5d37adac21ull},
     {L"shitduende_rigged_skeleton_animblueprint_c", L"blueprintupdateanimation", L"shitduende_rigged_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x13309a9ea9590d69ull},
     {L"tentacleball_prot_skeleton_animblueprint1_c", L"blueprintupdateanimation", L"tentacleball_prot_skeleton_animblueprint1_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf253073b0390594dull},
