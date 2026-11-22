@@ -27,6 +27,7 @@ inline constexpr RefFn kRefFns[] = {
     {L"piramid_sk_prot_skeleton_animblueprint_c", L"blueprintupdateanimation", L"piramid_sk_prot_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x967dd224b19e6260ull},
     {L"rufus_skeleton_animblueprint_c", L"blueprintupdateanimation", L"rufus_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf4ab9b5d37adac21ull},
     {L"shitduende_rigged_skeleton_animblueprint_c", L"blueprintupdateanimation", L"shitduende_rigged_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x13309a9ea9590d69ull},
+    {L"shrimpeatermaster_c", L"eat", L"shrimpeatermaster_c.eat", 0x6a2d5d90ab51fa2dull, 0x505a9edec74bb079ull},
     {L"tentacleball_prot_skeleton_animblueprint1_c", L"blueprintupdateanimation", L"tentacleball_prot_skeleton_animblueprint1_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0xf253073b0390594dull},
     {L"tomtenisse1_skeleton_animblueprint_c", L"blueprintupdateanimation", L"tomtenisse1_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x092f0f854cd6a61cull},
     {L"wallpcunit_tapes_anim_skeleton_animblueprint_c", L"blueprintupdateanimation", L"wallpcunit_tapes_anim_skeleton_animblueprint_c.blueprintupdateanimation", 0x86ca63c8a831a98full, 0x6f8572ea8b9ec959ull},

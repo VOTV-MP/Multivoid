@@ -256,6 +256,19 @@ bounds of the values, at a bounded rate per client; it answers a refused edit of
 plant is found by its save key, so what a join's load brought is already the host's, and a client's edits wait until its join has settled. A client's
 harvest leaves the host's plant empty and the item with the harvester. Tests: `harness/autotest/autotest_plant_state.cpp`.
 
+### The Arirals' shrimp
+
+From day 11 the Arirals eat a shrimp pack left out: `shrimpEaterMaster_C`'s `eat`, every 15 s, takes the shrimp nearest
+the last one it ate and, unless player 0 is within 100 m of that spot or the shrimp was rendered in the last 5 s, plays
+the eat sound, leaves an empty pack and destroys the shrimp (a loyal reputation stops it). Every peer ran its own against
+its own player: a client's eat destroyed the shrimp for everyone through the prop destroy seam, its empty pack stayed on
+that client, and a shrimp beside a client was eaten by the host's. The eater is the host's
+(`coop/props/shrimp_eater_authority`): a client's `eat` is refused, and the host's is refused as well for a shrimp a
+client's player is within 100 m of the spot, or had in view in the last 5 s (its streamed eye and aim, read twice a
+second); the host's own player stays the game's check. `[V]` on the fork's build of the same change: a shrimp beside slot
+1 was eaten within 15 s before and kept after; one 150 m from every player was eaten once, by the host, and all three
+peers ended on the same 2 shrimps and 9 empty packs, where before they ended on 10 and 11.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -274,6 +287,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | the base alarm | whoever transitions | polled; the host canonicalises |
 | the basement's pipes and flood | the host | a client's `addDamage`, `addWater` and `setLevel` refused outside the lane's apply; the bit and the level sent as they change; a client's repair asked |
 | emails, the daily task | the host | one reflected append; a change-hash poll |
+| the Arirals' shrimp eater | the host | a client's `eat` refused; the host's refused near or in view of a client's player |
 
 ## Wire messages
 
@@ -338,4 +352,5 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the Arirals' shrimp | `coop/props/shrimp_eater_authority` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
