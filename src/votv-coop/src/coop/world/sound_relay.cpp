@@ -17,7 +17,10 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/devices/grime.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_audio.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <windows.h>
@@ -40,13 +43,16 @@ namespace C = coop::sound_catalog;
 using Verdict = ue_wrap::script_gate::Verdict;
 
 UE_FACT_FN(kRowPlaySoundAt, "sound_relay", L"GameplayStatics", L"PlaySoundAtLocation", Dispatch);
+UE_FACT_FN(kRowPlaySound2D, "sound_relay", L"GameplayStatics", L"PlaySound2D", Dispatch);
 
 constexpr uint64_t kRefusalSayMs = 10000;
 
 // The Blueprint functions whose sounds are relayed, with the class that declares each. kOwnPlayer: sent by the machine
-// whose own player ran it, either role. kHostWorld: an actor that lives on the host alone, sent by the host. `bit` is the
-// sound table's name for the caller: the sound it plays must allow it.
-enum class From : uint8_t { kOwnPlayer, kHostWorld };
+// whose own player ran it, either role. kHostWorld: an actor that lives on the host alone, sent by the host. kGrime: a
+// grime decal's own clean sound, sent by the machine that cleaned it -- grime_C::clean runs only where a sponge, a mop or a
+// cleaner scrubbed it (another peer takes the clean's dirt from coop/interactables/grime_sync, not from clean). `bit` is
+// the sound table's name for the caller: the sound it plays must allow it.
+enum class From : uint8_t { kOwnPlayer, kHostWorld, kGrime };
 struct Caller {
     const wchar_t* cls;
     const wchar_t* fn;
@@ -59,6 +65,7 @@ constexpr Caller kCallers[] = {
     // The wandering church's bells (Ghezra/Multivoid#39): `bell` only calls the ubergraph at its bell entry, and the
     // ubergraph holds every PlaySoundAtLocation of the chime, so that is the frame the call is seen from.
     {L"church_C", L"ExecuteUbergraph_church", From::kHostWorld, C::kBell},
+    {L"grime_C", L"ExecuteUbergraph_grime", From::kGrime, C::kGrime},   // a scrubbed decal's squelch (its clean's Sound)
 };
 constexpr int kCallerCount = static_cast<int>(sizeof(kCallers) / sizeof(kCallers[0]));
 
@@ -124,6 +131,9 @@ void Refuse(int senderSlot, Refusal why, unsigned index) {
             g_counts.refused[w]);
 }
 
+void SendSound(N::Session& s, void* sound, uint8_t bit, const float at[3], float volume, float pitch, const wchar_t* cls,
+               const wchar_t* fn);
+
 Verdict OnPlaySoundAtPre(void* /*context*/, void* source, const uint8_t* parms) {
     const int i = CallerIndex(H::CurrentCallerFrame().function);
     if (i < 0) return Verdict::Run;
@@ -139,11 +149,24 @@ Verdict OnPlaySoundAtPre(void* /*context*/, void* source, const uint8_t* parms) 
         }
         return Verdict::Cancel;
     }
-    if (kCallers[i].from == From::kOwnPlayer ? source != coop::players::Registry::Get().Local()
-                                             : s->role() != N::Role::Host)
+    const From from = kCallers[i].from;
+    if (from == From::kOwnPlayer ? source != coop::players::Registry::Get().Local()
+        : from == From::kGrime   ? !ue_wrap::grime::IsGrime(source)
+                                 : s->role() != N::Role::Host)
         return Verdict::Run;
     void* const sound = *reinterpret_cast<void* const*>(parms + g_offSound);
     if (!sound) return Verdict::Run;
+    float at[3];
+    std::memcpy(at, parms + g_offLoc, sizeof(at));
+    SendSound(*s, sound, kCallers[i].bit, at, g_offVol >= 0 ? *reinterpret_cast<const float*>(parms + g_offVol) : 1.f,
+              g_offPitch >= 0 ? *reinterpret_cast<const float*>(parms + g_offPitch) : 1.f, kCallers[i].cls,
+              kCallers[i].fn);
+    return Verdict::Run;
+}
+
+// A sound this machine played for a listed caller, sent by its index when the table holds it for that caller.
+void SendSound(N::Session& s, void* sound, uint8_t bit, const float at[3], float volume, float pitch, const wchar_t* cls,
+               const wchar_t* fn) {
     // Until this peer's table is built it sends nothing (the next sound tries again), and says so once.
     if (!C::Ready()) {
         ++g_counts.notReadyHere;
@@ -151,35 +174,75 @@ Verdict OnPlaySoundAtPre(void* /*context*/, void* source, const uint8_t* parms) 
             g_notReadySaid = true;
             UE_LOGI("sound_relay: catalogue not ready -- this peer sends no sound until its table builds (said once)");
         }
-        return Verdict::Run;
+        return;
     }
     const std::wstring path = ue_wrap::object_path::Of(sound);
     const uint16_t index = C::IndexOf(path);
     const C::Entry* const entry = C::Find(index);
-    if (!entry || !(entry->callers & kCallers[i].bit)) {
+    if (!entry || !(entry->callers & bit)) {
         ++g_counts.notCatalogued;
         if (g_uncataloguedSaid.insert(path).second)
             UE_LOGW("sound_relay: not catalogued: %ls from %ls::%ls is not in the sound table for that caller -- it is not "
-                    "relayed", path.c_str(), kCallers[i].cls, kCallers[i].fn);
-        return Verdict::Run;
+                    "relayed", path.c_str(), cls, fn);
+        return;
     }
     ++g_counts.playedHere;
     g_counts.lastPlayedHere = index;
     UE_LOGI("sound_relay: played here index %u '%ls'", static_cast<unsigned>(index), path.c_str());
     if (SendOff()) {
         UE_LOGI("sound_relay: sound_send_off: index %u is not sent", static_cast<unsigned>(index));
-        return Verdict::Run;
+        return;
     }
     N::SoundAtPayload p{};
     p.sound = index;
-    std::memcpy(p.loc, parms + g_offLoc, sizeof(p.loc));
-    p.volume = g_offVol >= 0 ? *reinterpret_cast<const float*>(parms + g_offVol) : 1.f;
-    p.pitch = g_offPitch >= 0 ? *reinterpret_cast<const float*>(parms + g_offPitch) : 1.f;
+    std::memcpy(p.loc, at, sizeof(p.loc));
+    p.volume = volume;
+    p.pitch = pitch;
     p.catalogue = C::Digest();
-    s->SendReliable(N::ReliableKind::SoundAt, &p, sizeof(p));
+    s.SendReliable(N::ReliableKind::SoundAt, &p, sizeof(p));
     ++g_counts.sent;
     UE_LOGI("sound_relay: sent index %u at (%.0f,%.0f,%.0f)", static_cast<unsigned>(index), p.loc[0], p.loc[1], p.loc[2]);
+}
+
+// A 2D sound (GameplayStatics::PlaySound2D) is heard by this machine's player alone, wherever it is. The cleaning item in
+// this player's hand plays its use's sounds so (the mop's and the sponge's dip, a bucket's scoop, its water thrown out,
+// its fuel poured), so another player never heard them. One the hand's item plays goes out placed at this player, by its
+// index, when the table holds it for a hand item; the receiver plays it with the entry's attenuation (att_default, which
+// the items' own placed sounds use).
+void* g_fn2D = nullptr;
+bool g_armed2D = false, g_install2DFailed = false;
+int32_t g_off2DSound = -1, g_off2DVol = -1, g_off2DPitch = -1;
+
+Verdict OnPlaySound2DPre(void* /*context*/, void* source, const uint8_t* parms) {
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || !source) return Verdict::Run;
+    void* const me = coop::players::Registry::Get().Local();
+    ue_wrap::engine::MainPlayerGrabState gs{};
+    if (!me || !ue_wrap::engine::ReadMainPlayerGrabState(me, gs) || !gs.holdingActor || gs.holdingActor != source)
+        return Verdict::Run;
+    void* const sound = *reinterpret_cast<void* const*>(parms + g_off2DSound);
+    ue_wrap::FVector where{};
+    if (!sound || !ue_wrap::engine::TryGetActorLocation(me, where)) return Verdict::Run;
+    const float at[3] = {where.X, where.Y, where.Z};
+    SendSound(*s, sound, C::kHand, at, g_off2DVol >= 0 ? *reinterpret_cast<const float*>(parms + g_off2DVol) : 1.f,
+              g_off2DPitch >= 0 ? *reinterpret_cast<const float*>(parms + g_off2DPitch) : 1.f, L"(the hand's item)",
+              L"PlaySound2D");
     return Verdict::Run;
+}
+
+void Install2DHook() {
+    if (g_fn2D || g_install2DFailed) return;
+    const ue_wrap::facts::Resolved fn = ue_wrap::facts::Resolve(kRowPlaySound2D);
+    if (!fn) return;
+    g_off2DSound = R::FindParamOffset(fn.Fn(), L"Sound");
+    g_off2DVol = R::FindParamOffset(fn.Fn(), L"VolumeMultiplier");
+    g_off2DPitch = R::FindParamOffset(fn.Fn(), L"PitchMultiplier");
+    if (g_off2DSound < 0 || !H::InstallPreHook(fn, &OnPlaySound2DPre, /*armed=*/false)) {
+        g_install2DFailed = true;
+        UE_LOGE("sound_relay: no pre hook on PlaySound2D (Sound %d) -- a hand item's sounds are not relayed", g_off2DSound);
+        return;
+    }
+    g_fn2D = fn.Fn();
 }
 
 void InstallHook() {
@@ -219,9 +282,10 @@ Counts GetCounts() { return g_counts; }
 void Install(N::Session* session) {
     g_session.store(session, std::memory_order_release);
     InstallHook();
-    if (!g_fn) return;
+    Install2DHook();
     const bool want = session && session->connected();
-    if (want != g_armed && H::SetArmed(g_fn, &OnPlaySoundAtPre, want)) g_armed = want;
+    if (g_fn && want != g_armed && H::SetArmed(g_fn, &OnPlaySoundAtPre, want)) g_armed = want;
+    if (g_fn2D && want != g_armed2D && H::SetArmed(g_fn2D, &OnPlaySound2DPre, want)) g_armed2D = want;
 }
 
 void OnSoundAt(int senderSlot, const N::SoundAtPayload& p) {
@@ -263,6 +327,7 @@ void OnSoundAt(int senderSlot, const N::SoundAtPayload& p) {
 
 void OnDisconnect() {
     if (g_fn && g_armed && H::SetArmed(g_fn, &OnPlaySoundAtPre, false)) g_armed = false;
+    if (g_fn2D && g_armed2D && H::SetArmed(g_fn2D, &OnPlaySound2DPre, false)) g_armed2D = false;
     g_session.store(nullptr, std::memory_order_release);
 }
 

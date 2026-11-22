@@ -6,6 +6,8 @@
 #include "coop/config/config_registry.h"  // the sound drill's red arm of the index check
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_path.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/physsound_table.h"
 
 #include <algorithm>
@@ -24,6 +26,13 @@ constexpr const wchar_t* kKnockPath = L"/Game/audio/effects/metalDoorKnock_Cue.m
 constexpr const wchar_t* kBellPath = L"/Game/audio/effects/churchbell.churchbell";
 constexpr const wchar_t* kAttDefault = L"/Game/audio/misc/att_default.att_default";
 constexpr const wchar_t* kAttDefaultNoAo = L"/Game/audio/misc/att_default_noAO.att_default_noAO";
+// The cleaning sounds (grime_C's clean; prop_mop_C's, prop_sponge_C's and prop_bucket_C's PlaySound2D calls), with the
+// volume and pitch ranges those calls pass. The bucket's fuel pour, `fuel1`, is found by its name among the loaded sounds:
+// the bucket's class holds it, and a bucket stands in every base.
+constexpr const wchar_t* kWadePath = L"/Game/audio/effects/physics/footsteps/wade_Cue.wade_Cue";
+constexpr const wchar_t* kSplashPath = L"/Game/audio/effects/physics/water/water_splash_Cue.water_splash_Cue";
+constexpr const wchar_t* kPoopPath = L"/Game/audio/effects/poop_Cue.poop_Cue";
+constexpr const wchar_t* kFuelName = L"fuel1";
 
 constexpr uint64_t kRetryMs = 3000;
 
@@ -48,6 +57,29 @@ uint32_t DigestOf(const std::vector<Entry>& entries) {
         for (const wchar_t c : entries[i].path) h = (h ^ static_cast<uint8_t>(c)) * 16777619u;
     }
     return h;
+}
+
+// The loaded sound named `name` (a SoundCue or a SoundWave), by its object path; empty while none is loaded.
+std::wstring LoadedSoundPath(const wchar_t* name) {
+    for (const wchar_t* cls : {L"SoundCue", L"SoundWave"})
+        for (void* o : ue_wrap::reflection::FindObjectsByClass(cls))
+            if (o && ue_wrap::reflection::NameEquals(ue_wrap::reflection::NameOf(o), name)) return ue_wrap::object_path::Of(o);
+    return {};
+}
+
+// `e` into the table: a sound the table holds already takes the new callers, and its ranges widen to hold both.
+void Add(std::vector<Entry>& entries, const Entry& e) {
+    for (Entry& have : entries) {
+        if (have.path != e.path) continue;
+        have.callers |= e.callers;
+        if (!have.attenuation) have.attenuation = e.attenuation;
+        have.volumeMin = std::min(have.volumeMin, e.volumeMin);
+        have.volumeMax = std::max(have.volumeMax, e.volumeMax);
+        have.pitchMin = std::min(have.pitchMin, e.pitchMin);
+        have.pitchMax = std::max(have.pitchMax, e.pitchMax);
+        return;
+    }
+    entries.push_back(e);
 }
 
 bool IndexCheckOff() {
@@ -80,11 +112,25 @@ bool Ready() {
         }
         return false;
     }
+    const std::wstring fuel = LoadedSoundPath(kFuelName);
+    if (fuel.empty()) {
+        const std::string w = "the bucket's fuel sound is not loaded yet";
+        if (w != g_lastWhy) {
+            g_lastWhy = w;
+            UE_LOGW("sound_catalog: not built yet -- %s (tried again when a sound needs it)", w.c_str());
+        }
+        return false;
+    }
     std::vector<Entry> entries;
-    entries.reserve(cues.size() + 2);
+    entries.reserve(cues.size() + 6);
     for (const std::wstring& c : cues) entries.push_back({c, kAttack, kAttDefault, 1.f, 1.f, 1.f, 1.f});
     entries.push_back({kKnockPath, kKnock, kAttDefaultNoAo, 1.f, 1.f, 0.5f, 0.5f});
     entries.push_back({kBellPath, kBell, nullptr, 1.f, 1.f, 0.8f, 1.f});
+    // A path the impact column names already takes the cleaning callers on its one entry.
+    Add(entries, {kPoopPath, static_cast<uint8_t>(kGrime | kHand), kAttDefault, 0.1f, 1.f, 0.75f, 1.5f});
+    Add(entries, {kWadePath, kHand, kAttDefault, 0.5f, 1.f, 1.f, 1.5f});
+    Add(entries, {kSplashPath, kHand, kAttDefault, 0.5f, 0.5f, 1.f, 1.f});
+    Add(entries, {fuel, kHand, kAttDefault, 0.5f, 0.5f, 1.f, 1.f});
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.path < b.path; });
     // A path named twice would give one sound two indexes: not a table to speak by.
     if (std::adjacent_find(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.path == b.path; }) !=
@@ -98,8 +144,8 @@ bool Ready() {
     for (size_t i = 0; i < g_entries.size(); ++i) g_index.emplace(g_entries[i].path, static_cast<uint16_t>(i + 1));
     g_digest = DigestOf(g_entries);
     g_built = true;
-    UE_LOGI("sound_catalog: n=%zu digest=0x%08X (%zu impact sounds, the knock and the bell)", g_entries.size(), g_digest,
-            cues.size());
+    UE_LOGI("sound_catalog: n=%zu digest=0x%08X (%zu impact sounds, the knock, the bell and the cleaning sounds)",
+            g_entries.size(), g_digest, cues.size());
     return true;
 }
 

@@ -2,7 +2,9 @@
 // same way, so the wire names a sound by its place in the table and never by a path.
 //
 // An entry is every distinct sound the game's `list_physSound` table names in its impact column (what a melee hit plays
-// for the struck material), plus the vent knocker's knock and the church's bell. The entries are sorted by path, so the
+// for the struck material), plus the vent knocker's knock, the church's bell, a scrubbed grime decal's squelch and the
+// sounds a cleaning item in the hand plays to its own player alone (a mop's or a sponge's dip, a bucket's scoop, its
+// water thrown out, its fuel poured). The entries are sorted by path, so the
 // order is the same on every peer whatever order the game's table stores its rows in, and a peer's table is identified
 // by a digest of the paths (FNV-1a over the sorted paths joined by newlines): a receiver whose own digest differs drops
 // the sound. Each entry carries what the game does with it: the callers that play it, its attenuation, and the volume and
@@ -24,6 +26,8 @@ enum Caller : uint8_t {
     kAttack = 1,   // mainPlayer_C::attack: the struck material's impact sound, from the player's own machine
     kKnock  = 2,   // kocker_C::knock: the vent knocker, an actor of the host's world
     kBell   = 4,   // church_C's bell, an actor of the host's world
+    kGrime  = 8,   // grime_C's clean: a scrubbed decal's squelch, from the machine whose player cleaned it
+    kHand   = 16,  // a held cleaning item's PlaySound2D, sent placed at its player, from that player's machine
 };
 
 struct Entry {
