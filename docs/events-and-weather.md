@@ -264,9 +264,13 @@ gray boar's and theEvil's deaths, the follower's pickups, the ship and float pho
 them against its own copy, so each machine drifted to its own value, and what a client read from it (a brownie trail's
 note, the shrimp eaters' tier) was its own. The value is the host's (`coop/world/arir_rep_sync`): the host sends it
 (`EventCue` 105, the value in `x`) when an `addAriralRep` moves it, once a second when another route moved it, and to a
-joiner; a client's own `addAriralRep` is refused, and the host's value is written in. `[V]` on the fork's build of the same
-change: the host's +7 reached every peer and a joiner, and slot 1's own +100 was refused; before, the host held 7 and slot
-1 100.
+joiner; a client's own `addAriralRep` is refused, and the host's value is written in. What a client's own player does is
+asked of the host (`ArirRepIntent`), which makes it as its own: its wake (the gamemode's `wakeup`, five either way), its
+swing at the follower (two off), and its photo of the visit ship (fifteen). The host judges each by its cause's own
+amount, one a second, and pays the ship's photo once, whoever took it first, as the game's do-once does. `[V]` on the
+fork's build of the same change: the host's +7 reached every peer and a joiner, and slot 1's own +100 was refused;
+before, the host held 7 and slot 1 100. Slot 1's wake took every peer to 11.13, the game's own scaling of +5, its photo
+to 22.38, and its second photo was refused as paid. The swing is `[?]`: the drill's world held no follower.
 
 ## Who owns what
 
@@ -324,7 +328,7 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | Limit | Evidence |
 |---|---|
 | The sky's earth teleport plays its two sounds on every client (`coop/world/world_sound_sync`, EventCue ids from 100, found by the sound the host's `PlaySound2D` is given); its black hole and its light ride SkyState | `[?]` `harness/autotest/autotest_world_sound.cpp`: the cue received and the play call made on the client (the rewritten drill has not run yet); `[RD]` for the rest |
-| A client's own reputation changes are refused, not yet asked of the host: its player's wake (the gamemode's `wakeup`, five either way) and its swing at the follower (two off) change nothing, and a photo a client takes of the Ariral ship or the float earns none, since only the host's copies bind the photo | `[RD]` `lib_C.addAriralRep`'s callers; `arirShipAppear_C.runTrigger` and `trigger_agrav_C` bind `photoTaken` on the host's copy alone |
+| A photo a client takes of the visit ship pays only once a client's copy binds the photo (the ship's lane raising it through its own `runTrigger`), and a photo of the Ariral float earns none: the float's trigger binds its `photoTaken` in its own `runTrigger`, which only the host's copy runs | `[RD]` `arirShipAppear_C.runTrigger`, `trigger_agrav_C.runTrigger` |
 | The alien sounds are each player's own: the event is replayed, and each peer's three noisers walk around its own player, sound and leave when that player sees one. A player does not hear the noisers around another. A joiner whose world is up while the host's noisers are out is sent the event once at its ready edge (the join snapshot, one row for the three noisers) and gets noisers of its own | `[?]` `harness/autotest/autotest_world_sound.cpp`: three noisers on each peer, and on a rejoined client (the rewritten drill has not run yet) |
 | A harvest's sound is the harvester's alone: no other peer plays it | `[RD]` the harvest half of #104 waits for the host to perform every harvest (#115): the host's own `growingPlant_C::harvestSound` call then sends an EventCue id 102 at the plant |
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
