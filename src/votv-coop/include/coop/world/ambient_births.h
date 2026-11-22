@@ -1,9 +1,10 @@
 // coop/world/ambient_births.h -- the births and deaths of the ambient actors, named once for every lane that needs them.
 //
-// The walking tree, the sus hole, the beehive branch and the wasp nest are each made and unmade by the engine. A birth
+// The walking tree, the sus hole, the beehive branch, the wasp nest and the picnic's warp arrow are each made and unmade
+// by the engine. A birth
 // is announced by the object index's listener list, a death by the death seam (coop/element/death_seam), which hears
 // the actor's end of play: the object index announces only the free, which waits for the next collection. One listener
-// and four class subscriptions here recognise the four classes and keep one ordered queue of (object, slot, birth or
+// and five class subscriptions here recognise the five classes and keep one ordered queue of (object, slot, birth or
 // death, class); the creature lane and the fixture lane drain their classes in their own ticks, so neither scans the
 // world for what the engine already says.
 //
@@ -20,7 +21,8 @@
 
 namespace coop::ambient_births {
 
-enum class Class : uint8_t { Tree, Hole, Branch, Nest };  // walkingTree_C, susDirtHole_C, beehiveBranch_C, prop_waspnest_bee_C
+// walkingTree_C, susDirtHole_C, beehiveBranch_C, prop_waspnest_bee_C, arirShipVanishing_C
+enum class Class : uint8_t { Tree, Hole, Branch, Nest, Ship };
 enum class Kind : uint8_t { Birth, Death };
 
 using Mask = uint8_t;

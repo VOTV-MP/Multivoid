@@ -283,7 +283,10 @@ void ListHoles(std::vector<void*>& out) { Collect(L"susDirtHole_C", out); }
 void ListBranches(std::vector<void*>& out) { Collect(L"beehiveBranch_C", out); }
 
 void* SpawnFixture(bool branch, const FVector& at, const FRotator& rot) {
-    const wchar_t* name = branch ? L"beehiveBranch_C" : L"susDirtHole_C";
+    return SpawnFixtureOf(branch ? L"beehiveBranch_C" : L"susDirtHole_C", at, rot);
+}
+
+void* SpawnFixtureOf(const wchar_t* name, const FVector& at, const FRotator& rot) {
     void* cls = OI::ClassByName(name);
     if (!cls) cls = R::FindClass(name);
     void* a = cls ? engine::SpawnActor(cls, at) : nullptr;
