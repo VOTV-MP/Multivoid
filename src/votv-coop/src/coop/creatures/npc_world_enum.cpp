@@ -156,7 +156,9 @@ struct ExSpawnSource {
     const wchar_t* cls;
     const wchar_t* const* outputs;   // null-terminated; null: any allowlisted output
 };
-constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
+// The sixth week's flyovers are mirrored with a lane for what their actor pose does not carry (coop/world/flyover_sync).
+constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C",     L"superEgger_C",     L"morningUfo_C", L"rozitBorg_C",
+                                              L"ufoDropper_body_C", L"ufoDropper_car_C", nullptr};
 // The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
 // so its source is narrowed to the outputs whose client roll the spawn authority refuses: the night roll's
 // (mainGamemode_C::CustomEvent_5, an Octa or a night egg) and the four ambient UFO timers' (coop/world/ufo_sync).

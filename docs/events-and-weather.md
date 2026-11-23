@@ -177,6 +177,18 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The sixth week's flyovers, the peeping UFO (`morningUfo_C`), the Rozital mothership (`rozitBorg_C`) and the drop
+saucers (`ufoDropper_body_C`, `ufoDropper_car_C`), are spawned by the dispatcher on the host alone, and reached no
+client. They are now among its mirrored outputs, and `coop/world/flyover_sync` carries what the actor pose does not.
+The mothership's copy runs its own tick, which flies its ships, and takes the host's `alpha` every 2 s (`EventCue` 115).
+The UFO's box is refused on a client, and the host sends its show (113); the UFO's look at player 0 is served the
+nearest player, so a client's player can scare it off. A saucer copy's begin play, box, deploy, drop and end are refused;
+at the host's deploy (114) it shows and plays its timeline, which lowers it and blinks this machine's lights, and the
+car or body it drops is the host's. A client ends a saucer it loaded from its save where the host's copy stands or the
+host has none (116). `[V]` on the fork's build of the same change: before, slot 1 had none of the four;
+with the lane off, its mothership stood at alpha 0 and its saucers never showed; after, its mothership tracked the host's
+alpha, its UFO showed and flew, its saucers showed and blinked its lights, and the host's car reached it.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -296,6 +308,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the sixth week's flyovers | the host | mirrored; the mothership's alpha, the UFO's show and the saucer's deploy sent |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
@@ -366,5 +379,6 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the sixth week's flyovers | `coop/world/flyover_sync`, `coop/creatures/npc_world_enum` |
 | sounds played at a place | `coop/world/sound_relay`, `coop/world/sound_catalog`, `coop/world/sound_judge`, `ue_wrap/world/physsound_table`, `ue_wrap/core/object_path`; `coop/dev/sound_drill` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
