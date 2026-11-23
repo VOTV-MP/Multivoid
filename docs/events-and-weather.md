@@ -185,7 +185,7 @@ The UFO's box is refused on a client, and the host sends its show (113); the UFO
 nearest player, so a client's player can scare it off. A saucer copy's begin play, box, deploy, drop and end are refused;
 at the host's deploy (114) it shows and plays its timeline, which lowers it and blinks this machine's lights, and the
 car or body it drops is the host's. A client ends a saucer it loaded from its save where the host's copy stands or the
-host has none (116). `[V]` on the fork's build of the same change: before, slot 1 had none of the four;
+host has none (116: the host's saucers, sent to a joiner at its world-ready, then an end marker). `[V]` on the fork's build of the same change: before, slot 1 had none of the four;
 with the lane off, its mothership stood at alpha 0 and its saucers never showed; after, its mothership tracked the host's
 alpha, its UFO showed and flew, its saucers showed and blinked its lights, and the host's car reached it.
 

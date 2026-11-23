@@ -8,8 +8,8 @@
 //   - ufoDropper_C's kinds wait hidden for a player in their box (or forceDeploy), then a timeline lowers the saucer,
 //     blinks the base's lights, drops the body or the car and ends. HOST: the deploy is sent (114). CLIENT: the copy's
 //     begin play, box, deploy, drop and end refused; at 114 it shows and plays its timeline, its tick on for the blink.
-//     A saucer loaded from a client's own save ends where the host's copy stands or the host has none (its saucers'
-//     places, every 2 s, 116). Game thread.
+//     A saucer loaded from a client's own save ends where the host's copy stands or the host has none (the host's
+//     saucers' places, to a joiner at its world-ready, 116, then an end marker). Game thread.
 
 #pragma once
 
@@ -26,7 +26,7 @@ namespace coop::flyover_sync {
 inline constexpr uint32_t kCueMorningShow = 113;    // the peeping UFO's place
 inline constexpr uint32_t kCueDropperDeploy = 114;  // the drop saucer's place
 inline constexpr uint32_t kCueBorgAlpha = 115;      // x = the mothership's alpha
-inline constexpr uint32_t kCueDropperLive = 116;    // a drop saucer the host has, its place, every 2 s
+inline constexpr uint32_t kCueDropperLive = 116;    // a drop saucer the host has, its place, to a joiner (z -1e9: the end)
 
 void Install(coop::net::Session* session);
 
@@ -39,6 +39,9 @@ void OnMirrorEnding(void* actor);
 
 // A client's receiver: true when the cue was this lane's.
 bool OnCue(const coop::net::EventCuePayload& p);
+
+// HOST: its saucers' places, to a joiner at its world-ready (coop/session/connect_replay). Game thread.
+void SendJoin(int slot);
 
 void OnDisconnect();
 

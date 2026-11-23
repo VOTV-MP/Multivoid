@@ -74,10 +74,10 @@ bool g_morningBox = false, g_dropBegin = false, g_dropBox = false, g_dropForce =
      g_dropEnd = false;
 uint64_t g_nextServe = 0, g_nextAlpha = 0;
 std::unordered_set<void*> g_sent;   // HOST: the UFOs and saucers whose show is sent
-struct Live { ue_wrap::FVector at; uint64_t when; };
-std::vector<Live> g_live;           // CLIENT: the host's saucers' places, as last sent
-uint64_t g_connectedAt = 0;         // CLIENT: this session's first connected tick
-constexpr uint64_t kLiveStaleMs = 6000, kLoadGraceMs = 8000;
+std::vector<ue_wrap::FVector> g_live;   // CLIENT: the host's saucers' places, as its join list sent them
+uint64_t g_listDoneAt = 0;              // CLIENT: when the join list ended (0: not yet)
+constexpr uint64_t kTwinWindowMs = 30000;   // CLIENT: from the list's end, how long its save's saucers are judged
+constexpr float kListEndZ = -1.0e9f;        // the join list's end marker, a place no saucer stands at
 
 bool IsRole(N::Role r) {
     N::Session* const s = g_session.load(std::memory_order_acquire);
@@ -220,14 +220,6 @@ void SendAlpha() {
         const float* const a = borgs[i] && R::IsLive(borgs[i]) ? FloatField(borgs[i], L"alpha") : nullptr;
         if (a) Send(kCueBorgAlpha, *a, 0.f, 0.f);
     }
-    for (const wchar_t* k : kDropperKinds) {
-        void* found[16];
-        const int32_t m = ue_wrap::world_instances::Find(k, found, 16);
-        ue_wrap::FVector at{};
-        for (int32_t i = 0; i < m; ++i)
-            if (found[i] && R::IsLive(found[i]) && ue_wrap::engine::TryGetActorLocation(found[i], at))
-                Send(kCueDropperLive, at.X, at.Y, at.Z);
-    }
 }
 
 bool Near(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -251,8 +243,7 @@ void ShowMorning(const N::EventCuePayload& p) {
 // the host has none. One the host has with no copy beside it (the host loaded its own from its save, which the lane
 // does not mirror) stays, inert, and a deploy shows it.
 void EndLoadedTwins(uint64_t now) {
-    for (auto it = g_live.begin(); it != g_live.end();)
-        it = now - it->when > kLiveStaleMs ? g_live.erase(it) : std::next(it);
+    if (!g_listDoneAt || now - g_listDoneAt > kTwinWindowMs) return;
     for (const wchar_t* k : kDropperKinds) {
         void* found[16];
         const int32_t n = ue_wrap::world_instances::Find(k, found, 16);
@@ -263,8 +254,8 @@ void EndLoadedTwins(uint64_t now) {
                 !ue_wrap::engine::TryGetActorLocation(own, at))
                 continue;
             bool hostHas = false;
-            for (const Live& l : g_live) hostHas = hostHas || Near(l.at, at);
-            if (!hostHas && now - g_connectedAt >= kLoadGraceMs) {
+            for (const ue_wrap::FVector& l : g_live) hostHas = hostHas || Near(l, at);
+            if (!hostHas) {
                 if (ue_wrap::engine::DestroyActor(own))
                     UE_LOGI("flyover: this machine's own %ls from its save ended -- the host has none there", k);
                 continue;
@@ -327,7 +318,6 @@ void Tick() {
     if (!g_dropEnd && (g_dropEnd = sg::WatchName(kRowDropEnd, kTagDropEnd, &OnClientRefusePre, nullptr)))
         UE_LOGI("flyover: the drop saucer's end is watched");
     const uint64_t now = ::GetTickCount64();
-    if (s->role() == N::Role::Client && s->connected() && !g_connectedAt) g_connectedAt = now;
     if (s->role() == N::Role::Client && s->connected() && now >= g_nextServe) {
         g_nextServe = now + kAlphaMs;
         EndLoadedTwins(now);
@@ -344,6 +334,32 @@ void Tick() {
     // Ended ones leave the sent set.
     for (auto it = g_sent.begin(); it != g_sent.end();)
         it = R::IsLive(*it) ? std::next(it) : g_sent.erase(it);
+}
+
+void SendJoin(int slot) {
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != N::Role::Host) return;
+    auto send = [&](float x, float y, float z) {
+        N::EventCuePayload p{};
+        p.cueId = kCueDropperLive;
+        p.x = x;
+        p.y = y;
+        p.z = z;
+        s->SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+    };
+    int n = 0;
+    for (const wchar_t* k : kDropperKinds) {
+        void* found[16];
+        const int32_t m = ue_wrap::world_instances::Find(k, found, 16);
+        ue_wrap::FVector at{};
+        for (int32_t i = 0; i < m; ++i)
+            if (found[i] && R::IsLive(found[i]) && ue_wrap::engine::TryGetActorLocation(found[i], at)) {
+                send(at.X, at.Y, at.Z);
+                ++n;
+            }
+    }
+    send(0.f, 0.f, kListEndZ);
+    UE_LOGI("flyover: slot %d's world is ready -- its list of the host's %d saucer(s) sent", slot, n);
 }
 
 void OnMirrorMaterialized(void* actor) {
@@ -364,7 +380,15 @@ bool OnCue(const N::EventCuePayload& p) {
         p.cueId != kCueDropperLive)
         return false;
     if (!IsRole(N::Role::Client)) return true;
-    if (p.cueId == kCueDropperLive) g_live.push_back({{p.x, p.y, p.z}, ::GetTickCount64()});
+    if (p.cueId == kCueDropperLive) {
+        if (p.z > kListEndZ * 0.5f) {
+            g_live.push_back({p.x, p.y, p.z});
+        } else {
+            g_listDoneAt = ::GetTickCount64();
+            UE_LOGI("flyover: the host's %zu saucer(s) at the join -- this machine's own from its save are judged",
+                    g_live.size());
+        }
+    }
     else if (p.cueId == kCueMorningShow) ShowMorning(p);
     else if (p.cueId == kCueDropperDeploy) Deploy(p);
     else TakeAlpha(p.x);
@@ -374,7 +398,7 @@ bool OnCue(const N::EventCuePayload& p) {
 void OnDisconnect() {
     g_sent.clear();
     g_live.clear();
-    g_nextServe = g_nextAlpha = g_connectedAt = 0;
+    g_nextServe = g_nextAlpha = g_listDoneAt = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
 
