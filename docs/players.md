@@ -571,6 +571,7 @@ dead peer through the ragdoll bit of its next pose.
 | No chat line announces a death | `[V]` `coop/comms/chat_sync` carries no such kind |
 | After a revive the player can drift horizontally from where it woke, metres over seconds; the cause is unmeasured | `[V]` `harness/autotest/death_state_probe.cpp` reads the position back |
 | Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` `coop/player/player_damage` |
+| A puppet's gravity gun component shoots for no one: its tick read this machine's player, so each other player added a shot and a recharge of its own | `[V]` `coop/player/puppet_gravgun` (on the fork's build: two clicks in one recharge shot twice with two others joined, once after) |
 | A third-party bundle pak cannot be discovered: bundle membership is a fixed table | `[V]` `coop/player/skin_registry` |
 | A ban is by player id and, on a direct link, by address: a banned player with a new identity key who comes from a new address or through a relay is a new player, and an address ban refuses whoever shares that address | `[V]` `coop/moderation/ban_list` |
 | The connection cap is by address too, so players behind one router share it; over a relayed internet route it counts by the identity a peer proves, so a peer that rotates its identity there gets a fresh count each time | `[V]` `coop/net/connect_history` on the direct lane; `[RD]` on the internet lane, from the transport's source |

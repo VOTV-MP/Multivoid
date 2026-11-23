@@ -185,6 +185,7 @@
 #include "coop/player/item_activate.h"
 #include "coop/player/cremator_hit.h"
 #include "coop/player/player_damage.h"
+#include "coop/player/puppet_gravgun.h"  // a puppet's gravity gun component shoots for no one here
 #include "coop/player/puppet_cremation.h"
 #include "coop/player/player_hit.h"
 #include "coop/session/player_handshake.h"  // TickSkinConverge
@@ -251,6 +252,7 @@ void Install(coop::net::Session& session) {
     coop::geom_octa_sync::Install(&session);  // the Geom Octa's lane: the [OCTA] watches (live once the class loads)
     coop::item_activate::Install(&session);  // flashlight
     coop::player_damage::Install(&session);  // the refusals on a peer's puppet: its impacts, damage, fire and hit verbs
+    coop::puppet_gravgun::Install(&session);  // a puppet's gravity gun component shoots for no one here
     coop::puppet_cremation::Install();  // a cremator never consumes a peer's puppet: it answers its crematorAction true
     coop::weather_sync::Install(&session);  // weather
     coop::interactable_sync::Install(&session);  // doors + lights + container lids
@@ -687,6 +689,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::moderation::cremate::Tick();  // HOST: the begin-overlap watch until registered, then the trips' recorded events
     coop::dev::dev_lanes::TickDrills(session);  // [dev] the drills' and censuses' legs (a single read each when off)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
+    coop::puppet_gravgun::Tick();  // the puppet gravity gun refusal, registered once
     coop::save_notice::Tick();  // the save watch's name resolves until it is live
     coop::player_handshake::TickSkinConverge();  // heal a join-window deferred skin apply (~2 s throttle)
     coop::skin_preview::Tick();  // F1-skins live mannequin preview (spawn/apply/position/hide)
