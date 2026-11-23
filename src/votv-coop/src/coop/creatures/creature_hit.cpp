@@ -25,6 +25,8 @@ bool IsCreature(void* actor) {
 
 bool IsDelivered(void* actor) {
     if (ue_wrap::ambient_creature::IsWalker(actor)) return true;  // a prop, not an Npc, and its copy's timers are off
+    // The Killer Birch, a world-actor mirror on a client whose tick is parked (coop/creatures/birch_sync).
+    if (actor && R::ClassNameOf(actor) == L"birch_C") return true;
     return IsCreature(actor) && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor));
 }
 

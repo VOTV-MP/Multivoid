@@ -162,6 +162,18 @@ constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C",
 // (mainGamemode_C::CustomEvent_5, an Octa or a night egg) and the four ambient UFO timers' (coop/world/ufo_sync).
 constexpr const wchar_t* kGamemodeOutputs[] = {L"geomOcta_C", L"eg_C", L"ufo_ballfo_C", L"ufo_boofo_spawn1_C",
                                                L"ufo_pillfo_C", L"ufo_joel_C", nullptr};
+// The basalt stone mints the first pillar, and each pillar the next (coop/world/hexpillar_sync).
+constexpr const wchar_t* kPillarOutputs[] = {L"hexpillar_C", nullptr};
+// The Christmas tree's wake and the vengeful soul mint the Nisse (coop/creatures/nisse_sync).
+constexpr const wchar_t* kNisseOutputs[] = {L"tomtenisse_C", nullptr};
+// Wolfgang: the cave spawner mints her head, a head its body, young and nest, the nest the nesting Wolfgang
+// (coop/creatures/wolfgang_sync). The cave spawner's Antibreather stays its own.
+constexpr const wchar_t* kCaveOutputs[] = {L"centipedeHead_C", nullptr};
+constexpr const wchar_t* kWolfgangOutputs[] = {L"centipedeSegmet_C", L"centipedeSegmet_jr_C", L"wolfgangJr_C",
+                                               L"eggyWolfgang_C", nullptr};
+constexpr const wchar_t* kNestOutputs[] = {L"parentWolfgang_C", nullptr};
+// The Killer Birch's spawner (coop/creatures/birch_sync).
+constexpr const wchar_t* kBirchOutputs[] = {L"birch_C", nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
@@ -177,6 +189,16 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
     {L"blackballSpawner_C",      nullptr},          // the orb event: its ubergraph mints npc_orborb_C
+    {L"prop_hexpillar_C",        kPillarOutputs},   // the basalt stone: its digUp mints the first pillar
+    {L"hexpillar_C",             kPillarOutputs},   // a basalt pillar: its tick mints the next
+    {L"prop_xmastree_C",         kNisseOutputs},    // the Christmas tree: its woken mints three Nisse
+    {L"nisse_soul_C",            kNisseOutputs},    // the vengeful soul: its tick mints Nisse
+    {L"antibreatherSPawner_C",   kCaveOutputs},     // the cave: cencipede mints Wolfgang
+    {L"centipedeHead_C",         kWolfgangOutputs}, // Wolfgang: her body, young and nest
+    {L"wolfgangJr_C",            kWolfgangOutputs}, // her young: their bodies
+    {L"parentWolfgang_C",        kWolfgangOutputs}, // the nesting Wolfgang: her body
+    {L"eggyWolfgang_C",          kNestOutputs},     // the nest: the nesting Wolfgang
+    {L"birchSpawner_C",          kBirchOutputs},    // the Killer Birch's spawner
 };
 
 // Whether `cls`'s own name is one of `names` (null-terminated). One render, then plain compares.

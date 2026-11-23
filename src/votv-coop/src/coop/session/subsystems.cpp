@@ -212,6 +212,11 @@
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
+#include "coop/world/anomaly_ask.h"       // a client asks the host to run an Anomalous act
+#include "coop/world/hexpillar_sync.h"    // the basalt pillars are the host's
+#include "coop/creatures/nisse_sync.h"    // the Nisse are the host's
+#include "coop/creatures/wolfgang_sync.h" // Wolfgang is the host's
+#include "coop/creatures/birch_sync.h"    // the Killer Birch is the host's
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/creatures/npc_mirror_brain.h"  // a parked family's mirror runs none of its Blueprint graph
 #include "coop/creatures/walker_lanes.h"  // the walking mannequin: its brain refused on a client, its claim, state and gaze
@@ -282,6 +287,11 @@ void Install(coop::net::Session& session) {
     coop::ufo_sync::Install(&session);  // the ambient UFOs fly the host's paths; the Midas run is relayed
     coop::roomba_sync::Install(&session);  // the robot cleaner: a client refuses its tick and pickup, its switch is the host's
     coop::puppet_identity::Install(&session);  // a puppet's touch of a wisp, a grunt, a trigger box or a dream box acts on no machine's player
+    coop::anomaly_ask::Install(&session);    // a client asks the host to run an Anomalous act
+    coop::hexpillar_sync::Install(&session); // the basalt pillars are the host's
+    coop::nisse_sync::Install(&session);     // the Nisse are the host's
+    coop::wolfgang_sync::Install(&session);  // Wolfgang is the host's
+    coop::birch_sync::Install(&session);     // the Killer Birch is the host's
     coop::roach_sync::Install(&session);  // roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::owner_entity_sync::Install(&session);  // owner-entity lane: eyer per-peer owned + cross-peer display mirrors
     coop::hook_sync::Install(&session);  // hook lane: owner-phase stream + mirrors, and the ReceiveTick park they depend on
@@ -554,6 +564,11 @@ DisconnectStats DisconnectAll() {
     coop::orb_authority::OnDisconnect();  // the encounters the host was judging
     coop::ufo_sync::OnDisconnect();  // the paths sent and pending
     coop::puppet_identity::OnDisconnect();  // the resolved classes and stubs, the grunt and wisp_p windows
+    coop::anomaly_ask::OnDisconnect();
+    coop::hexpillar_sync::OnDisconnect();
+    coop::nisse_sync::OnDisconnect();
+    coop::wolfgang_sync::OnDisconnect();
+    coop::birch_sync::OnDisconnect();
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::hook_sync::OnDisconnect();  // same, for every hook mirror, anchored included
@@ -654,7 +669,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: the host judges its own seat and grab, a client asks the host; the syncer streams its pose (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:woodchipper"}; coop::woodchipper_sync::Tick(); coop::flood_sync::Tick(); coop::kerfur_dress_sync::Tick(); }  // woodchippers: the host's intents and its changed chippers, the burn read once a second / the client's held states; the Omega outfit watch settles
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:woodchipper"}; coop::woodchipper_sync::Tick(); coop::flood_sync::Tick(); coop::kerfur_dress_sync::Tick(); coop::hexpillar_sync::Tick(); coop::nisse_sync::Tick(); coop::wolfgang_sync::Tick(); coop::birch_sync::Tick(); }  // woodchippers: the host's intents and its changed chippers, the burn read once a second / the client's held states; the Omega outfit watch settles
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:glowstick"}; coop::glowstick_sync::Tick(); }  // a glowstick's stick: the sticks a player ended published, the waits for a struck prop retried
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv_host"}; coop::atv_host_sync::Tick(); }  // the ATVs' fuel, health and modules
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }  // base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)

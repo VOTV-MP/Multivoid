@@ -2,11 +2,15 @@
 
 #include "coop/creatures/hit_target_creature.h"
 
+#include "coop/creatures/birch_sync.h"
+#include "coop/creatures/nisse_sync.h"
 #include "coop/creatures/npc_mirror_brain.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/player/hit_intent.h"
+#include "coop/world/hexpillar_sync.h"
+#include "coop/world/world_actor_sync.h"
 
 #include "ue_wrap/actors/int_objects.h"
 #include "ue_wrap/actors/zombie.h"
@@ -56,18 +60,31 @@ void Predict(void* mirror, const FVector& hitLoc) {
     if (const wchar_t* played = ue_wrap::zombie::PlayHitFeedback(mirror, hitLoc)) SayPredicted(played);
 }
 
-// The creature the intent names: a live host Npc element of a parked family, else null.
+// The world-actor classes a swing can hit: a basalt pillar (coop/world/hexpillar_sync), whose damage ends it, and a
+// Nisse (coop/creatures/nisse_sync), whose death the game avenges, and the Killer Birch (coop/creatures/birch_sync),
+// which bleeds and turns angry.
+bool IsHittableWorldActor(void* actor) {
+    if (!actor) return false;
+    const auto& name = R::NameOf(R::ClassOf(actor));
+    return R::NameEquals(name, coop::hexpillar_sync::kPillarClass) || R::NameEquals(name, coop::nisse_sync::kNisseClass) ||
+           R::NameEquals(name, coop::birch_sync::kBirchClass);
+}
+
+// The creature the intent names: a live host Npc element of a parked family, or a hittable world actor; else null.
 void* CreatureOf(uint32_t eid) {
     void* actor = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::Npc);
-    return actor && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor)) ? actor : nullptr;
+    if (actor && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor))) return actor;
+    actor = EL::LiveActorOfType(static_cast<EL::ElementId>(eid), EL::ElementType::WorldActor);
+    return IsHittableWorldActor(actor) ? actor : nullptr;
 }
 
 }  // namespace
 
 uint32_t ClientClaim(const sg::Call& c, coop::hit_intent::Swing& swing) {
-    if (!c.object || !coop::npc_mirror_brain::IsMarkedMirror(c.object) ||
-        !coop::npc_mirror_brain::IsParkedClass(R::ClassOf(c.object)))
-        return EL::kInvalidId;
+    const bool creature = c.object && coop::npc_mirror_brain::IsMarkedMirror(c.object) &&
+                          coop::npc_mirror_brain::IsParkedClass(R::ClassOf(c.object));
+    const bool worldActor = c.object && coop::world_actor_sync::IsMirroredActor(c.object) && IsHittableWorldActor(c.object);
+    if (!creature && !worldActor) return EL::kInvalidId;
 
     if (!coop::hit_intent::ReadLocalSwing(c, swing)) return EL::kInvalidId;
 

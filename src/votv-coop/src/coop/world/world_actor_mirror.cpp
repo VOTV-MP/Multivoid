@@ -12,6 +12,7 @@
 #include "coop/element/identity_create.h"  // the single WorldActor mirror create funnel
 #include "coop/items/coingun_sync.h"
 #include "coop/element/bind_wait.h"       // GiveUp: a spawn cancelled while its class loads
+#include "ue_wrap/actors/spawner_stamp.h"
 #include "coop/element/class_load_wait.h"  // ParkSpawn / Cancel: a spawn waiting on its class load
 #include "coop/element/mirror_managers.h"  // WaMirrors
 #include "coop/element/registry.h"
@@ -207,6 +208,15 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // firing inside FinishSpawning's BeginPlay can identify this actor rather than merely observe
     // that some materialisation is in progress.
     coop::world_actor_sync::NoteMaterializingActor(spawned);
+    // Spawned as the game's own spawner spawns the class (the Killer Birch's begin play ends the game unless its
+    // spawner's constant was written): a mirror whose stamp failed is dropped before its begin play runs.
+    if (!ue_wrap::spawner_stamp::Stamp(R::ClassOf(spawned), spawned)) {
+        UE_LOGE("world-actor[client OnSpawn]: '%ls' eid=%u could not be stamped as its spawner stamps it -- dropped",
+                classW.c_str(), payload.elementId);
+        if (sp.k2DestroyFn && R::IsLive(spawned)) R::CallFunction(spawned, sp.k2DestroyFn, nullptr);
+        D::ClearIncomingClass();
+        return;
+    }
     // Seed the birth value before FinishSpawning runs BeginPlay. The coin's BeginPlay reads its
     // points once and sets its material from them (bronze, silver or gold), and the coin gun's
     // sell writes that integer between its own deferred begin and finish. This mirror had nothing
