@@ -87,9 +87,9 @@ void* Field(void* obj, const wchar_t* name) {
     return v && R::IsLive(v) ? v : nullptr;
 }
 
-// A function of `obj` with no parameters, or with its one bool parameter `bReset`.
+// A function of `obj` (its own or an ancestor's) with no parameters, or with its one bool parameter `bReset`.
 bool Run(void* obj, const wchar_t* fnName, int reset = -1) {
-    void* const fn = obj ? R::FindFunction(R::ClassOf(obj), fnName) : nullptr;
+    void* const fn = obj ? R::FindDispatchFunction(R::ClassOf(obj), fnName, nullptr) : nullptr;
     ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     if (reset >= 0) f.Set<bool>(L"bReset", reset != 0);
