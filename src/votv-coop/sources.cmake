@@ -31,6 +31,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/broom_push.cpp
     ${VOTVCOOP_SOURCES_UE_WRAP_2}
     src/coop/player/movement_ledger.cpp
+    src/coop/player/puppet_gravgun.cpp
     src/coop/player/remote_player.cpp
     src/coop/player/pose_bases.cpp
     src/coop/player/puppet_seat.cpp
