@@ -80,6 +80,8 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/turbine_sync.cpp
     src/coop/interactables/woodchipper_sync.cpp
     src/coop/world/flood_sync.cpp
+    src/coop/creatures/firetank_sync.cpp
+    src/coop/creatures/gray_sync.cpp
     src/coop/creatures/kerfur_dress_sync.cpp
     src/coop/world/sound_relay.cpp
     src/coop/world/sound_catalog.cpp

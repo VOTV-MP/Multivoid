@@ -176,6 +176,9 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+    {L"ufoDropper_tank_C",       nullptr},          // graystank: the saucer's drop mints the Firetank's box
+    {L"firetankDeploy_C",        nullptr},          // the box's spawnParts mints the Firetank
+    {L"boarInvasion_C",          nullptr},          // boarwar: the Firetanks and the Ariral shooters (boars are props)
     {L"blackballSpawner_C",      nullptr},          // the orb event: its ubergraph mints npc_orborb_C
 };
 
@@ -273,7 +276,9 @@ void InstallExSpawnCatch() {
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
                 "mainGamemode_C -> geomOcta_C + eg_C + the four ambient UFOs, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "
-                "tentacleBallsFollower_C -> tentacleBall_C, blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
+                "tentacleBallsFollower_C -> tentacleBall_C, ufoDropper_tank_C -> firetankDeploy_C -> firetank_C, "
+                "boarInvasion_C -> firetank_C + npc_ariral_shooter_C, "
+                "blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
                 "now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "

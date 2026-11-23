@@ -79,6 +79,28 @@ UE_FACT_FN(kRowMoveTentacleBall, "spawn_authority", L"tentacleBall_C", L"move", 
 UE_FACT_FN(kRowSphereHitTentacleBall, "spawn_authority", L"tentacleBall_C",
            L"BndEvt__tentacleBall_Sphere_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
            Declared);
+UE_FACT_FN(kRowFiretankDeploySpawnParts, "spawn_authority", L"firetankDeploy_C", L"spawnParts", Declared);
+UE_FACT_FN(kRowFiretankTick, "spawn_authority", L"firetank_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowFiretankUpdate, "spawn_authority", L"firetank_C", L"Update", Declared);
+UE_FACT_FN(kRowFiretankSenseUpdate, "spawn_authority", L"firetank_C", L"senseUpdate", Declared);
+UE_FACT_FN(kRowFiretankFire, "spawn_authority", L"firetank_C", L"fire", Declared);
+UE_FACT_FN(kRowFiretankActivate, "spawn_authority", L"firetank_C", L"Activate", Declared);
+UE_FACT_FN(kRowFiretankMoveTo, "spawn_authority", L"firetank_C", L"moveTo", Declared);
+UE_FACT_FN(kRowFiretankSeeBegin, "spawn_authority", L"firetank_C",
+           L"BndEvt__testTank_seeZone_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowFiretankSeeEnd, "spawn_authority", L"firetank_C",
+           L"BndEvt__testTank_seeZone_K2Node_ComponentBoundEvent_2_ComponentEndOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowFiretankCube, "spawn_authority", L"firetank_C",
+           L"BndEvt__firetank_Cube_K2Node_ComponentBoundEvent_5_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowFiretankCube1, "spawn_authority", L"firetank_C",
+           L"BndEvt__testTank_Cube1_K2Node_ComponentBoundEvent_3_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowFiretankBackoff, "spawn_authority", L"firetank_C",
+           L"BndEvt__testTank_backoffCollide_K2Node_ComponentBoundEvent_1_ComponentHitSignature__DelegateSignature",
+           Declared);
 UE_FACT_FN(kRowBeginGrayEventController, "spawn_authority", L"grayEventController_C", L"begin", Declared);
 UE_FACT_FN(kRowTurnedonGrayEventController, "spawn_authority", L"grayEventController_C", L"turnedon", Declared);
 UE_FACT_FN(kRowSpawnGrayEventController, "spawn_authority", L"grayEventController_C", L"spawn", Declared);
@@ -182,6 +204,23 @@ constexpr Row kRows[] = {
     {&kRowReceiveTickTentacleBall,        "tentacleBall.ReceiveTick"},
     {&kRowMoveTentacleBall,               "tentacleBall.move"},
     {&kRowSphereHitTentacleBall,          "tentacleBall.SphereHit"},
+    // firetankDeploy_C (graystank's box, a world-actor mirror): its spawnParts, 20 s after it lands, mints the box's
+    // parts (props) and the Firetank; the host's cross. firetank_C (a world-actor mirror): its begin play builds the
+    // wheels and arms the timers; their bodies are refused -- Update and moveTo (the drive), senseUpdate and the
+    // seeZone overlaps (the target), fire (the flame and its damage), Activate (the engine) -- with the tick, the two
+    // flame cubes' overlaps (the burn) and the back-off hit. Its speech and its health noise stay.
+    {&kRowFiretankDeploySpawnParts, "firetankDeploy.spawnParts"},
+    {&kRowFiretankTick, "firetank.ReceiveTick"},
+    {&kRowFiretankUpdate, "firetank.Update"},
+    {&kRowFiretankSenseUpdate, "firetank.senseUpdate"},
+    {&kRowFiretankFire, "firetank.fire"},
+    {&kRowFiretankActivate, "firetank.Activate"},
+    {&kRowFiretankMoveTo, "firetank.moveTo"},
+    {&kRowFiretankSeeBegin, "firetank.seeZoneBegin"},
+    {&kRowFiretankSeeEnd, "firetank.seeZoneEnd"},
+    {&kRowFiretankCube, "firetank.CubeOverlap"},
+    {&kRowFiretankCube1, "firetank.Cube1Overlap"},
+    {&kRowFiretankBackoff, "firetank.backoffHit"},
 
     // The event spawners themselves: a client's copies must never mint children. Every
     // BeginDeferred inside these graphs is bytecode-internal, so the spawn interceptor never

@@ -13,6 +13,8 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/creatures/firetank_sync.h"
+#include "coop/creatures/gray_sync.h"
 #include "coop/world/vent_crawler_sync.h"
 #include "coop/world/world_sound_sync.h"
 
@@ -266,6 +268,8 @@ void OnReliable(const coop::net::EventCuePayload& payload) {
     if (!GT::IsGameThread()) { UE_LOGW("event_cue: OnReliable off-game-thread -- dropping"); return; }
     if (coop::vent_crawler_sync::OnCue(payload)) return;  // a crawl's start
     if (coop::world_sound_sync::OnCue(payload)) return;  // a sound cue, not an emitter
+    if (coop::firetank_sync::OnCue(payload)) return;  // the Firetank's flame on every machine
+    if (coop::gray_sync::OnCue(payload)) return;  // the Grays' ATV lockout
     if (payload.cueId >= static_cast<uint32_t>(kCueCount)) {
         UE_LOGW("event_cue: OnReliable unknown cueId=%u (have %d cues) -- dropping (newer host?)",
                 payload.cueId, kCueCount);

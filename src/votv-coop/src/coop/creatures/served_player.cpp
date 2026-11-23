@@ -112,7 +112,8 @@ NativeSeam g_gpp{&kRowGetPlayerPawn, kPlayerPawn, &OnPawnPost};
 // mode's, the petting's and loadHoldItem's (a function nothing calls) read player 0 as written. An insert
 // read is answered in full, as the body would: the out parameter is the only thing it writes -- null while
 // the client's body is absent, which takes the insert's own refusal rather than the host's hand. A walking
-// mannequin reads it for one flag with no test of its own, so it keeps the host's while that body is absent.
+// mannequin reads it for one flag with no test of its own, so it keeps the host's while that body is absent; so does
+// the Grays' controller, whose one read is the body its Despawn knocks down (coop/creatures/gray_sync).
 sg::Verdict OnMainPlayerPre(const sg::Call& c) {
     if (g_records.empty() || !c.callerObject) return sg::Verdict::Run;
     void* pawn = nullptr;
@@ -125,7 +126,7 @@ sg::Verdict OnMainPlayerPre(const sg::Call& c) {
     }
     uint8_t* out = sOutOff >= 0 ? sg::OutParamPtr(c, sOutOff) : nullptr;
     if (!out) return sg::Verdict::Run;
-    if (ue_wrap::ambient_creature::IsWalker(c.callerObject)) {
+    if (ue_wrap::ambient_creature::IsWalker(c.callerObject) || R::ClassNameOf(c.callerObject) == L"grayEventController_C") {
         if (!pawn) return sg::Verdict::Run;
     } else if (!K::IsInsertPlayerRead(c.callerFunction, c.callerLocals, out)) {
         return sg::Verdict::Run;
