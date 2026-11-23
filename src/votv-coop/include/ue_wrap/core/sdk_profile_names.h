@@ -79,6 +79,7 @@ inline constexpr const wchar_t* NpcClass_VentCrawler  = L"ventCrawler_C";
 inline constexpr const wchar_t* NpcClass_GrayTest     = L"grayTest_C";      // graysforest pack
 inline constexpr const wchar_t* NpcClass_Eg           = L"eg_C";            // eggvasion and night eggs
 inline constexpr const wchar_t* NpcClass_TentacleBall = L"tentacleBall_C";  // tentacleBalls pack
+inline constexpr const wchar_t* NpcClass_Kavotia      = L"kavotia_C";       // rozitalHole's guards (the patrol's rings)
 // wisp_C (Awisp_C : ACharacter): the wispSwarm-event wisp and the ambient sky wisp
 // (ticker_wispSpawner_C spawns at absolute map coordinates, world-anchored, so host-authoritative
 // too). Both spawn paths are EX_CallMath, caught by the ufunction_hook Func thunk on
@@ -124,6 +125,7 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_GrayTest,
     NpcClass_Eg,
     NpcClass_TentacleBall,
+    NpcClass_Kavotia,      // rozitalHole's guards, minted by kavotiaPatrolController_C (the hole lane, hole_sync)
     NpcClass_Wisp,         // wispSwarm-event and ambient sky wisp (both host-authoritative)
     NpcClass_WispB,        // sky-wisp color variants (ticker_wispSpawner map; direct ACharacter
     NpcClass_WispRed,      //   subclasses, NOT wisp_C children -- each needs its own row)

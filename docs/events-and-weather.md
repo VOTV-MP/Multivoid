@@ -296,6 +296,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the Hole Repair | the host | its controller's box refused on a client; its room's place sent; its guards and Igetis mirrored, their shots sent and a client's hit delivered |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
@@ -366,5 +367,6 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the Hole Repair | `coop/world/hole_sync`, `coop/world/spawn_authority`, `coop/creatures/creature_hit`; `docs/npcs-and-kerfur.md` |
 | sounds played at a place | `coop/world/sound_relay`, `coop/world/sound_catalog`, `coop/world/sound_judge`, `ue_wrap/world/physsound_table`, `ue_wrap/core/object_path`; `coop/dev/sound_drill` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |
