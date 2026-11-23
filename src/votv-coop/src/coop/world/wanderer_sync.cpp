@@ -51,7 +51,6 @@ UE_FACT_FN(kRowGoatLook, "wanderer_sync", L"goat_C", L"lookPlace", Declared);
 constexpr int kTagRefuse = 0x574E4452;  // 'WNDR'
 constexpr int kTagVanish = 0x574E4456;  // 'WNDV'
 constexpr uint64_t kCheckMs = 500;
-constexpr uint64_t kRefreshMs = 5000;
 
 // The moved part: the actor itself, or (the goat) its stand; `shown` is a part whose visibility is carried.
 struct Wanderer {
@@ -76,7 +75,7 @@ struct State {
 
 std::atomic<N::Session*> g_session{nullptr};
 bool g_watched = false;
-uint64_t g_nextCheck = 0, g_nextRefresh = 0;
+uint64_t g_nextCheck = 0;
 State g_sent[kCount];
 bool g_sentOnce[kCount] = {};
 int g_which = -1;          // CLIENT: the entity 127 named
@@ -132,13 +131,21 @@ bool Same(const State& a, const State& b) {
            a.flags == b.flags;
 }
 
-void Send(N::Session& s, uint32_t cue, float x, float y, float z) {
+// To every client (`slot` -1) or to one.
+void Send(N::Session& s, uint32_t cue, float x, float y, float z, int slot = -1) {
     N::EventCuePayload p{};
     p.cueId = cue;
     p.x = x;
     p.y = y;
     p.z = z;
-    s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    if (slot < 0) s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    else s.SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+}
+
+void SendState(N::Session& s, int i, const State& now, int slot) {
+    Send(s, kCueWhich, static_cast<float>(i), static_cast<float>(now.flags), 0.f, slot);
+    Send(s, kCueTurn, now.turn.Pitch, now.turn.Yaw, now.turn.Roll, slot);
+    Send(s, kCuePlace, now.at.X, now.at.Y, now.at.Z, slot);
 }
 
 // CLIENT: the rolls run on the host alone.
@@ -171,15 +178,13 @@ void Watch() {
     }
 }
 
-void HostSend(N::Session& s, bool refresh) {
+void HostSend(N::Session& s) {
     for (int i = 0; i < kCount; ++i) {
         void* const a = One(i);
         State now;
         if (!a || !Read(i, a, now)) continue;
-        if (!refresh && g_sentOnce[i] && Same(now, g_sent[i])) continue;
-        Send(s, kCueWhich, static_cast<float>(i), static_cast<float>(now.flags), 0.f);
-        Send(s, kCueTurn, now.turn.Pitch, now.turn.Yaw, now.turn.Roll);
-        Send(s, kCuePlace, now.at.X, now.at.Y, now.at.Z);
+        if (g_sentOnce[i] && Same(now, g_sent[i])) continue;
+        SendState(s, i, now, -1);
         if (!g_sentOnce[i] || !Same(now, g_sent[i]))
             UE_LOGI("wanderer: the host's %ls stands at (%.0f,%.0f,%.0f) flags=%d -- sent", kWanderers[i].cls, now.at.X,
                     now.at.Y, now.at.Z, now.flags);
@@ -247,9 +252,21 @@ void Tick() {
     const uint64_t now = ::GetTickCount64();
     if (now < g_nextCheck) return;
     g_nextCheck = now + kCheckMs;
-    const bool refresh = now >= g_nextRefresh;
-    if (refresh) g_nextRefresh = now + kRefreshMs;
-    HostSend(*s, refresh);
+    HostSend(*s);
+}
+
+void SendJoin(int slot) {
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != N::Role::Host) return;
+    int sent = 0;
+    for (int i = 0; i < kCount; ++i) {
+        void* const a = One(i);
+        State now;
+        if (!a || !Read(i, a, now)) continue;
+        SendState(*s, i, now, slot);
+        ++sent;
+    }
+    UE_LOGI("wanderer: slot %d's world is ready -- %d wanderer(s)' places sent to it", slot, sent);
 }
 
 bool OnCue(const N::EventCuePayload& p) {
@@ -274,7 +291,7 @@ bool OnCue(const N::EventCuePayload& p) {
 }
 
 void OnDisconnect() {
-    g_nextCheck = g_nextRefresh = 0;
+    g_nextCheck = 0;
     for (bool& b : g_sentOnce) b = false;
     g_which = -1;
     g_session.store(nullptr, std::memory_order_release);

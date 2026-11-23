@@ -4,8 +4,8 @@
 // (log_C: vanishes and comes back at a random point), the telephone booth (teleBooth_C: its timer moves it while off
 // screen), the sheet ghost (gost_C: its timers move and hide it) and William the Protector (goat_C: its tick moves
 // its stand and hides the goat off its pedestal).
-// HOST: they roll; each one's state is sent when it changes, and each 5 s for a joiner (EventCue 127 which and its
-// flags, 128 its turn, 129 its place). The log's vanish and return are sent as they start (130).
+// HOST: they roll; each one's state is sent when it changes, and to a joiner at its world-ready (EventCue 127 which
+// and its flags, 128 its turn, 129 its place). The log's vanish and return are sent as they start (130).
 // CLIENT: those rolls are refused; each copy takes the host's state, and the log plays the host's vanish. Game thread.
 
 #pragma once
@@ -32,6 +32,9 @@ void Tick();
 
 // A client's receiver: true when the cue was this lane's.
 bool OnCue(const coop::net::EventCuePayload& p);
+
+// HOST: the state, to a joiner at its world-ready (coop/session/connect_replay). Game thread.
+void SendJoin(int slot);
 
 void OnDisconnect();
 
