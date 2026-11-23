@@ -57,11 +57,11 @@ constexpr int kTagDamage = 0x484F4C44;  // 'HOLD'
 constexpr const wchar_t* kGuard = L"kavotia_C";
 constexpr const wchar_t* kShot = L"kavotiaShot_C";
 constexpr float kSenseRange = 5000.f, kVisitRange = 500.f;
-constexpr uint64_t kRoomMs = 5000, kLiveStaleMs = 15000;
+constexpr uint64_t kStaleEndMs = 15000;   // CLIENT: how long, from a join's none, its save's controllers are ended
+constexpr uint64_t kDisarmCheckMs = 2000;  // HOST: while the trace hook is armed, how often its guards are counted
 
 std::atomic<N::Session*> g_session{nullptr};
 bool g_box = false, g_sense = false, g_damage = false, g_hooked = false, g_traceHooked = false, g_traceArmed = false;
-uint64_t g_nextArm = 0;
 uint32_t g_cleared = 0, g_hits = 0;
 void* g_igetis = nullptr;     // HOST: the Igetis whose montage's start is watched, and its `anim` last seen
 bool g_igetisAnim = false;
@@ -69,8 +69,9 @@ std::vector<void*> g_shots;   // HOST: shots made this tick, read on the next (t
 constexpr float kBodyRadius = 70.f, kShotRange = 50000.f;
 ue_wrap::FRotator g_shotRot{};   // CLIENT: the next shot's rotation, which its 119 brings before its place
 uint32_t g_handed = 0, g_visits = 0, g_shotsSent = 0, g_shotsMade = 0, g_refused = 0;
-uint64_t g_nextRoom = 0;
-uint64_t g_connectedAt = 0, g_liveAt = 0;   // CLIENT: this session's first connected tick; the host's last 118
+std::vector<void*> g_newRooms;   // HOST: rooms born this tick, sent on the next (their place is set at their finish)
+bool g_guardBorn = false;        // HOST: a guard was born: the trace hook arms
+uint64_t g_endStaleUntil = 0;    // CLIENT: a join said the host has no controller: its own end until then
 
 bool IsClient() {
     N::Session* const s = g_session.load(std::memory_order_acquire);
@@ -204,10 +205,12 @@ void DeliverCrossing(void* shot, const ue_wrap::FVector& a, const ue_wrap::FRota
 
 // HOST: a guard fired; the shot goes to the clients, rotation first.
 void OnBeginDeferred(void* /*context*/, void* srcObj, void* spawned) {
-    if (IsClient() || !spawned || !srcObj || R::ClassNameOf(srcObj) != kGuard ||
-        R::ClassNameOf(spawned) != kShot)
-        return;
-    g_shots.push_back(spawned);
+    if (IsClient() || !spawned) return;
+    const auto& name = R::NameOf(R::ClassOf(spawned));
+    if (R::NameEquals(name, kGuard)) g_guardBorn = true;            // the patrol's guard: the trace hook arms
+    else if (R::NameEquals(name, kRoom)) g_newRooms.push_back(spawned);
+    else if (srcObj && R::NameEquals(name, kShot) && R::NameEquals(R::NameOf(R::ClassOf(srcObj)), kGuard))
+        g_shots.push_back(spawned);
 }
 
 // HOST: the Igetis's `anim` turns true as its montage starts (the walk to the device, the capsule's take and drop).
@@ -311,30 +314,50 @@ void MakeShot(const N::EventCuePayload& p) {
                 g_refused);
 }
 
-void SendRooms(N::Session& s) {
-    void* rooms[4];
-    const int32_t n = ue_wrap::world_instances::Find(kRoom, rooms, 4);
-    for (int32_t i = 0; i < n; ++i) {
-        ue_wrap::FVector at{};
-        if (!rooms[i] || !R::IsLive(rooms[i]) || !ue_wrap::engine::TryGetActorLocation(rooms[i], at)) continue;
-        N::EventCuePayload p{};
-        p.cueId = kCueHoleRoom;
-        p.x = at.X;
-        p.y = at.Y;
-        p.z = at.Z;
-        s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+// HOST: a room's place, to every client (`slot` -1) or to one.
+bool SendRoom(N::Session& s, void* room, int slot) {
+    ue_wrap::FVector at{};
+    if (!room || !R::IsLive(room) || !ue_wrap::engine::TryGetActorLocation(room, at)) return false;
+    N::EventCuePayload p{};
+    p.cueId = kCueHoleRoom;
+    p.x = at.X;
+    p.y = at.Y;
+    p.z = at.Z;
+    if (slot < 0) s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    else s.SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+    return true;
+}
+
+// HOST: the rooms born last tick, now placed.
+void SendNewRooms(N::Session& s) {
+    for (void* room : g_newRooms)
+        if (SendRoom(s, room, -1)) UE_LOGI("hole: the host's Hole's bottom room is born -- its place sent");
+    g_newRooms.clear();
+}
+
+// HOST: the trace hook arms at a guard's birth and disarms once none stands.
+void ArmTrace() {
+    static uint64_t s_nextCheck = 0;
+    const uint64_t now = ::GetTickCount64();
+    bool want = g_traceArmed;
+    if (g_guardBorn) {
+        g_guardBorn = false;
+        want = true;
+    } else if (g_traceArmed && now >= s_nextCheck) {
+        s_nextCheck = now + kDisarmCheckMs;
+        void* one[1];
+        want = ue_wrap::world_instances::Find(kGuard, one, 1) > 0;
     }
-    void* ctl[4];
-    if (ue_wrap::world_instances::Find(kController, ctl, 4) > 0 && ctl[0] && R::IsLive(ctl[0])) {
-        N::EventCuePayload p{};
-        p.cueId = kCueHoleLive;
-        s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    if (want != g_traceArmed &&
+        ue_wrap::ufunction_hook::SetArmed(ue_wrap::facts::Resolve(kRowLineTrace).Fn(), &OnLineTracePost, want)) {
+        g_traceArmed = want;
+        UE_LOGI("hole: a guard's trace hook %s", want ? "armed (a guard is born)" : "disarmed (no guard stands)");
     }
 }
 
-// CLIENT: a controller this machine loaded from its save outlives the host's, which ended; it ends too.
+// CLIENT: a controller this machine loaded from its save, when the host said at the join it has none, ends.
 void EndStaleControllers(uint64_t now) {
-    if (now - g_connectedAt < kLiveStaleMs || now - g_liveAt < kLiveStaleMs) return;
+    if (now >= g_endStaleUntil) return;
     void* ctl[4];
     const int32_t n = ue_wrap::world_instances::Find(kController, ctl, 4);
     for (int32_t i = 0; i < n; ++i)
@@ -384,30 +407,31 @@ void Tick() {
                                                                   &OnLineTracePost, /*armed=*/false)))
         UE_LOGI("hole: a guard's trace is hooked, disarmed");
     // Armed while guards stand: the trace is the game's most common, and the hook reads its caller.
-    if (g_traceHooked && host && ::GetTickCount64() >= g_nextArm) {
-        g_nextArm = ::GetTickCount64() + 1000;
-        void* one[1];
-        const bool want = ue_wrap::world_instances::Find(kGuard, one, 1) > 0;
-        if (want != g_traceArmed &&
-            ue_wrap::ufunction_hook::SetArmed(ue_wrap::facts::Resolve(kRowLineTrace).Fn(), &OnLineTracePost, want)) {
-            g_traceArmed = want;
-            UE_LOGI("hole: a guard's trace hook %s", want ? "armed" : "disarmed");
-        }
-    }
+    if (g_traceHooked && host) ArmTrace();
     if (!s->connected()) return;
     if (host) {
         SendShots();
         WatchIgetis();
-    }
-    const uint64_t now = ::GetTickCount64();
-    if (now < g_nextRoom) return;
-    g_nextRoom = now + kRoomMs;
-    if (s->role() == N::Role::Host) {
-        SendRooms(*s);
+        SendNewRooms(*s);
         return;
     }
-    if (!g_connectedAt) g_connectedAt = now;
-    EndStaleControllers(now);
+    if (g_endStaleUntil) EndStaleControllers(::GetTickCount64());
+}
+
+void SendJoin(int slot) {
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != N::Role::Host) return;
+    void* rooms[4];
+    const int32_t n = ue_wrap::world_instances::Find(kRoom, rooms, 4);
+    for (int32_t i = 0; i < n; ++i) SendRoom(*s, rooms[i], slot);
+    void* ctl[4];
+    const bool live = ue_wrap::world_instances::Find(kController, ctl, 4) > 0 && ctl[0] && R::IsLive(ctl[0]);
+    N::EventCuePayload p{};
+    p.cueId = kCueHoleLive;
+    p.x = live ? 1.f : 0.f;
+    s->SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+    UE_LOGI("hole: slot %d's world is ready -- %d room(s) and the controller (%s) sent to it", slot, n,
+            live ? "standing" : "none");
 }
 
 bool OnCue(const N::EventCuePayload& p) {
@@ -415,7 +439,7 @@ bool OnCue(const N::EventCuePayload& p) {
         p.cueId != kCueIgetisPlay)
         return false;
     if (!IsClient()) return true;
-    if (p.cueId == kCueHoleLive) g_liveAt = ::GetTickCount64();
+    if (p.cueId == kCueHoleLive) g_endStaleUntil = p.x > 0.5f ? 0 : ::GetTickCount64() + kStaleEndMs;
     else if (p.cueId == kCueShotRot) g_shotRot = ue_wrap::FRotator{p.x, p.y, p.z};
     else if (p.cueId == kCueShotAt) MakeShot(p);
     else if (p.cueId == kCueIgetisPlay) PlayIgetis();
@@ -430,7 +454,9 @@ void OnDisconnect() {
     if (g_traceHooked && g_traceArmed)
         ue_wrap::ufunction_hook::SetArmed(ue_wrap::facts::Resolve(kRowLineTrace).Fn(), &OnLineTracePost, false);
     g_traceArmed = false;
-    g_nextRoom = g_connectedAt = g_liveAt = 0;
+    g_newRooms.clear();
+    g_guardBorn = false;
+    g_endStaleUntil = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
 
