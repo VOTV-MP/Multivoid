@@ -164,6 +164,8 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"superEgger_C",               // super egger
     L"igetis_C",                   // igetis
     L"firetank_C",                 // firetank (APawn -- transform-only mirror is layout-agnostic)
+    L"HoelUfo_C",                  // the super fog's "Thunder Wisp", minted by superFog_C
+    L"ufo_trifo_C",                // the TriFO, minted by the signal screen (analogDScreenTest_C) at the trifo signal
     L"piramidSubpawn_C",           // pyramid sub-pawn (APawn; the SANDBOX piramidTest_C child, not the event)
     L"piramid2_C",                 // walking pyramid event actor (a plain AActor; brain suppression and the
                                    // gather relay: coop/creatures/piramid_sync)
