@@ -39,13 +39,13 @@ UE_FACT_FN(kRowSphere, "gray_sync", L"grayTest_C",
            L"BndEvt__grayTest_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
            Declared);
 constexpr int kTagSphere = 0x47525953;   // 'GRYS'
-constexpr uint64_t kPollMs = 500, kRepeatMs = 5000;
+constexpr uint64_t kPollMs = 500;
 
 std::atomic<N::Session*> g_session{nullptr};
 bool g_watched = false;
 void* g_served = nullptr;   // HOST: the controller served while its Grays stand, so its getMainPlayer watch is live
 int g_zapped = -1;          // HOST: the ATV's zapped as last sent
-uint64_t g_nextPoll = 0, g_lastSent = 0;
+uint64_t g_nextPoll = 0;
 
 bool IsRole(N::Role r) {
     N::Session* const s = g_session.load(std::memory_order_acquire);
@@ -117,15 +117,13 @@ void PollZapped(N::Session& s) {
     uint8_t* const bit = ZappedBit(mask);
     if (!bit) return;
     const int zapped = (*bit & mask) ? 1 : 0;
-    const uint64_t now = ::GetTickCount64();
-    if (zapped == g_zapped && !(zapped && now - g_lastSent >= kRepeatMs)) return;
+    if (zapped == g_zapped) return;
     N::EventCuePayload p{};
     p.cueId = kCueAtvZapped;
     p.x = static_cast<float>(zapped);
     s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
-    if (zapped != g_zapped) UE_LOGI("gray: the host's ATV is %s -- sent", zapped ? "zapped" : "free again");
+    UE_LOGI("gray: the host's ATV is %s -- sent", zapped ? "zapped" : "free again");
     g_zapped = zapped;
-    g_lastSent = now;
 }
 
 }  // namespace
@@ -142,6 +140,18 @@ void Tick() {
     g_nextPoll = now + kPollMs;
     PollZapped(*s);
     KeepServed();
+}
+
+void SendJoin(int slot) {
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    uint8_t mask = 0;
+    uint8_t* const bit = s && s->role() == N::Role::Host ? ZappedBit(mask) : nullptr;
+    if (!bit || !(*bit & mask)) return;   // a free ATV is every world's default
+    N::EventCuePayload p{};
+    p.cueId = kCueAtvZapped;
+    p.x = 1.f;
+    s->SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+    UE_LOGI("gray: slot %d's world is ready -- the zapped ATV sent to it", slot);
 }
 
 bool OnCue(const N::EventCuePayload& p) {
@@ -161,7 +171,7 @@ void OnDisconnect() {
     if (g_served) SP::Unserve(g_served);
     g_served = nullptr;
     g_zapped = -1;
-    g_nextPoll = g_lastSent = 0;
+    g_nextPoll = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
 

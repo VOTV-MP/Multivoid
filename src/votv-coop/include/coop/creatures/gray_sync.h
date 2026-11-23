@@ -7,7 +7,7 @@
 // drove on.
 // HOST: while Grays stand, their controller is served a client (coop/creatures/served_player, the main-player seam,
 // its watch live before a touch); a Gray taken by a client's body serves that client the punch, delivered to it
-// (coop/creatures/creature_hit), and one taken by the host's body is the host's. The ATV's zapped is sent as it changes and every 5 s while set (EventCue 124, x = 1 or 0). CLIENT: its ATV copy takes it.
+// (coop/creatures/creature_hit), and one taken by the host's body is the host's. The ATV's zapped is sent as it changes, and to a joiner while set (EventCue 124, x = 1 or 0). CLIENT: its ATV copy takes it.
 // Game thread.
 
 #pragma once
@@ -31,6 +31,9 @@ void Tick();
 
 // A client's receiver: true when the cue was this lane's.
 bool OnCue(const coop::net::EventCuePayload& p);
+
+// HOST: a zapped ATV, to a joiner at its world-ready (coop/session/connect_replay). Game thread.
+void SendJoin(int slot);
 
 void OnDisconnect();
 
