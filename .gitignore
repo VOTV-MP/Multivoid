@@ -276,6 +276,7 @@ docs/**
 !docs/props.md
 !docs/prop-coasting.md
 !docs/props-buckets.md
+!docs/props-switches.md
 !docs/send-path.md
 !docs/signals.md
 !docs/testing.md
