@@ -164,6 +164,7 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"superEgger_C",               // super egger
     L"igetis_C",                   // igetis
     L"firetank_C",                 // firetank (APawn -- transform-only mirror is layout-agnostic)
+    L"theBody_C",                  // The Body: the gamemode's tickerBody mints it at a random map point
     L"piramidSubpawn_C",           // pyramid sub-pawn (APawn; the SANDBOX piramidTest_C child, not the event)
     L"piramid2_C",                 // walking pyramid event actor (a plain AActor; brain suppression and the
                                    // gather relay: coop/creatures/piramid_sync)

@@ -159,9 +159,11 @@ struct ExSpawnSource {
 constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C", nullptr};
 // The gamemode mints many classes besides these, and most of its other spawners are not refused on a client yet,
 // so its source is narrowed to the outputs whose client roll the spawn authority refuses: the night roll's
-// (mainGamemode_C::CustomEvent_5, an Octa or a night egg) and the four ambient UFO timers' (coop/world/ufo_sync).
-constexpr const wchar_t* kGamemodeOutputs[] = {L"geomOcta_C", L"eg_C", L"ufo_ballfo_C", L"ufo_boofo_spawn1_C",
-                                               L"ufo_pillfo_C", L"ufo_joel_C", nullptr};
+// (mainGamemode_C::CustomEvent_5, an Octa or a night egg), the four ambient UFO timers' (coop/world/ufo_sync), and
+// The Body's and the Mushroom Duende's timers (tickerBody, tickerFunguy).
+constexpr const wchar_t* kGamemodeOutputs[] = {L"geomOcta_C",   L"eg_C",       L"ufo_ballfo_C", L"ufo_boofo_spawn1_C",
+                                               L"ufo_pillfo_C", L"ufo_joel_C", L"theBody_C",    L"npc_funguy_C",
+                                               nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain

@@ -110,6 +110,9 @@ UE_FACT_FN(kRowUfoBooGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_boo",
 UE_FACT_FN(kRowUfoPillGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_pill", Declared);
 UE_FACT_FN(kRowUfoJoelGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_joel", Declared);
 UE_FACT_FN(kRowUfoMidasGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_midas", Declared);
+UE_FACT_FN(kRowTickerBodyGamemode, "spawn_authority", L"mainGamemode_C", L"tickerBody", Declared);
+UE_FACT_FN(kRowTickerFunguyGamemode, "spawn_authority", L"mainGamemode_C", L"tickerFunguy", Declared);
+UE_FACT_FN(kRowGenImpostorPropsMaster, "spawn_authority", L"impostorPropsMaster_C", L"gen", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries.
 struct Row {
@@ -219,6 +222,13 @@ constexpr Row kRows[] = {
     {&kRowUfoPillGamemode,                "gamemode.ufo_pill"},
     {&kRowUfoJoelGamemode,                "gamemode.ufo_joel"},
     {&kRowUfoMidasGamemode,               "gamemode.ufo_midas"},
+    // The Body and the Mushroom Duende: two more timers of the gamemode, each rolling a random map point, minting there
+    // and re-arming itself. The host's cross by the source-gated catch.
+    {&kRowTickerBodyGamemode,             "gamemode.tickerBody"},
+    {&kRowTickerFunguyGamemode,           "gamemode.tickerFunguy"},
+    // The Mimic: the level's impostor master mints a prop_impostor_C at a random map point on its looping timer's
+    // handler. The host's crosses as a prop.
+    {&kRowGenImpostorPropsMaster,         "impostorPropsMaster.gen"},
 
     // The ambient creatures and fixtures, the host's: the deer and walking tree roll absolute map points and the npc lane
     // mirrors what the host rolled; the hexahive's field of dirt holes and the beehive's branches cross on the fixture lane.
