@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/world/ambient_births.h"
 #include "coop/world/anomaly_ask.h"
 #include "coop/world/world_actor_sync.h"
 
@@ -31,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::hexpillar_sync {
 namespace {
@@ -48,10 +50,10 @@ UE_FACT_FN(kRowReachedByExplosion, "hexpillar_sync", L"hexpillar_C", L"reachedBy
 constexpr const wchar_t* kStoneClass = L"prop_hexpillar_C";
 constexpr int kTagDig = 0x48504447;     // 'HPDG'
 constexpr int kTagBlast = 0x48504258;   // 'HPBX'
-constexpr int kCap = 1024;              // pillars read a pass
+constexpr int kCap = 1024;              // pillars a client matches a cue's place against
 constexpr uint64_t kPassMs = 500;
-constexpr uint64_t kRefreshMs = 10000;
 constexpr int kSendsPerPass = 48;
+constexpr uint64_t kPendingMs = 30000;  // CLIENT: a rise whose mirror has not come yet waits this long
 constexpr float kRiseStep = 0.02f;
 constexpr float kDigReachCm = 2000.f;   // the sender's body to the stone
 constexpr float kStoneNearCm = 300.f;   // the asked place to the host's stone
@@ -59,13 +61,18 @@ constexpr float kMatchCm = 100.f;       // a cue's place to a client's mirror
 
 std::atomic<N::Session*> g_session{nullptr};
 bool g_watched = false;
-uint64_t g_nextPass = 0, g_nextRefresh = 0;
-std::unordered_map<void*, float> g_sentRise;   // HOST: the `a` last sent per pillar
-bool g_refreshing = false;
+uint64_t g_nextPass = 0;
+std::unordered_map<void*, float> g_sentRise;   // HOST: every pillar born (the birth hub), and the `a` last sent
+std::vector<void*> g_join[N::kMaxPeers];       // HOST: a joiner's pillars, sent in batches
 void* g_pillars[kCap];
 ue_wrap::FVector g_at{};                       // CLIENT: the place 131 named
 bool g_haveAt = false;
+struct Pending { ue_wrap::FVector at; float a; uint64_t until; };
+std::vector<Pending> g_pending;                // CLIENT: rises whose mirror has not come yet
+std::vector<coop::ambient_births::Event> g_births;
 int g_ended = 0;
+int32_t g_riseOff = -1;                        // `a`'s offset, resolved once per class object
+void* g_riseCls = nullptr;
 
 N::Session* Session() { return g_session.load(std::memory_order_acquire); }
 bool IsClient() {
@@ -78,28 +85,47 @@ float Dist2(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return dx * dx + dy * dy + dz * dz;
 }
 
+int32_t RiseOffset(void* pillar) {
+    void* const cls = R::ClassOf(pillar);
+    if (cls != g_riseCls) {
+        g_riseCls = cls;
+        g_riseOff = R::FindPropertyOffset(cls, L"a");
+    }
+    return g_riseOff;
+}
+
 bool ReadRise(void* pillar, float& out) {
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(pillar), L"a");
+    const int32_t off = RiseOffset(pillar);
     if (off < 0) return false;
     std::memcpy(&out, static_cast<const uint8_t*>(pillar) + off, sizeof(out));
     return std::isfinite(out);
 }
 
 void ApplyRise(void* pillar, float a) {
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(pillar), L"a");
+    const int32_t off = RiseOffset(pillar);
     if (off < 0) return;
     std::memcpy(static_cast<uint8_t*>(pillar) + off, &a, sizeof(a));
     ue_wrap::ParamFrame pf(R::FindDispatchFunction(R::ClassOf(pillar), L"upd", nullptr));
     if (pf.valid()) ue_wrap::Call(pillar, pf);
 }
 
-void Send(N::Session& s, uint32_t cue, float x, float y, float z) {
+// To every client (`slot` -1) or to one.
+void Send(N::Session& s, uint32_t cue, float x, float y, float z, int slot = -1) {
     N::EventCuePayload p{};
     p.cueId = cue;
     p.x = x;
     p.y = y;
     p.z = z;
-    s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    if (slot < 0) s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    else s.SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+}
+
+bool SendPillar(N::Session& s, void* pillar, float a, int slot) {
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(pillar, at)) return false;
+    Send(s, kCuePillarAt, at.X, at.Y, at.Z, slot);
+    Send(s, kCuePillarRise, a, 0.f, 0.f, slot);
+    return true;
 }
 
 // CLIENT: a dirt hole's dig of the stone is the host's to run.
@@ -130,52 +156,96 @@ void Watch() {
     }
 }
 
-void HostPass(N::Session& s, uint64_t now) {
-    const int n = ue_wrap::world_instances::Find(kPillarClass, g_pillars, kCap);
-    if (now >= g_nextRefresh) {
-        g_nextRefresh = now + kRefreshMs;
-        g_refreshing = true;
+// HOST: the pillars the birth hub announces (the save's at its seed, every later one at its birth) are enrolled once.
+void HostTakeBirths() {
+    g_births.clear();
+    coop::ambient_births::Drain(coop::ambient_births::Bit(coop::ambient_births::Class::Pillar), g_births);
+    int enrolled = 0;
+    for (const auto& e : g_births) {
+        if (e.kind != coop::ambient_births::Kind::Birth || !R::IsLiveByIndex(e.obj, e.index)) continue;
+        if (WA::HostEnrollExSpawn(e.obj) != 0) ++enrolled;
+        g_sentRise.emplace(e.obj, std::nanf(""));   // not sent yet (a new pillar's `a` starts below 0)
     }
-    int sends = 0, enrolled = 0;
-    bool done = true;
-    for (int k = 0; k < n; ++k) {
-        void* const p = g_pillars[k];
-        if (!p || !R::IsLive(p)) continue;
-        if (WA::HostEnrollExSpawn(p) != 0 && !g_sentRise.count(p)) ++enrolled;
-        float a = 0.f;
-        if (!ReadRise(p, a)) continue;
-        auto it = g_sentRise.find(p);
-        const bool moved = it == g_sentRise.end() || std::fabs(a - it->second) >= kRiseStep ||
-                           (a >= 1.f && it->second < 1.f);
-        if (!moved && !g_refreshing) continue;
-        if (sends >= kSendsPerPass) {
-            done = false;
-            break;
-        }
-        ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(p, at)) continue;
-        Send(s, kCuePillarAt, at.X, at.Y, at.Z);
-        Send(s, kCuePillarRise, a, 0.f, 0.f);
-        g_sentRise[p] = a;
-        ++sends;
-    }
-    if (done) g_refreshing = false;
-    if (enrolled) UE_LOGI("hexpillar: %d pillar(s) enrolled as the host's (%d standing)", enrolled, n);
-    // Forget the pillars that ended.
-    for (auto it = g_sentRise.begin(); it != g_sentRise.end();)
-        it = R::IsLive(it->first) ? std::next(it) : g_sentRise.erase(it);
+    if (enrolled) UE_LOGI("hexpillar: %d pillar(s) born and enrolled as the host's (%zu standing)", enrolled, g_sentRise.size());
 }
 
-// CLIENT: its own pillars (a save's, or one born before a refusal) are ended; the host's mirrors stand.
-void ClientSweep() {
-    if (WA::IsMaterializingMirror()) return;
-    const int n = ue_wrap::world_instances::Find(kPillarClass, g_pillars, kCap);
-    for (int k = 0; k < n; ++k) {
-        void* const p = g_pillars[k];
-        if (!p || !R::IsLive(p) || WA::IsMirroredActor(p)) continue;
-        if (E::DestroyActor(p) && (++g_ended == 1 || (g_ended & (g_ended - 1)) == 0))
-            UE_LOGI("hexpillar: this client's own pillar ended -- the host's cross (%d so far)", g_ended);
+// HOST: a pillar still rising is sent as its `a` moves; one at full height is done.
+void HostPass(N::Session& s) {
+    int sends = 0;
+    for (auto it = g_sentRise.begin(); it != g_sentRise.end();) {
+        void* const p = it->first;
+        if (!R::IsLive(p)) {
+            it = g_sentRise.erase(it);
+            continue;
+        }
+        float a = 0.f;
+        const bool done = it->second >= 1.f;
+        if (!done && sends < kSendsPerPass && ReadRise(p, a) &&
+            (std::isnan(it->second) || std::fabs(a - it->second) >= kRiseStep || (a >= 1.f && it->second < 1.f)) &&
+            SendPillar(s, p, a, -1)) {
+            it->second = a;
+            ++sends;
+        }
+        ++it;
     }
+    // A joiner's pillars, in batches after the rises.
+    for (int slot = 1; slot < N::kMaxPeers && sends < kSendsPerPass; ++slot) {
+        auto& q = g_join[slot];
+        while (!q.empty() && sends < kSendsPerPass) {
+            void* const p = q.back();
+            q.pop_back();
+            float a = 0.f;
+            if (R::IsLive(p) && ReadRise(p, a) && SendPillar(s, p, a, slot)) ++sends;
+        }
+    }
+}
+
+// CLIENT: its own pillars (a save's, or one born before a refusal) end at their birth; the host's mirrors stand.
+void ClientTakeBirths() {
+    if (WA::IsMaterializingMirror()) return;
+    g_births.clear();
+    coop::ambient_births::Drain(coop::ambient_births::Bit(coop::ambient_births::Class::Pillar), g_births);
+    for (const auto& e : g_births) {
+        if (e.kind != coop::ambient_births::Kind::Birth || !R::IsLiveByIndex(e.obj, e.index) ||
+            WA::IsMirroredActor(e.obj))
+            continue;
+        if (E::DestroyActor(e.obj) && (++g_ended == 1 || (g_ended & (g_ended - 1)) == 0))
+            UE_LOGI("hexpillar: this client's own pillar ended at its birth -- the host's cross (%d so far)", g_ended);
+    }
+}
+
+// CLIENT: the mirror nearest the place, within a metre.
+void* MirrorAt(const ue_wrap::FVector& where) {
+    const int n = ue_wrap::world_instances::Find(kPillarClass, g_pillars, kCap);
+    void* best = nullptr;
+    float bestD = kMatchCm * kMatchCm;
+    for (int k = 0; k < n; ++k) {
+        void* const q = g_pillars[k];
+        ue_wrap::FVector at{};
+        if (!q || !R::IsLive(q) || !WA::IsMirroredActor(q) || !E::TryGetActorLocation(q, at)) continue;
+        const float d = Dist2(at, where);
+        if (d < bestD) {
+            bestD = d;
+            best = q;
+        }
+    }
+    return best;
+}
+
+// CLIENT: a rise that came before its mirror (a joiner's, ahead of the world-actor snapshot) is applied once it stands.
+void ClientPending(uint64_t now) {
+    size_t keep = 0;
+    for (size_t i = 0; i < g_pending.size(); ++i) {
+        const Pending pd = g_pending[i];
+        if (now > pd.until) continue;
+        if (void* const m = MirrorAt(pd.at)) {
+            ApplyRise(m, pd.a);
+            UE_LOGI("hexpillar: a rise the host sent before its mirror (%.2f) is drawn now", pd.a);
+        } else {
+            g_pending[keep++] = pd;
+        }
+    }
+    g_pending.resize(keep);
 }
 
 }  // namespace
@@ -186,11 +256,23 @@ void Tick() {
     N::Session* const s = Session();
     if (!s || !s->running()) return;
     Watch();
+    const bool host = s->role() == N::Role::Host;
+    if (host) HostTakeBirths();
+    else ClientTakeBirths();
     const uint64_t now = ::GetTickCount64();
-    if (now < g_nextPass) return;
+    if (now < g_nextPass || !s->connected()) return;
     g_nextPass = now + kPassMs;
-    if (s->role() == N::Role::Host) HostPass(*s, now);
-    else if (s->connected()) ClientSweep();
+    if (host) HostPass(*s);
+    else if (!g_pending.empty()) ClientPending(now);
+}
+
+void SendJoin(int slot) {
+    if (slot < 1 || slot >= N::kMaxPeers || !Session() || Session()->role() != N::Role::Host) return;
+    auto& q = g_join[slot];
+    q.clear();
+    for (const auto& kv : g_sentRise)
+        if (R::IsLive(kv.first)) q.push_back(kv.first);
+    if (!q.empty()) UE_LOGI("hexpillar: slot %d's world is ready -- its %zu pillar(s)' rise queued", slot, q.size());
 }
 
 bool OnCue(const N::EventCuePayload& p) {
@@ -203,20 +285,15 @@ bool OnCue(const N::EventCuePayload& p) {
     }
     if (!g_haveAt) return true;
     g_haveAt = false;
-    const int n = ue_wrap::world_instances::Find(kPillarClass, g_pillars, kCap);
-    void* best = nullptr;
-    float bestD = kMatchCm * kMatchCm;
-    for (int k = 0; k < n; ++k) {
-        void* const q = g_pillars[k];
-        ue_wrap::FVector at{};
-        if (!q || !R::IsLive(q) || !WA::IsMirroredActor(q) || !E::TryGetActorLocation(q, at)) continue;
-        const float d = Dist2(at, g_at);
-        if (d < bestD) {
-            bestD = d;
-            best = q;
-        }
+    const float a = std::fmin(std::fmax(p.x, -1.f), 1.f);
+    static int s_drawn = 0;
+    if (void* const m = MirrorAt(g_at)) {
+        ApplyRise(m, a);
+        if (++s_drawn == 1 || (s_drawn & (s_drawn - 1)) == 0)
+            UE_LOGI("hexpillar: the host's rise (%.2f) drawn on its mirror (%d so far)", a, s_drawn);
+    } else {
+        g_pending.push_back(Pending{g_at, a, ::GetTickCount64() + kPendingMs});
     }
-    if (best) ApplyRise(best, std::fmin(std::fmax(p.x, 0.f), 1.f));
     return true;
 }
 
@@ -254,9 +331,11 @@ void OnDigAsk(uint8_t slot, float x, float y, float z) {
 }
 
 void OnDisconnect() {
-    g_nextPass = g_nextRefresh = 0;
+    g_nextPass = 0;
     g_sentRise.clear();
-    g_refreshing = g_haveAt = false;
+    for (auto& q : g_join) q.clear();
+    g_pending.clear();
+    g_haveAt = false;
     g_ended = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
