@@ -17,8 +17,12 @@ namespace DS = coop::element::death_seam;
 namespace OI = ue_wrap::object_index;
 namespace R = ue_wrap::reflection;
 
-constexpr size_t kClasses = 4;
-constexpr const wchar_t* kNames[kClasses] = {L"walkingTree_C", L"susDirtHole_C", L"beehiveBranch_C", L"prop_waspnest_bee_C"};
+constexpr size_t kClasses = 11;
+constexpr const wchar_t* kNames[kClasses] = {L"walkingTree_C",   L"susDirtHole_C",        L"beehiveBranch_C",
+                                             L"prop_waspnest_bee_C", L"hexpillar_C",      L"centipedeHead_C",
+                                             L"wolfgangJr_C",    L"parentWolfgang_C",     L"eggyWolfgang_C",
+                                             L"centipedeSegmet_C", L"centipedeSegmet_jr_C"};
+constexpr size_t kEndClasses = 4;   // the classes whose deaths are asked for: the first four
 
 // A level load brings the hexahive's field of holes in one go; a queue this size holds every ambient actor of a world.
 constexpr size_t kCap = 4096;
@@ -27,7 +31,7 @@ bool g_active = false;
 bool g_listening = false;
 bool g_fullSaid = false;
 
-// The four class objects, by name. A pointer is dropped when the index unlists its class (the listing id moves). A null
+// The class objects, by name. A pointer is dropped when the index unlists its class (the listing id moves). A null
 // one is asked again when the index's class set has moved since the last ask, and once per pump tick besides: a class
 // answers null while it loads and its finishing moves no number (object_index.h:55-58). Never per birth. The residual:
 // a birth in the very tick its class finished loading is missed; the class loads with the spawner that hard-references it.
@@ -102,12 +106,12 @@ void OnEnd(const DS::ActorEnd& end) {
 // never again (the seam's table has no unsubscribe).
 void SubscribeEnds() {
     static bool s_all = false;
-    static bool s_one[kClasses] = {};
+    static bool s_one[kEndClasses] = {};
     if (s_all || !DS::Install()) return;
-    const DS::ClassHandler handlers[kClasses] = {&OnEnd<Class::Tree>, &OnEnd<Class::Hole>, &OnEnd<Class::Branch>,
-                                                 &OnEnd<Class::Nest>};
+    const DS::ClassHandler handlers[kEndClasses] = {&OnEnd<Class::Tree>, &OnEnd<Class::Hole>, &OnEnd<Class::Branch>,
+                                                    &OnEnd<Class::Nest>};
     bool all = true;
-    for (size_t i = 0; i < kClasses; ++i) {
+    for (size_t i = 0; i < kEndClasses; ++i) {
         if (!s_one[i]) s_one[i] = DS::SubscribeClass(kNames[i], handlers[i]);
         all = all && s_one[i];
     }

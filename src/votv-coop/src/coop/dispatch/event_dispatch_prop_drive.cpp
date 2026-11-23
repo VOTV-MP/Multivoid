@@ -47,6 +47,7 @@
 #include "coop/interactables/garbage_bin_sync.h"
 #include "coop/props/container_break.h"
 #include "coop/world/spill_sync.h"
+#include "coop/world/anomaly_ask.h"
 #include "coop/world/sus_hole_intent.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/atv.h"   // ClampCharge: a host state's battery
@@ -685,6 +686,18 @@ bool HandlePropDriveEvent(net::Session& session,
         net::SusHoleIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         ::coop::sus_hole_intent::OnIntent(session, msg.senderPeerSlot, p);
+        break;
+    }
+    case net::ReliableKind::AnomalyAsk: {
+        // CLIENT->HOST. The op, the place and the sender's reach are the lane's to judge (coop::anomaly_ask).
+        if (session.role() != net::Role::Host || msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen != sizeof(net::AnomalyAskPayload)) {
+            UE_LOGW("event_feed: a malformed or misdirected AnomalyAsk from slot %d -- dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::AnomalyAskPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        ::coop::anomaly_ask::OnAsk(session, static_cast<uint8_t>(msg.senderPeerSlot), p);
         break;
     }
     case net::ReliableKind::WalkerSeen: {

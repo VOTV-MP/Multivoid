@@ -110,6 +110,7 @@ UE_FACT_FN(kRowUfoBooGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_boo",
 UE_FACT_FN(kRowUfoPillGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_pill", Declared);
 UE_FACT_FN(kRowUfoJoelGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_joel", Declared);
 UE_FACT_FN(kRowUfoMidasGamemode, "spawn_authority", L"mainGamemode_C", L"ufo_midas", Declared);
+UE_FACT_FN(kRowReceiveTickBirchSpawner, "spawn_authority", L"birchSpawner_C", L"ReceiveTick", Declared);
 
 // One row: the facts row a client must not run, and the tag its refusal log carries.
 struct Row {
@@ -219,6 +220,9 @@ constexpr Row kRows[] = {
     {&kRowUfoPillGamemode,                "gamemode.ufo_pill"},
     {&kRowUfoJoelGamemode,                "gamemode.ufo_joel"},
     {&kRowUfoMidasGamemode,               "gamemode.ufo_midas"},
+    // The Killer Birch: its spawner mints the birch in its tick when its player is in its area; the host's spawner
+    // reads every player's body, and its birch crosses (coop/creatures/birch_sync).
+    {&kRowReceiveTickBirchSpawner,        "birchSpawner.ReceiveTick"},
 
     // The ambient creatures and fixtures, the host's: the deer and walking tree roll absolute map points and the npc lane
     // mirrors what the host rolled; the hexahive's field of dirt holes and the beehive's branches cross on the fixture lane.

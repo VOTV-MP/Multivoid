@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 318;
+inline constexpr uint16_t kProtocolVersion = 319;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1587,6 +1587,11 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // Client to host: this client's own game ran an Anomalous entity's act that is the host's to run (its own copy is
+    // cancelled): op 1, its dirt hole dug up the basalt pillar's buried stone at `x, y, z`; op 2, its player woke with
+    // the Christmas tree up (the Nisse). The host judges the sender's reach and runs the act on its own copy. Never
+    // relayed; not pre-world. Late join: none, an ask is an act. AnomalyAskPayload.
+    AnomalyAsk = 302,
     // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
     // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
     // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
@@ -4330,6 +4335,16 @@ static_assert(sizeof(FireflySpawnPayload) == 12, "FireflySpawnPayload must be 12
 
 // One cosmetic emitter cue (EventCue): the registry index and the world position. cueId is on the
 // wire and the registry is append-only.
+// An Anomalous entity's act a client asks of the host (AnomalyAsk): which, and where.
+inline constexpr uint8_t kAnomalyAskDigPillar = 1;   // the basalt pillar's stone, dug up at the place
+inline constexpr uint8_t kAnomalyAskNisseWoken = 2;  // the sender woke with the Christmas tree up; the place is its body
+struct AnomalyAskPayload {
+    uint8_t op;          // kAnomalyAsk*
+    uint8_t pad[3];
+    float   x, y, z;     // the place
+};
+static_assert(sizeof(AnomalyAskPayload) == 16, "AnomalyAskPayload must be 16 bytes");
+
 struct EventCuePayload {
     uint32_t cueId;  // index into event_cue_sync's cue registry (append-only)
     float x;         // world spawn location of the cue emitter

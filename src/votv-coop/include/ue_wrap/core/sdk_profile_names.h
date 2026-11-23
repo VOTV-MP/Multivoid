@@ -164,6 +164,15 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"superEgger_C",               // super egger
     L"igetis_C",                   // igetis
     L"firetank_C",                 // firetank (APawn -- transform-only mirror is layout-agnostic)
+    L"birch_C",                    // the Killer Birch, minted by birchSpawner_C (birch_sync); stamped as its spawner does
+    L"centipedeHead_C",            // Wolfgang, minted by the cave spawner's cencipede (wolfgang_sync)
+    L"wolfgangJr_C",               // her young, minted by her head
+    L"parentWolfgang_C",           // the nesting Wolfgang, minted by her nest
+    L"eggyWolfgang_C",             // her nest, minted by her head
+    L"centipedeSegmet_C",          // her body's segments, minted by her head's begin play
+    L"centipedeSegmet_jr_C",       // her young's segments
+    L"tomtenisse_C",               // a Nisse: the Christmas tree's woken and the vengeful soul mint them (nisse_sync)
+    L"hexpillar_C",                // a basalt pillar: the stone's digUp and each pillar's tick mint them (hexpillar_sync)
     L"piramidSubpawn_C",           // pyramid sub-pawn (APawn; the SANDBOX piramidTest_C child, not the event)
     L"piramid2_C",                 // walking pyramid event actor (a plain AActor; brain suppression and the
                                    // gather relay: coop/creatures/piramid_sync)
