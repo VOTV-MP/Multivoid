@@ -2,7 +2,9 @@
 //
 // The desk lamp, the floor lamp, the wall lights, the spotlight's head (alone or on its tripod) and the hot plate
 // flip their own `active` and run their `upd`, which shows the light, the glow or the heat (the hot plate's heat level,
-// its `power`, is stepped the same way and carried with its switch); the beacon sets its
+// its `power`, is stepped the same way and carried with its switch); the smoke detector sounds through `alarm`, which a
+// client's own fire check never runs (it is refused: the host's fires are the shared ones), and a client may only ask
+// it silenced; the beacon sets its
 // `isActive` through `open`, which also lights its radar point. No lane carried the switch, so each peer's press was
 // its own: a client's lamp lit on its machine alone, and a client's hot plate cooked nothing on the host. Here the
 // host watches those bodies' ends: each change of the switch goes to every client (PropSwitchState), and a joiner gets
