@@ -79,6 +79,20 @@ UE_FACT_FN(kRowMoveTentacleBall, "spawn_authority", L"tentacleBall_C", L"move", 
 UE_FACT_FN(kRowSphereHitTentacleBall, "spawn_authority", L"tentacleBall_C",
            L"BndEvt__tentacleBall_Sphere_K2Node_ComponentBoundEvent_0_ComponentHitSignature__DelegateSignature",
            Declared);
+UE_FACT_FN(kRowReceiveBeginPlayKavotia, "spawn_authority", L"kavotia_C", L"ReceiveBeginPlay", Declared);
+UE_FACT_FN(kRowReceiveTickKavotia, "spawn_authority", L"kavotia_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowSenseKavotia, "spawn_authority", L"kavotia_C", L"Sense", Declared);
+UE_FACT_FN(kRowRandChargeKavotia, "spawn_authority", L"kavotia_C", L"randCharge", Declared);
+UE_FACT_FN(kRowChargeEndKavotia, "spawn_authority", L"kavotia_C", L"Timeline_0__FinishedFunc", Declared);
+UE_FACT_FN(kRowReceiveBeginPlayIgetis, "spawn_authority", L"igetis_C", L"ReceiveBeginPlay", Declared);
+UE_FACT_FN(kRowReceiveTickIgetis, "spawn_authority", L"igetis_C", L"ReceiveTick", Declared);
+UE_FACT_FN(kRowSphereBeginOverlapIgetis, "spawn_authority", L"igetis_C",
+           L"BndEvt__igetis_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowSphere1BeginOverlapIgetis, "spawn_authority", L"igetis_C",
+           L"BndEvt__igetis_Sphere1_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
+           Declared);
+UE_FACT_FN(kRowThrowIgetis, "spawn_authority", L"igetis_C", L"throw", Declared);
 UE_FACT_FN(kRowBeginGrayEventController, "spawn_authority", L"grayEventController_C", L"begin", Declared);
 UE_FACT_FN(kRowTurnedonGrayEventController, "spawn_authority", L"grayEventController_C", L"turnedon", Declared);
 UE_FACT_FN(kRowSpawnGrayEventController, "spawn_authority", L"grayEventController_C", L"spawn", Declared);
@@ -182,6 +196,23 @@ constexpr Row kRows[] = {
     {&kRowReceiveTickTentacleBall,        "tentacleBall.ReceiveTick"},
     {&kRowMoveTentacleBall,               "tentacleBall.move"},
     {&kRowSphereHitTentacleBall,          "tentacleBall.SphereHit"},
+    // kavotia_C (rozitalHole's guards): BeginPlay arms the walk, the 1 s `sense` timer, the charge and talk timers.
+    // The tick aims the anim's shoot target at `lookingAt`; `Sense` picks a pawn from this machine's (the target, the
+    // walk to it); `randCharge` starts the charge timeline, whose finish spawns the kavotiaShot_C. The talk, step
+    // and charge sound stay -- presentation, which a refused BeginPlay leaves unarmed on the mirror.
+    {&kRowReceiveBeginPlayKavotia,        "kavotia.ReceiveBeginPlay"},
+    {&kRowReceiveTickKavotia,             "kavotia.ReceiveTick"},
+    {&kRowSenseKavotia,                   "kavotia.Sense"},
+    {&kRowRandChargeKavotia,              "kavotia.randCharge"},
+    {&kRowChargeEndKavotia,               "kavotia.Timeline_0__FinishedFunc"},
+    // igetis_C (rozitalHole's overseer, a world-actor mirror): BeginPlay and the tick drive its idle and its look;
+    // its two spheres are a player's approach, which starts its walk and `throw`, the capsule's take and its drop
+    // into the hole.
+    {&kRowReceiveBeginPlayIgetis,         "igetis.ReceiveBeginPlay"},
+    {&kRowReceiveTickIgetis,              "igetis.ReceiveTick"},
+    {&kRowSphereBeginOverlapIgetis,       "igetis.SphereBeginOverlap"},
+    {&kRowSphere1BeginOverlapIgetis,      "igetis.Sphere1BeginOverlap"},
+    {&kRowThrowIgetis,                    "igetis.throw"},
 
     // The event spawners themselves: a client's copies must never mint children. Every
     // BeginDeferred inside these graphs is bytecode-internal, so the spawn interceptor never
