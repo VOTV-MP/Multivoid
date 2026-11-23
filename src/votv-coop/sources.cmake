@@ -81,6 +81,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/woodchipper_sync.cpp
     src/coop/world/flood_sync.cpp
     src/coop/creatures/kerfur_dress_sync.cpp
+    src/coop/props/chip_scrap_sync.cpp
     src/coop/world/sound_relay.cpp
     src/coop/world/sound_catalog.cpp
     src/coop/world/sound_judge.cpp

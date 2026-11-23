@@ -135,6 +135,16 @@ both counters reach zero. A client's broom authors none of that, since the host 
 above. The host names a pile to the depletion watch as its `broomed` runs, which is how a pile a
 client's stroke empties far from the host's camera still reads as a depletion.
 
+### The shovel and the rake
+
+The shovel's dig and the rake run the pile's own `turnIntoScrap`: it mints the pile's scrap (one prop, by its chip
+type) and destroys the pile. A client's ran on its copy alone, so that client saw the scrap and the pile gone and every
+other player kept the pile. Now a client's `turnIntoScrap` is refused at the script-body gate and asked of the host
+(`ChipScrapAsk`: the pile's id, and its place for a pile with none); the host judges the sender's reach and runs it on
+its own pile, and the scrap and the pile's end cross as props (`coop/props/chip_scrap_sync`). `[V]` (the fork's entity
+probe, mode `scrap`: before, slot 1's scoop left its pile count one below the host's; after, all three peers, a late
+joiner too, lost the pile, and the host's scrap reached the client at the pile's place)
+
 ### The broom
 
 One stroke acts on whatever a 50 uu sphere at its trace's hit point overlaps, in a fixed order: it
@@ -207,6 +217,7 @@ replacement for the position key.
 | a dispenser's counters | each peer, minimum wins | the host as sent at join |
 | a broom stroke | the host | a client's stroke is what it read of its holder; the host runs the stroke with those reads, reach- and rate-checked |
 | a native a joiner has not bound | the host | only host messages move it (converts, position corrections, pose streams); the joiner runs no morph of it (`coop/props/trash_morph_gate`), and a clump of it is held still from its load spawn (`coop/props/trash_native_hold`) |
+| a shovel's or rake's scoop | the host, by intent | a client's `turnIntoScrap` is refused and sent as the pile's id and place; the host runs it, reach- and rate-checked |
 | bagging a pile | the host, by intent | a client's press is refused at the script-body gate and sent as the target's id; the host spawns the bag and destroys the target, so the prop seams carry both |
 
 ## Wire messages
@@ -216,6 +227,7 @@ replacement for the position key.
 | `GrabIntent`, `ThrowIntent` | a client to the host | the pile id; the release or a hard throw with its direction |
 | `PackTrashIntent` | a client to the host | the id of the pile or clump a client bagged, and whether the tool was a folded bag or a roll |
 | `GarbageBinState` | the host to all | a garbage container's listed props (the key of every keyed one, a chunked message) and its canHold and canCollect, when its `checkPickup` runs or a listed prop dies, and every container to a joiner, once the scan index is current |
+| `ChipScrapAsk` | a client to the host | the id and place of a pile a client's shovel or rake scooped |
 | `BroomStroke` | a client to the host | the segment, heading and velocity a broom stroke read of its holder |
 | `PropConvert` | the host to all | the atomic pile-clump convert: id, form, pose, scale, chip type, context |
 | `TrashCarryPose` (stream) | the host to all | per-id poses for client-grabbed clumps and the clumps a broom sets rolling |
@@ -271,6 +283,7 @@ the host may have moved or removed the pile since.
 | the client's grab and throw | `coop/props/trash_use_intercept`, `coop/player/puppet_carry_drive`, `coop/props/trash_clump_pose_stream`, `coop/props/active_drive` |
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | the broom | `coop/items/broom_stroke` (every stroke the host's), `coop/items/broom_push` (what it pushes), `ue_wrap/actors/broom` |
+| the shovel and the rake | `coop/props/chip_scrap_sync` |
 | bagging a pile | `coop/props/pack_trash_intent`, and the bag family's tests in `ue_wrap/actors/prop` |
 | garbage containers | `coop/interactables/garbage_sync` (the client's guards), `coop/interactables/garbage_bin_sync` (what one holds) |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
