@@ -5,7 +5,8 @@
 // ran its own walk by its own view, so each player's post stood somewhere else, and so did its radar dot.
 // HOST: its post walks; its place is sent each 0.5 s it has moved (EventCue 125) and its normal's turn with it (126,
 // x, y, z = pitch, yaw, roll). CLIENT: the post's tick is refused, and its copy takes the host's place and turn. The
-// host's walk reads the host's view alone: a post a client looks at may still move. Game thread.
+// host's walk reads the host's view alone: a post a client looks at may still move. A joiner is sent the post's place
+// at its world-ready. Game thread.
 
 #pragma once
 
@@ -29,6 +30,9 @@ void Tick();
 
 // A client's receiver: true when the cue was this lane's.
 bool OnCue(const coop::net::EventCuePayload& p);
+
+// HOST: the state, to a joiner at its world-ready (coop/session/connect_replay). Game thread.
+void SendJoin(int slot);
 
 void OnDisconnect();
 

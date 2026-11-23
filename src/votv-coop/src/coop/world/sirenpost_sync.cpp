@@ -69,13 +69,24 @@ sg::Verdict OnTickPre(const sg::Call& call) {
     return call.tag == kTag && IsClient() ? sg::Verdict::Cancel : sg::Verdict::Run;
 }
 
-void Send(N::Session& s, uint32_t cue, float x, float y, float z) {
+// To every client (`slot` -1) or to one.
+void Send(N::Session& s, uint32_t cue, float x, float y, float z, int slot = -1) {
     N::EventCuePayload p{};
     p.cueId = cue;
     p.x = x;
     p.y = y;
     p.z = z;
-    s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    if (slot < 0) s.SendReliable(N::ReliableKind::EventCue, &p, sizeof(p));
+    else s.SendReliableToSlot(slot, N::ReliableKind::EventCue, &p, sizeof(p));
+}
+
+// The post's turn, then its place; false when it stands nowhere.
+bool SendPlace(N::Session& s, void* post, const ue_wrap::FVector& at, int slot) {
+    void* const normal = Field(post, L"normal");
+    const ue_wrap::FRotator turn = normal ? E::GetComponentWorldRotation(normal) : ue_wrap::FRotator{};
+    Send(s, kCueSirenPostTurn, turn.Pitch, turn.Yaw, turn.Roll, slot);
+    Send(s, kCueSirenPostAt, at.X, at.Y, at.Z, slot);
+    return true;
 }
 
 void SendPost(N::Session& s) {
@@ -84,10 +95,7 @@ void SendPost(N::Session& s) {
     if (!post || !E::TryGetActorLocation(post, at)) return;
     const float dx = at.X - g_sentAt.X, dy = at.Y - g_sentAt.Y, dz = at.Z - g_sentAt.Z;
     if (g_sentOnce && dx * dx + dy * dy + dz * dz < 25.f) return;   // within 5 cm: unmoved
-    void* const normal = Field(post, L"normal");
-    const ue_wrap::FRotator turn = normal ? E::GetComponentWorldRotation(normal) : ue_wrap::FRotator{};
-    Send(s, kCueSirenPostTurn, turn.Pitch, turn.Yaw, turn.Roll);
-    Send(s, kCueSirenPostAt, at.X, at.Y, at.Z);
+    SendPlace(s, post, at, -1);
     if (!g_sentOnce) UE_LOGI("sirenpost: the host's siren post stands at (%.0f,%.0f,%.0f) -- sent as it walks", at.X,
                              at.Y, at.Z);
     g_sentAt = at;
@@ -108,6 +116,15 @@ void Tick() {
     if (now < g_nextSend) return;
     g_nextSend = now + kSendMs;
     SendPost(*s);
+}
+
+void SendJoin(int slot) {
+    N::Session* const s = g_session.load(std::memory_order_acquire);
+    void* const post = Post();
+    ue_wrap::FVector at{};
+    if (!s || s->role() != N::Role::Host || !post || !E::TryGetActorLocation(post, at)) return;
+    SendPlace(*s, post, at, slot);
+    UE_LOGI("sirenpost: slot %d's world is ready -- the post's place (%.0f,%.0f,%.0f) sent to it", slot, at.X, at.Y, at.Z);
 }
 
 bool OnCue(const N::EventCuePayload& p) {
