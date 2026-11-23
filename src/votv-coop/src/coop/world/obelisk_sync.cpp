@@ -108,6 +108,24 @@ void EndBorn() {
     if (ended) UE_LOGI("obelisk: %d prop(s) this copy's landing made ended -- the host's cross", ended);
 }
 
+// CLIENT: a joiner's save also holds the host's obelisk, and its actor may be made after the host's begin play reached
+// this world (the cue's check found none): while this world's copy stands, any other obelisk by it ends, the copy
+// being the one that falls with the host's.
+void EndTwins() {
+    void* const copy = g_copy.load(std::memory_order_acquire);
+    ue_wrap::FVector c{};
+    if (!copy || !R::IsLive(copy) || !ue_wrap::engine::TryGetActorLocation(copy, c)) return;
+    for (void* o : R::FindObjectsByClass(kClass)) {
+        ue_wrap::FVector at{};
+        if (o == copy || !o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__") ||
+            !ue_wrap::engine::TryGetActorLocation(o, at))
+            continue;
+        const float dx = at.X - c.X, dy = at.Y - c.Y;
+        if (dx * dx + dy * dy < 500.f * 500.f && ue_wrap::engine::DestroyActor(o))
+            UE_LOGI("obelisk: this world's own obelisk from its save ended -- the copy falls with the host's");
+    }
+}
+
 }  // namespace
 
 void Install(N::Session* session) { g_session.store(session, std::memory_order_release); }
@@ -122,6 +140,7 @@ void Tick() {
                                                              &OnBeginDeferred)))
         UE_LOGI("obelisk: a client's copy's births are caught");
     EndBorn();
+    if (s->role() == N::Role::Client) EndTwins();
 }
 
 bool OnCue(const N::EventCuePayload& p) {

@@ -7,8 +7,8 @@
 // or punch. HOST: the obelisk's begin play, while it has not fallen, is sent (EventCue 108 its yaw, then 107 its
 // place). CLIENT: spawns its own copy there, turned as the host's, so the fall and landing play for its own player as
 // the game's do (its own camera, its own punch, its own event count); the copy's push is turned off, and the props its
-// landing makes are ended at their birth, since the host's cross. A joiner loads the obelisk the save holds. Game
-// thread.
+// landing makes are ended at their birth, since the host's cross. A joiner loads the obelisk the save holds; one that
+// joins while it falls is sent its begin play too, and its save's own obelisk by the copy ends. Game thread.
 
 #pragma once
 
