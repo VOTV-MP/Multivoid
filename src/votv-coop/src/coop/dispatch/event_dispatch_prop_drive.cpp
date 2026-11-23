@@ -23,6 +23,7 @@
 #include "coop/element/registry.h"
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
 #include "coop/props/prop_switch_sync.h"  // a light's or the hot plate's switch, the host's
+#include "coop/props/butter_churn_sync.h"  // a butter churn's milk, speed and butter, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/world/flood_sync.h"
@@ -428,6 +429,38 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::ButterChurnState: {
+        // HOST->ALL (coop/props/butter_churn_sync). Exact length.
+        net::ButterChurnStatePayload p{};
+        if (session.role() == net::Role::Host || msg.payloadLen != sizeof(p)) {
+            UE_LOGW("event_feed: a butter churn state the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.eid == 0 || p.hasButter > 1 || p.grant > 1 || !std::isfinite(p.speed) || !std::isfinite(p.milk)) {
+            UE_LOGW("event_feed: a butter churn state malformed -- dropping");
+            break;
+        }
+        ::coop::butter_churn_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::ButterChurnAsk: {
+        // CLIENT->HOST (coop/props/butter_churn_sync). Exact length.
+        net::ButterChurnAskPayload p{};
+        if (session.role() != net::Role::Host || msg.payloadLen != sizeof(p)) {
+            UE_LOGW("event_feed: a butter churn ask the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.eid == 0 || p.op < 1 || p.op > 3) {
+            UE_LOGW("event_feed: a butter churn ask malformed -- dropping");
+            break;
+        }
+        ::coop::butter_churn_sync::OnAsk(msg.senderPeerSlot, p);
         break;
     }
     case net::ReliableKind::PropSwitchState:

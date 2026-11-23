@@ -37,6 +37,7 @@
 #include "coop/props/prop_throw.h"
 #include "coop/props/prop_tool_flags.h"
 #include "coop/props/remover_request.h"
+#include "coop/props/butter_churn_sync.h"
 #include "coop/props/prop_switch_sync.h"
 #include "coop/props/roomba_sync.h"
 #include "coop/props/snack_act.h"
@@ -82,6 +83,7 @@ void OnDisconnect() {
     COOP_CLEANUP_STEP("disconnect", coop::prop_stick_sync::OnDisconnect());  // drop commit-pending stick records
     COOP_CLEANUP_STEP("disconnect", coop::prop_pry_sync::OnDisconnect());  // the session's pry counters and its pried-keys record
     COOP_CLEANUP_STEP("disconnect", coop::prop_pry_host::OnDisconnect());  // the host's pry counters (a sender's queue goes with its slot)
+    COOP_CLEANUP_STEP("disconnect", coop::butter_churn_sync::OnDisconnect());  // the churn states held, the asks timed
     COOP_CLEANUP_STEP("disconnect", coop::prop_switch_sync::OnDisconnect());  // the light switches held and seen
     COOP_CLEANUP_STEP("disconnect", coop::roomba_sync::OnDisconnect());  // the cleaners known, the presses and states queued
     COOP_CLEANUP_STEP("disconnect", coop::fireext_thrust_sync::OnDisconnect());  // the thrusting extinguishers it held

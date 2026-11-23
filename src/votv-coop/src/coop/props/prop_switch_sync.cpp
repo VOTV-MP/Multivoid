@@ -5,8 +5,10 @@
 // and run `upd`; the cord's plug and unplug run `upd` too. The hot plate's switch is its action 8, and its action 5
 // steps its heat level `power` (an int, 0..4) and runs `upd`. prop_spotlightHead_C (and its tripod subclass) flips
 // `active` in toggleLight and runs `upd`; prop_spotlight_C's head is a child actor, its `lighhead`, which names the
-// spotlight back as its `tripod`. prop_beacon_C sets `isActive` from `open`'s `condition`. Every one of those bodies
-// ends in the watched `upd` or `open`, so the switch is read where it lands, whatever pressed it.
+// spotlight back as its `tripod`. prop_beacon_C sets `isActive` from `open`'s `condition`. prop_smokeDetec_C sets
+// `isActive` from `alarm`'s `activate`: its once-a-second timer runs `check`, which sounds it when `checkFire` finds a
+// fire in its sphere, and its action 5 silences it. Every one of those bodies ends in the watched `upd`, `open` or
+// `alarm`, so the switch is read where it lands, whatever pressed it.
 
 #include "coop/props/prop_switch_sync.h"
 
@@ -49,21 +51,27 @@ UE_FACT_FN(kRowWall, "prop_switch_sync", L"prop_lightIntWall1_C", L"upd", Declar
 UE_FACT_FN(kRowSpot, "prop_switch_sync", L"prop_spotlightHead_C", L"upd", Declared);
 UE_FACT_FN(kRowPad, "prop_switch_sync", L"prop_cookingPad_C", L"upd", Declared);
 UE_FACT_FN(kRowBeacon, "prop_switch_sync", L"prop_beacon_C", L"Open", Declared);
+UE_FACT_FN(kRowSmoke, "prop_switch_sync", L"prop_smokeDetec_C", L"alarm", Declared);
+UE_FACT_FN(kRowSmokeCheck, "prop_switch_sync", L"prop_smokeDetec_C", L"check", Declared);
+constexpr int kTagSmokeCheck = 0x50535780;
 
 struct Kind {
     const ue_wrap::facts::Function* row;
     const wchar_t* cls;
     const wchar_t* field;  // the switch
-    bool viaOpen;          // set through open(condition), not written then upd
+    const wchar_t* setFn;  // set through this function's bool `setParam`; null: the field written, then `upd` run
+    const wchar_t* setParam;
     bool level;            // carries the hot plate's heat level, its int `power`
+    bool offOnly;          // a client may ask it off, never on (the smoke alarm: the host's fires sound it)
 };
 const Kind kKinds[] = {
-    {&kRowDesk, L"prop_deskLamp_C", L"active", false, false},
-    {&kRowFloor, L"prop_floorlamp_C", L"active", false, false},
-    {&kRowWall, L"prop_lightIntWall1_C", L"active", false, false},
-    {&kRowSpot, L"prop_spotlightHead_C", L"active", false, false},
-    {&kRowPad, L"prop_cookingPad_C", L"active", false, true},
-    {&kRowBeacon, L"prop_beacon_C", L"isActive", true, false},
+    {&kRowDesk, L"prop_deskLamp_C", L"active", nullptr, nullptr, false, false},
+    {&kRowFloor, L"prop_floorlamp_C", L"active", nullptr, nullptr, false, false},
+    {&kRowWall, L"prop_lightIntWall1_C", L"active", nullptr, nullptr, false, false},
+    {&kRowSpot, L"prop_spotlightHead_C", L"active", nullptr, nullptr, false, false},
+    {&kRowPad, L"prop_cookingPad_C", L"active", nullptr, nullptr, true, false},
+    {&kRowBeacon, L"prop_beacon_C", L"isActive", L"Open", L"condition", false, false},
+    {&kRowSmoke, L"prop_smokeDetec_C", L"isActive", L"alarm", L"activate", false, true},
 };
 constexpr size_t kKindCount = sizeof(kKinds) / sizeof(kKinds[0]);
 constexpr int kTagBase = 0x50535700;     // 'PSW' + the kind's index
@@ -166,10 +174,10 @@ void* Resolve(const N::PropSwitchPayload& p) {
 // The state set on this copy through the prop's own body: `open(condition)`, or the fields written and `upd` run.
 bool Apply(void* obj, int kind, const State& st) {
     void* const cls = R::ClassOf(obj);
-    if (kKinds[kind].viaOpen) {
-        ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(cls, L"Open"));
+    if (kKinds[kind].setFn) {
+        ue_wrap::ParamFrame f(R::FindDispatchFunctionCached(cls, kKinds[kind].setFn));
         if (!f.valid()) return false;
-        f.Set<bool>(L"condition", st.on);
+        f.Set<bool>(kKinds[kind].setParam, st.on);
         return ue_wrap::Call(obj, f);
     }
     int32_t off = -1;
@@ -293,12 +301,17 @@ void ForEachSwitched(F&& fn) {
     for (void* o : found) fn(o);
 }
 
+// CLIENT: the smoke detector's once-a-second check for fire is the host's, whose fires are the shared ones.
+sg::Verdict OnSmokeCheckPre(const sg::Call&) { return IsClient() ? sg::Verdict::Cancel : sg::Verdict::Run; }
+
 }  // namespace
 
 void Install(N::Session* session) {
     g_session = session;
     if (g_watched) return;
     g_watched = true;
+    if (!sg::WatchName(kRowSmokeCheck, kTagSmokeCheck, &OnSmokeCheckPre, nullptr))
+        UE_LOGE("prop_switch: the watch on the smoke detector's check was refused -- a client sounds its own alarm");
     for (size_t i = 0; i < kKindCount; ++i)
         if (!sg::WatchName(*kKinds[i].row, kTagBase + static_cast<int>(i), nullptr, &OnSwitchPost))
             UE_LOGE("prop_switch: the watch on %ls was refused -- its switch is each machine's own", kKinds[i].cls);
@@ -309,14 +322,17 @@ void Tick() {
     sg::ResolvePendingNames();
     for (size_t i = 0; i < kKindCount; ++i)
         if (!sg::NameWatchSettled(*kKinds[i].row, kTagBase + static_cast<int>(i))) return;
+    if (!sg::NameWatchSettled(kRowSmokeCheck, kTagSmokeCheck)) return;
     g_settled = true;
+    if (!sg::NameWatchLive(kRowSmokeCheck, kTagSmokeCheck))
+        UE_LOGE("prop_switch: the watch on the smoke detector's check is dead -- a client sounds its own alarm");
     int live = 0;
     for (size_t i = 0; i < kKindCount; ++i) {
         if (sg::NameWatchLive(*kKinds[i].row, kTagBase + static_cast<int>(i))) ++live;
         else UE_LOGE("prop_switch: the watch on %ls is dead -- its switch is each machine's own", kKinds[i].cls);
     }
-    UE_LOGI("prop_switch: %d of %zu switch watches are live (lamps, wall lights, spotlight, hot plate, beacon)", live,
-            kKindCount);
+    UE_LOGI("prop_switch: %d of %zu switch watches are live (lamps, wall lights, spotlight, hot plate, beacon, smoke "
+            "alarm)", live, kKindCount);
 }
 
 void SendJoinSnapshotForSlot(int slot) {
@@ -360,8 +376,12 @@ void OnIntent(int senderSlot, const N::PropSwitchPayload& p) {
     const bool reach = body && E::TryGetActorLocation(body, bodyAt) && E::TryGetActorLocation(obj, at) &&
                        (bodyAt.X - at.X) * (bodyAt.X - at.X) + (bodyAt.Y - at.Y) * (bodyAt.Y - at.Y) +
                                (bodyAt.Z - at.Z) * (bodyAt.Z - at.Z) <= kReachCm * kReachCm;
-    if (!reach || cur == want) {
-        if (!reach)
+    const bool onRefused = kKinds[kind].offOnly && want.on && !cur.on;
+    if (!reach || cur == want || onRefused) {
+        if (onRefused)
+            UE_LOGW("prop_switch: HOST slot %d asked %ls eid %u on, which only the host's own check does -- refused",
+                    senderSlot, kKinds[kind].cls, p.eid);
+        else if (!reach)
             UE_LOGW("prop_switch: HOST slot %d's switch of %ls eid %u refused: its body is not within %.0f m", senderSlot,
                     kKinds[kind].cls, p.eid, kReachCm / 100.f);
         SendState(obj, kind, cur, senderSlot);  // the asker's copy takes the host's

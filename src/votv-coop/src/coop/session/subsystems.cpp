@@ -48,6 +48,7 @@
 #include "coop/player/nick_color.h"  // nick-color session wiring (Install)
 #include "coop/creatures/orb_authority.h"    // the black orb's encounter, judged by the host
 #include "coop/world/ufo_sync.h"             // the ambient UFOs: the host's paths and the Midas run
+#include "coop/props/butter_churn_sync.h"  // a butter churn's milk, speed and butter are the host's
 #include "coop/props/prop_switch_sync.h"  // a light's or the hot plate's switch is the host's
 #include "coop/props/roomba_sync.h"           // the robot cleaner: the host drives it and owns its switch
 #include "coop/props/fireext_thrust_sync.h"  // an extinguisher in runaway thrust: the host's
@@ -281,6 +282,7 @@ void Install(coop::net::Session& session) {
     coop::mirror_slot_entry::Install(&session);  // no device's overlap takes a prop a remote player carries
     coop::orb_authority::Install(&session);  // the black orb's encounter is the host's: its begin and timeline watches
     coop::ufo_sync::Install(&session);  // the ambient UFOs fly the host's paths; the Midas run is relayed
+    coop::butter_churn_sync::Install(&session);  // a butter churn's milk, speed and butter are the host's
     coop::prop_switch_sync::Install(&session);  // a light's or the hot plate's switch is the host's
     coop::roomba_sync::Install(&session);  // the robot cleaner: a client refuses its tick and pickup, its switch is the host's
     coop::puppet_identity::Install(&session);  // a puppet's touch of a wisp, a grunt, a trigger box or a dream box acts on no machine's player
@@ -663,7 +665,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // the server boxes: the watches settled, then the HOST's 1 Hz poll -> broadcast on change
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server_upgrade"}; coop::server_upgrade_sync::Tick(); }  // a parked canonical, applied once the servers resolve
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); coop::mirror_slot_entry::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim; the mirror entry's watches settle
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); coop::prop_switch_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"puppet_identity.settle"}; coop::puppet_identity::Tick(); coop::orb_authority::Tick(); coop::ufo_sync::Tick(); coop::roomba_sync::Tick(); coop::prop_switch_sync::Tick(); coop::butter_churn_sync::Tick(); }  // the watches settle, the per-world pointers follow the class set
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
