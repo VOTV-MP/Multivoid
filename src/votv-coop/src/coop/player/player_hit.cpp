@@ -94,7 +94,8 @@ bool FiniteWithin(const float (&v)[3]) {
 
 // The format check of OnReceived: the host authors the hit, so nothing here weighs its size.
 bool WellFormed(const coop::net::PlayerHitPayload& p) {
-    return (p.verb == coop::net::kPlayerHitVerbAddDamage || p.verb == coop::net::kPlayerHitVerbPunch) &&
+    return (p.verb == coop::net::kPlayerHitVerbAddDamage || p.verb == coop::net::kPlayerHitVerbPunch ||
+            p.verb == coop::net::kPlayerHitVerbIgnite) &&
            p.bone < coop::net::kPlayerHitBoneCount && p.cue < coop::net::kPlayerHitCueCount && std::isfinite(p.damage) &&
            p.damage >= 0.f &&
            FiniteWithin(p.v0) && FiniteWithin(p.v1) && FiniteWithin(p.v2);
@@ -171,6 +172,8 @@ void Apply(const coop::net::PlayerHitPayload& p) {
         const ApplyScope scope;
         if (p.verb == coop::net::kPlayerHitVerbAddDamage)
             ok = EN::InvokeAddDamage(body, source, p.damage, Vec(p.v0));
+        else if (p.verb == coop::net::kPlayerHitVerbIgnite)
+            ok = EN::InvokeMainPlayerIgnite(body, p.damage);
         else
             ok = EN::InvokePunch(body, Vec(p.v0), Vec(p.v1), kBones[p.bone], p.damage, Vec(p.v2));
     }
@@ -187,7 +190,10 @@ void Apply(const coop::net::PlayerHitPayload& p) {
     if (!first) return;
     if (source) g_appliedSaid.Insert(sourceClass, true); else g_noneSaid = true;
     UE_LOGI("[HIT] applied verb=%s damage=%.2f source=%ls ok=%d (first of its source class; the rest are counted)",
-            p.verb == coop::net::kPlayerHitVerbAddDamage ? "addDamage" : "punch", p.damage,
+            p.verb == coop::net::kPlayerHitVerbAddDamage ? "addDamage"
+            : p.verb == coop::net::kPlayerHitVerbIgnite  ? "ignite"
+                                                         : "punch",
+            p.damage,
             source ? R::ClassNameOf(source).c_str() : L"none", ok ? 1 : 0);
 }
 

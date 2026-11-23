@@ -28,7 +28,10 @@
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/facts/function_row.h"
 
+#include <windows.h>
+
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -144,12 +147,16 @@ std::atomic<uint32_t> g_igniteCanceled{0};
 // peer's machine as a CrematorHit (defined with the hit verbs below). True when the caller is a cremator.
 bool DeliverFromCremator(const sg::Call& c, uint8_t verb);
 
+// HOST: a cancelled ignite whose caller is a flamethrower or a delivered creature is its owner's ignite, at most
+// one a second for each peer (the flame calls it every frame it touches, and each one only resets the burn).
+void DeliverIgnite(const sg::Call& c);
+
 sg::Verdict OnIgnitePre(const sg::Call& c) {
     // IsPuppet alone: no session or local-pawn early-out in front of it, since the local pawn reads
     // null for a whole death or travel window, and one call let through then burns for the session.
     if (!c.object || !coop::players::Registry::Get().IsPuppet(c.object))
         return sg::Verdict::Run;
-    DeliverFromCremator(c, coop::net::kCrematorHitVerbIgnite);
+    if (!DeliverFromCremator(c, coop::net::kCrematorHitVerbIgnite)) DeliverIgnite(c);
     const uint32_t n = ++g_igniteCanceled;
     if (n <= 5 || (n % 100) == 0)
         UE_LOGI("player_damage: refused setting a peer's puppet %p alight (#%u) -- its fire is its owner's",
@@ -233,6 +240,31 @@ coop::net::PlayerHitPayload BuildAddDamage(const sg::Call& c) {
     // the victim drops the hit rather than run the other branch of the Blueprint.
     if (actor) p.sourceEid = coop::element::Registry::Get().EidForActor(actor);
     return p;
+}
+
+void DeliverIgnite(const sg::Call& c) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    // A Firetank's flame is its own actor (flamethrower_C), and its copy on a client burns nothing (firetank_sync).
+    const bool flame = c.callerObject && R::ClassNameOf(c.callerObject) == L"flamethrower_C";
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host ||
+        !(flame || coop::creature_hit::IsDelivered(c.callerObject)))
+        return;
+    const uint8_t slot = coop::players::Registry::Get().PeerIdOfActor(c.object);
+    if (slot == coop::players::kPeerIdHost || slot >= coop::players::kMaxPeers) return;
+    static uint64_t s_lastAt[coop::players::kMaxPeers] = {};
+    const uint64_t now = ::GetTickCount64();
+    if (now - s_lastAt[slot] < 1000) return;
+    static R::ParamOffset sFuel{L"fuel"};
+    coop::net::PlayerHitPayload p{};
+    p.verb = coop::net::kPlayerHitVerbIgnite;
+    p.damage = ReadFloat(c, sFuel);
+    if (!std::isfinite(p.damage) || p.damage <= 0.f) return;
+    if (!coop::player_hit::Deliver(slot, p)) return;
+    s_lastAt[slot] = now;
+    ++g_delivered;
+    if (FirstSent(R::ClassOf(c.callerObject), p.verb))
+        UE_LOGI("[HIT] sent verb=ignite slot=%u creature=%ls fuel=%.1f", static_cast<unsigned>(slot),
+                R::ClassNameOf(c.callerObject).c_str(), p.damage);
 }
 
 // The payload of a punch call on a puppet.

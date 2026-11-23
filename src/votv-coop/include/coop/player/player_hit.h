@@ -35,7 +35,7 @@ void Install(coop::net::Session* session);
 // backlog). Game thread.
 bool Deliver(uint8_t slot, const coop::net::PlayerHitPayload& payload);
 
-// Client: the wire. Checks the format only, as the host is the author: the verb 0 or 1, the bone under 6, a known cue, a finite
+// Client: the wire. Checks the format only, as the host is the author: the verb 0, 1 or 2, the bone under 6, a known cue, a finite
 // non-negative damage, every vector component finite and within 1e7. A payload that passes is applied on the game
 // thread, if it names this machine's player. Any thread.
 void OnReceived(const uint8_t* data, size_t len);

@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 318;
+inline constexpr uint16_t kProtocolVersion = 319;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -4182,6 +4182,7 @@ inline constexpr uint8_t kItemActivateFlag_HasActorKey = 0x01;
 // the receiver checks the format only: a zero-damage knock-down and a lethal 1E+27 are both real.
 inline constexpr uint8_t kPlayerHitVerbAddDamage = 0;  // v0 = impact
 inline constexpr uint8_t kPlayerHitVerbPunch     = 1;  // v0 = fullBody, v1 = boneImp, v2 = damageLocation
+inline constexpr uint8_t kPlayerHitVerbIgnite    = 2;  // damage = the ignite's fuel; a creature's flame (the Firetank)
 inline constexpr uint8_t kPlayerHitBoneCount     = 6;  // bone: None, chest, head, pelvis, torso, lowlegs
 // cue: a sound the hit's maker plays in 2D beside the verb, which the host refused and the victim plays.
 inline constexpr uint8_t kPlayerHitCueNone       = 0;
