@@ -177,6 +177,18 @@ timeline, and the swing through the engine's own transform math, so the vent sto
 starts the crawl with its own player; its door closes and loses its power, 23 sounds and the burst play, and the
 doors, keypads and vent end as the host's).
 
+The garage Soltomia (day 34, `soltomiaCleaning_C`) is spawned in the garage by its event on the host alone, hidden; its
+begin play cleans the ATV. A player in its box shows it, pulls the ATV into the garage, shuts the garage door and unjams
+the base's doors; the door opened, it plays its montage, whose throw hides its mesh and throws a `prop_sponge_solto_C`,
+and it ends at the montage's end. The ATV, the doors and the sponge reach a client through their own lanes; the
+Soltomia did not, so a client saw its ATV move and a sponge appear from nothing. The host sends its box's run once it is
+shown (`EventCue` 111 its yaw, then 110 its place) and its `opened` (112). A client spawns a copy there, its begin play,
+box and end refused, and shows it as the box's run does (its mesh, squeak, dust and talk); at 112 the copy plays the
+montage, and the sponge its throw makes is ended at its birth, since the host's crosses (`coop/world/soltomia_sync`). A
+joiner after it left gets the sponge. `[V]` on the fork's build of the same change: before, the
+host's Soltomia showed and threw and slot 1 had none; after, slot 1's copy showed at the host's place and yaw, played the
+throw, its own sponge was ended, and it ended with the host's one sponge.
+
 ### The ambient UFOs
 
 The gamemode arms five timers at begin play, each rolling and re-arming itself: the ball (high over player 0's
@@ -296,6 +308,7 @@ harvest leaves the host's plant empty and the item with the harvester. Tests: `h
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
+| the garage Soltomia | the host | its show and its opened sent; a client's copy shows and throws, its gameplay refused |
 | the ambient UFOs | the host | its timers refused on a client; its UFOs on the world-actor mirror with the host's rolled path; the Midas run relayed |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
 | the base alarm | whoever transitions | polled; the host canonicalises |
@@ -366,5 +379,6 @@ bit and the flood's level are sent to the joiner at its ready edge, and the host
 | the ambient UFOs | `coop/world/ufo_sync`, `coop/world/spawn_authority` (the gamemode's five timers); `harness/autotest/autotest_ufo.cpp` (`ufo_drill`) |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
 | the basement flood | `coop/world/flood_sync`; `coop/dev/flood_drill` |
+| the garage Soltomia | `coop/world/soltomia_sync` |
 | sounds played at a place | `coop/world/sound_relay`, `coop/world/sound_catalog`, `coop/world/sound_judge`, `ue_wrap/world/physsound_table`, `ue_wrap/core/object_path`; `coop/dev/sound_drill` |
 | tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`, `autotest_vent_crawler.cpp`; the event drill, `coop/dev/event_drill`; the world roll drill, `coop/dev/world_roll_drill` |

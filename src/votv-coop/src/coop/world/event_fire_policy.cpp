@@ -87,7 +87,7 @@ const NoReplayRow kNoReplayRows[] = {
     { "graystank", "creature spawn (no lane yet)" }, { "arirBuster", "creature spawn (no lane yet)" },
     { "eggvasion", "npc and world-actor lanes (eventer and egger EX-catch)" },
     { "boarwar", "creature spawn (no lane yet)" },
-    { "soltoClean", "world-actor spawn (no lane yet: soltomiaCleaning_C plays gameplay on a mirror)" },
+    { "soltoClean", "soltomiaCleaning_C's show and throw ride soltomia_sync (EventCue 110-112) on a copy" },
     { "salt", "save-actor spawn (no lane)" }, { "rozitalHole", "save-actor spawn (no lane)" },
     { "dreambase", "save-actor spawn (no lane)" },
     { "fallbody_0", "dropper spawn (no lane yet: the eventer's catch leaves the droppers out)" },
