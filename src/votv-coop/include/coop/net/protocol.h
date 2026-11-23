@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 318;
+inline constexpr uint16_t kProtocolVersion = 319;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1500,6 +1500,14 @@ enum class ReliableKind : uint16_t {
     // The host judges the sender's reach and presses its own cleaner, whose RoombaState answers. Never relayed.
     // RoombaPayload.
     RoombaIntent = 246,
+    // HOST->ALL: a light's or the hot plate's switch (a lamp, a wall light, a spotlight's head, the beacon, the hot
+    // plate) landed on the host's copy (coop/props/prop_switch_sync); to a joiner, every one at its ready edge. Never
+    // relayed; not pre-world. PropSwitchPayload.
+    PropSwitchState = 304,
+    // CLIENT->HOST: this client's press of such a switch, run on its copy and asked of the host, which judges the
+    // sender's reach and switches its own copy, whose PropSwitchState answers; a refusal is answered with the host's
+    // state, to the asker. Never relayed. PropSwitchPayload.
+    PropSwitchIntent = 305,
     // HOST->ALL: a garbage container's contents (the keys of the props its itemsInside lists) and whether it can be held
     // and collected, when any changes, and every container again to a joiner at its ready edge. A client's copy writes the
     // flags and the list and glues the props as the container's own glue does, once every listed prop is here. A chunked
@@ -2449,6 +2457,17 @@ struct RoombaPayload {
     uint8_t  pad[3];  // zero
 };
 static_assert(sizeof(RoombaPayload) == 8, "RoombaPayload must be 8 bytes");
+
+// A light's or the hot plate's switch (PropSwitchState, PropSwitchIntent): the prop's element id, or with `head` set
+// the spotlight tripod's, whose child actor is the head.
+struct PropSwitchPayload {
+    uint32_t eid;     // the prop's element id (the tripod's, for its head)
+    uint8_t  on;      // 1 on, 0 off: the state (a state) or the one asked for (an intent)
+    uint8_t  head;    // 1: the switch is the head of the spotlight `eid` names
+    uint8_t  level;   // the hot plate's heat level (its `power`, 0..4); 0 for the others
+    uint8_t  pad;     // zero
+};
+static_assert(sizeof(PropSwitchPayload) == 8, "PropSwitchPayload must be 8 bytes");
 
 // FloodState / FloodIntent. A burst pipe (burstWaterPipe_C) or a flood volume (waterVolume_basementFlooder_C), both placed in
 // the level, is named by its object name. op 0 a pipe's state (`damaged`), op 1 a volume's level (getLevel's units), op 2

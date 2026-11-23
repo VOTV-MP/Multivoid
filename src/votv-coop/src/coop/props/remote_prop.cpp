@@ -27,6 +27,7 @@
 #include "coop/props/container_act_host.h"  // overlap::OnBound: an overlap put waits for a prop's bind
 #include "coop/props/pile_look.h"
 #include "coop/creatures/walker_state_client.h"  // OnBound: a walker copy bound after the host sent its state takes the state here
+#include "coop/props/prop_switch_sync.h"  // OnBound: a light copy bound after the host sent its switch takes it here
 #include "coop/props/roomba_sync.h"  // OnBound: a cleaner copy bound after the host sent its state takes the state here
 #include "coop/props/miner_sync.h"  // OnBound: a mining rig copy bound after the host sent its state takes the state here
 #include "coop/props/bucket_sync.h"  // OnBound: a bucket or bag copy bound after the host sent its row takes the row here
@@ -481,6 +482,7 @@ void RegisterPropMirror(coop::element::ElementId eid,
         coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
         coop::drive_payload_sync::OnBound(static_cast<uint32_t>(eid), actor, senderSlot);  // a data drive's row, by its author
         coop::walker_state_client::OnBound(actor, key);  // a walker copy takes the host's held pose and hunt
+        coop::prop_switch_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a light or hot plate copy takes its held switch
         coop::roomba_sync::OnBound(static_cast<uint32_t>(eid), actor, cls.c_str());  // a cleaner copy joins the brush list and takes its held state
         coop::miner_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a mining rig copy takes the state the host sent before it was here
         coop::bucket_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a bucket or bag copy takes the row the host sent before it was here

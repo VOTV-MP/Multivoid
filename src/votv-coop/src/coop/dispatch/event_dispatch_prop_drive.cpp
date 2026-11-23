@@ -22,6 +22,7 @@
 #include "coop/dev/pile_defer_report.h"    // the pile deferral drill's report receiver
 #include "coop/element/registry.h"
 #include "coop/props/roomba_sync.h"  // a robot cleaner's switch, the host's
+#include "coop/props/prop_switch_sync.h"  // a light's or the hot plate's switch, the host's
 #include "coop/world/plant_edit_gate.h"
 #include "coop/world/plant_sync.h"
 #include "coop/world/flood_sync.h"
@@ -427,6 +428,25 @@ bool HandlePropDriveEvent(net::Session& session,
         }
         if (edit) ::coop::plant_edit_gate::OnEdit(static_cast<uint8_t>(msg.senderPeerSlot), p);
         else ::coop::plant_sync::OnState(p);
+        break;
+    }
+    case net::ReliableKind::PropSwitchState:
+    case net::ReliableKind::PropSwitchIntent: {
+        // PropSwitchState HOST->ALL, PropSwitchIntent CLIENT->HOST (coop/props/prop_switch_sync). Exact length.
+        const bool intent = msg.kind == net::ReliableKind::PropSwitchIntent;
+        net::PropSwitchPayload p{};
+        if (intent != (session.role() == net::Role::Host) || msg.payloadLen != sizeof(p)) {
+            UE_LOGW("event_feed: a light switch message the wrong way or of %zu bytes from slot %d -- dropping",
+                    static_cast<size_t>(msg.payloadLen), msg.senderPeerSlot);
+            break;
+        }
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.on > 1 || p.head > 1 || p.level > 4 || p.eid == 0) {
+            UE_LOGW("event_feed: a light switch message malformed -- dropping");
+            break;
+        }
+        if (intent) ::coop::prop_switch_sync::OnIntent(msg.senderPeerSlot, p);
+        else ::coop::prop_switch_sync::OnState(p);
         break;
     }
     case net::ReliableKind::RoombaState:

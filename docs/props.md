@@ -473,6 +473,9 @@ answered like a refused bite. A held food placed down, not thrown, is run by the
 A world bucket's water, a concrete bucket's concrete and a cement bag's units are the host's, the base's mop bucket among them,
 and a client's verbs on them are asked of the host ([props-buckets.md](props-buckets.md)).
 
+A light's switch and the hot plate's, with the plate's heat level, are the host's too, and a client's press is asked
+of the host ([props-switches.md](props-switches.md)).
+
 ## Who owns what
 
 | State | Owner | Shape |

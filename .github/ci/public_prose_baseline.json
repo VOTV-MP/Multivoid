@@ -2,7 +2,7 @@
   "as_of": "b2e99374a",
   "note": "measured on the working tree; as_of is HEAD at that moment",
   "counters": {
-    "md.files": 72,
+    "md.files": 73,
     "md.lines": 10366,
     "md.over_600": 0,
     "md.cyrillic": 1,
