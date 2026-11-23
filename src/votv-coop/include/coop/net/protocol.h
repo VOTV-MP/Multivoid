@@ -33,7 +33,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 318;
+inline constexpr uint16_t kProtocolVersion = 319;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1587,6 +1587,11 @@ enum class ReliableKind : uint16_t {
     // mends its copy (FloodIntent). Not pre-world. FloodPayload.
     FloodState = 285,
     FloodIntent = 286,
+    // Client to host: this client's shovel or rake scooped a trash pile, asked instead of run (its own turnIntoScrap
+    // is cancelled). The host judges the sender's reach and runs the pile's turnIntoScrap on its copy; the scrap and
+    // the pile's end cross as props. Never relayed; not pre-world. Late join: none, an ask is an act.
+    // ChipScrapAskPayload.
+    ChipScrapAsk = 303,
     // An Omega's outfit and its pat (coop/creatures/kerfur_dress_sync). HOST->ALL (272): an Omega's whole `drip` outfit, at
     // each change of it and to a joiner for every Omega (none at a registration: no game route dresses an Omega before it
     // registers), and a pat to show (flags bit 0, the outfit riding along). CLIENT->HOST (273): this client's player patted an Omega; a client's put-on and
@@ -4330,6 +4335,13 @@ static_assert(sizeof(FireflySpawnPayload) == 12, "FireflySpawnPayload must be 12
 
 // One cosmetic emitter cue (EventCue): the registry index and the world position. cueId is on the
 // wire and the registry is append-only.
+// A client's scoop of a trash pile (ChipScrapAsk): the pile's element id (0 for a pile with none) and its place.
+struct ChipScrapAskPayload {
+    uint32_t elementId;
+    float    x, y, z;
+};
+static_assert(sizeof(ChipScrapAskPayload) == 16, "ChipScrapAskPayload must be 16 bytes");
+
 struct EventCuePayload {
     uint32_t cueId;  // index into event_cue_sync's cue registry (append-only)
     float x;         // world spawn location of the cue emitter
