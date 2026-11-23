@@ -162,6 +162,9 @@ constexpr const wchar_t* kEventerOutputs[] = {L"ventCrawler_C", L"superEgger_C",
 // (mainGamemode_C::CustomEvent_5, an Octa or a night egg) and the four ambient UFO timers' (coop/world/ufo_sync).
 constexpr const wchar_t* kGamemodeOutputs[] = {L"geomOcta_C", L"eg_C", L"ufo_ballfo_C", L"ufo_boofo_spawn1_C",
                                                L"ufo_pillfo_C", L"ufo_joel_C", nullptr};
+// The super fog mints its Thunder Wisp; the signal screen, among its other births, the TriFO.
+constexpr const wchar_t* kSuperFogOutputs[] = {L"HoelUfo_C", nullptr};
+constexpr const wchar_t* kSignalScreenOutputs[] = {L"ufo_trifo_C", nullptr};
 constexpr ExSpawnSource kExSpawnSources[] = {
     {L"trigger_wispSwarm_C",     nullptr},          // the wisps event swarm
     {L"piramidSpawner_C",        nullptr},          // the piramid event chain
@@ -176,6 +179,8 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+    {L"superFog_C",              kSuperFogOutputs}, // the super fog: its spawnUfo mints the Thunder Wisp
+    {L"analogDScreenTest_C",     kSignalScreenOutputs},  // the signal screen: spawn_trifo mints the TriFO
     {L"blackballSpawner_C",      nullptr},          // the orb event: its ubergraph mints npc_orborb_C
 };
 
@@ -273,7 +278,8 @@ void InstallExSpawnCatch() {
                 "grayEventController_C -> grayTest_C, superEgger_C + ticker_egSpawner_C -> eg_C, "
                 "mainGamemode_C -> geomOcta_C + eg_C + the four ambient UFOs, ticker_deerSpawner_C -> deer_C, "
                 "ticker_treeSpawner_C -> walkingTree_C, "
-                "tentacleBallsFollower_C -> tentacleBall_C, blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
+                "tentacleBallsFollower_C -> tentacleBall_C, superFog_C -> HoelUfo_C, analogDScreenTest_C -> ufo_trifo_C, "
+                "blackballSpawner_C -> npc_orborb_C; EX_CallMath spawns "
                 "now enroll)");
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "

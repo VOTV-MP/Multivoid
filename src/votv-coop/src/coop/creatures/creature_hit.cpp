@@ -25,6 +25,8 @@ bool IsCreature(void* actor) {
 
 bool IsDelivered(void* actor) {
     if (ue_wrap::ambient_creature::IsWalker(actor)) return true;  // a prop, not an Npc, and its copy's timers are off
+    // The Thunder Wisp's zap, which its mirror on a client never makes (its tick is parked there).
+    if (actor && R::ClassNameOf(actor) == L"hoelUfoAttack_C") return true;
     return IsCreature(actor) && coop::npc_mirror_brain::IsParkedClass(R::ClassOf(actor));
 }
 

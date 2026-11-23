@@ -3,6 +3,7 @@
 #include "coop/world/weather_fog.h"
 
 #include "coop/net/protocol.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -69,6 +70,8 @@ long long g_lastReconcileMs    = 0;
 void*     g_superFogActor   = nullptr;
 int32_t   g_superFogIdx     = -1;
 long long g_lastSuperScanMs = 0;
+// CLIENT: the host's super fog as last applied, for its start edge.
+bool      g_lastHostSuper = false;
 
 long long NowMs() {
     using namespace std::chrono;
@@ -224,9 +227,18 @@ void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload) {
                 payload.fogAlpha, payload.fogStrength, payload.finalFogDensity);
     }
 
-    // Super fog: clear-only (destroy a stray when the host has none). The spawn is deferred: the
-    // super-fog actor owns a UFO encounter, and its spawn was not reliably reproducible in the
-    // probe. A bounded loop, since the by-class find returns one.
+    // Super fog: this client's own fog while the host's stands. Its UFO encounter is the host's (the Thunder Wisp
+    // crosses on the world-actor lane, and this copy's spawnUfo is refused on a client, coop/world/spawn_authority). A
+    // stray is destroyed when the host has none; a bounded loop, since the by-class find returns one.
+    if (hostSuperActive && !g_lastHostSuper && !R::FindObjectByClass(P::name::SuperFogClass)) {
+        void* cls = ue_wrap::asset_load::LoadObjectByPath(L"/Game/objects/superFog.superFog_C");
+        if (!cls) cls = R::FindClass(P::name::SuperFogClass);
+        g_spawnFogEchoSuppress.store(true, std::memory_order_release);
+        void* const sf = cls ? E::SpawnActor(cls, ue_wrap::FVector{}) : nullptr;
+        g_spawnFogEchoSuppress.store(false, std::memory_order_release);
+        UE_LOGI("weather_fog: host SUPER FOG -> this client's own super fog %s", sf ? "spawned" : "NOT spawned");
+    }
+    g_lastHostSuper = hostSuperActive;
     if (!hostSuperActive) {
         for (int k = 0; k < 8; ++k) {
             void* sf = R::FindObjectByClass(P::name::SuperFogClass);
