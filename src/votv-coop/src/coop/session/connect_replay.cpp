@@ -89,6 +89,7 @@
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/creature_event_relay.h"  // the host's creature events, carried to every client's count
 #include "coop/world/ufo_sync.h"  // the paths of the UFOs still flying, and the Midas run
+#include "coop/props/rdrone_sync.h"  // every remote drone's switch and energy
 #include "coop/props/butter_churn_sync.h"  // every butter churn's milk, speed and butter
 #include "coop/props/prop_switch_sync.h"  // every light's and hot plate's switch
 #include "coop/props/roomba_sync.h"  // every robot cleaner's switch
@@ -213,6 +214,8 @@ void ConnectReplayForSlot(int slot) {
     coop::prop_switch_sync::SendJoinSnapshotForSlot(slot);
     // Every butter churn's milk, speed and butter.
     coop::butter_churn_sync::SendJoinSnapshotForSlot(slot);
+    // Every remote drone's switch and energy.
+    coop::rdrone_sync::SendJoinSnapshotForSlot(slot);
     // The desk's back plates and every transformer station's door.
     coop::cover_sync::SendJoinSnapshotForSlot(slot);
     // Every spray, every thrusting extinguisher and every partly spent charge.

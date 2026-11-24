@@ -25,6 +25,7 @@ set(VOTVCOOP_PROPS_SOURCES
     src/coop/props/roomba_sync.cpp
     src/coop/props/prop_switch_sync.cpp
     src/coop/props/butter_churn_sync.cpp
+    src/coop/props/rdrone_sync.cpp
     src/coop/props/fireext_thrust_sync.cpp
     src/coop/props/fireext_sync.cpp
     src/coop/props/fireext_runaway_ask.cpp

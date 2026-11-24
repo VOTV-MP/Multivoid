@@ -27,6 +27,7 @@
 #include "coop/props/container_act_host.h"  // overlap::OnBound: an overlap put waits for a prop's bind
 #include "coop/props/pile_look.h"
 #include "coop/creatures/walker_state_client.h"  // OnBound: a walker copy bound after the host sent its state takes the state here
+#include "coop/props/rdrone_sync.h"  // OnBound: a drone copy bound after the host sent its state
 #include "coop/props/butter_churn_sync.h"  // OnBound: a churn copy bound after the host sent its state
 #include "coop/props/prop_switch_sync.h"  // OnBound: a light copy bound after the host sent its switch takes it here
 #include "coop/props/roomba_sync.h"  // OnBound: a cleaner copy bound after the host sent its state takes the state here
@@ -484,7 +485,8 @@ void RegisterPropMirror(coop::element::ElementId eid,
         coop::drive_payload_sync::OnBound(static_cast<uint32_t>(eid), actor, senderSlot);  // a data drive's row, by its author
         coop::walker_state_client::OnBound(actor, key);  // a walker copy takes the host's held pose and hunt
         coop::prop_switch_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a light or hot plate copy takes its held switch
-        coop::butter_churn_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a churn copy takes its held state  // a light or hot plate copy takes its held switch
+        coop::butter_churn_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a churn copy takes its held state
+        coop::rdrone_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a churn copy takes its held state  // a light or hot plate copy takes its held switch
         coop::roomba_sync::OnBound(static_cast<uint32_t>(eid), actor, cls.c_str());  // a cleaner copy joins the brush list and takes its held state
         coop::miner_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a mining rig copy takes the state the host sent before it was here
         coop::bucket_sync::OnBound(static_cast<uint32_t>(eid), actor);  // a bucket or bag copy takes the row the host sent before it was here

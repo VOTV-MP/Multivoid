@@ -227,6 +227,28 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | The client gets off | the rider gets off, the rest turn back, the stamp names no rider | the body stands again; the mirror is unseated where it stands |
 | The host sits | the game's own sit invites its kerfurs | the host's body sits in the seat; the stamped mirror sits on the ATV |
 
+### The sled and the remote drone
+
+The sled (`prop_sled_C`) is a seat: its `playerSit` binds the sitter's move keys to its pressed flags and turns its tick
+on, and the tick pushes the body for each flag, so a ride ran on the rider's machine alone and every other peer saw the
+sled stand. The rider's machine now claims it through the prop syncer (`coop/props/prop_syncer`, reason `Ride`) every
+tick it rides, watched from its own `playerSit` to its `playerUnsit` (`coop/props/rdrone_sync`): the host grants the
+claim and the rider's rows stream to every peer, or, when the host rides, the host's own drive streams them. On flat
+ground the push loses to friction; it slides on a slope or on the winter's ice.
+
+The remote drone (`prop_rdrone_C`) hovers by its own tick while it is `active` and drains its `energy` (its cord
+charges it); the laptop's drone app flies it through `move(forward, rot, up)`, one frame's acceleration per slider
+change, and shows its camera. It is the host's: a client refuses the drone's tick, so only the host's copy hovers. A
+client's `move` is asked of the host (`RdroneAsk`), summed and sent at most every 50 ms, its yaw also turned on the
+client's own copy so the pilot's camera answers at once; a client's press of its switch (action 8) is asked and judged
+by reach (6 m). The host claims a running drone's drive, so every copy follows its pose, and sends its `active` and its
+energy in 5% steps (`RdroneState`), which a client shows through the drone's own `upd`; a joiner gets every drone.
+
+`[V]` (a fork-only drill, three peers): slot 1's switch turned the host's drone on, its slider asks flew the host's drone 1.35 m up
+and 1.3 m on, its copy within a centimetre of the host's, and it fell where the host's fell when switched off; slot 1's
+ride of a sled shoved as a slope would moved the host's and slot 2's copies with it, and the host's ride moved slot 1's
+and slot 2's.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -254,6 +276,7 @@ copy and returns with the next block. `[?]` Read from the code, not measured.
 | `AtvState` | the syncer (a client's to the host alone), re-sent by the host; the host when idle | key, pose, rotation, velocities, the seat, the syncer and the riding kerfur the host stamps, the host copy's trap, the syncer's brake, lights, turbo and horn, the condition block with its vitals ack, an adopt flag |
 | `AtvSeat`, `AtvTakeover` | a client to the host | a sit in or leave of the driver's seat; a grab of the ATV |
 | `AtvAnswer` | the host to the asking client | the verdict on one request, with the seat and the syncer the host holds |
+| `RdroneState`, `RdroneAsk` | the host to all, a refused switch's state to its asker alone; a client to the host | a remote drone's switch and energy; a client's summed flight or its switch press |
 | `AtvExplodeRequest` | a client to the host | the ATV the client syncs that exploded, by key, and whether the story event's trap fell in that frame; the host blasts at the ATV's own `tp` |
 | `AtvPartIntent` | a client to the host | one piece of work on an ATV's wheels or spare: a wheel unbolted, a held wheel fitted or stowed as the spare, the spare taken; with the held wheel's scalars |
 | `AtvSpawn`, `AtvDestroy` | the host to all | an ATV's key, class and pose; its teardown |
@@ -308,6 +331,7 @@ join window is not queued.
 
 | Concept | Files |
 |---|---|
+| the sled's ride and the remote drone | `coop/props/rdrone_sync`; the ride's syncer, `coop/props/prop_syncer` |
 | the lane | `coop/interactables/atv_sync`, `coop/interactables/atv_sync_internal.h`; `coop/interactables/atv_body` (this machine's own seat and carry against the table) |
 | the seat and syncer table, and the host's judgements | `coop/interactables/atv_authority` |
 | the corrector, the hit guard and the damage gate | `coop/interactables/atv_corrector`, `coop/interactables/atv_hit_guard`, `coop/interactables/atv_damage_gate` |
