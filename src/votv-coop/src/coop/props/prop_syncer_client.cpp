@@ -119,6 +119,7 @@ const char* ReasonName(coop::net::PropSyncReason r) {
         case coop::net::PropSyncReason::DevDrill:       return "dev drill";
         case coop::net::PropSyncReason::SwingerParent:  return "swinger parent";
         case coop::net::PropSyncReason::BodyPush:       return "body push";
+        case coop::net::PropSyncReason::Ride:           return "ride";
     }
     return "client claim";
 }

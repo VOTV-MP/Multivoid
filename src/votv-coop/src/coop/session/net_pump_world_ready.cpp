@@ -18,6 +18,7 @@
 #include "coop/world/daily_task_sync.h"  // OnClientWorldReady: a task kept from the world left behind
 #include "coop/props/prop_key_index.h"     // CanAnswer at the world-ready gate
 #include "coop/props/join_membership_sweep.h"  // OnClientWorldReadyResetSweep
+#include "coop/props/rdrone_sync.h"  // OnClientWorldReady: the drone states held, the sled ridden
 #include "coop/props/butter_churn_sync.h"  // OnClientWorldReady: the churn states held
 #include "coop/props/prop_switch_sync.h"  // OnClientWorldReady: the switches held and seen
 #include "coop/props/roomba_sync.h"  // OnClientWorldReady: the cleaners bound and the states held
@@ -209,6 +210,7 @@ const char* TickWorldReadyAnnounce(coop::net::Session& session, void* localNow, 
                 // state so the new world re-adopts its save NPCs and re-sweeps orphans.
                 coop::npc_adoption::OnClientWorldReady();
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // drop the stale prop-kerfur pending set
+                coop::rdrone_sync::OnClientWorldReady();  // the drone states held and the sled ridden in the old world go
                 coop::butter_churn_sync::OnClientWorldReady();  // the churn states held for the old world go
                 coop::prop_switch_sync::OnClientWorldReady();  // the light switches held and seen for the old world go
                 coop::roomba_sync::OnClientWorldReady();  // the cleaners bound and the states held for the old world go
